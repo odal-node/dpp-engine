@@ -64,7 +64,7 @@ The engine ships as a **single binary** (`dpp-node`) that fuses all services und
 
 ### Dependencies on dpp-core
 
-All core crates are consumed from crates.io (dpp-core is published independently, version-pinned to `^0.1.0`; local dev can override to a sibling checkout via `.cargo/config.toml`, see `.cargo/config.toml.example`):
+All core crates are consumed from crates.io (dpp-core is published independently, version-pinned to `^0.2.0`; local dev can override to a sibling checkout via `.cargo/config.toml`, see `.cargo/config.toml.example`):
 
 | Core Crate | Used For |
 |---|---|
