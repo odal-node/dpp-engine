@@ -1,0 +1,133 @@
+//! HTTP client wrapper (`OdalClient`) that authenticates to the node with a bearer API key.
+
+use anyhow::Result;
+use base64::Engine;
+use reqwest::{Client, StatusCode};
+
+/// Shared HTTP client wrapper that authenticates with the vault using a
+/// `Authorization: Bearer <token>` header.
+///
+/// The configured `api_key` is forwarded verbatim — an Odal API key
+/// (`odal_sk_…`) validated by the node's `ApiKeyAuthProvider`. (There is no
+/// unsigned/dev-JWT fallback: the node accepts only real API keys and
+/// local-admin Basic auth.)
+pub struct OdalClient {
+    inner: Client,
+    bearer: String,
+}
+
+impl OdalClient {
+    pub fn new(api_key: impl Into<String>) -> Self {
+        Self {
+            inner: Client::builder()
+                .timeout(std::time::Duration::from_secs(10))
+                .build()
+                .unwrap(),
+            bearer: api_key.into(),
+        }
+    }
+
+    /// Build a client that authenticates with the node's **local admin**
+    /// credential — `Authorization: Bearer base64(user:pass)`, which the node's
+    /// `LocalAuthProvider` accepts. Used during first-run setup before any API
+    /// key exists.
+    pub fn with_local_admin(user: &str, pass: &str) -> Self {
+        let token =
+            base64::engine::general_purpose::STANDARD.encode(format!("{user}:{pass}").as_bytes());
+        Self {
+            inner: Client::builder()
+                .timeout(std::time::Duration::from_secs(10))
+                .build()
+                .unwrap(),
+            bearer: token,
+        }
+    }
+
+    /// GET `url` with Bearer token. Returns the response body as a string.
+    pub async fn get(&self, url: &str) -> Result<(StatusCode, String)> {
+        let resp = self.inner.get(url).bearer_auth(&self.bearer).send().await?;
+        let status = resp.status();
+        let body = resp.text().await?;
+        Ok((status, body))
+    }
+
+    /// POST JSON `payload` to `url` with Bearer token.
+    pub async fn post_json(
+        &self,
+        url: &str,
+        payload: &serde_json::Value,
+    ) -> Result<(StatusCode, String)> {
+        let resp = self
+            .inner
+            .post(url)
+            .bearer_auth(&self.bearer)
+            .json(payload)
+            .send()
+            .await?;
+        let status = resp.status();
+        let body = resp.text().await?;
+        Ok((status, body))
+    }
+
+    /// PATCH JSON `payload` to `url` with Bearer token.
+    pub async fn patch_json(
+        &self,
+        url: &str,
+        payload: &serde_json::Value,
+    ) -> Result<(StatusCode, String)> {
+        let resp = self
+            .inner
+            .patch(url)
+            .bearer_auth(&self.bearer)
+            .json(payload)
+            .send()
+            .await?;
+        let status = resp.status();
+        let body = resp.text().await?;
+        Ok((status, body))
+    }
+
+    /// DELETE `url` with Bearer token.
+    pub async fn delete(&self, url: &str) -> Result<(StatusCode, String)> {
+        let resp = self
+            .inner
+            .delete(url)
+            .bearer_auth(&self.bearer)
+            .send()
+            .await?;
+        let status = resp.status();
+        let body = resp.text().await?;
+        Ok((status, body))
+    }
+
+    /// Upload a file as `multipart/form-data` (field name `file`) to `url` with
+    /// Bearer token — the shape the integrator's `POST /api/v1/import/{sector}`
+    /// expects. The filename is preserved so the server can detect CSV vs XLSX.
+    pub async fn upload_file(
+        &self,
+        url: &str,
+        filename: &str,
+        bytes: Vec<u8>,
+    ) -> Result<(StatusCode, String)> {
+        let part = reqwest::multipart::Part::bytes(bytes).file_name(filename.to_owned());
+        let form = reqwest::multipart::Form::new().part("file", part);
+        let resp = self
+            .inner
+            .post(url)
+            .bearer_auth(&self.bearer)
+            .multipart(form)
+            .send()
+            .await?;
+        let status = resp.status();
+        let body = resp.text().await?;
+        Ok((status, body))
+    }
+
+    /// GET `url` without auth (used for public health endpoints).
+    pub async fn get_public(&self, url: &str) -> Result<(StatusCode, String)> {
+        let resp = self.inner.get(url).send().await?;
+        let status = resp.status();
+        let body = resp.text().await?;
+        Ok((status, body))
+    }
+}
