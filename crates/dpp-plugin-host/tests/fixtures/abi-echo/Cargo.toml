@@ -1,0 +1,27 @@
+[workspace]
+
+# Minimal `export_plugin!` fixture for the `wasm-fixture-tests` integration test.
+# It is NOT a sector plugin — it exists only to prove that a real SDK-generated
+# Wasm ABI round-trips through the wasmtime host (the other host tests hand-roll
+# WAT and never exercise the macro's linear-memory packing).
+[package]
+name    = "abi-echo"
+version = "0.0.0"
+edition = "2024"
+license = "BSL-1.1"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+path = "src/lib.rs"
+
+[dependencies]
+dpp-plugin-sdk = { path = "../../../../../../dpp-core/crates/dpp-plugin-sdk" }
+serde_json     = "1"
+
+[profile.release]
+opt-level     = "z"
+lto           = true
+codegen-units = 1
+strip         = true
+panic         = "abort"

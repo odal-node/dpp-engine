@@ -1,0 +1,49 @@
+[package]
+name        = "dpp-plugin-host"
+description = "wasmtime-based sandbox host for Odal Node sector plugins"
+version.workspace     = true
+edition.workspace     = true
+authors.workspace     = true
+license.workspace     = true
+repository.workspace  = true
+rust-version.workspace = true
+
+[lib]
+name = "dpp_plugin_host"
+path = "src/lib.rs"
+
+[dependencies]
+dpp-domain        = { workspace = true }
+dpp-plugin-traits = { workspace = true }
+dpp-common        = { path = "../dpp-common" }
+
+wasmtime      = { workspace = true }
+wasmtime-wasi = { workspace = true }
+serde         = { workspace = true }
+serde_json    = { workspace = true }
+anyhow        = { workspace = true }
+thiserror     = { workspace = true }
+tracing       = { workspace = true }
+metrics       = { workspace = true }
+tokio         = { workspace = true }
+ed25519-dalek = { workspace = true }
+base64        = { workspace = true }
+sha2          = { workspace = true }
+
+[features]
+integration-tests = []
+# Compiles the `tests/fixtures/abi-echo` crate to wasm32-wasip1 at test time and
+# drives the real SDK-generated ABI through the host. Off by default because it
+# requires the wasm32-wasip1 target and a nested cargo build.
+wasm-fixture-tests = []
+
+[dev-dependencies]
+tokio     = { workspace = true }
+uuid      = { workspace = true }
+wat       = "1"
+tempfile  = "3"
+criterion = { workspace = true }
+
+[[bench]]
+name    = "wasm_invoke"
+harness = false
