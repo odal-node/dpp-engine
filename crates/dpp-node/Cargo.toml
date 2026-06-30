@@ -1,0 +1,79 @@
+[package]
+name        = "dpp-node"
+description = "Odal Node MVP single binary — fuses vault, identity, integrator, bridge and plugin host"
+version.workspace     = true
+edition.workspace     = true
+authors.workspace     = true
+license.workspace     = true
+repository.workspace  = true
+rust-version.workspace = true
+
+[lib]
+name = "dpp_node"
+path = "src/lib.rs"
+
+[[bin]]
+name = "dpp-node"
+path = "src/main.rs"
+
+[dependencies]
+# Service libraries
+dpp-domain = { workspace = true }
+dpp-crypto      = { workspace = true }
+dpp-common             = { path = "../dpp-common" }
+dpp-dal                = { path = "../dpp-dal" }
+dpp-types              = { workspace = true }
+dpp-vault              = { path = "../dpp-vault" }
+dpp-identity   = { path = "../dpp-identity" }
+dpp-integrator         = { path = "../dpp-integrator" }
+dpp-registry           = { workspace = true }
+dpp-plugin-host        = { path = "../dpp-plugin-host" }
+
+# Event bus
+async-nats   = { workspace = true }
+
+# HTTP client (EU registry bridge)
+reqwest      = { workspace = true }
+
+# Runtime
+async-trait  = { workspace = true }
+tokio        = { workspace = true }
+axum         = { workspace = true }
+tower-http   = { workspace = true }
+anyhow       = { workspace = true }
+tracing                     = { workspace = true }
+tracing-subscriber          = { workspace = true }
+dotenvy                     = { workspace = true }
+metrics                     = { workspace = true }
+metrics-exporter-prometheus = { workspace = true }
+serde        = { workspace = true }
+serde_json   = { workspace = true }
+uuid         = { workspace = true }
+chrono       = { workspace = true }
+ed25519-dalek = { workspace = true }
+hex          = { workspace = true }
+sha2         = { workspace = true }
+aws-sdk-s3   = { workspace = true }
+
+[features]
+integration-tests = []
+
+[dev-dependencies]
+tower          = { version = "0.4", features = ["util"] }
+serial_test    = "3"
+futures        = "0.3"
+criterion      = { workspace = true }
+uuid           = { workspace = true }
+testcontainers = { workspace = true }
+reqwest        = { workspace = true }
+tokio          = { workspace = true }
+base64         = { workspace = true }
+chrono         = { workspace = true }
+async-nats     = { workspace = true }
+dpp-common                  = { path = "../dpp-common" }
+metrics-exporter-prometheus = { workspace = true }
+
+[[bench]]
+name    = "nats_throughput"
+harness = false
+required-features = ["integration-tests"]
