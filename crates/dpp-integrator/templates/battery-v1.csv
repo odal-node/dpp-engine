@@ -1,0 +1,3 @@
+productName [REQUIRED],gtin [REQUIRED],batchId [REQUIRED],manufacturerName [REQUIRED],manufacturerCountry [REQUIRED],batteryChemistry [REQUIRED],nominalVoltageV [REQUIRED],nominalCapacityAh [REQUIRED],expectedLifetimeCycles [REQUIRED],co2ePerUnitKg [REQUIRED],recycledContentPct [OPTIONAL],repairabilityScore [OPTIONAL]
+EV Battery 48V LFP Example,12345678901234,BATCH-2026-001,Acme Energy GmbH,DE,LFP,48.0,100.0,3000,85.40,12.5,
+E-Bike Battery 36V NMC,98765432109876,BATCH-2026-002,VeloTech BV,NL,NMC,36.0,14.0,800,42.10,,7.5

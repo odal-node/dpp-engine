@@ -1,0 +1,47 @@
+[package]
+name        = "dpp-integrator"
+description = "CSV/Excel-to-DPP inbound adapter for manufacturers with spreadsheet workflows"
+version.workspace     = true
+edition.workspace     = true
+authors.workspace     = true
+license.workspace     = true
+repository.workspace  = true
+rust-version.workspace = true
+
+[lib]
+name = "dpp_integrator"
+path = "src/lib.rs"
+
+[[bin]]
+name = "dpp-integrator"
+path = "src/main.rs"
+
+[dependencies]
+dpp-domain  = { workspace = true }
+dpp-common  = { path = "../dpp-common" }
+
+async-trait   = { workspace = true }
+axum          = { workspace = true }
+tokio         = { workspace = true }
+tower-http    = { workspace = true }
+serde         = { workspace = true }
+serde_json    = { workspace = true }
+uuid          = { workspace = true }
+chrono        = { workspace = true }
+thiserror     = { workspace = true }
+anyhow        = { workspace = true }
+dotenvy       = { workspace = true }
+tracing             = { workspace = true }
+tracing-subscriber  = { workspace = true }
+metrics       = { workspace = true }
+reqwest       = { workspace = true }
+base64        = { workspace = true }
+calamine      = { workspace = true }
+csv           = { workspace = true }
+# Direct, version-matched to calamine's own deps (single version in the lockfile,
+# so no duplicate build) — used to pre-scan XLSX for zip/dimension bombs.
+zip           = { version = "0.6", default-features = false, features = ["deflate"] }
+quick-xml     = "0.30"
+
+[dev-dependencies]
+tower         = { workspace = true, features = ["util"] }

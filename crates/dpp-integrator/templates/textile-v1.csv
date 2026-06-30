@@ -1,0 +1,3 @@
+productName [REQUIRED],gtin [REQUIRED],batchId [REQUIRED],manufacturerName [REQUIRED],manufacturerCountry [REQUIRED],fibreComposition [REQUIRED],countryOfManufacturing [REQUIRED],careInstructions [REQUIRED],chemicalComplianceStandard [REQUIRED],recycledContentPct [OPTIONAL],repairScore [OPTIONAL],carbonFootprintKgCo2e [OPTIONAL]
+Organic Cotton T-Shirt,10000000000017,BATCH-T-2026-001,EcoWear Ltd,BD,"[{""fibre"":""cotton"",""pct"":100}]",BD,30°C machine wash gentle,OEKO-TEX 100,0,,2.1
+Recycled Poly Fleece Jacket,10000000000024,BATCH-T-2026-002,GreenFibre SA,PT,"[{""fibre"":""recycled_polyester"",""pct"":80},{""fibre"":""polyester"",""pct"":20}]",PT,40°C machine wash,REACH,80,6.5,4.8
