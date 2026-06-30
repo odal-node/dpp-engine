@@ -1,0 +1,59 @@
+[package]
+name        = "dpp-vault"
+description = "DPP write engine — create, version, sign, and manage passport records"
+version.workspace     = true
+edition.workspace     = true
+authors.workspace     = true
+license.workspace     = true
+repository.workspace  = true
+rust-version.workspace = true
+
+[lib]
+name = "dpp_vault"
+path = "src/lib.rs"
+
+[[bin]]
+name = "dpp-vault"
+path = "src/main.rs"
+
+[dependencies]
+dpp-domain  = { workspace = true }
+dpp-crypto  = { workspace = true }
+dpp-digital-link     = { workspace = true }
+dpp-registry = { workspace = true }
+dpp-types   = { workspace = true }
+dpp-dal     = { path = "../dpp-dal" }
+dpp-common  = { path = "../dpp-common" }
+
+axum          = { workspace = true }
+tokio         = { workspace = true }
+tower         = { workspace = true }
+tower-http    = { workspace = true }
+serde         = { workspace = true }
+serde_json    = { workspace = true }
+uuid          = { workspace = true }
+chrono        = { workspace = true }
+thiserror     = { workspace = true }
+anyhow        = { workspace = true }
+async-trait   = { workspace = true }
+dotenvy       = { workspace = true }
+tracing             = { workspace = true }
+tracing-subscriber  = { workspace = true }
+metrics             = { workspace = true }
+base64        = { workspace = true }
+reqwest       = { workspace = true }
+sha2          = { workspace = true }
+rand          = { workspace = true }
+hex           = { workspace = true }
+subtle        = { workspace = true }
+
+[features]
+integration-tests = []
+
+[dev-dependencies]
+tower                 = { version = "0.4", features = ["util"] }
+axum                  = { workspace = true }
+testcontainers        = { workspace = true }
+testcontainers-modules = { workspace = true }
+tokio                 = { workspace = true }
+flate2                = { workspace = true }
