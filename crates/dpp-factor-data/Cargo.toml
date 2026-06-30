@@ -1,0 +1,20 @@
+[package]
+name        = "dpp-factor-data"
+description = "Licensed LCI emission factor data store for Odal Node — ghost stub until a dataset licence is signed"
+version.workspace     = true
+edition.workspace     = true
+authors.workspace     = true
+license.workspace     = true
+repository.workspace  = true
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+dpp-calc     = { workspace = true }
+
+serde        = { workspace = true }
+serde_json   = { workspace = true }
+thiserror    = { workspace = true }
+chrono       = { workspace = true }
+sha2         = { workspace = true }
+hex          = { workspace = true }

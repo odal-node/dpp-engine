@@ -1,0 +1,23 @@
+[package]
+name        = "dpp-seal"
+description = "eIDAS qualified seal adapter — CSC/QTSP wire types and stub adapter for Odal Node"
+version.workspace     = true
+edition.workspace     = true
+authors.workspace     = true
+license.workspace     = true
+repository.workspace  = true
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+dpp-domain   = { workspace = true }
+
+serde        = { workspace = true }
+serde_json   = { workspace = true }
+thiserror    = { workspace = true }
+chrono       = { workspace = true }
+async-trait  = { workspace = true }
+tracing      = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true }
