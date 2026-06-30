@@ -1,0 +1,135 @@
+# docker/docker-compose.yml — production / self-host stack (the one `odal up` runs).
+#
+# Deployment modes:
+#   • pull        — `docker compose up -d`           uses the published `image:`
+#   • source      — `docker compose up -d --build`   builds node/resolver from
+#                   the crates.io Dockerfiles (dpp-* resolved from the registry)
+#   • local core  — add `-f docker/docker-compose.local.yml` to the --build
+#                   command to compile against the sibling ../dpp-core working
+#                   tree instead (pre-publish dev; see that file / `just up-local`)
+#
+# Build context is the parent dir holding dpp-core/ + dpp-engine/ as siblings.
+# node.Dockerfile / resolver.Dockerfile carry both build modes: the default
+# (published) COPYs only dpp-engine/ and resolves dpp-* from crates.io, while
+# `BUILD_MODE=local` (set by docker-compose.local.yml) also COPYs dpp-core/. For
+# local development infra only (with services via `cargo run`), use
+# docker-compose.dev.yml instead.
+#
+# Ports: postgres 5432 (internal only), node 8001, resolver 8003.
+name: odal-node
+
+services:
+
+  # ---------------------------------------------------------------------------
+  # PostgreSQL — primary datastore. [verify] pin to a minor digest before any
+  # production deploy.
+  # ---------------------------------------------------------------------------
+  postgres:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: postgres
+      # Fail closed: a prod stack must never boot on a default password.
+      POSTGRES_PASSWORD: ${DATABASE_POSTGRES_PASS:?DATABASE_POSTGRES_PASS must be set in .env}
+      POSTGRES_DB: odal
+      # The init script reads this to provision the odal_app role — required.
+      DATABASE_APP_PASS: ${DATABASE_APP_PASS:?DATABASE_APP_PASS must be set in .env}
+    volumes:
+      - pg-data:/var/lib/postgresql/data
+      # Provision the odal_app role from DATABASE_APP_PASS on first init. The
+      # hook + its SQL live in ops/bootstrap/ (single source of truth with the
+      # managed `just db-bootstrap` path); here DATABASE_APP_PASS is a required
+      # real secret. Paths are relative to this compose file's dir (docker/).
+      - ../ops/bootstrap/pg-init.sh:/docker-entrypoint-initdb.d/10-roles.sh:ro
+      - ../ops/bootstrap/bootstrap.sql:/opt/odal/bootstrap.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d odal"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    command: redis-server --save 60 1
+    volumes:
+      - redis-data:/data
+    restart: unless-stopped
+
+  # Event bus. The node connects at boot; JetStream persists to a volume.
+  nats:
+    image: nats:2-alpine
+    command: ["-js", "-sd", "/data", "-m", "8222"]
+    volumes:
+      - nats-data:/data
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8222/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+    restart: unless-stopped
+
+  node:
+    image: ghcr.io/odal-node/dpp-node:${ODAL_VERSION:-latest}
+    build:
+      context: ../..
+      dockerfile: dpp-engine/docker/node.Dockerfile
+    ports:
+      - "${NODE_PORT:-8001}:8000"
+    env_file:
+      - path: ../.env
+        required: false
+    environment:
+      # postgres connection for the app role (RLS-bound, non-superuser).
+      DATABASE_URL: postgres://odal_app:${DATABASE_APP_PASS:?DATABASE_APP_PASS must be set in .env}@postgres:5432/odal
+      # Privileged URL used at startup to run sqlx migrations (postgres superuser).
+      # Remove once migrations are managed externally via `just migrate`.
+      DATABASE_MIGRATE_URL: postgres://postgres:${DATABASE_POSTGRES_PASS:?DATABASE_POSTGRES_PASS must be set in .env}@postgres:5432/odal
+      # The node listens on a FIXED internal port 8000 (what the port mapping and
+      # healthcheck target). `.env`'s NODE_PORT is the operator's HOST port and is
+      # used only for the `${NODE_PORT}:8000` mapping above — override it here so
+      # it doesn't shadow the internal port (the node reads NODE_PORT before PORT).
+      NODE_PORT: "8000"
+      PORT: "8000"
+      PLUGINS_DIR: /plugins
+      NATS_URL: nats://nats:4222
+      # The Ed25519 signing key MUST live on a persisted volume. `.env`'s
+      # default (./dev-keystore.enc) lands in the container's throwaway layer, so
+      # a recreate would mint a new key and invalidate every passport ever
+      # signed. Pin it onto the node-data volume so the key survives restarts.
+      KEY_STORE_PATH: keystore.enc
+    volumes:
+      - node-data:/data
+      - node-plugins:/plugins
+    depends_on:
+      postgres:
+        condition: service_healthy
+      nats:
+        condition: service_healthy
+    restart: unless-stopped
+
+  resolver:
+    image: ghcr.io/odal-node/dpp-resolver:${ODAL_VERSION:-latest}
+    build:
+      context: ../..
+      dockerfile: dpp-engine/docker/resolver.Dockerfile
+    ports:
+      - "${RESOLVER_PORT:-8003}:8003"
+    environment:
+      PORT: "8003"
+      VAULT_BASE_URL: http://node:8000/vault
+      OPERATOR_DID_URL: http://node:8000/identity/.well-known/did.json
+      REDIS_URL: redis://redis:6379
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    depends_on:
+      - node
+      - redis
+    restart: unless-stopped
+
+volumes:
+  pg-data:
+  redis-data:
+  nats-data:
+  node-data:
+  node-plugins:

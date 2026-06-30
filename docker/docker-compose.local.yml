@@ -1,0 +1,27 @@
+# docker/docker-compose.local.yml — BUILD-FROM-LOCAL-CORE override.
+#
+# Layer this on top of docker-compose.yml to compile node + resolver from the
+# sibling ../dpp-core working tree instead of the published crates.io crates.
+# Use it before dpp-core's in-progress changes are published (the engine source
+# may use core API that isn't on crates.io yet):
+#
+#   docker compose -f docker/docker-compose.yml -f docker/docker-compose.local.yml up -d --build
+#   # or: just up-local
+#
+# It only flips each service's Dockerfile into local-core mode via the BUILD_MODE
+# build-arg (node.Dockerfile / resolver.Dockerfile carry both modes); everything
+# else (Dockerfile, ports, env, volumes, the base context ../..) is inherited
+# from docker-compose.yml. WITHOUT this override the base stack builds (or pulls)
+# the crates.io-based images.
+name: odal-node
+
+services:
+  node:
+    build:
+      args:
+        BUILD_MODE: local
+
+  resolver:
+    build:
+      args:
+        BUILD_MODE: local

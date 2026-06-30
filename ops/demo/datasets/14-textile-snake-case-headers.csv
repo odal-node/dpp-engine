@@ -1,0 +1,4 @@
+product_name,sector,gtin,manufacturer_name,manufacturer_country,batch_id,fibreComposition,countryOfManufacturing,careInstructions,chemicalComplianceStandard
+Glamor Snake Case T-Shirt,textile,3801234500901,Glamor Clothing,DE,BATCH-SNAKE-001,"[{""fibre"":""cotton"",""pct"":100.0}]",DE,Machine wash 40°C.,OEKO-TEX Standard 100
+Glamor Snake Case Dress,textile,3801234500902,Glamor Clothing,DE,BATCH-SNAKE-002,"[{""fibre"":""viscose"",""pct"":100.0}]",DE,Hand wash 30°C.,REACH Compliant
+Glamor Snake Case Jacket,textile,3801234500903,Glamor Clothing,DE,BATCH-SNAKE-003,"[{""fibre"":""polyester"",""pct"":100.0}]",DE,Machine wash 30°C.,OEKO-TEX Standard 100

@@ -1,0 +1,10 @@
+productName,sector,gtin,manufacturerName,manufacturerCountry,batchId,fibreComposition,countryOfManufacturing,careInstructions,chemicalComplianceStandard
+Glamor Broken JSON Brackets,textile,3801234500201,Glamor Clothing,DE,BATCH-JSON-001,"[{fibre:cotton,pct:100}]",DE,Machine wash 40°C.,OEKO-TEX Standard 100
+Glamor Missing Quotes,textile,3801234500202,Glamor Clothing,DE,BATCH-JSON-002,"[{fibre: ""cotton"", pct: 100.0}]",DE,Machine wash 40°C.,OEKO-TEX Standard 100
+Glamor Not JSON At All,textile,3801234500203,Glamor Clothing,DE,BATCH-JSON-003,100% cotton,DE,Machine wash 40°C.,OEKO-TEX Standard 100
+Glamor Empty Array,textile,3801234500204,Glamor Clothing,DE,BATCH-JSON-004,[],DE,Machine wash 40°C.,OEKO-TEX Standard 100
+Glamor Null Fibre,textile,3801234500205,Glamor Clothing,DE,BATCH-JSON-005,null,DE,Machine wash 40°C.,OEKO-TEX Standard 100
+Glamor Percentages Dont Add Up,textile,3801234500206,Glamor Clothing,DE,BATCH-JSON-006,"[{""fibre"":""cotton"",""pct"":50.0},{""fibre"":""polyester"",""pct"":30.0}]",DE,Machine wash 40°C.,OEKO-TEX Standard 100
+Glamor Negative Percentage,textile,3801234500207,Glamor Clothing,DE,BATCH-JSON-007,"[{""fibre"":""cotton"",""pct"":-10.0}]",DE,Machine wash 40°C.,OEKO-TEX Standard 100
+Glamor Over 100 Percent,textile,3801234500208,Glamor Clothing,DE,BATCH-JSON-008,"[{""fibre"":""cotton"",""pct"":150.0}]",DE,Machine wash 40°C.,OEKO-TEX Standard 100
+Glamor Truncated JSON,textile,3801234500209,Glamor Clothing,DE,BATCH-JSON-009,"[{""fibre"":""cotton"",""pct"":10",DE,Machine wash 40°C.,OEKO-TEX Standard 100

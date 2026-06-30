@@ -1,0 +1,101 @@
+productName,sector,gtin,manufacturerName,manufacturerCountry,batchId,fibreComposition,countryOfManufacturing,careInstructions,chemicalComplianceStandard
+Glamor Basic Tee White XS,textile,3801234601001,Glamor Clothing,DE,BATCH-BULK-001,"[{""fibre"":""cotton"",""pct"":100.0}]",DE,Machine wash 40°C.,OEKO-TEX Standard 100
+Glamor Basic Tee White S,textile,3801234601002,Glamor Clothing,DE,BATCH-BULK-001,"[{""fibre"":""cotton"",""pct"":100.0}]",DE,Machine wash 40°C.,OEKO-TEX Standard 100
+Glamor Basic Tee White M,textile,3801234601003,Glamor Clothing,DE,BATCH-BULK-001,"[{""fibre"":""cotton"",""pct"":100.0}]",DE,Machine wash 40°C.,OEKO-TEX Standard 100
+Glamor Basic Tee White L,textile,3801234601004,Glamor Clothing,DE,BATCH-BULK-001,"[{""fibre"":""cotton"",""pct"":100.0}]",DE,Machine wash 40°C.,OEKO-TEX Standard 100
+Glamor Basic Tee White XL,textile,3801234601005,Glamor Clothing,DE,BATCH-BULK-001,"[{""fibre"":""cotton"",""pct"":100.0}]",DE,Machine wash 40°C.,OEKO-TEX Standard 100
+Glamor Basic Tee Black XS,textile,3801234601006,Glamor Clothing,DE,BATCH-BULK-001,"[{""fibre"":""cotton"",""pct"":100.0}]",DE,Machine wash 40°C.,OEKO-TEX Standard 100
+Glamor Basic Tee Black S,textile,3801234601007,Glamor Clothing,DE,BATCH-BULK-001,"[{""fibre"":""cotton"",""pct"":100.0}]",DE,Machine wash 40°C.,OEKO-TEX Standard 100
+Glamor Basic Tee Black M,textile,3801234601008,Glamor Clothing,DE,BATCH-BULK-001,"[{""fibre"":""cotton"",""pct"":100.0}]",DE,Machine wash 40°C.,OEKO-TEX Standard 100
+Glamor Basic Tee Black L,textile,3801234601009,Glamor Clothing,DE,BATCH-BULK-001,"[{""fibre"":""cotton"",""pct"":100.0}]",DE,Machine wash 40°C.,OEKO-TEX Standard 100
+Glamor Basic Tee Black XL,textile,3801234601010,Glamor Clothing,DE,BATCH-BULK-001,"[{""fibre"":""cotton"",""pct"":100.0}]",DE,Machine wash 40°C.,OEKO-TEX Standard 100
+Glamor Basic Tee Navy XS,textile,3801234601011,Glamor Clothing,DE,BATCH-BULK-001,"[{""fibre"":""cotton"",""pct"":100.0}]",DE,Machine wash 40°C.,OEKO-TEX Standard 100
+Glamor Basic Tee Navy S,textile,3801234601012,Glamor Clothing,DE,BATCH-BULK-001,"[{""fibre"":""cotton"",""pct"":100.0}]",DE,Machine wash 40°C.,OEKO-TEX Standard 100
+Glamor Basic Tee Navy M,textile,3801234601013,Glamor Clothing,DE,BATCH-BULK-001,"[{""fibre"":""cotton"",""pct"":100.0}]",DE,Machine wash 40°C.,OEKO-TEX Standard 100
+Glamor Basic Tee Navy L,textile,3801234601014,Glamor Clothing,DE,BATCH-BULK-001,"[{""fibre"":""cotton"",""pct"":100.0}]",DE,Machine wash 40°C.,OEKO-TEX Standard 100
+Glamor Basic Tee Navy XL,textile,3801234601015,Glamor Clothing,DE,BATCH-BULK-001,"[{""fibre"":""cotton"",""pct"":100.0}]",DE,Machine wash 40°C.,OEKO-TEX Standard 100
+Glamor V-Neck White XS,textile,3801234601016,Glamor Clothing,DE,BATCH-BULK-002,"[{""fibre"":""cotton"",""pct"":95.0},{""fibre"":""elastane"",""pct"":5.0}]",DE,Machine wash 30°C.,OEKO-TEX Standard 100
+Glamor V-Neck White S,textile,3801234601017,Glamor Clothing,DE,BATCH-BULK-002,"[{""fibre"":""cotton"",""pct"":95.0},{""fibre"":""elastane"",""pct"":5.0}]",DE,Machine wash 30°C.,OEKO-TEX Standard 100
+Glamor V-Neck White M,textile,3801234601018,Glamor Clothing,DE,BATCH-BULK-002,"[{""fibre"":""cotton"",""pct"":95.0},{""fibre"":""elastane"",""pct"":5.0}]",DE,Machine wash 30°C.,OEKO-TEX Standard 100
+Glamor V-Neck White L,textile,3801234601019,Glamor Clothing,DE,BATCH-BULK-002,"[{""fibre"":""cotton"",""pct"":95.0},{""fibre"":""elastane"",""pct"":5.0}]",DE,Machine wash 30°C.,OEKO-TEX Standard 100
+Glamor V-Neck White XL,textile,3801234601020,Glamor Clothing,DE,BATCH-BULK-002,"[{""fibre"":""cotton"",""pct"":95.0},{""fibre"":""elastane"",""pct"":5.0}]",DE,Machine wash 30°C.,OEKO-TEX Standard 100
+Glamor V-Neck Grey XS,textile,3801234601021,Glamor Clothing,DE,BATCH-BULK-002,"[{""fibre"":""cotton"",""pct"":95.0},{""fibre"":""elastane"",""pct"":5.0}]",DE,Machine wash 30°C.,OEKO-TEX Standard 100
+Glamor V-Neck Grey S,textile,3801234601022,Glamor Clothing,DE,BATCH-BULK-002,"[{""fibre"":""cotton"",""pct"":95.0},{""fibre"":""elastane"",""pct"":5.0}]",DE,Machine wash 30°C.,OEKO-TEX Standard 100
+Glamor V-Neck Grey M,textile,3801234601023,Glamor Clothing,DE,BATCH-BULK-002,"[{""fibre"":""cotton"",""pct"":95.0},{""fibre"":""elastane"",""pct"":5.0}]",DE,Machine wash 30°C.,OEKO-TEX Standard 100
+Glamor V-Neck Grey L,textile,3801234601024,Glamor Clothing,DE,BATCH-BULK-002,"[{""fibre"":""cotton"",""pct"":95.0},{""fibre"":""elastane"",""pct"":5.0}]",DE,Machine wash 30°C.,OEKO-TEX Standard 100
+Glamor V-Neck Grey XL,textile,3801234601025,Glamor Clothing,DE,BATCH-BULK-002,"[{""fibre"":""cotton"",""pct"":95.0},{""fibre"":""elastane"",""pct"":5.0}]",DE,Machine wash 30°C.,OEKO-TEX Standard 100
+Glamor Polo Blue XS,textile,3801234601026,Glamor Clothing,DE,BATCH-BULK-003,"[{""fibre"":""cotton"",""pct"":92.0},{""fibre"":""elastane"",""pct"":8.0}]",DE,Machine wash 40°C.,OEKO-TEX Standard 100
+Glamor Polo Blue S,textile,3801234601027,Glamor Clothing,DE,BATCH-BULK-003,"[{""fibre"":""cotton"",""pct"":92.0},{""fibre"":""elastane"",""pct"":8.0}]",DE,Machine wash 40°C.,OEKO-TEX Standard 100
+Glamor Polo Blue M,textile,3801234601028,Glamor Clothing,DE,BATCH-BULK-003,"[{""fibre"":""cotton"",""pct"":92.0},{""fibre"":""elastane"",""pct"":8.0}]",DE,Machine wash 40°C.,OEKO-TEX Standard 100
+Glamor Polo Blue L,textile,3801234601029,Glamor Clothing,DE,BATCH-BULK-003,"[{""fibre"":""cotton"",""pct"":92.0},{""fibre"":""elastane"",""pct"":8.0}]",DE,Machine wash 40°C.,OEKO-TEX Standard 100
+Glamor Polo Blue XL,textile,3801234601030,Glamor Clothing,DE,BATCH-BULK-003,"[{""fibre"":""cotton"",""pct"":92.0},{""fibre"":""elastane"",""pct"":8.0}]",DE,Machine wash 40°C.,OEKO-TEX Standard 100
+Glamor Polo Red XS,textile,3801234601031,Glamor Clothing,DE,BATCH-BULK-003,"[{""fibre"":""cotton"",""pct"":92.0},{""fibre"":""elastane"",""pct"":8.0}]",DE,Machine wash 40°C.,OEKO-TEX Standard 100
+Glamor Polo Red S,textile,3801234601032,Glamor Clothing,DE,BATCH-BULK-003,"[{""fibre"":""cotton"",""pct"":92.0},{""fibre"":""elastane"",""pct"":8.0}]",DE,Machine wash 40°C.,OEKO-TEX Standard 100
+Glamor Polo Red M,textile,3801234601033,Glamor Clothing,DE,BATCH-BULK-003,"[{""fibre"":""cotton"",""pct"":92.0},{""fibre"":""elastane"",""pct"":8.0}]",DE,Machine wash 40°C.,OEKO-TEX Standard 100
+Glamor Polo Red L,textile,3801234601034,Glamor Clothing,DE,BATCH-BULK-003,"[{""fibre"":""cotton"",""pct"":92.0},{""fibre"":""elastane"",""pct"":8.0}]",DE,Machine wash 40°C.,OEKO-TEX Standard 100
+Glamor Polo Red XL,textile,3801234601035,Glamor Clothing,DE,BATCH-BULK-003,"[{""fibre"":""cotton"",""pct"":92.0},{""fibre"":""elastane"",""pct"":8.0}]",DE,Machine wash 40°C.,OEKO-TEX Standard 100
+Glamor Dress Floral XS,textile,3801234601036,Glamor Clothing,DE,BATCH-BULK-004,"[{""fibre"":""viscose"",""pct"":100.0}]",DE,Hand wash 30°C. Do not bleach.,REACH Compliant
+Glamor Dress Floral S,textile,3801234601037,Glamor Clothing,DE,BATCH-BULK-004,"[{""fibre"":""viscose"",""pct"":100.0}]",DE,Hand wash 30°C. Do not bleach.,REACH Compliant
+Glamor Dress Floral M,textile,3801234601038,Glamor Clothing,DE,BATCH-BULK-004,"[{""fibre"":""viscose"",""pct"":100.0}]",DE,Hand wash 30°C. Do not bleach.,REACH Compliant
+Glamor Dress Floral L,textile,3801234601039,Glamor Clothing,DE,BATCH-BULK-004,"[{""fibre"":""viscose"",""pct"":100.0}]",DE,Hand wash 30°C. Do not bleach.,REACH Compliant
+Glamor Dress Floral XL,textile,3801234601040,Glamor Clothing,DE,BATCH-BULK-004,"[{""fibre"":""viscose"",""pct"":100.0}]",DE,Hand wash 30°C. Do not bleach.,REACH Compliant
+Glamor Linen Shirt White S,textile,3801234601041,Glamor Clothing,DE,BATCH-BULK-005,"[{""fibre"":""linen"",""pct"":100.0}]",DE,Hand wash cold. Iron damp.,EU REACH Annex XVII
+Glamor Linen Shirt White M,textile,3801234601042,Glamor Clothing,DE,BATCH-BULK-005,"[{""fibre"":""linen"",""pct"":100.0}]",DE,Hand wash cold. Iron damp.,EU REACH Annex XVII
+Glamor Linen Shirt White L,textile,3801234601043,Glamor Clothing,DE,BATCH-BULK-005,"[{""fibre"":""linen"",""pct"":100.0}]",DE,Hand wash cold. Iron damp.,EU REACH Annex XVII
+Glamor Linen Shirt White XL,textile,3801234601044,Glamor Clothing,DE,BATCH-BULK-005,"[{""fibre"":""linen"",""pct"":100.0}]",DE,Hand wash cold. Iron damp.,EU REACH Annex XVII
+Glamor Linen Shirt Blue S,textile,3801234601045,Glamor Clothing,DE,BATCH-BULK-005,"[{""fibre"":""linen"",""pct"":100.0}]",DE,Hand wash cold. Iron damp.,EU REACH Annex XVII
+Glamor Linen Shirt Blue M,textile,3801234601046,Glamor Clothing,DE,BATCH-BULK-005,"[{""fibre"":""linen"",""pct"":100.0}]",DE,Hand wash cold. Iron damp.,EU REACH Annex XVII
+Glamor Linen Shirt Blue L,textile,3801234601047,Glamor Clothing,DE,BATCH-BULK-005,"[{""fibre"":""linen"",""pct"":100.0}]",DE,Hand wash cold. Iron damp.,EU REACH Annex XVII
+Glamor Linen Shirt Blue XL,textile,3801234601048,Glamor Clothing,DE,BATCH-BULK-005,"[{""fibre"":""linen"",""pct"":100.0}]",DE,Hand wash cold. Iron damp.,EU REACH Annex XVII
+Glamor Joggers Black XS,textile,3801234601049,Glamor Clothing,DE,BATCH-BULK-006,"[{""fibre"":""cotton"",""pct"":70.0},{""fibre"":""polyester"",""pct"":30.0}]",DE,Machine wash 40°C. Tumble dry low.,OEKO-TEX Standard 100
+Glamor Joggers Black S,textile,3801234601050,Glamor Clothing,DE,BATCH-BULK-006,"[{""fibre"":""cotton"",""pct"":70.0},{""fibre"":""polyester"",""pct"":30.0}]",DE,Machine wash 40°C. Tumble dry low.,OEKO-TEX Standard 100
+Glamor Joggers Black M,textile,3801234601051,Glamor Clothing,DE,BATCH-BULK-006,"[{""fibre"":""cotton"",""pct"":70.0},{""fibre"":""polyester"",""pct"":30.0}]",DE,Machine wash 40°C. Tumble dry low.,OEKO-TEX Standard 100
+Glamor Joggers Black L,textile,3801234601052,Glamor Clothing,DE,BATCH-BULK-006,"[{""fibre"":""cotton"",""pct"":70.0},{""fibre"":""polyester"",""pct"":30.0}]",DE,Machine wash 40°C. Tumble dry low.,OEKO-TEX Standard 100
+Glamor Joggers Black XL,textile,3801234601053,Glamor Clothing,DE,BATCH-BULK-006,"[{""fibre"":""cotton"",""pct"":70.0},{""fibre"":""polyester"",""pct"":30.0}]",DE,Machine wash 40°C. Tumble dry low.,OEKO-TEX Standard 100
+Glamor Joggers Grey XS,textile,3801234601054,Glamor Clothing,DE,BATCH-BULK-006,"[{""fibre"":""cotton"",""pct"":70.0},{""fibre"":""polyester"",""pct"":30.0}]",DE,Machine wash 40°C. Tumble dry low.,OEKO-TEX Standard 100
+Glamor Joggers Grey S,textile,3801234601055,Glamor Clothing,DE,BATCH-BULK-006,"[{""fibre"":""cotton"",""pct"":70.0},{""fibre"":""polyester"",""pct"":30.0}]",DE,Machine wash 40°C. Tumble dry low.,OEKO-TEX Standard 100
+Glamor Joggers Grey M,textile,3801234601056,Glamor Clothing,DE,BATCH-BULK-006,"[{""fibre"":""cotton"",""pct"":70.0},{""fibre"":""polyester"",""pct"":30.0}]",DE,Machine wash 40°C. Tumble dry low.,OEKO-TEX Standard 100
+Glamor Joggers Grey L,textile,3801234601057,Glamor Clothing,DE,BATCH-BULK-006,"[{""fibre"":""cotton"",""pct"":70.0},{""fibre"":""polyester"",""pct"":30.0}]",DE,Machine wash 40°C. Tumble dry low.,OEKO-TEX Standard 100
+Glamor Joggers Grey XL,textile,3801234601058,Glamor Clothing,DE,BATCH-BULK-006,"[{""fibre"":""cotton"",""pct"":70.0},{""fibre"":""polyester"",""pct"":30.0}]",DE,Machine wash 40°C. Tumble dry low.,OEKO-TEX Standard 100
+Glamor Windbreaker Black S,textile,3801234601059,Glamor Clothing,DE,BATCH-BULK-007,"[{""fibre"":""polyester"",""pct"":100.0}]",DE,Machine wash 30°C. Do not iron.,OEKO-TEX Standard 100
+Glamor Windbreaker Black M,textile,3801234601060,Glamor Clothing,DE,BATCH-BULK-007,"[{""fibre"":""polyester"",""pct"":100.0}]",DE,Machine wash 30°C. Do not iron.,OEKO-TEX Standard 100
+Glamor Windbreaker Black L,textile,3801234601061,Glamor Clothing,DE,BATCH-BULK-007,"[{""fibre"":""polyester"",""pct"":100.0}]",DE,Machine wash 30°C. Do not iron.,OEKO-TEX Standard 100
+Glamor Windbreaker Black XL,textile,3801234601062,Glamor Clothing,DE,BATCH-BULK-007,"[{""fibre"":""polyester"",""pct"":100.0}]",DE,Machine wash 30°C. Do not iron.,OEKO-TEX Standard 100
+Glamor Windbreaker Navy S,textile,3801234601063,Glamor Clothing,DE,BATCH-BULK-007,"[{""fibre"":""polyester"",""pct"":100.0}]",DE,Machine wash 30°C. Do not iron.,OEKO-TEX Standard 100
+Glamor Windbreaker Navy M,textile,3801234601064,Glamor Clothing,DE,BATCH-BULK-007,"[{""fibre"":""polyester"",""pct"":100.0}]",DE,Machine wash 30°C. Do not iron.,OEKO-TEX Standard 100
+Glamor Windbreaker Navy L,textile,3801234601065,Glamor Clothing,DE,BATCH-BULK-007,"[{""fibre"":""polyester"",""pct"":100.0}]",DE,Machine wash 30°C. Do not iron.,OEKO-TEX Standard 100
+Glamor Windbreaker Navy XL,textile,3801234601066,Glamor Clothing,DE,BATCH-BULK-007,"[{""fibre"":""polyester"",""pct"":100.0}]",DE,Machine wash 30°C. Do not iron.,OEKO-TEX Standard 100
+Glamor Hoodie Zip Grey S,textile,3801234601067,Glamor Clothing,DE,BATCH-BULK-008,"[{""fibre"":""cotton"",""pct"":80.0},{""fibre"":""polyester"",""pct"":20.0}]",DE,Machine wash 40°C. Tumble dry low.,OEKO-TEX Standard 100
+Glamor Hoodie Zip Grey M,textile,3801234601068,Glamor Clothing,DE,BATCH-BULK-008,"[{""fibre"":""cotton"",""pct"":80.0},{""fibre"":""polyester"",""pct"":20.0}]",DE,Machine wash 40°C. Tumble dry low.,OEKO-TEX Standard 100
+Glamor Hoodie Zip Grey L,textile,3801234601069,Glamor Clothing,DE,BATCH-BULK-008,"[{""fibre"":""cotton"",""pct"":80.0},{""fibre"":""polyester"",""pct"":20.0}]",DE,Machine wash 40°C. Tumble dry low.,OEKO-TEX Standard 100
+Glamor Hoodie Zip Grey XL,textile,3801234601070,Glamor Clothing,DE,BATCH-BULK-008,"[{""fibre"":""cotton"",""pct"":80.0},{""fibre"":""polyester"",""pct"":20.0}]",DE,Machine wash 40°C. Tumble dry low.,OEKO-TEX Standard 100
+Glamor Hoodie Pullover Navy S,textile,3801234601071,Glamor Clothing,DE,BATCH-BULK-008,"[{""fibre"":""cotton"",""pct"":80.0},{""fibre"":""polyester"",""pct"":20.0}]",DE,Machine wash 40°C. Tumble dry low.,OEKO-TEX Standard 100
+Glamor Hoodie Pullover Navy M,textile,3801234601072,Glamor Clothing,DE,BATCH-BULK-008,"[{""fibre"":""cotton"",""pct"":80.0},{""fibre"":""polyester"",""pct"":20.0}]",DE,Machine wash 40°C. Tumble dry low.,OEKO-TEX Standard 100
+Glamor Hoodie Pullover Navy L,textile,3801234601073,Glamor Clothing,DE,BATCH-BULK-008,"[{""fibre"":""cotton"",""pct"":80.0},{""fibre"":""polyester"",""pct"":20.0}]",DE,Machine wash 40°C. Tumble dry low.,OEKO-TEX Standard 100
+Glamor Hoodie Pullover Navy XL,textile,3801234601074,Glamor Clothing,DE,BATCH-BULK-008,"[{""fibre"":""cotton"",""pct"":80.0},{""fibre"":""polyester"",""pct"":20.0}]",DE,Machine wash 40°C. Tumble dry low.,OEKO-TEX Standard 100
+Glamor Silk Scarf Red,textile,3801234601075,Glamor Clothing,DE,BATCH-BULK-009,"[{""fibre"":""silk"",""pct"":100.0}]",DE,Dry clean only.,OEKO-TEX Standard 100
+Glamor Silk Scarf Blue,textile,3801234601076,Glamor Clothing,DE,BATCH-BULK-009,"[{""fibre"":""silk"",""pct"":100.0}]",DE,Dry clean only.,OEKO-TEX Standard 100
+Glamor Silk Scarf Green,textile,3801234601077,Glamor Clothing,DE,BATCH-BULK-009,"[{""fibre"":""silk"",""pct"":100.0}]",DE,Dry clean only.,OEKO-TEX Standard 100
+Glamor Wool Coat Charcoal S,textile,3801234601078,Glamor Clothing,DE,BATCH-BULK-010,"[{""fibre"":""wool"",""pct"":70.0},{""fibre"":""polyester"",""pct"":25.0},{""fibre"":""nylon"",""pct"":5.0}]",DE,Dry clean only.,OEKO-TEX Standard 100
+Glamor Wool Coat Charcoal M,textile,3801234601079,Glamor Clothing,DE,BATCH-BULK-010,"[{""fibre"":""wool"",""pct"":70.0},{""fibre"":""polyester"",""pct"":25.0},{""fibre"":""nylon"",""pct"":5.0}]",DE,Dry clean only.,OEKO-TEX Standard 100
+Glamor Wool Coat Charcoal L,textile,3801234601080,Glamor Clothing,DE,BATCH-BULK-010,"[{""fibre"":""wool"",""pct"":70.0},{""fibre"":""polyester"",""pct"":25.0},{""fibre"":""nylon"",""pct"":5.0}]",DE,Dry clean only.,OEKO-TEX Standard 100
+Glamor Wool Coat Charcoal XL,textile,3801234601081,Glamor Clothing,DE,BATCH-BULK-010,"[{""fibre"":""wool"",""pct"":70.0},{""fibre"":""polyester"",""pct"":25.0},{""fibre"":""nylon"",""pct"":5.0}]",DE,Dry clean only.,OEKO-TEX Standard 100
+Glamor Wool Coat Camel S,textile,3801234601082,Glamor Clothing,DE,BATCH-BULK-010,"[{""fibre"":""wool"",""pct"":70.0},{""fibre"":""polyester"",""pct"":25.0},{""fibre"":""nylon"",""pct"":5.0}]",DE,Dry clean only.,OEKO-TEX Standard 100
+Glamor Wool Coat Camel M,textile,3801234601083,Glamor Clothing,DE,BATCH-BULK-010,"[{""fibre"":""wool"",""pct"":70.0},{""fibre"":""polyester"",""pct"":25.0},{""fibre"":""nylon"",""pct"":5.0}]",DE,Dry clean only.,OEKO-TEX Standard 100
+Glamor Wool Coat Camel L,textile,3801234601084,Glamor Clothing,DE,BATCH-BULK-010,"[{""fibre"":""wool"",""pct"":70.0},{""fibre"":""polyester"",""pct"":25.0},{""fibre"":""nylon"",""pct"":5.0}]",DE,Dry clean only.,OEKO-TEX Standard 100
+Glamor Wool Coat Camel XL,textile,3801234601085,Glamor Clothing,DE,BATCH-BULK-010,"[{""fibre"":""wool"",""pct"":70.0},{""fibre"":""polyester"",""pct"":25.0},{""fibre"":""nylon"",""pct"":5.0}]",DE,Dry clean only.,OEKO-TEX Standard 100
+Glamor Denim Jacket Blue S,textile,3801234601086,Glamor Clothing,DE,BATCH-BULK-011,"[{""fibre"":""cotton"",""pct"":99.0},{""fibre"":""elastane"",""pct"":1.0}]",DE,Machine wash 30°C. Wash inside out.,EU REACH Annex XVII
+Glamor Denim Jacket Blue M,textile,3801234601087,Glamor Clothing,DE,BATCH-BULK-011,"[{""fibre"":""cotton"",""pct"":99.0},{""fibre"":""elastane"",""pct"":1.0}]",DE,Machine wash 30°C. Wash inside out.,EU REACH Annex XVII
+Glamor Denim Jacket Blue L,textile,3801234601088,Glamor Clothing,DE,BATCH-BULK-011,"[{""fibre"":""cotton"",""pct"":99.0},{""fibre"":""elastane"",""pct"":1.0}]",DE,Machine wash 30°C. Wash inside out.,EU REACH Annex XVII
+Glamor Denim Jacket Blue XL,textile,3801234601089,Glamor Clothing,DE,BATCH-BULK-011,"[{""fibre"":""cotton"",""pct"":99.0},{""fibre"":""elastane"",""pct"":1.0}]",DE,Machine wash 30°C. Wash inside out.,EU REACH Annex XVII
+Glamor Cashmere V-Neck Cream S,textile,3801234601090,Glamor Clothing,DE,BATCH-BULK-012,"[{""fibre"":""cashmere"",""pct"":100.0}]",DE,Hand wash cold. Lay flat to dry.,OEKO-TEX Standard 100
+Glamor Cashmere V-Neck Cream M,textile,3801234601091,Glamor Clothing,DE,BATCH-BULK-012,"[{""fibre"":""cashmere"",""pct"":100.0}]",DE,Hand wash cold. Lay flat to dry.,OEKO-TEX Standard 100
+Glamor Cashmere V-Neck Cream L,textile,3801234601092,Glamor Clothing,DE,BATCH-BULK-012,"[{""fibre"":""cashmere"",""pct"":100.0}]",DE,Hand wash cold. Lay flat to dry.,OEKO-TEX Standard 100
+Glamor Cashmere V-Neck Cream XL,textile,3801234601093,Glamor Clothing,DE,BATCH-BULK-012,"[{""fibre"":""cashmere"",""pct"":100.0}]",DE,Hand wash cold. Lay flat to dry.,OEKO-TEX Standard 100
+Glamor Performance Legging Black XS,textile,3801234601094,Glamor Clothing,DE,BATCH-BULK-013,"[{""fibre"":""nylon"",""pct"":78.0},{""fibre"":""elastane"",""pct"":22.0}]",DE,Machine wash 30°C. No softener.,OEKO-TEX Standard 100
+Glamor Performance Legging Black S,textile,3801234601095,Glamor Clothing,DE,BATCH-BULK-013,"[{""fibre"":""nylon"",""pct"":78.0},{""fibre"":""elastane"",""pct"":22.0}]",DE,Machine wash 30°C. No softener.,OEKO-TEX Standard 100
+Glamor Performance Legging Black M,textile,3801234601096,Glamor Clothing,DE,BATCH-BULK-013,"[{""fibre"":""nylon"",""pct"":78.0},{""fibre"":""elastane"",""pct"":22.0}]",DE,Machine wash 30°C. No softener.,OEKO-TEX Standard 100
+Glamor Performance Legging Black L,textile,3801234601097,Glamor Clothing,DE,BATCH-BULK-013,"[{""fibre"":""nylon"",""pct"":78.0},{""fibre"":""elastane"",""pct"":22.0}]",DE,Machine wash 30°C. No softener.,OEKO-TEX Standard 100
+Glamor Performance Legging Black XL,textile,3801234601098,Glamor Clothing,DE,BATCH-BULK-013,"[{""fibre"":""nylon"",""pct"":78.0},{""fibre"":""elastane"",""pct"":22.0}]",DE,Machine wash 30°C. No softener.,OEKO-TEX Standard 100
+Glamor Organic Tote Natural,textile,3801234601099,Glamor Clothing,DE,BATCH-BULK-014,"[{""fibre"":""organic cotton"",""pct"":100.0}]",DE,Machine wash 30°C. Line dry.,GOTS Certified
+Glamor Recycled Fleece Olive XL,textile,3801234601100,Glamor Clothing,DE,BATCH-BULK-015,"[{""fibre"":""recycled polyester"",""pct"":100.0}]",DE,Machine wash 30°C. Hang dry.,GRS Certified

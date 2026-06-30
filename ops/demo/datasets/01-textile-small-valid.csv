@@ -1,0 +1,6 @@
+productName,sector,gtin,manufacturerName,manufacturerCountry,batchId,fibreComposition,countryOfManufacturing,careInstructions,chemicalComplianceStandard
+Glamor Classic T-Shirt,textile,3801234567890,Glamor Clothing,DE,BATCH-SS26-001,"[{""fibre"":""cotton"",""pct"":100.0}]",DE,Machine wash 40°C. Iron medium heat.,OEKO-TEX Standard 100
+Glamor Summer Dress,textile,3801234567906,Glamor Clothing,DE,BATCH-SS26-002,"[{""fibre"":""viscose"",""pct"":70.0},{""fibre"":""linen"",""pct"":30.0}]",DE,Hand wash 30°C. Do not bleach.,REACH Compliant
+Glamor Sport Jacket,textile,3801234567913,Glamor Clothing,DE,BATCH-SS26-003,"[{""fibre"":""polyester"",""pct"":85.0},{""fibre"":""elastane"",""pct"":15.0}]",DE,Machine wash 30°C. Do not tumble dry.,OEKO-TEX Standard 100
+Glamor Kids Hoodie,textile,3801234567920,Glamor Clothing,DE,BATCH-AW26-001,"[{""fibre"":""cotton"",""pct"":80.0},{""fibre"":""polyester"",""pct"":20.0}]",DE,Machine wash 40°C. Tumble dry low.,OEKO-TEX Standard 100
+Glamor Linen Blouse,textile,3801234567937,Glamor Clothing,DE,BATCH-SS26-004,"[{""fibre"":""linen"",""pct"":100.0}]",DE,Hand wash cold. Line dry. Iron low heat.,EU REACH Annex XVII

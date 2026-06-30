@@ -1,0 +1,10 @@
+productName,sector,gtin,manufacturerName,manufacturerCountry,batchId,fibreComposition,countryOfManufacturing,careInstructions,chemicalComplianceStandard
+,textile,3801234500101,Glamor Clothing,DE,BATCH-ERR-001,"[{""fibre"":""cotton"",""pct"":100.0}]",DE,Machine wash 40°C.,OEKO-TEX Standard 100
+Glamor Dress No GTIN,textile,,Glamor Clothing,DE,BATCH-ERR-002,"[{""fibre"":""cotton"",""pct"":100.0}]",DE,Machine wash 40°C.,OEKO-TEX Standard 100
+Glamor Jacket No Fibre,textile,3801234500103,Glamor Clothing,DE,BATCH-ERR-003,,DE,Machine wash 30°C.,OEKO-TEX Standard 100
+Glamor Pants No Country,textile,3801234500104,Glamor Clothing,DE,BATCH-ERR-004,"[{""fibre"":""cotton"",""pct"":100.0}]",,Machine wash 40°C.,OEKO-TEX Standard 100
+Glamor Blouse No Care,textile,3801234500105,Glamor Clothing,DE,BATCH-ERR-005,"[{""fibre"":""linen"",""pct"":100.0}]",DE,,EU REACH Annex XVII
+Glamor Hoodie No Compliance,textile,3801234500106,Glamor Clothing,DE,BATCH-ERR-006,"[{""fibre"":""cotton"",""pct"":80.0},{""fibre"":""polyester"",""pct"":20.0}]",DE,Machine wash 40°C.,
+Glamor Shirt No Manufacturer,textile,3801234500107,,DE,BATCH-ERR-007,"[{""fibre"":""cotton"",""pct"":100.0}]",DE,Machine wash 40°C.,OEKO-TEX Standard 100
+,textile,,,DE,,,,,
+Glamor Completely Empty Except Name,textile,,,DE,,,,,,

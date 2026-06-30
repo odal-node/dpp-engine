@@ -1,0 +1,4 @@
+productName	sector	gtin	manufacturerName	manufacturerCountry	batchId	fibreComposition	countryOfManufacturing	careInstructions	chemicalComplianceStandard
+Glamor TSV T-Shirt	textile	3801234500701	Glamor Clothing	DE	BATCH-TSV-001	"[{""fibre"":""cotton"",""pct"":100.0}]"	DE	Machine wash 40°C.	OEKO-TEX Standard 100
+Glamor TSV Dress	textile	3801234500702	Glamor Clothing	DE	BATCH-TSV-002	"[{""fibre"":""viscose"",""pct"":70.0},{""fibre"":""linen"",""pct"":30.0}]"	DE	Hand wash 30°C.	REACH Compliant
+Glamor TSV Jacket	textile	3801234500703	Glamor Clothing	DE	BATCH-TSV-003	"[{""fibre"":""polyester"",""pct"":85.0},{""fibre"":""elastane"",""pct"":15.0}]"	DE	Machine wash 30°C.	OEKO-TEX Standard 100

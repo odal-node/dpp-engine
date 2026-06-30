@@ -1,0 +1,9 @@
+productName,sector,gtin,manufacturerName,manufacturerCountry,batchId,fibreComposition,countryOfManufacturing,careInstructions,chemicalComplianceStandard
+Glamor T-Shirt With Ü Umlaut,textile,3801234500401,Glamor Kleidung GmbH,DE,BATCH-ENC-001,"[{""fibre"":""cotton"",""pct"":100.0}]",DE,Maschinenwäsche 40°C. Nicht bleichen.,OEKO-TEX Standard 100
+Glamor Рубашка Cyrillic Name,textile,3801234500402,Амор Облека,DE,BATCH-ENC-002,"[{""fibre"":""cotton"",""pct"":100.0}]",DE,Машинско перење 40°C.,OEKO-TEX Standard 100
+Glamor 衬衫 Chinese Characters,textile,3801234500403,Glamor Clothing,CN,BATCH-ENC-003,"[{""fibre"":""cotton"",""pct"":100.0}]",CN,Machine wash 40°C.,GB/T 18885
+"Glamor T-Shirt With ""Quotes"" Inside",textile,3801234500404,Glamor Clothing,DE,BATCH-ENC-004,"[{""fibre"":""cotton"",""pct"":100.0}]",DE,Machine wash 40°C.,OEKO-TEX Standard 100
+Glamor T-Shirt With Comma In Name,textile,3801234500405,"Glamor Clothing, Ltd.",DE,BATCH-ENC-005,"[{""fibre"":""cotton"",""pct"":100.0}]",DE,Machine wash 40°C.,OEKO-TEX Standard 100
+Glamor T-Shirt Très Long Name That Exceeds What Anyone Would Reasonably Put As A Product Name But We Need To Test Buffer Limits And Ensure The System Handles It Gracefully Without Truncation Errors,textile,3801234500406,Glamor Clothing,DE,BATCH-ENC-006,"[{""fibre"":""cotton"",""pct"":100.0}]",DE,Machine wash 40°C.,OEKO-TEX Standard 100
+Glamor T-Shirt With Newline\nInside,textile,3801234500407,Glamor Clothing,DE,BATCH-ENC-007,"[{""fibre"":""cotton"",""pct"":100.0}]",DE,Machine wash 40°C.,OEKO-TEX Standard 100
+Glamor Emoji Shirt 🧵,textile,3801234500408,Glamor Clothing,DE,BATCH-ENC-008,"[{""fibre"":""cotton"",""pct"":100.0}]",DE,Machine wash 40°C.,OEKO-TEX Standard 100

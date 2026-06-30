@@ -1,0 +1,11 @@
+productName,sector,gtin,manufacturerName,manufacturerCountry,batchId,batteryChemistry,nominalVoltageV,nominalCapacityAh,expectedLifetimeCycles,co2ePerUnitKg
+Voltex EV Module 75kWh,battery,04901234567001,Voltex Battery GmbH,DE,VB-2026-001,NMC811,400.0,188.0,2000,61.2
+Voltex EV Module 100kWh,battery,04901234567002,Voltex Battery GmbH,DE,VB-2026-002,NMC811,400.0,250.0,2000,58.7
+Voltex Industrial UPS 10kWh,battery,04901234567003,Voltex Battery GmbH,DE,VB-2026-003,LFP,51.2,200.0,5000,45.3
+Voltex Industrial UPS 20kWh,battery,04901234567004,Voltex Battery GmbH,DE,VB-2026-004,LFP,51.2,400.0,5000,44.8
+Voltex Home Storage 5kWh,battery,04901234567005,Voltex Battery GmbH,DE,VB-2026-005,LFP,48.0,104.0,6000,42.1
+Voltex Home Storage 10kWh,battery,04901234567006,Voltex Battery GmbH,DE,VB-2026-006,LFP,48.0,208.0,6000,41.5
+Voltex Marine Module 30kWh,battery,04901234567007,Voltex Battery GmbH,DE,VB-2026-007,NMC622,355.0,85.0,3000,55.9
+Voltex E-Bike Pack 1kWh,battery,04901234567008,Voltex Battery GmbH,DE,VB-2026-008,NMC532,36.0,28.0,1000,72.4
+Voltex Forklift Module 25kWh,battery,04901234567009,Voltex Battery GmbH,DE,VB-2026-009,LFP,80.0,312.0,4000,47.2
+Voltex Grid Storage 50kWh,battery,04901234567010,Voltex Battery GmbH,DE,VB-2026-010,LFP,768.0,65.0,8000,39.8

@@ -1,0 +1,20 @@
+# BuildKit honours `<Dockerfile>.dockerignore` next to the Dockerfile, so this
+# lives in the platform repo (not the build-context root). Patterns are relative
+# to the build context (the parent dir holding dpp-engine/).
+**/target
+**/node_modules
+**/.git
+**/.github
+**/dist
+**/.astro
+dpp-web
+docs
+public
+research
+**/*.log
+**/.env
+**/.env.*
+!**/.env.example
+# Local [patch.crates-io] override — never bake the sibling-path patch into an
+# image that must build from crates.io.
+**/.cargo/config.toml

@@ -1,0 +1,8 @@
+productName,sector,gtin,manufacturerName,manufacturerCountry,batchId,fibreComposition,countryOfManufacturing,careInstructions,chemicalComplianceStandard
+Glamor GTIN Too Short,textile,380123,Glamor Clothing,DE,BATCH-GTIN-001,"[{""fibre"":""cotton"",""pct"":100.0}]",DE,Machine wash 40°C.,OEKO-TEX Standard 100
+Glamor GTIN Too Long,textile,38012345678901234,Glamor Clothing,DE,BATCH-GTIN-002,"[{""fibre"":""cotton"",""pct"":100.0}]",DE,Machine wash 40°C.,OEKO-TEX Standard 100
+Glamor GTIN With Letters,textile,380ABC4567890,Glamor Clothing,DE,BATCH-GTIN-003,"[{""fibre"":""cotton"",""pct"":100.0}]",DE,Machine wash 40°C.,OEKO-TEX Standard 100
+Glamor GTIN Bad Checksum,textile,3801234567899,Glamor Clothing,DE,BATCH-GTIN-004,"[{""fibre"":""cotton"",""pct"":100.0}]",DE,Machine wash 40°C.,OEKO-TEX Standard 100
+Glamor GTIN With Spaces,textile,380 123 456 789 0,Glamor Clothing,DE,BATCH-GTIN-005,"[{""fibre"":""cotton"",""pct"":100.0}]",DE,Machine wash 40°C.,OEKO-TEX Standard 100
+Glamor GTIN With Dashes,textile,380-1234-5678-90,Glamor Clothing,DE,BATCH-GTIN-006,"[{""fibre"":""cotton"",""pct"":100.0}]",DE,Machine wash 40°C.,OEKO-TEX Standard 100
+Glamor Valid GTIN Control Row,textile,3801234567890,Glamor Clothing,DE,BATCH-GTIN-007,"[{""fibre"":""cotton"",""pct"":100.0}]",DE,Machine wash 40°C.,OEKO-TEX Standard 100

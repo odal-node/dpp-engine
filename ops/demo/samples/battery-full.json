@@ -1,0 +1,32 @@
+{
+  "productName": "Odal Reference Battery LFP-48",
+  "productCategory": "BATTERY",
+  "batchId": "BATCH-2026-Q2-007",
+  "manufacturer": {
+    "name": "GreenCell GmbH",
+    "address": "Prenzlauer Berg 12, 10405 Berlin, DE",
+    "didWebUrl": "https://greencell.example/.well-known/did.json"
+  },
+  "materials": [
+    { "name": "Lithium Iron Phosphate", "weightKg": 1.20, "recycledPct": 12.5, "originCountry": "CN" },
+    { "name": "Graphite", "weightKg": 0.40, "recycledPct": 5.0, "originCountry": "DE" },
+    { "name": "Aluminium casing", "weightKg": 0.30, "recycledPct": 90.0, "originCountry": "DE" }
+  ],
+  "co2ePerUnit": 45.2,
+  "repairabilityScore": 7.5,
+  "schemaVersion": "1.0.0",
+  "sectorData": {
+    "sector": "battery",
+    "gtin": "09506000134352",
+    "batteryChemistry": "LFP",
+    "nominalVoltageV": 48.0,
+    "nominalCapacityAh": 100.0,
+    "expectedLifetimeCycles": 3000,
+    "co2ePerUnitKg": 45.2,
+    "recycledContentCobaltPct": 0.0,
+    "recycledContentLithiumPct": 12.5,
+    "recycledContentNickelPct": 0.0,
+    "stateOfHealthPct": 100.0,
+    "ratedCapacityKwh": 4.8
+  }
+}

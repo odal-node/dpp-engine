@@ -1,0 +1,47 @@
+{
+  "productName": "Odal Reference Organic Cotton Tee",
+  "productCategory": "TEXTILE",
+  "batchId": "TEX-2026-SS-014",
+  "manufacturer": {
+    "name": "EcoTextile Ltd",
+    "address": "Whitworth Street 5, Manchester M1, GB",
+    "didWebUrl": "https://ecotextile.example/.well-known/did.json"
+  },
+  "materials": [
+    { "name": "Organic Cotton", "weightKg": 0.18, "recycledPct": 0.0, "originCountry": "IN" },
+    { "name": "Recycled Polyester", "weightKg": 0.12, "recycledPct": 100.0, "originCountry": "TR" }
+  ],
+  "co2ePerUnit": 3.2,
+  "repairabilityScore": 6.0,
+  "schemaVersion": "1.0.0",
+  "sectorData": {
+    "sector": "textile",
+    "fibreComposition": [
+      { "fibre": "organic cotton", "pct": 60.0, "countryOfOrigin": "IN" },
+      { "fibre": "recycled polyester", "pct": 40.0, "countryOfOrigin": "TR" }
+    ],
+    "countryOfManufacturing": "GB",
+    "careInstructions": "Machine wash 30°C, do not bleach, iron low, line dry",
+    "chemicalComplianceStandard": "OEKO-TEX STANDARD 100",
+    "recycledContentPct": 40.0,
+    "carbonFootprintKgCo2e": 3.2,
+    "waterUseLitres": 450.0,
+    "microplasticSheddingMgPerWash": 12.0,
+    "repairScore": 6.0,
+    "durabilityScore": 8.0,
+    "expectedWashCycles": 80,
+    "countryOfRawMaterialOrigin": "IN",
+    "disassemblyInstructions": "Cut side seams; collar and hem are single-thread chain-stitched for easy separation.",
+    "sparePartsAvailable": false,
+    "productWeightGrams": 180.0,
+    "svhcSubstances": [
+      {
+        "casNumber": "117-81-7",
+        "substanceName": "DEHP",
+        "concentrationPct": 0.01,
+        "locationInProduct": "print finish",
+        "scipNotificationId": "SCIP-2026-ET-0014"
+      }
+    ]
+  }
+}

@@ -1,0 +1,4 @@
+productName;sector;gtin;manufacturerName;manufacturerCountry;batchId;fibreComposition;countryOfManufacturing;careInstructions;chemicalComplianceStandard
+Glamor Semi T-Shirt;textile;3801234500801;Glamor Clothing;DE;BATCH-SEMI-001;"[{""fibre"":""cotton"",""pct"":100.0}]";DE;Machine wash 40°C.;OEKO-TEX Standard 100
+Glamor Semi Dress;textile;3801234500802;Glamor Clothing;DE;BATCH-SEMI-002;"[{""fibre"":""viscose"",""pct"":100.0}]";DE;Hand wash 30°C.;REACH Compliant
+Glamor Semi Jacket;textile;3801234500803;Glamor Clothing;DE;BATCH-SEMI-003;"[{""fibre"":""polyester"",""pct"":100.0}]";DE;Machine wash 30°C.;OEKO-TEX Standard 100

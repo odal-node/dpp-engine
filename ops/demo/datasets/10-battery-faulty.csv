@@ -1,0 +1,11 @@
+productName,sector,gtin,manufacturerName,manufacturerCountry,batchId,batteryChemistry,nominalVoltageV,nominalCapacityAh,expectedLifetimeCycles,co2ePerUnitKg
+No Chemistry Battery,battery,04901234567101,Voltex Battery GmbH,DE,VB-ERR-001,,400.0,188.0,2000,61.2
+Zero Voltage Battery,battery,04901234567102,Voltex Battery GmbH,DE,VB-ERR-002,NMC811,0.0,188.0,2000,61.2
+Negative Capacity Battery,battery,04901234567103,Voltex Battery GmbH,DE,VB-ERR-003,NMC811,400.0,-50.0,2000,61.2
+Zero Lifetime Battery,battery,04901234567104,Voltex Battery GmbH,DE,VB-ERR-004,NMC811,400.0,188.0,0,61.2
+Missing CO2 Battery,battery,04901234567105,Voltex Battery GmbH,DE,VB-ERR-005,NMC811,400.0,188.0,2000,
+No Name Battery,battery,04901234567106,Voltex Battery GmbH,DE,VB-ERR-006,NMC811,400.0,188.0,2000,61.2
+No GTIN Battery,battery,,Voltex Battery GmbH,DE,VB-ERR-007,NMC811,400.0,188.0,2000,61.2
+Text In Voltage Field,battery,04901234567108,Voltex Battery GmbH,DE,VB-ERR-008,NMC811,four hundred,188.0,2000,61.2
+Absurd CO2 Value,battery,04901234567109,Voltex Battery GmbH,DE,VB-ERR-009,NMC811,400.0,188.0,2000,999999.0
+Completely Empty Row,battery,,,DE,,,,,,,
