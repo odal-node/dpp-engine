@@ -1,0 +1,540 @@
+//! End-to-end tests for the DPP resolver.
+//!
+//! Covers functionality not exercised by the inline unit tests in `lib.rs`:
+//! - QR PNG generation and cacheability
+//! - Content negotiation edge cases (no Accept, wildcard Accept)
+//! - HTML rendering with battery and textile sector data
+//! - Valid JWS passthrough (DID document serves matching key)
+//! - Health and readiness probes
+//!
+//! All tests use mock vault servers (no Docker required).
+//!
+//! Run with:
+//! ```sh
+//! cargo test -p dpp-resolver -- --nocapture
+//! ```
+
+use std::sync::OnceLock;
+
+use axum::{
+    Router,
+    body::Body,
+    http::{Request, StatusCode},
+    routing::get,
+};
+use metrics_exporter_prometheus::{PrometheusBuilder, PrometheusHandle};
+use serde_json::json;
+use tower::ServiceExt;
+
+use dpp_resolver::{infra::cache::Cache, router, state::AppState};
+
+fn test_state(vault_base_url: String) -> AppState {
+    AppState {
+        vault_base_url,
+        // Signature verification disabled for these resolution/caching e2e tests.
+        operator_did_url: String::new(),
+        cache: Cache::new_noop(),
+        http: reqwest::Client::new(),
+    }
+}
+
+async fn start_mock_vault(mock_router: Router) -> u16 {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind mock vault");
+    let port = listener.local_addr().unwrap().port();
+    tokio::spawn(async move {
+        axum::serve(listener, mock_router)
+            .await
+            .expect("mock vault serve");
+    });
+    port
+}
+
+fn sample_passport() -> serde_json::Value {
+    json!({
+        "id": "00000000-0000-4000-9000-000000000001",
+        "productName": "E2E Test Widget",
+        "productCategory": "ELECTRONICS",
+        "status": "active",
+        "manufacturer": {"name": "E2E Corp", "address": "Berlin, DE"},
+        "materials": [{"name": "Copper", "weightKg": 0.3}],
+        "schemaVersion": "1.0.0"
+    })
+}
+
+fn sample_battery_passport() -> serde_json::Value {
+    json!({
+        "id": "00000000-0000-4000-9000-000000000002",
+        "productName": "EcoCell 48V",
+        "productCategory": "BATTERY",
+        "status": "active",
+        "manufacturer": {"name": "GreenCell GmbH", "address": "Munich, DE"},
+        "sectorData": {
+            "sector": "battery",
+            "batteryChemistry": "LFP",
+            "nominalVoltageV": 48.0,
+            "nominalCapacityAh": 100.0,
+            "expectedLifetimeCycles": 3000,
+            "co2ePerUnitKg": 72.5,
+            "recycledContentCobaltPct": 12.0,
+            "recycledContentLithiumPct": 8.0
+        }
+    })
+}
+
+fn sample_textile_passport() -> serde_json::Value {
+    json!({
+        "id": "00000000-0000-4000-9000-000000000003",
+        "productName": "Eco Jacket",
+        "productCategory": "TEXTILE",
+        "status": "active",
+        "manufacturer": {"name": "FabriqGreen", "address": "Milan, IT"},
+        "sectorData": {
+            "sector": "textile",
+            "countryOfManufacturing": "IT",
+            "careInstructions": "Machine wash cold",
+            "chemicalComplianceStandard": "OEKO-TEX 100",
+            "recycledContentPct": 40.0,
+            "fibreComposition": [
+                {"fibre": "Organic Cotton", "pct": 60.0},
+                {"fibre": "Recycled Polyester", "pct": 40.0}
+            ]
+        }
+    })
+}
+
+// ---------------------------------------------------------------------------
+// Health probes
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn health_returns_ok() {
+    let vault = Router::new();
+    let port = start_mock_vault(vault).await;
+    let app = router::build(test_state(format!("http://127.0.0.1:{port}")));
+
+    let req = Request::builder()
+        .uri("/health")
+        .body(Body::empty())
+        .unwrap();
+    let resp = app.oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn ready_returns_ok() {
+    let vault = Router::new();
+    let port = start_mock_vault(vault).await;
+    let app = router::build(test_state(format!("http://127.0.0.1:{port}")));
+
+    let req = Request::builder()
+        .uri("/ready")
+        .body(Body::empty())
+        .unwrap();
+    let resp = app.oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+}
+
+// ---------------------------------------------------------------------------
+// QR code generation
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn qr_endpoint_returns_png() {
+    let passport = sample_passport();
+    let vault = {
+        let p = passport.clone();
+        Router::new().route(
+            "/public/dpp/{id}",
+            get(move || {
+                let pp = p.clone();
+                async move { axum::Json(pp) }
+            }),
+        )
+    };
+    let port = start_mock_vault(vault).await;
+    let app = router::build(test_state(format!("http://127.0.0.1:{port}")));
+
+    let req = Request::builder()
+        .uri("/dpp/00000000-0000-4000-9000-000000000001/qr")
+        .body(Body::empty())
+        .unwrap();
+    let resp = app.oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let ct = resp
+        .headers()
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    assert_eq!(ct, "image/png", "QR endpoint must return image/png");
+
+    let body = axum::body::to_bytes(resp.into_body(), 1_000_000)
+        .await
+        .unwrap();
+    // PNG magic bytes
+    assert!(
+        body.starts_with(&[0x89, b'P', b'N', b'G']),
+        "response body must be valid PNG"
+    );
+    assert!(body.len() > 100, "PNG must not be empty");
+}
+
+// ---------------------------------------------------------------------------
+// Content negotiation edge cases
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn no_accept_header_defaults_to_json_ld() {
+    let passport = sample_passport();
+    let vault = {
+        let p = passport.clone();
+        Router::new().route(
+            "/public/dpp/{id}",
+            get(move || {
+                let pp = p.clone();
+                async move { axum::Json(pp) }
+            }),
+        )
+    };
+    let port = start_mock_vault(vault).await;
+    let app = router::build(test_state(format!("http://127.0.0.1:{port}")));
+
+    // No Accept header → should default to JSON-LD
+    let req = Request::builder()
+        .uri("/dpp/00000000-0000-4000-9000-000000000001")
+        .body(Body::empty())
+        .unwrap();
+    let resp = app.oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let ct = resp
+        .headers()
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    assert!(
+        ct.contains("application/ld+json"),
+        "no Accept should default to JSON-LD, got: {ct}"
+    );
+}
+
+#[tokio::test]
+async fn wildcard_accept_returns_json_ld() {
+    let passport = sample_passport();
+    let vault = {
+        let p = passport.clone();
+        Router::new().route(
+            "/public/dpp/{id}",
+            get(move || {
+                let pp = p.clone();
+                async move { axum::Json(pp) }
+            }),
+        )
+    };
+    let port = start_mock_vault(vault).await;
+    let app = router::build(test_state(format!("http://127.0.0.1:{port}")));
+
+    let req = Request::builder()
+        .uri("/dpp/00000000-0000-4000-9000-000000000001")
+        .header("accept", "*/*")
+        .body(Body::empty())
+        .unwrap();
+    let resp = app.oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let ct = resp
+        .headers()
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    assert!(
+        ct.contains("application/ld+json"),
+        "*/* should get JSON-LD, got: {ct}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// HTML rendering with sector data
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn html_includes_battery_sector_data() {
+    let passport = sample_battery_passport();
+    let vault = {
+        let p = passport.clone();
+        Router::new().route(
+            "/public/dpp/{id}",
+            get(move || {
+                let pp = p.clone();
+                async move { axum::Json(pp) }
+            }),
+        )
+    };
+    let port = start_mock_vault(vault).await;
+    let app = router::build(test_state(format!("http://127.0.0.1:{port}")));
+
+    let req = Request::builder()
+        .uri("/dpp/00000000-0000-4000-9000-000000000002")
+        .header("accept", "text/html")
+        .body(Body::empty())
+        .unwrap();
+    let resp = app.oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let body = axum::body::to_bytes(resp.into_body(), 100_000)
+        .await
+        .unwrap();
+    let html = String::from_utf8_lossy(&body);
+    assert!(
+        html.contains("EcoCell 48V"),
+        "HTML must contain product name"
+    );
+    assert!(
+        html.contains("Battery Information"),
+        "HTML must contain battery section header"
+    );
+    assert!(html.contains("LFP"), "HTML must contain battery chemistry");
+    assert!(html.contains("3000"), "HTML must contain lifetime cycles");
+}
+
+#[tokio::test]
+async fn html_includes_textile_fibre_bar() {
+    let passport = sample_textile_passport();
+    let vault = {
+        let p = passport.clone();
+        Router::new().route(
+            "/public/dpp/{id}",
+            get(move || {
+                let pp = p.clone();
+                async move { axum::Json(pp) }
+            }),
+        )
+    };
+    let port = start_mock_vault(vault).await;
+    let app = router::build(test_state(format!("http://127.0.0.1:{port}")));
+
+    let req = Request::builder()
+        .uri("/dpp/00000000-0000-4000-9000-000000000003")
+        .header("accept", "text/html")
+        .body(Body::empty())
+        .unwrap();
+    let resp = app.oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let body = axum::body::to_bytes(resp.into_body(), 100_000)
+        .await
+        .unwrap();
+    let html = String::from_utf8_lossy(&body);
+    assert!(
+        html.contains("Textile Information"),
+        "HTML must contain textile section"
+    );
+    assert!(
+        html.contains("Organic Cotton"),
+        "HTML must contain fibre name"
+    );
+    assert!(
+        html.contains("fibre-bar"),
+        "HTML must contain fibre composition bar"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// JSON-LD includes @context
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn json_ld_response_includes_context() {
+    let passport = sample_passport();
+    let vault = {
+        let p = passport.clone();
+        Router::new().route(
+            "/public/dpp/{id}",
+            get(move || {
+                let pp = p.clone();
+                async move { axum::Json(pp) }
+            }),
+        )
+    };
+    let port = start_mock_vault(vault).await;
+    let app = router::build(test_state(format!("http://127.0.0.1:{port}")));
+
+    let req = Request::builder()
+        .uri("/dpp/00000000-0000-4000-9000-000000000001")
+        .header("accept", "application/json")
+        .body(Body::empty())
+        .unwrap();
+    let resp = app.oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let body = axum::body::to_bytes(resp.into_body(), 100_000)
+        .await
+        .unwrap();
+    let doc: serde_json::Value = serde_json::from_slice(&body).expect("valid JSON");
+    assert!(
+        doc.get("@context").is_some(),
+        "JSON-LD response must include @context"
+    );
+    assert_eq!(
+        doc["productName"], "E2E Test Widget",
+        "product name must be preserved"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Valid JWS signature passes through
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn valid_jws_signature_passes_through() {
+    use base64::Engine;
+    use ed25519_dalek::{Signer, SigningKey};
+
+    let signing_key = SigningKey::generate(&mut rand::rngs::OsRng);
+    let b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD;
+    let pub_key_b64 = b64.encode(signing_key.verifying_key().as_bytes());
+
+    // Build a valid JWS over a passport payload.
+    let passport_payload = json!({
+        "id": "00000000-0000-4000-9000-000000000004",
+        "productName": "Signed Widget"
+    });
+    let header = r#"{"alg":"EdDSA","crv":"Ed25519"}"#;
+    let header_b64 = b64.encode(header);
+    let payload_b64 = b64.encode(serde_json::to_vec(&passport_payload).unwrap());
+    let signing_input = format!("{header_b64}.{payload_b64}");
+    let sig = signing_key.sign(signing_input.as_bytes());
+    let sig_b64 = b64.encode(sig.to_bytes());
+    let valid_jws = format!("{signing_input}.{sig_b64}");
+
+    // Serve DID document with matching public key.
+    let did_doc = json!({
+        "@context": ["https://www.w3.org/ns/did/v1"],
+        "id": "did:web:valid.example",
+        "verificationMethod": [{
+            "id": "did:web:valid.example#key-1",
+            "type": "JsonWebKey2020",
+            "controller": "did:web:valid.example",
+            "publicKeyJwk": {"kty": "OKP", "crv": "Ed25519", "x": pub_key_b64}
+        }],
+        "assertionMethod": ["did:web:valid.example#key-1"]
+    });
+    let did_router = {
+        let d = did_doc.clone();
+        Router::new().route(
+            "/.well-known/did.json",
+            get(move || {
+                let doc = d.clone();
+                async move { axum::Json(doc) }
+            }),
+        )
+    };
+    let did_port = start_mock_vault(did_router).await;
+    let did_url = format!("http://127.0.0.1:{did_port}/.well-known/did.json");
+
+    let passport = json!({
+        "id": "00000000-0000-4000-9000-000000000004",
+        "productName": "Signed Widget",
+        "status": "active",
+        "manufacturer": {"name": "Signed Corp", "address": "EU", "didWebUrl": did_url},
+        "jwsSignature": valid_jws
+    });
+    let vault = {
+        let p = passport.clone();
+        Router::new().route(
+            "/public/dpp/{id}",
+            get(move || {
+                let pp = p.clone();
+                async move { axum::Json(pp) }
+            }),
+        )
+    };
+    let vault_port = start_mock_vault(vault).await;
+    let app = router::build(test_state(format!("http://127.0.0.1:{vault_port}")));
+
+    let req = Request::builder()
+        .uri("/dpp/00000000-0000-4000-9000-000000000004")
+        .header("accept", "application/json")
+        .body(Body::empty())
+        .unwrap();
+    let resp = app.oneshot(req).await.unwrap();
+    assert_eq!(
+        resp.status(),
+        StatusCode::OK,
+        "valid JWS should pass verification and return 200"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Vault unreachable returns 502
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn vault_unreachable_returns_502() {
+    // Point at a port with nothing listening
+    let app = router::build(test_state("http://127.0.0.1:1".into()));
+
+    let req = Request::builder()
+        .uri("/dpp/00000000-0000-4000-9000-000000000005")
+        .header("accept", "application/json")
+        .body(Body::empty())
+        .unwrap();
+    let resp = app.oneshot(req).await.unwrap();
+    assert_eq!(
+        resp.status(),
+        StatusCode::BAD_GATEWAY,
+        "unreachable vault should return 502"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Metrics — the resolver's signature-verification counter is emitted (RT2-6)
+// ---------------------------------------------------------------------------
+
+fn prometheus_handle() -> &'static PrometheusHandle {
+    static HANDLE: OnceLock<PrometheusHandle> = OnceLock::new();
+    HANDLE.get_or_init(|| {
+        PrometheusBuilder::new()
+            .install_recorder()
+            .expect("failed to install Prometheus recorder")
+    })
+}
+
+/// A resolve must record `jws_verify_total` so the public-facing tamper signal is
+/// collectable. Guards against the emission being removed/renamed (RT2-6). The
+/// recorder is installed in-test, then a resolve is driven and the rendered
+/// output is asserted to contain the counter.
+#[tokio::test]
+async fn resolve_records_jws_verify_total() {
+    let handle = prometheus_handle();
+
+    let passport = sample_passport();
+    let vault = {
+        let p = passport.clone();
+        Router::new().route(
+            "/public/dpp/{id}",
+            get(move || {
+                let pp = p.clone();
+                async move { axum::Json(pp) }
+            }),
+        )
+    };
+    let port = start_mock_vault(vault).await;
+    let app = router::build(test_state(format!("http://127.0.0.1:{port}")));
+
+    let req = Request::builder()
+        .uri("/dpp/00000000-0000-4000-9000-000000000001")
+        .header("accept", "application/json")
+        .body(Body::empty())
+        .unwrap();
+    let resp = app.oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let output = handle.render();
+    assert!(
+        output.contains("jws_verify_total"),
+        "jws_verify_total not found in Prometheus output:\n{output}"
+    );
+}
