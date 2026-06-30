@@ -1,0 +1,42 @@
+[package]
+name        = "dpp-dal"
+description = "PostgreSQL data access layer for Odal Node (RLS operator isolation)"
+version.workspace     = true
+edition.workspace     = true
+authors.workspace     = true
+license.workspace     = true
+repository.workspace  = true
+rust-version.workspace = true
+
+[lib]
+name = "dpp_dal"
+path = "src/lib.rs"
+
+[dependencies]
+dpp-domain  = { workspace = true }
+dpp-types   = { workspace = true }
+
+serde        = { workspace = true }
+serde_json   = { workspace = true }
+anyhow       = { workspace = true }
+thiserror    = { workspace = true }
+async-trait  = { workspace = true }
+tokio        = { workspace = true }
+uuid         = { workspace = true }
+chrono       = { workspace = true }
+tracing      = { workspace = true }
+metrics      = { workspace = true }
+
+sqlx = { version = "0.8", default-features = false, features = [
+  "postgres", "runtime-tokio", "tls-rustls", "uuid", "chrono", "json", "migrate", "macros",
+] }
+
+[features]
+integration-tests = []
+
+[dev-dependencies]
+testcontainers = { workspace = true }
+tokio          = { workspace = true }
+uuid           = { workspace = true }
+chrono         = { workspace = true }
+testcontainers-modules = { workspace = true, features = ["postgres"] }
