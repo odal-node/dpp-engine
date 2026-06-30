@@ -1,0 +1,38 @@
+Business Source License 1.1
+
+Licensor:  Aleksandar Temelkov, trading as "Odal Node"
+
+Licensed Work:  Odal Node
+
+Additional Use Grant:  You may make production use of the Licensed Work to
+  issue, sign, store, and serve Digital Product Passports for your own
+  organisation's products and regulatory-compliance obligations
+  ("self-hosting"). This grant does NOT permit offering the Licensed Work
+  to third parties as a hosted or managed service, nor redistributing or
+  embedding it as part of a competing product, where the Licensed Work
+  provides a material part of that service or product's value.
+
+Change Date:  Four years from the date of each release
+
+Change License:  Apache License, Version 2.0
+
+Terms
+
+The Licensor hereby grants you the right to copy, modify, create
+derivative works, redistribute, and make non-production use of the
+Licensed Work. The Additional Use Grant above additionally permits the
+production use it describes (self-hosting for your own compliance) at no
+charge.
+
+Any production use beyond the Additional Use Grant — in particular
+offering the Licensed Work to third parties as a hosted or managed
+service, or distributing it as part of a competing product — requires a
+commercial license from the Licensor. Contact: legal@odal-node.io
+
+On the Change Date, the Licensed Work for that release converts
+automatically to the Change License (Apache License, Version 2.0) and may
+thereafter be used without restriction.
+
+References
+
+- [BSL-1.1 Full Text](https://mariadb.com/bsl11/)

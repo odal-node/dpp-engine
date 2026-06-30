@@ -1,0 +1,95 @@
+# =============================================================================
+# Odal Node — .gitignore
+# Public repo: github.com/odal-node/dpp-engine
+# =============================================================================
+
+# Keycloak dev realm (generated from template)
+ops/docker/keycloak/*-realm.json
+!ops/docker/keycloak/*-realm.template.json
+
+# -----------------------------------------------------------------------------
+# SECRETS & ENVIRONMENT
+# -----------------------------------------------------------------------------
+.env
+.env.*
+!.env.example
+secrets/
+*.pem
+*.key
+*.p12
+*.pfx
+*.enc
+*.enc.*
+# Encrypted Ed25519 key stores (KEY_STORE_PATH) — never commit signing keys
+dev-keystore.enc
+*-keystore.enc
+
+# -----------------------------------------------------------------------------
+# INFRASTRUCTURE (private repo only)
+# -----------------------------------------------------------------------------
+ops/terraform/
+ops/helm/**/values.production.yaml
+ops/helm/**/values.staging.yaml
+ops/k8s/overlays/production/
+ops/k8s/overlays/staging/
+
+# -----------------------------------------------------------------------------
+# RUST
+# -----------------------------------------------------------------------------
+/target/
+# Standalone crates excluded from the workspace each have their own target dir.
+# /target/ above only anchors to the repo root; these patterns catch the rest.
+plugins/*/target/
+# Compiled sector plugins + signatures. NEVER commit the binaries: they are
+# build outputs of dpp-core, and production loads SIGNED artifacts from the
+# dpp-core release pipeline, not from this repo. Locally, `just build-plugins`
+# regenerates them into ./plugins from the sibling ../dpp-core checkout.
+plugins/*.wasm
+plugins/*.wasm.sig
+# Workspace-detached test fixtures (e.g. the wasm-fixture-tests abi-echo plugin).
+crates/*/tests/fixtures/*/target/
+Cargo.lock
+**/*.rs.bak
+# Local dev override: [patch.crates-io] pointing core deps at the sibling
+# dpp-core checkout. Absent in CI/release, so published versions are used.
+# Copy .cargo/config.toml.example to enable (or run `just core-local`).
+.cargo/config.toml
+
+# -----------------------------------------------------------------------------
+# NODE / FRONTEND
+# -----------------------------------------------------------------------------
+node_modules/
+.next/
+.nuxt/
+dist/
+.pnp
+.pnp.js
+*.tsbuildinfo
+.turbo/
+
+# -----------------------------------------------------------------------------
+# EDITOR & OS
+# -----------------------------------------------------------------------------
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# -----------------------------------------------------------------------------
+# BUILD ARTIFACTS
+# -----------------------------------------------------------------------------
+*.log
+*.tmp
+*.bak
+coverage/
+.nyc_output/
+
+# -----------------------------------------------------------------------------
+# WASM BUILD OUTPUT (odal-resolver Cloudflare Workers build)
+# -----------------------------------------------------------------------------
+pkg/
+wasm-pack.log

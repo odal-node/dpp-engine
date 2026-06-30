@@ -1,0 +1,26 @@
+# =============================================================================
+# Local development override for the dpp-core dependencies.
+#
+# Copy this file to `.cargo/config.toml` (git-ignored) to build dpp-engine
+# against the sibling ../dpp-core working tree instead of the published crates:
+#
+#     cp .cargo/config.toml.example .cargo/config.toml     # or: just core-local
+#
+# With this file present, edits in ../dpp-core are picked up immediately — no
+# publish, no version bump. Delete it (or `just core-published`) to go back to
+# the registry versions pinned in Cargo.toml.
+#
+# CI and release builds intentionally have NO .cargo/config.toml, so they always
+# resolve the published `dpp-* = "x.y.z"` versions from [workspace.dependencies].
+#
+# Note: a [patch] only applies when the local crate's version satisfies the
+# requirement in Cargo.toml. If you bump dpp-core's version ahead of the
+# published one, update Cargo.toml to match or Cargo will ignore the patch.
+# =============================================================================
+[patch.crates-io]
+dpp-domain        = { path = "../dpp-core/crates/dpp-domain" }
+dpp-crypto        = { path = "../dpp-core/crates/dpp-crypto" }
+dpp-digital-link  = { path = "../dpp-core/crates/dpp-digital-link" }
+dpp-plugin-traits = { path = "../dpp-core/crates/dpp-plugin-traits" }
+dpp-registry      = { path = "../dpp-core/crates/dpp-registry" }
+dpp-calc          = { path = "../dpp-core/crates/dpp-calc" }

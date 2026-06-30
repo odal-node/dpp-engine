@@ -1,0 +1,37 @@
+version: 2
+updates:
+  - package-ecosystem: cargo
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+    labels:
+      - dependencies
+      - rust
+
+  - package-ecosystem: npm
+    directory: "/web/dashboard"
+    schedule:
+      interval: weekly
+      day: monday
+    labels:
+      - dependencies
+      - frontend
+
+  - package-ecosystem: docker
+    directory: "/docker"
+    schedule:
+      interval: weekly
+      day: monday
+    labels:
+      - dependencies
+      - docker
+
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+    labels:
+      - dependencies
+      - ci

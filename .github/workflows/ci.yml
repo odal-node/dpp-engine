@@ -1,0 +1,168 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: [main, develop]
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  fmt:
+    name: Format check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: dpp-engine
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - name: cargo fmt --check
+        working-directory: dpp-engine
+        run: cargo fmt --all --check
+
+  clippy:
+    name: Clippy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: dpp-engine
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: dpp-engine
+      - name: cargo clippy
+        working-directory: dpp-engine
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+  test-unit:
+    name: Unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: dpp-engine
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: dpp-engine
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@nextest
+      # `--workspace` (no integration feature) runs every non-Docker test:
+      # lib tests, the `odal` CLI binary tests, and the resolver e2e / JWS
+      # verification + security-regression tests. The feature-gated
+      # testcontainer tests run in the `test-integration` job below.
+      - name: Unit + CLI + resolver tests
+        working-directory: dpp-engine
+        run: cargo nextest run --workspace --no-tests=fail
+
+  test-integration:
+    name: Integration tests (testcontainers)
+    runs-on: ubuntu-latest
+    needs: [test-unit]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: dpp-engine
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: dpp-engine
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@nextest
+      - name: Create results dir
+        run: mkdir -p dpp-engine/results
+      # Docker is pre-installed on ubuntu-latest; testcontainers uses it.
+      # The plugin-host suite includes the fuel-exhaustion sandbox test, which
+      # aborts on Windows (SEH unwind) but must pass on the Linux deploy target.
+      - name: DAL integration tests
+        working-directory: dpp-engine
+        run: cargo nextest run -p dpp-dal --features integration-tests --no-tests=fail --reporter junit --junit-path results/dal.xml
+      - name: Vault integration tests (lifecycle, auth, validation)
+        working-directory: dpp-engine
+        run: cargo nextest run -p dpp-vault --features integration-tests --no-tests=fail --reporter junit --junit-path results/vault.xml
+      - name: Plugin host integration tests (incl. fuel sandbox)
+        working-directory: dpp-engine
+        run: cargo nextest run -p dpp-plugin-host --features integration-tests --no-tests=fail --reporter junit --junit-path results/plugin-host.xml
+      - name: Node smoke tests
+        working-directory: dpp-engine
+        run: cargo nextest run -p dpp-node --features integration-tests --no-tests=fail --reporter junit --junit-path results/node.xml
+      - name: Upload integration test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: integration-test-results-${{ github.run_id }}
+          path: dpp-engine/results/*.xml
+          retention-days: 90
+
+  debug-prints:
+    name: No debug prints in service crates
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: dpp-engine
+      # Forbid println!/eprintln!/dbg! in crates/**/src (service code).
+      # The cli/ directory, tests, and benches are explicitly allowed.
+      - name: Check for debug prints
+        working-directory: dpp-engine
+        run: |
+          if grep -rn --include="*.rs" \
+               -e '\bprintln!' -e '\beprintln!' -e '\bdbg!' \
+               --exclude-dir=tests --exclude-dir=benches \
+               crates/dpp-common/src \
+               crates/dpp-dal/src \
+               crates/dpp-vault/src \
+               crates/dpp-identity/src \
+               crates/dpp-resolver/src \
+               crates/dpp-integrator/src \
+               crates/dpp-plugin-host/src \
+               crates/dpp-node/src; then
+            echo "ERROR: println!/eprintln!/dbg! found in service crate src — use tracing:: instead"
+            exit 1
+          fi
+
+  audit:
+    name: Security audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: dpp-engine
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: dpp-engine
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --locked
+      - name: cargo audit
+        working-directory: dpp-engine
+        run: cargo audit
+
+  test-postgres:
+    name: Postgres integration tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: dpp-engine
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: dpp-engine
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@nextest
+      - name: PostgreSQL integration tests (check + clippy + pg_integration)
+        working-directory: dpp-engine
+        run: |
+          cargo check -p dpp-dal
+          cargo check -p dpp-node
+          cargo clippy -p dpp-dal -p dpp-node -- -D warnings
+          cargo nextest run -p dpp-dal --features integration-tests --no-tests=fail --test pg_integration

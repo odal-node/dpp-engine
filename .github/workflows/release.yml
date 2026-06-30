@@ -1,0 +1,64 @@
+name: Release images
+
+# Build and publish the node + resolver container images to GHCR on a version
+# tag. Tag from a commit that already passed CI (see docs/governance/RELEASE.md).
+#
+# The Dockerfiles build dpp-engine alone; dpp-core is consumed from crates.io
+# (published independently at 0.1.0), so only this repo is checked out.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  publish:
+    name: Build & push ${{ matrix.image }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: dpp-node
+            dockerfile: dpp-engine/docker/node.Dockerfile
+          - image: dpp-resolver
+            dockerfile: dpp-engine/docker/resolver.Dockerfile
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: dpp-engine
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Compute tags & labels
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/odal-node/${{ matrix.image }}
+          # `latest` is applied automatically for non-prerelease semver tags
+          # (metadata-action default flavor latest=auto).
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+
+      # Context is the workspace root holding both checked-out repos. BuildKit
+      # honours docker/<dockerfile>.dockerignore to keep the context small.
+      - name: Build & push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=${{ matrix.image }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.image }}

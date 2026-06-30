@@ -1,0 +1,42 @@
+# =============================================================================
+# CODEOWNERS — Odal Node Platform (dpp-engine)
+# https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
+#
+# Rules are evaluated bottom-up; last matching rule wins.
+# All teams/users below must exist in the github.com/odal-node org.
+# =============================================================================
+
+# Default: all files require review from a maintainer
+*                                   @odal-node/maintainers
+
+# -----------------------------------------------------------------------------
+# Legal — BSL-1.1 licence + legal docs (maintainer + legal representative)
+# -----------------------------------------------------------------------------
+LICENSE                             @odal-node/maintainers @odal-node/legal
+docs/legal/                         @odal-node/maintainers @odal-node/legal
+
+# -----------------------------------------------------------------------------
+# Security policy — require maintainer review
+# -----------------------------------------------------------------------------
+docs/project/SECURITY.md            @odal-node/maintainers
+
+# -----------------------------------------------------------------------------
+# Architecture & governance docs — require maintainer review
+# -----------------------------------------------------------------------------
+docs/architecture/                  @odal-node/maintainers
+docs/governance/                    @odal-node/maintainers
+
+# -----------------------------------------------------------------------------
+# Security-critical surfaces — persistence/RLS isolation, auth, DB migrations
+# -----------------------------------------------------------------------------
+crates/dpp-dal/                     @odal-node/maintainers
+crates/dpp-vault/src/infra/auth/    @odal-node/maintainers
+crates/dpp-vault/src/middleware/    @odal-node/maintainers
+ops/pg/                             @odal-node/maintainers
+
+# -----------------------------------------------------------------------------
+# Deploy + CI automation and the workspace manifest
+# -----------------------------------------------------------------------------
+docker/                             @odal-node/maintainers
+/.github/                           @odal-node/maintainers
+/Cargo.toml                         @odal-node/maintainers

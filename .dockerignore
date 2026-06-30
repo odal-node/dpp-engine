@@ -1,0 +1,7 @@
+# Build-context ignore for CI/release, whose context is the dpp-engine repo root
+# (release.yml: context: .). Keeps build artefacts out and — defensively — the
+# git-ignored local dpp-core override out, so published images always resolve the
+# crates.io dpp-* versions pinned in Cargo.toml.
+target/
+.git/
+.cargo/config.toml

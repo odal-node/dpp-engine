@@ -1,0 +1,2007 @@
+openapi: "3.1.0"
+
+info:
+  title: Odal Node API
+  version: "0.1.0"
+  description: |
+    **Sovereign Digital Product Passport Infrastructure**
+
+    The Odal API is split across two deployable services:
+
+    - **Node** (`http://localhost:8001`) — the MVP service that bundles vault,
+      identity, and integrator on a single port with sub-path routing:
+      `/vault/*`, `/identity/*`, `/integrator/*`.
+    - **Resolver** (`http://localhost:8003`) — standalone public resolver for
+      QR code scans and supply-chain integrations. Unauthenticated.
+
+    All authenticated vault endpoints are versioned under `/vault/api/v1/`.
+    Path parameters use OpenAPI 3.1 `{id}` brace syntax (aligned with
+    Axum 0.8 routing).
+
+    Authentication uses `Authorization: Bearer odal_sk_...` API keys (SHA-256
+    hashed, prefix-indexed) or HTTP Basic auth for local development.
+
+    Regulation references:
+    - EU Ecodesign for Sustainable Products Regulation (ESPR) 2024/1781
+    - EU Battery Regulation 2023/1542
+    - W3C DID Core Spec 1.0 / W3C VC Data Model 1.1
+  contact:
+    name: Odal Support
+    email: contact@odal-node.io
+    url: https://docs.odal-node.io
+  license:
+    name: BSL-1.1
+    url: https://mariadb.com/bsl11/
+  x-legal-entity: "Odal Node"
+
+servers:
+  - url: http://localhost:8001
+    description: "Local development — odal-node (vault + identity public + integrator)"
+  - url: http://localhost:8002
+    description: "Local development — odal-identity (standalone; hosts the mTLS internal signing surface)"
+  - url: http://localhost:8003
+    description: "Local development — odal-resolver (public)"
+
+# ---------------------------------------------------------------------------
+# Security Schemes
+# ---------------------------------------------------------------------------
+components:
+  securitySchemes:
+    BearerApiKey:
+      type: http
+      scheme: bearer
+      description: |
+        Machine-to-machine access via API keys. Keys are prefixed with
+        `odal_sk_` and sent as `Authorization: Bearer odal_sk_...`.
+
+        Keys are stored as SHA-256 hashes in PostgreSQL with a 12-character
+        prefix index for fast lookup. The plain-text key is only returned
+        once at creation time via `POST /vault/api/v1/api-keys`.
+
+    BasicAuth:
+      type: http
+      scheme: basic
+      description: |
+        Local development fallback. Uses the `ADMIN_USERNAME` and
+        `ADMIN_PASSWORD` environment variables. Not available in production.
+
+    MutualTLS:
+      type: mutualTLS
+      description: |
+        Client-certificate (mTLS) authentication for service-to-service calls.
+        The standalone identity service accepts the internal `/internal/*`
+        endpoints only from a client presenting `CN=odal-vault`. The fused
+        `dpp-node` never exposes these over the network — it signs in-process.
+
+  # -------------------------------------------------------------------------
+  # Reusable Schemas
+  # -------------------------------------------------------------------------
+  schemas:
+
+    DppId:
+      type: string
+      format: uuid
+      description: UUID v7 identifier assigned on creation. Embedded in QR codes and public URLs.
+      example: "019723f4-1a2b-7c3d-8e4f-5a6b7c8d9e0f"
+
+    ProductCategory:
+      description: |
+        Fine-grained product category (a data attribute — the dispatch key is
+        `sector`). Known categories serialise as snake_case strings; any other
+        category serialises as `{ "other": "<value>" }`.
+      oneOf:
+        - type: string
+          enum:
+            - ev_battery
+            - industrial_battery
+            - lmt_battery
+            - apparel
+            - footwear
+            - home_textile
+            - smartphone
+            - laptop
+            - charger
+        - type: object
+          required: [other]
+          properties:
+            other:
+              type: string
+      example: "ev_battery"
+
+    PassportStatus:
+      type: string
+      enum: [draft, active, suspended, archived]
+      description: |
+        DPP lifecycle state. The domain model uses `Published` internally;
+        the wire format uses `active`. Deserialization accepts both.
+        - `draft`: under construction; not publicly resolvable
+        - `active`: published and signed; publicly resolvable via QR
+        - `suspended`: temporarily hidden (recall, dispute); JWS preserved
+        - `archived`: end-of-life; immutable; retained for regulatory record-keeping
+
+        Valid transitions:
+        draft → active, draft → archived,
+        active → suspended, active → archived,
+        suspended → active, suspended → archived.
+
+    ManufacturerInfo:
+      type: object
+      required: [name, address]
+      properties:
+        name:
+          type: string
+          example: "EcoTech GmbH"
+        address:
+          type: string
+          example: "Hauptstraße 1, 10115 Berlin"
+        didWebUrl:
+          type: string
+          format: uri
+          description: "did:web URL for the manufacturer"
+          example: "https://ecotech.example.com/.well-known/did.json"
+
+    MaterialEntry:
+      type: object
+      required: [name, weightKg]
+      properties:
+        name:
+          type: string
+          example: "Lithium carbonate"
+        weightKg:
+          type: number
+          description: Weight in kilograms
+          example: 12.5
+        recycledPct:
+          type: number
+          minimum: 0
+          maximum: 100
+          description: "Percentage of recycled content (0.0–100.0)"
+          example: 35.0
+        originCountry:
+          type: string
+          minLength: 2
+          maxLength: 2
+          description: ISO 3166-1 alpha-2 country code
+          example: "DE"
+
+    SectorData:
+      type: object
+      description: |
+        Sector-specific data, **internally tagged** by a `sector` discriminator
+        (`#[serde(tag = "sector")]`) — e.g.
+        `{ "sector": "battery", "gtin": "…", "batteryChemistry": "LFP", … }`.
+        The remaining fields are sector-specific and validated against the
+        sector's versioned JSON schema. Sectors include `battery`, `textile`,
+        `steel`, `aluminium`, `tyre`, `electronics`, and others.
+      required: [sector]
+      discriminator:
+        propertyName: sector
+      properties:
+        sector:
+          type: string
+          example: "battery"
+      additionalProperties: true
+      example:
+        sector: "battery"
+        gtin: "09506000134352"
+        batteryChemistry: "LFP"
+        nominalVoltageV: 48.0
+        nominalCapacityAh: 100.0
+        expectedLifetimeCycles: 3000
+        co2ePerUnitKg: 45.2
+
+    CreateRequest:
+      type: object
+      required: [productName, manufacturer]
+      description: |
+        Request body for creating a new DPP. Only `productName` and
+        `manufacturer` are required. All other fields are optional and
+        can be filled in later via `PUT` before publishing.
+      properties:
+        productName:
+          type: string
+          description: Human-readable product name. Must not be blank.
+          example: "EcoCell Pro 48V"
+        sector:
+          type: string
+          description: |
+            EU ESPR sector (the dispatch key), e.g. `battery`, `textile`,
+            `electronics`. Optional — derived from `sectorData` when omitted.
+          example: "battery"
+        manufacturer:
+          $ref: "#/components/schemas/ManufacturerInfo"
+        materials:
+          type: array
+          items:
+            $ref: "#/components/schemas/MaterialEntry"
+        co2ePerUnit:
+          type: number
+          description: "CO₂ equivalent per unit in kg"
+          example: 4.2
+        repairabilityScore:
+          type: number
+          minimum: 0
+          maximum: 100
+          description: >-
+            Non-regulatory repairability indicator (0–100). NOT the EU 2023/1669
+            repairability class. Optional.
+        sectorData:
+          $ref: "#/components/schemas/SectorData"
+        batchId:
+          type: string
+          description: Optional batch or lot identifier
+          example: "BATCH-2026-04-001"
+        schemaVersion:
+          type: string
+          description: >-
+            Sector schema version. When omitted, the sector's current version is
+            used (e.g. battery 2.0.0); a supplied value is honoured.
+          example: "1.0.0"
+
+    PassportResponse:
+      type: object
+      required:
+        - id
+        - productName
+        - manufacturer
+        - materials
+        - status
+        - schemaVersion
+        - createdAt
+        - updatedAt
+        - retentionLocked
+      properties:
+        id:
+          $ref: "#/components/schemas/DppId"
+        batchId:
+          type: string
+          nullable: true
+        productName:
+          type: string
+          example: "EcoCell Pro 48V"
+        productCategory:
+          $ref: "#/components/schemas/ProductCategory"
+        manufacturer:
+          $ref: "#/components/schemas/ManufacturerInfo"
+        materials:
+          type: array
+          items:
+            $ref: "#/components/schemas/MaterialEntry"
+        co2ePerUnit:
+          type: number
+          nullable: true
+        repairabilityScore:
+          type: number
+          nullable: true
+        sectorData:
+          $ref: "#/components/schemas/SectorData"
+        status:
+          $ref: "#/components/schemas/PassportStatus"
+        qrCodeUrl:
+          type: string
+          format: uri
+          nullable: true
+          description: "Set on publish to https://p.odal-node.io/{id}"
+        jwsSignature:
+          type: string
+          nullable: true
+          description: JWS compact serialisation (Ed25519). Null until published.
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+        publishedAt:
+          type: string
+          format: date-time
+          nullable: true
+        schemaVersion:
+          type: string
+          example: "1.0.0"
+        retentionLocked:
+          type: boolean
+          description: |
+            Set to `true` permanently on first publish. Retention-locked
+            passports must remain accessible for the EU ESPR retention period.
+
+    AuditEntry:
+      type: object
+      required: [id, passportId, operatorId, actor, action, timestamp]
+      properties:
+        id:
+          type: string
+          format: uuid
+        passportId:
+          type: string
+        operatorId:
+          type: string
+        actor:
+          type: string
+          example: "admin@example.com"
+        action:
+          type: string
+          example: "published"
+        previousStatus:
+          type: string
+          nullable: true
+        newStatus:
+          type: string
+          nullable: true
+        metadata:
+          type: object
+          nullable: true
+        timestamp:
+          type: string
+          format: date-time
+
+    OperatorConfig:
+      type: object
+      required: [operatorId, legalName, address, country, contactEmail]
+      properties:
+        operatorId:
+          type: string
+          example: "self_hosted"
+        legalName:
+          type: string
+          example: "Odal Node GmbH"
+        tradeName:
+          type: string
+          nullable: true
+        address:
+          type: string
+          example: "Johannes Strauss 12"
+        country:
+          type: string
+          minLength: 2
+          maxLength: 2
+          example: "MK"
+        contactEmail:
+          type: string
+          format: email
+          example: "contact@odal-node.io"
+        didWebUrl:
+          type: string
+          format: uri
+          nullable: true
+        productCategories:
+          type: array
+          items:
+            type: string
+          nullable: true
+        brandPrimary:
+          type: string
+          nullable: true
+          description: "Primary brand colour (hex)"
+          example: "#2E7D32"
+        brandSecondary:
+          type: string
+          nullable: true
+        brandLogoUrl:
+          type: string
+          format: uri
+          nullable: true
+        customDomain:
+          type: string
+          nullable: true
+        dataResidency:
+          type: string
+          default: "EU"
+        retentionPolicyDays:
+          type: integer
+          default: 3650
+        featureFlags:
+          type: object
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+          nullable: true
+        updatedAt:
+          type: string
+          format: date-time
+          nullable: true
+
+    UpdateOperatorConfig:
+      type: object
+      description: Merge-patch update — only supply fields being changed.
+      properties:
+        legalName:
+          type: string
+        tradeName:
+          type: string
+        address:
+          type: string
+        country:
+          type: string
+        contactEmail:
+          type: string
+        didWebUrl:
+          type: string
+        productCategories:
+          type: array
+          items:
+            type: string
+        brandPrimary:
+          type: string
+        brandSecondary:
+          type: string
+        brandLogoUrl:
+          type: string
+        customDomain:
+          type: string
+        dataResidency:
+          type: string
+        retentionPolicyDays:
+          type: integer
+        featureFlags:
+          type: object
+
+    ApiKey:
+      type: object
+      required: [id, name, keyPrefix, isActive, createdAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+          example: "CI pipeline"
+        keyPrefix:
+          type: string
+          description: "First 12 characters of the key (e.g. 'odal_sk_abc1')"
+          example: "odal_sk_abc1"
+        isActive:
+          type: boolean
+        createdAt:
+          type: string
+          format: date-time
+        lastUsedAt:
+          type: string
+          format: date-time
+          nullable: true
+        expiresAt:
+          type: string
+          format: date-time
+          nullable: true
+
+    NewApiKey:
+      type: object
+      required: [key, secret]
+      properties:
+        key:
+          $ref: "#/components/schemas/ApiKey"
+        secret:
+          type: string
+          description: |
+            The full plain-text API key. Shown ONCE at creation time.
+            Store securely — it cannot be retrieved again.
+          example: "odal_sk_abc123def456ghi789jkl012mno345pqr678"
+
+    CreateApiKeyRequest:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+          description: Human-readable label for this key.
+          example: "CI pipeline"
+        expiresAt:
+          type: string
+          format: date-time
+          nullable: true
+          description: Optional expiration. Null = never expires.
+
+    Facility:
+      type: object
+      required: [id, name, identifierScheme, identifierValue, country, isDefault, createdAt]
+      description: A manufacturing/processing facility (ESPR Annex III).
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+          example: "München Cell Plant"
+        identifierScheme:
+          type: string
+          description: 'Identifier scheme, e.g. "gln" or "national".'
+          example: "gln"
+        identifierValue:
+          type: string
+          example: "4012345000009"
+        country:
+          type: string
+          minLength: 2
+          maxLength: 2
+          example: "DE"
+        address:
+          type: string
+          nullable: true
+        isDefault:
+          type: boolean
+          description: The default facility is stamped onto new passports.
+        createdAt:
+          type: string
+          format: date-time
+
+    CreateFacilityRequest:
+      type: object
+      required: [name, identifierScheme, identifierValue, country]
+      properties:
+        name:
+          type: string
+        identifierScheme:
+          type: string
+          example: "gln"
+        identifierValue:
+          type: string
+          description: 'Validated by scheme — a "gln" must pass the GS1 mod-10 check digit.'
+          example: "4012345000009"
+        country:
+          type: string
+          minLength: 2
+          maxLength: 2
+          example: "DE"
+        address:
+          type: string
+          nullable: true
+        isDefault:
+          type: boolean
+          default: false
+          description: Make this the default facility on creation (unsets any previous default).
+
+    OperatorIdentifier:
+      type: object
+      required: [id, scheme, value, isPrimary, createdAt]
+      description: An economic-operator identifier (ESPR Art. 13).
+      properties:
+        id:
+          type: string
+          format: uuid
+        scheme:
+          type: string
+          description: 'Identifier scheme, e.g. "vat", "lei", "eori", "duns".'
+          example: "lei"
+        value:
+          type: string
+          example: "5493001KJTIIGC8Y1R12"
+        label:
+          type: string
+          nullable: true
+        isPrimary:
+          type: boolean
+          description: The primary identifier is stamped onto new passports.
+        createdAt:
+          type: string
+          format: date-time
+
+    CreateOperatorIdentifierRequest:
+      type: object
+      required: [scheme, value]
+      properties:
+        scheme:
+          type: string
+          description: 'Identifier scheme, e.g. "vat", "lei", "eori", "duns".'
+          example: "lei"
+        value:
+          type: string
+          description: >-
+            Validated by scheme — LEI uses ISO 7064 MOD 97-10; DUNS is 9 digits;
+            EORI/VAT require a 2-letter country prefix. Unknown schemes are
+            accepted without structural verification.
+          example: "5493001KJTIIGC8Y1R12"
+        label:
+          type: string
+          nullable: true
+        isPrimary:
+          type: boolean
+          default: false
+          description: Make this the primary identifier on creation (unsets any previous primary).
+
+    NodeState:
+      type: object
+      required: [bootstrapped, operatorComplete]
+      properties:
+        bootstrapped:
+          type: boolean
+          description: True once at least one active API key exists (the node is claimed).
+        operatorComplete:
+          type: boolean
+          description: True once the operator identity is complete enough to publish.
+
+    DidDocument:
+      type: object
+      description: |
+        A W3C DID Core `did:web` document. Lists the operator's Ed25519
+        verification methods; rotated keys are retained (so historical
+        signatures still verify) and revoked keys are omitted.
+      example:
+        "@context":
+          - "https://www.w3.org/ns/did/v1"
+          - "https://w3id.org/security/suites/ed25519-2020/v1"
+        id: "did:web:id.odal-node.io"
+        verificationMethod:
+          - id: "did:web:id.odal-node.io#key-1"
+            type: "JsonWebKey2020"
+            controller: "did:web:id.odal-node.io"
+            publicKeyJwk: { kty: "OKP", crv: "Ed25519", x: "<base64url>" }
+        authentication: ["did:web:id.odal-node.io#key-1"]
+        assertionMethod: ["did:web:id.odal-node.io#key-1"]
+
+    SignRequest:
+      type: object
+      required: [operator_id, passport_id, payload]
+      description: "Internal signing request. Field names are snake_case (internal contract)."
+      properties:
+        operator_id:
+          type: string
+          description: Operator whose key signs. Auto-provisioned on first use.
+          example: "self_hosted"
+        passport_id:
+          type: string
+          description: The passport id being signed (recorded in the JWS payload).
+        payload:
+          type: string
+          description: Base64-encoded canonical JSON of the payload to sign.
+
+    SignResponse:
+      type: object
+      required: [jws_signature]
+      properties:
+        jws_signature:
+          type: string
+          description: Compact JWS (EdDSA over RFC 8785 canonical bytes).
+
+    RotateRequest:
+      type: object
+      required: [operator_id]
+      properties:
+        operator_id:
+          type: string
+          example: "self_hosted"
+
+    RotateResponse:
+      type: object
+      required: [operator_id, new_key_id, fingerprint, rotated, did_document]
+      properties:
+        operator_id:
+          type: string
+        new_key_id:
+          type: string
+          example: "did:web:id.odal-node.io#key-1"
+        fingerprint:
+          type: string
+          description: SHA-256 fingerprint (hex) of the new public key.
+        rotated:
+          type: boolean
+        did_document:
+          $ref: "#/components/schemas/DidDocument"
+
+    ImportCreatedEntry:
+      type: object
+      required: [row, passportId, status]
+      properties:
+        row:
+          type: integer
+          description: 1-based row number from the uploaded file.
+        passportId:
+          type: string
+        status:
+          type: string
+          example: "draft"
+
+    ImportErrorEntry:
+      type: object
+      required: [row, field, message]
+      properties:
+        row:
+          type: integer
+        field:
+          type: string
+          description: 'Column name, or "vault" / "auth" / "internal".'
+        message:
+          type: string
+
+    ImportSyncResponse:
+      type: object
+      required: [totalRows, successCount, errorCount, created, errors]
+      description: Returned for synchronous imports (≤ 100 valid rows) and dry runs.
+      properties:
+        totalRows:
+          type: integer
+        successCount:
+          type: integer
+        errorCount:
+          type: integer
+        created:
+          type: array
+          items:
+            $ref: "#/components/schemas/ImportCreatedEntry"
+        errors:
+          type: array
+          items:
+            $ref: "#/components/schemas/ImportErrorEntry"
+
+    ImportAsyncResponse:
+      type: object
+      required: [jobId, status, totalRows]
+      description: Returned for async imports (> 100 valid rows). Poll the job-status endpoint.
+      properties:
+        jobId:
+          type: string
+          format: uuid
+        status:
+          type: string
+          example: "queued"
+        totalRows:
+          type: integer
+
+    JobStatusResponse:
+      type: object
+      required: [jobId, status, progress]
+      properties:
+        jobId:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [queued, processing, completed, failed]
+        progress:
+          type: object
+          properties:
+            processed:
+              type: integer
+            total:
+              type: integer
+        result:
+          type: object
+          nullable: true
+          description: Populated on completion (created/errors) or failure (reason).
+
+    ApiError:
+      type: object
+      required: [error, message]
+      properties:
+        error:
+          type: string
+          example: "VALIDATION_ERROR"
+        message:
+          type: string
+          example: "productName is required"
+
+  responses:
+    Unauthorized:
+      description: Missing or invalid authentication credentials.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ApiError"
+          example:
+            error: "UNAUTHORIZED"
+            message: "Missing or invalid Authorization header."
+
+    NotFound:
+      description: Resource not found within the operator's scope.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ApiError"
+          example:
+            error: "NOT_FOUND"
+            message: "DPP not found."
+
+    ValidationError:
+      description: One or more fields failed validation.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ApiError"
+
+    Conflict:
+      description: |
+        State conflict — e.g. attempting to publish an already-published DPP
+        or updating an archived DPP.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ApiError"
+
+    Forbidden:
+      description: |
+        The credential is authenticated but lacks the required scope — e.g. a
+        `write`/`read` key attempting an admin-only action (registry identity).
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ApiError"
+          example:
+            error: "FORBIDDEN"
+            message: "Registry-identity management requires an admin-scoped credential."
+
+# ---------------------------------------------------------------------------
+# Paths — Vault (under /vault when accessed through the node)
+# ---------------------------------------------------------------------------
+paths:
+
+  # ---- DPP CRUD (odal-vault) -----------------------------------------------
+
+  /vault/api/v1/dpp:
+    post:
+      operationId: createDpp
+      summary: Create a DPP
+      description: |
+        Create a new Digital Product Passport in `draft` status.
+        Only `productName` (non-blank) and `manufacturer` (with `name`
+        and `address`) are required. All other fields can be supplied
+        later via `PUT` before publishing.
+
+        Returns the full passport record with a server-assigned UUID v7 `id`.
+      tags: [DPP Management]
+      security:
+        - BearerApiKey: []
+        - BasicAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateRequest"
+            example:
+              productName: "EcoCell Pro 48V"
+              sector: "battery"
+              manufacturer:
+                name: "EcoTech GmbH"
+                address: "Hauptstraße 1, 10115 Berlin"
+              co2ePerUnit: 4.2
+              batchId: "BATCH-2026-04-001"
+              sectorData:
+                sector: "battery"
+                gtin: "09506000134352"
+                batteryChemistry: "LFP"
+                nominalVoltageV: 48.0
+                nominalCapacityAh: 100.0
+                expectedLifetimeCycles: 3000
+                co2ePerUnitKg: 45.2
+      responses:
+        "201":
+          description: DPP created in draft status.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PassportResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
+  /vault/api/v1/dpps:
+    get:
+      operationId: listDpps
+      summary: List DPPs
+      description: |
+        Paginated list of DPPs for the authenticated operator.
+        Supports filtering by status, free-text search across
+        `productName`, `batchId`, and `manufacturer.name`, and an exact
+        `facilityId` match (ESPR Annex III; ADR-006 — a grouping filter,
+        never an isolation boundary).
+      tags: [DPP Management]
+      security:
+        - BearerApiKey: []
+        - BasicAuth: []
+      parameters:
+        - name: q
+          in: query
+          schema:
+            type: string
+          description: Free-text search across productName, batchId, manufacturer.name
+        - name: status
+          in: query
+          schema:
+            $ref: "#/components/schemas/PassportStatus"
+        - name: facilityId
+          in: query
+          schema:
+            type: string
+          description: Exact match on the facility identifier stamped on the passport (see GET /facilities).
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+        - name: skip
+          in: query
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+      responses:
+        "200":
+          description: Paginated list of DPPs.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [dpps, total, limit, skip]
+                properties:
+                  dpps:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/PassportResponse"
+                  total:
+                    type: integer
+                    description: Total count (optionally filtered by status and/or facilityId)
+                  limit:
+                    type: integer
+                  skip:
+                    type: integer
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /vault/api/v1/dpp/{dppId}:
+    get:
+      operationId: getDpp
+      summary: Get a DPP (write-side)
+      description: |
+        Retrieve the full DPP record including drafts.
+        Scoped to the authenticated operator. For the public read
+        (post-publish), use the resolver's `GET /dpp/{dppId}`.
+      tags: [DPP Management]
+      security:
+        - BearerApiKey: []
+        - BasicAuth: []
+      parameters:
+        - name: dppId
+          in: path
+          required: true
+          schema:
+            $ref: "#/components/schemas/DppId"
+      responses:
+        "200":
+          description: Full DPP record.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PassportResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+    put:
+      operationId: updateDpp
+      summary: Update a DPP
+      description: |
+        JSON merge-patch on a `draft` or `active` DPP.
+        The request body is a free-form JSON object; only supplied
+        fields are changed. Returns `409 Conflict` if the DPP is
+        `suspended` or `archived`.
+      tags: [DPP Management]
+      security:
+        - BearerApiKey: []
+        - BasicAuth: []
+      parameters:
+        - name: dppId
+          in: path
+          required: true
+          schema:
+            $ref: "#/components/schemas/DppId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              description: Free-form merge-patch. Supply only the fields being changed.
+      responses:
+        "200":
+          description: Updated DPP record.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PassportResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+  # ---- DPP Lifecycle (odal-vault) ------------------------------------------
+
+  /vault/api/v1/dpp/{dppId}/publish:
+    post:
+      operationId: publishDpp
+      summary: Publish a DPP
+      description: |
+        Transition a DPP from `draft` to `active`.
+
+        On success:
+        1. `qrCodeUrl` is set to `https://p.odal-node.io/{id}`
+        2. The identity service signs the VC payload with Ed25519 (best-effort;
+           signing failure does not block publish — `jwsSignature` may be null)
+        3. `retentionLocked` is set to `true` permanently
+        4. `status` = `active`, `publishedAt` = now
+        5. A `dpp.published` NATS event is emitted (fire-after-commit)
+
+        No request body is required.
+      tags: [DPP Lifecycle]
+      security:
+        - BearerApiKey: []
+        - BasicAuth: []
+      parameters:
+        - name: dppId
+          in: path
+          required: true
+          schema:
+            $ref: "#/components/schemas/DppId"
+      responses:
+        "200":
+          description: DPP published successfully. Returns the full passport record.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PassportResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+  /vault/api/v1/dpp/{dppId}/suspend:
+    post:
+      operationId: suspendDpp
+      summary: Suspend a DPP
+      description: |
+        Transition an `active` DPP to `suspended`.
+        The DPP becomes non-resolvable. The JWS signature is preserved.
+        Emits a `dpp.suspended` NATS event.
+
+        An optional request body with a `reason` field can be provided.
+      tags: [DPP Lifecycle]
+      security:
+        - BearerApiKey: []
+        - BasicAuth: []
+      parameters:
+        - name: dppId
+          in: path
+          required: true
+          schema:
+            $ref: "#/components/schemas/DppId"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason:
+                  type: string
+                  example: "Product recall — safety investigation pending"
+      responses:
+        "200":
+          description: DPP suspended. Returns the full passport record.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PassportResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+  /vault/api/v1/dpp/{dppId}/archive:
+    post:
+      operationId: archiveDpp
+      summary: Archive a DPP
+      description: |
+        Transition a DPP to `archived`. This is irreversible.
+        Archived DPPs are immutable and retained for regulatory record-keeping.
+        No request body is required.
+      tags: [DPP Lifecycle]
+      security:
+        - BearerApiKey: []
+        - BasicAuth: []
+      parameters:
+        - name: dppId
+          in: path
+          required: true
+          schema:
+            $ref: "#/components/schemas/DppId"
+      responses:
+        "200":
+          description: DPP archived. Returns the full passport record.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PassportResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+  # ---- Audit History (odal-vault) ------------------------------------------
+
+  /vault/api/v1/dpp/{dppId}/history:
+    get:
+      operationId: getDppHistory
+      summary: Get DPP audit history
+      description: |
+        Returns the chronological audit trail for a passport: creation,
+        status transitions, field updates, etc.
+      tags: [DPP Management]
+      security:
+        - BearerApiKey: []
+        - BasicAuth: []
+      parameters:
+        - name: dppId
+          in: path
+          required: true
+          schema:
+            $ref: "#/components/schemas/DppId"
+      responses:
+        "200":
+          description: List of audit entries.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/AuditEntry"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  # ---- Operator Config (odal-vault) ----------------------------------------
+
+  /vault/api/v1/operator:
+    get:
+      operationId: getOperatorConfig
+      summary: Get operator configuration
+      description: |
+        Returns the calling operator's configuration (branding, legal info,
+        retention settings). If no config has been saved yet, returns an
+        empty default config rather than 404.
+      tags: [Operator]
+      security:
+        - BearerApiKey: []
+        - BasicAuth: []
+      responses:
+        "200":
+          description: Operator configuration.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OperatorConfig"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+    patch:
+      operationId: updateOperatorConfig
+      summary: Update operator configuration
+      description: |
+        Merge-patch the operator's configuration. Only supplied fields
+        are changed.
+      tags: [Operator]
+      security:
+        - BearerApiKey: []
+        - BasicAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateOperatorConfig"
+      responses:
+        "200":
+          description: Updated operator configuration.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OperatorConfig"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  # ---- API Key Management (odal-vault) -------------------------------------
+
+  /vault/api/v1/api-keys:
+    get:
+      operationId: listApiKeys
+      summary: List active API keys
+      description: |
+        Lists all active API keys for this deployment. Only the key prefix
+        is returned — the full secret is shown once at creation time.
+      tags: [API Keys]
+      security:
+        - BearerApiKey: []
+        - BasicAuth: []
+      responses:
+        "200":
+          description: List of API keys.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ApiKey"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+    post:
+      operationId: createApiKey
+      summary: Create a new API key
+      description: |
+        Generate a new API key. The response includes the full plain-text
+        `secret` — this is the only time it will be shown. Store it securely.
+      tags: [API Keys]
+      security:
+        - BearerApiKey: []
+        - BasicAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateApiKeyRequest"
+      responses:
+        "201":
+          description: API key created. The `secret` field is shown ONCE.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NewApiKey"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
+  /vault/api/v1/api-keys/{id}:
+    delete:
+      operationId: revokeApiKey
+      summary: Revoke an API key
+      description: |
+        Soft-revokes a key. The record remains for audit but `isActive`
+        is set to false. Subsequent auth attempts with this key will fail.
+      tags: [API Keys]
+      security:
+        - BearerApiKey: []
+        - BasicAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "204":
+          description: Key revoked.
+        "400":
+          description: Invalid key ID format.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  # ---- Node Setup State (odal-vault) ---------------------------------------
+
+  /vault/api/v1/node/state:
+    get:
+      operationId: getNodeState
+      summary: Node setup state
+      description: |
+        Reports whether the node has been claimed (at least one active API key)
+        and whether the operator identity is complete enough to publish. Used by
+        `odal bootstrap` to stay idempotent.
+      tags: [Node]
+      security:
+        - BearerApiKey: []
+        - BasicAuth: []
+      responses:
+        "200":
+          description: Node setup state.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NodeState"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  # ---- Registry Identity: Facilities (odal-vault) --------------------------
+
+  /vault/api/v1/facilities:
+    get:
+      operationId: listFacilities
+      summary: List facilities
+      description: |
+        Lists the operator's facilities (ESPR Annex III). The `isDefault`
+        facility is stamped onto new passports. Requires an admin-scoped key.
+      tags: [Registry Identity]
+      security:
+        - BearerApiKey: []
+        - BasicAuth: []
+      responses:
+        "200":
+          description: List of facilities.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Facility"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    post:
+      operationId: addFacility
+      summary: Add a facility
+      description: |
+        Add a facility. The identifier is validated by scheme — a `gln` must
+        pass the GS1 mod-10 check digit. Requires an admin-scoped key.
+      tags: [Registry Identity]
+      security:
+        - BearerApiKey: []
+        - BasicAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateFacilityRequest"
+      responses:
+        "201":
+          description: Facility created.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Facility"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
+  /vault/api/v1/facilities/{id}:
+    delete:
+      operationId: removeFacility
+      summary: Remove a facility
+      tags: [Registry Identity]
+      security:
+        - BearerApiKey: []
+        - BasicAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "204":
+          description: Facility removed.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /vault/api/v1/facilities/{id}/default:
+    post:
+      operationId: setDefaultFacility
+      summary: Set the default facility
+      description: Makes this facility the sole default, stamped onto new passports.
+      tags: [Registry Identity]
+      security:
+        - BearerApiKey: []
+        - BasicAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "204":
+          description: Default facility set.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  # ---- Registry Identity: Operator Identifiers (odal-vault) ----------------
+
+  /vault/api/v1/operator-identifiers:
+    get:
+      operationId: listOperatorIdentifiers
+      summary: List operator identifiers
+      description: |
+        Lists the operator's economic-operator identifiers (ESPR Art. 13). The
+        `isPrimary` identifier is stamped onto new passports. Admin scope required.
+      tags: [Registry Identity]
+      security:
+        - BearerApiKey: []
+        - BasicAuth: []
+      responses:
+        "200":
+          description: List of operator identifiers.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/OperatorIdentifier"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    post:
+      operationId: addOperatorIdentifier
+      summary: Add an operator identifier
+      description: |
+        Add an economic-operator identifier. Validated by scheme — LEI uses
+        ISO 7064 MOD 97-10; DUNS is 9 digits; EORI/VAT require a country prefix.
+        Requires an admin-scoped key.
+      tags: [Registry Identity]
+      security:
+        - BearerApiKey: []
+        - BasicAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateOperatorIdentifierRequest"
+      responses:
+        "201":
+          description: Operator identifier created.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OperatorIdentifier"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
+  /vault/api/v1/operator-identifiers/{id}:
+    delete:
+      operationId: removeOperatorIdentifier
+      summary: Remove an operator identifier
+      tags: [Registry Identity]
+      security:
+        - BearerApiKey: []
+        - BasicAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "204":
+          description: Operator identifier removed.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /vault/api/v1/operator-identifiers/{id}/primary:
+    post:
+      operationId: setPrimaryOperatorIdentifier
+      summary: Set the primary operator identifier
+      description: Makes this identifier the sole primary, stamped onto new passports.
+      tags: [Registry Identity]
+      security:
+        - BearerApiKey: []
+        - BasicAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "204":
+          description: Primary operator identifier set.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  # ---- Public Vault Endpoints -----------------------------------------------
+
+  /vault/public/dpp/{dppId}:
+    get:
+      operationId: publicGetDpp
+      summary: Public read of a published DPP
+      description: |
+        Unauthenticated read of a published passport. Used by the resolver
+        service internally. Returns 404 for drafts, 410 for suspended.
+      tags: [Public (Vault)]
+      parameters:
+        - name: dppId
+          in: path
+          required: true
+          schema:
+            $ref: "#/components/schemas/DppId"
+      responses:
+        "200":
+          description: Published passport record.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PassportResponse"
+        "404":
+          description: Not found or not published.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "410":
+          description: Passport has been suspended.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+
+  /vault/public/dpp/by-gtin/{gtin}:
+    get:
+      operationId: publicGetDppByGtin
+      summary: Public read of a published DPP by GTIN
+      description: |
+        Unauthenticated read of the published passport for a GS1 GTIN-14.
+        Returns 404 if no published passport matches the GTIN.
+      tags: [Public (Vault)]
+      parameters:
+        - name: gtin
+          in: path
+          required: true
+          schema:
+            type: string
+            description: GS1 GTIN-14 (14 digits, mod-10 check digit).
+            example: "09506000134352"
+      responses:
+        "200":
+          description: Published passport record.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PassportResponse"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /vault/health:
+    get:
+      operationId: vaultHealth
+      summary: Vault health check
+      tags: [Health]
+      responses:
+        "200":
+          description: Service is up.
+
+  /vault/ready:
+    get:
+      operationId: vaultReady
+      summary: Vault readiness check
+      tags: [Health]
+      responses:
+        "200":
+          description: Service is ready (DB connection verified).
+
+  /vault/api/v1/info:
+    get:
+      operationId: vaultInfo
+      summary: Service info
+      description: Returns version and build information.
+      tags: [Health]
+      responses:
+        "200":
+          description: Service info.
+
+  # ---- Identity — public (odal-identity) -----------------------------------
+  # On the fused node these are served under /identity/*. The standalone
+  # identity service (:8002) serves them at the root (/health, /ready,
+  # /.well-known/did.json).
+
+  /identity/.well-known/did.json:
+    get:
+      operationId: getDidDocument
+      summary: did:web DID document
+      description: |
+        Serves the operator's `did:web` DID document. Public, unauthenticated.
+      tags: [Identity]
+      responses:
+        "200":
+          description: The DID document.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DidDocument"
+
+  /identity/health:
+    get:
+      operationId: identityHealth
+      summary: Identity health check
+      tags: [Health]
+      responses:
+        "200":
+          description: Service is up.
+
+  /identity/ready:
+    get:
+      operationId: identityReady
+      summary: Identity readiness check
+      tags: [Health]
+      responses:
+        "200":
+          description: Service is ready.
+
+  # ---- Identity — internal, mTLS (odal-identity standalone, :8002) ----------
+  # NOT exposed by the fused node — it signs in-process. Reachable only on the
+  # standalone identity service and only from a client presenting CN=odal-vault.
+
+  /internal/sign:
+    servers:
+      - url: http://localhost:8002
+        description: "odal-identity standalone (mTLS internal)"
+    post:
+      operationId: internalSign
+      summary: Sign a payload (internal, mTLS)
+      description: |
+        Signs a base64-encoded canonical-JSON payload with the operator's
+        Ed25519 key (auto-provisioned on first use). Returns a compact JWS.
+        Service-to-service only — gated by mTLS (`CN=odal-vault`).
+      tags: [Identity (internal)]
+      security:
+        - MutualTLS: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SignRequest"
+      responses:
+        "200":
+          description: Signed payload.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SignResponse"
+        "400":
+          description: Payload is not valid base64 or not valid JSON.
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
+  /internal/keys/rotate:
+    servers:
+      - url: http://localhost:8002
+        description: "odal-identity standalone (mTLS internal)"
+    post:
+      operationId: internalRotateKey
+      summary: Rotate an operator signing key (internal, mTLS)
+      description: |
+        Archives the current key (so prior signatures still verify), generates
+        a new primary key, and rebuilds the DID document. Service-to-service
+        only — gated by mTLS (`CN=odal-vault`).
+      tags: [Identity (internal)]
+      security:
+        - MutualTLS: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RotateRequest"
+      responses:
+        "200":
+          description: Key rotated; returns the new fingerprint and DID document.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RotateResponse"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
+  # ---- Integrator — CSV/XLSX bulk import (odal-integrator) ------------------
+
+  /integrator/health:
+    get:
+      operationId: integratorHealth
+      summary: Integrator health check
+      tags: [Health]
+      responses:
+        "200":
+          description: Service is up.
+
+  /integrator/api/v1/templates/{sector}:
+    get:
+      operationId: getImportTemplate
+      summary: Download a CSV import template
+      description: |
+        Returns the canonical CSV import template for a sector (`battery`,
+        `textile`). `?format=xlsx` returns 501 (download the CSV and open it in
+        a spreadsheet app). Unauthenticated.
+      tags: [Integrator]
+      parameters:
+        - name: sector
+          in: path
+          required: true
+          schema:
+            type: string
+            example: "battery"
+        - name: format
+          in: query
+          schema:
+            type: string
+            enum: [csv, xlsx]
+            default: csv
+      responses:
+        "200":
+          description: CSV template (Content-Disposition attachment).
+          content:
+            text/csv:
+              schema:
+                type: string
+        "404":
+          description: No template for this sector.
+        "501":
+          description: XLSX export not yet implemented.
+
+  /integrator/api/v1/import/{sector}:
+    post:
+      operationId: importFile
+      summary: Bulk-import passports from a file
+      description: |
+        Upload a CSV or XLSX file to create draft passports for a sector
+        (`battery`, `textile`, `steel`, `aluminium`, `tyre`). The caller's
+        `Authorization: Bearer` token is validated and forwarded to the vault.
+
+        - ≤ 100 valid rows → processed synchronously, `200` with results.
+        - `> 100` valid rows → an async job is queued, `202` with a `jobId`.
+        - `dry_run=true` → validate only, `200` with the would-be results.
+      tags: [Integrator]
+      security:
+        - BearerApiKey: []
+      parameters:
+        - name: sector
+          in: path
+          required: true
+          schema:
+            type: string
+            example: "battery"
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  description: CSV or XLSX file.
+                dry_run:
+                  type: string
+                  description: '"true" or "1" to validate without creating records.'
+      responses:
+        "200":
+          description: Synchronous import (or dry-run) results.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ImportSyncResponse"
+        "202":
+          description: Async import job accepted — poll the job-status endpoint.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ImportAsyncResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          description: Unknown sector.
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
+  /integrator/api/v1/imports/{job_id}:
+    get:
+      operationId: getImportJobStatus
+      summary: Poll an async import job
+      description: |
+        Returns the status and progress of an async import job. Requires the
+        same bearer auth as the import endpoint (validated against the vault).
+      tags: [Integrator]
+      security:
+        - BearerApiKey: []
+      parameters:
+        - name: job_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Job status and progress.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JobStatusResponse"
+        "400":
+          description: Invalid job ID format.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  # ---- Public Resolver (odal-resolver, port 8003) --------------------------
+
+  /dpp/{dppId}:
+    get:
+      operationId: resolveDpp
+      summary: Resolve a public DPP
+      description: |
+        Resolve a published Digital Product Passport by ID. This endpoint
+        is the target of QR code scans. No authentication required.
+
+        Content negotiation via `Accept` header:
+        - `application/json` (default): returns JSON passport data
+        - `text/html`: returns the consumer-facing HTML passport page
+          with operator branding (logo, colours)
+      tags: [Public Resolver]
+      parameters:
+        - name: dppId
+          in: path
+          required: true
+          schema:
+            $ref: "#/components/schemas/DppId"
+      responses:
+        "200":
+          description: DPP resolved.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PassportResponse"
+            text/html:
+              schema:
+                type: string
+                description: Consumer-facing HTML passport page.
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /dpp/{dppId}/qr:
+    get:
+      operationId: getDppQrCode
+      summary: Get QR code for a DPP
+      description: |
+        Returns a QR code image for the given DPP. The QR encodes the
+        resolver URL `https://p.odal-node.io/{dppId}`.
+        This endpoint is on the **resolver** service (port 8003).
+      tags: [Public Resolver]
+      parameters:
+        - name: dppId
+          in: path
+          required: true
+          schema:
+            $ref: "#/components/schemas/DppId"
+      responses:
+        "200":
+          description: QR code image.
+          content:
+            image/png:
+              schema:
+                type: string
+                format: binary
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /01/{gtin}:
+    get:
+      operationId: resolveByGtin
+      summary: GS1 Digital Link resolver
+      description: |
+        GS1-conformant resolver (GS1-CRSV1) keyed by GTIN-14. Behaviour depends
+        on the `linkType` query / `Accept` header:
+        - default → `307` redirect to the HTML DPP page
+        - `?linkType=gs1:pip` / `gs1:dpp` (and related) → `307` redirect to the DPP
+        - `?linkType=linkset` or `Accept: application/linkset+json` → `200`
+          RFC 9264 linkset
+      tags: [Public Resolver]
+      parameters:
+        - name: gtin
+          in: path
+          required: true
+          schema:
+            type: string
+            example: "09506000134352"
+        - name: linkType
+          in: query
+          required: false
+          schema:
+            type: string
+          description: "e.g. linkset, gs1:pip, gs1:dpp"
+      responses:
+        "200":
+          description: RFC 9264 linkset (when a linkset is requested).
+          content:
+            application/linkset+json:
+              schema:
+                type: object
+        "307":
+          description: Redirect to the DPP page (`Location` header).
+        "404":
+          description: No published DPP for this GTIN, or unknown link type.
+
+  /health:
+    get:
+      operationId: resolverHealth
+      summary: Resolver health check
+      tags: [Health]
+      responses:
+        "200":
+          description: Resolver is up.
+
+  /ready:
+    get:
+      operationId: resolverReady
+      summary: Resolver readiness check
+      tags: [Health]
+      responses:
+        "200":
+          description: Resolver is ready.
+
+# ---------------------------------------------------------------------------
+# Tags
+# ---------------------------------------------------------------------------
+tags:
+  - name: DPP Management
+    description: Create, read, update, list, and audit Digital Product Passports.
+  - name: DPP Lifecycle
+    description: Lifecycle transitions — publish, suspend, archive.
+  - name: Operator
+    description: Operator configuration (branding, legal info, retention policy).
+  - name: API Keys
+    description: API key management — create, list, revoke.
+  - name: Registry Identity
+    description: Facilities (ESPR Annex III) and operator identifiers (Art. 13) stamped onto new passports.
+  - name: Node
+    description: Node setup/readiness state.
+  - name: Identity
+    description: Public did:web identity — DID document, health, readiness.
+  - name: Identity (internal)
+    description: mTLS service-to-service signing/rotation (standalone identity service only).
+  - name: Integrator
+    description: CSV/XLSX bulk import — templates, upload, async job polling.
+  - name: Public (Vault)
+    description: Unauthenticated vault endpoints for inter-service communication.
+  - name: Public Resolver
+    description: Unauthenticated public endpoints for QR scan resolution.
+  - name: Health
+    description: Health and readiness probes.

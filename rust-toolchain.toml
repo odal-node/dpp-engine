@@ -1,0 +1,7 @@
+[toolchain]
+channel = "1.96.0"
+components = ["rustfmt", "clippy"]
+# Deploy target is Linux (images build via docker/*.Dockerfile). No wasm targets:
+# the platform *loads* prebuilt sector plugins through the Wasm host, it does not
+# compile them — the wasm crates live in dpp-core/plugins.
+targets   = ["x86_64-unknown-linux-gnu"]

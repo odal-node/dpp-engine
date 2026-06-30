@@ -1,0 +1,60 @@
+name: Bug report
+description: Report a defect in dpp-engine (node, vault, resolver, identity, integrator, CLI)
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. **Do not file a public issue for security vulnerabilities** —
+        follow the [security policy](../blob/main/docs/project/SECURITY.md) instead.
+  - type: dropdown
+    id: service
+    attributes:
+      label: Affected service / crate
+      options:
+        - dpp-node
+        - dpp-vault
+        - dpp-resolver
+        - dpp-identity
+        - dpp-integrator
+        - dpp-dal
+        - dpp-plugin-host
+        - cli (odal)
+        - other / not sure
+    validations:
+      required: true
+  - type: dropdown
+    id: deployment
+    attributes:
+      label: Deployment mode
+      options:
+        - Self-hosted
+        - Odal-managed
+        - Local dev
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version / commit
+      placeholder: e.g. v0.1.0 or a commit SHA
+    validations:
+      required: true
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What did you expect, and what occurred instead?
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+    validations:
+      required: true
+  - type: textarea
+    id: env
+    attributes:
+      label: Environment
+      placeholder: OS, Docker version, PostgreSQL version, Rust toolchain

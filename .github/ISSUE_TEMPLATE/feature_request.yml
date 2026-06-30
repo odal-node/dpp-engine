@@ -1,0 +1,26 @@
+name: Feature request
+description: Propose a change to dpp-engine (services, ops, CLI, deployment)
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        The Golden Rule: **business-model / operational** changes belong in `dpp-engine`.
+        Changes driven by an **EU regulation or open standard** belong in `dpp-core`.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem / operational driver
+      description: What use case, deployment need, or business requirement motivates this?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed change
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered

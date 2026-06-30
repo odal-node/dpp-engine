@@ -1,0 +1,61 @@
+# cargo-audit configuration
+# https://github.com/rustsec/rustsec/blob/main/cargo-audit/README.md
+
+[advisories]
+# RUSTSEC-2023-0071 — `rsa` 0.9.10 "Marvin Attack" timing side-channel (medium, 5.9).
+# No fixed upstream release exists. `rsa` is reachable only transitively via
+# `bollard` (the Docker API client) under `testcontainers`, which is a
+# dev-dependency used by the integration tests — it is NOT in the shipped
+# `dpp-node` / `dpp-resolver` binaries (`cargo tree -i rsa` finds no non-dev path).
+# Re-evaluate when a patched `rsa` releases or testcontainers drops the chain.
+#
+# RUSTSEC-2026-0098 / -0099 / -0104 — `rustls-webpki` 0.101.7 (name-constraint
+# bypass for URI/wildcard names; reachable panic in CRL parsing).
+# Upstream-blocked: pulled by `rustls` 0.21 via `hyper-rustls` 0.24, which is
+# the newest connector `aws-smithy-http-client` 1.1.13 (latest published) ships —
+# no `cargo update` can move it until smithy migrates to rustls 0.23. The only
+# consumer is `aws-sdk-s3`'s default HTTPS client, and S3 is NOT yet wired into
+# `dpp-node` (no live code path exercises it). Even when wired, the specific
+# advisories are not practically reachable for an S3 client over public PKI:
+# the name-constraint bypasses require a name-constrained CA in the trust chain,
+# and the CRL panic requires CRL validation to be configured (the SDK default
+# does neither). Re-evaluate when smithy ships a rustls-0.23 client OR before
+# S3 is actually connected — at which point prefer a custom rustls-0.23 connector.
+#
+# RUSTSEC-2026-0188 — `wasmtime-wasi` 45.0.2 "WASI hard links and renames
+# bypass FilePerms for destination" (medium, 6.5). Fix requires >=45.0.3
+# (not yet published — 45.0.2 is still latest on the 45.x line as of this
+# writing) or the major bump to >=46.0.1. Not reachable in this project's
+# actual usage: `dpp-plugin-host::runtime::build_store` constructs the WASI
+# context with `WasiCtxBuilder::new().build_p1()` and NO preopened
+# directories (see also the doc comment on `host_funcs.rs` and
+# `sandbox.rs`: "no preopened directories, so no file reads or writes") —
+# the bypass requires WASI filesystem capabilities the plugin sandbox never
+# grants. Re-evaluate when a 45.0.3 patch ships, or before any change grants
+# plugins filesystem access.
+#
+# RUSTSEC-2025-0057 / -0119 / -0134 — `fxhash`, `number_prefix`,
+# `rustls-pemfile` are unmaintained (informational, no known vulnerability).
+# Checked whether the in-range patch each transitive consumer allows already
+# drops them (`cargo update -p inquire -p indicatif -p testcontainers
+# -p testcontainers-modules --dry-run` locks 0 packages) — it does not; the
+# fix requires a major-version bump of `inquire` (0.7->0.9, the entire `odal`
+# CLI's interactive prompts), `indicatif` (0.17->0.18, CLI progress bars), or
+# `testcontainers`/`testcontainers-modules` (0.21->0.27 / 0.9->0.15, the
+# Docker-backed integration-test harness for dpp-dal/dpp-vault). All three
+# are dev/CLI-only (no path into the shipped `dpp-node` / `dpp-resolver`
+# binaries) and each bump carries real breaking-change risk that needs a
+# real verification pass (Docker available, full CLI prompt walkthrough) —
+# deferred rather than rushed into a "fresh tree" commit. Re-evaluate when
+# bumping `inquire`/`indicatif`/`testcontainers` is scheduled as its own
+# reviewed change.
+ignore = [
+    "RUSTSEC-2023-0071",
+    "RUSTSEC-2026-0098",
+    "RUSTSEC-2026-0099",
+    "RUSTSEC-2026-0104",
+    "RUSTSEC-2026-0188",
+    "RUSTSEC-2025-0057",
+    "RUSTSEC-2025-0119",
+    "RUSTSEC-2025-0134",
+]

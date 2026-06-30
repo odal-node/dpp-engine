@@ -1,0 +1,8 @@
+# Odal Node — Clippy configuration
+# All warnings are treated as errors in CI (via -D warnings flag).
+
+# Disallow integer arithmetic that can silently overflow.
+arithmetic-side-effects-allowed = []
+
+# Disallow std::mem::forget — use drop() or ManuallyDrop.
+# (prevents accidental key material leaks in the identity service / key store)
