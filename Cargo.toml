@@ -27,18 +27,18 @@ rust-version = "1.96"
 # Shared dependency versions — crates inherit these with `workspace = true`
 # ---------------------------------------------------------------------------
 [workspace.dependencies]
-# Core crates — consumed from crates.io (dpp-core is published independently at 0.2.0).
-dpp-domain = "0.2.0"
+# Core crates — consumed from crates.io (dpp-core is published independently at 0.3.0).
+dpp-domain = "0.3.0"
 
 # Engine-wide types (tenant, auth, audit, API keys) — engine-internal crate.
 dpp-types = { path = "crates/dpp-types" }
-dpp-crypto        = "0.2.0"
+dpp-crypto        = "0.3.0"
 # KeyStore lives in dpp-core/dpp-crypto; the identity service crate is dpp-identity
 # (dir: crates/dpp-identity, pkg: dpp-identity).
-dpp-digital-link  = "0.2.0"
-dpp-plugin-traits = "0.2.0"
-dpp-registry      = "0.2.0"
-dpp-calc          = "0.2.0"
+dpp-digital-link  = "0.3.0"
+dpp-plugin-traits = "0.3.0"
+dpp-registry      = "0.3.0"
+dpp-calc          = "0.3.0"
 
 # Web framework
 axum         = { version = "0.8", features = ["macros", "multipart"] }
