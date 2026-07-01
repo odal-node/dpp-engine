@@ -122,8 +122,19 @@ pub fn render_passport_details(doc: &serde_json::Value) {
         line("Manufacturer", name);
     }
     // Registry identity stamped on create (ESPR Annex III facility / Art. 13 operator id).
-    if let Some(f) = s("facilityId") {
-        line("Facility", f);
+    // The facility is a self-contained snapshot { scheme, value, name, country, address };
+    // show "name (value)" when both are present, else whichever exists.
+    if let Some(facility) = doc.get("facility").filter(|v| v.is_object()) {
+        let fs = |k: &str| facility.get(k).and_then(|v| v.as_str());
+        let display = match (fs("name"), fs("value")) {
+            (Some(name), Some(value)) => format!("{name} ({value})"),
+            (Some(name), None) => name.to_owned(),
+            (None, Some(value)) => value.to_owned(),
+            (None, None) => String::new(),
+        };
+        if !display.is_empty() {
+            line("Facility", &display);
+        }
     }
     if let Some(o) = s("operatorIdentifier") {
         line("Operator ID", o);

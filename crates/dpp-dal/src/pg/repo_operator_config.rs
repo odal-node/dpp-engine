@@ -4,7 +4,7 @@
 use async_trait::async_trait;
 use sqlx::Row;
 
-use dpp_domain::DppError;
+use dpp_domain::{DppError, FacilitySnapshot};
 use dpp_types::operator::{OperatorConfig, OperatorConfigRepository};
 
 use super::{PgDal, db_err};
@@ -63,23 +63,31 @@ impl OperatorConfigRepository for PgOperatorConfigRepo {
         Ok(row.as_ref().map(Self::from_row))
     }
 
-    /// Identifier value of the operator's default facility (ESPR Annex III).
+    /// Snapshot of the operator's default facility (ESPR Annex III).
     ///
-    /// Returns the `identifier_value` of the `is_default` facility, or `None`
-    /// when the operator has not configured a default facility.
-    async fn default_facility_identifier(
+    /// Returns the full descriptor (scheme, value, name, country, address) of the
+    /// live `is_default` facility, or `None` when none is configured. Copied by
+    /// value onto new passports so the signed record stays self-contained.
+    async fn default_facility(
         &self,
         operator_id: &str,
-    ) -> Result<Option<String>, DppError> {
+    ) -> Result<Option<FacilitySnapshot>, DppError> {
         let row = sqlx::query(
-            "SELECT identifier_value FROM odal.facility \
-             WHERE operator_id = $1 AND is_default = true LIMIT 1",
+            "SELECT identifier_scheme, identifier_value, name, country, address \
+             FROM odal.facility \
+             WHERE operator_id = $1 AND is_default = true AND retired_at IS NULL LIMIT 1",
         )
         .bind(operator_id)
         .fetch_optional(self.dal.pool())
         .await
         .map_err(db_err)?;
-        Ok(row.map(|r| r.get::<String, _>("identifier_value")))
+        Ok(row.map(|r| FacilitySnapshot {
+            scheme: r.get("identifier_scheme"),
+            value: r.get("identifier_value"),
+            name: r.get("name"),
+            country: r.get::<String, _>("country"),
+            address: r.get("address"),
+        }))
     }
 
     /// Value of the operator's primary economic-operator identifier (ESPR Art. 13).
@@ -92,7 +100,7 @@ impl OperatorConfigRepository for PgOperatorConfigRepo {
     ) -> Result<Option<String>, DppError> {
         let row = sqlx::query(
             "SELECT value FROM odal.operator_identifier \
-             WHERE operator_id = $1 AND is_primary = true LIMIT 1",
+             WHERE operator_id = $1 AND is_primary = true AND retired_at IS NULL LIMIT 1",
         )
         .bind(operator_id)
         .fetch_optional(self.dal.pool())

@@ -3,6 +3,8 @@
 **Sovereign, self-hostable Digital Product Passport infrastructure**
 
 [![License: BSL-1.1](https://img.shields.io/badge/License-BSL--1.1-orange.svg)](LICENSE)
+[![CI](https://github.com/odal-node/dpp-engine/actions/workflows/ci.yml/badge.svg)](https://github.com/odal-node/dpp-engine/actions/workflows/ci.yml)
+[![Rust 1.96+](https://img.shields.io/badge/Rust-1.96%2B-orange.svg)](https://www.rust-lang.org/)
 [![Status: Active Development](https://img.shields.io/badge/Status-Active%20Development-green.svg)]()
 
 The self-hostable runtime for Odal Node — HTTP services, PostgreSQL persistence, auth, telemetry, and compliance calculators: everything an operator needs to issue, sign, and serve EU-compliant Digital Product Passports on their own infrastructure. Self-hosting for your own compliance is permitted at no charge (see [LICENSE](LICENSE)).

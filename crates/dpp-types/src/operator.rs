@@ -6,7 +6,7 @@
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use dpp_domain::DppError;
+use dpp_domain::{DppError, FacilitySnapshot};
 use serde::{Deserialize, Serialize};
 
 /// Constant identity of the single operator this node serves.
@@ -201,14 +201,16 @@ pub trait OperatorConfigRepository: Send + Sync {
     /// Create or update the operator config (upsert by `operator_id`).
     async fn upsert(&self, config: OperatorConfig) -> Result<OperatorConfig, DppError>;
 
-    /// Identifier value of the operator's **default** facility (ESPR Annex III),
-    /// or `None` if none is configured. Read once at startup to stamp new passports.
+    /// Snapshot of the operator's **default** facility (ESPR Annex III), or `None`
+    /// if none is configured. Read live on create and copied by value onto the
+    /// new passport so the signed record carries the full facility descriptor,
+    /// independent of the operator's mutable facility registry.
     ///
     /// Default impl returns `None` so non-persistent test doubles need not implement it.
-    async fn default_facility_identifier(
+    async fn default_facility(
         &self,
         _operator_id: &str,
-    ) -> Result<Option<String>, DppError> {
+    ) -> Result<Option<FacilitySnapshot>, DppError> {
         Ok(None)
     }
 

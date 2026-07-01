@@ -59,6 +59,13 @@ pub async fn publish_handler(
             "CONFLICT",
             "DPP cannot be published from its current state.",
         ),
+        // Publish-time gates (Annex III completeness, binding compliance
+        // violations, sector-data validation) surface as client errors, not 500s.
+        Err(dpp_domain::DppError::Validation(msg)) => api_error(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "VALIDATION_ERROR",
+            &msg.to_string(),
+        ),
         Err(e) => internal_error(e),
     }
 }

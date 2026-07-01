@@ -305,13 +305,14 @@ async fn start_vault_with_identity(dal: PgDal, identity: Arc<dyn IdentityPort>) 
 // Operator seeding
 // ---------------------------------------------------------------------------
 
-/// Seed a *complete* operator profile so publish-flow tests clear the operator-
-/// completeness gate (`POST /publish` → 422 `OPERATOR_INCOMPLETE`).
+/// Seed only the operator-config row (the FK parent for facilities / identifiers /
+/// passports). Use this in tests that manage facilities or operator identifiers
+/// themselves and assert on their counts — it does **not** pre-seed any.
 ///
 /// Writes directly via the operator repo. Deliberately NOT folded into
 /// `start_vault`: `operator_config.rs` asserts the empty default on a fresh DB,
-/// so seeding must be opt-in, called right after `start_vault` in each publish test.
-pub async fn seed_complete_operator(dal: &PgDal) {
+/// so seeding must be opt-in, called right after `start_vault`.
+pub async fn seed_operator_config(dal: &PgDal) {
     use dpp_types::operator::{OperatorConfig, OperatorConfigRepository, STANDALONE_OPERATOR_ID};
 
     let mut cfg = OperatorConfig::empty(STANDALONE_OPERATOR_ID);
@@ -324,7 +325,47 @@ pub async fn seed_complete_operator(dal: &PgDal) {
     PgOperatorConfigRepo::new(dal.clone())
         .upsert(cfg)
         .await
-        .expect("seed complete operator");
+        .expect("seed operator config");
+}
+
+/// Seed a *complete, publishable* operator: the config plus the Annex III default
+/// facility (point (i)) and primary operator identifier (point (k)) that
+/// `publish` now requires for in-force sectors. Use in publish-flow tests.
+pub async fn seed_complete_operator(dal: &PgDal) {
+    use dpp_types::operator::STANDALONE_OPERATOR_ID;
+    use dpp_types::registry_identity::{Facility, OperatorIdentifier, RegistryIdentityRepository};
+
+    seed_operator_config(dal).await;
+
+    let repo = PgRegistryIdentityRepo::new(dal.clone());
+    repo.add_facility(
+        STANDALONE_OPERATOR_ID,
+        Facility {
+            id: uuid::Uuid::now_v7(),
+            name: "Seed Plant".into(),
+            identifier_scheme: "gln".into(),
+            identifier_value: "4012345000009".into(),
+            country: "DE".into(),
+            address: None,
+            is_default: true,
+            created_at: chrono::Utc::now(),
+        },
+    )
+    .await
+    .expect("seed default facility");
+    repo.add_operator_identifier(
+        STANDALONE_OPERATOR_ID,
+        OperatorIdentifier {
+            id: uuid::Uuid::now_v7(),
+            scheme: "vat".into(),
+            value: "DE123456789".into(),
+            label: None,
+            is_primary: true,
+            created_at: chrono::Utc::now(),
+        },
+    )
+    .await
+    .expect("seed primary operator identifier");
 }
 
 // ---------------------------------------------------------------------------

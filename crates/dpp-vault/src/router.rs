@@ -33,9 +33,9 @@ use crate::{
         publish::publish_handler,
         read::read_handler,
         registry_identity::{
-            facilities_create_handler, facilities_delete_handler, facilities_list_handler,
-            facilities_set_default_handler, operator_ids_create_handler,
-            operator_ids_delete_handler, operator_ids_list_handler,
+            facilities_audit_handler, facilities_create_handler, facilities_delete_handler,
+            facilities_list_handler, facilities_set_default_handler, operator_ids_audit_handler,
+            operator_ids_create_handler, operator_ids_delete_handler, operator_ids_list_handler,
             operator_ids_set_primary_handler,
         },
         suspend::suspend_handler,
@@ -78,6 +78,7 @@ pub fn build(state: AppState) -> Router {
             get(facilities_list_handler).post(facilities_create_handler),
         )
         .route("/facilities/{id}", delete(facilities_delete_handler))
+        .route("/facilities/{id}/audit", get(facilities_audit_handler))
         .route(
             "/facilities/{id}/default",
             post(facilities_set_default_handler),
@@ -90,6 +91,10 @@ pub fn build(state: AppState) -> Router {
         .route(
             "/operator-identifiers/{id}",
             delete(operator_ids_delete_handler),
+        )
+        .route(
+            "/operator-identifiers/{id}/audit",
+            get(operator_ids_audit_handler),
         )
         .route(
             "/operator-identifiers/{id}/primary",

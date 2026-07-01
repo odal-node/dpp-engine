@@ -352,6 +352,29 @@ impl RetryableError {
     }
 }
 
+/// Map a registration request's facility onto the EU registry's facility
+/// identifier. Prefers the full Annex III snapshot the passport carries
+/// (scheme/name/country/address); falls back to the bare identifier value for
+/// passports published before the snapshot existed.
+fn facility_identifier_for(request: &RegistrationRequest) -> FacilityIdentifier {
+    match &request.facility {
+        Some(f) => FacilityIdentifier {
+            scheme: f.scheme.clone(),
+            value: f.value.clone(),
+            name: Some(f.name.clone()),
+            country: f.country.clone(),
+            address: f.address.clone(),
+        },
+        None => FacilityIdentifier {
+            scheme: "national".into(),
+            value: request.facility_identifier.clone(),
+            name: None,
+            country: String::new(),
+            address: None,
+        },
+    }
+}
+
 /// Extract GTIN-14 from a GS1 Digital Link URI.
 ///
 /// GS1 DL format: `https://host/01/{gtin14}[/extra/segments]`.
@@ -395,13 +418,7 @@ impl RegistrySyncPort for EuRegistrySync {
                     value: request.passport_id.to_string(),
                     batch_id: None,
                 },
-                facility_id: FacilityIdentifier {
-                    scheme: "national".into(),
-                    value: request.facility_identifier.clone(),
-                    name: None,
-                    country: String::new(),
-                    address: None,
-                },
+                facility_id: facility_identifier_for(&request),
                 operator_id: OperatorIdentifier {
                     scheme: "did".into(),
                     value: request.operator_identifier.clone(),
@@ -707,6 +724,49 @@ mod tests {
         assert_eq!(record.identifiers.registry_id, "EU-REG-2026-00003");
     }
 
+    fn request_with_facility(
+        facility: Option<dpp_domain::FacilitySnapshot>,
+    ) -> RegistrationRequest {
+        RegistrationRequest {
+            passport_id: PassportId::new(),
+            operator_identifier: "did:web:test.example".into(),
+            facility_identifier: "LEGACY-FAC".into(),
+            facility,
+            product_category: "battery".into(),
+            data_carrier_uri: String::new(),
+            schema_version: "2.0.0".into(),
+            jws_signature: None,
+            published_at: None,
+            country_code: String::new(),
+        }
+    }
+
+    #[test]
+    fn facility_identifier_prefers_full_snapshot() {
+        let request = request_with_facility(Some(dpp_domain::FacilitySnapshot {
+            scheme: "gln".into(),
+            value: "4012345000009".into(),
+            name: "Default Plant".into(),
+            country: "DE".into(),
+            address: Some("1 Allee, Berlin".into()),
+        }));
+        let fid = facility_identifier_for(&request);
+        assert_eq!(fid.scheme, "gln");
+        assert_eq!(fid.value, "4012345000009");
+        assert_eq!(fid.name.as_deref(), Some("Default Plant"));
+        assert_eq!(fid.country, "DE");
+        assert_eq!(fid.address.as_deref(), Some("1 Allee, Berlin"));
+    }
+
+    #[test]
+    fn facility_identifier_falls_back_to_bare_value() {
+        let fid = facility_identifier_for(&request_with_facility(None));
+        assert_eq!(fid.scheme, "national");
+        assert_eq!(fid.value, "LEGACY-FAC");
+        assert!(fid.name.is_none());
+        assert!(fid.country.is_empty());
+    }
+
     #[test]
     fn ghost_record_uses_pending_status() {
         let passport_id = PassportId::new();
@@ -714,6 +774,7 @@ mod tests {
             passport_id,
             operator_identifier: "did:web:test.example".into(),
             facility_identifier: "FAC-001".into(),
+            facility: None,
             product_category: "battery".into(),
             data_carrier_uri: "https://id.example.com/01/09506000134352".into(),
             schema_version: "2.0.0".into(),

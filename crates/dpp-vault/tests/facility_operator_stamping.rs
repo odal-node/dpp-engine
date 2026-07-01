@@ -7,12 +7,12 @@
 
 mod helpers;
 
-use helpers::{TestClient, make_jwt, seed_complete_operator, start_postgres, start_vault};
+use helpers::{TestClient, make_jwt, seed_operator_config, start_postgres, start_vault};
 
 #[tokio::test(flavor = "multi_thread")]
 async fn api_created_facility_and_operator_id_are_stamped_on_create() {
     let pg = start_postgres().await;
-    seed_complete_operator(&pg.dal).await; // operator_config — FK parent for both tables
+    seed_operator_config(&pg.dal).await; // operator_config — FK parent for both tables
     let vault_url = start_vault(pg.dal.clone()).await;
     let token = make_jwt("00000000-0000-0000-0000-000000000001");
     let client = TestClient::new(&vault_url, &token);
@@ -75,8 +75,12 @@ async fn api_created_facility_and_operator_id_are_stamped_on_create() {
     assert_eq!(resp.status(), 200);
     let dpp: serde_json::Value = resp.json().await.unwrap();
     assert_eq!(
-        dpp["facilityId"], "4012345000009",
-        "facilityId must be stamped from the default facility (Annex III)"
+        dpp["facility"]["value"], "4012345000009",
+        "facility.value must be stamped from the default facility (Annex III)"
+    );
+    assert_eq!(
+        dpp["facility"]["name"], "Default Plant",
+        "the full facility descriptor is snapshotted onto the passport"
     );
     assert_eq!(
         dpp["operatorIdentifier"], "DE123456789",
@@ -87,7 +91,7 @@ async fn api_created_facility_and_operator_id_are_stamped_on_create() {
 #[tokio::test(flavor = "multi_thread")]
 async fn facility_rejects_invalid_gln_via_api() {
     let pg = start_postgres().await;
-    seed_complete_operator(&pg.dal).await;
+    seed_operator_config(&pg.dal).await;
     let vault_url = start_vault(pg.dal.clone()).await;
     let token = make_jwt("00000000-0000-0000-0000-000000000001");
     let client = TestClient::new(&vault_url, &token);
@@ -110,7 +114,7 @@ async fn facility_rejects_invalid_gln_via_api() {
 #[tokio::test(flavor = "multi_thread")]
 async fn duplicate_facility_returns_422_not_500() {
     let pg = start_postgres().await;
-    seed_complete_operator(&pg.dal).await;
+    seed_operator_config(&pg.dal).await;
     let vault_url = start_vault(pg.dal.clone()).await;
     let token = make_jwt("00000000-0000-0000-0000-000000000001");
     let client = TestClient::new(&vault_url, &token);

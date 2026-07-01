@@ -184,7 +184,7 @@ pub async fn create_handler(
         retention_until: None,
         product_id: None,
         operator_identifier: None,
-        facility_id: None,
+        facility: None,
     };
 
     match state.service.create(passport, &auth).await {

@@ -116,9 +116,9 @@ impl PassportService {
         // them, so EU registry payloads are complete. Read live from the operator
         // config so identifiers managed via the API/CLI apply without a restart.
         if let Some(reader) = &self.registry_reader {
-            if passport.facility_id.is_none() {
-                passport.facility_id = reader
-                    .default_facility_identifier(STANDALONE_OPERATOR_ID)
+            if passport.facility.is_none() {
+                passport.facility = reader
+                    .default_facility(STANDALONE_OPERATOR_ID)
                     .await
                     .unwrap_or(None);
             }
@@ -280,7 +280,7 @@ impl PassportService {
     /// state, or `DppError::Signing` if the identity service fails.
     #[tracing::instrument(skip(self), fields(passport_id = %id))]
     pub async fn publish(&self, id: PassportId, auth: &AuthContext) -> Result<Passport, DppError> {
-        let passport = self.find_by_id(id).await?;
+        let mut passport = self.find_by_id(id).await?;
 
         if !passport
             .status
@@ -290,6 +290,52 @@ impl PassportService {
                 current: passport.status.to_string(),
                 required: PassportStatus::Published.to_string(),
             });
+        }
+
+        // Annex III completeness (ESPR): a published DPP for an in-force sector must
+        // carry the unique facility identifier (Annex III point (i)) and the
+        // responsible-operator identifier (point (k)). Backfill from the current
+        // registry defaults first — so a draft created before the default facility /
+        // primary identifier was configured still publishes cleanly — then require
+        // their presence. Never sign a passport that is missing them.
+        if let Some(reader) = &self.registry_reader {
+            if passport.facility.is_none() {
+                passport.facility = reader
+                    .default_facility(STANDALONE_OPERATOR_ID)
+                    .await
+                    .unwrap_or(None);
+            }
+            if passport.operator_identifier.is_none() {
+                passport.operator_identifier = reader
+                    .primary_operator_identifier(STANDALONE_OPERATOR_ID)
+                    .await
+                    .unwrap_or(None);
+            }
+        }
+        if catalog().is_in_force(passport.sector.catalog_key()) {
+            let mut missing = Vec::new();
+            if passport.facility.is_none() {
+                missing.push("facility (Annex III unique facility identifier)");
+            }
+            if passport.operator_identifier.is_none() {
+                missing.push("operatorIdentifier (Annex III responsible-operator identifier)");
+            }
+            if !missing.is_empty() {
+                tracing::warn!(
+                    passport_id = %id,
+                    missing = %missing.join("; "),
+                    "publish blocked — passport is missing required Annex III registry identity"
+                );
+                return Err(DppError::Validation(
+                    format!(
+                        "cannot publish: missing required registry identity — {}. \
+                         Configure a default facility (`odal facility`) and a primary \
+                         operator identifier (`odal operator-id`) before publishing.",
+                        missing.join("; ")
+                    )
+                    .into(),
+                ));
+            }
         }
 
         // Publish-time validation (domain Gap 7 / vault V3): never sign sector
@@ -383,7 +429,6 @@ impl PassportService {
                 DppError::Signing(e.to_string())
             })?;
 
-        let mut passport = passport;
         passport.status = PassportStatus::Published;
         // publishedAt is set once, on first publish, and preserved across
         // suspend → re-publish cycles (dpp-core invariant).
@@ -773,7 +818,7 @@ mod tests {
             retention_until: None,
             product_id: None,
             operator_identifier: None,
-            facility_id: None,
+            facility: None,
         }
     }
 

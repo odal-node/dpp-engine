@@ -240,7 +240,7 @@ impl PassportRepository for PgPassportRepo {
                       OR doc->>'productName'           ILIKE '%' || $2 || '%'
                       OR doc->>'batchId'               ILIKE '%' || $2 || '%'
                       OR doc->'manufacturer'->>'name'  ILIKE '%' || $2 || '%')
-                 AND ($3::text IS NULL OR doc->>'facilityId' = $3)
+                 AND ($3::text IS NULL OR doc->'facility'->>'value' = $3)
                ORDER BY created_at DESC
                LIMIT $4 OFFSET $5"#,
         )
@@ -269,7 +269,7 @@ impl PassportRepository for PgPassportRepo {
         let total: i64 = sqlx::query_scalar(
             r#"SELECT COUNT(*) FROM odal.passport
                WHERE ($1::text IS NULL OR status = $1)
-                 AND ($2::text IS NULL OR doc->>'facilityId' = $2)"#,
+                 AND ($2::text IS NULL OR doc->'facility'->>'value' = $2)"#,
         )
         .bind(status.map(|s| s.to_string()))
         .bind(facility_id)

@@ -28,7 +28,7 @@ use uuid::Uuid;
 use dpp_dal::pg::{PgApiKeyRepo, PgAuditRepo, PgDal, PgPassportRepo, sqlx};
 use dpp_domain::{
     domain::{
-        passport::{ManufacturerInfo, Passport, PassportId},
+        passport::{FacilitySnapshot, ManufacturerInfo, Passport, PassportId},
         sector::Sector,
         status::PassportStatus,
     },
@@ -126,7 +126,19 @@ fn make_passport() -> Passport {
         retention_until: None,
         product_id: None,
         operator_identifier: None,
-        facility_id: None,
+        facility: None,
+    }
+}
+
+/// Build a facility snapshot carrying `value` (other fields are placeholders) for
+/// the ADR-006 grouping-filter test.
+fn facility_with_value(value: &str) -> FacilitySnapshot {
+    FacilitySnapshot {
+        scheme: "gln".into(),
+        value: value.into(),
+        name: "Test Facility".into(),
+        country: "DE".into(),
+        address: None,
     }
 }
 
@@ -164,12 +176,12 @@ async fn t1b_list_and_count_filter_by_facility_id() {
     let repo = PgPassportRepo::new(pg.dal.clone());
 
     let mut a = make_passport();
-    a.facility_id = Some("4012345000009".into());
+    a.facility = Some(facility_with_value("4012345000009"));
     repo.create(a).await.expect("create a");
 
     let mut b = make_passport();
     b.product_name = "PG Parity Battery (other facility)".into();
-    b.facility_id = Some("4000001000005".into());
+    b.facility = Some(facility_with_value("4000001000005"));
     repo.create(b).await.expect("create b");
 
     let mut c = make_passport();
@@ -182,7 +194,10 @@ async fn t1b_list_and_count_filter_by_facility_id() {
         .expect("list filtered by facility");
     assert_eq!(for_facility_a.len(), 1);
     assert_eq!(
-        for_facility_a[0].facility_id.as_deref(),
+        for_facility_a[0]
+            .facility
+            .as_ref()
+            .map(|f| f.value.as_str()),
         Some("4012345000009")
     );
     assert_eq!(

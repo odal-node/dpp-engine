@@ -37,6 +37,8 @@ Migrations are SQL files in `ops/pg/`, applied apply-once with checksums via `sq
 | `0010_grants.sql` | role grants for `odal_app` | — |
 | `0011_public_jws_mutable.sql` | adds `publicJwsSignature` to the retention guard's mutable-field whitelist | `odal` |
 | `0012_registry_identity_grants.sql` | `DELETE` grants for `facility` / `operator_identifier` (control-plane management) | `odal` |
+| `0013_facility_retire.sql` | facility soft-delete (`retiredAt` + partial unique), revoke facility `DELETE`, append-only `registry_identity_audit` | `odal` |
+| `0014_operator_identifier_retire.sql` | operator-identifier soft-delete (`retiredAt` + partial unique), revoke its `DELETE` | `odal` |
 
 Graph tables (component/material/supplier modelling) are deliberately absent — Phase 2, when that model is designed.
 
@@ -82,8 +84,9 @@ Normalised economic operator identifiers (VAT, EORI, LEI). One operator can have
 | `label` | string | Human-readable label |
 | `isPrimary` | bool | Whether this is the primary identifier |
 | `createdAt` | datetime | |
+| `retiredAt` | datetime | nullable; set = soft-deleted. Like facilities, the value is stamped by value onto immutable passports (Art. 13), so the row is never hard-deleted. `DELETE` is revoked for the app role (0014). |
 
-**Indexes:** `idx_opident_unique` UNIQUE on `(operatorId, scheme, value)`.
+**Indexes:** `uq_operator_identifier_live` UNIQUE on `(operatorId, scheme, value)` **where `retiredAt IS NULL`** — a retired identifier can be re-registered.
 
 ### 3.3 facility
 
@@ -100,8 +103,23 @@ ESPR Annex III facility records (first paragraph, point (i): unique facility ide
 | `isDefault` | bool | Default facility for new passports |
 | `createdAt` | datetime | |
 | `updatedAt` | datetime | |
+| `retiredAt` | datetime | nullable; set = soft-deleted. Facilities are **never** hard-deleted — their identifier is stamped by value onto immutable passports, so the row is kept as Annex III provenance. `DELETE` is revoked for the app role (0013). |
 
-**Indexes:** `idx_facility_ident` UNIQUE on `(identifierScheme, identifierValue)`.
+**Indexes:** `uq_facility_identifier_live` UNIQUE on `(identifierScheme, identifierValue)` **where `retiredAt IS NULL`** — two *live* facilities cannot share an identifier, but a retired one can be re-registered.
+
+### 3.3a registry_identity_audit
+
+Append-only trail of facility (Annex III) and operator-identifier (Art. 13) mutations, so the operator can prove what their registry-identity set was when any passport was published. Immutable by trigger (`ODAL_AUDIT`), like `passport_audit`.
+
+| Field | Type | Notes |
+|---|---|---|
+| `operatorId` | string | node provenance identity |
+| `entityType` | string | `facility` \| `operator_identifier` |
+| `entityId` | uuid | the facility / identifier acted on |
+| `action` | string | `added` \| `retired` \| `set_default` \| `set_primary` |
+| `actor` | string | `user_id` from the auth context |
+| `snapshot` | object | nullable, the full record at the time of the action |
+| `ts` | datetime | |
 
 ### 3.4 api_key
 
@@ -137,7 +155,7 @@ The core DPP record. Contains all product data, sector-specific extensions, and 
 | `repairabilityScore` | float | nullable |
 | `sectorData` | object | Sector-specific extension data |
 | `batchId` | string | nullable |
-| `facilityId` | string | nullable, the facility *identifier value* (e.g. GLN), stamped from the `isDefault` facility on create — **not** a row FK; it is the Annex III unique facility identifier the DPP must carry permanently, retained even if the facility row is later deleted |
+| `facility` | object | nullable, a self-contained **snapshot** `{ scheme, value, name, country, address }` of the Annex III facility, copied by value from the `isDefault` facility on create — **not** a row FK. The passport carries the full descriptor permanently, so a published DPP stays complete even if the source facility row is later retired. The `facilityId` list/count filter matches `facility.value`. |
 | `digitalLinkUrl` | string | nullable, GS1 Digital Link |
 | `complianceResult` | object | nullable, compliance check output |
 | `retentionLocked` | bool | Set true on publish, never cleared |

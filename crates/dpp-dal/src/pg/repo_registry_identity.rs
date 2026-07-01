@@ -9,7 +9,9 @@ use sqlx::Row;
 use uuid::Uuid;
 
 use dpp_domain::DppError;
-use dpp_types::registry_identity::{Facility, OperatorIdentifier, RegistryIdentityRepository};
+use dpp_types::registry_identity::{
+    Facility, OperatorIdentifier, RegistryIdentityAudit, RegistryIdentityRepository,
+};
 
 use super::{PgDal, db_err};
 
@@ -58,6 +60,19 @@ impl PgRegistryIdentityRepo {
             created_at: r.get("created_at"),
         }
     }
+
+    fn registry_audit_from_row(r: &sqlx::postgres::PgRow) -> RegistryIdentityAudit {
+        RegistryIdentityAudit {
+            id: r.get("id"),
+            operator_id: r.get("operator_id"),
+            entity_type: r.get("entity_type"),
+            entity_id: r.get("entity_id"),
+            action: r.get("action"),
+            actor: r.get("actor"),
+            snapshot: r.get("snapshot"),
+            ts: r.get("ts"),
+        }
+    }
 }
 
 #[async_trait]
@@ -68,7 +83,7 @@ impl RegistryIdentityRepository for PgRegistryIdentityRepo {
         let rows = sqlx::query(
             "SELECT id, name, identifier_scheme, identifier_value, country, address, \
                     is_default, created_at \
-             FROM odal.facility WHERE operator_id = $1 \
+             FROM odal.facility WHERE operator_id = $1 AND retired_at IS NULL \
              ORDER BY is_default DESC, created_at DESC",
         )
         .bind(operator_id)
@@ -120,37 +135,56 @@ impl RegistryIdentityRepository for PgRegistryIdentityRepo {
     }
 
     async fn set_default_facility(&self, operator_id: &str, id: Uuid) -> Result<bool, DppError> {
-        // One statement flips the chosen row to default and all others off.
+        // One statement flips the chosen row to default and all other live rows
+        // off. Retired facilities are excluded so a retired row can never carry
+        // the default flag and can never be re-defaulted.
         let res = sqlx::query(
             "UPDATE odal.facility SET is_default = (id = $2), updated_at = now() \
-             WHERE operator_id = $1",
+             WHERE operator_id = $1 AND retired_at IS NULL",
         )
         .bind(operator_id)
         .bind(id)
         .execute(self.dal.pool())
         .await
         .map_err(db_err)?;
-        // rows_affected counts every facility; confirm the target actually exists.
+        // rows_affected counts every live facility; confirm the target is live.
         if res.rows_affected() == 0 {
             return Ok(false);
         }
-        let exists = sqlx::query("SELECT 1 FROM odal.facility WHERE operator_id = $1 AND id = $2")
-            .bind(operator_id)
-            .bind(id)
-            .fetch_optional(self.dal.pool())
-            .await
-            .map_err(db_err)?;
+        let exists = sqlx::query(
+            "SELECT 1 FROM odal.facility \
+             WHERE operator_id = $1 AND id = $2 AND retired_at IS NULL",
+        )
+        .bind(operator_id)
+        .bind(id)
+        .fetch_optional(self.dal.pool())
+        .await
+        .map_err(db_err)?;
         Ok(exists.is_some())
     }
 
-    async fn delete_facility(&self, operator_id: &str, id: Uuid) -> Result<bool, DppError> {
-        let res = sqlx::query("DELETE FROM odal.facility WHERE operator_id = $1 AND id = $2")
-            .bind(operator_id)
-            .bind(id)
-            .execute(self.dal.pool())
-            .await
-            .map_err(db_err)?;
-        Ok(res.rows_affected() > 0)
+    async fn retire_facility(
+        &self,
+        operator_id: &str,
+        id: Uuid,
+    ) -> Result<Option<Facility>, DppError> {
+        // Soft-delete: the row is Annex III provenance referenced by value from
+        // immutable passports, so it is never removed — only marked retired and
+        // stripped of its default flag. A DB DELETE would fail anyway (grant
+        // revoked in 0013); this UPDATE is the sole retirement path.
+        let row = sqlx::query(
+            "UPDATE odal.facility \
+             SET retired_at = now(), is_default = false, updated_at = now() \
+             WHERE operator_id = $1 AND id = $2 AND retired_at IS NULL \
+             RETURNING id, name, identifier_scheme, identifier_value, country, address, \
+                       is_default, created_at",
+        )
+        .bind(operator_id)
+        .bind(id)
+        .fetch_optional(self.dal.pool())
+        .await
+        .map_err(db_err)?;
+        Ok(row.as_ref().map(Self::facility_from_row))
     }
 
     // ── Operator identifiers ─────────────────────────────────────────────────
@@ -161,7 +195,7 @@ impl RegistryIdentityRepository for PgRegistryIdentityRepo {
     ) -> Result<Vec<OperatorIdentifier>, DppError> {
         let rows = sqlx::query(
             "SELECT id, scheme, value, label, is_primary, created_at \
-             FROM odal.operator_identifier WHERE operator_id = $1 \
+             FROM odal.operator_identifier WHERE operator_id = $1 AND retired_at IS NULL \
              ORDER BY is_primary DESC, created_at DESC",
         )
         .bind(operator_id)
@@ -214,8 +248,11 @@ impl RegistryIdentityRepository for PgRegistryIdentityRepo {
         operator_id: &str,
         id: Uuid,
     ) -> Result<bool, DppError> {
+        // Flip the chosen live row to primary and all other live rows off; retired
+        // rows are excluded so a retired identifier can never carry the primary flag.
         let res = sqlx::query(
-            "UPDATE odal.operator_identifier SET is_primary = (id = $2) WHERE operator_id = $1",
+            "UPDATE odal.operator_identifier SET is_primary = (id = $2) \
+             WHERE operator_id = $1 AND retired_at IS NULL",
         )
         .bind(operator_id)
         .bind(id)
@@ -226,7 +263,8 @@ impl RegistryIdentityRepository for PgRegistryIdentityRepo {
             return Ok(false);
         }
         let exists = sqlx::query(
-            "SELECT 1 FROM odal.operator_identifier WHERE operator_id = $1 AND id = $2",
+            "SELECT 1 FROM odal.operator_identifier \
+             WHERE operator_id = $1 AND id = $2 AND retired_at IS NULL",
         )
         .bind(operator_id)
         .bind(id)
@@ -236,18 +274,66 @@ impl RegistryIdentityRepository for PgRegistryIdentityRepo {
         Ok(exists.is_some())
     }
 
-    async fn delete_operator_identifier(
+    async fn retire_operator_identifier(
         &self,
         operator_id: &str,
         id: Uuid,
-    ) -> Result<bool, DppError> {
-        let res =
-            sqlx::query("DELETE FROM odal.operator_identifier WHERE operator_id = $1 AND id = $2")
-                .bind(operator_id)
-                .bind(id)
-                .execute(self.dal.pool())
-                .await
-                .map_err(db_err)?;
-        Ok(res.rows_affected() > 0)
+    ) -> Result<Option<OperatorIdentifier>, DppError> {
+        // Soft-delete: the value is stamped by value onto immutable passports
+        // (Art. 13), so the row is preserved as provenance — only marked retired
+        // and stripped of its primary flag. A DB DELETE would fail anyway (grant
+        // revoked in 0014); this UPDATE is the sole retirement path.
+        let row = sqlx::query(
+            "UPDATE odal.operator_identifier SET retired_at = now(), is_primary = false \
+             WHERE operator_id = $1 AND id = $2 AND retired_at IS NULL \
+             RETURNING id, scheme, value, label, is_primary, created_at",
+        )
+        .bind(operator_id)
+        .bind(id)
+        .fetch_optional(self.dal.pool())
+        .await
+        .map_err(db_err)?;
+        Ok(row.as_ref().map(Self::operator_id_from_row))
+    }
+
+    // ── Registry-identity audit (append-only) ────────────────────────────────
+
+    async fn append_audit(&self, entry: RegistryIdentityAudit) -> Result<(), DppError> {
+        sqlx::query(
+            "INSERT INTO odal.registry_identity_audit \
+               (id, operator_id, entity_type, entity_id, action, actor, snapshot, ts) \
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8)",
+        )
+        .bind(entry.id)
+        .bind(&entry.operator_id)
+        .bind(&entry.entity_type)
+        .bind(entry.entity_id)
+        .bind(&entry.action)
+        .bind(&entry.actor)
+        .bind(&entry.snapshot)
+        .bind(entry.ts)
+        .execute(self.dal.pool())
+        .await
+        .map_err(db_err)?;
+        Ok(())
+    }
+
+    async fn list_registry_audit(
+        &self,
+        entity_type: &str,
+        entity_id: Uuid,
+    ) -> Result<Vec<RegistryIdentityAudit>, DppError> {
+        let rows = sqlx::query(
+            "SELECT id, operator_id, entity_type, entity_id, action, actor, snapshot, ts \
+             FROM odal.registry_identity_audit \
+             WHERE entity_type = $1 AND entity_id = $2 \
+             ORDER BY ts ASC",
+        )
+        .bind(entity_type)
+        .bind(entity_id)
+        .fetch_all(self.dal.pool())
+        .await
+        .map_err(db_err)?;
+        Ok(rows.iter().map(Self::registry_audit_from_row).collect())
     }
 }
