@@ -17,7 +17,7 @@
 ARG BUILD_MODE=published
 
 # ── Build deps shared by both modes ─────────────────────────────────────────────
-FROM rust:1.90-slim-bookworm AS builder-base
+FROM rust:1.96-slim-bookworm AS builder-base
 RUN apt-get update && apt-get install -y --no-install-recommends \
     pkg-config libssl-dev \
     && rm -rf /var/lib/apt/lists/*
