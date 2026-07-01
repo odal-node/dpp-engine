@@ -29,5 +29,11 @@ console     = { workspace = true }
 rfd         = { workspace = true }
 dirs        = { workspace = true }
 
+# Forces wayland-client's "dlopen" feature (see workspace Cargo.toml) on the
+# same targets rfd's ashpd backend compiles for, so the wayland-sys build
+# script never probes pkg-config for wayland-client.pc.
+[target.'cfg(any(target_os = "linux", target_os = "freebsd", target_os = "dragonfly", target_os = "netbsd", target_os = "openbsd"))'.dependencies]
+wayland-client = { workspace = true }
+
 [dev-dependencies]
 tempfile    = "3"

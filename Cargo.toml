@@ -122,6 +122,13 @@ console      = "0.15"
 # Native OS file picker for `Passports › Import`. `xdg-portal` (not gtk3) keeps
 # Linux/Docker builds free of GTK dev libs; native backends used on Win/macOS.
 rfd          = { version = "0.15", default-features = false, features = ["tokio", "xdg-portal", "common-controls-v6"] }
+# ashpd (rfd's xdg-portal backend) pulls in wayland-client on Linux/BSD. Force
+# "dlopen" so wayland-sys loads libwayland-client.so at runtime instead of
+# requiring wayland-client.pc + headers at build time (CI/Docker images don't
+# have them). This is a feature-unification-only dep — cli/Cargo.toml pulls it
+# in on the same targets ashpd does; see wayland-sys's build.rs, which skips
+# its pkg-config probe entirely once CARGO_FEATURE_DLOPEN is set.
+wayland-client = { version = "0.31", features = ["dlopen"] }
 dirs         = "5"
 
 # Integration tests
