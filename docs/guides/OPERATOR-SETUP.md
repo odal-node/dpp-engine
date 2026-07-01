@@ -74,6 +74,13 @@ address, contact email). This is the EU responsible-economic-operator identity
 and is **required before you can publish** — the node refuses to publish until it
 is complete. It is editable any time via **Operator › Edit** (`odal operator set`).
 
+Before your first publish, also register at least one **facility** and one
+**operator identifier** — see [Facility & operator identifier
+management](#facility--operator-identifier-management) below. Unlike operator
+identity, these are not currently a hard publish gate, but they're what
+satisfies ESPR Annex III (unique facility identifier) and Art. 13 (economic-
+operator identifier) on every passport you create afterwards.
+
 After setup, the Console drops into its normal top-level menu.
 
 ---
@@ -128,6 +135,7 @@ From the Console you can:
 - **Passports** — import, validate, publish, suspend, archive, export
 - **Operator** — view or update your operator profile
 - **API keys** — create, list, revoke
+- **Registry identity** — facilities (ESPR Annex III) and operator identifiers (ESPR Art. 13)
 - **Schema** — check for sector-schema updates
 
 ---
@@ -161,6 +169,11 @@ odal --profile prod bootstrap \
 odal --profile prod operator set \
   --legal-name "Acme GmbH" --country DE \
   --address "1 Allee, Berlin" --contact-email ops@acme.example
+odal --profile prod facility add \
+  --name "Berlin Plant" --scheme gln --value 4012345000009 \
+  --country DE --default
+odal --profile prod operator-id add \
+  --scheme vat --value DE123456789 --primary
 ```
 
 In CI you can skip the files entirely and pass everything via the environment —
@@ -187,6 +200,36 @@ To rotate the primary key:
 2. Save it to the active profile in `~/.config/odal/credentials.toml` (or re-run
    `odal --reconfigure` and paste it).
 3. Revoke the old key.
+
+---
+
+## Facility & operator identifier management
+
+Every passport carries a facility identifier (ESPR Annex III) and a
+responsible-operator identifier (ESPR Art. 13). Whichever facility is marked
+**default** and whichever operator identifier is marked **primary** are
+stamped onto new passports automatically at create time — live, so a change
+here takes effect immediately with no node restart. Management is
+admin-scoped (a least-privilege API key cannot mutate it). You can also drive
+all of this from the Console: **Registry identity** in the top-level menu.
+
+```sh
+# Facilities (e.g. manufacturing sites, identified by GS1 GLN)
+odal facility list                                   # configured facilities (default marked *)
+odal facility add --name "Berlin Plant" --scheme gln \
+  --value 4012345000009 --country DE --default       # add + make default
+odal facility set-default <id>                       # switch which facility is default
+odal facility remove <id>                             # remove a facility
+
+# Operator identifiers (e.g. VAT, LEI, EORI, DUNS)
+odal operator-id list                                 # configured identifiers (primary marked *)
+odal operator-id add --scheme vat --value DE123456789 --primary
+odal operator-id set-primary <id>                     # switch which identifier is primary
+odal operator-id remove <id>                          # remove an identifier
+```
+
+An operator can register multiple facilities and identifiers — this is
+grouping/attribution, never a tenancy or isolation boundary (see ADR-006).
 
 ---
 
@@ -244,4 +287,5 @@ location / {
 | `odal status` shows vault healthy but identity unhealthy | Identity sub-router not responding | Check node logs: `docker compose logs node` |
 | `odal bootstrap` fails with 401 | Wrong `ADMIN_USERNAME`/`ADMIN_PASSWORD` | Verify against `.env`; re-run setup |
 | API key rejected after update | Old key in config | Run `odal --reconfigure` and re-enter the new key |
+| `odal facility add` fails with 422 | Bad GS1 GLN check digit, or facility management attempted with a non-admin key | Verify the GLN; confirm you're using an admin-scoped key |
 | DID document not publicly reachable | Proxy not configured or domain not resolving | Verify reverse proxy config and DNS |

@@ -165,6 +165,25 @@ odal passport publish                # sign + publish (mints GS1 Digital Link / 
 | `odal key create <name>` | Mint API key (secret shown once) | API key |
 | `odal key list` | List API keys (prefix only) | API key |
 | `odal key revoke <id>` | Deactivate an API key | API key |
+| `odal key use <secret>` | Adopt an existing `odal_sk_…` secret as this profile's credential | none |
+
+### Facilities & operator identifiers
+
+Facilities (ESPR Annex III) and operator identifiers (ESPR Art. 13) are
+stamped onto new passports live from whichever is marked default/primary — no
+node restart needed after a change. Management is admin-scoped (a
+least-privilege key cannot mutate the operator's registry identity).
+
+| Command | Purpose | Auth |
+|---|---|---|
+| `odal facility list` | List configured facilities (default marked `*`) | API key (Admin) |
+| `odal facility add --name --scheme --value --country [--address] [--default]` | Add a facility (e.g. a GLN) | API key (Admin) |
+| `odal facility set-default <id>` | Make a facility the default (stamped on new passports) | API key (Admin) |
+| `odal facility remove <id>` | Remove a facility | API key (Admin) |
+| `odal operator-id list` | List configured operator identifiers (primary marked `*`) | API key (Admin) |
+| `odal operator-id add --scheme --value [--label] [--primary]` | Add an operator identifier (e.g. VAT, LEI) | API key (Admin) |
+| `odal operator-id set-primary <id>` | Make an identifier the primary (stamped on new passports) | API key (Admin) |
+| `odal operator-id remove <id>` | Remove an operator identifier | API key (Admin) |
 
 ### Profiles / environments
 
@@ -181,6 +200,7 @@ odal passport publish                # sign + publish (mints GS1 Digital Link / 
 
 | Command | Purpose | Auth |
 |---|---|---|
+| `odal passport list [--status] [--q] [--facility-id] [--limit] [--json]` | List/search passports (optionally filtered to one facility) | API key |
 | `odal passport import <file>` | Create draft passports from CSV/TSV/JSON | API key |
 | `odal passport validate` | Check drafts for required fields | API key |
 | `odal passport publish [id]` | Sign + publish all drafts (or one) | API key |
