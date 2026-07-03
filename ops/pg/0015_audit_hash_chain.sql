@@ -1,5 +1,5 @@
 -- ============================================================================
--- 0015 — audit hash chain (N-1): tamper-evident per-passport audit log.
+-- 0015 — audit hash chain: tamper-evident per-passport audit log.
 --
 -- `entry_hash` = SHA-256 over the JCS-canonicalised content of the entry folded
 -- with `prev_hash`; `prev_hash` links to the predecessor entry's `entry_hash`

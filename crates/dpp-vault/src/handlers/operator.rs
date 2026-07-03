@@ -25,7 +25,7 @@ pub async fn operator_get_handler(State(state): State<AppState>) -> impl IntoRes
 
 /// `PATCH /api/v1/operator` — merge-patch the node's operator config.
 ///
-/// N-2: mutating operator identity/branding is an administrative action, so a
+/// Mutating operator identity/branding is an administrative action, so a
 /// least-privilege key is rejected with 403. (`GET` stays available to any
 /// authenticated caller.)
 pub async fn operator_patch_handler(

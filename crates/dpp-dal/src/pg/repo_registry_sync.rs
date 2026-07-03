@@ -12,12 +12,12 @@ use sqlx::Row;
 use uuid::Uuid;
 
 use dpp_domain::{
-    domain::passport::{Passport, PassportId},
     DppError,
+    domain::passport::{Passport, PassportId},
 };
 use dpp_types::{RegistrySyncCounts, RegistrySyncOutbox, RegistrySyncRow, RegistrySyncStatus};
 
-use super::{db_err, repo_passport::update_passport_in_tx, PgDal};
+use super::{PgDal, db_err, repo_passport::update_passport_in_tx};
 
 /// PostgreSQL implementation of [`RegistrySyncOutbox`].
 pub struct PgRegistrySyncRepo {
@@ -73,7 +73,7 @@ impl RegistrySyncOutbox for PgRegistrySyncRepo {
         status: RegistrySyncStatus,
     ) -> Result<(), DppError> {
         // Upsert so a passport published before the outbox existed still gets a
-        // row. Status-push to the registry is Phase B (no port method yet); this
+        // row. Status-push to the registry has no port method yet; this
         // records the intent durably in the meantime.
         sqlx::query(
             r#"INSERT INTO odal.registry_sync (passport_id, status, updated_at)

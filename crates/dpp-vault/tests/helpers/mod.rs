@@ -64,10 +64,10 @@ impl AuthProvider for TestAuthProvider {
         let claims: serde_json::Value = serde_json::from_slice(&payload)
             .map_err(|_| AuthError::Invalid("payload is not valid JSON".to_owned()))?;
 
-        if let Some(exp) = claims.get("exp").and_then(|v| v.as_i64()) {
-            if chrono::Utc::now().timestamp() > exp {
-                return Err(AuthError::Invalid("token expired".to_owned()));
-            }
+        if let Some(exp) = claims.get("exp").and_then(|v| v.as_i64())
+            && chrono::Utc::now().timestamp() > exp
+        {
+            return Err(AuthError::Invalid("token expired".to_owned()));
         }
         if claims
             .get("operator_suspended")
@@ -77,7 +77,7 @@ impl AuthProvider for TestAuthProvider {
             return Err(AuthError::Suspended);
         }
 
-        // Honour an optional `scope` claim (N-2): tests that omit it get Admin so
+        // Honour an optional `scope` claim: tests that omit it get Admin so
         // existing lifecycle/key tests retain full access; `make_jwt_scoped` can
         // mint a least-privilege principal to drive the scope-enforcement PoC.
         let scope = claims
@@ -389,7 +389,7 @@ pub fn make_jwt(operator_id: &str) -> String {
 }
 
 /// Like [`make_jwt`] but carries a `scope` claim (`"admin"`/`"write"`/`"read"`)
-/// so integration tests can drive the N-2 scope-enforcement paths.
+/// so integration tests can drive the scope-enforcement paths.
 pub fn make_jwt_scoped(operator_id: &str, scope: &str) -> String {
     let header =
         base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(r#"{"alg":"HS256","typ":"JWT"}"#);

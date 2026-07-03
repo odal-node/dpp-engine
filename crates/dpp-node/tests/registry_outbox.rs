@@ -1,4 +1,4 @@
-//! Integration test: the registry-sync **transactional outbox** (chunk 02).
+//! Integration test: the registry-sync **transactional outbox**.
 //!
 //! Proves the sentence in `ops/pg/0006_registry_sync.sql` — "written in the
 //! publish transaction; drained with backoff" — is now true in code:
@@ -16,19 +16,20 @@
 
 #![cfg(feature = "integration-tests")]
 
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use async_trait::async_trait;
 use chrono::Utc;
 use testcontainers::{
-    core::{ports::ContainerPort, WaitFor},
-    runners::AsyncRunner,
     GenericImage, ImageExt,
+    core::{WaitFor, ports::ContainerPort},
+    runners::AsyncRunner,
 };
 
-use dpp_dal::pg::{sqlx, PgDal, PgPassportRepo, PgRegistrySyncRepo};
+use dpp_dal::pg::{PgDal, PgPassportRepo, PgRegistrySyncRepo, sqlx};
 use dpp_domain::{
+    DppError,
     domain::{
         passport::{ManufacturerInfo, Passport, PassportId},
         sector::Sector,
@@ -41,7 +42,6 @@ use dpp_domain::{
             RegistrySyncPort,
         },
     },
-    DppError,
 };
 use dpp_node::infra::registry_drain::drain_once;
 use dpp_types::{RegistrySyncOutbox, RegistrySyncStatus};
@@ -221,7 +221,10 @@ async fn publish_is_atomic_idempotent_and_drains_exactly_once() {
     );
     let row = outbox.pending_for(id).await.unwrap().expect("outbox row");
     assert_eq!(row.status, RegistrySyncStatus::Pending);
-    assert!(row.payload.is_some(), "row carries the registration payload");
+    assert!(
+        row.payload.is_some(),
+        "row carries the registration payload"
+    );
 
     // Idempotency: a re-published passport does not create a second row.
     let mut again = draft_passport();
@@ -241,7 +244,10 @@ async fn publish_is_atomic_idempotent_and_drains_exactly_once() {
     assert_eq!(after.status, RegistrySyncStatus::Registered);
     assert_eq!(after.registry_id.as_deref(), Some("EU-REG-TEST-0001"));
 
-    assert!(outbox.due(50).await.unwrap().is_empty(), "registered row not due");
+    assert!(
+        outbox.due(50).await.unwrap().is_empty(),
+        "registered row not due"
+    );
     let s2 = drain_once(&outbox, &port, 50).await;
     assert_eq!(s2.registered, 0);
     assert_eq!(calls.load(Ordering::SeqCst), 1, "registered exactly once");
@@ -262,7 +268,10 @@ async fn drain_backs_off_on_transient_and_marks_terminal_rejection() {
     let row = outbox.pending_for(transient_id).await.unwrap().unwrap();
     assert_eq!(row.status, RegistrySyncStatus::Pending);
     assert_eq!(row.attempts, 1);
-    assert!(row.next_attempt_at > Utc::now(), "backoff pushed retry into the future");
+    assert!(
+        row.next_attempt_at > Utc::now(),
+        "backoff pushed retry into the future"
+    );
     assert!(
         outbox.due(50).await.unwrap().is_empty(),
         "backed-off row is not immediately due again"

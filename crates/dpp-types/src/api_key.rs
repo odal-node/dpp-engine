@@ -6,7 +6,7 @@ use dpp_domain::DppError;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-/// Authorization scope granted to an API key (N-2).
+/// Authorization scope granted to an API key.
 ///
 /// Before scopes, every key was implicitly full-admin: a single leaked key could
 /// mint further keys (persistence) and revoke the operator's own keys (lockout).
@@ -87,7 +87,7 @@ pub struct ApiKey {
     pub key_prefix: String,
     /// Whether the key can currently be used for authentication.
     pub is_active: bool,
-    /// Authorization scope (N-2). Defaults to `Admin` for pre-scope keys.
+    /// Authorization scope. Defaults to `Admin` for pre-scope keys.
     #[serde(default)]
     pub scope: ApiKeyScope,
     /// When the key was issued.
@@ -127,7 +127,7 @@ pub struct CreateApiKeyRequest {
     pub name: String,
     /// Optional hard expiry date. `None` = never expires.
     pub expires_at: Option<DateTime<Utc>>,
-    /// Scope to grant (N-2). Omitted = `Admin` (backward compatible). Set
+    /// Scope to grant. Omitted = `Admin` (backward compatible). Set
     /// `"write"` or `"read"` for least-privilege integration keys.
     #[serde(default)]
     pub scope: Option<ApiKeyScope>,

@@ -2,9 +2,7 @@
 
 use std::sync::Arc;
 
-use axum::{
-    Router, extract::DefaultBodyLimit, middleware, response::Json, routing::get,
-};
+use axum::{Router, extract::DefaultBodyLimit, middleware, response::Json, routing::get};
 use tower_http::{
     catch_panic::CatchPanicLayer,
     request_id::{PropagateRequestIdLayer, SetRequestIdLayer},
@@ -68,14 +66,14 @@ pub fn build(
         .layer(middleware::from_fn(inject_request_id))
         .layer(PropagateRequestIdLayer::x_request_id())
         .layer(SetRequestIdLayer::x_request_id(UuidRequestId))
-        // N-6: turn any handler panic into a clean 500 instead of a dropped
+        // Turn any handler panic into a clean 500 instead of a dropped
         // connection. The node fuses vault + identity + integrator in one
         // process, so a panic-to-500 net is worth the outermost layer.
         .layer(CatchPanicLayer::new())
 }
 
-/// Node health with the ghost-honesty trust report (chunk 03) and the active
-/// Compliance Current ruleset version (N-2), so no surface can present a
+/// Node health with the ghost-honesty trust report and the active
+/// Compliance Current ruleset version, so no surface can present a
 /// placeholder as real and the ruleset a passport was validated against is
 /// observable ("provably more current than a fork").
 pub fn node_health(
@@ -86,10 +84,10 @@ pub fn node_health(
         "status": "ok",
         "ruleset": { "version": active_ruleset.version() },
     });
-    if let serde_json::Value::Object(map) = &mut body {
-        if let serde_json::Value::Object(t) = trust.health_json() {
-            map.extend(t);
-        }
+    if let serde_json::Value::Object(map) = &mut body
+        && let serde_json::Value::Object(t) = trust.health_json()
+    {
+        map.extend(t);
     }
     Json(body)
 }
@@ -104,8 +102,16 @@ mod tests {
         let report = NodeTrustReport::new(
             NodeProfile::Development,
             vec![
-                TrustPort { port: "seal", mode: TrustMode::Ghost, required: true },
-                TrustPort { port: "registry_sync", mode: TrustMode::Sandbox, required: true },
+                TrustPort {
+                    port: "seal",
+                    mode: TrustMode::Ghost,
+                    required: true,
+                },
+                TrustPort {
+                    port: "registry_sync",
+                    mode: TrustMode::Sandbox,
+                    required: true,
+                },
             ],
         );
         let ruleset = ActiveRuleset::baseline();
@@ -117,4 +123,3 @@ mod tests {
         assert_eq!(body["ruleset"]["version"], "baseline");
     }
 }
-

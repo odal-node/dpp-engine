@@ -13,7 +13,7 @@ use crate::{middleware::auth::AuthContext, state::AppState};
 
 use super::error::{api_error, internal_error};
 
-/// N-2: key management is an administrative action. A least-privilege
+/// Key management is an administrative action. A least-privilege
 /// (`write`/`read`) key must not be able to mint further keys (persistence) or
 /// revoke the operator's own keys (lockout). Returns a 403 response to short-
 /// circuit the handler when the caller is not admin-scoped.
@@ -120,7 +120,7 @@ pub async fn api_keys_delete_handler(
 
 #[cfg(test)]
 mod tests {
-    //! N-2 regression: API-key management must require an admin-scoped
+    //! Regression guard: API-key management must require an admin-scoped
     //! credential, so a leaked least-privilege key cannot mint or revoke keys.
     use super::*;
     use dpp_types::api_key::ApiKeyScope;

@@ -81,7 +81,7 @@ services:
       - path: ../.env
         required: false
     environment:
-      # postgres connection for the app role (RLS-bound, non-superuser).
+      # postgres connection for the app role (single-tenant, non-superuser; no RLS — ADR-005).
       DATABASE_URL: postgres://odal_app:${DATABASE_APP_PASS:?DATABASE_APP_PASS must be set in .env}@postgres:5432/odal
       # Privileged URL used at startup to run sqlx migrations (postgres superuser).
       # Remove once migrations are managed externally via `just migrate`.

@@ -52,10 +52,7 @@ async fn publish_is_blocked_without_annexiii_identity_then_backfills() {
     let pg = start_postgres().await;
     seed_operator_config(&pg.dal).await; // operator config only — no facility yet
     let vault_url = start_vault(pg.dal.clone()).await;
-    let client = TestClient::new(
-        &vault_url,
-        &make_jwt("00000000-0000-0000-0000-000000000001"),
-    );
+    let client = TestClient::new(&vault_url, make_jwt("00000000-0000-0000-0000-000000000001"));
 
     // Create a battery passport while no default facility/identifier is configured.
     let resp = client.post_json("/api/v1/dpp", battery_body()).await;
@@ -102,10 +99,7 @@ async fn default_facility_cannot_be_retired_while_alternatives_exist() {
     let pg = start_postgres().await;
     seed_operator_config(&pg.dal).await;
     let vault_url = start_vault(pg.dal.clone()).await;
-    let client = TestClient::new(
-        &vault_url,
-        &make_jwt("00000000-0000-0000-0000-000000000001"),
-    );
+    let client = TestClient::new(&vault_url, make_jwt("00000000-0000-0000-0000-000000000001"));
 
     // Facility A (default) and B (secondary).
     let a = client
@@ -153,10 +147,7 @@ async fn sole_facility_can_be_retired_even_if_default() {
     let pg = start_postgres().await;
     seed_operator_config(&pg.dal).await;
     let vault_url = start_vault(pg.dal.clone()).await;
-    let client = TestClient::new(
-        &vault_url,
-        &make_jwt("00000000-0000-0000-0000-000000000001"),
-    );
+    let client = TestClient::new(&vault_url, make_jwt("00000000-0000-0000-0000-000000000001"));
 
     let f = client
         .post_json(
@@ -180,10 +171,7 @@ async fn facility_audit_endpoint_returns_the_trail() {
     let pg = start_postgres().await;
     seed_operator_config(&pg.dal).await;
     let vault_url = start_vault(pg.dal.clone()).await;
-    let client = TestClient::new(
-        &vault_url,
-        &make_jwt("00000000-0000-0000-0000-000000000001"),
-    );
+    let client = TestClient::new(&vault_url, make_jwt("00000000-0000-0000-0000-000000000001"));
 
     let f = client
         .post_json(

@@ -97,7 +97,7 @@ mod tests {
         assert!(!host.has_any_plugin());
     }
 
-    // N-1 regression: unsigned plugins must be refused at startup when a signing
+    // Regression guard: unsigned plugins must be refused at startup when a signing
     // key is absent — the fail-open "load any .wasm with only a warning" path is
     // closed. The policy is a pure function so it is testable without env races.
     #[test]
@@ -122,7 +122,7 @@ mod tests {
         assert!(ensure_signing_policy(false, 0, false).is_ok());
     }
 
-    // N-1 live PoC: drop an (unsigned) `.wasm` into PLUGINS_DIR with no signing
+    // Live PoC: drop an (unsigned) `.wasm` into PLUGINS_DIR with no signing
     // key configured and assert `boot()` itself refuses to start — the fail-open
     // "load any wasm with a warning" path is closed end-to-end, not just in the
     // policy helper. Relies on PLUGIN_SIGNING_KEY / ALLOW_UNSIGNED_PLUGINS being

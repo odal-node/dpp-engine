@@ -55,7 +55,7 @@ pub async fn resolve_qr_handler(
     State(state): State<AppState>,
     Path(dpp_id): Path<String>,
 ) -> impl IntoResponse {
-    // N-4: validate the id at the edge before it reaches a cache key or URL.
+    // Validate the id at the edge before it reaches a cache key or URL.
     if !crate::domain::is_valid_dpp_id(&dpp_id) {
         return (
             StatusCode::NOT_FOUND,

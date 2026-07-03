@@ -23,7 +23,7 @@ pub async fn resolve_json_handler(
     headers: HeaderMap,
     Path(dpp_id): Path<String>,
 ) -> impl IntoResponse {
-    // N-4: validate the id at the resolver's own edge before it touches a cache
+    // Validate the id at the resolver's own edge before it touches a cache
     // key or a server-to-server URL — do not rely on the vault for output safety.
     if !crate::domain::is_valid_dpp_id(&dpp_id) {
         return (

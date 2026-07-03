@@ -139,7 +139,7 @@ async fn main() -> anyhow::Result<()> {
     let cache =
         Cache::new(&cfg.redis_url, cfg.cache_ttl_secs).context("Failed to create Redis pool")?;
 
-    // N-5: SSRF hardening. The DID-fetch target is operator-config-bound today,
+    // SSRF hardening. The DID-fetch target is operator-config-bound today,
     // but disabling redirect-following means even a future change that lets
     // passport data influence the DID URL — or a malicious operator DID host —
     // cannot bounce the resolver into an internal service via a 30x redirect.

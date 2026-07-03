@@ -1,4 +1,4 @@
-//! N-2 live PoC: API-key scope enforcement against a real Postgres-backed vault.
+//! Live PoC: API-key scope enforcement against a real Postgres-backed vault.
 //!
 //! Proves end-to-end that a least-privilege (`write`) credential cannot escalate
 //! to administrative actions — it can neither mint API keys (persistence) nor
@@ -20,7 +20,7 @@ async fn write_scoped_credential_cannot_escalate() {
     let vault_url = start_vault(pg.dal.clone()).await;
 
     // The attacker holds a leaked least-privilege (write) key.
-    let attacker = TestClient::new(&vault_url, &make_jwt_scoped("op", "write"));
+    let attacker = TestClient::new(&vault_url, make_jwt_scoped("op", "write"));
 
     // 1) Persistence: cannot mint a new key.
     let mint = attacker
@@ -65,7 +65,7 @@ async fn write_scoped_credential_cannot_escalate() {
 async fn admin_can_mint_least_privilege_key_and_scope_round_trips() {
     let pg = start_postgres().await;
     let vault_url = start_vault(pg.dal.clone()).await;
-    let admin = TestClient::new(&vault_url, &make_jwt("op"));
+    let admin = TestClient::new(&vault_url, make_jwt("op"));
 
     // Admin mints a least-privilege integration key (the recommended posture).
     let create = admin

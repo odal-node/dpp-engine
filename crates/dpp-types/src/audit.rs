@@ -39,7 +39,7 @@ pub struct AuditEntry {
     pub metadata: Option<serde_json::Value>,
     /// Wall-clock timestamp of the operation (UUIDv7 source; sub-millisecond ordered).
     pub timestamp: DateTime<Utc>,
-    /// Hash-chain link to the previous entry in this passport's chain (N-1).
+    /// Hash-chain link to the previous entry in this passport's chain.
     /// `""`/`None` for the genesis entry. Set by the repo on append.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub prev_hash: Option<String>,
@@ -126,7 +126,7 @@ pub struct AuditChainBreak {
 /// tampered row). `Ok(())` means every link verifies.
 ///
 /// This detects any tamper that does not re-hash the *entire forward chain*;
-/// pinning the head with a signed checkpoint (the second half of N-1) is what
+/// pinning the head with a signed checkpoint is what
 /// makes a full re-hash detectable by a third party without DB access.
 ///
 /// # Errors

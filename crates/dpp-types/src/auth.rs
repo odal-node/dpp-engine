@@ -17,7 +17,7 @@ use crate::api_key::ApiKeyScope;
 pub struct AuthContext {
     /// Caller identity — API key id, username, or similar token principal.
     pub user_id: String,
-    /// Authorization scope of the credential (N-2). Admin Basic auth and
+    /// Authorization scope of the credential. Admin Basic auth and
     /// pre-scope API keys are `Admin`; least-privilege keys carry their stored
     /// scope. Handlers for key management and operator config require `Admin`.
     #[serde(default)]

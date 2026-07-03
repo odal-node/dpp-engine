@@ -11,7 +11,7 @@ pub struct Config {
     pub redis_url: String,
     /// Cache TTL in seconds (default: 30).
     ///
-    /// N-3: this is the worst-case window in which a *suspended/recalled*
+    /// This is the worst-case window in which a *suspended/recalled*
     /// passport can still be served from cache as a verified, active page,
     /// because the resolver caches the rendered response and the vault has no
     /// cross-service hook to evict it on suspend. A short default keeps that

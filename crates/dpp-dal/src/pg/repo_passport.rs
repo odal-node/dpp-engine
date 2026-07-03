@@ -1,4 +1,4 @@
-//! `PassportRepository` on PostgreSQL — document-style (D-1).
+//! `PassportRepository` on PostgreSQL — document-style.
 //!
 //! Single-tenant: one operator per node, no operator-isolation boundary and no
 //! `operator_id` column on the passport.

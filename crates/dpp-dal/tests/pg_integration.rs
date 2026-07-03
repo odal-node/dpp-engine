@@ -283,7 +283,7 @@ async fn t4_audit_append_only() {
     assert!(res.is_err(), "audit DELETE must be rejected by trigger");
 }
 
-// T7 — audit hash chain (N-1): a forward chain verifies; a tampered row is
+// T7 — audit hash chain: a forward chain verifies; a tampered row is
 // caught at the exact index. Tampering bypasses the append-only trigger the way
 // only a superuser could, proving the chain detects what the trigger can't.
 #[tokio::test]
@@ -306,7 +306,10 @@ async fn t7_audit_hash_chain_detects_tamper() {
     };
     audit.append(mk("created", "draft")).await.expect("a1");
     audit.append(mk("published", "active")).await.expect("a2");
-    audit.append(mk("suspended", "suspended")).await.expect("a3");
+    audit
+        .append(mk("suspended", "suspended"))
+        .await
+        .expect("a3");
 
     // (a) the intact forward chain verifies.
     assert!(

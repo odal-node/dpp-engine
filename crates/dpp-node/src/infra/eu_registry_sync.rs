@@ -18,11 +18,12 @@
 //!
 //! If the registry is unreachable (connection refused, DNS failure) the adapter
 //! returns an error. It does **not** fabricate a synthetic success: the
-//! transactional outbox (`dpp-types::RegistrySyncOutbox`, chunk 02) already
+//! transactional outbox (`dpp-types::RegistrySyncOutbox`) already
 //! guarantees no registration is lost — an unreachable registry simply leaves
 //! the outbox row `pending`, visibly, to be retried with backoff. Faking a
 //! `Pending` here would let the drain mark an unregistered passport
-//! "registered", which is exactly the ghost-as-real dishonesty chunk 03 forbids.
+//! "registered", which is exactly the ghost-as-real dishonesty the honesty
+//! invariant forbids.
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};

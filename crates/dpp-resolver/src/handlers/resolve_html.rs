@@ -18,7 +18,7 @@ pub async fn resolve_html_handler(
     State(state): State<AppState>,
     Path(dpp_id): Path<String>,
 ) -> impl IntoResponse {
-    // N-4: validate the id at the resolver's own edge before it touches a cache
+    // Validate the id at the resolver's own edge before it touches a cache
     // key, a server-to-server URL, or the rendered SVG/HTML — do not rely on the
     // vault for this surface's output safety.
     if !crate::domain::is_valid_dpp_id(&dpp_id) {
@@ -129,7 +129,7 @@ pub async fn resolve_html_handler(
                 HeaderValue::from_static("text/html; charset=utf-8"),
             ),
             (
-                // N-3: keep downstream/CDN caching within the recall-propagation
+                // Keep downstream/CDN caching within the recall-propagation
                 // window so a suspended passport is not pinned as active in an
                 // intermediary cache longer than the resolver's own TTL.
                 header::CACHE_CONTROL,
@@ -762,7 +762,7 @@ fn build_qr_svg(dpp_id: &str) -> String {
     }
 
     // Defense-in-depth: escape the URL in the SVG <title> text context. The id is
-    // already constrained to a UUID at the handler edge (N-4), so this is belt-and-
+    // already constrained to a UUID at the handler edge, so this is belt-and-
     // suspenders against any future change to how the URL is built.
     let title_url = esc(&url);
     format!(

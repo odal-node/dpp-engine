@@ -76,7 +76,7 @@ impl AuthProvider for ApiKeyAuthProvider {
 
         Ok(AuthContext {
             user_id: "api-key".to_owned(),
-            // N-2: carry the key's stored scope so admin-only routes can reject
+            // Carry the key's stored scope so admin-only routes can reject
             // least-privilege keys.
             scope: record.key.scope,
             // Carry the key id so the revoke handler can forbid a key from

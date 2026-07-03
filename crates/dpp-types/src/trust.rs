@@ -1,4 +1,4 @@
-//! Ghost-honesty invariant (chunk 03).
+//! Ghost-honesty invariant.
 //!
 //! The system refuses to present placeholder trust as real trust. Every trust
 //! port (seal, registry sync, archive, …) reports the *tier* that produced it —
@@ -155,9 +155,21 @@ mod tests {
 
     fn ports(seal: TrustMode, registry: TrustMode, archive: TrustMode) -> Vec<TrustPort> {
         vec![
-            TrustPort { port: "seal", mode: seal, required: true },
-            TrustPort { port: "registry_sync", mode: registry, required: true },
-            TrustPort { port: "archive", mode: archive, required: false },
+            TrustPort {
+                port: "seal",
+                mode: seal,
+                required: true,
+            },
+            TrustPort {
+                port: "registry_sync",
+                mode: registry,
+                required: true,
+            },
+            TrustPort {
+                port: "archive",
+                mode: archive,
+                required: false,
+            },
         ]
     }
 
@@ -175,7 +187,10 @@ mod tests {
             ports(TrustMode::Ghost, TrustMode::Sandbox, TrustMode::Ghost),
         );
         let err = report.enforce_profile().expect_err("must refuse");
-        assert!(err.contains("seal"), "message names the offending port: {err}");
+        assert!(
+            err.contains("seal"),
+            "message names the offending port: {err}"
+        );
         // archive is Ghost but not required → not a blocker.
         assert!(!err.contains("archive"));
         assert_eq!(report.ghosted_required(), vec!["seal"]);
@@ -187,7 +202,10 @@ mod tests {
             NodeProfile::Production,
             ports(TrustMode::Live, TrustMode::Live, TrustMode::Ghost),
         );
-        assert!(report.enforce_profile().is_ok(), "ghost archive is tolerated");
+        assert!(
+            report.enforce_profile().is_ok(),
+            "ghost archive is tolerated"
+        );
     }
 
     #[test]

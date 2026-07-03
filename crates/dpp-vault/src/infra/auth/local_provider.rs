@@ -45,7 +45,7 @@ impl AuthProvider for LocalAuthProvider {
                 return Ok(AuthContext {
                     user_id: "admin".to_owned(),
                     // Local admin (Basic) auth is always full-admin: it is
-                    // the operator's own bootstrap credential (N-2).
+                    // the operator's own bootstrap credential.
                     scope: ApiKeyScope::Admin,
                     // No API key row backs admin Basic auth, so it can
                     // revoke any key (this is the lockout-recovery path).
