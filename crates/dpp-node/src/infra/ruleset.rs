@@ -1,4 +1,4 @@
-//! Compliance Current — signed, versioned ruleset bundles (N-2).
+//! Compliance Current — signed, versioned ruleset bundles.
 //!
 //! ADR-002's moat made literal: rulesets ship as versioned bundles whose
 //! manifest is signed (compact EdDSA JWS) by an **offline publisher key**,
@@ -166,7 +166,8 @@ fn decode_jws_payload<T: for<'de> Deserialize<'de>>(jws: &str) -> Result<T, Rule
     let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
         .decode(payload_b64)
         .map_err(|e| RulesetError::Malformed(format!("payload base64: {e}")))?;
-    serde_json::from_slice(&bytes).map_err(|e| RulesetError::Malformed(format!("payload json: {e}")))
+    serde_json::from_slice(&bytes)
+        .map_err(|e| RulesetError::Malformed(format!("payload json: {e}")))
 }
 
 /// Read a `SignedBundle` from a JSON file (the configured channel drop).
@@ -248,8 +249,8 @@ mod tests {
         let path = std::env::temp_dir().join(format!("ruleset-pub-{}.enc", uuid::Uuid::now_v7()));
         let store = KeyStore::open_and_migrate(&path, "test-passphrase").expect("open keystore");
         let entry = store.generate_key("publisher").expect("generate key");
-        let pubkey_b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD
-            .encode(entry.verifying_key.as_bytes());
+        let pubkey_b64 =
+            base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(entry.verifying_key.as_bytes());
         (store, "publisher".to_owned(), pubkey_b64)
     }
 
@@ -279,9 +280,17 @@ mod tests {
     fn tampered_signature_is_refused() {
         let (store, kid, pubkey) = publisher();
         let mut b = bundle(&store, &kid, "2026-Q3.1", 5);
-        // Flip the last char of the JWS signature segment to a guaranteed-different one.
-        let last = b.manifest_jws.pop().expect("non-empty jws");
-        b.manifest_jws.push(if last == 'A' { 'B' } else { 'A' });
+        // Flip the second-to-last char of the JWS signature segment. The very
+        // last base64url char of a 64-byte Ed25519 signature carries only 2
+        // significant bits (the rest is zero-padding most decoders discard),
+        // so flipping it can decode to the same signature bytes — an
+        // intermittent no-op tamper. The second-to-last char sits in a full
+        // 6-bit group and is always fully significant, so flipping it
+        // deterministically produces a different signature.
+        let mut chars: Vec<char> = b.manifest_jws.chars().collect();
+        let idx = chars.len() - 2;
+        chars[idx] = if chars[idx] == 'A' { 'B' } else { 'A' };
+        b.manifest_jws = chars.into_iter().collect();
         assert!(matches!(
             verify_bundle(&b, &pubkey),
             Err(RulesetError::BadSignature)
