@@ -1,6 +1,6 @@
 [package]
 name        = "dpp-dal"
-description = "PostgreSQL data access layer for Odal Node (RLS operator isolation)"
+description = "PostgreSQL data access layer for Odal Node (single-tenant; no RLS — operator isolation is an infrastructure concern, see ADR-005)"
 version.workspace     = true
 edition.workspace     = true
 authors.workspace     = true

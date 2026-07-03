@@ -75,8 +75,8 @@ fails, the operation still succeeds. Consumers must be idempotent.
 | CSV/XLSX bulk import | Done | Per-sector templates, async jobs |
 | Event bus (NATS JetStream) | Done | Fire-after-commit, NoOp fallback |
 | Wasm plugin compliance | Done | Sandboxed sector plugins |
-| EU Central Registry sync | Schema ready | `registry_sync` table, GhostRegistrySync stub |
-| Unsold goods reporting | Done | ESPR Article 22 |
+| EU Central Registry sync | Port + ghost only | `RegistrySyncPort` + `GhostRegistrySync`; the `registry_sync` outbox table is migrated but **not yet written or drained** — publish calls the port inline, log-only on failure (implementation plan 02) |
+| Unsold goods reporting | Done | ESPR Arts. 24 (disclosure) / 25 (destruction ban, 19 Jul 2026); standardised disclosure format (implementing act of 9 Feb 2026) applies Q1 2027 — conformance pass pending (implementation plan 07) |
 | Public passport resolver | Done | Content-negotiated (JSON/HTML) |
 | QR code generation | Done | Resolver endpoint |
 
@@ -88,8 +88,8 @@ fails, the operation still succeeds. Consumers must be idempotent.
 |---|---|---|
 | Graph tables (component, material, supplier) | Phase 2 | Migration 007 is commented out |
 | OAuth/OIDC authentication | Phase 2 | Add to composite auth chain |
-| CO2e calculator (real implementation) | Phase 2 | Currently a placeholder crate |
-| Repairability calculator | Phase 2 | Currently a placeholder crate |
+| CO2e calculator (PEFCR depth + licensed factors) | Phase 2 | Baseline methodology **is implemented** in Apache `dpp-calc` (cradle-to-gate CO2e, repairability); Phase 2 = PEFCR-precise rulesets + real LCI factors via `dpp-factor-data` (licence-gated) |
+| Repairability calculator (EU-methodology depth) | Phase 2 | Same: `dpp-calc` baseline shipped; Phase 2 deepens against the final delegated-act methodology |
 | EU Central Registry integration | When API published | Replace GhostRegistrySync |
 | Dashboard (Next.js) | Parallel | Separate directory, consumes vault API |
 | Managed hosting (Control Plane) | v1.0.0 | One isolated node per operator; no in-engine multi-tenancy |
