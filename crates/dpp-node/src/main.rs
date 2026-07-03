@@ -34,8 +34,12 @@ use dpp_integrator::{
     state::AppState as IntegratorState,
 };
 use dpp_types::{
-    api_key::ApiKeyRepository, audit::AuditRepository, operator::OperatorConfigRepository,
-    registry_identity::RegistryIdentityRepository, registry_sync::RegistrySyncOutbox,
+    api_key::ApiKeyRepository,
+    audit::AuditRepository,
+    operator::OperatorConfigRepository,
+    registry_identity::RegistryIdentityRepository,
+    registry_sync::RegistrySyncOutbox,
+    transfer::TransferStore,
     trust::{NodeProfile, NodeTrustReport, TrustMode, TrustPort},
 };
 use dpp_vault::{
@@ -64,6 +68,7 @@ struct DbComponents {
     api_key_repo: Arc<dyn ApiKeyRepository>,
     registry_repo: Arc<dyn RegistryIdentityRepository>,
     registry_outbox: Arc<dyn RegistrySyncOutbox>,
+    transfer_store: Arc<dyn TransferStore>,
     job_store: Arc<dyn JobStore>,
     db_ping: Arc<dyn DbPing>,
 }
@@ -72,7 +77,7 @@ async fn init_db(cfg: &NodeConfig) -> anyhow::Result<DbComponents> {
     use async_trait::async_trait;
     use dpp_dal::pg::{
         PgApiKeyRepo, PgAuditRepo, PgDal, PgOperatorConfigRepo, PgPassportRepo,
-        PgRegistryIdentityRepo, PgRegistrySyncRepo,
+        PgRegistryIdentityRepo, PgRegistrySyncRepo, PgTransferRepo,
     };
     use dpp_domain::DppError;
     use dpp_node::infra::pg_job_store::PgJobStore;
@@ -132,6 +137,7 @@ async fn init_db(cfg: &NodeConfig) -> anyhow::Result<DbComponents> {
         api_key_repo: Arc::new(PgApiKeyRepo::new(dal.clone())),
         registry_repo: Arc::new(PgRegistryIdentityRepo::new(dal.clone())),
         registry_outbox: Arc::new(PgRegistrySyncRepo::new(dal.clone())),
+        transfer_store: Arc::new(PgTransferRepo::new(dal.clone())),
         job_store: Arc::new(PgJobStore::new(dal.clone())),
         db_ping: Arc::new(PgPing(dal)),
     })
@@ -246,22 +252,39 @@ async fn main() -> anyhow::Result<()> {
             }
         };
 
-    // ── Ghost-honesty invariant (chunk 03) ───────────────────────────────────
+    // ── Ghost-honesty invariant ───────────────────────────────────────────────
     // Collect each trust port's resolved tier, log it, export gauges, and — in a
     // production profile — refuse to boot on placeholder trust. The seal port is
-    // not yet wired (chunk 04), so it always resolves to Ghost for now: a
+    // not yet wired, so it always resolves to Ghost for now: a
     // production node cannot boot until a real QTSP seal exists, which is the
     // honest posture. List-driven so a new port inherits the invariant for free.
     let trust = Arc::new(NodeTrustReport::new(
         NodeProfile::from_env(),
         vec![
-            TrustPort { port: "seal", mode: TrustMode::Ghost, required: true },
-            TrustPort { port: "registry_sync", mode: registry_trust, required: true },
-            TrustPort { port: "archive", mode: archive_trust, required: false },
+            TrustPort {
+                port: "seal",
+                mode: TrustMode::Ghost,
+                required: true,
+            },
+            TrustPort {
+                port: "registry_sync",
+                mode: registry_trust,
+                required: true,
+            },
+            TrustPort {
+                port: "archive",
+                mode: archive_trust,
+                required: false,
+            },
         ],
     ));
     for p in &trust.ports {
-        tracing::info!(port = p.port, mode = p.mode.as_str(), required = p.required, "trust mode");
+        tracing::info!(
+            port = p.port,
+            mode = p.mode.as_str(),
+            required = p.required,
+            "trust mode"
+        );
         metrics::gauge!("trust_mode", "port" => p.port).set(p.mode.gauge_value());
     }
     if let Err(msg) = trust.enforce_profile() {
@@ -269,7 +292,7 @@ async fn main() -> anyhow::Result<()> {
         anyhow::bail!(msg);
     }
 
-    // ── Compliance Current: signed ruleset channel (N-2) ─────────────────────
+    // ── Compliance Current: signed ruleset channel ────────────────────────────
     // Load the pinned, signed bundle if a channel is configured; otherwise stay
     // on the in-repo baseline. A bad bundle never takes the node down — it stays
     // on the last-good ruleset (fail-closed) and raises an alarm metric.
@@ -337,7 +360,8 @@ async fn main() -> anyhow::Result<()> {
             operator_country,
         )
         .with_registry_reader(db.operator_repo.clone())
-        .with_registry_outbox(db.registry_outbox.clone()),
+        .with_registry_outbox(db.registry_outbox.clone())
+        .with_transfer_store(db.transfer_store.clone()),
     );
     let operator_service = Arc::new(OperatorService::new(db.operator_repo.clone()));
     let api_key_service = Arc::new(ApiKeyService::new(db.api_key_repo.clone()));
@@ -444,7 +468,13 @@ async fn main() -> anyhow::Result<()> {
     spawn_metrics_server(cfg.metrics_addr.clone(), prometheus_handle.clone());
 
     // ── Assemble router ───────────────────────────────────────────────────────
-    let app = router::build(vault_state, identity_state, integrator_state, trust, active_ruleset);
+    let app = router::build(
+        vault_state,
+        identity_state,
+        integrator_state,
+        trust,
+        active_ruleset,
+    );
 
     let addr = format!("0.0.0.0:{}", cfg.port);
     let listener = TcpListener::bind(&addr)

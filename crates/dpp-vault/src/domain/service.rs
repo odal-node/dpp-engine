@@ -6,10 +6,14 @@ use chrono::Utc;
 use dpp_digital_link::build_qr_url;
 use dpp_domain::{
     domain::{
+        eol::EolEvent,
         error::DppError,
         passport::{Passport, PassportId},
         sector::{CarbonFootprint, RepairabilityScore, SectorData},
         status::PassportStatus,
+        transfer::{
+            ResponsibleOperator, TransferChain, TransferReason, TransferRecord, TransferStatus,
+        },
     },
     ports::{
         archive::ArchivePort,
@@ -31,7 +35,9 @@ use dpp_types::{
     auth::AuthContext,
     operator::OperatorConfigRepository,
     registry_sync::{RegistrySyncOutbox, RegistrySyncStatus},
+    transfer::TransferStore,
 };
+use uuid::Uuid;
 
 /// Core domain service for the passport lifecycle.
 ///
@@ -53,6 +59,9 @@ pub struct PassportService {
     /// `None` (test doubles / in-memory repo), publish falls back to the legacy
     /// inline path.
     pub registry_outbox: Option<Arc<dyn RegistrySyncOutbox>>,
+    /// Persistence for transfer-of-responsibility chains. `None` disables
+    /// the transfer endpoints (test doubles without a transfer store).
+    pub transfer_store: Option<Arc<dyn TransferStore>>,
     /// ISO 3166-1 alpha-2 country code of this operator, sourced from
     /// `OperatorConfig.country` at startup. Used in EU registry registration payloads.
     pub operator_country: String,
@@ -85,9 +94,18 @@ impl PassportService {
             registry_sync,
             archive,
             registry_outbox: None,
+            transfer_store: None,
             operator_country,
             registry_reader: None,
         }
+    }
+
+    /// Provide the transfer-chain store, enabling the transfer-of-responsibility
+    /// endpoints.
+    #[must_use]
+    pub fn with_transfer_store(mut self, store: Arc<dyn TransferStore>) -> Self {
+        self.transfer_store = Some(store);
+        self
     }
 
     /// Provide the transactional registry-sync outbox. When set, publish routes
@@ -480,10 +498,8 @@ impl PassportService {
         // doubles), fall back to a plain update.
         let updated = match &self.registry_outbox {
             Some(outbox) => {
-                let reg_req = RegistrationRequest::from_published_passport(
-                    &passport,
-                    &self.operator_country,
-                );
+                let reg_req =
+                    RegistrationRequest::from_published_passport(&passport, &self.operator_country);
                 let payload = serde_json::to_value(&reg_req)
                     .map_err(|e| DppError::Serialisation(e.to_string()))?;
                 match outbox.commit_publish(&passport, payload).await {
@@ -501,7 +517,8 @@ impl PassportService {
             }
             None => match self.repo.update(passport).await {
                 Ok(p) => {
-                    metrics::counter!("passport_publish_total", "outcome" => "success").increment(1);
+                    metrics::counter!("passport_publish_total", "outcome" => "success")
+                        .increment(1);
                     p
                 }
                 Err(e) => {
@@ -585,9 +602,11 @@ impl PassportService {
         self.audit.append(entry).await?;
 
         // Record the suspended status intent in the registry outbox (drained to
-        // the EU registry once its status-push API exists — Phase B). Non-fatal.
+        // the EU registry once its status-push API exists). Non-fatal.
         if let Some(outbox) = &self.registry_outbox
-            && let Err(e) = outbox.enqueue_status(id, RegistrySyncStatus::Suspended).await
+            && let Err(e) = outbox
+                .enqueue_status(id, RegistrySyncStatus::Suspended)
+                .await
         {
             tracing::warn!(
                 code = event_codes::REGISTRY_SYNC_FAILED,
@@ -671,9 +690,11 @@ impl PassportService {
         self.audit.append(entry).await?;
 
         // Record the deactivated status intent in the registry outbox (drained
-        // to the EU registry once its status-push API exists — Phase B). Non-fatal.
+        // to the EU registry once its status-push API exists). Non-fatal.
         if let Some(outbox) = &self.registry_outbox
-            && let Err(e) = outbox.enqueue_status(id, RegistrySyncStatus::Deactivated).await
+            && let Err(e) = outbox
+                .enqueue_status(id, RegistrySyncStatus::Deactivated)
+                .await
         {
             tracing::warn!(
                 code = event_codes::REGISTRY_SYNC_FAILED,
@@ -694,6 +715,203 @@ impl PassportService {
         .await;
 
         Ok(updated)
+    }
+
+    /// Declare a passport end-of-life: recycled, destroyed (with a
+    /// derogation), exported, or lost. Transitions to `Deactivated` (terminal;
+    /// the record is retained — the DPP outlives the product, EN 18221). The
+    /// typed [`EolEvent`] is recorded in the hash-chained audit trail and
+    /// a `deactivated` status intent is enqueued to the registry outbox.
+    #[tracing::instrument(skip(self, eol), fields(passport_id = %id))]
+    pub async fn declare_eol(
+        &self,
+        id: PassportId,
+        eol: EolEvent,
+        auth: &AuthContext,
+    ) -> Result<Passport, DppError> {
+        let passport = self.find_by_id(id).await?;
+
+        if !passport
+            .status
+            .can_transition_to(&PassportStatus::Deactivated)
+        {
+            return Err(DppError::InvalidTransition {
+                current: passport.status.to_string(),
+                required: PassportStatus::Deactivated.to_string(),
+            });
+        }
+
+        let prev_status = passport.status.to_string();
+        let updated = self
+            .repo
+            .update_status(id, PassportStatus::Deactivated)
+            .await?;
+
+        // The typed EOL reason rides in the audit entry's metadata — it becomes
+        // part of the tamper-evident chain.
+        let eol_meta =
+            serde_json::to_value(&eol).map_err(|e| DppError::Serialisation(e.to_string()))?;
+        let entry = AuditEntry::new(
+            &updated.id.to_string(),
+            "deactivated",
+            auth,
+            Some(&prev_status),
+            Some(&PassportStatus::Deactivated.to_string()),
+        )
+        .with_metadata(eol_meta);
+        self.audit.append(entry).await?;
+
+        // Registry outbox: record the deactivated status intent (pushed to the
+        // EU registry once its status API exists). Non-fatal.
+        if let Some(outbox) = &self.registry_outbox
+            && let Err(e) = outbox
+                .enqueue_status(id, RegistrySyncStatus::Deactivated)
+                .await
+        {
+            tracing::warn!(
+                code = event_codes::REGISTRY_SYNC_FAILED,
+                passport_id = %id,
+                error = %e,
+                "failed to enqueue deactivated status to registry outbox (non-fatal)"
+            );
+        }
+
+        self.emit(
+            event::subjects::PASSPORT_DEACTIVATED,
+            serde_json::json!({
+                "passportId": updated.id.to_string(),
+                "status": "deactivated",
+                "previousStatus": prev_status,
+            }),
+        )
+        .await;
+
+        Ok(updated)
+    }
+
+    /// Initiate a transfer of responsibility: the outgoing operator signs
+    /// a `TransferRecord` over its canonical `signing_payload`, appended to the
+    /// passport's `TransferChain` as a pending handover awaiting acceptance.
+    ///
+    /// Single-node/managed mode: this node signs on behalf of the outgoing
+    /// operator via `IdentityPort`, verifiable against the node's DID. Only
+    /// `Published` passports transfer.
+    pub async fn initiate_transfer(
+        &self,
+        id: PassportId,
+        from_operator: ResponsibleOperator,
+        to_operator: ResponsibleOperator,
+        reason: TransferReason,
+        notes: Option<String>,
+        auth: &AuthContext,
+    ) -> Result<TransferRecord, DppError> {
+        let passport = self.find_by_id(id).await?;
+        if passport.status != PassportStatus::Published {
+            return Err(DppError::InvalidTransition {
+                current: passport.status.to_string(),
+                required: PassportStatus::Published.to_string(),
+            });
+        }
+        let store = self
+            .transfer_store
+            .as_ref()
+            .ok_or_else(|| DppError::Internal("transfer store not configured".into()))?;
+
+        let mut chain = store
+            .get_chain(id)
+            .await?
+            .unwrap_or_else(|| TransferChain::new(id, from_operator.clone()));
+
+        let mut record = TransferRecord {
+            transfer_id: Uuid::now_v7(),
+            passport_id: id,
+            from_operator,
+            to_operator,
+            reason,
+            from_signature: None,
+            to_signature: None,
+            initiated_at: Utc::now(),
+            completed_at: None,
+            rejected_at: None,
+            cancelled_at: None,
+            notes,
+        };
+        // The outgoing operator signs the canonical handover terms.
+        let payload = record.signing_payload();
+        record.from_signature = Some(self.identity.sign_passport(id, &payload).await?.jws);
+
+        chain
+            .initiate_transfer(record.clone())
+            .map_err(|e| DppError::Validation(e.to_string().into()))?;
+        store.save_chain(&chain).await?;
+
+        let entry = AuditEntry::new(&id.to_string(), "transferred", auth, None, None)
+            .with_metadata(serde_json::json!({
+                "event": "transfer.initiated",
+                "transferId": record.transfer_id,
+                "toOperator": record.to_operator.did,
+            }));
+        self.audit.append(entry).await?;
+
+        Ok(record)
+    }
+
+    /// Accept a pending transfer: verify the outgoing operator's signature,
+    /// countersign as the incoming operator, and complete the handover. The
+    /// incoming operator becomes the current responsible operator on the chain.
+    pub async fn accept_transfer(
+        &self,
+        id: PassportId,
+        auth: &AuthContext,
+    ) -> Result<TransferRecord, DppError> {
+        let store = self
+            .transfer_store
+            .as_ref()
+            .ok_or_else(|| DppError::Internal("transfer store not configured".into()))?;
+        let mut chain = store
+            .get_chain(id)
+            .await?
+            .ok_or_else(|| DppError::NotFound(format!("no transfer chain for {id}")))?;
+
+        let idx = chain
+            .transfers
+            .iter()
+            .position(|t| t.status() == TransferStatus::Initiated)
+            .ok_or_else(|| DppError::Validation("no pending transfer to accept".into()))?;
+
+        let payload = chain.transfers[idx].signing_payload();
+        let from_sig = chain.transfers[idx]
+            .from_signature
+            .clone()
+            .ok_or_else(|| DppError::Validation("pending transfer has no from-signature".into()))?;
+
+        // Fail-closed: the outgoing signature must verify before we countersign.
+        if !self.identity.verify_signature(&from_sig, &payload).await? {
+            return Err(DppError::Validation(
+                "transfer from-signature failed verification".into(),
+            ));
+        }
+
+        chain.transfers[idx].to_signature =
+            Some(self.identity.sign_passport(id, &payload).await?.jws);
+        chain.transfers[idx]
+            .complete()
+            .map_err(|e| DppError::Validation(e.to_string().into()))?;
+        let record = chain.transfers[idx].clone();
+        store.save_chain(&chain).await?;
+
+        let entry = AuditEntry::new(&id.to_string(), "transferred", auth, None, None)
+            .with_metadata(serde_json::json!({
+                "event": "transfer.accepted",
+                "transferId": record.transfer_id,
+                "toOperator": record.to_operator.did,
+            }));
+        self.audit.append(entry).await?;
+
+        // Registry transfer notification is deferred (the registry's transfer API
+        // is unpublished); the local chain is authoritative in the meantime.
+
+        Ok(record)
     }
 
     /// Return the append-only audit trail for a passport.

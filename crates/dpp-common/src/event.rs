@@ -80,6 +80,7 @@ pub mod subjects {
     pub const PASSPORT_PUBLISHED: &str = "dpp.passport.published";
     pub const PASSPORT_SUSPENDED: &str = "dpp.passport.suspended";
     pub const PASSPORT_ARCHIVED: &str = "dpp.passport.archived";
+    pub const PASSPORT_DEACTIVATED: &str = "dpp.passport.deactivated";
     pub const PASSPORT_FAILED: &str = "dpp.passport.failed";
 
     // Batch import

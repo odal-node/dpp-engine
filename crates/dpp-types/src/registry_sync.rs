@@ -21,7 +21,7 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-use dpp_domain::{domain::passport::PassportId, DppError};
+use dpp_domain::{DppError, domain::passport::PassportId};
 
 /// Persisted sync state of a passport's registry registration.
 ///
@@ -153,11 +153,8 @@ pub trait RegistrySyncOutbox: Send + Sync {
 
     /// Terminal failure: mark `rejected` and store the reason. The row stays for
     /// audit — a human investigates, it is never deleted.
-    async fn mark_rejected(
-        &self,
-        passport_id: PassportId,
-        message: String,
-    ) -> Result<(), DppError>;
+    async fn mark_rejected(&self, passport_id: PassportId, message: String)
+    -> Result<(), DppError>;
 
     /// Transient failure: increment `attempts`, push `next_attempt_at` out by an
     /// exponential backoff (with jitter), keep the row `pending`.
@@ -176,8 +173,5 @@ pub trait RegistrySyncOutbox: Send + Sync {
     /// Counts by status plus the stalled count (`pending` rows whose `attempts`
     /// have reached `stall_threshold`). Feeds boot reconciliation logs and the
     /// `registry_outbox_*` gauges.
-    async fn status_counts(
-        &self,
-        stall_threshold: i32,
-    ) -> Result<RegistrySyncCounts, DppError>;
+    async fn status_counts(&self, stall_threshold: i32) -> Result<RegistrySyncCounts, DppError>;
 }

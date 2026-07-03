@@ -25,7 +25,7 @@ use dpp_crypto::identity::LocalIdentityService;
 use dpp_crypto::keystore::KeyStore;
 use dpp_dal::pg::{
     PgApiKeyRepo, PgAuditRepo, PgDal, PgOperatorConfigRepo, PgPassportRepo, PgRegistryIdentityRepo,
-    sqlx,
+    PgTransferRepo, sqlx,
 };
 use dpp_domain::{
     DppError, GhostArchive, GhostRegistrySync,
@@ -61,10 +61,10 @@ impl AuthProvider for TestAuthProvider {
             .map_err(|_| AuthError::Invalid("base64 decode failed".to_owned()))?;
         let claims: serde_json::Value = serde_json::from_slice(&payload)
             .map_err(|_| AuthError::Invalid("payload is not valid JSON".to_owned()))?;
-        if let Some(exp) = claims.get("exp").and_then(|v| v.as_i64()) {
-            if chrono::Utc::now().timestamp() > exp {
-                return Err(AuthError::Invalid("token expired".to_owned()));
-            }
+        if let Some(exp) = claims.get("exp").and_then(|v| v.as_i64())
+            && chrono::Utc::now().timestamp() > exp
+        {
+            return Err(AuthError::Invalid("token expired".to_owned()));
         }
         Ok(AuthContext {
             user_id: claims
@@ -172,16 +172,19 @@ async fn start_node_with_dal(dal: PgDal) -> String {
     let event_bus: Arc<dyn dpp_common::event::EventBus> = Arc::new(dpp_common::event::NoOpEventBus);
     let registry_sync: Arc<dyn dpp_domain::ports::registry_sync::RegistrySyncPort> =
         Arc::new(GhostRegistrySync);
-    let service = Arc::new(PassportService::new(
-        passport_repo,
-        identity,
-        compliance,
-        audit_repo,
-        event_bus,
-        registry_sync,
-        Arc::new(GhostArchive),
-        String::new(),
-    ));
+    let service = Arc::new(
+        PassportService::new(
+            passport_repo,
+            identity,
+            compliance,
+            audit_repo,
+            event_bus,
+            registry_sync,
+            Arc::new(GhostArchive),
+            String::new(),
+        )
+        .with_transfer_store(Arc::new(PgTransferRepo::new(dal.clone()))),
+    );
     let operator_service = Arc::new(OperatorService::new(operator_repo));
     let api_key_service = Arc::new(ApiKeyService::new(api_key_repo));
     let registry_identity_service = Arc::new(RegistryIdentityService::new(Arc::new(
@@ -219,8 +222,13 @@ async fn start_node_with_dal(dal: PgDal) -> String {
         }],
     ));
     let ruleset = std::sync::Arc::new(dpp_node::infra::ruleset::ActiveRuleset::baseline());
-    let app =
-        dpp_node::router::build(vault_state, identity_state, integrator_state, trust, ruleset);
+    let app = dpp_node::router::build(
+        vault_state,
+        identity_state,
+        integrator_state,
+        trust,
+        ruleset,
+    );
 
     tokio::spawn(async move {
         axum::serve(listener, app).await.expect("node server error");
@@ -278,7 +286,7 @@ async fn node_health_reports_trust_modes() {
         .await
         .expect("GET /health failed");
     assert_eq!(resp.status(), 200);
-    // Ghost-honesty invariant (chunk 03): /health surfaces each trust port's
+    // Ghost-honesty invariant: /health surfaces each trust port's
     // tier. The dev node here has no registry creds, so registry_sync is a ghost.
     let body: serde_json::Value = resp.json().await.expect("health is JSON");
     assert_eq!(body["status"], "ok");
@@ -391,6 +399,181 @@ async fn full_dpp_lifecycle_through_assembled_node() {
         "public resolver must return 2xx or 3xx, got {}",
         resp.status()
     );
+}
+
+// End-of-life deactivates the passport (retained, not deleted) and records
+// the typed EOL reason in the hash-chained audit trail.
+#[tokio::test(flavor = "multi_thread")]
+async fn eol_declaration_deactivates_and_records_reason() {
+    let (base, _container) = start_db_and_node().await;
+    let token = make_jwt("00000000-0000-0000-0000-000000000077");
+    let client = reqwest::Client::new();
+
+    let created: serde_json::Value = client
+        .post(format!("{base}/vault/api/v1/dpp"))
+        .bearer_auth(&token)
+        .json(&serde_json::json!({
+            "productName": "EOL Test Battery",
+            "productCategory": "BATTERY",
+            "manufacturer": {"name": "SmokeTestCorp", "address": "Berlin, DE"},
+            "materials": [],
+            "schemaVersion": "1.0.0"
+        }))
+        .send()
+        .await
+        .expect("create request failed")
+        .json()
+        .await
+        .unwrap();
+    let id = created["id"].as_str().expect("id").to_owned();
+
+    let resp = client
+        .post(format!("{base}/vault/api/v1/dpp/{id}/publish"))
+        .bearer_auth(&token)
+        .json(&serde_json::json!({}))
+        .send()
+        .await
+        .expect("publish request failed");
+    assert_eq!(resp.status(), 200);
+
+    // Declare EOL: recycled, with a recovered-material summary (Annex XIII).
+    let resp = client
+        .post(format!("{base}/vault/api/v1/dpp/{id}/eol"))
+        .bearer_auth(&token)
+        .json(&serde_json::json!({
+            "reason": {"kind": "recycled"},
+            "materialRecovery": {"lithiumKg": 0.4}
+        }))
+        .send()
+        .await
+        .expect("eol request failed");
+    assert_eq!(resp.status(), 200);
+    let deactivated: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(deactivated["status"], "deactivated");
+
+    // The record is retained (readable), just terminal.
+    let fetched: serde_json::Value = client
+        .get(format!("{base}/vault/api/v1/dpp/{id}"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .expect("read request failed")
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(fetched["status"], "deactivated");
+
+    // The typed EOL reason is in the (hash-chained) audit trail.
+    let history: serde_json::Value = client
+        .get(format!("{base}/vault/api/v1/dpp/{id}/history"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .expect("history request failed")
+        .json()
+        .await
+        .unwrap();
+    let eol_entry = history
+        .as_array()
+        .expect("history is an array")
+        .iter()
+        .find(|e| e["action"] == "deactivated")
+        .expect("history must record a deactivated entry");
+    assert_eq!(eol_entry["newStatus"], "deactivated");
+    assert_eq!(eol_entry["metadata"]["reason"]["kind"], "recycled");
+    assert_eq!(eol_entry["metadata"]["materialRecovery"]["lithiumKg"], 0.4);
+}
+
+// Full lifecycle close — publish → transfer initiate (outgoing signs) →
+// accept (incoming countersigns, verified) → EOL. The dual-signed handover is
+// persisted on the passport's transfer chain.
+#[tokio::test(flavor = "multi_thread")]
+async fn transfer_of_responsibility_dual_signed_then_eol() {
+    let (base, _container) = start_db_and_node().await;
+    let token = make_jwt("00000000-0000-0000-0000-000000000066");
+    let client = reqwest::Client::new();
+
+    let created: serde_json::Value = client
+        .post(format!("{base}/vault/api/v1/dpp"))
+        .bearer_auth(&token)
+        .json(&serde_json::json!({
+            "productName": "Transfer Test Battery",
+            "productCategory": "BATTERY",
+            "manufacturer": {"name": "SmokeTestCorp", "address": "Berlin, DE"},
+            "materials": [],
+            "schemaVersion": "1.0.0"
+        }))
+        .send()
+        .await
+        .expect("create request failed")
+        .json()
+        .await
+        .unwrap();
+    let id = created["id"].as_str().expect("id").to_owned();
+
+    assert_eq!(
+        client
+            .post(format!("{base}/vault/api/v1/dpp/{id}/publish"))
+            .bearer_auth(&token)
+            .json(&serde_json::json!({}))
+            .send()
+            .await
+            .expect("publish request failed")
+            .status(),
+        200
+    );
+
+    // Outgoing operator initiates and signs the handover.
+    let init_resp = client
+        .post(format!("{base}/vault/api/v1/dpp/{id}/transfer/initiate"))
+        .bearer_auth(&token)
+        .json(&serde_json::json!({
+            "fromOperator": {"did":"did:web:acme.example","name":"Acme GmbH","role":"manufacturer","euOperatorId":null,"country":"DE"},
+            "toOperator": {"did":"did:web:recycler.example","name":"ReCo","role":"recycler","euOperatorId":null,"country":"DE"},
+            "reason": "preparationForReuse"
+        }))
+        .send()
+        .await
+        .expect("initiate request failed");
+    let init_status = init_resp.status();
+    let init: serde_json::Value = init_resp.json().await.unwrap();
+    assert_eq!(init_status, 200, "initiate failed: {init}");
+    assert!(
+        init["fromSignature"].is_string(),
+        "outgoing operator signed"
+    );
+    assert!(init["toSignature"].is_null(), "not yet accepted");
+
+    // Incoming operator accepts — the node verifies the outgoing signature and
+    // countersigns, completing the handover.
+    let accepted: serde_json::Value = client
+        .post(format!("{base}/vault/api/v1/dpp/{id}/transfer/accept"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .expect("accept request failed")
+        .json()
+        .await
+        .unwrap();
+    assert!(
+        accepted["toSignature"].is_string(),
+        "incoming countersigned"
+    );
+    assert!(accepted["completedAt"].is_string(), "transfer completed");
+    assert_eq!(accepted["toOperator"]["did"], "did:web:recycler.example");
+
+    // Close the loop: the recycler declares end-of-life.
+    let eol: serde_json::Value = client
+        .post(format!("{base}/vault/api/v1/dpp/{id}/eol"))
+        .bearer_auth(&token)
+        .json(&serde_json::json!({"reason": {"kind": "recycled"}}))
+        .send()
+        .await
+        .expect("eol request failed")
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(eol["status"], "deactivated");
 }
 
 // ---------------------------------------------------------------------------

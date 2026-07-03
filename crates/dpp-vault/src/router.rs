@@ -22,6 +22,7 @@ use crate::{
         api_keys::{api_keys_create_handler, api_keys_delete_handler, api_keys_list_handler},
         archive::archive_handler,
         create::create_handler,
+        eol::eol_handler,
         health::{health_handler, ready_handler},
         history::history_handler,
         info::info_handler,
@@ -39,6 +40,7 @@ use crate::{
             operator_ids_set_primary_handler,
         },
         suspend::suspend_handler,
+        transfer::{transfer_accept_handler, transfer_initiate_handler},
         update::update_handler,
     },
     middleware::auth::auth_middleware,
@@ -58,6 +60,15 @@ pub fn build(state: AppState) -> Router {
         .route("/dpp/{dppId}/publish", post(publish_handler))
         .route("/dpp/{dppId}/suspend", post(suspend_handler))
         .route("/dpp/{dppId}/archive", post(archive_handler))
+        .route("/dpp/{dppId}/eol", post(eol_handler))
+        .route(
+            "/dpp/{dppId}/transfer/initiate",
+            post(transfer_initiate_handler),
+        )
+        .route(
+            "/dpp/{dppId}/transfer/accept",
+            post(transfer_accept_handler),
+        )
         .route("/dpp/{dppId}/history", get(history_handler))
         // ── Node setup state ──────────────────────────────────────────
         .route("/node/state", get(node_state_handler))
