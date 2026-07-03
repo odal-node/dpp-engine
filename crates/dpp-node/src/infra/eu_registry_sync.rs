@@ -14,12 +14,15 @@
 //! exponential backoff (3 attempts, 1s → 2s → 4s). Non-retryable errors
 //! (4xx except 429) fail immediately.
 //!
-//! # Pre-go-live fallback
+//! # Unreachable registry
 //!
 //! If the registry is unreachable (connection refused, DNS failure) the adapter
-//! falls back to `GhostRegistrySync` behaviour — returning a synthetic
-//! `Pending` record so passport publishing is not blocked before the registry
-//! launches (~19 July 2026).
+//! returns an error. It does **not** fabricate a synthetic success: the
+//! transactional outbox (`dpp-types::RegistrySyncOutbox`, chunk 02) already
+//! guarantees no registration is lost — an unreachable registry simply leaves
+//! the outbox row `pending`, visibly, to be retried with backoff. Faking a
+//! `Pending` here would let the drain mark an unregistered passport
+//! "registered", which is exactly the ghost-as-real dishonesty chunk 03 forbids.
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -61,9 +64,6 @@ pub struct EuRegistrySyncConfig {
     pub retry_base_delay: Duration,
     /// Request timeout.
     pub request_timeout: Duration,
-    /// Whether to fall back to ghost/passthrough behaviour when the
-    /// registry is unreachable (true during pre-go-live period).
-    pub fallback_on_unreachable: bool,
 }
 
 impl EuRegistrySyncConfig {
@@ -76,7 +76,6 @@ impl EuRegistrySyncConfig {
             max_retries: 3,
             retry_base_delay: Duration::from_secs(1),
             request_timeout: Duration::from_secs(30),
-            fallback_on_unreachable: true,
         }
     }
 
@@ -89,7 +88,6 @@ impl EuRegistrySyncConfig {
             max_retries: 3,
             retry_base_delay: Duration::from_secs(1),
             request_timeout: Duration::from_secs(30),
-            fallback_on_unreachable: false,
         }
     }
 }
@@ -265,22 +263,6 @@ impl EuRegistrySync {
         }
     }
 
-    /// Build a ghost/passthrough record for pre-go-live fallback.
-    fn ghost_record(passport_id: &PassportId, request: &RegistrationRequest) -> RegistryRecord {
-        let now = Utc::now();
-        RegistryRecord {
-            identifiers: RegistryIdentifiers {
-                product_id: format!("PENDING-PROD-{passport_id}"),
-                operator_id: format!("PENDING-OP-{}", &request.operator_identifier),
-                facility_id: format!("PENDING-FAC-{}", &request.facility_identifier),
-                registry_id: format!("PENDING-REG-{}", Uuid::now_v7()),
-            },
-            status: RegistryStatus::Pending,
-            registered_at: now,
-            updated_at: now,
-        }
-    }
-
     /// Map a bridge `EuRegistryResponse` to a domain `RegistryRecord`.
     fn response_to_record(resp: &EuRegistryResponse) -> RegistryRecord {
         use dpp_registry::registry::RegistryStatusCode;
@@ -443,7 +425,6 @@ impl RegistrySyncPort for EuRegistrySync {
         }
 
         let passport_id = request.passport_id;
-        let req_clone = request.clone();
 
         let result = self
             .with_retry(|| {
@@ -505,15 +486,8 @@ impl RegistrySyncPort for EuRegistrySync {
                 );
                 Ok(record)
             }
-            // Only ghost-fallback on network-level unreachability (DNS/connect failure).
-            // Fatal 4xx and exhausted-retry 5xx must surface as real errors.
-            Err(RetryableError::Unreachable(_)) if self.config.fallback_on_unreachable => {
-                tracing::warn!(
-                    passport_id = %passport_id,
-                    "EU registry unreachable — using ghost pending record (pre-go-live fallback)"
-                );
-                Ok(Self::ghost_record(&passport_id, &req_clone))
-            }
+            // Unreachable/fatal/exhausted-retry all surface as real errors — the
+            // outbox keeps the row `pending` and retries. Never fake success.
             Err(e) => Err(e.into_dpp_error()),
         }
     }
@@ -670,15 +644,13 @@ mod tests {
     #[test]
     fn sandbox_config_has_correct_defaults() {
         let config = EuRegistrySyncConfig::sandbox("id".into(), "secret".into());
-        assert!(config.fallback_on_unreachable);
         assert_eq!(config.max_retries, 3);
         assert!(config.endpoint.base_url.contains("sandbox"));
     }
 
     #[test]
-    fn production_config_disables_fallback() {
+    fn production_config_requires_mtls() {
         let config = EuRegistrySyncConfig::production("id".into(), "secret".into());
-        assert!(!config.fallback_on_unreachable);
         assert!(config.endpoint.mtls_required);
     }
 
@@ -765,32 +737,6 @@ mod tests {
         assert_eq!(fid.value, "LEGACY-FAC");
         assert!(fid.name.is_none());
         assert!(fid.country.is_empty());
-    }
-
-    #[test]
-    fn ghost_record_uses_pending_status() {
-        let passport_id = PassportId::new();
-        let request = RegistrationRequest {
-            passport_id,
-            operator_identifier: "did:web:test.example".into(),
-            facility_identifier: "FAC-001".into(),
-            facility: None,
-            product_category: "battery".into(),
-            data_carrier_uri: "https://id.example.com/01/09506000134352".into(),
-            schema_version: "2.0.0".into(),
-            jws_signature: None,
-            published_at: None,
-            country_code: String::new(),
-        };
-        let record = EuRegistrySync::ghost_record(&passport_id, &request);
-        assert_eq!(record.status, RegistryStatus::Pending);
-        assert!(record.identifiers.product_id.starts_with("PENDING-PROD-"));
-        assert!(
-            record
-                .identifiers
-                .operator_id
-                .contains("did:web:test.example")
-        );
     }
 
     #[test]

@@ -9,10 +9,18 @@ pub mod audit;
 pub mod auth;
 pub mod operator;
 pub mod registry_identity;
+pub mod registry_sync;
+pub mod trust;
 
 pub use api_key::{ApiKey, ApiKeyRecord, ApiKeyRepository, CreateApiKeyRequest, NewApiKey};
-pub use audit::{AuditEntry, AuditRepository};
+pub use audit::{
+    verify_audit_chain, AuditChainBreak, AuditEntry, AuditRepository, GENESIS_PREV_HASH,
+};
 pub use auth::{AuthContext, AuthError, AuthProvider};
+pub use registry_sync::{
+    RegistrySyncCounts, RegistrySyncOutbox, RegistrySyncRow, RegistrySyncStatus,
+};
+pub use trust::{NodeProfile, NodeTrustReport, TrustMode, TrustPort};
 pub use operator::{
     OperatorConfig, OperatorConfigRepository, STANDALONE_OPERATOR_ID, UpdateOperatorConfig,
 };

@@ -210,7 +210,17 @@ async fn start_node_with_dal(dal: PgDal) -> String {
         batch_concurrency: 4,
     };
 
-    let app = dpp_node::router::build(vault_state, identity_state, integrator_state);
+    let trust = std::sync::Arc::new(dpp_types::trust::NodeTrustReport::new(
+        dpp_types::trust::NodeProfile::Development,
+        vec![dpp_types::trust::TrustPort {
+            port: "registry_sync",
+            mode: dpp_types::trust::TrustMode::Ghost,
+            required: true,
+        }],
+    ));
+    let ruleset = std::sync::Arc::new(dpp_node::infra::ruleset::ActiveRuleset::baseline());
+    let app =
+        dpp_node::router::build(vault_state, identity_state, integrator_state, trust, ruleset);
 
     tokio::spawn(async move {
         axum::serve(listener, app).await.expect("node server error");
@@ -262,13 +272,18 @@ async fn start_db_and_node() -> (String, testcontainers::ContainerAsync<GenericI
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn node_health_check_returns_ok() {
+async fn node_health_reports_trust_modes() {
     let (base, _c) = start_db_and_node().await;
     let resp = reqwest::get(format!("{base}/health"))
         .await
         .expect("GET /health failed");
     assert_eq!(resp.status(), 200);
-    assert_eq!(resp.text().await.unwrap(), "ok");
+    // Ghost-honesty invariant (chunk 03): /health surfaces each trust port's
+    // tier. The dev node here has no registry creds, so registry_sync is a ghost.
+    let body: serde_json::Value = resp.json().await.expect("health is JSON");
+    assert_eq!(body["status"], "ok");
+    assert_eq!(body["profile"], "development");
+    assert_eq!(body["trust_mode"]["registry_sync"], "ghost");
 }
 
 #[tokio::test(flavor = "multi_thread")]

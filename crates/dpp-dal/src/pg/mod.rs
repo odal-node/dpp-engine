@@ -15,6 +15,7 @@ pub mod repo_audit;
 pub mod repo_operator_config;
 pub mod repo_passport;
 pub mod repo_registry_identity;
+pub mod repo_registry_sync;
 
 pub use pool::PgDal;
 
@@ -23,6 +24,7 @@ pub use repo_audit::PgAuditRepo;
 pub use repo_operator_config::PgOperatorConfigRepo;
 pub use repo_passport::PgPassportRepo;
 pub use repo_registry_identity::PgRegistryIdentityRepo;
+pub use repo_registry_sync::PgRegistrySyncRepo;
 /// Re-export so downstream crates (dpp-node's PgJobStore) can use the same
 /// sqlx version without declaring their own dependency.
 pub use sqlx;

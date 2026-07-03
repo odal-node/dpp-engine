@@ -30,6 +30,7 @@ use dpp_types::{
     audit::{AuditEntry, AuditRepository},
     auth::AuthContext,
     operator::OperatorConfigRepository,
+    registry_sync::{RegistrySyncOutbox, RegistrySyncStatus},
 };
 
 /// Core domain service for the passport lifecycle.
@@ -45,6 +46,13 @@ pub struct PassportService {
     pub events: Arc<dyn EventBus>,
     pub registry_sync: Arc<dyn RegistrySyncPort>,
     pub archive: Arc<dyn ArchivePort>,
+    /// Transactional outbox for EU registry registration. When present (the
+    /// Postgres node), publish persists the passport and enqueues its
+    /// registration atomically, and a background drain task calls
+    /// `registry_sync` — so a killed node never loses a registration. When
+    /// `None` (test doubles / in-memory repo), publish falls back to the legacy
+    /// inline path.
+    pub registry_outbox: Option<Arc<dyn RegistrySyncOutbox>>,
     /// ISO 3166-1 alpha-2 country code of this operator, sourced from
     /// `OperatorConfig.country` at startup. Used in EU registry registration payloads.
     pub operator_country: String,
@@ -76,9 +84,20 @@ impl PassportService {
             events,
             registry_sync,
             archive,
+            registry_outbox: None,
             operator_country,
             registry_reader: None,
         }
+    }
+
+    /// Provide the transactional registry-sync outbox. When set, publish routes
+    /// the passport write + registration enqueue through a single transaction
+    /// (`commit_publish`) and the inline fire-after-commit register call is
+    /// skipped — the node's drain task performs registration instead.
+    #[must_use]
+    pub fn with_registry_outbox(mut self, outbox: Arc<dyn RegistrySyncOutbox>) -> Self {
+        self.registry_outbox = Some(outbox);
+        self
     }
 
     /// Provide the reader used to stamp the default facility (ESPR Annex III) and
@@ -352,28 +371,7 @@ impl PassportService {
             // JSON Schema gate (fail-closed): enum sets, string patterns, and
             // numeric ranges that the Rust types don't enforce. Runs after typed
             // validation so field-level messages are the primary signal.
-            let schema_key = sector_data.sector().catalog_key();
-            if let Some(schema_version) = catalog().resolve_schema_version(schema_key, None) {
-                let mut sd_json = serde_json::to_value(sector_data)
-                    .map_err(|e| DppError::Serialisation(e.to_string()))?;
-                // SectorData is internally tagged; schemas validate the inner object.
-                if let Some(obj) = sd_json.as_object_mut() {
-                    obj.remove("sector");
-                }
-                schema_registry()
-                    .validate_strict(schema_key, &schema_version, &sd_json)
-                    .map_err(DppError::from)?;
-            } else {
-                // No versioned JSON Schema registered for this sector — typed
-                // validation (above) is the only structural gate. Observable so
-                // operators don't publish schema-free passports silently.
-                tracing::warn!(
-                    passport_id = %id,
-                    sector = %schema_key,
-                    "publishing passport with no registered JSON Schema — \
-                     only typed validation ran; add a schema to enforce enum/pattern/range constraints"
-                );
-            }
+            validate_schema_for_publish(sector_data)?;
 
             // Compliance gate: a sector whose DPP obligation is in force must not
             // be signed/published while it carries *binding* violations. Advisory
@@ -474,15 +472,43 @@ impl PassportService {
             })?;
         passport.public_jws_signature = Some(public_jws);
 
-        let updated = match self.repo.update(passport).await {
-            Ok(p) => {
-                metrics::counter!("passport_publish_total", "outcome" => "success").increment(1);
-                p
+        // Persist the published passport. With the transactional outbox present,
+        // the passport write and the EU-registry registration enqueue commit
+        // atomically (ESPR Art. 13) — a Published passport can never exist
+        // without a queued registration, and the node's drain task performs the
+        // actual registration with backoff. Without an outbox (in-memory test
+        // doubles), fall back to a plain update.
+        let updated = match &self.registry_outbox {
+            Some(outbox) => {
+                let reg_req = RegistrationRequest::from_published_passport(
+                    &passport,
+                    &self.operator_country,
+                );
+                let payload = serde_json::to_value(&reg_req)
+                    .map_err(|e| DppError::Serialisation(e.to_string()))?;
+                match outbox.commit_publish(&passport, payload).await {
+                    Ok(()) => {
+                        metrics::counter!("passport_publish_total", "outcome" => "success")
+                            .increment(1);
+                        passport
+                    }
+                    Err(e) => {
+                        metrics::counter!("passport_publish_total", "outcome" => "error")
+                            .increment(1);
+                        return Err(e);
+                    }
+                }
             }
-            Err(e) => {
-                metrics::counter!("passport_publish_total", "outcome" => "error").increment(1);
-                return Err(e);
-            }
+            None => match self.repo.update(passport).await {
+                Ok(p) => {
+                    metrics::counter!("passport_publish_total", "outcome" => "success").increment(1);
+                    p
+                }
+                Err(e) => {
+                    metrics::counter!("passport_publish_total", "outcome" => "error").increment(1);
+                    return Err(e);
+                }
+            },
         };
 
         let entry = AuditEntry::new(
@@ -493,20 +519,6 @@ impl PassportService {
             Some(&PassportStatus::Published.to_string()),
         );
         self.audit.append(entry).await?;
-
-        // EU registry sync (ESPR Art. 13) — fire-after-commit, non-blocking.
-        // Failures are logged but never propagated; the DB write is the source of truth.
-        // Pre-go-live: GhostRegistrySync returns Pending without a network call.
-        let reg_req =
-            RegistrationRequest::from_published_passport(&updated, &self.operator_country);
-        if let Err(e) = self.registry_sync.register(reg_req).await {
-            tracing::warn!(
-                code = event_codes::REGISTRY_SYNC_FAILED,
-                passport_id = %updated.id,
-                error = %e,
-                "EU registry sync failed (non-fatal)"
-            );
-        }
 
         // ESPR Art. 13 third-party archive — fire-after-commit, non-blocking.
         // Failures are logged but never propagated; the DB write is the source of truth.
@@ -571,6 +583,19 @@ impl PassportService {
             entry = entry.with_metadata(serde_json::json!({"reason": r}));
         }
         self.audit.append(entry).await?;
+
+        // Record the suspended status intent in the registry outbox (drained to
+        // the EU registry once its status-push API exists — Phase B). Non-fatal.
+        if let Some(outbox) = &self.registry_outbox
+            && let Err(e) = outbox.enqueue_status(id, RegistrySyncStatus::Suspended).await
+        {
+            tracing::warn!(
+                code = event_codes::REGISTRY_SYNC_FAILED,
+                passport_id = %id,
+                error = %e,
+                "failed to enqueue suspended status to registry outbox (non-fatal)"
+            );
+        }
 
         self.emit(
             event::subjects::PASSPORT_SUSPENDED,
@@ -645,6 +670,19 @@ impl PassportService {
         );
         self.audit.append(entry).await?;
 
+        // Record the deactivated status intent in the registry outbox (drained
+        // to the EU registry once its status-push API exists — Phase B). Non-fatal.
+        if let Some(outbox) = &self.registry_outbox
+            && let Err(e) = outbox.enqueue_status(id, RegistrySyncStatus::Deactivated).await
+        {
+            tracing::warn!(
+                code = event_codes::REGISTRY_SYNC_FAILED,
+                passport_id = %id,
+                error = %e,
+                "failed to enqueue deactivated status to registry outbox (non-fatal)"
+            );
+        }
+
         self.emit(
             event::subjects::PASSPORT_ARCHIVED,
             serde_json::json!({
@@ -685,6 +723,44 @@ impl PassportService {
             );
         }
     }
+}
+
+/// Validate `sector_data` against its sector's current JSON Schema before it
+/// can be published. Fails closed: a published, signed DPP must pass a real
+/// schema check whenever it carries sector data — unlike `create`, where a
+/// draft may stay lenient. `Ok` covers a resolved-and-valid schema; `Err`
+/// covers both a resolved-but-invalid schema and no schema resolved at all.
+fn validate_schema_for_publish(sector_data: &SectorData) -> Result<(), DppError> {
+    let schema_key = sector_data.sector().catalog_key();
+    let Some(schema_version) = catalog().resolve_schema_version(schema_key, None) else {
+        // Every built-in sector has a catalog entry (CI-enforced parity guard),
+        // so this is unreachable via `SectorData`'s named variants today; the
+        // only value that resolves here is `SectorData::Other`, which is itself
+        // already blocked by `validate_sector_data` above (no "other" validator
+        // is registered by default). Kept fail-closed as defence in depth for
+        // when the open sector model gains a real per-sector validator.
+        metrics::counter!("publish_schema_unresolved_total", "sector" => schema_key).increment(1);
+        tracing::warn!(
+            sector = %schema_key,
+            "publish blocked — no registered JSON Schema for this sector"
+        );
+        return Err(DppError::Validation(
+            format!(
+                "cannot publish: no registered JSON Schema for sector '{schema_key}' — \
+                 publish requires a resolvable schema when sector data is present"
+            )
+            .into(),
+        ));
+    };
+    let mut sd_json =
+        serde_json::to_value(sector_data).map_err(|e| DppError::Serialisation(e.to_string()))?;
+    // SectorData is internally tagged; schemas validate the inner object.
+    if let Some(obj) = sd_json.as_object_mut() {
+        obj.remove("sector");
+    }
+    schema_registry()
+        .validate_strict(schema_key, &schema_version, &sd_json)
+        .map_err(DppError::from)
 }
 
 fn apply_compliance(passport: &mut Passport, registry: &dyn ComplianceRegistry) {
@@ -773,7 +849,9 @@ fn schema_registry() -> &'static dpp_domain::schemas::VersionedSchemaRegistry {
 
 #[cfg(test)]
 mod tests {
-    use super::{apply_compliance, apply_patch, build_gs1_or_fallback_url};
+    use super::{
+        apply_compliance, apply_patch, build_gs1_or_fallback_url, validate_schema_for_publish,
+    };
     use chrono::Utc;
     use dpp_domain::{
         domain::{
@@ -903,5 +981,18 @@ mod tests {
         apply_compliance(&mut p, &NoopRegistry);
         assert!(p.co2e_per_unit.is_none());
         assert!(p.repairability_score.is_none());
+    }
+
+    // ── validate_schema_for_publish (Q-2) ────────────────────────────────────
+
+    #[test]
+    fn unresolvable_sector_schema_fails_closed() {
+        // `SectorData::Other`'s catalog key ("other") has no embedded schema —
+        // the only value that can reach this branch, since every named sector
+        // has a catalog entry (CI-enforced parity guard). Publish must refuse
+        // it outright, not warn-and-pass.
+        let sd = SectorData::Other(serde_json::json!({"anything": "goes"}));
+        let err = validate_schema_for_publish(&sd).unwrap_err();
+        assert!(matches!(err, DppError::Validation(_)));
     }
 }

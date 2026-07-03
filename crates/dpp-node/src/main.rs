@@ -35,7 +35,8 @@ use dpp_integrator::{
 };
 use dpp_types::{
     api_key::ApiKeyRepository, audit::AuditRepository, operator::OperatorConfigRepository,
-    registry_identity::RegistryIdentityRepository,
+    registry_identity::RegistryIdentityRepository, registry_sync::RegistrySyncOutbox,
+    trust::{NodeProfile, NodeTrustReport, TrustMode, TrustPort},
 };
 use dpp_vault::{
     domain::{
@@ -62,6 +63,7 @@ struct DbComponents {
     operator_repo: Arc<dyn OperatorConfigRepository>,
     api_key_repo: Arc<dyn ApiKeyRepository>,
     registry_repo: Arc<dyn RegistryIdentityRepository>,
+    registry_outbox: Arc<dyn RegistrySyncOutbox>,
     job_store: Arc<dyn JobStore>,
     db_ping: Arc<dyn DbPing>,
 }
@@ -70,7 +72,7 @@ async fn init_db(cfg: &NodeConfig) -> anyhow::Result<DbComponents> {
     use async_trait::async_trait;
     use dpp_dal::pg::{
         PgApiKeyRepo, PgAuditRepo, PgDal, PgOperatorConfigRepo, PgPassportRepo,
-        PgRegistryIdentityRepo,
+        PgRegistryIdentityRepo, PgRegistrySyncRepo,
     };
     use dpp_domain::DppError;
     use dpp_node::infra::pg_job_store::PgJobStore;
@@ -129,6 +131,7 @@ async fn init_db(cfg: &NodeConfig) -> anyhow::Result<DbComponents> {
         operator_repo: Arc::new(PgOperatorConfigRepo::new(dal.clone())),
         api_key_repo: Arc::new(PgApiKeyRepo::new(dal.clone())),
         registry_repo: Arc::new(PgRegistryIdentityRepo::new(dal.clone())),
+        registry_outbox: Arc::new(PgRegistrySyncRepo::new(dal.clone())),
         job_store: Arc::new(PgJobStore::new(dal.clone())),
         db_ping: Arc::new(PgPing(dal)),
     })
@@ -206,7 +209,7 @@ async fn main() -> anyhow::Result<()> {
     // If EU_REGISTRY_CLIENT_ID + SECRET are set, use the live (sandbox) adapter.
     // Otherwise fall back to GhostRegistrySync so publish is never blocked before
     // the EU registry launches (~19 Jul 2026).
-    let registry_sync: Arc<dyn RegistrySyncPort> = match (
+    let (registry_sync, registry_trust): (Arc<dyn RegistrySyncPort>, TrustMode) = match (
         std::env::var("EU_REGISTRY_CLIENT_ID")
             .ok()
             .filter(|s| !s.is_empty()),
@@ -220,27 +223,88 @@ async fn main() -> anyhow::Result<()> {
             let adapter = EuRegistrySync::new(reg_cfg)
                 .context("Failed to build EU registry sync HTTP client")?;
             tracing::info!("EU registry sync: sandbox adapter active");
-            Arc::new(adapter) as Arc<dyn RegistrySyncPort>
+            (Arc::new(adapter), TrustMode::Sandbox)
         }
         _ => {
             tracing::info!(
                 "EU registry sync: ghost (pre-go-live) — set EU_REGISTRY_CLIENT_ID + EU_REGISTRY_CLIENT_SECRET to enable"
             );
-            Arc::new(dpp_domain::GhostRegistrySync) as Arc<dyn RegistrySyncPort>
+            (Arc::new(dpp_domain::GhostRegistrySync), TrustMode::Ghost)
         }
     };
 
     // ── ESPR Art. 13 archive (S3/MinIO or NoOp) ──────────────────────────────
-    let archive: Arc<dyn ArchivePort> = match S3ArchiveConfig::from_env() {
-        Some(cfg) => {
-            tracing::info!(bucket = %cfg.bucket, "ESPR archive: S3 adapter active");
-            Arc::new(S3ArchiveAdapter::new(cfg)) as Arc<dyn ArchivePort>
+    let (archive, archive_trust): (Arc<dyn ArchivePort>, TrustMode) =
+        match S3ArchiveConfig::from_env() {
+            Some(cfg) => {
+                tracing::info!(bucket = %cfg.bucket, "ESPR archive: S3 adapter active");
+                (Arc::new(S3ArchiveAdapter::new(cfg)), TrustMode::Live)
+            }
+            None => {
+                tracing::info!("ESPR archive: no-op — set ARCHIVE_S3_BUCKET to enable");
+                (Arc::new(NoOpArchive), TrustMode::Ghost)
+            }
+        };
+
+    // ── Ghost-honesty invariant (chunk 03) ───────────────────────────────────
+    // Collect each trust port's resolved tier, log it, export gauges, and — in a
+    // production profile — refuse to boot on placeholder trust. The seal port is
+    // not yet wired (chunk 04), so it always resolves to Ghost for now: a
+    // production node cannot boot until a real QTSP seal exists, which is the
+    // honest posture. List-driven so a new port inherits the invariant for free.
+    let trust = Arc::new(NodeTrustReport::new(
+        NodeProfile::from_env(),
+        vec![
+            TrustPort { port: "seal", mode: TrustMode::Ghost, required: true },
+            TrustPort { port: "registry_sync", mode: registry_trust, required: true },
+            TrustPort { port: "archive", mode: archive_trust, required: false },
+        ],
+    ));
+    for p in &trust.ports {
+        tracing::info!(port = p.port, mode = p.mode.as_str(), required = p.required, "trust mode");
+        metrics::gauge!("trust_mode", "port" => p.port).set(p.mode.gauge_value());
+    }
+    if let Err(msg) = trust.enforce_profile() {
+        tracing::error!(%msg, "production profile refuses placeholder trust");
+        anyhow::bail!(msg);
+    }
+
+    // ── Compliance Current: signed ruleset channel (N-2) ─────────────────────
+    // Load the pinned, signed bundle if a channel is configured; otherwise stay
+    // on the in-repo baseline. A bad bundle never takes the node down — it stays
+    // on the last-good ruleset (fail-closed) and raises an alarm metric.
+    let active_ruleset = Arc::new(dpp_node::infra::ruleset::ActiveRuleset::baseline());
+    match (
+        std::env::var("RULESET_BUNDLE_PATH")
+            .ok()
+            .filter(|s| !s.is_empty()),
+        std::env::var("RULESET_PUBLISHER_PUBKEY")
+            .ok()
+            .filter(|s| !s.is_empty()),
+    ) {
+        (Some(path), Some(pubkey)) => {
+            let loaded = dpp_node::infra::ruleset::read_bundle_file(std::path::Path::new(&path))
+                .and_then(|b| {
+                    active_ruleset
+                        .load_and_swap(&b, &pubkey)
+                        .map_err(anyhow::Error::from)
+                });
+            match loaded {
+                Ok(v) => tracing::info!(version = %v, "compliance-current ruleset loaded"),
+                Err(e) => {
+                    metrics::counter!("ruleset_load_failures_total").increment(1);
+                    tracing::error!(
+                        error = %e,
+                        "ruleset bundle failed to load — staying on baseline (fail-closed)"
+                    );
+                }
+            }
         }
-        None => {
-            tracing::info!("ESPR archive: no-op — set ARCHIVE_S3_BUCKET to enable");
-            Arc::new(NoOpArchive) as Arc<dyn ArchivePort>
-        }
-    };
+        _ => tracing::info!(
+            "compliance-current ruleset: baseline — set RULESET_BUNDLE_PATH + RULESET_PUBLISHER_PUBKEY for a signed channel"
+        ),
+    }
+    tracing::info!(version = %active_ruleset.version(), "active ruleset");
 
     // ── Vault service state ────────────────────────────────────────────────────
     let operator_country = db
@@ -253,9 +317,14 @@ async fn main() -> anyhow::Result<()> {
         .unwrap_or_default();
 
     let compliance: Arc<dyn ComplianceRegistry> = plugin_host.clone();
+    // Clone the registry-sync port for the outbox drain task before it is moved
+    // into the service (the service persists it as a field but the drain owns
+    // the actual registration calls now).
+    let registry_sync_for_drain = registry_sync.clone();
     // The registry reader stamps the default facility (Annex III) + primary
     // operator identifier (Art. 13) onto new passports, read live so changes made
-    // via the API/CLI apply without a node restart.
+    // via the API/CLI apply without a node restart. The registry outbox makes the
+    // passport-publish write and its EU-registry registration enqueue atomic.
     let service = Arc::new(
         PassportService::new(
             db.passport_repo.clone(),
@@ -267,7 +336,8 @@ async fn main() -> anyhow::Result<()> {
             archive,
             operator_country,
         )
-        .with_registry_reader(db.operator_repo.clone()),
+        .with_registry_reader(db.operator_repo.clone())
+        .with_registry_outbox(db.registry_outbox.clone()),
     );
     let operator_service = Arc::new(OperatorService::new(db.operator_repo.clone()));
     let api_key_service = Arc::new(ApiKeyService::new(db.api_key_repo.clone()));
@@ -316,6 +386,57 @@ async fn main() -> anyhow::Result<()> {
         });
     }
 
+    // ── Registry outbox drain (ESPR Art. 13) ──────────────────────────────
+    // Publish enqueues each registration transactionally with the passport
+    // write; this task drains due rows against the registry port with backoff.
+    // A killed node loses nothing — rows persist and are retried here on restart.
+    {
+        const DRAIN_INTERVAL: std::time::Duration = std::time::Duration::from_secs(30);
+        const DRAIN_BATCH: i64 = 50;
+        const STALL_THRESHOLD: i32 = 8;
+
+        let outbox = db.registry_outbox.clone();
+        let registry_sync = registry_sync_for_drain;
+
+        // Boot reconciliation: log outstanding registry-sync state so a restart
+        // surfaces (never hides) queued/rejected/stalled registrations.
+        match outbox.status_counts(STALL_THRESHOLD).await {
+            Ok(c) => {
+                tracing::info!(
+                    pending = c.pending,
+                    registered = c.registered,
+                    rejected = c.rejected,
+                    status_intents = c.status_intents,
+                    stalled = c.stalled,
+                    "registry outbox reconciliation at boot"
+                );
+                metrics::gauge!("registry_outbox_pending").set(c.pending as f64);
+                metrics::gauge!("registry_outbox_stalled").set(c.stalled as f64);
+                metrics::gauge!("registry_outbox_rejected").set(c.rejected as f64);
+            }
+            Err(e) => tracing::warn!(error = %e, "registry outbox boot reconciliation failed"),
+        }
+
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(DRAIN_INTERVAL).await;
+                dpp_node::infra::registry_drain::drain_once(&outbox, &registry_sync, DRAIN_BATCH)
+                    .await;
+                if let Ok(c) = outbox.status_counts(STALL_THRESHOLD).await {
+                    metrics::gauge!("registry_outbox_pending").set(c.pending as f64);
+                    metrics::gauge!("registry_outbox_stalled").set(c.stalled as f64);
+                    metrics::gauge!("registry_outbox_rejected").set(c.rejected as f64);
+                    if c.stalled > 0 {
+                        tracing::warn!(
+                            stalled = c.stalled,
+                            "registry outbox has stalled rows — manual investigation required"
+                        );
+                    }
+                }
+            }
+        });
+    }
+
     // ── Metrics: dedicated private listener (never the public API port) ────────
     // `/metrics` is deliberately NOT mounted on the public router — exposing
     // operational telemetry to anyone who can reach the API port is needless
@@ -323,7 +444,7 @@ async fn main() -> anyhow::Result<()> {
     spawn_metrics_server(cfg.metrics_addr.clone(), prometheus_handle.clone());
 
     // ── Assemble router ───────────────────────────────────────────────────────
-    let app = router::build(vault_state, identity_state, integrator_state);
+    let app = router::build(vault_state, identity_state, integrator_state, trust, active_ruleset);
 
     let addr = format!("0.0.0.0:{}", cfg.port);
     let listener = TcpListener::bind(&addr)

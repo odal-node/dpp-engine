@@ -3,4 +3,6 @@
 pub mod eu_registry_sync;
 pub mod nats_event_bus;
 pub mod pg_job_store;
+pub mod registry_drain;
+pub mod ruleset;
 pub mod s3_archive;

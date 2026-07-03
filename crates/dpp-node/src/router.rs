@@ -1,11 +1,18 @@
 //! Top-level Axum router for the `dpp-node` single binary.
 
-use axum::{Router, extract::DefaultBodyLimit, middleware, routing::get};
+use std::sync::Arc;
+
+use axum::{
+    Router, extract::DefaultBodyLimit, middleware, response::Json, routing::get,
+};
 use tower_http::{
     catch_panic::CatchPanicLayer,
     request_id::{PropagateRequestIdLayer, SetRequestIdLayer},
     trace::TraceLayer,
 };
+
+use crate::infra::ruleset::ActiveRuleset;
+use dpp_types::trust::NodeTrustReport;
 
 /// Node-global request body cap (8 MiB). Generous enough for the largest
 /// legitimate body (the integrator's 5 MiB bulk import, which keeps its own
@@ -33,6 +40,8 @@ pub fn build(
     vault_state: VaultState,
     identity_state: IdentityState,
     integrator_state: IntegratorState,
+    trust: Arc<NodeTrustReport>,
+    active_ruleset: Arc<ActiveRuleset>,
 ) -> Router {
     let vault_router = dpp_vault::router::build(vault_state);
     // Public-only identity routes (did:web document + health). The internal
@@ -42,7 +51,14 @@ pub fn build(
     let integrator_router = dpp_integrator::router::build(integrator_state);
 
     Router::new()
-        .route("/health", get(health))
+        .route(
+            "/health",
+            get(move || {
+                let trust = trust.clone();
+                let ruleset = active_ruleset.clone();
+                async move { node_health(&trust, &ruleset) }
+            }),
+        )
         .nest("/vault", vault_router)
         .nest("/identity", identity_router)
         .nest("/integrator", integrator_router)
@@ -58,6 +74,47 @@ pub fn build(
         .layer(CatchPanicLayer::new())
 }
 
-async fn health() -> &'static str {
-    "ok"
+/// Node health with the ghost-honesty trust report (chunk 03) and the active
+/// Compliance Current ruleset version (N-2), so no surface can present a
+/// placeholder as real and the ruleset a passport was validated against is
+/// observable ("provably more current than a fork").
+pub fn node_health(
+    trust: &NodeTrustReport,
+    active_ruleset: &ActiveRuleset,
+) -> Json<serde_json::Value> {
+    let mut body = serde_json::json!({
+        "status": "ok",
+        "ruleset": { "version": active_ruleset.version() },
+    });
+    if let serde_json::Value::Object(map) = &mut body {
+        if let serde_json::Value::Object(t) = trust.health_json() {
+            map.extend(t);
+        }
+    }
+    Json(body)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use dpp_types::trust::{NodeProfile, NodeTrustReport, TrustMode, TrustPort};
+
+    #[test]
+    fn node_health_surfaces_trust_modes() {
+        let report = NodeTrustReport::new(
+            NodeProfile::Development,
+            vec![
+                TrustPort { port: "seal", mode: TrustMode::Ghost, required: true },
+                TrustPort { port: "registry_sync", mode: TrustMode::Sandbox, required: true },
+            ],
+        );
+        let ruleset = ActiveRuleset::baseline();
+        let Json(body) = node_health(&report, &ruleset);
+        assert_eq!(body["status"], "ok");
+        assert_eq!(body["profile"], "development");
+        assert_eq!(body["trust_mode"]["seal"], "ghost");
+        assert_eq!(body["trust_mode"]["registry_sync"], "sandbox");
+        assert_eq!(body["ruleset"]["version"], "baseline");
+    }
+}
+

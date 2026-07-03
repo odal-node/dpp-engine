@@ -261,6 +261,8 @@ async fn t4_audit_append_only() {
         new_status: Some("draft".into()),
         metadata: None,
         timestamp: chrono::Utc::now(),
+        prev_hash: None,
+        entry_hash: None,
     };
     audit.append(entry.clone()).await.expect("append");
 
@@ -279,6 +281,72 @@ async fn t4_audit_append_only() {
         .execute(&admin)
         .await;
     assert!(res.is_err(), "audit DELETE must be rejected by trigger");
+}
+
+// T7 — audit hash chain (N-1): a forward chain verifies; a tampered row is
+// caught at the exact index. Tampering bypasses the append-only trigger the way
+// only a superuser could, proving the chain detects what the trigger can't.
+#[tokio::test]
+async fn t7_audit_hash_chain_detects_tamper() {
+    let pg = start_pg().await;
+    let audit = PgAuditRepo::new(pg.dal.clone());
+    let pid = Uuid::now_v7().to_string();
+
+    let mk = |action: &str, new: &str| AuditEntry {
+        id: Uuid::now_v7(),
+        passport_id: pid.clone(),
+        actor: "test".into(),
+        action: action.into(),
+        previous_status: None,
+        new_status: Some(new.to_owned()),
+        metadata: None,
+        timestamp: chrono::Utc::now(),
+        prev_hash: None,
+        entry_hash: None,
+    };
+    audit.append(mk("created", "draft")).await.expect("a1");
+    audit.append(mk("published", "active")).await.expect("a2");
+    audit.append(mk("suspended", "suspended")).await.expect("a3");
+
+    // (a) the intact forward chain verifies.
+    assert!(
+        audit.verify_chain(&pid).await.expect("verify").is_none(),
+        "freshly appended chain must verify"
+    );
+
+    // (a') tamper the middle row's content, disabling the append-only trigger as
+    // the table owner (superuser) — the only way the row could change at all.
+    let admin = sqlx::postgres::PgPoolOptions::new()
+        .max_connections(1)
+        .connect(&pg.admin_url)
+        .await
+        .expect("admin");
+    sqlx::query("ALTER TABLE odal.passport_audit DISABLE TRIGGER audit_immutable")
+        .execute(&admin)
+        .await
+        .expect("disable trigger");
+    let affected = sqlx::query(
+        "UPDATE odal.passport_audit SET new_status = 'evil' \
+         WHERE passport_id = $1 AND action = 'published'",
+    )
+    .bind(&pid)
+    .execute(&admin)
+    .await
+    .expect("tamper update");
+    assert_eq!(affected.rows_affected(), 1, "one row tampered");
+    sqlx::query("ALTER TABLE odal.passport_audit ENABLE TRIGGER audit_immutable")
+        .execute(&admin)
+        .await
+        .expect("re-enable trigger");
+
+    // verify now reports the break at the exact tampered (second) entry.
+    let brk = audit
+        .verify_chain(&pid)
+        .await
+        .expect("verify")
+        .expect("tamper must be detected");
+    assert_eq!(brk.index, 1, "break reported at the tampered entry");
+    assert_eq!(brk.passport_id, pid);
 }
 
 // T5 — key_prefix is UNIQUE at the schema level (collision gap closed).

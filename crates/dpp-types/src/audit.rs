@@ -8,9 +8,13 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use dpp_domain::DppError;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 use crate::auth::AuthContext;
+
+/// The `prev_hash` of the first (genesis) entry in a passport's chain.
+pub const GENESIS_PREV_HASH: &str = "";
 
 /// A single immutable audit record for a passport state change.
 ///
@@ -35,6 +39,15 @@ pub struct AuditEntry {
     pub metadata: Option<serde_json::Value>,
     /// Wall-clock timestamp of the operation (UUIDv7 source; sub-millisecond ordered).
     pub timestamp: DateTime<Utc>,
+    /// Hash-chain link to the previous entry in this passport's chain (N-1).
+    /// `""`/`None` for the genesis entry. Set by the repo on append.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prev_hash: Option<String>,
+    /// SHA-256 (hex) over the JCS-canonicalised content of this entry folded
+    /// with `prev_hash` — the chain link the next entry points back to. Set by
+    /// the repo on append; `None` on an in-memory entry not yet persisted.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub entry_hash: Option<String>,
 }
 
 impl AuditEntry {
@@ -60,6 +73,8 @@ impl AuditEntry {
             new_status: new_status.map(|s| s.to_owned()),
             metadata: None,
             timestamp: Utc::now(),
+            prev_hash: None,
+            entry_hash: None,
         }
     }
 
@@ -68,6 +83,79 @@ impl AuditEntry {
         self.metadata = Some(metadata);
         self
     }
+
+    /// The chain hash for this entry given its predecessor's hash: SHA-256 (hex)
+    /// over the JCS-canonicalised content **and** `prev_hash`. Excludes the
+    /// `prev_hash`/`entry_hash` columns themselves (prev is folded in as
+    /// `prevHash`). Deterministic — the same content + prev always hashes equal.
+    #[must_use]
+    pub fn chain_hash(&self, prev_hash: &str) -> String {
+        let canonical = serde_json::json!({
+            "id": self.id,
+            "passportId": self.passport_id,
+            "actor": self.actor,
+            "action": self.action,
+            "previousStatus": self.previous_status,
+            "newStatus": self.new_status,
+            "metadata": self.metadata,
+            "timestamp": self.timestamp,
+            "prevHash": prev_hash,
+        });
+        let bytes = serde_jcs::to_vec(&canonical)
+            .expect("JCS canonicalisation of audit content is infallible");
+        hex::encode(Sha256::digest(&bytes))
+    }
+}
+
+/// The first broken link found while verifying a passport's audit chain.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AuditChainBreak {
+    /// 0-based position of the offending entry in the ordered chain.
+    pub index: usize,
+    /// The passport whose chain broke.
+    pub passport_id: String,
+    /// Human-readable reason (prev-link mismatch vs. content tamper).
+    pub reason: String,
+}
+
+/// Verify a passport's audit entries form an intact hash chain.
+///
+/// `entries` must be in chain order (ascending timestamp). Returns the first
+/// break: either a `prev_hash` that doesn't point at the prior entry, or an
+/// `entry_hash` that doesn't match the entry's recomputed content hash (a
+/// tampered row). `Ok(())` means every link verifies.
+///
+/// This detects any tamper that does not re-hash the *entire forward chain*;
+/// pinning the head with a signed checkpoint (the second half of N-1) is what
+/// makes a full re-hash detectable by a third party without DB access.
+///
+/// # Errors
+/// [`AuditChainBreak`] at the first inconsistent entry.
+pub fn verify_audit_chain(entries: &[AuditEntry]) -> Result<(), AuditChainBreak> {
+    let mut expected_prev = GENESIS_PREV_HASH.to_owned();
+    for (index, entry) in entries.iter().enumerate() {
+        let stored_prev = entry.prev_hash.as_deref().unwrap_or(GENESIS_PREV_HASH);
+        if stored_prev != expected_prev {
+            return Err(AuditChainBreak {
+                index,
+                passport_id: entry.passport_id.clone(),
+                reason: format!(
+                    "prev_hash link broken: stored {stored_prev:?}, expected {expected_prev:?}"
+                ),
+            });
+        }
+        let recomputed = entry.chain_hash(&expected_prev);
+        let stored_hash = entry.entry_hash.as_deref().unwrap_or("");
+        if stored_hash != recomputed {
+            return Err(AuditChainBreak {
+                index,
+                passport_id: entry.passport_id.clone(),
+                reason: "entry_hash mismatch — content tampered".to_owned(),
+            });
+        }
+        expected_prev = recomputed;
+    }
+    Ok(())
 }
 
 /// Port trait for audit trail persistence.
@@ -77,4 +165,67 @@ pub trait AuditRepository: Send + Sync {
     async fn append(&self, entry: AuditEntry) -> Result<(), DppError>;
     /// Retrieve the full audit trail for a passport, ordered by timestamp ascending.
     async fn list_by_passport(&self, passport_id: &str) -> Result<Vec<AuditEntry>, DppError>;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn entry(action: &str) -> AuditEntry {
+        AuditEntry {
+            id: Uuid::now_v7(),
+            passport_id: "p1".into(),
+            actor: "actor".into(),
+            action: action.into(),
+            previous_status: None,
+            new_status: None,
+            metadata: None,
+            timestamp: Utc::now(),
+            prev_hash: None,
+            entry_hash: None,
+        }
+    }
+
+    /// Link a slice into a chain exactly as the repo's append path does.
+    fn chain(entries: &mut [AuditEntry]) {
+        let mut prev = GENESIS_PREV_HASH.to_owned();
+        for e in entries.iter_mut() {
+            let h = e.chain_hash(&prev);
+            e.prev_hash = Some(prev.clone());
+            e.entry_hash = Some(h.clone());
+            prev = h;
+        }
+    }
+
+    #[test]
+    fn chain_hash_is_deterministic_and_prev_sensitive() {
+        let e = entry("created");
+        assert_eq!(e.chain_hash(""), e.chain_hash(""));
+        assert_ne!(e.chain_hash(""), e.chain_hash("deadbeef"));
+    }
+
+    #[test]
+    fn intact_chain_verifies() {
+        let mut es = [entry("created"), entry("published"), entry("suspended")];
+        chain(&mut es);
+        assert!(verify_audit_chain(&es).is_ok());
+    }
+
+    #[test]
+    fn tampered_content_breaks_at_exact_index() {
+        let mut es = [entry("created"), entry("published"), entry("archived")];
+        chain(&mut es);
+        es[1].new_status = Some("suspended".into()); // flip content, keep stored hash
+        let brk = verify_audit_chain(&es).expect_err("tamper must be detected");
+        assert_eq!(brk.index, 1);
+        assert!(brk.reason.contains("tampered"));
+    }
+
+    #[test]
+    fn broken_prev_link_detected() {
+        let mut es = [entry("created"), entry("published")];
+        chain(&mut es);
+        es[1].prev_hash = Some("0000".into());
+        assert_eq!(verify_audit_chain(&es).expect_err("break").index, 1);
+    }
 }

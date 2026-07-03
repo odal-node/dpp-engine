@@ -8,7 +8,7 @@
 //!   real concurrent-write safety (no string-built SQL, no lowercasing quirks).
 
 use async_trait::async_trait;
-use sqlx::Row;
+use sqlx::{Postgres, Row, Transaction};
 use uuid::Uuid;
 
 use dpp_domain::{
@@ -21,6 +21,37 @@ use dpp_domain::{
 };
 
 use super::{PgDal, db_err};
+
+/// Apply a passport update (scalar columns + `doc`) inside a caller-supplied
+/// transaction. Shared by [`PgPassportRepo::update`] and the transactional
+/// outbox's `commit_publish`, so the publish-write and the outbox insert commit
+/// atomically without duplicating this SQL. Errors `NotFound` if no row matched.
+pub(crate) async fn update_passport_in_tx(
+    tx: &mut Transaction<'_, Postgres>,
+    passport: &Passport,
+) -> Result<(), DppError> {
+    let doc = serde_json::to_value(passport)
+        .map_err(|e| DppError::Internal(format!("serialize: {e}")))?;
+    let res = sqlx::query(
+        r#"UPDATE odal.passport SET
+             sector           = $2->>'sector',
+             status           = COALESCE($2->>'status', status),
+             retention_locked = COALESCE(($2->>'retentionLocked')::boolean, retention_locked),
+             schema_version   = COALESCE($2->>'schemaVersion', schema_version),
+             published_at     = COALESCE(NULLIF($2->>'publishedAt','')::timestamptz, published_at),
+             doc              = $2
+           WHERE id = $1"#,
+    )
+    .bind(passport.id.0)
+    .bind(&doc)
+    .execute(&mut **tx)
+    .await
+    .map_err(db_err)?;
+    if res.rows_affected() == 0 {
+        return Err(DppError::NotFound("record not found after update".into()));
+    }
+    Ok(())
+}
 
 /// PostgreSQL implementation of [`PassportRepository`].
 ///
@@ -137,26 +168,8 @@ impl PassportRepository for PgPassportRepo {
 
     /// Replace the stored doc; errors if no row with the given id exists.
     async fn update(&self, passport: Passport) -> Result<Passport, DppError> {
-        let doc = Self::to_doc(&passport)?;
         let mut tx = self.dal.begin().await?;
-        let updated = sqlx::query(
-            r#"UPDATE odal.passport SET
-                 sector           = $2->>'sector',
-                 status           = COALESCE($2->>'status', status),
-                 retention_locked = COALESCE(($2->>'retentionLocked')::boolean, retention_locked),
-                 schema_version   = COALESCE($2->>'schemaVersion', schema_version),
-                 published_at     = COALESCE(NULLIF($2->>'publishedAt','')::timestamptz, published_at),
-                 doc              = $2
-               WHERE id = $1"#,
-        )
-        .bind(Self::uuid_of(passport.id))
-        .bind(&doc)
-        .execute(&mut *tx)
-        .await
-        .map_err(db_err)?;
-        if updated.rows_affected() == 0 {
-            return Err(DppError::NotFound("record not found after update".into()));
-        }
+        update_passport_in_tx(&mut tx, &passport).await?;
         tx.commit().await.map_err(db_err)?;
         Ok(passport)
     }
