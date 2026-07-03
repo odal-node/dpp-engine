@@ -1,5 +1,6 @@
 //! XLSX parser for bulk import uploads.
-//! Includes zip-bomb and dimension-bomb pre-scan guards before delegating to calamine.
+//! Includes zip-bomb, dimension-bomb, and pathological-attribute pre-scan
+//! guards before delegating to calamine.
 
 use std::collections::HashMap;
 use std::io::{BufRead, Cursor, Read};
@@ -22,6 +23,19 @@ const MAX_DENSE_CELLS: u64 = 5_000_000;
 /// streaming so a zip-bomb (a tiny archive that inflates to gigabytes) is
 /// rejected before calamine reads anything.
 const MAX_DECOMPRESSED_BYTES: u64 = 128 * 1024 * 1024;
+
+/// Maximum attributes accepted on a single XML start/empty tag anywhere in the
+/// archive. Guards RUSTSEC-2026-0194: quick-xml's default checked attribute
+/// iteration (`.attributes()`, `try_get_attribute`) does an `O(N²)` scan for
+/// duplicate names with no bound on `N`, and calamine (transitively pinned to
+/// a pre-0.41 quick-xml with no fixed release published yet) parses every XML
+/// part of an XLSX this way. A single crafted tag with tens of thousands of
+/// attributes can pin a CPU core for minutes. A legitimate XLSX tag never
+/// carries more than a handful of attributes (a `<c>` cell tops out around 6;
+/// the root `<worksheet>`/`<workbook>` tag's xmlns declarations top out
+/// around a dozen) — this cap rejects the file before calamine, or our own
+/// scan below, ever runs the vulnerable check against a pathological tag.
+const MAX_ATTRS_PER_TAG: usize = 64;
 
 /// Parse XLSX bytes into a list of rows.
 ///
@@ -135,6 +149,8 @@ impl<R: Read> Read for LimitedReader<'_, R> {
 ///   enforced by streaming so a lying central-directory size can't bypass it.
 /// - **dimension-bomb**: each worksheet's cell references are scanned and the
 ///   implied dense range (max-col × max-row) is capped (`MAX_DENSE_CELLS`).
+/// - **pathological attributes**: every XML part (not just worksheets) is
+///   scanned for tags exceeding `MAX_ATTRS_PER_TAG` (see RUSTSEC-2026-0194).
 fn precheck_xlsx(bytes: &[u8]) -> Result<(), ParseError> {
     let mut zip = ZipArchive::new(Cursor::new(bytes))
         .map_err(|e| ParseError::Csv(format!("XLSX is not a valid zip: {e}")))?;
@@ -144,17 +160,18 @@ fn precheck_xlsx(bytes: &[u8]) -> Result<(), ParseError> {
         let entry = zip
             .by_index(i)
             .map_err(|e| ParseError::Csv(format!("XLSX entry error: {e}")))?;
-        let is_worksheet =
-            entry.name().starts_with("xl/worksheets/") && entry.name().ends_with(".xml");
+        let name = entry.name();
+        let is_worksheet = name.starts_with("xl/worksheets/") && name.ends_with(".xml");
+        let is_xml = name.ends_with(".xml") || name.ends_with(".rels");
         let mut limited = LimitedReader {
             inner: entry,
             remaining: &mut budget,
         };
-        if is_worksheet {
-            scan_worksheet(std::io::BufReader::new(limited))?;
+        if is_xml {
+            scan_xml_entry(std::io::BufReader::new(limited), is_worksheet)?;
         } else {
-            // Non-worksheet entries (sharedStrings, styles, …): decompress to a
-            // sink only to enforce the byte budget against zip-bombs.
+            // Non-XML entries (rare in an XLSX; e.g. embedded media): decompress
+            // to a sink only to enforce the byte budget against zip-bombs.
             std::io::copy(&mut limited, &mut std::io::sink())
                 .map_err(|e| ParseError::Csv(format!("XLSX decompression too large: {e}")))?;
         }
@@ -162,19 +179,44 @@ fn precheck_xlsx(bytes: &[u8]) -> Result<(), ParseError> {
     Ok(())
 }
 
-/// Stream a worksheet's XML and reject it if its cells reference an oversized
-/// dense range. Returns early as soon as the cap is exceeded, so a bomb is
-/// rejected without reading the whole file.
-fn scan_worksheet<R: BufRead>(reader: R) -> Result<(), ParseError> {
+/// Stream an XML part and reject it if any tag exceeds `MAX_ATTRS_PER_TAG`
+/// attributes, or (when `track_dimensions` is set, i.e. this is a worksheet)
+/// its cells reference an oversized dense range. Returns early as soon as
+/// either cap is exceeded, so a bomb is rejected without reading the whole
+/// file.
+///
+/// Deliberately uses `.attributes().with_checks(false)` rather than
+/// `.attributes()`/`try_get_attribute` — the checked variants are exactly the
+/// RUSTSEC-2026-0194 code path this scan exists to guard against, so using
+/// them here would make the guard itself exploitable.
+fn scan_xml_entry<R: BufRead>(reader: R, track_dimensions: bool) -> Result<(), ParseError> {
     let mut xml = XmlReader::from_reader(reader);
     let mut buf = Vec::new();
     let (mut max_col, mut max_row): (u64, u64) = (0, 0);
     loop {
         match xml.read_event_into(&mut buf) {
             Ok(Event::Eof) => break,
-            Ok(Event::Start(e)) | Ok(Event::Empty(e)) if e.name().as_ref() == b"c" => {
-                if let Ok(Some(attr)) = e.try_get_attribute("r")
-                    && let Some((col, row)) = parse_cell_ref(&attr.value)
+            Ok(Event::Start(e)) | Ok(Event::Empty(e)) => {
+                let is_cell = track_dimensions && e.name().as_ref() == b"c";
+                let mut attr_count = 0usize;
+                let mut r_value: Option<Vec<u8>> = None;
+                for attr in e.attributes().with_checks(false) {
+                    attr_count += 1;
+                    if attr_count > MAX_ATTRS_PER_TAG {
+                        return Err(ParseError::Csv(format!(
+                            "XLSX contains a tag with too many attributes; \
+                                 maximum is {MAX_ATTRS_PER_TAG}"
+                        )));
+                    }
+                    if is_cell
+                        && let Ok(attr) = attr
+                        && attr.key.as_ref() == b"r"
+                    {
+                        r_value = Some(attr.value.into_owned());
+                    }
+                }
+                if let Some(r) = r_value
+                    && let Some((col, row)) = parse_cell_ref(&r)
                 {
                     max_col = max_col.max(col);
                     max_row = max_row.max(row);
@@ -187,7 +229,7 @@ fn scan_worksheet<R: BufRead>(reader: R) -> Result<(), ParseError> {
                 }
             }
             Ok(_) => {}
-            Err(e) => return Err(ParseError::Csv(format!("XLSX worksheet scan error: {e}"))),
+            Err(e) => return Err(ParseError::Csv(format!("XLSX XML scan error: {e}"))),
         }
         buf.clear();
     }
@@ -256,7 +298,7 @@ mod tests {
             <row r="1"><c r="A1"><v>1</v></c></row>
             <row r="1048576"><c r="XFD1048576"><v>1</v></c></row>
         </sheetData></worksheet>"#;
-        let res = scan_worksheet(Cursor::new(&xml[..]));
+        let res = scan_xml_entry(Cursor::new(&xml[..]), true);
         assert!(
             res.is_err(),
             "far-apart cells (dimension bomb) must be rejected"
@@ -269,7 +311,7 @@ mod tests {
             <row r="1"><c r="A1"><v>1</v></c><c r="B1"><v>2</v></c></row>
             <row r="2"><c r="A2"><v>3</v></c></row>
         </sheetData></worksheet>"#;
-        let res = scan_worksheet(Cursor::new(&xml[..]));
+        let res = scan_xml_entry(Cursor::new(&xml[..]), true);
         assert!(res.is_ok(), "a small contiguous sheet must be accepted");
     }
 
@@ -301,6 +343,51 @@ mod tests {
         assert!(
             precheck_xlsx(&zip).is_err(),
             "dimension-bomb archive must be rejected"
+        );
+    }
+
+    /// RUSTSEC-2026-0194 guard: a tag with far more attributes than any real
+    /// XLSX part uses must be rejected before calamine's checked attribute
+    /// iteration (the vulnerable `O(N²)` duplicate-name scan) ever sees it.
+    fn attr_bomb_xml(count: usize) -> Vec<u8> {
+        let mut attrs = String::new();
+        for i in 0..count {
+            attrs.push_str(&format!(" a{i}=\"x\""));
+        }
+        format!("<c{attrs}/>").into_bytes()
+    }
+
+    #[test]
+    fn scan_rejects_attribute_bomb_in_worksheet() {
+        let xml = attr_bomb_xml(MAX_ATTRS_PER_TAG + 1);
+        let res = scan_xml_entry(Cursor::new(&xml[..]), true);
+        assert!(
+            res.is_err(),
+            "a tag exceeding MAX_ATTRS_PER_TAG must be rejected"
+        );
+    }
+
+    #[test]
+    fn scan_accepts_tag_at_attribute_cap() {
+        let xml = attr_bomb_xml(MAX_ATTRS_PER_TAG);
+        let res = scan_xml_entry(Cursor::new(&xml[..]), true);
+        assert!(res.is_ok(), "a tag exactly at the cap must be accepted");
+    }
+
+    /// The attribute-count guard must also cover non-worksheet XML parts
+    /// (sharedStrings, styles, workbook.xml, …), since calamine parses all of
+    /// them with the same vulnerable checked-attribute pattern.
+    #[test]
+    fn precheck_rejects_attribute_bomb_in_shared_strings() {
+        let bomb = attr_bomb_xml(MAX_ATTRS_PER_TAG + 1);
+        let sheet = br#"<worksheet><sheetData><c r="A1"/></sheetData></worksheet>"#;
+        let zip = zip_with(&[
+            ("xl/worksheets/sheet1.xml", sheet),
+            ("xl/sharedStrings.xml", &bomb),
+        ]);
+        assert!(
+            precheck_xlsx(&zip).is_err(),
+            "an attribute bomb in a non-worksheet XML part must be rejected"
         );
     }
 

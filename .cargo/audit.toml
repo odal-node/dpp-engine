@@ -49,6 +49,33 @@
 # deferred rather than rushed into a "fresh tree" commit. Re-evaluate when
 # bumping `inquire`/`indicatif`/`testcontainers` is scheduled as its own
 # reviewed change.
+#
+# RUSTSEC-2026-0194 / -0195 — `quick-xml` <0.41.0 (O(N²) duplicate-attribute
+# scan; unbounded `NsReader` namespace allocation). Two independent paths,
+# both currently unfixable by a version bump:
+#   1. `dpp-integrator` -> `calamine` 0.22.1 (latest published: 0.35.0, which
+#      still pins `quick-xml = "0.39"` — itself vulnerable to -0194; no
+#      calamine release exists yet on a patched quick-xml). This path IS
+#      shipped (`dpp-integrator` -> `dpp-node`) and DOES parse untrusted
+#      uploaded XLSX, so it was not safe to just ignore: confirmed calamine
+#      uses a plain `quick_xml::Reader` (not `NsReader`), so -0195 does not
+#      apply; -0194 is mitigated in `xlsx_parser.rs`'s `precheck_xlsx`, which
+#      now caps attributes-per-tag (`MAX_ATTRS_PER_TAG`) across every XML
+#      part of the archive (not just worksheets, since calamine parses
+#      sharedStrings/styles/workbook.xml the same vulnerable way) before
+#      calamine ever opens the file, and does its own scan via
+#      `.attributes().with_checks(false)` so the guard isn't exploitable
+#      itself. Re-evaluate when calamine ships a quick-xml >=0.41.0 release
+#      and drop the cap's ignore-need (the cap itself is worth keeping
+#      regardless, as defense in depth).
+#   2. `dpp-cli` -> `rfd` -> `ashpd` -> `wayland-protocols`/`wayland-client`
+#      -> `wayland-scanner` 0.31.10 (latest published; pins `quick-xml =
+#      "^0.39"`, no fixed release exists yet). `wayland-scanner` only runs
+#      quick-xml at *build time*, code-generating Rust bindings from the
+#      Wayland protocol XML files vendored inside `wayland-protocols`'s own
+#      crate source — not attacker-reachable input, no runtime path. `rfd`
+#      pulls this in only for the Linux XDG-portal file-dialog backend.
+#      Re-evaluate when `wayland-scanner` releases a fix.
 ignore = [
     "RUSTSEC-2023-0071",
     "RUSTSEC-2026-0098",
@@ -58,4 +85,6 @@ ignore = [
     "RUSTSEC-2025-0057",
     "RUSTSEC-2025-0119",
     "RUSTSEC-2025-0134",
+    "RUSTSEC-2026-0194",
+    "RUSTSEC-2026-0195",
 ]
