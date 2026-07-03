@@ -72,8 +72,11 @@ Strong success criteria let you loop independently. Weak criteria ("make it work
    - docs: documentation
    - refactor: code change that doesn't fix bugs or add features
    - chore: build/tooling changes
+   - `scope` is the functional area touched (`docs`, `domain`, `dal`, `vault`, `node`, …) — never the repo name itself (no `(core)` in dpp-core, no `(engine)` in dpp-engine), since a repo's own history is already scoped to that repo
 3. NEVER include `Co-Authored-By` or any AI attribution tags in commit messages
 4. NEVER commit or push code without approval
+5. NEVER commit before running the full check suite (`just check`) locally and confirming it is green — a commit is not ready because the code looks right, it is ready because the same gate CI runs has already passed
+6. Do not reference internal planning taxonomy (roadmap phase letters, review chunk numbers, priority tags like N-1/P0/R-phase) in commit messages or in code/doc comments outside the planning docs themselves — describe what the change does, not which internal tracking item it closes
 
 ## Overview
 
