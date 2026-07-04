@@ -115,6 +115,7 @@ fn draft_passport() -> Passport {
         product_id: None,
         operator_identifier: Some("did:web:test.example".into()),
         facility: None,
+        seal: None,
     }
 }
 
