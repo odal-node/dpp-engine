@@ -5,7 +5,7 @@ use async_trait::async_trait;
 use tokio::net::TcpListener;
 use tracing_subscriber::{EnvFilter, fmt};
 
-use dpp_common::event::NoOpEventBus;
+use dpp_common::{event::NoOpEventBus, event_codes};
 use dpp_dal::pg::{
     PgApiKeyRepo, PgAuditRepo, PgDal, PgOperatorConfigRepo, PgPassportRepo, PgRegistryIdentityRepo,
 };
@@ -13,6 +13,7 @@ use dpp_domain::{
     DppError, GhostArchive, GhostRegistrySync,
     compliance::passthrough_registry::PassthroughRegistry, ports::registry_sync::RegistrySyncPort,
 };
+use dpp_types::trust::{NodeProfile, NodeTrustReport, TrustMode, TrustPort};
 use dpp_vault::{
     config::Config,
     domain::{
@@ -67,6 +68,40 @@ async fn main() -> anyhow::Result<()> {
 
     let event_bus: Arc<dyn dpp_common::event::EventBus> = Arc::new(NoOpEventBus);
     let registry_sync: Arc<dyn RegistrySyncPort> = Arc::new(GhostRegistrySync);
+
+    // ── Ghost-honesty invariant ───────────────────────────────────────────────
+    // Standalone dpp-vault always resolves registry_sync and archive to their
+    // Ghost adapters (unlike the fused dpp-node binary, which picks a real
+    // adapter when configured) — so a production profile must refuse to boot
+    // here too, or this binary would silently run with placeholder trust.
+    let trust = NodeTrustReport::new(
+        NodeProfile::from_env(),
+        vec![
+            TrustPort {
+                port: "registry_sync",
+                mode: TrustMode::Ghost,
+                required: true,
+            },
+            TrustPort {
+                port: "archive",
+                mode: TrustMode::Ghost,
+                required: false,
+            },
+        ],
+    );
+    for p in &trust.ports {
+        tracing::info!(
+            port = p.port,
+            mode = p.mode.as_str(),
+            required = p.required,
+            "trust mode"
+        );
+        metrics::gauge!("trust_mode", "port" => p.port).set(p.mode.gauge_value());
+    }
+    if let Err(msg) = trust.enforce_profile() {
+        tracing::error!(code = event_codes::TRUST_GHOST_BOOT_REFUSED, %msg, "production profile refuses placeholder trust");
+        anyhow::bail!(msg);
+    }
 
     // The registry reader stamps the default facility (Annex III) + primary
     // operator identifier (Art. 13) onto new passports, read live so changes made
