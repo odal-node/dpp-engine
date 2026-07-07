@@ -5,17 +5,29 @@
 //! this crate holds the proprietary data layer so no licensed bytes ever appear
 //! in the Apache-2.0 `dpp-calc` crate.
 //!
+//! # The firewall rule (read this before adding anything here)
+//!
+//! This crate is the licence boundary — it exists so licensed data never
+//! touches the Apache-2.0 core. Two rules follow from that, and they don't
+//! relax just because this repo is already BSL-1.1: redistribution terms on
+//! licensed datasets (ecoinvent, EF, Sphera) bind regardless of *this* crate's
+//! own licence.
+//!
+//! - **MAY live here (in git, always):** loader code (`FactorStore`), manifest
+//!   types (`FactorDatasetManifest`), stub/ghost providers, and anything that
+//!   describes a dataset without containing it.
+//! - **MAY NEVER live here (not in git, not even encrypted-at-rest in this
+//!   repo):** raw factor tables or any byte derived from a licensed dataset.
+//!   Real datasets are runtime-loaded only — fetched at boot from operator- or
+//!   Odal-licensed storage the deployment configures, hashed on load into
+//!   `table_hash`, never bundled in the crate or committed anywhere.
+//!
 //! # What ships now
 //!
 //! Only `GhostFactorProvider` (returns `FactorNotFound` for every lookup) and
 //! the supporting types (`FactorDatasetManifest`, `FactorStore`). No ecoinvent
 //! or EF data is bundled here — that is gated behind signing a dataset licence
 //! and answering the open questions in `docs/analysis/PRE-LAUNCH-CRATES-SEAL-AND-FACTOR.md` §6.5.
-//!
-//! # Licence warning
-//!
-//! DO NOT bundle or expose raw factor tables. See §6.3 of the crate proposal
-//! for the ecoinvent/EF redistribution constraints that apply to this crate.
 
 pub mod manifest;
 pub mod store;
