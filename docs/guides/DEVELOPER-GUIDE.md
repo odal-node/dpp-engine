@@ -6,7 +6,7 @@ in one place. If you read only one doc, read this.
 > **Commands live in the [`justfile`](../../justfile).** Run `just --list` for the
 > full menu; this guide shows the common ones and explains the *why*. Git workflow,
 > branching, and PR rules live in [GIT-STRATEGY.md](../governance/GIT-STRATEGY.md)
-> and [CONTRIBUTING.md](../governance/CONTRIBUTING.md).
+> and [CONTRIBUTING.md](../../CONTRIBUTING.md).
 
 ---
 
@@ -226,7 +226,7 @@ Phase-0 golden set — every series that has an alert rule attached:
 - **Compliance logic stays open** — all regulatory logic is Apache-2.0 in dpp-core.
 - **Git workflow** (branches, commits, PRs, tags): see
   [GIT-STRATEGY.md](../governance/GIT-STRATEGY.md) and
-  [CONTRIBUTING.md](../governance/CONTRIBUTING.md). Code style: rustfmt defaults,
+  [CONTRIBUTING.md](../../CONTRIBUTING.md). Code style: rustfmt defaults,
   `thiserror` in libs / `anyhow` in binaries, no `unwrap`/`expect` in library paths.
 
 ## 12. Troubleshooting
@@ -252,5 +252,5 @@ Phase-0 golden set — every series that has an alert rule attached:
 
 - [cli/README.md](../../cli/README.md) — full CLI command reference.
 - `docs/architecture/` — OVERVIEW, DATA-MODEL, AUTH, EVENT-BUS, DESIGN-PATTERNS.
-- [GIT-STRATEGY.md](../governance/GIT-STRATEGY.md), [CONTRIBUTING.md](../governance/CONTRIBUTING.md) — git workflow + contribution.
+- [GIT-STRATEGY.md](../governance/GIT-STRATEGY.md), [CONTRIBUTING.md](../../CONTRIBUTING.md) — git workflow + contribution.
 - `dpp-cor

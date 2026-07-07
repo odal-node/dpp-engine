@@ -117,7 +117,7 @@ crypto-adjacent operation in the platform is SHA-256 hashing of API keys,
 which uses the `sha2` crate.
 
 For the full cryptographic design, see the
-[dpp-core Security Policy](https://github.com/odal-node/dpp-core/blob/main/docs/project/SECURITY.md).
+[dpp-core Security Policy](https://github.com/odal-node/dpp-core/blob/main/SECURITY.md).
 
 ## Recognition
 

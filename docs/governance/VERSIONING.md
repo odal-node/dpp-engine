@@ -79,4 +79,4 @@ Breaking changes are caught by:
 
 - [SemVer 2.0.0 specification](https://semver.org/spec/v2.0.0.html)
 - [Release process](RELEASE.md)
-- [Changelog](CHANGELOG.md)
+- [Changelog](../../CHANGELOG.md)

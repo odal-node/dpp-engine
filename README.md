@@ -66,7 +66,7 @@ The engine ships as a **single binary** (`dpp-node`) that fuses all services und
 
 ### Dependencies on dpp-core
 
-All core crates are consumed from crates.io (dpp-core is published independently, version-pinned to `^0.5.0` — keep this line, the workspace `Cargo.toml`, and `.cargo/config.toml`'s sync note in agreement on every core bump; local dev can override to a sibling checkout via `.cargo/config.toml`, see `.cargo/config.toml.example`):
+All core crates are consumed from crates.io (dpp-core is published independently, version-pinned to `^0.6.0` — keep this line, the workspace `Cargo.toml`, and `.cargo/config.toml`'s sync note in agreement on every core bump; local dev can override to a sibling checkout via `.cargo/config.toml`, see `.cargo/config.toml.example`):
 
 | Core Crate | Used For |
 |---|---|
@@ -216,7 +216,10 @@ The `ComplianceRegistry` trait in `dpp-domain::ports` is a technical extension s
 | [docs/architecture/OVERVIEW.md](docs/architecture/OVERVIEW.md) | Service topology and request flow |
 | [docs/architecture/DATA-MODEL.md](docs/architecture/DATA-MODEL.md) | Tables, migrations, and bootstrap |
 | [docs/architecture/AUTH.md](docs/architecture/AUTH.md) | Authentication and authorisation |
-| [docs/governance/CONTRIBUTING.md](docs/governance/CONTRIBUTING.md) | Repo layout and contribution flow |
+| [CONTRIBUTING.md](CONTRIBUTING.md) | Repo layout and contribution flow |
+| [SECURITY.md](SECURITY.md) | Vulnerability disclosure policy |
+| [GOVERNANCE.md](GOVERNANCE.md) | Decision-making structure and maintainer authority |
+| [CHANGELOG.md](CHANGELOG.md) | Release history, one entry per version |
 | [docs/legal/LICENSING.md](docs/legal/LICENSING.md) | BSL-1.1 terms and the open-core boundary |
 
 Architecture and design docs live in [dpp-core/docs/](https://github.com/odal-node/dpp-core/tree/main/docs) since they describe the standard, not the engine.
@@ -231,7 +234,7 @@ Architecture and design docs live in [dpp-core/docs/](https://github.com/odal-no
 
 ## Security
 
-Do **not** open public issues for security vulnerabilities. Report privately to **security@odal-node.io**.
+Do **not** open public issues for security vulnerabilities. Report privately to **security@odal-node.io** — see [SECURITY.md](SECURITY.md) for full disclosure policy.
 
 ---
 

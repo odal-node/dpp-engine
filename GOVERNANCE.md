@@ -57,7 +57,7 @@ or identity service integration) require:
 
 1. A dedicated review focusing on the security implications.
 2. Explicit sign-off in the PR description noting what changed and why.
-3. An update to [SECURITY.md](../project/SECURITY.md) if the change affects
+3. An update to [SECURITY.md](SECURITY.md) if the change affects
    the threat model.
 
 ## Licensing
@@ -84,6 +84,6 @@ contributions and grant the license via PR submission.
 ## References
 
 - [CONTRIBUTING.md](CONTRIBUTING.md)
-- [SECURITY.md](../project/SECURITY.md)
-- [Architecture docs](../architecture/)
+- [SECURITY.md](SECURITY.md)
+- [Architecture docs](docs/architecture/)
 - [

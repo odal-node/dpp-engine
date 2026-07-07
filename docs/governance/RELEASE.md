@@ -95,5 +95,5 @@ Their versions track independently from the platform version.
 ## References
 
 - [Versioning Policy](VERSIONING.md)
-- [Contributing Guide](CONTRIBUTING.md)
-- [Changelog](CHANGELOG.md)
+- [Contributing Guide](../../CONTRIBUTING.md)
+- [Changelog](../../CHANGELOG.md)

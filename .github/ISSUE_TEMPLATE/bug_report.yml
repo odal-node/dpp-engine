@@ -6,7 +6,7 @@ body:
     attributes:
       value: |
         Thanks for the report. **Do not file a public issue for security vulnerabilities** —
-        follow the [security policy](../blob/main/docs/project/SECURITY.md) instead.
+        follow the [security policy](../blob/main/SECURITY.md) instead.
   - type: dropdown
     id: service
     attributes:

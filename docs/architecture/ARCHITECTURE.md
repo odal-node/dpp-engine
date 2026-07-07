@@ -17,11 +17,11 @@ This is the architecture documentation index for dpp-engine, the self-hostable e
 
 | Document | Description |
 |---|---|
-| [Changelog](../governance/CHANGELOG.md) | Release history |
-| [Contributing](../governance/CONTRIBUTING.md) | Setup, coding conventions, PR workflow |
+| [Changelog](../../CHANGELOG.md) | Release history |
+| [Contributing](../../CONTRIBUTING.md) | Setup, coding conventions, PR workflow |
 | [Developer Guide](../guides/DEVELOPER-GUIDE.md) | Local setup, env vars, running, testing, quality gate, troubleshooting |
 | [Git Strategy](../governance/GIT-STRATEGY.md) | Trunk-based workflow, branch protection, tagging |
-| [Governance](../governance/GOVERNANCE.md) | Decision-making structure, core purity rule |
+| [Governance](../../GOVERNANCE.md) | Decision-making structure, core purity rule |
 | [Release](../governance/RELEASE.md) | Release checklist, Docker images, hotfix process |
 | [Versioning](../governance/VERSIONING.md) | SemVer policy, API versioning, migration versioning |
 
@@ -36,7 +36,7 @@ This is the architecture documentation index for dpp-engine, the self-hostable e
 | Document | Description |
 |---|---|
 | [Blueprint](../project/BLUEPRINT.md) | Vision, guiding principles, MVP scope, roadmap |
-| [Security](../project/SECURITY.md) | Vulnerability reporting, scope, auth security, Wasm sandbox |
+| [Security](../../SECURITY.md) | Vulnerability reporting, scope, auth security, Wasm sandbox |
 
 ## Key Principles
 
