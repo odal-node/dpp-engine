@@ -51,11 +51,22 @@ FROM builder-${BUILD_MODE} AS builder
 # ── Runtime stage (shared by both build modes) ──────────────────────────────────
 FROM debian:bookworm-slim AS runtime
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
+# `upgrade` pulls whatever Debian security patches exist for bookworm-slim's
+# packages as of build time, ahead of the base tag's next upstream rebuild —
+# this is what actually moves the vulnerability-scan needle on the published
+# image (the builder stage's CVEs never ship; only this runtime stage does).
+RUN apt-get update && apt-get upgrade -y && apt-get install -y --no-install-recommends \
     ca-certificates libssl3 curl \
     && rm -rf /var/lib/apt/lists/*
 
-COPY --from=builder /build/dpp-engine/target/release/dpp-resolver /usr/local/bin/dpp-resolver
+# Fixed, non-zero uid/gid — the resolver has no local state (Redis + upstream
+# vault only), so no volume ownership to worry about.
+RUN groupadd --system --gid 1000 odal \
+    && useradd --system --uid 1000 --gid odal --no-create-home --shell /usr/sbin/nologin odal
+
+COPY --from=builder --chmod=755 /build/dpp-engine/target/release/dpp-resolver /usr/local/bin/dpp-resolver
+
+USER odal
 
 EXPOSE 8003
 

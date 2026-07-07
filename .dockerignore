@@ -1,7 +1,10 @@
-# Build-context ignore for CI/release, whose context is the dpp-engine repo root
-# (release.yml: context: .). Keeps build artefacts out and — defensively — the
-# git-ignored local dpp-core override out, so published images always resolve the
-# crates.io dpp-* versions pinned in Cargo.toml.
+# Build-context ignore for ad-hoc builds where dpp-engine/ itself is the context
+# (e.g. `cd dpp-engine && docker build -f docker/node.Dockerfile .`). The actual
+# compose/CI builds use the parent dir as context (docker-compose.yml's
+# `context: ../..`; release.yml checks out to a subdir then builds with
+# `context: .`), so for those, docker/node.Dockerfile.dockerignore and
+# docker/resolver.Dockerfile.dockerignore (BuildKit's per-Dockerfile ignore
+# convention) are what actually apply — keep both pairs in sync.
 target/
 .git/
 .cargo/config.toml
