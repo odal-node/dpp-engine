@@ -11,6 +11,18 @@ public router.
 
 ---
 
+## Why a standalone binary still exists
+
+Today, nobody runs `dpp-identity` as its own process — every deployment uses
+the fused `dpp-node` binary, which signs in-process via `LocalIdentityService`
+and only ever mounts `build_public()` (the `did:web` document). The standalone
+binary, its mTLS-gated `/internal/*` endpoints, and this crate's `main.rs`
+remain because splitting identity out onto its own host is a real future
+option (a separate signing host with a narrower blast radius than the full
+node) — not because anything currently deploys that way. If you're
+"finishing" the separation nobody has asked for yet, stop and check that
+assumption first.
+
 ## When to use this crate
 
 - You need to extend or test the `did:web` document endpoint.

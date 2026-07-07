@@ -12,6 +12,19 @@
 //! - Support a configurable allow-list of trusted certificate subjects.
 //! - When mutual TLS is terminated in-process (Rustls), inspect the
 //!   `rustls::ServerConnection` peer certificates directly.
+//!
+//! # Threat model
+//!
+//! This gates the standalone identity service's `/internal/sign` and
+//! `/internal/keys/rotate` endpoints — the only callers with the authority to
+//! produce a JWS signature or rotate an operator's signing key. Only a caller
+//! presenting a certificate whose subject `CN` equals [`ALLOWED_CN`]
+//! (`odal-vault`) *and* whose issuer `CN` matches `MTLS_REQUIRED_ISSUER_CN`
+//! may reach them — i.e. only the vault service, over a connection the
+//! terminating proxy has already verified. In the fused `dpp-node` binary
+//! these endpoints aren't mounted at all (signing happens in-process via
+//! `LocalIdentityService`), so this layer only matters when identity runs as
+//! a separate process; see the crate README for when that's the case.
 
 use axum::{
     extract::Request,
