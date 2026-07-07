@@ -56,6 +56,45 @@ debug-check:
         exit 1
     fi
 
+# Forbid raw "dpp.passport."/"dpp.import." subject literals outside dpp-common::event
+# (event_type/NATS-subject strings must come from the `subjects` constants, or a
+# renamed subject silently stops matching subscribers).
+subjects-check:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if grep -rn --include="*.rs" \
+         -e '"dpp\.passport\.' -e '"dpp\.import\.' \
+         --exclude-dir=tests --exclude-dir=benches \
+         --exclude=event.rs \
+         crates/*/src; then
+        echo "ERROR: raw dpp.passport./dpp.import. subject literal outside dpp-common::event — use the subjects:: constants"
+        exit 1
+    fi
+
+# Forbid public type/fn/const definitions in mod.rs (index files should be
+# `mod`/`pub use` only — the re-layout's whole point). Two allocation-plan
+# exceptions are named and excluded: service/mod.rs (PassportService + its
+# builders) and validate/mod.rs (dispatch fn + its error type).
+mod-rs-check:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    exceptions="crates/dpp-vault/src/domain/service/mod.rs crates/dpp-integrator/src/domain/validate/mod.rs"
+    violations=""
+    for f in $(find crates/*/src cli/src -name mod.rs); do
+        skip=false
+        for e in $exceptions; do
+            [ "$f" = "$e" ] && skip=true
+        done
+        [ "$skip" = true ] && continue
+        if grep -nE '^[[:space:]]*pub[[:space:]]+(struct|enum|trait|fn|const|static|type)\b' "$f" > /dev/null; then
+            violations="$violations $f"
+        fi
+    done
+    if [ -n "$violations" ]; then
+        echo "ERROR: mod.rs defines public items (should be a pure index) in:$violations"
+        exit 1
+    fi
+
 # Run security audit against the RustSec advisory database
 audit:
     cargo audit
@@ -65,7 +104,7 @@ doc:
     cargo doc --workspace --no-deps
 
 # Fast gate (no Docker) — mirrors CI jobs: fmt, clippy, debug-prints, test-unit, audit
-check: fmt-check lint debug-check test audit
+check: fmt-check lint debug-check subjects-check mod-rs-check test audit
 
 # Full local CI mirror — adds integration-feature clippy + the Docker tiers (needs Docker running)
 ci: check lint-integration test-integration test-pg

@@ -156,6 +156,66 @@ jobs:
             exit 1
           fi
 
+  subjects-check:
+    name: No raw event subject literals outside dpp-common::event
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: dpp-engine
+      # event_type/NATS-subject strings must come from dpp_common::event::subjects,
+      # or a renamed subject silently stops matching subscribers.
+      - name: Check for raw dpp.passport./dpp.import. literals
+        working-directory: dpp-engine
+        run: |
+          if grep -rn --include="*.rs" \
+               -e '"dpp\.passport\.' -e '"dpp\.import\.' \
+               --exclude-dir=tests --exclude-dir=benches \
+               --exclude=event.rs \
+               crates/dpp-common/src \
+               crates/dpp-dal/src \
+               crates/dpp-vault/src \
+               crates/dpp-identity/src \
+               crates/dpp-resolver/src \
+               crates/dpp-integrator/src \
+               crates/dpp-plugin-host/src \
+               crates/dpp-node/src; then
+            echo "ERROR: raw dpp.passport./dpp.import. subject literal outside dpp-common::event — use the subjects:: constants"
+            exit 1
+          fi
+
+  mod-rs-check:
+    name: No public items in mod.rs (index files only)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: dpp-engine
+      # mod.rs should be `mod` + `pub use` only. Two allocation-plan
+      # exceptions are named and excluded below: service/mod.rs (the
+      # PassportService struct + its builders) and validate/mod.rs (the
+      # dispatch fn + its error type) — both are the pack's documented
+      # deviations, not drift.
+      - name: Check for public items in mod.rs
+        working-directory: dpp-engine
+        run: |
+          exceptions="crates/dpp-vault/src/domain/service/mod.rs crates/dpp-integrator/src/domain/validate/mod.rs"
+          violations=""
+          for f in $(find crates/*/src cli/src -name mod.rs); do
+              skip=false
+              for e in $exceptions; do
+                  [ "$f" = "$e" ] && skip=true
+              done
+              [ "$skip" = true ] && continue
+              if grep -nE '^[[:space:]]*pub[[:space:]]+(struct|enum|trait|fn|const|static|type)\b' "$f" > /dev/null; then
+                  violations="$violations $f"
+              fi
+          done
+          if [ -n "$violations" ]; then
+              echo "ERROR: mod.rs defines public items (should be a pure index) in:$violations"
+              exit 1
+          fi
+
   audit:
     name: Security audit
     runs-on: ubuntu-latest
