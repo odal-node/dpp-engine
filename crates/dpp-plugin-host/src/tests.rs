@@ -198,7 +198,7 @@ fn discover_strips_sector_prefix() {
 
 #[test]
 fn enrich_input_adds_is_in_force_flag() {
-    use crate::enrich_input;
+    use crate::host::enrich_input;
     let input = serde_json::json!({"gtin": "12345678901234", "co2ePerUnitKg": 1.5});
     let enriched = enrich_input(input, "battery");
     // Must contain the injected flag (battery is in-force).
@@ -208,7 +208,7 @@ fn enrich_input_adds_is_in_force_flag() {
 
 #[test]
 fn enrich_input_non_object_passes_through() {
-    use crate::enrich_input;
+    use crate::host::enrich_input;
     let input = serde_json::json!("not an object");
     let enriched = enrich_input(input.clone(), "battery");
     assert_eq!(enriched, input, "non-object input must not be modified");
