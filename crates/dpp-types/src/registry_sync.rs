@@ -16,6 +16,13 @@
 //! is the invariant the whole chunk exists to establish: a passport is never
 //! marked Published without a corresponding `pending` outbox row, so a crash
 //! between the two writes cannot silently drop a legally-required registration.
+//!
+//! # Why this port lives here and not in core's `dpp-domain::ports`
+//!
+//! The DPP standard defines *that* a passport must be registered — it says
+//! nothing about queuing, retry, or outbox mechanics for getting there. Those
+//! are this deployment's operational concern, so the port stays engine-side
+//! alongside `TransferStore`, not promoted to a core port.
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};

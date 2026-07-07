@@ -6,6 +6,13 @@
 //! and a production node **fails to boot** if a required port resolved to a
 //! ghost. The guard is list-driven: a newly-added port inherits the invariant
 //! by appearing in the report, never by editing a hardcoded check.
+//!
+//! Corollary — the one failure mode of a list-driven guard: a port that is
+//! never added to [`NodeTrustReport::ports`] is invisible to it. The check
+//! only ever sees what the composition root put in the list, so wiring a new
+//! required trust port anywhere in `dpp-node`'s boot sequence must include
+//! registering it here, or `enforce_profile` will silently pass regardless of
+//! that port's real tier.
 
 use serde::Serialize;
 

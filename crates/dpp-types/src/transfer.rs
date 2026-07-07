@@ -3,6 +3,13 @@
 //! The core `TransferChain` (dual-signed provenance of who is responsible for a
 //! passport over its life) is a domain type; this port persists one chain per
 //! passport. The Postgres implementation lives in `dpp-dal::pg::repo_transfer`.
+//!
+//! # Why this port lives here and not in core's `dpp-domain::ports`
+//!
+//! `TransferChain` itself is core (the standard defines its shape). *Storing*
+//! one chain per passport is an operational choice this deployment makes, the
+//! same way `RegistrySyncOutbox` is engine-side — the port stays here, next to
+//! that one, rather than promoted to core.
 
 use async_trait::async_trait;
 

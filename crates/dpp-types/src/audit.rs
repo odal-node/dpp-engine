@@ -3,6 +3,12 @@
 //! Audit entries record every state-changing operation on a passport.
 //! The database enforces append-only at the trigger level — entries are never
 //! updated or deleted.
+//!
+//! ⬅️ Core-candidate: `AuditEntry` and [`verify_audit_chain`]'s hash-chain
+//! format are third-party-verifiable, which makes the wire shape part of the
+//! proof-bound standard rather than engine plumbing. Not moved yet — the
+//! format should stabilise against the checkpoint layer first — but new
+//! fields here should be added with a future `dpp-domain` home in mind.
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
