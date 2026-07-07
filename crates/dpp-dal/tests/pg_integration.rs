@@ -401,3 +401,37 @@ async fn t6_patch_fields_merge() {
     assert_eq!(reread.product_name, "Patched");
     assert_eq!(reread.schema_version, "2.0.0", "untouched fields survive");
 }
+
+// T8 — grant coverage: the app role can read every table a migration creates.
+// Catches the "0010's grants were a snapshot" lesson (0017 had to re-grant): a
+// migration that adds a table after 0010 must ship its own odal_app grant, or
+// reads/writes silently fail with a permissions error nobody sees until
+// production. Table list kept in sync with `migration_repo_drift.rs`'s
+// `tables_created_in` parser — both read the same `ops/pg/*.sql` set.
+#[tokio::test]
+async fn t8_app_role_can_read_every_table() {
+    let pg = start_pg().await;
+
+    const TABLES: &[&str] = &[
+        "odal.operator_config",
+        "odal.operator_identifier",
+        "odal.facility",
+        "odal.api_key",
+        "odal.passport",
+        "odal.passport_audit",
+        "odal.registry_sync",
+        "odal.import_job",
+        "odal.unsold_goods_report",
+        "odal.registry_identity_audit",
+        "odal.passport_transfer",
+        "identity.did_document",
+        "identity.key_pair",
+    ];
+
+    for table in TABLES {
+        sqlx::query(&format!("SELECT 1 FROM {table} LIMIT 1"))
+            .fetch_optional(pg.dal.pool())
+            .await
+            .unwrap_or_else(|e| panic!("odal_app cannot SELECT from {table}: {e}"));
+    }
+}
