@@ -2,5 +2,7 @@
 
 pub mod batch_runner;
 pub mod csv_parser;
-pub mod validator;
+pub mod fields;
+pub mod request;
+pub mod validate;
 pub mod xlsx_parser;

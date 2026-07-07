@@ -74,3 +74,36 @@ pub async fn get_template(
 
     (StatusCode::OK, headers, content).into_response()
 }
+
+/// Golden-pairing test: each shipped template's own example rows must be
+/// accepted by that sector's row validator. Without this, a validator's
+/// required-field list can silently drift away from the header set the
+/// template actually ships (or vice versa) with nothing catching it.
+#[cfg(test)]
+mod template_validator_pairing {
+    use super::{BATTERY_TEMPLATE, TEXTILE_TEMPLATE};
+    use crate::domain::{csv_parser, validate};
+
+    fn assert_all_rows_validate(sector: &str, csv: &str) {
+        let rows = csv_parser::parse_csv(csv.as_bytes()).expect("template must parse as CSV");
+        assert!(!rows.is_empty(), "{sector} template has no example rows");
+        for (i, row) in rows.iter().enumerate() {
+            let row_num = i + 1;
+            if let Err(validate::RowValidationError::Invalid(errs)) =
+                validate::validate_row(sector, row, row_num)
+            {
+                panic!("{sector} template row {row_num} failed validation: {errs:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn battery_template_rows_pass_battery_validator() {
+        assert_all_rows_validate("battery", BATTERY_TEMPLATE);
+    }
+
+    #[test]
+    fn textile_template_rows_pass_textile_validator() {
+        assert_all_rows_validate("textile", TEXTILE_TEMPLATE);
+    }
+}

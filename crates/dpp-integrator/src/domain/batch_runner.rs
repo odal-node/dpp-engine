@@ -6,7 +6,7 @@ use tokio::sync::Semaphore;
 use tracing;
 
 use crate::{
-    domain::validator::CreatePassportRequest,
+    domain::request::CreatePassportRequest,
     infra::vault_client::{VaultClientError, VaultHttpClient},
 };
 

@@ -13,7 +13,10 @@ use uuid::Uuid;
 use crate::{
     domain::{
         batch_runner::{BatchResult, run_batch},
-        csv_parser, validator, xlsx_parser,
+        csv_parser,
+        request::CreatePassportRequest,
+        validate::{self, RowValidationError},
+        xlsx_parser,
     },
     infra::job_store::{ImportJob, JobStatus},
     state::AppState,
@@ -94,15 +97,12 @@ pub async fn import_file(
     mut multipart: Multipart,
 ) -> impl IntoResponse {
     // Validate sector early
-    if !matches!(
-        sector.as_str(),
-        "battery" | "textile" | "steel" | "aluminium" | "tyre"
-    ) {
+    if !validate::SUPPORTED_SECTORS.contains(&sector.as_str()) {
         metrics::counter!("import_rejections_total", "reason" => "unknown_sector").increment(1);
         return Problem::new(StatusCode::NOT_FOUND, "Not Found")
             .with_detail(format!(
-                "Unknown sector: '{}'. Valid values: battery, textile, steel, aluminium, tyre.",
-                sector
+                "Unknown sector: '{sector}'. Valid values: {}.",
+                validate::SUPPORTED_SECTORS.join(", ")
             ))
             .into_response();
     }
@@ -226,22 +226,14 @@ pub async fn import_file(
     metrics::counter!("import_rows_total").increment(total_rows as u64);
 
     // Validate every row; collect results without aborting on first error
-    let mut valid_rows: Vec<(usize, validator::CreatePassportRequest)> = Vec::new();
+    let mut valid_rows: Vec<(usize, CreatePassportRequest)> = Vec::new();
     let mut row_errors: Vec<ErrorEntry> = Vec::new();
 
     for (i, raw_row) in raw_rows.iter().enumerate() {
         let row_num = i + 1; // 1-based for user-facing messages
-        let result = match sector.as_str() {
-            "battery" => validator::validate_battery_row(raw_row, row_num),
-            "textile" => validator::validate_textile_row(raw_row, row_num),
-            "steel" => validator::validate_steel_row(raw_row, row_num),
-            "aluminium" => validator::validate_aluminium_row(raw_row, row_num),
-            "tyre" => validator::validate_tyre_row(raw_row, row_num),
-            _ => unreachable!(),
-        };
-        match result {
+        match validate::validate_row(&sector, raw_row, row_num) {
             Ok(req) => valid_rows.push((row_num, req)),
-            Err(errs) => {
+            Err(RowValidationError::Invalid(errs)) => {
                 for e in errs {
                     row_errors.push(ErrorEntry {
                         row: e.row,
@@ -249,6 +241,17 @@ pub async fn import_file(
                         message: e.message,
                     });
                 }
+            }
+            // The pre-upload SUPPORTED_SECTORS check above already rejected any
+            // sector that would land here — kept as a real, typed branch rather
+            // than `unreachable!()` so this stays correct if the two checks
+            // ever move apart.
+            Err(RowValidationError::UnsupportedSector) => {
+                metrics::counter!("import_rejections_total", "reason" => "unknown_sector")
+                    .increment(1);
+                return Problem::new(StatusCode::NOT_FOUND, "Not Found")
+                    .with_detail(format!("Unknown sector: '{sector}'."))
+                    .into_response();
             }
         }
     }

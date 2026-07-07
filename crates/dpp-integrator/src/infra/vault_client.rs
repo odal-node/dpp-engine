@@ -2,7 +2,7 @@
 
 use std::fmt;
 
-use crate::domain::validator::CreatePassportRequest;
+use crate::domain::request::CreatePassportRequest;
 
 /// HTTP client for `dpp-vault`.
 ///
