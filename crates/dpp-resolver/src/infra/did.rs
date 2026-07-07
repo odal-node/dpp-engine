@@ -7,7 +7,7 @@ use metrics;
 use serde_json::Value;
 use tracing;
 
-use crate::domain::jws;
+use dpp_crypto::jws::verifier as jws;
 
 /// Verify a published passport's **public** signature (`publicJwsSignature`)
 /// against the operator's did:web document and return the verified public view.
