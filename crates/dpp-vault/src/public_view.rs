@@ -4,6 +4,12 @@
 //! serves **and** what `publicJwsSignature` is signed over at publish time.
 //! Keeping the two identical is what lets anyone verify the public passport
 //! against the operator DID without a trusted resolver.
+//!
+//! ⬅️ Core-candidate: the redaction contract (which fields are public per
+//! access tier) is part of what the DPP standard promises third parties, not
+//! an operational choice this deployment makes — a plausible future home is
+//! `dpp-domain` alongside `AccessTier`. Not moved yet; recorded for the next
+//! core breaking revision.
 
 use std::sync::OnceLock;
 
