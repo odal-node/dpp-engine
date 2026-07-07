@@ -12,6 +12,14 @@ use serde::Serialize;
 /// Serialises to a JSON body with a `type` URI derived from the `title`.
 /// Use [`Problem::new`] to construct, then chain [`Problem::with_detail`] /
 /// [`Problem::with_instance`] as needed.
+///
+/// # `type` URIs are API surface, not incidental
+///
+/// Because `problem_type` is derived from `title`, the `title` string passed
+/// to [`Problem::new`] at each call site *is* the catalogue key — changing a
+/// title changes the `type` URI a client may have started depending on. Once
+/// EN 18222 conformance claims are made, treat every distinct `title` used
+/// across the codebase as stable API surface, on par with a route path.
 #[derive(Debug, Serialize)]
 pub struct Problem {
     /// Absolute URI identifying the problem type

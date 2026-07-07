@@ -1,4 +1,21 @@
 //! Axum middleware for HTTP request metrics (counter + histogram).
+//!
+//! # Naming convention (workspace-wide, not just this middleware)
+//!
+//! Metric names are permanent API surface the moment something scrapes them —
+//! a fleet-wide dashboard or alert rule parses them forever. The convention
+//! observed across the engine: counters end in `_total` (`http_requests_total`,
+//! `signing_failures_total`, `plugin_fuel_exhausted_total`), histograms end in
+//! their unit (`http_request_duration_seconds`), gauges carry no suffix
+//! (`trust_mode`). Follow it for any new metric.
+//!
+//! One existing near-miss worth knowing about rather than silently renaming:
+//! `registry_outbox_rejected` (a gauge, `dpp-node::main`) and
+//! `registry_outbox_rejected_total` (a counter, `dpp-node::infra::registry_drain`)
+//! are two different metrics with a name that differs only by the `_total`
+//! convention — easy to misread as the same series. Renaming either is a
+//! breaking change for anyone already scraping it, so this is flagged, not
+//! fixed, here.
 
 use std::time::Instant;
 

@@ -53,8 +53,30 @@ pub const RETENTION_BLOCKED: &str = "RETENTION_BLOCKED";
 // ── EU registry sync ─────────────────────────────────────────────────────────
 
 /// Registry sync failed after exhausting all retries, or the registry is
-/// permanently unreachable.
+/// permanently unreachable. Also used for status-enqueue failures on
+/// suspend/archive/EOL (`dpp-vault::domain::service`) — these are non-fatal,
+/// the local passport state is authoritative.
 pub const REGISTRY_SYNC_FAILED: &str = "REGISTRY_SYNC_FAILED";
+
+// ── Ruleset (compliance calculators) ─────────────────────────────────────────
+
+/// A ruleset bundle failed to load at boot; the node stays on its baseline
+/// bundle (fail-closed). Fires in `dpp-node::main`.
+pub const RULESET_LOAD_FAILED: &str = "RULESET_LOAD_FAILED";
+
+// ── Trust / ghost-honesty guard ──────────────────────────────────────────────
+
+/// A production node refused to boot because a required trust port (seal,
+/// registry sync, archive) resolved to a ghost. Fires in `dpp-node::main`,
+/// immediately before the process exits — logged for boot-loop diagnosis.
+pub const TRUST_GHOST_BOOT_REFUSED: &str = "TRUST_GHOST_BOOT_REFUSED";
+
+// ── Transfer of responsibility ───────────────────────────────────────────────
+
+/// The incoming operator's `accept_transfer` rejected the outgoing operator's
+/// signature — fail-closed, the handover is not completed. Fires in
+/// `dpp-vault::domain::service`.
+pub const TRANSFER_SIGNATURE_INVALID: &str = "TRANSFER_SIGNATURE_INVALID";
 
 // ── Key store ────────────────────────────────────────────────────────────────
 
