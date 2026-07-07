@@ -10,6 +10,16 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-07-06
+
+### Changed
+
+- dpp-core dependency pins bumped to 0.6.0, adding `dpp-rules` (with the
+  `bundle` feature) as a direct dependency — unblocks the signed
+  Compliance-Current ruleset bundle loader (`dpp-node::infra::ruleset`,
+  added in 0.3.0), which needs `dpp_rules::bundle` to verify and hot-swap
+  bundles.
+
 ## [0.3.0] - 2026-07-04
 
 ### Fixed
