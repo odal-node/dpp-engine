@@ -23,8 +23,18 @@ jobs:
         include:
           - image: dpp-node
             dockerfile: dpp-engine/docker/node.Dockerfile
+            description: >-
+              Odal Node MVP single binary — fuses vault, identity, integrator,
+              and Wasm plugin host into one process for self-hosted Digital
+              Product Passport deployments.
+            readme: crates/dpp-node/README.md
           - image: dpp-resolver
             dockerfile: dpp-engine/docker/resolver.Dockerfile
+            description: >-
+              Public QR / GS1 Digital Link resolver for Digital Product
+              Passports — verifies Ed25519 JWS signatures and serves HTML or
+              JSON-LD, no authentication required.
+            readme: crates/dpp-resolver/README.md
     steps:
       - uses: actions/checkout@v4
         with:
@@ -49,6 +59,16 @@ jobs:
           tags: |
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
+          # GHCR links a package to its source repo and shows that repo's root
+          # README on the package page — both images share dpp-engine, so both
+          # get the same README regardless. These labels are what actually
+          # differ per package: GHCR shows `.description` as the package's
+          # short blurb and `.documentation` as a deep link to the image's own
+          # README (crates/dpp-node or dpp-resolver), instead of the shared one.
+          labels: |
+            org.opencontainers.image.title=${{ matrix.image }}
+            org.opencontainers.image.description=${{ matrix.description }}
+            org.opencontainers.image.documentation=https://github.com/odal-node/dpp-engine/blob/main/${{ matrix.readme }}
 
       # Context is the workspace root holding both checked-out repos. BuildKit
       # honours docker/<dockerfile>.dockerignore to keep the context small.
