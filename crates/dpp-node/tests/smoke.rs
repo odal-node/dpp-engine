@@ -183,7 +183,8 @@ async fn start_node_with_dal(dal: PgDal) -> String {
             Arc::new(GhostArchive),
             String::new(),
         )
-        .with_transfer_store(Arc::new(PgTransferRepo::new(dal.clone()))),
+        .with_transfer_store(Arc::new(PgTransferRepo::new(dal.clone())))
+        .with_registry_reader(operator_repo.clone()),
     );
     let operator_service = Arc::new(OperatorService::new(operator_repo));
     let api_key_service = Arc::new(ApiKeyService::new(api_key_repo));
@@ -328,6 +329,220 @@ async fn unauthenticated_vault_request_returns_401() {
         .await
         .expect("GET request failed");
     assert_eq!(resp.status(), 401);
+}
+
+/// Route-inventory snapshot (`00-INDEX.md`'s "no-regret first step" ahead of
+/// an OpenAPI surface): a checked-in list of every (method, path) the
+/// assembled node mounts, asserted to resolve — never `404` — through the
+/// real router. Catches accidental route loss during future refactors. This
+/// list is the reviewed artifact: update it deliberately when a route is
+/// added, removed, or renamed; do not regenerate it mechanically.
+#[tokio::test(flavor = "multi_thread")]
+async fn route_inventory_matches_assembled_router() {
+    let (base, _c) = start_db_and_node().await;
+    let client = reqwest::Client::new();
+
+    const FAKE_ID: &str = "00000000-0000-4000-8000-000000000000";
+
+    // The two public (unauthenticated) lookup routes run real handler logic —
+    // unlike every `/vault/api/v1/*` route below, which 401s on a fake id
+    // before ever reaching the handler. A nonexistent id/gtin here would 404
+    // for "not found", indistinguishable from "route missing"; publish a real
+    // battery passport first so those two checks are unambiguous (the
+    // by-gtin lookup only ever matches battery — its QR URL is the only one
+    // that embeds the GTIN, see `PgPassportRepo::find_published_by_gtin`).
+    // Battery is in-force, so publish also requires a default facility +
+    // primary operator identifier (Annex III / Art. 13) — seed both first.
+    let token = make_jwt("00000000-0000-0000-0000-000000000088");
+    let facility_resp = client
+        .post(format!("{base}/vault/api/v1/facilities"))
+        .bearer_auth(&token)
+        .json(&serde_json::json!({
+            "name": "Default Plant", "identifierScheme": "gln",
+            "identifierValue": "4012345000009", "country": "DE", "isDefault": true
+        }))
+        .send()
+        .await
+        .expect("facility seed request failed");
+    assert!(
+        facility_resp.status().is_success(),
+        "facility seed failed: {}",
+        facility_resp.status()
+    );
+    let operator_id_resp = client
+        .post(format!("{base}/vault/api/v1/operator-identifiers"))
+        .bearer_auth(&token)
+        .json(&serde_json::json!({ "scheme": "vat", "value": "DE123456789", "isPrimary": true }))
+        .send()
+        .await
+        .expect("operator-identifier seed request failed");
+    assert!(
+        operator_id_resp.status().is_success(),
+        "operator-identifier seed failed: {}",
+        operator_id_resp.status()
+    );
+
+    let created: serde_json::Value = client
+        .post(format!("{base}/vault/api/v1/dpp"))
+        .bearer_auth(&token)
+        .json(&serde_json::json!({
+            "productName": "Route Inventory Battery",
+            "manufacturer": {"name": "SmokeTestCorp", "address": "Berlin, DE"},
+            "materials": [],
+            "schemaVersion": "1.0.0",
+            "sectorData": {
+                "sector": "battery",
+                "gtin": "09506000134352",
+                "batteryChemistry": "LFP",
+                "nominalVoltageV": 48.0,
+                "nominalCapacityAh": 100.0,
+                "expectedLifetimeCycles": 3000,
+                "co2ePerUnitKg": 45.2
+            }
+        }))
+        .send()
+        .await
+        .expect("create request failed")
+        .json()
+        .await
+        .expect("create response must be JSON");
+    let real_id = created["id"]
+        .as_str()
+        .unwrap_or_else(|| panic!("id missing from create response: {created}"))
+        .to_owned();
+    let publish_resp = client
+        .post(format!("{base}/vault/api/v1/dpp/{real_id}/publish"))
+        .bearer_auth(&token)
+        .json(&serde_json::json!({}))
+        .send()
+        .await
+        .expect("publish request failed");
+    let publish_status = publish_resp.status();
+    let publish_body = publish_resp.text().await.unwrap_or_default();
+    assert!(
+        publish_status.is_success(),
+        "publish failed setting up the route-inventory test fixture: {publish_status} {publish_body}"
+    );
+    const REAL_GTIN: &str = "09506000134352";
+
+    let routes: Vec<(reqwest::Method, String)> = vec![
+        (reqwest::Method::GET, "/health".into()),
+        (reqwest::Method::GET, "/vault/health".into()),
+        (reqwest::Method::GET, "/vault/ready".into()),
+        (reqwest::Method::GET, "/vault/api/v1/info".into()),
+        (reqwest::Method::GET, format!("/vault/public/dpp/{real_id}")),
+        (
+            reqwest::Method::GET,
+            format!("/vault/public/dpp/by-gtin/{REAL_GTIN}"),
+        ),
+        (reqwest::Method::POST, "/vault/api/v1/dpp".into()),
+        (reqwest::Method::GET, "/vault/api/v1/dpps".into()),
+        (reqwest::Method::GET, format!("/vault/api/v1/dpp/{FAKE_ID}")),
+        (reqwest::Method::PUT, format!("/vault/api/v1/dpp/{FAKE_ID}")),
+        (
+            reqwest::Method::POST,
+            format!("/vault/api/v1/dpp/{FAKE_ID}/publish"),
+        ),
+        (
+            reqwest::Method::POST,
+            format!("/vault/api/v1/dpp/{FAKE_ID}/suspend"),
+        ),
+        (
+            reqwest::Method::POST,
+            format!("/vault/api/v1/dpp/{FAKE_ID}/archive"),
+        ),
+        (
+            reqwest::Method::POST,
+            format!("/vault/api/v1/dpp/{FAKE_ID}/eol"),
+        ),
+        (
+            reqwest::Method::POST,
+            format!("/vault/api/v1/dpp/{FAKE_ID}/transfer/initiate"),
+        ),
+        (
+            reqwest::Method::POST,
+            format!("/vault/api/v1/dpp/{FAKE_ID}/transfer/accept"),
+        ),
+        (
+            reqwest::Method::GET,
+            format!("/vault/api/v1/dpp/{FAKE_ID}/history"),
+        ),
+        (reqwest::Method::GET, "/vault/api/v1/node/state".into()),
+        (reqwest::Method::GET, "/vault/api/v1/operator".into()),
+        (reqwest::Method::PATCH, "/vault/api/v1/operator".into()),
+        (reqwest::Method::GET, "/vault/api/v1/api-keys".into()),
+        (reqwest::Method::POST, "/vault/api/v1/api-keys".into()),
+        (
+            reqwest::Method::DELETE,
+            format!("/vault/api/v1/api-keys/{FAKE_ID}"),
+        ),
+        (reqwest::Method::GET, "/vault/api/v1/facilities".into()),
+        (reqwest::Method::POST, "/vault/api/v1/facilities".into()),
+        (
+            reqwest::Method::DELETE,
+            format!("/vault/api/v1/facilities/{FAKE_ID}"),
+        ),
+        (
+            reqwest::Method::GET,
+            format!("/vault/api/v1/facilities/{FAKE_ID}/audit"),
+        ),
+        (
+            reqwest::Method::POST,
+            format!("/vault/api/v1/facilities/{FAKE_ID}/default"),
+        ),
+        (
+            reqwest::Method::GET,
+            "/vault/api/v1/operator-identifiers".into(),
+        ),
+        (
+            reqwest::Method::POST,
+            "/vault/api/v1/operator-identifiers".into(),
+        ),
+        (
+            reqwest::Method::DELETE,
+            format!("/vault/api/v1/operator-identifiers/{FAKE_ID}"),
+        ),
+        (
+            reqwest::Method::GET,
+            format!("/vault/api/v1/operator-identifiers/{FAKE_ID}/audit"),
+        ),
+        (
+            reqwest::Method::POST,
+            format!("/vault/api/v1/operator-identifiers/{FAKE_ID}/primary"),
+        ),
+        (reqwest::Method::GET, "/identity/health".into()),
+        (reqwest::Method::GET, "/identity/ready".into()),
+        (
+            reqwest::Method::GET,
+            "/identity/.well-known/did.json".into(),
+        ),
+        (reqwest::Method::GET, "/integrator/health".into()),
+        (
+            reqwest::Method::GET,
+            "/integrator/api/v1/templates/battery".into(),
+        ),
+        (
+            reqwest::Method::POST,
+            "/integrator/api/v1/import/battery".into(),
+        ),
+        (
+            reqwest::Method::GET,
+            format!("/integrator/api/v1/imports/{FAKE_ID}"),
+        ),
+    ];
+
+    for (method, path) in &routes {
+        let resp = client
+            .request(method.clone(), format!("{base}{path}"))
+            .send()
+            .await
+            .unwrap_or_else(|e| panic!("{method} {path} request failed: {e}"));
+        assert_ne!(
+            resp.status(),
+            reqwest::StatusCode::NOT_FOUND,
+            "{method} {path} returned 404 — route missing from the assembled router"
+        );
+    }
 }
 
 // ---------------------------------------------------------------------------

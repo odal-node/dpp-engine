@@ -1,5 +1,6 @@
 //! Entry point for the `dpp-node` single-binary MVP.
 
+mod boot;
 mod plugins;
 
 use dpp_node::{
@@ -25,23 +26,11 @@ use dpp_common::{
 use dpp_crypto::identity::LocalIdentityService;
 use dpp_crypto::keystore::KeyStore;
 use dpp_domain::ports::{
-    archive::ArchivePort, compliance::ComplianceRegistry, passport_repo::PassportRepository,
-    registry_sync::RegistrySyncPort,
+    archive::ArchivePort, compliance::ComplianceRegistry, registry_sync::RegistrySyncPort,
 };
 use dpp_identity_service::state::AppState as IdentityState;
-use dpp_integrator::{
-    infra::{job_store::JobStore, vault_client::VaultHttpClient},
-    state::AppState as IntegratorState,
-};
-use dpp_types::{
-    api_key::ApiKeyRepository,
-    audit::AuditRepository,
-    operator::OperatorConfigRepository,
-    registry_identity::RegistryIdentityRepository,
-    registry_sync::RegistrySyncOutbox,
-    transfer::TransferStore,
-    trust::{NodeProfile, NodeTrustReport, TrustMode, TrustPort},
-};
+use dpp_integrator::{infra::vault_client::VaultHttpClient, state::AppState as IntegratorState};
+use dpp_types::trust::TrustMode;
 use dpp_vault::{
     domain::{
         api_key_service::ApiKeyService, operator_service::OperatorService,
@@ -51,99 +40,11 @@ use dpp_vault::{
         api_key_provider::ApiKeyAuthProvider, composite_provider::CompositeAuthProvider,
         local_provider::LocalAuthProvider,
     },
-    state::{AppState as VaultState, DbPing},
+    state::AppState as VaultState,
 };
 
 /// The issuer key id the node signs with and publishes at its did:web document.
 const ISSUER_KEY_ID: &str = "root";
-
-// ---------------------------------------------------------------------------
-// DB-backend abstraction: cfg-gated init functions return the same struct.
-// ---------------------------------------------------------------------------
-
-struct DbComponents {
-    passport_repo: Arc<dyn PassportRepository>,
-    audit_repo: Arc<dyn AuditRepository>,
-    operator_repo: Arc<dyn OperatorConfigRepository>,
-    api_key_repo: Arc<dyn ApiKeyRepository>,
-    registry_repo: Arc<dyn RegistryIdentityRepository>,
-    registry_outbox: Arc<dyn RegistrySyncOutbox>,
-    transfer_store: Arc<dyn TransferStore>,
-    job_store: Arc<dyn JobStore>,
-    db_ping: Arc<dyn DbPing>,
-}
-
-async fn init_db(cfg: &NodeConfig) -> anyhow::Result<DbComponents> {
-    use async_trait::async_trait;
-    use dpp_dal::pg::{
-        PgApiKeyRepo, PgAuditRepo, PgDal, PgOperatorConfigRepo, PgPassportRepo,
-        PgRegistryIdentityRepo, PgRegistrySyncRepo, PgTransferRepo,
-    };
-    use dpp_domain::DppError;
-    use dpp_node::infra::pg_job_store::PgJobStore;
-
-    struct PgPing(PgDal);
-
-    #[async_trait]
-    impl DbPing for PgPing {
-        async fn ping(&self) -> anyhow::Result<()> {
-            self.0
-                .ping()
-                .await
-                .map_err(|e: DppError| anyhow::anyhow!("{e}"))
-        }
-    }
-
-    tracing::info!(url = %cfg.database_url, "connecting to PostgreSQL");
-
-    // If a privileged migration URL is provided, run sqlx migrations before
-    // the app pool opens. odal_app cannot run DDL; migrations need a superuser
-    // or odal_migrate role. If absent, migrations must be pre-applied (ops).
-    if let Some(ref migrate_url) = cfg.database_migrate_url {
-        tracing::info!("running schema migrations via DATABASE_MIGRATE_URL");
-        PgDal::migrate(migrate_url)
-            .await
-            .context("Failed to apply PostgreSQL migrations")?;
-        tracing::info!("schema migrations applied");
-    }
-
-    // Retry up to 30 times to handle container startup ordering.
-    let mut last_err: Option<anyhow::Error> = None;
-    let mut dal_opt: Option<PgDal> = None;
-    for attempt in 1..=30 {
-        match PgDal::connect(&cfg.database_url).await {
-            Ok(d) => {
-                last_err = None;
-                dal_opt = Some(d);
-                break;
-            }
-            Err(e) => {
-                tracing::warn!(attempt, error = %e, "PostgreSQL not ready yet, retrying");
-                last_err = Some(anyhow::anyhow!("{e}"));
-                tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-            }
-        }
-    }
-    if let Some(e) = last_err {
-        return Err(e).context("Failed to connect to PostgreSQL after 30 attempts");
-    }
-    let dal = dal_opt.expect("dal set on success");
-    tracing::info!(url = %cfg.database_url, "PostgreSQL connected");
-
-    Ok(DbComponents {
-        passport_repo: Arc::new(PgPassportRepo::new(dal.clone())),
-        audit_repo: Arc::new(PgAuditRepo::new(dal.clone())),
-        operator_repo: Arc::new(PgOperatorConfigRepo::new(dal.clone())),
-        api_key_repo: Arc::new(PgApiKeyRepo::new(dal.clone())),
-        registry_repo: Arc::new(PgRegistryIdentityRepo::new(dal.clone())),
-        registry_outbox: Arc::new(PgRegistrySyncRepo::new(dal.clone())),
-        transfer_store: Arc::new(PgTransferRepo::new(dal.clone())),
-        job_store: Arc::new(PgJobStore::new(dal.clone())),
-        db_ping: Arc::new(PgPing(dal)),
-    })
-}
-
-// ---------------------------------------------------------------------------
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -162,7 +63,7 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!("booting dpp-node");
 
     // ── Database (backend selected at compile time) ────────────────────────
-    let db = init_db(&cfg).await?;
+    let db = boot::db::init_db(&cfg).await?;
 
     // ── Wasm plugin host ──────────────────────────────────────────────────────
     let plugin_host = plugins::boot(&cfg.plugins_dir).context("Failed to boot Wasm plugin host")?;
@@ -224,7 +125,7 @@ async fn main() -> anyhow::Result<()> {
             .filter(|s| !s.is_empty()),
     ) {
         (Some(id), Some(secret)) => {
-            use dpp_node::infra::eu_registry_sync::{EuRegistrySync, EuRegistrySyncConfig};
+            use dpp_node::infra::registry::{EuRegistrySync, EuRegistrySyncConfig};
             let reg_cfg = EuRegistrySyncConfig::sandbox(id, secret);
             let adapter = EuRegistrySync::new(reg_cfg)
                 .context("Failed to build EU registry sync HTTP client")?;
@@ -252,45 +153,7 @@ async fn main() -> anyhow::Result<()> {
             }
         };
 
-    // ── Ghost-honesty invariant ───────────────────────────────────────────────
-    // Collect each trust port's resolved tier, log it, export gauges, and — in a
-    // production profile — refuse to boot on placeholder trust. The seal port is
-    // not yet wired, so it always resolves to Ghost for now: a
-    // production node cannot boot until a real QTSP seal exists, which is the
-    // honest posture. List-driven so a new port inherits the invariant for free.
-    let trust = Arc::new(NodeTrustReport::new(
-        NodeProfile::from_env(),
-        vec![
-            TrustPort {
-                port: "seal",
-                mode: TrustMode::Ghost,
-                required: true,
-            },
-            TrustPort {
-                port: "registry_sync",
-                mode: registry_trust,
-                required: true,
-            },
-            TrustPort {
-                port: "archive",
-                mode: archive_trust,
-                required: false,
-            },
-        ],
-    ));
-    for p in &trust.ports {
-        tracing::info!(
-            port = p.port,
-            mode = p.mode.as_str(),
-            required = p.required,
-            "trust mode"
-        );
-        metrics::gauge!("trust_mode", "port" => p.port).set(p.mode.gauge_value());
-    }
-    if let Err(msg) = trust.enforce_profile() {
-        tracing::error!(%msg, "production profile refuses placeholder trust");
-        anyhow::bail!(msg);
-    }
+    let trust = boot::trust::build_and_enforce(registry_trust, archive_trust)?;
 
     // ── Compliance Current: signed ruleset channel ────────────────────────────
     // Load the pinned, signed bundle if a channel is configured; otherwise stay
@@ -317,6 +180,7 @@ async fn main() -> anyhow::Result<()> {
                 Err(e) => {
                     metrics::counter!("ruleset_load_failures_total").increment(1);
                     tracing::error!(
+                        code = event_codes::RULESET_LOAD_FAILED,
                         error = %e,
                         "ruleset bundle failed to load — staying on baseline (fail-closed)"
                     );
@@ -396,70 +260,9 @@ async fn main() -> anyhow::Result<()> {
         batch_concurrency: cfg.batch_concurrency,
     };
 
-    // ── Background cleanup for expired import jobs (every 6 hours) ──────────
-    {
-        let store = db.job_store.clone();
-        tokio::spawn(async move {
-            let interval = tokio::time::Duration::from_secs(6 * 3600);
-            let max_age = chrono::Duration::days(30);
-            loop {
-                tokio::time::sleep(interval).await;
-                tracing::debug!("running import job cleanup");
-                store.cleanup(max_age).await;
-            }
-        });
-    }
-
-    // ── Registry outbox drain (ESPR Art. 13) ──────────────────────────────
-    // Publish enqueues each registration transactionally with the passport
-    // write; this task drains due rows against the registry port with backoff.
-    // A killed node loses nothing — rows persist and are retried here on restart.
-    {
-        const DRAIN_INTERVAL: std::time::Duration = std::time::Duration::from_secs(30);
-        const DRAIN_BATCH: i64 = 50;
-        const STALL_THRESHOLD: i32 = 8;
-
-        let outbox = db.registry_outbox.clone();
-        let registry_sync = registry_sync_for_drain;
-
-        // Boot reconciliation: log outstanding registry-sync state so a restart
-        // surfaces (never hides) queued/rejected/stalled registrations.
-        match outbox.status_counts(STALL_THRESHOLD).await {
-            Ok(c) => {
-                tracing::info!(
-                    pending = c.pending,
-                    registered = c.registered,
-                    rejected = c.rejected,
-                    status_intents = c.status_intents,
-                    stalled = c.stalled,
-                    "registry outbox reconciliation at boot"
-                );
-                metrics::gauge!("registry_outbox_pending").set(c.pending as f64);
-                metrics::gauge!("registry_outbox_stalled").set(c.stalled as f64);
-                metrics::gauge!("registry_outbox_rejected").set(c.rejected as f64);
-            }
-            Err(e) => tracing::warn!(error = %e, "registry outbox boot reconciliation failed"),
-        }
-
-        tokio::spawn(async move {
-            loop {
-                tokio::time::sleep(DRAIN_INTERVAL).await;
-                dpp_node::infra::registry_drain::drain_once(&outbox, &registry_sync, DRAIN_BATCH)
-                    .await;
-                if let Ok(c) = outbox.status_counts(STALL_THRESHOLD).await {
-                    metrics::gauge!("registry_outbox_pending").set(c.pending as f64);
-                    metrics::gauge!("registry_outbox_stalled").set(c.stalled as f64);
-                    metrics::gauge!("registry_outbox_rejected").set(c.rejected as f64);
-                    if c.stalled > 0 {
-                        tracing::warn!(
-                            stalled = c.stalled,
-                            "registry outbox has stalled rows — manual investigation required"
-                        );
-                    }
-                }
-            }
-        });
-    }
+    // ── Background tasks: expired-import-job cleanup + registry outbox drain ──
+    boot::tasks::spawn_job_cleanup(db.job_store.clone());
+    boot::tasks::spawn_registry_drain(db.registry_outbox.clone(), registry_sync_for_drain).await;
 
     // ── Metrics: dedicated private listener (never the public API port) ────────
     // `/metrics` is deliberately NOT mounted on the public router — exposing

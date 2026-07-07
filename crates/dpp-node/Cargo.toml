@@ -27,6 +27,7 @@ dpp-vault              = { path = "../dpp-vault" }
 dpp-identity   = { path = "../dpp-identity" }
 dpp-integrator         = { path = "../dpp-integrator" }
 dpp-registry           = { workspace = true }
+dpp-rules              = { workspace = true }
 dpp-plugin-host        = { path = "../dpp-plugin-host" }
 
 # Event bus

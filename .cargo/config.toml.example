@@ -24,3 +24,4 @@ dpp-digital-link  = { path = "../dpp-core/crates/dpp-digital-link" }
 dpp-plugin-traits = { path = "../dpp-core/crates/dpp-plugin-traits" }
 dpp-registry      = { path = "../dpp-core/crates/dpp-registry" }
 dpp-calc          = { path = "../dpp-core/crates/dpp-calc" }
+dpp-rules         = { path = "../dpp-core/crates/dpp-rules" }

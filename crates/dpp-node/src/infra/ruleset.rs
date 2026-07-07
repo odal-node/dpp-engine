@@ -7,21 +7,13 @@
 //! restart. "Provably more current than a fork" becomes a wire artifact a
 //! customer or auditor can verify, not a consulting promise.
 //!
-//! ## Bundle format (open)
-//!
-//! A bundle is `{ manifestJws, content }`:
-//! - `manifestJws` — a compact EdDSA JWS whose payload is the [`RulesetManifest`]
-//!   (bundle version, effective date, EU-act citations, sector schema versions,
-//!   and the SHA-256 of `content`), signed by the publisher key.
-//! - `content` — the ruleset payload the manifest commits to (thresholds,
-//!   tables, schema references).
-//!
-//! Verification is two independent checks: **authenticity** (the JWS verifies
-//! under the pinned publisher key) and **integrity** (`content` hashes to the
-//! value in the signed manifest). Reusing `dpp-crypto`'s JWS means no new crypto
-//! and no bespoke signature format. The reference loader lives engine-side for
-//! now; it is a candidate to promote into Apache `dpp-rules` at the next core
-//! release (the format above is the open contract either way).
+//! The bundle format and fail-closed verification (signature + content-hash
+//! checks) live in `dpp_rules::bundle` (Apache-2.0) — see that module's docs
+//! for the wire shape and why verification takes an injected [`JwsVerify`]
+//! rather than depending on a JWS crate directly. This file supplies the
+//! concrete verifier ([`DppCryptoVerifier`]), signing (needs a private key
+//! store), reading bundle files from disk, and the hot-swappable runtime
+//! state — all engine concerns that stay here.
 
 use std::collections::BTreeMap;
 use std::sync::{Arc, RwLock};
@@ -29,74 +21,19 @@ use std::sync::{Arc, RwLock};
 use chrono::{DateTime, Utc};
 use dpp_crypto::jws;
 use dpp_crypto::keystore::KeyStore;
-use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
+use dpp_rules::bundle::JwsVerify;
+pub use dpp_rules::bundle::{
+    RulesetError, RulesetManifest, SignedBundle, VerifiedRuleset, content_hash, verify_bundle,
+};
 
-/// Signed description of a ruleset bundle — the JWS payload.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub struct RulesetManifest {
-    /// Channel bundle version, e.g. `"2026-Q3.1"`.
-    pub bundle_version: String,
-    /// When this bundle's rules take effect.
-    pub effective_date: DateTime<Utc>,
-    /// EU-act citations this bundle encodes (audit trail for the change).
-    #[serde(default)]
-    pub act_citations: Vec<String>,
-    /// Sector → schema version this bundle references (never forks schemas).
-    #[serde(default)]
-    pub schema_versions: BTreeMap<String, String>,
-    /// Hex SHA-256 over the JCS-canonicalised `content`.
-    pub content_sha256: String,
-}
+/// Wires `dpp_rules::bundle`'s injected EdDSA check to `dpp-crypto`'s JWS
+/// verifier — the one production implementation of [`JwsVerify`].
+struct DppCryptoVerifier;
 
-/// A signed bundle on the wire.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SignedBundle {
-    /// Compact EdDSA JWS over the manifest, signed by the publisher key.
-    pub manifest_jws: String,
-    /// The ruleset payload the manifest commits to.
-    pub content: serde_json::Value,
-}
-
-/// A bundle that passed both signature and hash checks. Only constructible via
-/// [`verify_bundle`], so holding one is proof it verified.
-#[derive(Debug, Clone)]
-pub struct VerifiedRuleset {
-    /// The verified manifest.
-    pub manifest: RulesetManifest,
-    /// The verified content.
-    pub content: serde_json::Value,
-}
-
-impl VerifiedRuleset {
-    /// The active bundle version (surfaced on `/health`, stamped into provenance).
-    #[must_use]
-    pub fn version(&self) -> &str {
-        &self.manifest.bundle_version
+impl JwsVerify for DppCryptoVerifier {
+    fn verify_eddsa(&self, jws: &str, public_key_b64: &str) -> Result<bool, RulesetError> {
+        jws::verify_jws(jws, public_key_b64).map_err(|e| RulesetError::Malformed(e.to_string()))
     }
-}
-
-/// Why a bundle was refused. Verification is fail-closed — any of these keeps
-/// the node on its current ruleset.
-#[derive(Debug, thiserror::Error)]
-pub enum RulesetError {
-    /// The manifest JWS did not verify under the pinned publisher key.
-    #[error("bundle signature invalid or not signed by the pinned publisher key")]
-    BadSignature,
-    /// `content` does not hash to the value in the signed manifest.
-    #[error("bundle content hash mismatch — content does not match the signed manifest")]
-    ContentHashMismatch,
-    /// The bundle was structurally malformed.
-    #[error("malformed bundle: {0}")]
-    Malformed(String),
-}
-
-/// Canonical SHA-256 (hex) of a content value (RFC 8785 / JCS bytes).
-fn content_hash(content: &serde_json::Value) -> String {
-    let bytes = serde_jcs::to_vec(content).expect("JCS canonicalisation is infallible");
-    hex::encode(Sha256::digest(&bytes))
 }
 
 /// Build and sign a bundle from content + metadata (publisher tooling).
@@ -126,48 +63,6 @@ pub fn sign_bundle(
         manifest_jws,
         content,
     })
-}
-
-/// Verify a bundle against the pinned publisher public key (base64url). Both the
-/// signature (authenticity) and the content hash (integrity) must pass.
-///
-/// # Errors
-/// [`RulesetError`] — fail-closed on a bad signature, hash mismatch, or malformed input.
-pub fn verify_bundle(
-    bundle: &SignedBundle,
-    publisher_pubkey_b64: &str,
-) -> Result<VerifiedRuleset, RulesetError> {
-    // (1) Authenticity: the manifest JWS verifies under the pinned key.
-    let ok = jws::verify_jws(&bundle.manifest_jws, publisher_pubkey_b64)
-        .map_err(|e| RulesetError::Malformed(e.to_string()))?;
-    if !ok {
-        return Err(RulesetError::BadSignature);
-    }
-    // (2) The manifest is now trusted — extract it from the JWS payload.
-    let manifest: RulesetManifest = decode_jws_payload(&bundle.manifest_jws)?;
-    // (3) Integrity: content must hash to what the signed manifest commits to.
-    if content_hash(&bundle.content) != manifest.content_sha256 {
-        return Err(RulesetError::ContentHashMismatch);
-    }
-    Ok(VerifiedRuleset {
-        manifest,
-        content: bundle.content.clone(),
-    })
-}
-
-/// Decode the payload segment of a compact JWS into `T` (used only after the
-/// signature verified, so the bytes are trusted).
-fn decode_jws_payload<T: for<'de> Deserialize<'de>>(jws: &str) -> Result<T, RulesetError> {
-    use base64::Engine;
-    let payload_b64 = jws
-        .split('.')
-        .nth(1)
-        .ok_or_else(|| RulesetError::Malformed("JWS has no payload segment".into()))?;
-    let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
-        .decode(payload_b64)
-        .map_err(|e| RulesetError::Malformed(format!("payload base64: {e}")))?;
-    serde_json::from_slice(&bytes)
-        .map_err(|e| RulesetError::Malformed(format!("payload json: {e}")))
 }
 
 /// Read a `SignedBundle` from a JSON file (the configured channel drop).
@@ -231,7 +126,7 @@ impl ActiveRuleset {
         bundle: &SignedBundle,
         publisher_pubkey_b64: &str,
     ) -> Result<String, RulesetError> {
-        let verified = verify_bundle(bundle, publisher_pubkey_b64)?;
+        let verified = verify_bundle(bundle, publisher_pubkey_b64, &DppCryptoVerifier)?;
         let version = verified.manifest.bundle_version.clone();
         *self.current.write().expect("ruleset lock poisoned") = Arc::new(verified);
         Ok(version)
@@ -271,7 +166,7 @@ mod tests {
     fn signed_bundle_verifies_and_carries_version() {
         let (store, kid, pubkey) = publisher();
         let b = bundle(&store, &kid, "2026-Q3.1", 5);
-        let v = verify_bundle(&b, &pubkey).expect("must verify");
+        let v = verify_bundle(&b, &pubkey, &DppCryptoVerifier).expect("must verify");
         assert_eq!(v.version(), "2026-Q3.1");
         assert_eq!(v.content["textileFibreThreshold"], 5);
     }
@@ -292,7 +187,7 @@ mod tests {
         chars[idx] = if chars[idx] == 'A' { 'B' } else { 'A' };
         b.manifest_jws = chars.into_iter().collect();
         assert!(matches!(
-            verify_bundle(&b, &pubkey),
+            verify_bundle(&b, &pubkey, &DppCryptoVerifier),
             Err(RulesetError::BadSignature)
         ));
     }
@@ -304,7 +199,7 @@ mod tests {
         // Change the content without re-signing the manifest.
         b.content = serde_json::json!({ "textileFibreThreshold": 999 });
         assert!(matches!(
-            verify_bundle(&b, &pubkey),
+            verify_bundle(&b, &pubkey, &DppCryptoVerifier),
             Err(RulesetError::ContentHashMismatch)
         ));
     }
@@ -315,7 +210,7 @@ mod tests {
         let (_other_store, _oid, other_pubkey) = publisher();
         let b = bundle(&store, &kid, "2026-Q3.1", 5);
         assert!(matches!(
-            verify_bundle(&b, &other_pubkey),
+            verify_bundle(&b, &other_pubkey, &DppCryptoVerifier),
             Err(RulesetError::BadSignature)
         ));
     }
