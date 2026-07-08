@@ -335,6 +335,93 @@ components:
           type: string
           format: date-time
 
+    SignedLayer:
+      type: object
+      description: |
+        A JWS alongside the exact JSON payload it was signed over — embedded
+        directly rather than left for a verifier to reconstruct.
+      required: [payload, jws]
+      properties:
+        payload:
+          type: object
+        jws:
+          type: string
+          description: Compact EdDSA JWS.
+
+    DossierManifest:
+      type: object
+      description: |
+        Signed metadata binding every dossier member into one atomic,
+        tamper-evident unit.
+      required: [formatVersion, passportId, issuerDid, createdAt, nodeVersion, contentHashes]
+      properties:
+        formatVersion:
+          type: string
+          example: "1"
+        passportId:
+          type: string
+        issuerDid:
+          type: string
+          example: "did:web:node.example.com"
+        createdAt:
+          type: string
+          format: date-time
+        nodeVersion:
+          type: string
+        rulesetVersion:
+          type: string
+          nullable: true
+        contentHashes:
+          type: object
+          description: member name -> hex SHA-256 of that member's JCS-canonical bytes.
+          additionalProperties:
+            type: string
+
+    EvidenceDossier:
+      type: object
+      description: |
+        A self-contained, signed export of a passport's full proof chain,
+        verifiable offline with zero trust in the issuing node. See
+        `dpp-evidence`'s `spec/dossier-v1.md` (in the `dpp-core` repository)
+        for the full specification, including the trust model and why
+        `calcReceipts`/`checkpoint` are always empty/`null` in format v1.
+      required: [manifest, manifestJws, fullView, publicView, didDocuments, auditEntries]
+      properties:
+        manifest:
+          $ref: "#/components/schemas/DossierManifest"
+        manifestJws:
+          type: string
+        fullView:
+          $ref: "#/components/schemas/SignedLayer"
+        publicView:
+          $ref: "#/components/schemas/SignedLayer"
+        didDocuments:
+          type: object
+          description: DID document snapshots, keyed by DID.
+          additionalProperties:
+            type: object
+        auditEntries:
+          type: array
+          items:
+            $ref: "#/components/schemas/AuditEntry"
+        transferChain:
+          type: object
+          nullable: true
+          description: Present iff the passport has ever changed responsible operator.
+        eolEvent:
+          type: object
+          nullable: true
+          description: Present iff the passport was declared end-of-life.
+        checkpoint:
+          type: object
+          nullable: true
+          description: Always `null` in format v1 — the signed-checkpoint layer is not yet built.
+        calcReceipts:
+          type: array
+          description: Always empty in format v1 — `dpp-calc` invocation is not yet wired end to end.
+          items:
+            type: object
+
     OperatorConfig:
       type: object
       required: [operatorId, legalName, address, country, contactEmail]
@@ -1159,6 +1246,47 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "404":
           $ref: "#/components/responses/NotFound"
+
+  /vault/api/v1/dpp/{dppId}/evidence:
+    get:
+      operationId: getDppEvidence
+      summary: Export a signed, offline-verifiable evidence dossier
+      description: |
+        Assembles a self-contained, signed dossier proving a passport's full
+        proof chain — both JWS signatures, DID document snapshots, the
+        hash-chained audit trail, and (when present) the transfer chain and
+        end-of-life record. Requires no trust in this node to verify: pair
+        with the `odal verify` CLI command, or the `dpp-evidence` crate
+        directly, to check it fully offline. See `dpp-evidence`'s
+        `spec/dossier-v1.md` in the `dpp-core` repository for the complete
+        format specification and trust model.
+
+        Authenticated tier only — the dossier's `fullView` member carries
+        full-view (non-redacted) passport data. Requires the passport to have
+        been published at least once; a draft has no signature to export.
+      tags: [DPP Management]
+      security:
+        - BearerApiKey: []
+        - BasicAuth: []
+      parameters:
+        - name: dppId
+          in: path
+          required: true
+          schema:
+            $ref: "#/components/schemas/DppId"
+      responses:
+        "200":
+          description: The evidence dossier.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EvidenceDossier"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
 
   # ---- Operator Config (odal-vault) ----------------------------------------
 

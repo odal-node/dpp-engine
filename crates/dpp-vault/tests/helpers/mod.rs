@@ -178,6 +178,10 @@ impl IdentityPort for FailingIdentity {
     ) -> Result<bool, DppError> {
         Err(DppError::Signing("identity service unavailable".into()))
     }
+
+    async fn own_did_document(&self) -> Result<serde_json::Value, DppError> {
+        Err(DppError::Signing("identity service unavailable".into()))
+    }
 }
 
 #[async_trait]
@@ -218,6 +222,14 @@ impl IdentityPort for MockIdentity {
         _payload: &serde_json::Value,
     ) -> Result<bool, DppError> {
         Ok(true)
+    }
+
+    async fn own_did_document(&self) -> Result<serde_json::Value, DppError> {
+        Ok(serde_json::json!({
+            "id": "did:web:test.mock",
+            "verificationMethod": [],
+            "assertionMethod": [],
+        }))
     }
 }
 

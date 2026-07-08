@@ -5,6 +5,7 @@ pub mod archive;
 pub mod create;
 pub mod eol;
 pub mod error;
+pub mod evidence;
 pub mod health;
 pub mod history;
 pub mod info;

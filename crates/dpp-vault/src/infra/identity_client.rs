@@ -159,4 +159,29 @@ impl IdentityPort for IdentityHttpClient {
 
         Ok(json.get("valid").and_then(|v| v.as_bool()).unwrap_or(false))
     }
+
+    /// GET `/.well-known/did.json` — the same public, unauthenticated route
+    /// external verifiers resolve. Single-tenant: there is one document, for
+    /// the root operator; `self.operator_id` is not path-encoded into the
+    /// request (`did_builder::build_did_document` publishes a pathless
+    /// `did:web:{hostname}` DID, resolving only at the well-known path).
+    async fn own_did_document(&self) -> Result<serde_json::Value, DppError> {
+        let resp = self
+            .client
+            .get(format!("{}/.well-known/did.json", self.base_url))
+            .send()
+            .await
+            .map_err(|e| DppError::Internal(format!("identity service unreachable: {e}")))?;
+
+        if !resp.status().is_success() {
+            let status = resp.status().as_u16();
+            return Err(DppError::Internal(format!(
+                "identity service returned {status} for did.json"
+            )));
+        }
+
+        resp.json()
+            .await
+            .map_err(|e| DppError::Serialisation(e.to_string()))
+    }
 }

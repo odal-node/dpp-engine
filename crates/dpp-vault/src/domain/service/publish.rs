@@ -243,13 +243,26 @@ impl PassportService {
             },
         };
 
+        // Stamp the exact payloads that were signed (not the current row) as
+        // metadata on this publish's audit entry. `jws_signature` and
+        // `public_jws_signature` are frozen at this moment and never re-signed
+        // by later lifecycle transitions (suspend/archive/eol only touch
+        // `status`), so evidence export (N02) must recover *this* snapshot
+        // rather than reconstruct one from the passport's current — by then
+        // possibly mutated — row. A re-publish (Suspend -> Published) runs
+        // this same path again and appends a new "published" entry with a
+        // fresh snapshot; export always uses the most recent one.
         let entry = AuditEntry::new(
             &updated.id.to_string(),
             "published",
-            auth,
+            &auth.user_id,
             None,
             Some(&PassportStatus::Published.to_string()),
-        );
+        )
+        .with_metadata(serde_json::json!({
+            "fullViewPayload": payload,
+            "publicViewPayload": public_view,
+        }));
         self.audit.append(entry).await?;
 
         // ESPR Art. 13 third-party archive — fire-after-commit, non-blocking.

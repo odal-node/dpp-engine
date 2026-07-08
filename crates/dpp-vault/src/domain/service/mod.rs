@@ -13,10 +13,12 @@
 //! - [`lifecycle`] — `suspend`, `archive`
 //! - [`eol`] — `declare_eol`
 //! - [`transfer`] — `initiate_transfer`, `accept_transfer`
+//! - [`evidence`] — `export_evidence` (N02 offline-verifiable dossier)
 //! - [`seal`] — reserved seat for the eIDAS seal step in `publish` (not wired yet)
 
 mod create;
 mod eol;
+mod evidence;
 mod lifecycle;
 mod publish;
 mod query;

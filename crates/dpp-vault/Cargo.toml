@@ -22,8 +22,9 @@ dpp-crypto  = { workspace = true }
 dpp-digital-link     = { workspace = true }
 dpp-registry = { workspace = true }
 dpp-types   = { workspace = true }
-dpp-dal     = { path = "../dpp-dal" }
-dpp-common  = { path = "../dpp-common" }
+dpp-dal      = { path = "../dpp-dal" }
+dpp-common   = { path = "../dpp-common" }
+dpp-evidence = { workspace = true }
 
 axum          = { workspace = true }
 tokio         = { workspace = true }
