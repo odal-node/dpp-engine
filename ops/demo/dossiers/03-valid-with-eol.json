@@ -1,0 +1,96 @@
+{
+  "auditEntries": [
+    {
+      "action": "created",
+      "actor": "demo-user",
+      "entryHash": "5e932fa882eb378d96acb4e9b8abde420bd9e5732de052c87099d5147cc35f56",
+      "id": "019f3fa1-1c44-7c32-89d2-abeae0461aa2",
+      "metadata": null,
+      "newStatus": "active",
+      "passportId": "01HXYZDEMO0000000000000001",
+      "prevHash": "",
+      "previousStatus": null,
+      "timestamp": "2026-07-01T12:00:00Z"
+    },
+    {
+      "action": "published",
+      "actor": "demo-user",
+      "entryHash": "f7c11bbc3f1b95757e5697549acb178c40c98df1410b7b1ba8bb9d23411b8cc7",
+      "id": "019f3fa1-1c44-7c32-89d2-abf6c30f19e0",
+      "metadata": null,
+      "newStatus": "active",
+      "passportId": "01HXYZDEMO0000000000000001",
+      "prevHash": "5e932fa882eb378d96acb4e9b8abde420bd9e5732de052c87099d5147cc35f56",
+      "previousStatus": null,
+      "timestamp": "2026-07-01T12:05:00Z"
+    },
+    {
+      "action": "deactivated",
+      "actor": "demo-user",
+      "entryHash": "a1f1eb604c23a60c48907b18d2957314d6981c872a663d2616cdc274960d40e1",
+      "id": "019f3fa1-1c44-7c32-89d2-ac0e5452e452",
+      "metadata": null,
+      "newStatus": "active",
+      "passportId": "01HXYZDEMO0000000000000001",
+      "prevHash": "f7c11bbc3f1b95757e5697549acb178c40c98df1410b7b1ba8bb9d23411b8cc7",
+      "previousStatus": null,
+      "timestamp": "2027-08-05T12:00:00Z"
+    }
+  ],
+  "didDocuments": {
+    "did:web:demo.odal-node.io": {
+      "assertionMethod": [
+        "did:web:demo.odal-node.io#root"
+      ],
+      "id": "did:web:demo.odal-node.io",
+      "verificationMethod": [
+        {
+          "id": "did:web:demo.odal-node.io#root",
+          "publicKeyJwk": {
+            "crv": "Ed25519",
+            "kty": "OKP",
+            "x": "GX9rI-FshTLGq8g4-s1ep4m-DHaykgM0A5v6iz02jWE"
+          },
+          "type": "JsonWebKey2020"
+        }
+      ]
+    }
+  },
+  "eolEvent": {
+    "declaredAt": "2027-08-05T12:00:00+00:00",
+    "declaredBy": "did:web:demo.odal-node.io",
+    "passportId": "01HXYZDEMO0000000000000001",
+    "reason": "recycled"
+  },
+  "fullView": {
+    "jws": "eyJhbGciOiJFZERTQSJ9.eyJpZCI6IjAxSFhZWkRFTU8wMDAwMDAwMDAwMDAwMDAxIiwicHJvZHVjdE5hbWUiOiJEZW1vIEJhdHRlcnkgUGFjayIsInNlY3RvciI6ImJhdHRlcnkiLCJzdGF0dXMiOiJhY3RpdmUifQ.cbIYcBZFEtjJwUrAVwl-yezFQQTSHl87KC2t3gDZ-GXhjqSm8_A-f4Uu12yjSrRK4fFWsGDCgRQHqr8O6e_5Dg",
+    "payload": {
+      "id": "01HXYZDEMO0000000000000001",
+      "productName": "Demo Battery Pack",
+      "sector": "battery",
+      "status": "active"
+    }
+  },
+  "manifest": {
+    "contentHashes": {
+      "auditEntries": "cbe946c3394c55962a11468d96a65c5018a3d6eb1093b10454d44b9d28faba9e",
+      "eolEvent": "c6c5951e479e67bbd539dc15a10bd06bc7269e0026eb6c4ad34cdfbcad3783f8",
+      "fullView": "765fd8783f8d3b940dd34654125469b3e3bd9355f769d4a35c2c9d42900e9335",
+      "publicView": "7fdf780387f75c1b9734e6f9066e8a1355e60ea23aa74e20939329686ef546bf"
+    },
+    "createdAt": "2026-07-01T15:00:00Z",
+    "formatVersion": "1",
+    "issuerDid": "did:web:demo.odal-node.io",
+    "nodeVersion": "0.7.0-demo",
+    "passportId": "01HXYZDEMO0000000000000001"
+  },
+  "manifestJws": "eyJhbGciOiJFZERTQSJ9.eyJjb250ZW50SGFzaGVzIjp7ImF1ZGl0RW50cmllcyI6ImNiZTk0NmMzMzk0YzU1OTYyYTExNDY4ZDk2YTY1YzUwMThhM2Q2ZWIxMDkzYjEwNDU0ZDQ0YjlkMjhmYWJhOWUiLCJlb2xFdmVudCI6ImM2YzU5NTFlNDc5ZTY3YmJkNTM5ZGMxNWExMGJkMDZiYzcyNjllMDAyNmViNmM0YWQzNGNkZmJjYWQzNzgzZjgiLCJmdWxsVmlldyI6Ijc2NWZkODc4M2Y4ZDNiOTQwZGQzNDY1NDEyNTQ2OWIzZTNiZDkzNTVmNzY5ZDRhMzVjMmM5ZDQyOTAwZTkzMzUiLCJwdWJsaWNWaWV3IjoiN2ZkZjc4MDM4N2Y3NWMxYjk3MzRlNmY5MDY2ZThhMTM1NWU2MGVhMjNhYTc0ZTIwOTM5MzI5Njg2ZWY1NDZiZiJ9LCJjcmVhdGVkQXQiOiIyMDI2LTA3LTAxVDE1OjAwOjAwWiIsImZvcm1hdFZlcnNpb24iOiIxIiwiaXNzdWVyRGlkIjoiZGlkOndlYjpkZW1vLm9kYWwtbm9kZS5pbyIsIm5vZGVWZXJzaW9uIjoiMC43LjAtZGVtbyIsInBhc3Nwb3J0SWQiOiIwMUhYWVpERU1PMDAwMDAwMDAwMDAwMDAwMSJ9.gPNOHmugbup4cy36aqT3WBTHwqOKK_saLQ-9r9lWY6pUTxMLTKpKU987OCZLdoCNLpuZQv-LLoJpxRbu1W1uCQ",
+  "publicView": {
+    "jws": "eyJhbGciOiJFZERTQSJ9.eyJpZCI6IjAxSFhZWkRFTU8wMDAwMDAwMDAwMDAwMDAxIiwicHJvZHVjdE5hbWUiOiJEZW1vIEJhdHRlcnkgUGFjayIsInNlY3RvciI6ImJhdHRlcnkifQ.q0gr_RFORGbgkOn_dmMtQwKn7G_kBXUx2YamaZU4aWCxgbgYI43sApT1qIM9afJRVXPpLMjAsyiAEk2YF5c4AQ",
+    "payload": {
+      "id": "01HXYZDEMO0000000000000001",
+      "productName": "Demo Battery Pack",
+      "sector": "battery"
+    }
+  }
+}
