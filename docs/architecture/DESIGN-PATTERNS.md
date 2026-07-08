@@ -120,13 +120,16 @@ Every event carries a schema version:
 
 Infrastructure dependencies that are optional use a NoOp implementation:
 
-| Dependency | Real Implementation | NoOp Fallback |
+| Dependency | Real Implementation | Fallback |
 |---|---|---|
 | Event bus | `NatsEventBus` | `NoOpEventBus` (discards events) |
 | Compliance | Wasm sector plugin | `PassthroughRegistry` (accepts all) |
-| EU Registry | *(future)* | `GhostRegistrySync` (returns Pending) |
+| EU Registry | `EuRegistrySync` (HTTP, when the Commission publishes) | `GhostRegistrySync` — but registration intent is **never lost**: it lives in the durable outbox regardless of adapter tier |
+| Qualified seal | CSC/QTSP adapter (`dpp-seal`) | `GhostSeal` — clearly marked placeholder |
 
 **Why:** Self-hosted single-node deployments should work without NATS. The NoOp pattern means the code paths are identical — no `if nats_enabled { ... }` branches. The trait dispatch handles it.
+
+**The honesty rule on top:** every fallback reports its tier in `/health` (`trust_mode` per port), and a `NODE_PROFILE=production` node **refuses to boot** while a trust-critical port resolves to a ghost. Fallbacks keep development friction-free; they are never allowed to impersonate the real thing.
 
 ---
 

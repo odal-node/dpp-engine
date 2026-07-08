@@ -52,4 +52,4 @@ This means the resolver URL can change without reprinting physical QR codes — 
 
 ## EU Central Registry (dpp-registry)
 
-When the European Commission publishes the Article 13 registry API (expected before 19 July 2026), the `GhostRegistrySync` in `dpp-domain::ports::registry_sync` is replaced with a real `EuRegistrySync` implementation. Every published DPP ID is registered in the EU Central Registry. The registry is a pointer index, not data storage — the actual signed VC lives in the implementor's infrastructure.
+The Commission's Art. 13 deadline to set up the registry was 19 July 2026; as of this writing the API specification remains unpublished. The engine is already registry-shaped: every publish commits a registration intent to a durable outbox (drained with backoff), so when the `EuRegistrySync` HTTP adapter activates against the published API, the backlog registers without loss. The registry is a pointer index, not data storage — the actual signed passport lives in the operator's infrastructure.

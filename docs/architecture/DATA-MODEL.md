@@ -1,6 +1,6 @@
 # Platform Data Model
 
-This document describes the **PostgreSQL** schema used by dpp-engine: all tables, their fields, indexes, and triggers. Authoritative DDL: `ops/pg/0001_extensions_roles_schemas.sql` through `0012_registry_identity_grants.sql`.
+This document describes the **PostgreSQL** schema used by dpp-engine: all tables, their fields, indexes, and triggers. Authoritative DDL: `ops/pg/0001_extensions_roles_schemas.sql` through `0017_passport_transfer.sql` (including the hash-chained audit columns in `0015`, the end-of-life status in `0016`, and the transfer chain in `0017`).
 
 ---
 

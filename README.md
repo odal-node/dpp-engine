@@ -7,7 +7,7 @@
 [![Rust 1.96+](https://img.shields.io/badge/Rust-1.96%2B-orange.svg)](https://www.rust-lang.org/)
 [![Status: Active Development](https://img.shields.io/badge/Status-Active%20Development-green.svg)]()
 
-The self-hostable runtime for Odal Node — HTTP services, PostgreSQL persistence, auth, telemetry, and compliance calculators: everything an operator needs to issue, sign, and serve EU-compliant Digital Product Passports on their own infrastructure. Self-hosting for your own compliance is permitted at no charge (see [LICENSE](LICENSE)).
+The self-hostable runtime for Odal Node — HTTP services, PostgreSQL persistence, auth, telemetry, and the operational trust layer: everything an operator needs to issue, sign, serve, and *prove* EU-compliant Digital Product Passports on their own infrastructure. Self-hosting for your own compliance is permitted at no charge (see [LICENSE](LICENSE)).
 
 Consumes [dpp-core](https://github.com/odal-node/dpp-core) (Apache-2.0) for domain types, crypto, and schema validation.
 
@@ -53,16 +53,16 @@ The engine ships as a **single binary** (`dpp-node`) that fuses all services und
 |---|---|---|
 | `dpp-types` | lib | Platform-wide types — operator config, auth, audit, API keys |
 | `dpp-dal` | lib | PostgreSQL DAL — passport repo, migrations (single-tenant; no RLS) |
-| `dpp-vault` | bin+lib | DPP write engine — create, version, sign, audit (27 endpoints) |
-| `dpp-identity` | bin+lib | `did:web` identity HTTP service — signing, key rotation (5 endpoints) |
-| `dpp-resolver` | bin+lib | Public QR / Digital Link resolver, JWS-verified (4 endpoints) |
-| `dpp-integrator` | bin+lib | CSV/XLSX-to-DPP bulk import adapter (4 endpoints) |
-| `dpp-common` | lib | Event bus trait, telemetry, config helpers, RFC 7807 HTTP errors |
-| `dpp-plugin-host` | lib | wasmtime sandbox — fuel metering, memory cap, deny-all WASI |
-| `dpp-node` | bin | **MVP single binary — fuses all services** |
-| `dpp-cli` (`cli/`) | bin | `odal` — the operator control-plane CLI |
-| `dpp-seal` *(not wired)* | lib | eIDAS qualified seal adapter — CSC/QTSP wire types + `QtspSealAdapter` stub |
-| `dpp-factor-data` *(not wired)* | lib | Licensed LCI factor data store — `GhostFactorProvider` + `FactorStore` trait |
+| `dpp-vault` | bin+lib | DPP write engine — create, versioned lifecycle (publish / suspend / archive / end-of-life), transfer-of-responsibility handshake, hash-chained audit, evidence-dossier export |
+| `dpp-identity` | bin+lib | `did:web` identity HTTP service — signing, key rotation |
+| `dpp-resolver` | bin+lib | Public QR / Digital Link resolver, JWS-verified fail-closed |
+| `dpp-integrator` | bin+lib | CSV/XLSX-to-DPP bulk import adapter with per-sector templates |
+| `dpp-common` | lib | Event bus trait + well-known subjects, telemetry, RFC 7807 HTTP errors |
+| `dpp-plugin-host` | lib | wasmtime sandbox — fuel metering, memory cap, deny-all WASI, signed-plugin policy |
+| `dpp-node` | bin | **The single binary — fuses all services**, boot trust-report, registry outbox drain, signed-ruleset loader |
+| `dpp-cli` (`cli/`) | bin | `odal` — the operator control plane, from bootstrap to evidence export and offline verification |
+| `dpp-seal` | lib | eIDAS qualified-seal adapter (CSC/QTSP client scaffold) — resolves to a clearly-marked Ghost until a QTSP is configured; a production-profile node **refuses to boot** on ghost trust adapters |
+| `dpp-factor-data` | lib | Licensed LCI factor store — ghost provider until a dataset licence is signed; any ghost-derived result is marked `dataset_id="ghost"` |
 
 ### Dependencies on dpp-core
 
@@ -105,7 +105,7 @@ cargo nextest run --workspace
 
 The node starts on port **8001**. The resolver runs separately on port **8003**.
 
-**Environment**: Copy the single root template — `cp .env.example .env`. It documents every backend var, grouped by deployable (node + resolver). The `web/` dashboard keeps its own `.env` (frontend secrets).
+**Environment**: Copy the single root template — `cp .env.example .env`. It documents every backend var, grouped by deployable (node + resolver), including the trust-layer surface: `NODE_PROFILE` (a `production` node refuses to boot on placeholder trust adapters), `RULESET_BUNDLE_PATH` + `RULESET_PUBLISHER_PUBKEY` (signed compliance-ruleset channel), and the optional `EU_REGISTRY_*` / `ARCHIVE_S3_*` / `QTSP_*` adapter blocks.
 
 ### Operate it with the `odal` CLI
 
@@ -119,57 +119,16 @@ cargo build -p dpp-cli                          # builds target/debug/odal
 ./target/debug/odal passport validate && ./target/debug/odal passport publish
 ```
 
+```bash
+# Prove it, offline: export a signed evidence dossier and verify it with no server
+./target/debug/odal passport evidence <dpp-id> > dossier.json
+./target/debug/odal verify dossier.json      # 8+ independent checks, exit 0 = verified
+```
+
 Full command reference: **[cli/README.md](cli/README.md)**.
 
 ---
 
-## Service Endpoints
-
-### MVP Node (port 8001)
-
-Routes are mounted by prefix: `/vault/*`, `/identity/*`, `/integrator/*` (see
-`crates/dpp-node/src/router.rs`). The fused node mounts identity's
-**public-only** router — the internal signing/key-rotation endpoints exist in
-`dpp-identity` for **standalone** deployment only and are never network-reachable
-here; the vault signs in-process instead (see `ATK-1` regression test).
-
-| Method | Path | Auth | Service |
-|---|---|---|---|
-| GET | `/health` | None | Node |
-| GET | `/vault/health` | None | Vault |
-| GET | `/vault/ready` | None | Vault |
-| GET | `/vault/api/v1/info` | None | Vault |
-| GET | `/vault/public/dpp/{id}` | None | Vault |
-| GET | `/vault/public/dpp/by-gtin/{gtin}` | None | Vault |
-| POST | `/vault/api/v1/dpp` | Bearer | Vault |
-| GET | `/vault/api/v1/dpps` | Bearer | Vault |
-| GET | `/vault/api/v1/dpp/{id}` | Bearer | Vault |
-| PUT | `/vault/api/v1/dpp/{id}` | Bearer | Vault |
-| POST | `/vault/api/v1/dpp/{id}/publish` | Bearer | Vault |
-| POST | `/vault/api/v1/dpp/{id}/suspend` | Bearer | Vault |
-| POST | `/vault/api/v1/dpp/{id}/archive` | Bearer | Vault |
-| GET | `/vault/api/v1/dpp/{id}/history` | Bearer | Vault |
-| GET | `/vault/api/v1/node/state` | Bearer | Vault |
-| GET | `/vault/api/v1/operator` | Bearer | Vault |
-| PATCH | `/vault/api/v1/operator` | Bearer (Admin) | Vault |
-| GET | `/vault/api/v1/api-keys` | Bearer (Admin) | Vault |
-| POST | `/vault/api/v1/api-keys` | Bearer (Admin) | Vault |
-| DELETE | `/vault/api/v1/api-keys/{id}` | Bearer (Admin) | Vault |
-| GET | `/vault/api/v1/facilities` | Bearer (Admin) | Vault |
-| POST | `/vault/api/v1/facilities` | Bearer (Admin) | Vault |
-| DELETE | `/vault/api/v1/facilities/{id}` | Bearer (Admin) | Vault |
-| POST | `/vault/api/v1/facilities/{id}/default` | Bearer (Admin) | Vault |
-| GET | `/vault/api/v1/operator-identifiers` | Bearer (Admin) | Vault |
-| POST | `/vault/api/v1/operator-identifiers` | Bearer (Admin) | Vault |
-| DELETE | `/vault/api/v1/operator-identifiers/{id}` | Bearer (Admin) | Vault |
-| POST | `/vault/api/v1/operator-identifiers/{id}/primary` | Bearer (Admin) | Vault |
-| GET | `/identity/health` | None | Identity |
-| GET | `/identity/ready` | None | Identity |
-| GET | `/identity/.well-known/did.json` | None | Identity |
-| GET | `/integrator/health` | None | Integrator |
-| GET | `/integrator/api/v1/templates/{sector}` | None | Integrator |
-| POST | `/integrator/api/v1/import/{sector}` | Bearer | Integrator |
-| GET | `/integrator/api/v1/imports/{job_id}` | Bearer | Integrator |
 
 ### Resolver (port 8003, standalone)
 
@@ -193,7 +152,13 @@ here; the vault signs in-process instead (see `ATK-1` regression test).
 
 Docker Compose: `docker/docker-compose.dev.yml`
 
-Migrations: `ops/pg/0001_extensions_roles_schemas.sql` through `0012_registry_identity_grants.sql` — applied via `PgDal::migrate` at startup if `DATABASE_MIGRATE_URL` is set.
+Migrations: `ops/pg/0001_extensions_roles_schemas.sql` through `0017_passport_transfer.sql` — applied via `PgDal::migrate` at startup if `DATABASE_MIGRATE_URL` is set. The audit table is append-only (DB trigger) and hash-chained (`0015`); the registry outbox (`0006`) is written inside the publish transaction and drained with backoff.
+
+---
+
+## What Makes This Node Different (the trust layer, shipped)
+
+**Honesty is enforced, not promised.** Every trust-critical port reports its tier (`ghost` / `sandbox` / `live`) in `/health`; under `NODE_PROFILE=production` the node **refuses to start** while any required port resolves to a placeholder — a node cannot claim trust services it doesn't have. **History is tamper-evident:** every audit entry is hash-chained; a superuser edit is detected at the exact index. **Registration is never lost:** EU-registry intent is committed to a durable outbox in the same transaction as publish, then drained with retry/backoff — kill the node mid-publish and nothing is lost (tested). **Regulation ships as signed data:** compliance rulesets arrive as Ed25519-signed bundles, verified fail-closed and hot-swapped atomically; the active version is visible in `/health`. **Anyone can verify, offline:** a signed evidence dossier (passport, JWS, DID document, audit chain, transfer chain) exports in one call and verifies with zero network via [`dpp-evidence`](https://github.com/odal-node/dpp-core/tree/main/crates/dpp-evidence).
 
 ---
 
@@ -210,6 +175,8 @@ The `ComplianceRegistry` trait in `dpp-domain::ports` is a technical extension s
 
 ## Documentation
 
+**Start with the guided index: [docs/README.md](docs/README.md)** — grouped by question, with a three-document reading path for newcomers.
+
 | Document | Description |
 |---|---|
 | [cli/README.md](cli/README.md) | `odal` CLI reference — the operator control plane |
@@ -217,6 +184,8 @@ The `ComplianceRegistry` trait in `dpp-domain::ports` is a technical extension s
 | [docs/architecture/OVERVIEW.md](docs/architecture/OVERVIEW.md) | Service topology and request flow |
 | [docs/architecture/DATA-MODEL.md](docs/architecture/DATA-MODEL.md) | Tables, migrations, and bootstrap |
 | [docs/architecture/AUTH.md](docs/architecture/AUTH.md) | Authentication and authorisation |
+| [docs/ops/PRODUCTION-RUNBOOK.md](docs/ops/PRODUCTION-RUNBOOK.md) | Running Odal Node for real operators — topology, hardening, backups, upgrades |
+| [api/openapi.yaml](api/openapi.yaml) | HTTP surface specification |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | Repo layout and contribution flow |
 | [SECURITY.md](SECURITY.md) | Vulnerability disclosure policy |
 | [GOVERNANCE.md](GOVERNANCE.md) | Decision-making structure and maintainer authority |

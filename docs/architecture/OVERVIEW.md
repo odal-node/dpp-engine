@@ -79,7 +79,14 @@ Sub-services communicate via localhost HTTP (e.g., vault calls identity for sign
    b. retention_locked = true, status = active, qrCodeUrl generated
    c. Passport updated in DB
    d. Event emitted to NATS (fire-after-commit)
-   e. EU registry notified (currently no-op via GhostRegistrySync)
+   e. Registration intent written to the durable registry outbox in the same
+      transaction; a background drain retries with backoff — the HTTP adapter
+      stays Ghost until the Commission publishes the Art. 13 registry API, so
+      nothing is lost while waiting and publish never blocks on the registry
+7. Later lifecycle: suspend / archive / end-of-life (typed reason) /
+   transfer-of-responsibility (dual-signed handshake) — each appends to the
+   hash-chained audit trail; a signed evidence dossier of the whole history
+   is exportable at any time (GET /vault/api/v1/dpp/{id}/evidence)
 ```
 
 ### Read Path (QR Scan)
@@ -120,8 +127,10 @@ dpp-types <-- dpp-dal <-- dpp-vault <-- dpp-node
 dpp-common (event bus trait, telemetry) <-- dpp-vault, dpp-node
 dpp-plugin-host <-- dpp-node
 
-dpp-seal        (not wired — stub pending QTSP contract + EU registry API)
-dpp-factor-data (not wired — stub pending dataset licence + S3 factor store)
+dpp-seal        (CSC/QTSP adapter scaffold — resolves to Ghost until a QTSP is
+                 configured; a NODE_PROFILE=production node refuses to boot on it)
+dpp-factor-data (licensed-LCI store — ghost provider until a dataset licence is
+                 signed; ghost-derived results are marked dataset_id="ghost")
 ```
 
 **Dependency rules:**

@@ -6,8 +6,8 @@ The persistence layer is **PostgreSQL** (migration from the legacy backend compl
 
 ## PostgreSQL
 
-**Schema:** `ops/pg/0001_extensions_roles_schemas.sql` through `0012_registry_identity_grants.sql` — a
-clean, FK-ordered 12-file migration set applied via `PgDal::migrate(url)` at boot
+**Schema:** `ops/pg/0001_extensions_roles_schemas.sql` through `0017_passport_transfer.sql` — a
+clean, FK-ordered migration set applied via `PgDal::migrate(url)` at boot
 using a privileged role, or pre-applied by ops tooling.
 
 **Connection:** `PgDal::connect(database_url)` — connects as the least-privilege app
