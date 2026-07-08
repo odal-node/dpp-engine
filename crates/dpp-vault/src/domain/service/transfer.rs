@@ -73,7 +73,7 @@ impl PassportService {
             .map_err(|e| DppError::Validation(e.to_string().into()))?;
         store.save_chain(&chain).await?;
 
-        let entry = AuditEntry::new(&id.to_string(), "transferred", auth, None, None)
+        let entry = AuditEntry::new(&id.to_string(), "transferred", &auth.user_id, None, None)
             .with_metadata(serde_json::json!({
                 "event": "transfer.initiated",
                 "transferId": record.transfer_id,
@@ -134,7 +134,7 @@ impl PassportService {
         let record = chain.transfers[idx].clone();
         store.save_chain(&chain).await?;
 
-        let entry = AuditEntry::new(&id.to_string(), "transferred", auth, None, None)
+        let entry = AuditEntry::new(&id.to_string(), "transferred", &auth.user_id, None, None)
             .with_metadata(serde_json::json!({
                 "event": "transfer.accepted",
                 "transferId": record.transfer_id,

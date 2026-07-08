@@ -43,7 +43,7 @@ impl PassportService {
         let mut entry = AuditEntry::new(
             &updated.id.to_string(),
             "suspended",
-            auth,
+            &auth.user_id,
             Some(&PassportStatus::Published.to_string()),
             Some(&PassportStatus::Suspended.to_string()),
         );
@@ -134,7 +134,7 @@ impl PassportService {
         let entry = AuditEntry::new(
             &updated.id.to_string(),
             "archived",
-            auth,
+            &auth.user_id,
             Some(&prev_status),
             Some(&PassportStatus::Archived.to_string()),
         );

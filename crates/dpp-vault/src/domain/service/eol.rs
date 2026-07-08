@@ -50,7 +50,7 @@ impl PassportService {
         let entry = AuditEntry::new(
             &updated.id.to_string(),
             "deactivated",
-            auth,
+            &auth.user_id,
             Some(&prev_status),
             Some(&PassportStatus::Deactivated.to_string()),
         )

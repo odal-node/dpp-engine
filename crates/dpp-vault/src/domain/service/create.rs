@@ -66,7 +66,7 @@ impl PassportService {
         let entry = AuditEntry::new(
             &created.id.to_string(),
             "created",
-            auth,
+            &auth.user_id,
             None,
             Some(&PassportStatus::Draft.to_string()),
         );
@@ -131,7 +131,13 @@ impl PassportService {
 
         let updated = self.repo.patch_fields(id, delta).await?;
 
-        let entry = AuditEntry::new(&updated.id.to_string(), "updated", auth, None, None);
+        let entry = AuditEntry::new(
+            &updated.id.to_string(),
+            "updated",
+            &auth.user_id,
+            None,
+            None,
+        );
         self.audit.append(entry).await?;
 
         self.emit(

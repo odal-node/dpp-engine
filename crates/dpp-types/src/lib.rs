@@ -15,10 +15,11 @@
 //!    standard defines the *records*, not how a given deployment queues or
 //!    stores them. See the doc comment on each port for the specific reasoning.
 //! 3. **Standard-adjacent provenance** — `audit`: `AuditEntry` and its hash
-//!    chain are verified by third parties, which makes the wire format part of
-//!    the proof-bound standard rather than engine plumbing. This is a
-//!    candidate for a future core module once the format stabilises — not
-//!    moved yet, recorded here so new fields land with that in mind.
+//!    chain were promoted to `dpp-core`'s `dpp-evidence` crate (2026-07-08),
+//!    since they're verified by third parties and are part of the
+//!    proof-bound standard rather than engine plumbing. This module
+//!    re-exports the type and keeps only the persistence port
+//!    (`AuditRepository`) — storage is still an engine deployment choice.
 //!
 //! New types should fit one of these three; if a fit isn't obvious, that's a
 //! sign the taxonomy needs revisiting rather than a place to force it.
