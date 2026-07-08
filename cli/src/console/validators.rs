@@ -39,6 +39,22 @@ pub fn valid_import_file(input: &str) -> Check {
     }
 }
 
+/// An existing evidence dossier `.json` file path.
+pub fn valid_dossier_file(input: &str) -> Check {
+    let t = input.trim();
+    if t.is_empty() {
+        return Ok(Validation::Invalid("Please enter a file path".into()));
+    }
+    let path = std::path::Path::new(t);
+    if !path.exists() {
+        return Ok(Validation::Invalid(format!("File not found: {t}").into()));
+    }
+    match path.extension().and_then(|e| e.to_str()) {
+        Some("json") => Ok(Validation::Valid),
+        _ => Ok(Validation::Invalid("Unsupported format — use .json".into())),
+    }
+}
+
 /// Required 2-letter ISO 3166-1 alpha-2 country code.
 pub fn valid_country(input: &str) -> Check {
     let t = input.trim();

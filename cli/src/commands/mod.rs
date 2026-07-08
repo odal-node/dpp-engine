@@ -2,6 +2,7 @@
 
 pub mod bootstrap;
 pub mod down;
+pub mod evidence;
 pub mod export;
 pub mod facility;
 pub mod import;
@@ -18,3 +19,4 @@ pub mod status;
 pub mod up;
 pub mod update;
 pub mod validate;
+pub mod verify;

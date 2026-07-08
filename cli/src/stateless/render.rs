@@ -7,6 +7,7 @@ use std::io::Write as _;
 
 use anyhow::Result;
 use console::style;
+use dpp_evidence::{CheckStatus, VerificationReport};
 
 use crate::config::{Config, EnvKind};
 use crate::core::types::{
@@ -182,6 +183,25 @@ pub fn render_validation_report(report: &ValidationReport) {
     }
     if report.records.iter().all(|r| r.issues.is_empty()) {
         println!("\nAll draft DPPs pass validation.");
+    }
+}
+
+/// Render an evidence dossier verification report (`odal verify`).
+pub fn render_verification_report(report: &VerificationReport, file: &str) {
+    println!("Verifying: {file}");
+    println!("Trust anchor: {}\n", report.trust_anchor_note);
+    for check in &report.checks {
+        match &check.status {
+            CheckStatus::Pass => println!("  [PASS] {}", check.name),
+            CheckStatus::Fail(reason) => println!("  [FAIL] {} — {reason}", check.name),
+            CheckStatus::Absent(reason) => println!("  [N/A ] {} — {reason}", check.name),
+        }
+    }
+    println!();
+    if report.all_verified() {
+        println!("VERIFIED — every check passed.");
+    } else {
+        println!("TAMPER DETECTED — one or more checks failed. See FAIL lines above.");
     }
 }
 

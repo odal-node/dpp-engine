@@ -7,6 +7,7 @@ use crate::cli_args::{
 use crate::commands::{
     bootstrap::run_bootstrap,
     down::run_down,
+    evidence::run_evidence,
     export::run_export,
     facility::{
         run_facility_add, run_facility_list, run_facility_remove, run_facility_set_default,
@@ -31,6 +32,7 @@ use crate::commands::{
     up::run_up,
     update::run_update,
     validate::run_validate,
+    verify::run_verify,
 };
 
 pub fn should_enter_interactive() -> bool {
@@ -205,6 +207,9 @@ pub async fn dispatch(cmd: Commands) -> anyhow::Result<()> {
             command: PassportCommands::History { id },
         } => run_history(&id).await,
         Commands::Passport {
+            command: PassportCommands::Evidence { id, output },
+        } => run_evidence(&id, output.as_deref()).await,
+        Commands::Passport {
             command:
                 PassportCommands::Export {
                     format,
@@ -215,5 +220,6 @@ pub async fn dispatch(cmd: Commands) -> anyhow::Result<()> {
         Commands::Schema {
             command: SchemaCommands::Check,
         } => run_schema().await,
+        Commands::Verify { file } => run_verify(&file),
     }
 }

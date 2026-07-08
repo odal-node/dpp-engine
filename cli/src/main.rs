@@ -261,6 +261,16 @@ mod tests {
     }
 
     #[test]
+    fn parse_verify() {
+        let cli = Cli::parse_from(["odal", "verify", "dossier.json"]);
+        if let Some(Commands::Verify { file }) = cli.command {
+            assert_eq!(file, "dossier.json");
+        } else {
+            panic!("expected Verify");
+        }
+    }
+
+    #[test]
     fn parse_schema_check() {
         let cli = Cli::parse_from(["odal", "schema", "check"]);
         assert!(matches!(

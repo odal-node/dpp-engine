@@ -1,5 +1,6 @@
 //! Passport actions: import, export, list, publish, suspend, archive, history, validate.
 
+mod evidence;
 mod export;
 mod import;
 mod lifecycle;
@@ -7,6 +8,7 @@ mod list;
 mod publish;
 mod validate;
 
+pub use evidence::action_evidence;
 pub use export::action_export;
 pub use import::action_import;
 pub use lifecycle::{action_archive, action_history, action_suspend};

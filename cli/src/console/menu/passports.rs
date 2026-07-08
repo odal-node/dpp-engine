@@ -344,7 +344,7 @@ async fn prompt_import_file(self_hosted: bool) -> Result<Option<String>> {
     )? {
         Some("Browse…") => match super::super::file_picker::pick_import_file().await {
             Some(path) => {
-                super::super::file_picker::remember_dir(&path);
+                super::super::file_picker::remember_import_dir(&path);
                 Ok(Some(path.to_string_lossy().into_owned()))
             }
             None => prompt_import_path_text(),

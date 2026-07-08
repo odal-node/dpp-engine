@@ -9,6 +9,7 @@ mod operator_ids;
 mod passports;
 mod registry_identity;
 mod schema;
+mod verify;
 
 use anyhow::Result;
 use console::style;
@@ -134,9 +135,10 @@ pub(super) fn ask<T>(result: inquire::error::InquireResult<T>) -> anyhow::Result
 
 const TOP: &[MenuItem] = &[
     MenuItem::new("Infrastructure", "start · stop · status · update images"),
-    MenuItem::new("Passports", "import · validate · publish · export"),
     MenuItem::new("Operator", "view · edit configuration"),
     MenuItem::new("Registry identity", "facilities · operator identifiers"),
+    MenuItem::new("Passports", "import · validate · publish · export"),
+    MenuItem::new("Dossiers", "verify an exported evidence dossier"),
     MenuItem::new("API keys", "create · list · revoke"),
     MenuItem::new("Environment", "switch · create · view profiles (dev/prod)"),
     MenuItem::new("Schema", "check for updates"),
@@ -167,6 +169,7 @@ pub async fn event_loop() -> Result<()> {
                 "API keys" => api_keys::api_keys().await?,
                 "Environment" => environment::environment().await?,
                 "Schema" => schema::schema().await?,
+                "Dossiers" => verify::verify().await?,
                 "Setup / Reconfigure" => {
                     let _ = run_setup().await;
                 }

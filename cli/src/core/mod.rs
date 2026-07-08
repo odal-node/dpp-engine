@@ -6,3 +6,4 @@ pub mod passport;
 pub mod registry_identity;
 pub mod schema;
 pub mod types;
+pub mod verify;
