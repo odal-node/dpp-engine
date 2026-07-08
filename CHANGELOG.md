@@ -10,6 +10,39 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-07-08
+
+### Added
+
+- **Evidence dossier export** (N02): `GET /vault/api/v1/dpp/{dppId}/evidence`
+  assembles a self-contained, signed dossier proving a passport's full proof
+  chain — both JWS signatures, DID document snapshots, the hash-chained audit
+  trail, and (when present) the transfer chain and end-of-life record. New
+  CLI: `odal passport evidence <id>`. Documented in `api/openapi.yaml`.
+- **`odal verify <file>`**: verifies an evidence dossier fully offline using
+  `dpp-evidence`'s `verify_dossier_json`, zero trust in the issuing node.
+  Reports each check (`manifest_signature`, `content_integrity`,
+  `full_view_signature`, `public_view_signature`, `audit_chain`,
+  `transfer_chain`, `input_fidelity`, …) and exits 0 (verified), 1 (tamper
+  detected), or 2 (not a valid dossier). Also available from the console's
+  top-level `Verify` menu item.
+
+### Changed
+
+- `dpp-vault`/`dpp-types` now depend on `dpp-core`'s `dpp-evidence` crate
+  (`dpp-evidence = "0.7.0"`) for the dossier wire format and the audit-trail
+  type — `dpp-types::audit` re-exports `AuditEntry` from there instead of
+  defining it locally (the hash-chain algorithm now has exactly one
+  implementation, not a duplicate-by-doc-comment one).
+
+### Breaking
+
+- `IdentityPort` gains a new required method, `own_did_document`. Any custom
+  `IdentityPort` implementation must add it.
+- `AuditEntry::new`'s third parameter changes from `&AuthContext` to a plain
+  actor string. *Migration:* `AuditEntry::new(id, action, auth, prev, new)` ->
+  `AuditEntry::new(id, action, &auth.user_id, prev, new)`.
+
 ## [0.4.0] - 2026-07-06
 
 ### Changed

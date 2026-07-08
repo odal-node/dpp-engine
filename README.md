@@ -66,7 +66,7 @@ The engine ships as a **single binary** (`dpp-node`) that fuses all services und
 
 ### Dependencies on dpp-core
 
-All core crates are consumed from crates.io (dpp-core is published independently, version-pinned to `^0.6.0` — keep this line, the workspace `Cargo.toml`, and `.cargo/config.toml`'s sync note in agreement on every core bump; local dev can override to a sibling checkout via `.cargo/config.toml`, see `.cargo/config.toml.example`):
+All core crates are consumed from crates.io (dpp-core is published independently, version-pinned to `^0.7.0` — keep this line, the workspace `Cargo.toml`, and `.cargo/config.toml`'s sync note in agreement on every core bump; local dev can override to a sibling checkout via `.cargo/config.toml`, see `.cargo/config.toml.example`):
 
 | Core Crate | Used For |
 |---|---|
@@ -76,6 +76,7 @@ All core crates are consumed from crates.io (dpp-core is published independently
 | `dpp-calc` | EU-methodology calculators (CO2e, repairability) |
 | `dpp-plugin-traits` | Wasm plugin ABI |
 | `dpp-registry` | EU registry interface types |
+| `dpp-evidence` | Evidence dossier wire format + offline verification engine (`odal verify`) |
 
 **Dependency direction**: dpp-engine -> dpp-core (one-way). dpp-core has zero knowledge of this repo.
 
