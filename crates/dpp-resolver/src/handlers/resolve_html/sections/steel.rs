@@ -40,3 +40,39 @@ pub(super) fn build_steel_section(p: &serde_json::Value) -> String {
     </table>"#
     )
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn full_data_populates_all_fields() {
+        let p = serde_json::json!({"sectorData": {
+            "productionRoute": "EAF",
+            "productCategory": "Flat Steel",
+            "countryOfProduction": "IT",
+            "co2ePerTonneSteel": 0.850,
+            "recycledScrapContentPct": 65.0,
+        }});
+        let html = build_steel_section(&p);
+        assert!(html.contains("EAF"));
+        assert!(html.contains("Flat Steel"));
+        assert!(html.contains("IT"));
+        assert!(html.contains("0.850 t CO\u{2082}e / t steel"));
+        assert!(html.contains("65.0%"));
+    }
+
+    #[test]
+    fn missing_fields_fall_back_to_dashes() {
+        let p = serde_json::json!({"sectorData": {}});
+        let html = build_steel_section(&p);
+        assert!(html.contains("Steel Product Information"));
+        assert!(html.contains(">-<"));
+    }
+
+    #[test]
+    fn absent_sector_data_returns_empty_string() {
+        let p = serde_json::json!({});
+        assert_eq!(build_steel_section(&p), "");
+    }
+}

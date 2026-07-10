@@ -37,3 +37,39 @@ pub(super) fn build_aluminium_section(p: &serde_json::Value) -> String {
     </table>"#
     )
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn full_data_populates_all_fields() {
+        let p = serde_json::json!({"sectorData": {
+            "alloyGrade": "6061-T6",
+            "productionRoute": "Primary",
+            "countryOfProduction": "DE",
+            "co2ePerTonneKg": 8500.5,
+            "recycledContentPct": 22.3,
+        }});
+        let html = build_aluminium_section(&p);
+        assert!(html.contains("6061-T6"));
+        assert!(html.contains("Primary"));
+        assert!(html.contains("DE"));
+        assert!(html.contains("8500.50 kg CO\u{2082}e / t"));
+        assert!(html.contains("22.3%"));
+    }
+
+    #[test]
+    fn missing_fields_fall_back_to_dashes() {
+        let p = serde_json::json!({"sectorData": {}});
+        let html = build_aluminium_section(&p);
+        assert!(html.contains("Aluminium Product Information"));
+        assert!(html.contains(">-<"));
+    }
+
+    #[test]
+    fn absent_sector_data_returns_empty_string() {
+        let p = serde_json::json!({});
+        assert_eq!(build_aluminium_section(&p), "");
+    }
+}

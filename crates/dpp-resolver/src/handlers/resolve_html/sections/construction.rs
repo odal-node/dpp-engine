@@ -39,3 +39,45 @@ pub(super) fn build_construction_section(p: &serde_json::Value) -> String {
     </table>"#
     )
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn full_data_populates_all_fields() {
+        let p = serde_json::json!({"sectorData": {
+            "productFamily": "Insulation Board",
+            "countryOfManufacture": "FR",
+            "functionalUnit": "m2",
+            "co2ePerFunctionalUnitKg": 3.25,
+            "ceMarking": true,
+        }});
+        let html = build_construction_section(&p);
+        assert!(html.contains("Insulation Board"));
+        assert!(html.contains("FR"));
+        assert!(html.contains("3.25 kg CO\u{2082}e / m2"));
+        assert!(html.contains(">Yes<"));
+    }
+
+    #[test]
+    fn ce_marking_false_renders_no() {
+        let p = serde_json::json!({"sectorData": {"ceMarking": false}});
+        let html = build_construction_section(&p);
+        assert!(html.contains(">No<"));
+    }
+
+    #[test]
+    fn missing_fields_fall_back_to_dashes_and_default_unit() {
+        let p = serde_json::json!({"sectorData": {}});
+        let html = build_construction_section(&p);
+        assert!(html.contains("Construction Product Information"));
+        assert!(html.contains(">-<"));
+    }
+
+    #[test]
+    fn absent_sector_data_returns_empty_string() {
+        let p = serde_json::json!({});
+        assert_eq!(build_construction_section(&p), "");
+    }
+}

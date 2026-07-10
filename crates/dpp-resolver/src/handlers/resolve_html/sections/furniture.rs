@@ -40,3 +40,42 @@ pub(super) fn build_furniture_section(p: &serde_json::Value) -> String {
     </table>"#
     )
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn full_data_populates_all_fields() {
+        let p = serde_json::json!({"sectorData": {
+            "productType": "Office Chair",
+            "primaryMaterial": "Steel & Fabric",
+            "countryOfManufacture": "SE",
+            "co2ePerUnitKg": 18.4,
+            "repairabilityScore": 6.0,
+        }});
+        let html = build_furniture_section(&p);
+        assert!(html.contains("Office Chair"));
+        assert!(
+            html.contains("Steel &amp; Fabric"),
+            "esc() must escape '&'; got: {html}"
+        );
+        assert!(html.contains("SE"));
+        assert!(html.contains("18.40 kg CO\u{2082}e"));
+        assert!(html.contains("6.0 / 10"));
+    }
+
+    #[test]
+    fn missing_co2e_reports_not_disclosed() {
+        let p = serde_json::json!({"sectorData": {}});
+        let html = build_furniture_section(&p);
+        assert!(html.contains("Not disclosed"));
+        assert!(html.contains(">-<"));
+    }
+
+    #[test]
+    fn absent_sector_data_returns_empty_string() {
+        let p = serde_json::json!({});
+        assert_eq!(build_furniture_section(&p), "");
+    }
+}

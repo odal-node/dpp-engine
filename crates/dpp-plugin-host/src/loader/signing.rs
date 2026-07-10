@@ -68,3 +68,153 @@ pub(crate) fn verify_plugin_signature(wasm_path: &Path, trusted_key: &VerifyingK
     );
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ed25519_dalek::{Signer, SigningKey};
+    use tempfile::TempDir;
+
+    fn keypair(seed: u8) -> (SigningKey, VerifyingKey) {
+        let signing_key = SigningKey::from_bytes(&[seed; 32]);
+        let verifying_key = signing_key.verifying_key();
+        (signing_key, verifying_key)
+    }
+
+    /// Writes `wasm_bytes` to `{dir}/plugin.wasm` and a correctly signed
+    /// `plugin.wasm.sig` next to it, returning the wasm path.
+    fn write_signed_plugin(
+        dir: &TempDir,
+        wasm_bytes: &[u8],
+        signing_key: &SigningKey,
+    ) -> std::path::PathBuf {
+        let wasm_path = dir.path().join("plugin.wasm");
+        std::fs::write(&wasm_path, wasm_bytes).unwrap();
+        let digest = Sha256::digest(wasm_bytes);
+        let signature = signing_key.sign(&digest);
+        std::fs::write(wasm_path.with_extension("wasm.sig"), signature.to_bytes()).unwrap();
+        wasm_path
+    }
+
+    #[test]
+    fn valid_raw_signature_verifies() {
+        let (signing_key, verifying_key) = keypair(1);
+        let dir = TempDir::new().unwrap();
+        let wasm_path = write_signed_plugin(&dir, b"fake wasm bytes", &signing_key);
+
+        verify_plugin_signature(&wasm_path, &verifying_key).expect("signature should verify");
+    }
+
+    #[test]
+    fn valid_base64_signature_verifies() {
+        let (signing_key, verifying_key) = keypair(2);
+        let dir = TempDir::new().unwrap();
+        let wasm_path = dir.path().join("plugin.wasm");
+        let wasm_bytes = b"fake wasm bytes";
+        std::fs::write(&wasm_path, wasm_bytes).unwrap();
+        let digest = Sha256::digest(wasm_bytes);
+        let signature = signing_key.sign(&digest);
+        let encoded = base64::engine::general_purpose::STANDARD.encode(signature.to_bytes());
+        std::fs::write(wasm_path.with_extension("wasm.sig"), encoded).unwrap();
+
+        verify_plugin_signature(&wasm_path, &verifying_key)
+            .expect("base64 signature should verify");
+    }
+
+    #[test]
+    fn base64_signature_with_trailing_newline_verifies() {
+        let (signing_key, verifying_key) = keypair(3);
+        let dir = TempDir::new().unwrap();
+        let wasm_path = dir.path().join("plugin.wasm");
+        let wasm_bytes = b"fake wasm bytes";
+        std::fs::write(&wasm_path, wasm_bytes).unwrap();
+        let digest = Sha256::digest(wasm_bytes);
+        let signature = signing_key.sign(&digest);
+        let mut encoded = base64::engine::general_purpose::STANDARD.encode(signature.to_bytes());
+        encoded.push('\n');
+        std::fs::write(wasm_path.with_extension("wasm.sig"), encoded).unwrap();
+
+        verify_plugin_signature(&wasm_path, &verifying_key)
+            .expect("base64 signature with trailing newline should verify");
+    }
+
+    #[test]
+    fn missing_signature_file_is_rejected() {
+        let (_signing_key, verifying_key) = keypair(4);
+        let dir = TempDir::new().unwrap();
+        let wasm_path = dir.path().join("plugin.wasm");
+        std::fs::write(&wasm_path, b"fake wasm bytes").unwrap();
+
+        let err = verify_plugin_signature(&wasm_path, &verifying_key).unwrap_err();
+        assert!(err.to_string().contains("signature file not found"));
+    }
+
+    #[test]
+    fn tampered_wasm_bytes_fail_verification() {
+        let (signing_key, verifying_key) = keypair(5);
+        let dir = TempDir::new().unwrap();
+        let wasm_path = write_signed_plugin(&dir, b"original bytes", &signing_key);
+        // Tamper with the wasm file after signing — digest no longer matches.
+        std::fs::write(&wasm_path, b"tampered bytes!!").unwrap();
+
+        let err = verify_plugin_signature(&wasm_path, &verifying_key).unwrap_err();
+        assert!(err.to_string().contains("signature verification failed"));
+    }
+
+    #[test]
+    fn signature_from_wrong_key_is_rejected() {
+        let (signing_key, _matching_key) = keypair(6);
+        let (_other_signing_key, wrong_verifying_key) = keypair(7);
+        let dir = TempDir::new().unwrap();
+        let wasm_path = write_signed_plugin(&dir, b"fake wasm bytes", &signing_key);
+
+        let err = verify_plugin_signature(&wasm_path, &wrong_verifying_key).unwrap_err();
+        assert!(err.to_string().contains("signature verification failed"));
+    }
+
+    #[test]
+    fn malformed_signature_file_is_rejected() {
+        let (_signing_key, verifying_key) = keypair(8);
+        let dir = TempDir::new().unwrap();
+        let wasm_path = dir.path().join("plugin.wasm");
+        std::fs::write(&wasm_path, b"fake wasm bytes").unwrap();
+        // Not 64 bytes, and not valid base64 (contains spaces and '!').
+        std::fs::write(
+            wasm_path.with_extension("wasm.sig"),
+            b"this is not base64 and not 64 bytes!",
+        )
+        .unwrap();
+
+        let err = verify_plugin_signature(&wasm_path, &verifying_key).unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("neither raw 64 bytes nor valid base64")
+        );
+    }
+
+    #[test]
+    fn base64_decoding_to_wrong_length_is_rejected() {
+        let (_signing_key, verifying_key) = keypair(9);
+        let dir = TempDir::new().unwrap();
+        let wasm_path = dir.path().join("plugin.wasm");
+        std::fs::write(&wasm_path, b"fake wasm bytes").unwrap();
+        // Valid base64, but decodes to far fewer than 64 bytes.
+        let encoded = base64::engine::general_purpose::STANDARD.encode(b"too short");
+        std::fs::write(wasm_path.with_extension("wasm.sig"), encoded).unwrap();
+
+        let err = verify_plugin_signature(&wasm_path, &verifying_key).unwrap_err();
+        assert!(err.to_string().contains("invalid Ed25519 signature format"));
+    }
+
+    #[test]
+    fn missing_wasm_file_is_rejected() {
+        let (signing_key, verifying_key) = keypair(10);
+        let dir = TempDir::new().unwrap();
+        // Sign a wasm file, then delete it — only the .sig remains.
+        let wasm_path = write_signed_plugin(&dir, b"fake wasm bytes", &signing_key);
+        std::fs::remove_file(&wasm_path).unwrap();
+
+        let err = verify_plugin_signature(&wasm_path, &verifying_key).unwrap_err();
+        assert!(err.to_string().contains("failed to read wasm file"));
+    }
+}

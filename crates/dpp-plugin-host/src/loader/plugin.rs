@@ -359,3 +359,238 @@ fn call_calculate(
 
     Ok(result)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::runtime::build_engine;
+    use dpp_domain::ports::compliance::ComplianceStatus;
+    use dpp_plugin_traits::PluginCapability;
+    use ed25519_dalek::SigningKey;
+    use tempfile::TempDir;
+
+    const DESCRIBE_JSON: &str = r#"{"abiVersion":{"major":1,"minor":0},"supportedSchemas":[],"capabilities":["compute_metrics"],"maxFuel":500000,"maxMemoryBytes":1048576}"#;
+    const CALC_OK_JSON: &str =
+        r#"{"ok":{"complianceStatus":"COMPLIANT","metrics":{"co2e_score":1.5}}}"#;
+    const CALC_ERR_JSON: &str = r#"{"error":{"Internal":"boom"}}"#;
+    const GEN_OK_JSON: &str = r#"{"ok":{"productName":"Test Widget"}}"#;
+
+    fn wat_escape(s: &str) -> String {
+        s.replace('\\', "\\\\").replace('"', "\\\"")
+    }
+
+    fn pack(offset: u32, len: u32) -> i64 {
+        (((offset as u64) << 32) | (len as u64)) as i64
+    }
+
+    /// Builds a fake plugin `.wasm` with `alloc`/`dealloc`/`memory`/`describe` always
+    /// present, and `calculate_metrics`/`generate_passport` present only when their
+    /// JSON is `Some`. Each export returns a fixed packed `(ptr<<32|len)` pointing at
+    /// a canned JSON blob embedded via a WAT `data` segment — no real allocation
+    /// logic is needed since these fixtures ignore their input entirely.
+    fn build_plugin_wasm(
+        describe_json: &str,
+        calculate_json: Option<&str>,
+        calculate_len_override: Option<u32>,
+        generate_json: Option<&str>,
+    ) -> Vec<u8> {
+        let alloc_offset: u32 = 1024;
+        let describe_offset: u32 = 4096;
+        let calc_offset: u32 = 8192;
+        let gen_offset: u32 = 12288;
+
+        let mut data_segments = format!(
+            "(data (i32.const {describe_offset}) \"{}\")\n",
+            wat_escape(describe_json)
+        );
+        let describe_packed = pack(describe_offset, describe_json.len() as u32);
+
+        let mut funcs = String::new();
+
+        if let Some(cj) = calculate_json {
+            data_segments += &format!("(data (i32.const {calc_offset}) \"{}\")\n", wat_escape(cj));
+            let len = calculate_len_override.unwrap_or(cj.len() as u32);
+            let packed = pack(calc_offset, len);
+            funcs += &format!(
+                "(func (export \"calculate_metrics\") (param $ptr i32) (param $len i32) (result i64)\n  i64.const {packed})\n"
+            );
+        }
+
+        if let Some(gj) = generate_json {
+            data_segments += &format!("(data (i32.const {gen_offset}) \"{}\")\n", wat_escape(gj));
+            let packed = pack(gen_offset, gj.len() as u32);
+            funcs += &format!(
+                "(func (export \"generate_passport\") (param $ptr i32) (param $len i32) (result i64)\n  i64.const {packed})\n"
+            );
+        }
+
+        let wat = format!(
+            r#"(module
+  (memory (export "memory") 2)
+  {data_segments}
+  (func (export "alloc") (param $len i32) (result i32)
+    i32.const {alloc_offset})
+  (func (export "dealloc") (param $ptr i32) (param $len i32))
+  (func (export "describe") (result i64)
+    i64.const {describe_packed})
+  {funcs}
+)"#
+        );
+
+        wat::parse_str(&wat).expect("generated WAT must parse")
+    }
+
+    fn write_plugin_file(dir: &TempDir, wasm: &[u8]) -> std::path::PathBuf {
+        let path = dir.path().join("plugin.wasm");
+        std::fs::write(&path, wasm).unwrap();
+        path
+    }
+
+    fn full_plugin_wasm() -> Vec<u8> {
+        build_plugin_wasm(DESCRIBE_JSON, Some(CALC_OK_JSON), None, Some(GEN_OK_JSON))
+    }
+
+    #[test]
+    fn from_file_refuses_when_signature_verification_fails() {
+        let engine = build_engine().unwrap();
+        let dir = TempDir::new().unwrap();
+        // Any bytes work — verification happens before the file is read as wasm,
+        // and there's no `.sig` file at all.
+        let path = write_plugin_file(&dir, b"not real wasm bytes");
+        let trusted_key = SigningKey::from_bytes(&[9; 32]).verifying_key();
+
+        let err = match LoadedPlugin::from_file(&engine, &path, "battery", Some(&trusted_key)) {
+            Ok(_) => panic!("missing signature must refuse to load"),
+            Err(e) => e,
+        };
+        assert!(err.to_string().contains("signature file not found"));
+    }
+
+    #[test]
+    fn from_file_without_trusted_key_falls_back_to_host_defaults_when_describe_missing() {
+        let engine = build_engine().unwrap();
+        let dir = TempDir::new().unwrap();
+        // A module with zero exports: instantiates fine, but `call_describe` fails
+        // (missing `dealloc`/`describe`), so `from_file` must fall back rather than
+        // propagate that error.
+        let wasm = wat::parse_str("(module)").unwrap();
+        let path = write_plugin_file(&dir, &wasm);
+
+        let plugin = LoadedPlugin::from_file(&engine, &path, "battery", None)
+            .expect("dev-mode load without a key must succeed even without describe()");
+        assert!(plugin.capabilities.supported_schemas.is_empty());
+        assert!(plugin.capabilities.capabilities.is_empty());
+        assert_eq!(plugin.capabilities.max_fuel, None);
+    }
+
+    #[test]
+    fn from_file_caches_declared_capabilities_from_describe() {
+        let engine = build_engine().unwrap();
+        let dir = TempDir::new().unwrap();
+        let wasm = build_plugin_wasm(DESCRIBE_JSON, Some(CALC_OK_JSON), None, None);
+        let path = write_plugin_file(&dir, &wasm);
+
+        let plugin = LoadedPlugin::from_file(&engine, &path, "battery", None).unwrap();
+
+        assert_eq!(plugin.capabilities.abi_version.major, 1);
+        assert_eq!(
+            plugin.capabilities.capabilities,
+            vec![PluginCapability::ComputeMetrics]
+        );
+        assert_eq!(plugin.capabilities.max_fuel, Some(500_000));
+        assert_eq!(plugin.capabilities.max_memory_bytes, Some(1_048_576));
+    }
+
+    #[test]
+    fn invoke_calculate_success_maps_plugin_result() {
+        let engine = build_engine().unwrap();
+        let dir = TempDir::new().unwrap();
+        let path = write_plugin_file(&dir, &full_plugin_wasm());
+        let plugin = LoadedPlugin::from_file(&engine, &path, "battery", None).unwrap();
+
+        let result = plugin
+            .invoke_calculate(&serde_json::json!({"gtin": "irrelevant — fixture ignores input"}))
+            .expect("calculate should succeed");
+
+        assert_eq!(result.compliance_status, ComplianceStatus::Compliant);
+        assert_eq!(result.co2e_score, Some(1.5));
+    }
+
+    #[test]
+    fn invoke_generate_passport_success_returns_raw_payload() {
+        let engine = build_engine().unwrap();
+        let dir = TempDir::new().unwrap();
+        let path = write_plugin_file(&dir, &full_plugin_wasm());
+        let plugin = LoadedPlugin::from_file(&engine, &path, "battery", None).unwrap();
+
+        let payload = plugin
+            .invoke_generate_passport(&serde_json::json!({}))
+            .expect("generate_passport should succeed");
+
+        assert_eq!(payload["productName"], "Test Widget");
+    }
+
+    #[test]
+    fn invoke_calculate_surfaces_plugin_reported_error() {
+        let engine = build_engine().unwrap();
+        let dir = TempDir::new().unwrap();
+        let wasm = build_plugin_wasm(DESCRIBE_JSON, Some(CALC_ERR_JSON), None, None);
+        let path = write_plugin_file(&dir, &wasm);
+        let plugin = LoadedPlugin::from_file(&engine, &path, "battery", None).unwrap();
+
+        let err = plugin
+            .invoke_calculate(&serde_json::json!({}))
+            .expect_err("plugin-reported error must surface as Err");
+        assert!(err.to_string().contains("plugin reported an error"));
+    }
+
+    #[test]
+    fn invoke_calculate_rejects_invalid_json_output() {
+        let engine = build_engine().unwrap();
+        let dir = TempDir::new().unwrap();
+        let wasm = build_plugin_wasm(DESCRIBE_JSON, Some("not json at all"), None, None);
+        let path = write_plugin_file(&dir, &wasm);
+        let plugin = LoadedPlugin::from_file(&engine, &path, "battery", None).unwrap();
+
+        let err = plugin
+            .invoke_calculate(&serde_json::json!({}))
+            .expect_err("non-JSON output must be rejected");
+        assert!(err.to_string().contains("invalid JSON"));
+    }
+
+    #[test]
+    fn invoke_calculate_rejects_output_exceeding_size_cap() {
+        let engine = build_engine().unwrap();
+        let dir = TempDir::new().unwrap();
+        // Claims an output length far beyond MAX_ABI_OUTPUT_BYTES; the size check
+        // must reject this before ever attempting to read that much memory.
+        let oversized_len = (MAX_ABI_OUTPUT_BYTES + 1) as u32;
+        let wasm = build_plugin_wasm(DESCRIBE_JSON, Some(CALC_OK_JSON), Some(oversized_len), None);
+        let path = write_plugin_file(&dir, &wasm);
+        let plugin = LoadedPlugin::from_file(&engine, &path, "battery", None).unwrap();
+
+        let err = plugin
+            .invoke_calculate(&serde_json::json!({}))
+            .expect_err("oversized output must be rejected");
+        assert!(err.to_string().contains("output too large"));
+    }
+
+    #[test]
+    fn invoke_calculate_errors_cleanly_when_export_missing() {
+        let engine = build_engine().unwrap();
+        let dir = TempDir::new().unwrap();
+        // describe() succeeds (so from_file loads fine) but calculate_metrics was
+        // never exported — a partial/malformed plugin must fail predictably, not panic.
+        let wasm = build_plugin_wasm(DESCRIBE_JSON, None, None, Some(GEN_OK_JSON));
+        let path = write_plugin_file(&dir, &wasm);
+        let plugin = LoadedPlugin::from_file(&engine, &path, "battery", None).unwrap();
+
+        let err = plugin
+            .invoke_calculate(&serde_json::json!({}))
+            .expect_err("missing export must error, not panic");
+        assert!(
+            err.to_string()
+                .contains("missing 'calculate_metrics' export")
+        );
+    }
+}

@@ -43,3 +43,46 @@ pub(super) fn build_detergent_section(p: &serde_json::Value) -> String {
     </table>"#
     )
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn full_data_populates_all_fields() {
+        let p = serde_json::json!({"sectorData": {
+            "productType": "Laundry Detergent",
+            "format": "Liquid",
+            "countryOfManufacture": "NL",
+            "biodegradable": true,
+            "surfactants": ["anionic", "nonionic"],
+        }});
+        let html = build_detergent_section(&p);
+        assert!(html.contains("Laundry Detergent"));
+        assert!(html.contains("Liquid"));
+        assert!(html.contains("NL"));
+        assert!(html.contains("All surfactants biodegradable"));
+        assert!(html.contains(">2<"));
+    }
+
+    #[test]
+    fn not_biodegradable_renders_the_negative_message() {
+        let p = serde_json::json!({"sectorData": {"biodegradable": false}});
+        let html = build_detergent_section(&p);
+        assert!(html.contains("Not fully biodegradable"));
+    }
+
+    #[test]
+    fn missing_fields_fall_back_to_dashes() {
+        let p = serde_json::json!({"sectorData": {}});
+        let html = build_detergent_section(&p);
+        assert!(html.contains("Detergent Information"));
+        assert!(html.contains(">-<"));
+    }
+
+    #[test]
+    fn absent_sector_data_returns_empty_string() {
+        let p = serde_json::json!({});
+        assert_eq!(build_detergent_section(&p), "");
+    }
+}

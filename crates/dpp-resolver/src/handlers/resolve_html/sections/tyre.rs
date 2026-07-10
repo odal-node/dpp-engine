@@ -36,3 +36,39 @@ pub(super) fn build_tyre_section(p: &serde_json::Value) -> String {
     </table>"#
     )
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn full_data_populates_all_fields() {
+        let p = serde_json::json!({"sectorData": {
+            "tyreClass": "C1",
+            "fuelEfficiencyClass": "B",
+            "wetGripClass": "A",
+            "externalRollingNoiseDb": 68.0,
+            "noisePerformanceClass": "1",
+        }});
+        let html = build_tyre_section(&p);
+        assert!(html.contains(">C1<"));
+        assert!(html.contains(">B<"));
+        assert!(html.contains(">A<"));
+        assert!(html.contains("68 dB"));
+        assert!(html.contains(">1<"));
+    }
+
+    #[test]
+    fn missing_fields_fall_back_to_dashes() {
+        let p = serde_json::json!({"sectorData": {}});
+        let html = build_tyre_section(&p);
+        assert!(html.contains("Tyre Labelling Information"));
+        assert!(html.contains(">-<"));
+    }
+
+    #[test]
+    fn absent_sector_data_returns_empty_string() {
+        let p = serde_json::json!({});
+        assert_eq!(build_tyre_section(&p), "");
+    }
+}
