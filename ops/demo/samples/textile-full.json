@@ -16,6 +16,7 @@
   "schemaVersion": "1.0.0",
   "sectorData": {
     "sector": "textile",
+    "gtin": "09506000134352",
     "fibreComposition": [
       { "fibre": "organic cotton", "pct": 60.0, "countryOfOrigin": "IN" },
       { "fibre": "recycled polyester", "pct": 40.0, "countryOfOrigin": "TR" }

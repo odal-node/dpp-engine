@@ -17,7 +17,7 @@ pub struct RowError {
 /// Serialisable request body sent to `POST /api/v1/dpp` on the vault service.
 ///
 /// Shape must match `dpp-vault::handlers::create::CreateRequest`.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CreatePassportRequest {
     pub product_name: String,

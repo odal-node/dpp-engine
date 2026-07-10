@@ -15,6 +15,7 @@ use dpp_domain::{
     domain::{
         error::DppError,
         passport::{Passport, PassportId},
+        product_identity::ProductIdentity,
         status::PassportStatus,
     },
     ports::passport_repo::PassportRepository,
@@ -146,6 +147,38 @@ impl PassportRepository for PgPassportRepo {
              LIMIT 1",
         )
         .bind(gtin)
+        .fetch_optional(self.dal.pool())
+        .await
+        .map_err(db_err)?;
+        row.map(|r| Self::from_doc(r.get::<serde_json::Value, _>("doc")))
+            .transpose()
+    }
+
+    /// Find a passport by exact compound identity (sector, GTIN, batch),
+    /// across `Draft` and `Published` — backs the import delta-matcher.
+    /// Indexed by `0019_passport_identity_index.sql`. GTIN is read from
+    /// `doc->'sectorData'->>'gtin'`: present for every sector except
+    /// `UnsoldGoods`/`Other`, which carry no GTIN field and so never match
+    /// here — a discard-event report and an untyped catch-all, not a query bug.
+    async fn find_by_identity(
+        &self,
+        identity: &ProductIdentity,
+    ) -> Result<Option<Passport>, DppError> {
+        let sector_str = serde_json::to_value(&identity.sector)
+            .ok()
+            .and_then(|v| v.as_str().map(str::to_owned))
+            .ok_or_else(|| DppError::Internal("failed to serialise sector".into()))?;
+        let row = sqlx::query(
+            "SELECT doc FROM odal.passport \
+             WHERE status IN ('draft','active') \
+               AND sector = $1 \
+               AND doc->'sectorData'->>'gtin' = $2 \
+               AND doc->>'batchId' IS NOT DISTINCT FROM $3 \
+             LIMIT 1",
+        )
+        .bind(&sector_str)
+        .bind(&identity.gtin)
+        .bind(identity.batch_id.as_deref())
         .fetch_optional(self.dal.pool())
         .await
         .map_err(db_err)?;

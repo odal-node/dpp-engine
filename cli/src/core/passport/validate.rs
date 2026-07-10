@@ -71,6 +71,7 @@ pub fn find_issues(rec: &serde_json::Value) -> Vec<String> {
             }
             Some("textile") => {
                 for f in &[
+                    "gtin",
                     "fibreComposition",
                     "countryOfManufacturing",
                     "careInstructions",
@@ -101,6 +102,7 @@ mod tests {
             "productName": "T-Shirt",
             "sectorData": {
                 "sector": "textile",
+                "gtin": "09506000134352",
                 "fibreComposition": [{"fibre": "cotton", "pct": 100.0}],
                 "countryOfManufacturing": "DE",
                 "careInstructions": "Machine wash 30°C",
@@ -143,6 +145,21 @@ mod tests {
     fn missing_sector_data() {
         let rec = json!({ "productName": "Widget" });
         assert!(find_issues(&rec).iter().any(|i| i.contains("sectorData")));
+    }
+
+    #[test]
+    fn textile_missing_gtin() {
+        let rec = json!({
+            "productName": "T-Shirt",
+            "sectorData": {
+                "sector": "textile",
+                "fibreComposition": [{"fibre": "cotton", "pct": 100.0}],
+                "countryOfManufacturing": "DE",
+                "careInstructions": "wash",
+                "chemicalComplianceStandard": "REACH"
+            }
+        });
+        assert!(find_issues(&rec).iter().any(|i| i.contains("gtin")));
     }
 
     #[test]

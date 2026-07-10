@@ -36,6 +36,7 @@ tracing-subscriber  = { workspace = true }
 metrics       = { workspace = true }
 reqwest       = { workspace = true }
 base64        = { workspace = true }
+sha2          = { workspace = true }
 calamine      = { workspace = true }
 csv           = { workspace = true }
 # Direct, version-matched to calamine's own deps (single version in the lockfile,

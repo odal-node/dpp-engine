@@ -62,6 +62,7 @@ async fn test_textile_fibre_sum_invalid() {
         "schemaVersion": "1.0.0",
         "sectorData": {
             "sector": "textile",
+            "gtin": "09506000134352",
             "fibreComposition": [
                 {"fibre": "cotton", "pct": 50.0},
                 {"fibre": "polyester", "pct": 40.0}
@@ -148,6 +149,7 @@ async fn test_textile_empty_care_instructions() {
         "schemaVersion": "1.0.0",
         "sectorData": {
             "sector": "textile",
+            "gtin": "09506000134352",
             "fibreComposition": [
                 {"fibre": "cotton", "pct": 100.0}
             ],

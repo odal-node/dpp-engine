@@ -12,6 +12,7 @@ use uuid::Uuid;
 use dpp_dal::pg::{PgDal, sqlx};
 use dpp_integrator::{
     domain::batch_runner::BatchResult,
+    domain::import_report::ImportReport,
     infra::job_store::{ImportJob, JobStatus, JobStore},
 };
 use sqlx::Row;
@@ -48,12 +49,17 @@ impl PgJobStore {
         let result: Option<BatchResult> = row
             .get::<Option<serde_json::Value>, _>("result")
             .and_then(|v| serde_json::from_value(v).ok());
+        let report: Option<ImportReport> = row
+            .get::<Option<serde_json::Value>, _>("report")
+            .and_then(|v| serde_json::from_value(v).ok());
         Some(ImportJob {
             id: row.get("id"),
             status,
             total_rows: row.get::<i32, _>("total_rows").max(0) as usize,
             processed: row.get::<i32, _>("processed").max(0) as usize,
             result,
+            report,
+            parent_job_id: row.get::<Option<Uuid>, _>("parent_job_id"),
             created_at: row.get::<DateTime<Utc>, _>("created_at"),
         })
     }
@@ -121,6 +127,18 @@ impl JobStore for PgJobStore {
         .bind(result_json)
         .execute(&mut *tx)
         .await?;
+        tx.commit().await?;
+        Ok(())
+    }
+
+    async fn record_report(&self, id: Uuid, report: ImportReport) -> anyhow::Result<()> {
+        let report_json = serde_json::to_value(&report)?;
+        let mut tx = self.dal.begin().await.map_err(|e| anyhow::anyhow!("{e}"))?;
+        sqlx::query("UPDATE odal.import_job SET report = $2 WHERE id = $1")
+            .bind(id)
+            .bind(report_json)
+            .execute(&mut *tx)
+            .await?;
         tx.commit().await?;
         Ok(())
     }

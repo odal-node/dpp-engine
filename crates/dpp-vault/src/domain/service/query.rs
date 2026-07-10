@@ -3,6 +3,7 @@
 use dpp_domain::domain::{
     error::DppError,
     passport::{Passport, PassportId},
+    product_identity::ProductIdentity,
     status::PassportStatus,
 };
 use dpp_types::audit::AuditEntry;
@@ -30,6 +31,15 @@ impl PassportService {
     /// Fetch a published passport by GS1 GTIN (O(n) scan — see `PgPassportRepo`).
     pub async fn find_published_by_gtin(&self, gtin: &str) -> Result<Option<Passport>, DppError> {
         self.repo.find_published_by_gtin(gtin).await
+    }
+
+    /// Fetch a passport by exact compound identity (sector, GTIN, batch),
+    /// across `Draft` and `Published` — the import delta-matcher's lookup.
+    pub async fn find_by_identity(
+        &self,
+        identity: &ProductIdentity,
+    ) -> Result<Option<Passport>, DppError> {
+        self.repo.find_by_identity(identity).await
     }
 
     /// Fetch a passport in any status, including `Archived`. Returns `None` if unknown.

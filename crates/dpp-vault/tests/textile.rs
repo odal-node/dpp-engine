@@ -28,6 +28,7 @@ async fn test_textile_create_publish_resolve() {
         "schemaVersion": "1.0.0",
         "sectorData": {
             "sector": "textile",
+            "gtin": "09506000134352",
             "fibreComposition": [
                 {"fibre": "cotton", "pct": 95.0},
                 {"fibre": "elastane", "pct": 5.0}

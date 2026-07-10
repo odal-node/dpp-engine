@@ -55,6 +55,7 @@ pub async fn get_job_status(
                 JobStatus::Failed(reason) => ("failed", serde_json::json!({"reason": reason})),
             };
 
+            let report_json = serde_json::to_value(&job.report).unwrap_or(serde_json::Value::Null);
             (
                 StatusCode::OK,
                 Json(serde_json::json!({
@@ -64,7 +65,8 @@ pub async fn get_job_status(
                         "processed": job.processed,
                         "total": job.total_rows
                     },
-                    "result": result_json
+                    "result": result_json,
+                    "report": report_json
                 })),
             )
                 .into_response()

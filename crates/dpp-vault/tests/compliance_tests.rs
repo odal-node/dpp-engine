@@ -65,6 +65,7 @@ async fn test_passthrough_textile_stores_result() {
         "schemaVersion": "1.0.0",
         "sectorData": {
             "sector": "textile",
+            "gtin": "09506000134352",
             "fibreComposition": [
                 {"fibre": "wool", "pct": 100.0}
             ],
