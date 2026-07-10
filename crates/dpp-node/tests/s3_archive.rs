@@ -68,6 +68,7 @@ fn make_passport() -> Passport {
         co2e_per_unit: None,
         repairability_score: None,
         compliance_result: None,
+        lint_result: None,
         sector_data: None,
         status: PassportStatus::Published,
         qr_code_url: None,

@@ -102,4 +102,5 @@ pub const MUTABLE_FIELDS: &[&str] = &[
     "publishedAt",
     "retentionLocked",
     "updatedAt",
+    "lintResult",
 ];

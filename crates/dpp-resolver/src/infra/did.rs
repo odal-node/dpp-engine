@@ -157,9 +157,10 @@ mod tests {
     // ── DAL D2: MUTABLE_FIELDS parity guard ─────────────────────────────────
 
     /// `MUTABLE_FIELDS` must equal the DB retention trigger's `mutable_keys`
-    /// array (`0004_passport.sql`, amended by `0011_public_jws_mutable.sql`):
-    /// the fields a retention-locked passport may still change. Machine-checks
-    /// the DAL D2 invariant so the two cannot silently diverge.
+    /// array (`0004_passport.sql`, amended by `0011_public_jws_mutable.sql`
+    /// and `0018_lint_result_mutable.sql`): the fields a retention-locked
+    /// passport may still change. Machine-checks the DAL D2 invariant so the
+    /// two cannot silently diverge.
     #[test]
     fn mutable_fields_matches_db_trigger_mutable_keys() {
         let expected: &[&str] = &[
@@ -170,6 +171,7 @@ mod tests {
             "publishedAt",
             "retentionLocked",
             "updatedAt",
+            "lintResult",
         ];
         let mut actual = MUTABLE_FIELDS.to_vec();
         let mut want = expected.to_vec();
