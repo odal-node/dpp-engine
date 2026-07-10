@@ -1,0 +1,77 @@
+{
+  "auditEntries": [
+    {
+      "action": "created",
+      "actor": "demo-user",
+      "entryHash": "3bb3da77c9c2877913b0fe05a3b2a764d2a44c30ee5d7706499df93b0f490509",
+      "id": "019f3fa1-1c3b-7f80-8d00-9ccf6217616d",
+      "metadata": null,
+      "newStatus": "active",
+      "passportId": "01HXYZDEMO0000000000000001",
+      "prevHash": "",
+      "previousStatus": null,
+      "timestamp": "2026-07-01T12:00:00Z"
+    },
+    {
+      "action": "published",
+      "actor": "demo-user",
+      "entryHash": "71ebec38cec197332a44ec042bdd5310040e1a8d00f6eff4857f0829998f3696",
+      "id": "019f3fa1-1c3b-7f80-8d00-9cdbd3d4b984",
+      "metadata": null,
+      "newStatus": "active",
+      "passportId": "01HXYZDEMO0000000000000001",
+      "prevHash": "3bb3da77c9c2877913b0fe05a3b2a764d2a44c30ee5d7706499df93b0f490509",
+      "previousStatus": null,
+      "timestamp": "2026-07-01T12:05:00Z"
+    }
+  ],
+  "didDocuments": {
+    "did:web:demo.odal-node.io": {
+      "assertionMethod": [
+        "did:web:demo.odal-node.io#root"
+      ],
+      "id": "did:web:demo.odal-node.io",
+      "verificationMethod": [
+        {
+          "id": "did:web:demo.odal-node.io#root",
+          "publicKeyJwk": {
+            "crv": "Ed25519",
+            "kty": "OKP",
+            "x": "GX9rI-FshTLGq8g4-s1ep4m-DHaykgM0A5v6iz02jWE"
+          },
+          "type": "JsonWebKey2020"
+        }
+      ]
+    }
+  },
+  "fullView": {
+    "jws": "eyJhbGciOiJFZERTQSJ9.eyJpZCI6IjAxSFhZWkRFTU8wMDAwMDAwMDAwMDAwMDAxIiwicHJvZHVjdE5hbWUiOiJEZW1vIEJhdHRlcnkgUGFjayIsInNlY3RvciI6ImJhdHRlcnkiLCJzdGF0dXMiOiJhY3RpdmUifQ.cbIYcBZFEtjJwUrAVwl-yezFQQTSHl87KC2t3gDZ-GXhjqSm8_A-f4Uu12yjSrRK4fFWsGDCgRQHqr8O6e_5Dg",
+    "payload": {
+      "id": "01HXYZDEMO0000000000000001",
+      "productName": "Demo Battery Pack",
+      "sector": "battery",
+      "status": "active"
+    }
+  },
+  "manifest": {
+    "contentHashes": {
+      "auditEntries": "7199adf3ac0f70cef2434bceb9112d2030a1b0b39ea94e86da250a7e3502f009",
+      "fullView": "765fd8783f8d3b940dd34654125469b3e3bd9355f769d4a35c2c9d42900e9335",
+      "publicView": "7fdf780387f75c1b9734e6f9066e8a1355e60ea23aa74e20939329686ef546bf"
+    },
+    "createdAt": "2026-07-01T15:00:00Z",
+    "formatVersion": "1",
+    "issuerDid": "did:web:demo.odal-node.io",
+    "nodeVersion": "0.7.0-demo",
+    "passportId": "01HXYZDEMO0000000000000001"
+  },
+  "manifestJws": "eyJhbGciOiJFZERTQSJ9.eyJjb250ZW50SGFzaGVzIjp7ImF1ZGl0RW50cmllcyI6IjcxOTlhZGYzYWMwZjcwY2VmMjQzNGJjZWI5MTEyZDIwMzBhMWIwYjM5ZWE5NGU4NmRhMjUwYTdlMzUwMmYwMDkiLCJmdWxsVmlldyI6Ijc2NWZkODc4M2Y4ZDNiOTQwZGQzNDY1NDEyNTQ2OWIzZTNiZDkzNTVmNzY5ZDRhMzVjMmM5ZDQyOTAwZTkzMzUiLCJwdWJsaWNWaWV3IjoiN2ZkZjc4MDM4N2Y3NWMxYjk3MzRlNmY5MDY2ZThhMTM1NWU2MGVhMjNhYTc0ZTIwOTM5MzI5Njg2ZWY1NDZiZiJ9LCJjcmVhdGVkQXQiOiIyMDI2LTA3LTAxVDE1OjAwOjAwWiIsImZvcm1hdFZlcnNpb24iOiIxIiwiaXNzdWVyRGlkIjoiZGlkOndlYjpkZW1vLm9kYWwtbm9kZS5pbyIsIm5vZGVWZXJzaW9uIjoiMC43LjAtZGVtbyIsInBhc3Nwb3J0SWQiOiIwMUhYWVpERU1PMDAwMDAwMDAwMDAwMDAwMSJ9.NNQctO-RH1xcrgc9jzzi6NWRZLTIvfUpNhWpmEiRaWxjnEWdCtNzsTafx20lt1PeiApMs9h0YxIUJvOKExpEAg",
+  "publicView": {
+    "jws": "eyJhbGciOiJFZERTQSJ9.eyJpZCI6IjAxSFhZWkRFTU8wMDAwMDAwMDAwMDAwMDAxIiwicHJvZHVjdE5hbWUiOiJEZW1vIEJhdHRlcnkgUGFjayIsInNlY3RvciI6ImJhdHRlcnkifQ.q0gr_RFORGbgkOn_dmMtQwKn7G_kBXUx2YamaZU4aWCxgbgYI43sApT1qIM9afJRVXPpLMjAsyiAEk2YF5c4AQ",
+    "payload": {
+      "id": "01HXYZDEMO0000000000000001",
+      "productName": "Demo Battery Pack",
+      "sector": "battery"
+    }
+  }
+}

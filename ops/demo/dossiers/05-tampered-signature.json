@@ -1,0 +1,167 @@
+{
+  "auditEntries": [
+    {
+      "action": "created",
+      "actor": "demo-user",
+      "entryHash": "fa72cb2522edb056fa585be2cce23bcdbacaff1ebd9b8010cc07181e2ac15b1f",
+      "id": "019f3fa1-1c47-7153-a69f-59d63982ba3e",
+      "metadata": null,
+      "newStatus": "active",
+      "passportId": "01HXYZDEMO0000000000000001",
+      "prevHash": "",
+      "previousStatus": null,
+      "timestamp": "2026-07-01T12:00:00Z"
+    },
+    {
+      "action": "published",
+      "actor": "demo-user",
+      "entryHash": "5c2e31e5c696b7eff85db19039435ccf85cc652f35f51a3320bce69190d9c0e8",
+      "id": "019f3fa1-1c47-7153-a69f-59ed531277a6",
+      "metadata": null,
+      "newStatus": "active",
+      "passportId": "01HXYZDEMO0000000000000001",
+      "prevHash": "fa72cb2522edb056fa585be2cce23bcdbacaff1ebd9b8010cc07181e2ac15b1f",
+      "previousStatus": null,
+      "timestamp": "2026-07-01T12:05:00Z"
+    },
+    {
+      "action": "deactivated",
+      "actor": "demo-user",
+      "entryHash": "3d2c61460e9b83627e556bf507b4e23e1605cd63e737d4fac5d9e9a1ad368a33",
+      "id": "019f3fa1-1c47-7153-a69f-59fb8e83f18c",
+      "metadata": null,
+      "newStatus": "active",
+      "passportId": "01HXYZDEMO0000000000000001",
+      "prevHash": "5c2e31e5c696b7eff85db19039435ccf85cc652f35f51a3320bce69190d9c0e8",
+      "previousStatus": null,
+      "timestamp": "2027-08-05T12:00:00Z"
+    }
+  ],
+  "didDocuments": {
+    "did:web:demo.odal-node.io": {
+      "assertionMethod": [
+        "did:web:demo.odal-node.io#root"
+      ],
+      "id": "did:web:demo.odal-node.io",
+      "verificationMethod": [
+        {
+          "id": "did:web:demo.odal-node.io#root",
+          "publicKeyJwk": {
+            "crv": "Ed25519",
+            "kty": "OKP",
+            "x": "GX9rI-FshTLGq8g4-s1ep4m-DHaykgM0A5v6iz02jWE"
+          },
+          "type": "JsonWebKey2020"
+        }
+      ]
+    },
+    "did:web:from.example": {
+      "assertionMethod": [
+        "did:web:from.example#root"
+      ],
+      "id": "did:web:from.example",
+      "verificationMethod": [
+        {
+          "id": "did:web:from.example#root",
+          "publicKeyJwk": {
+            "crv": "Ed25519",
+            "kty": "OKP",
+            "x": "6kpsY-KcUgq-9VB7Ey7F-ZVHdq6-vnuSQh7qaRRG0iw"
+          },
+          "type": "JsonWebKey2020"
+        }
+      ]
+    },
+    "did:web:to.example": {
+      "assertionMethod": [
+        "did:web:to.example#root"
+      ],
+      "id": "did:web:to.example",
+      "verificationMethod": [
+        {
+          "id": "did:web:to.example#root",
+          "publicKeyJwk": {
+            "crv": "Ed25519",
+            "kty": "OKP",
+            "x": "E5j2LG0aRXxRumpLXz29L2n8qTIWIY3ImX5Ba9F9k8o"
+          },
+          "type": "JsonWebKey2020"
+        }
+      ]
+    }
+  },
+  "eolEvent": {
+    "declaredAt": "2027-08-05T12:00:00+00:00",
+    "declaredBy": "did:web:demo.odal-node.io",
+    "passportId": "01HXYZDEMO0000000000000001",
+    "reason": "recycled"
+  },
+  "fullView": {
+    "jws": "eyJhbGciOiJFZERTQSJ9.eyJpZCI6IjAxSFhZWkRFTU8wMDAwMDAwMDAwMDAwMDAxIiwicHJvZHVjdE5hbWUiOiJEZW1vIEJhdHRlcnkgUGFjayIsInNlY3RvciI6ImJhdHRlcnkiLCJzdGF0dXMiOiJhY3RpdmUifQ.cbIYcBZFEtjJwUrAVwl-yezFQQTSHl87KC2t3gDZ-GXhjqSm8_A-f4Uu12yjSrRK4fFWsGDCgRQHqr8O6e_5Dg",
+    "payload": {
+      "id": "01HXYZDEMO0000000000000001",
+      "productName": "Demo Battery Pack",
+      "sector": "battery",
+      "status": "active"
+    }
+  },
+  "manifest": {
+    "contentHashes": {
+      "auditEntries": "169eee1ea4d0c843502d1381c05c4e28eccad29ae87abb7963fdb61101f0d9d5",
+      "eolEvent": "c6c5951e479e67bbd539dc15a10bd06bc7269e0026eb6c4ad34cdfbcad3783f8",
+      "fullView": "765fd8783f8d3b940dd34654125469b3e3bd9355f769d4a35c2c9d42900e9335",
+      "publicView": "7fdf780387f75c1b9734e6f9066e8a1355e60ea23aa74e20939329686ef546bf",
+      "transferChain": "6ad5b41d41f4a795f9d032fb7921c6d76f4485c693baefcadde9e0540df43d0c"
+    },
+    "createdAt": "2026-07-01T15:00:00Z",
+    "formatVersion": "1",
+    "issuerDid": "did:web:demo.odal-node.io",
+    "nodeVersion": "0.7.0-demo",
+    "passportId": "01HXYZDEMO0000000000000001"
+  },
+  "manifestJws": "eyJhbGciOiJFZERTQSJ9.eyJjb250ZW50SGFzaGVzIjp7ImF1ZGl0RW50cmllcyI6IjE2OWVlZTFlYTRkMGM4NDM1MDJkMTM4MWMwNWM0ZTI4ZWNjYWQyOWFlODdhYmI3OTYzZmRiNjExMDFmMGQ5ZDUiLCJlb2xFdmVudCI6ImM2YzU5NTFlNDc5ZTY3YmJkNTM5ZGMxNWExMGJkMDZiYzcyNjllMDAyNmViNmM0YWQzNGNkZmJjYWQzNzgzZjgiLCJmdWxsVmlldyI6Ijc2NWZkODc4M2Y4ZDNiOTQwZGQzNDY1NDEyNTQ2OWIzZTNiZDkzNTVmNzY5ZDRhMzVjMmM5ZDQyOTAwZTkzMzUiLCJwdWJsaWNWaWV3IjoiN2ZkZjc4MDM4N2Y3NWMxYjk3MzRlNmY5MDY2ZThhMTM1NWU2MGVhMjNhYTc0ZTIwOTM5MzI5Njg2ZWY1NDZiZiIsInRyYW5zZmVyQ2hhaW4iOiI2YWQ1YjQxZDQxZjRhNzk1ZjlkMDMyZmI3OTIxYzZkNzZmNDQ4NWM2OTNiYWVmY2FkZGU5ZTA1NDBkZjQzZDBjIn0sImNyZWF0ZWRBdCI6IjIwMjYtMDctMDFUMTU6MDA6MDBaIiwiZm9ybWF0VmVyc2lvbiI6IjEiLCJpc3N1ZXJEaWQiOiJkaWQ6d2ViOmRlbW8ub2RhbC1ub2RlLmlvIiwibm9kZVZlcnNpb24iOiIwLjcuMC1kZW1vIiwicGFzc3BvcnRJZCI6IjAxSFhZWkRFTU8wMDAwMDAwMDAwMDAwMDAxIn0.-N7ZCCd5e8a-EUfCQexy8KSu5wUH4BIVeM6Tb69JFIZL-fEAQ4JYe_2pZRTWwYU_5ebd43TGlepsisolNaSEDg",
+  "publicView": {
+    "jws": "eyJhbGciOiJFZERTQSJ9.eyJpZCI6IjAxSFhZWkRFTU8wMDAwMDAwMDAwMDAwMDAxIiwicHJvZHVjdE5hbWUiOiJEZW1vIEJhdHRlcnkgUGFjayIsInNlY3RvciI6ImJhdHRlcnkifQ.q0gr_RFORGbgkOn_dmMtQwKn7G_kBXUx2YamaZU4aWCxgbgYI43sApT1qIM9afJRVXPpLMjAsyiAEk2YF5c4AQx",
+    "payload": {
+      "id": "01HXYZDEMO0000000000000001",
+      "productName": "Demo Battery Pack",
+      "sector": "battery"
+    }
+  },
+  "transferChain": {
+    "originalOperator": {
+      "country": "DE",
+      "did": "did:web:from.example",
+      "euOperatorId": null,
+      "name": "From Operator GmbH",
+      "role": "manufacturer"
+    },
+    "passportId": "019f3fa1-1c48-73d0-afed-551f94c76080",
+    "transfers": [
+      {
+        "completedAt": "2026-07-01T14:00:00Z",
+        "fromOperator": {
+          "country": "DE",
+          "did": "did:web:from.example",
+          "euOperatorId": null,
+          "name": "From Operator GmbH",
+          "role": "manufacturer"
+        },
+        "fromSignature": "eyJhbGciOiJFZERTQSJ9.eyJmcm9tT3BlcmF0b3IiOnsiY291bnRyeSI6IkRFIiwiZGlkIjoiZGlkOndlYjpmcm9tLmV4YW1wbGUiLCJldU9wZXJhdG9ySWQiOm51bGwsIm5hbWUiOiJGcm9tIE9wZXJhdG9yIEdtYkgiLCJyb2xlIjoibWFudWZhY3R1cmVyIn0sImluaXRpYXRlZEF0IjoiMjAyNi0wNy0wMVQxMzowMDowMFoiLCJwYXNzcG9ydElkIjoiMDE5ZjNmYTEtMWM0OC03M2QwLWFmZWQtNTUxZjk0Yzc2MDgwIiwicmVhc29uIjoic2FsZSIsInRvT3BlcmF0b3IiOnsiY291bnRyeSI6IkRFIiwiZGlkIjoiZGlkOndlYjp0by5leGFtcGxlIiwiZXVPcGVyYXRvcklkIjpudWxsLCJuYW1lIjoiVG8gT3BlcmF0b3IgU0FSTCIsInJvbGUiOiJtYW51ZmFjdHVyZXIifSwidHJhbnNmZXJJZCI6IjAxOWYzZmExLTFjNDgtNzNkMC1hZmVkLTU1MDczN2E3ZDRhMCJ9.hW3mNm2oD08EN0DZEvDaVbk7vyCtlDMc2xzADgt9rgPv5pXOeXTF3gMC1_7-biFIGob0lDR7YOrgB8jPbgrlDQ",
+        "initiatedAt": "2026-07-01T13:00:00Z",
+        "notes": "demo fixture transfer",
+        "passportId": "019f3fa1-1c48-73d0-afed-551f94c76080",
+        "reason": "sale",
+        "toOperator": {
+          "country": "DE",
+          "did": "did:web:to.example",
+          "euOperatorId": null,
+          "name": "To Operator SARL",
+          "role": "manufacturer"
+        },
+        "toSignature": "eyJhbGciOiJFZERTQSJ9.eyJmcm9tT3BlcmF0b3IiOnsiY291bnRyeSI6IkRFIiwiZGlkIjoiZGlkOndlYjpmcm9tLmV4YW1wbGUiLCJldU9wZXJhdG9ySWQiOm51bGwsIm5hbWUiOiJGcm9tIE9wZXJhdG9yIEdtYkgiLCJyb2xlIjoibWFudWZhY3R1cmVyIn0sImluaXRpYXRlZEF0IjoiMjAyNi0wNy0wMVQxMzowMDowMFoiLCJwYXNzcG9ydElkIjoiMDE5ZjNmYTEtMWM0OC03M2QwLWFmZWQtNTUxZjk0Yzc2MDgwIiwicmVhc29uIjoic2FsZSIsInRvT3BlcmF0b3IiOnsiY291bnRyeSI6IkRFIiwiZGlkIjoiZGlkOndlYjp0by5leGFtcGxlIiwiZXVPcGVyYXRvcklkIjpudWxsLCJuYW1lIjoiVG8gT3BlcmF0b3IgU0FSTCIsInJvbGUiOiJtYW51ZmFjdHVyZXIifSwidHJhbnNmZXJJZCI6IjAxOWYzZmExLTFjNDgtNzNkMC1hZmVkLTU1MDczN2E3ZDRhMCJ9.VBuCCrLSG5T-q_Q3w_kWUx2p6xm-9gvl-Ig0OZpAn-N6qsmzY8136wbY8tOmgdEq6uqGSAt0KxrFV0o2ger2Dg",
+        "transferId": "019f3fa1-1c48-73d0-afed-550737a7d4a0"
+      }
+    ]
+  }
+}
