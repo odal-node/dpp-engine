@@ -7,7 +7,8 @@ use tracing_subscriber::{EnvFilter, fmt};
 
 use dpp_common::{event::NoOpEventBus, event_codes};
 use dpp_dal::pg::{
-    PgApiKeyRepo, PgAuditRepo, PgDal, PgOperatorConfigRepo, PgPassportRepo, PgRegistryIdentityRepo,
+    PgApiKeyRepo, PgAuditRepo, PgDal, PgEvidenceDossierRepo, PgOperatorConfigRepo, PgPassportRepo,
+    PgRegistryIdentityRepo,
 };
 use dpp_domain::{
     DppError, GhostArchive, GhostRegistrySync,
@@ -62,6 +63,7 @@ async fn main() -> anyhow::Result<()> {
     let operator_repo = Arc::new(PgOperatorConfigRepo::new(dal.clone()));
     let api_key_repo = Arc::new(PgApiKeyRepo::new(dal.clone()));
     let registry_repo = Arc::new(PgRegistryIdentityRepo::new(dal.clone()));
+    let evidence_repo = Arc::new(PgEvidenceDossierRepo::new(dal.clone()));
 
     let identity = Arc::new(IdentityHttpClient::new(cfg.identity_service_url.clone()));
     let compliance = Arc::new(PassthroughRegistry::new());
@@ -117,7 +119,8 @@ async fn main() -> anyhow::Result<()> {
             Arc::new(GhostArchive),
             String::new(),
         )
-        .with_registry_reader(operator_repo.clone()),
+        .with_registry_reader(operator_repo.clone())
+        .with_evidence_store(evidence_repo),
     );
     let operator_service = Arc::new(OperatorService::new(operator_repo));
     let api_key_service = Arc::new(ApiKeyService::new(api_key_repo.clone()));

@@ -1,5 +1,5 @@
-//! N02 round-trip: publish -> transfer -> declare EOL -> export the evidence
-//! dossier -> verify it fully offline via `dpp_evidence::verify_dossier_json`.
+//! Round-trip: publish -> transfer -> declare EOL -> generate + persist the
+//! evidence dossier -> verify it via `PassportService::verify_evidence`.
 //!
 //! Uses real Ed25519 signing (`dpp_crypto::LocalIdentityService`, backed by a
 //! throwaway on-disk keystore) and small in-memory port implementations —
@@ -14,6 +14,7 @@ use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use chrono::Utc;
+use uuid::Uuid;
 
 use dpp_domain::{
     DppError, GhostArchive, GhostRegistrySync,
@@ -31,6 +32,9 @@ use dpp_types::{
     api_key::ApiKeyScope,
     audit::{AuditEntry, AuditRepository, GENESIS_PREV_HASH},
     auth::AuthContext,
+    evidence::{
+        EvidenceDossierRecord, EvidenceDossierRepository, EvidenceDossierSummary, content_hash,
+    },
     transfer::TransferStore,
 };
 use dpp_vault::domain::service::PassportService;
@@ -161,6 +165,63 @@ impl TransferStore for InMemoryTransferStore {
     }
 }
 
+/// In-memory `EvidenceDossierRepository` — append-only in spirit (nothing
+/// here exposes an update path), mirroring `PgEvidenceDossierRepo`'s shape.
+#[derive(Default)]
+struct InMemoryEvidenceRepo {
+    records: Mutex<Vec<EvidenceDossierRecord>>,
+}
+
+impl InMemoryEvidenceRepo {
+    /// Test-only hook: overwrite a stored record in place to simulate a
+    /// tampered row (the DB has no such path — this stands in for "what if
+    /// storage returned altered bytes").
+    fn replace(&self, record: EvidenceDossierRecord) {
+        let mut records = self.records.lock().unwrap();
+        if let Some(slot) = records.iter_mut().find(|r| r.id == record.id) {
+            *slot = record;
+        }
+    }
+}
+
+#[async_trait]
+impl EvidenceDossierRepository for InMemoryEvidenceRepo {
+    async fn insert(&self, record: &EvidenceDossierRecord) -> Result<(), DppError> {
+        self.records.lock().unwrap().push(record.clone());
+        Ok(())
+    }
+    async fn list_by_passport(
+        &self,
+        passport_id: PassportId,
+    ) -> Result<Vec<EvidenceDossierSummary>, DppError> {
+        let mut summaries: Vec<EvidenceDossierSummary> = self
+            .records
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|r| r.passport_id == passport_id)
+            .map(|r| EvidenceDossierSummary {
+                id: r.id,
+                passport_id: r.passport_id,
+                actor: r.actor.clone(),
+                created_at: r.created_at,
+                doc_hash: r.doc_hash.clone(),
+            })
+            .collect();
+        summaries.sort_by_key(|s| std::cmp::Reverse(s.created_at));
+        Ok(summaries)
+    }
+    async fn get(&self, id: Uuid) -> Result<Option<EvidenceDossierRecord>, DppError> {
+        Ok(self
+            .records
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|r| r.id == id)
+            .cloned())
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Harness
 // ---------------------------------------------------------------------------
@@ -176,7 +237,7 @@ fn auth() -> AuthContext {
 /// Builds a `PassportService` wired with real Ed25519 signing and in-memory
 /// ports, plus the DID the identity's did:web document actually publishes as
 /// (pathless form — see `dpp_crypto::identity::did_builder`).
-async fn build_service() -> (PassportService, String) {
+async fn build_service() -> (PassportService, Arc<InMemoryEvidenceRepo>, String) {
     let key_path =
         std::env::temp_dir().join(format!("evidence-test-{}.json", uuid::Uuid::new_v4()));
     let store =
@@ -190,6 +251,8 @@ async fn build_service() -> (PassportService, String) {
         base_url,
     ));
 
+    let evidence_store = Arc::new(InMemoryEvidenceRepo::default());
+
     let service = PassportService::new(
         Arc::new(InMemoryPassportRepo::default()),
         identity,
@@ -200,16 +263,17 @@ async fn build_service() -> (PassportService, String) {
         Arc::new(GhostArchive),
         "DE".to_owned(),
     )
-    .with_transfer_store(Arc::new(InMemoryTransferStore::default()));
+    .with_transfer_store(Arc::new(InMemoryTransferStore::default()))
+    .with_evidence_store(evidence_store.clone());
 
-    (service, issuer_did)
+    (service, evidence_store, issuer_did)
 }
 
 fn draft_passport() -> Passport {
     Passport {
         id: PassportId::new(),
         batch_id: None,
-        product_name: "Evidence Export Test Widget".into(),
+        product_name: "Evidence Dossier Test Widget".into(),
         sector: Sector::Textile,
         product_category: None,
         manufacturer: ManufacturerInfo {
@@ -221,6 +285,7 @@ fn draft_passport() -> Passport {
         co2e_per_unit: None,
         repairability_score: None,
         compliance_result: None,
+        lint_result: None,
         sector_data: None,
         status: PassportStatus::Draft,
         qr_code_url: None,
@@ -251,12 +316,28 @@ fn draft_passport() -> Passport {
 }
 
 // ---------------------------------------------------------------------------
-// The test
+// The tests
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-async fn publish_transfer_eol_then_export_verifies_fully_offline() {
-    let (service, issuer_did) = build_service().await;
+async fn generate_evidence_fails_for_a_draft_passport() {
+    let (service, _evidence, _issuer_did) = build_service().await;
+    let auth = auth();
+    let created = service
+        .create(draft_passport(), &auth)
+        .await
+        .expect("create");
+
+    let err = service
+        .generate_evidence(created.id, &auth)
+        .await
+        .expect_err("draft passport has no signature to export");
+    assert!(matches!(err, DppError::Validation(_)));
+}
+
+#[tokio::test]
+async fn publish_transfer_eol_then_generate_verifies_and_persists() {
+    let (service, evidence, issuer_did) = build_service().await;
     let auth = auth();
 
     let created = service
@@ -285,7 +366,7 @@ async fn publish_transfer_eol_then_export_verifies_fully_offline() {
             operator("From Operator"),
             operator("To Operator"),
             TransferReason::Sale,
-            Some("evidence export test".into()),
+            Some("evidence dossier test".into()),
             &auth,
         )
         .await
@@ -306,12 +387,21 @@ async fn publish_transfer_eol_then_export_verifies_fully_offline() {
         .await
         .expect("declare eol");
 
-    // Export the dossier and verify it fully offline.
-    let dossier = service
-        .export_evidence(published.id)
+    // Generate the dossier and persist it.
+    let record = service
+        .generate_evidence(published.id, &auth)
         .await
-        .expect("export evidence");
+        .expect("generate evidence");
 
+    assert_eq!(record.actor, "evidence-test");
+    assert_eq!(record.passport_id, published.id);
+    let recomputed = content_hash(&serde_json::to_value(&record.dossier).unwrap());
+    assert_eq!(
+        record.doc_hash, recomputed,
+        "stored doc_hash must match a fresh recomputation over the stored dossier"
+    );
+
+    let dossier = &record.dossier;
     assert_eq!(
         dossier.transfer_chain.as_ref().map(|c| c.transfers.len()),
         Some(1)
@@ -326,36 +416,28 @@ async fn publish_transfer_eol_then_export_verifies_fully_offline() {
         "checkpoint is always absent in v1"
     );
 
-    let dossier_bytes = serde_json::to_vec(&dossier).unwrap();
-    let report =
-        dpp_evidence::verify_dossier_json(&dossier_bytes, dpp_evidence::VerifyMode::Embedded)
-            .expect("a freshly exported dossier must at least parse");
+    // Verify the stored dossier — must come back clean.
+    let report = service
+        .verify_evidence(record.id)
+        .await
+        .expect("verify freshly generated dossier");
     assert!(
         report.all_verified(),
         "clean dossier must verify: {report:#?}"
     );
     assert_eq!(report.exit_code(), 0);
 
-    // Determinism: exporting again (no new events in between) differs only
-    // in the manifest's own timestamp/signature, not in the underlying
-    // members.
-    let dossier2 = service
-        .export_evidence(published.id)
-        .await
-        .expect("export evidence again");
-    assert_eq!(dossier.full_view.payload, dossier2.full_view.payload);
-    assert_eq!(dossier.audit_entries.len(), dossier2.audit_entries.len());
+    // Tamper: flip one byte in the stored record (standing in for storage
+    // returning altered bytes) and confirm verification names the break
+    // rather than reporting false-green.
+    let mut tampered = record.clone();
+    tampered.dossier.audit_entries[0].action = "tampered".into();
+    evidence.replace(tampered);
 
-    // Tamper: flip one byte in a stored audit row (round-tripped through
-    // JSON, exactly as a real consumer of the exported file would see it)
-    // and confirm the verifier names the break rather than reporting
-    // false-green.
-    let mut tampered = serde_json::to_value(&dossier).unwrap();
-    tampered["auditEntries"][0]["action"] = serde_json::json!("tampered");
-    let tampered_bytes = serde_json::to_vec(&tampered).unwrap();
-    let tampered_report =
-        dpp_evidence::verify_dossier_json(&tampered_bytes, dpp_evidence::VerifyMode::Embedded)
-            .expect("a tampered-but-structurally-valid dossier must still parse");
+    let tampered_report = service
+        .verify_evidence(record.id)
+        .await
+        .expect("a tampered-but-structurally-valid dossier must still parse");
     assert!(
         !tampered_report.all_verified(),
         "tampered audit row must be detected"
@@ -367,6 +449,21 @@ async fn publish_transfer_eol_then_export_verifies_fully_offline() {
         .unwrap();
     assert!(matches!(
         audit_check.status,
-        dpp_evidence::CheckStatus::Fail(_)
+        dpp_types::evidence::CheckStatus::Fail(_)
     ));
+
+    // Generating a second dossier and listing must return both, newest first.
+    // A short sleep avoids a `created_at` tie with `record` under fast clocks.
+    tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+    let record2 = service
+        .generate_evidence(published.id, &auth)
+        .await
+        .expect("generate a second dossier");
+    let summaries = service
+        .list_evidence(published.id)
+        .await
+        .expect("list evidence");
+    assert_eq!(summaries.len(), 2);
+    assert_eq!(summaries[0].id, record2.id, "newest dossier must be first");
+    assert_eq!(summaries[1].id, record.id);
 }

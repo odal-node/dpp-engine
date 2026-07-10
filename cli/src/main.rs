@@ -263,8 +263,8 @@ mod tests {
     #[test]
     fn parse_verify() {
         let cli = Cli::parse_from(["odal", "verify", "dossier.json"]);
-        if let Some(Commands::Verify { file }) = cli.command {
-            assert_eq!(file, "dossier.json");
+        if let Some(Commands::Verify { target }) = cli.command {
+            assert_eq!(target, "dossier.json");
         } else {
             panic!("expected Verify");
         }

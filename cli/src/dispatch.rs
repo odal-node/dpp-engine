@@ -220,6 +220,6 @@ pub async fn dispatch(cmd: Commands) -> anyhow::Result<()> {
         Commands::Schema {
             command: SchemaCommands::Check,
         } => run_schema().await,
-        Commands::Verify { file } => run_verify(&file),
+        Commands::Verify { target } => run_verify(&target).await,
     }
 }

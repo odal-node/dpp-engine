@@ -1,24 +1,87 @@
-//! `export_evidence` — assemble a self-contained, signed evidence dossier
-//! (N02) for fully offline verification. See `dpp_evidence::dossier` for the
-//! wire format, which this crate depends on `dpp-evidence` (Apache-2.0 core)
-//! purely to reuse — one definition, two producers/consumers. The audit
-//! trail's own wire type (`dpp_types::audit::AuditEntry`) is itself a
-//! re-export from `dpp-evidence`, so `list_by_passport`'s result is already
-//! the exact type the dossier wants — no mapping step needed.
+//! Evidence dossiers: assemble, generate + persist, list, fetch, and verify
+//! a passport's self-contained signed proof snapshot. See `dpp_types::evidence`
+//! for the wire format. The audit trail's own wire type
+//! (`dpp_types::audit::AuditEntry`) is already the exact type the dossier
+//! wants — no mapping step needed.
 
 use std::collections::BTreeMap;
 
 use dpp_domain::domain::{error::DppError, passport::PassportId, status::PassportStatus};
-use dpp_evidence::{DossierManifest, DossierV1, SignedLayer, compute_content_hashes};
+use dpp_types::evidence::{
+    DossierManifest, DossierV1, EvidenceDossierRecord, EvidenceDossierSummary, SignedLayer,
+    VerificationReport, compute_content_hashes, content_hash,
+};
+use uuid::Uuid;
 
 use super::PassportService;
 
 impl PassportService {
+    /// Generate an evidence dossier for a passport and persist it. Returns
+    /// the stored record (id, actor, doc hash, and the dossier itself).
+    #[tracing::instrument(skip(self, auth), fields(passport_id = %id))]
+    pub async fn generate_evidence(
+        &self,
+        id: PassportId,
+        auth: &dpp_types::auth::AuthContext,
+    ) -> Result<EvidenceDossierRecord, DppError> {
+        let dossier = self.assemble_dossier(id).await?;
+        let store = self.evidence_store.as_ref().ok_or_else(|| {
+            DppError::Internal("evidence store not configured on this service".into())
+        })?;
+        let doc_hash = content_hash(
+            &serde_json::to_value(&dossier).map_err(|e| DppError::Serialisation(e.to_string()))?,
+        );
+        let record = EvidenceDossierRecord {
+            id: Uuid::now_v7(),
+            passport_id: id,
+            actor: auth.user_id.clone(),
+            created_at: dossier.manifest.created_at,
+            doc_hash,
+            dossier,
+        };
+        store.insert(&record).await?;
+        Ok(record)
+    }
+
+    /// List stored dossier summaries for a passport, newest first.
+    /// 404s if the passport itself doesn't exist.
+    pub async fn list_evidence(
+        &self,
+        id: PassportId,
+    ) -> Result<Vec<EvidenceDossierSummary>, DppError> {
+        self.find_by_id(id).await?;
+        let store = self.evidence_store.as_ref().ok_or_else(|| {
+            DppError::Internal("evidence store not configured on this service".into())
+        })?;
+        store.list_by_passport(id).await
+    }
+
+    /// Fetch one stored dossier by id.
+    pub async fn get_evidence(&self, dossier_id: Uuid) -> Result<EvidenceDossierRecord, DppError> {
+        let store = self.evidence_store.as_ref().ok_or_else(|| {
+            DppError::Internal("evidence store not configured on this service".into())
+        })?;
+        store
+            .get(dossier_id)
+            .await?
+            .ok_or_else(|| DppError::NotFound(dossier_id.to_string()))
+    }
+
+    /// Verify a stored dossier's signatures and hash chains.
+    pub async fn verify_evidence(&self, dossier_id: Uuid) -> Result<VerificationReport, DppError> {
+        let record = self.get_evidence(dossier_id).await?;
+        let bytes = serde_json::to_vec(&record.dossier)
+            .map_err(|e| DppError::Serialisation(e.to_string()))?;
+        crate::domain::verify::verify_dossier_json(&bytes).map_err(|e| {
+            DppError::Internal(format!("stored dossier {dossier_id} failed to parse: {e}"))
+        })
+    }
+
     /// Assemble the evidence dossier for a passport. Requires the passport to
     /// have been published at least once (a `Draft` has no signature to
     /// export yet).
     #[tracing::instrument(skip(self), fields(passport_id = %id))]
-    pub async fn export_evidence(&self, id: PassportId) -> Result<DossierV1, DppError> {
+    async fn assemble_dossier(&self, id: PassportId) -> Result<DossierV1, DppError> {
         let passport = self.find_by_id(id).await?;
         if matches!(passport.status, PassportStatus::Draft) {
             return Err(DppError::Validation(
@@ -85,8 +148,8 @@ impl PassportService {
 
         // Best-effort: fetch each transfer counterparty's DID document over
         // HTTPS. An unresolvable remote DID is simply left out of the map —
-        // the offline verifier then reports that signature as unverifiable
-        // rather than silently skipping it (fail-closed, never false-green).
+        // the verifier then reports that signature as unverifiable rather
+        // than silently skipping it (fail-closed, never false-green).
         if let Some(chain) = &transfer_chain {
             for record in &chain.transfers {
                 for did in [&record.from_operator.did, &record.to_operator.did] {
@@ -153,7 +216,7 @@ impl PassportService {
 }
 
 async fn fetch_remote_did_document(did: &str) -> Result<serde_json::Value, DppError> {
-    let url = dpp_evidence::did_web_url(did).map_err(DppError::Internal)?;
+    let url = crate::domain::verify::did_web_url(did).map_err(DppError::Internal)?;
     let resp = reqwest::get(&url)
         .await
         .map_err(|e| DppError::Internal(format!("{url}: {e}")))?;

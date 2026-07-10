@@ -14,12 +14,12 @@
 //!    a chain-per-passport store). They live engine-side deliberately: the
 //!    standard defines the *records*, not how a given deployment queues or
 //!    stores them. See the doc comment on each port for the specific reasoning.
-//! 3. **Standard-adjacent provenance** — `audit`: `AuditEntry` and its hash
-//!    chain were promoted to `dpp-core`'s `dpp-evidence` crate (2026-07-08),
-//!    since they're verified by third parties and are part of the
-//!    proof-bound standard rather than engine plumbing. This module
-//!    re-exports the type and keeps only the persistence port
-//!    (`AuditRepository`) — storage is still an engine deployment choice.
+//! 3. **Provenance wire types** — `audit` and `evidence`: the audit-trail
+//!    entry with its hash chain, and the evidence-dossier format with its
+//!    verification report. These are defined here — they are the engine's
+//!    own proof surface — alongside their persistence ports
+//!    (`AuditRepository`, `EvidenceDossierRepository`); storage is an
+//!    engine deployment choice.
 //!
 //! New types should fit one of these three; if a fit isn't obvious, that's a
 //! sign the taxonomy needs revisiting rather than a place to force it.
@@ -27,6 +27,7 @@
 pub mod api_key;
 pub mod audit;
 pub mod auth;
+pub mod evidence;
 pub mod operator;
 pub mod registry_identity;
 pub mod registry_sync;
@@ -38,6 +39,11 @@ pub use audit::{
     AuditChainBreak, AuditEntry, AuditRepository, GENESIS_PREV_HASH, verify_audit_chain,
 };
 pub use auth::{AuthContext, AuthError, AuthProvider};
+pub use evidence::{
+    CheckResult, CheckStatus, DossierManifest, DossierV1, EvidenceDossierRecord,
+    EvidenceDossierRepository, EvidenceDossierSummary, SignedLayer, VerificationReport,
+    compute_content_hashes, content_hash,
+};
 pub use operator::{
     OperatorConfig, OperatorConfigRepository, STANDALONE_OPERATOR_ID, UpdateOperatorConfig,
 };

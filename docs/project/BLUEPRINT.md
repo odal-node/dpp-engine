@@ -78,7 +78,7 @@ fails, the operation still succeeds. Consumers must be idempotent.
 | EU Central Registry sync | **Outbox done**; adapter ghost until spec | Registration intent committed in the publish transaction to the durable `registry_sync` outbox; background drain with backoff; `EuRegistrySync` HTTP adapter activates when the Commission publishes the Art. 13 API |
 | Unsold goods reporting | Done | ESPR Arts. 24 (disclosure) / 25 (destruction ban, 19 Jul 2026); standardised disclosure format (implementing act of 9 Feb 2026) applies Q1 2027 — conformance pass pending (implementation plan 07) |
 | End-of-life & transfer of responsibility | Done | Typed EOL declaration; dual-signed transfer handshake (initiate/accept, fail-closed verify); hash-chained audit |
-| Evidence dossier export + offline verification | Done | `GET …/dpp/{id}/evidence` + `odal verify` via the Apache `dpp-evidence` crate — third parties verify with zero network |
+| Evidence dossier generation + verification | Done | `POST/GET …/dpp/{id}/evidence`, `POST …/evidence/{id}/verify`, `odal verify` |
 | Trust-mode honesty (`NODE_PROFILE`) | Done | Per-port `trust_mode` in `/health`; production profile refuses to boot on ghost trust adapters |
 | Signed compliance-ruleset channel | Done (loader) | Ed25519-signed bundles, fail-closed verify, atomic hot-swap; active version in `/health` |
 | Public passport resolver | Done | Content-negotiated (JSON/HTML) |

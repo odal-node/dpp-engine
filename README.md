@@ -53,14 +53,14 @@ The engine ships as a **single binary** (`dpp-node`) that fuses all services und
 |---|---|---|
 | `dpp-types` | lib | Platform-wide types — operator config, auth, audit, API keys |
 | `dpp-dal` | lib | PostgreSQL DAL — passport repo, migrations (single-tenant; no RLS) |
-| `dpp-vault` | bin+lib | DPP write engine — create, versioned lifecycle (publish / suspend / archive / end-of-life), transfer-of-responsibility handshake, hash-chained audit, evidence-dossier export |
+| `dpp-vault` | bin+lib | DPP write engine — create, versioned lifecycle (publish / suspend / archive / end-of-life), transfer-of-responsibility handshake, hash-chained audit, evidence-dossier generation + verification |
 | `dpp-identity` | bin+lib | `did:web` identity HTTP service — signing, key rotation |
 | `dpp-resolver` | bin+lib | Public QR / Digital Link resolver, JWS-verified fail-closed |
 | `dpp-integrator` | bin+lib | CSV/XLSX-to-DPP bulk import adapter with per-sector templates |
 | `dpp-common` | lib | Event bus trait + well-known subjects, telemetry, RFC 7807 HTTP errors |
 | `dpp-plugin-host` | lib | wasmtime sandbox — fuel metering, memory cap, deny-all WASI, signed-plugin policy |
 | `dpp-node` | bin | **The single binary — fuses all services**, boot trust-report, registry outbox drain, signed-ruleset loader |
-| `dpp-cli` (`cli/`) | bin | `odal` — the operator control plane, from bootstrap to evidence export and offline verification |
+| `dpp-cli` (`cli/`) | bin | `odal` — the operator control plane, from bootstrap to evidence dossier generation and verification |
 | `dpp-seal` | lib | eIDAS qualified-seal adapter (CSC/QTSP client scaffold) — resolves to a clearly-marked Ghost until a QTSP is configured; a production-profile node **refuses to boot** on ghost trust adapters |
 | `dpp-factor-data` | lib | Licensed LCI factor store — ghost provider until a dataset licence is signed; any ghost-derived result is marked `dataset_id="ghost"` |
 
@@ -76,7 +76,6 @@ All core crates are consumed from crates.io (dpp-core is published independently
 | `dpp-calc` | EU-methodology calculators (CO2e, repairability) |
 | `dpp-plugin-traits` | Wasm plugin ABI |
 | `dpp-registry` | EU registry interface types |
-| `dpp-evidence` | Evidence dossier wire format + offline verification engine (`odal verify`) |
 
 **Dependency direction**: dpp-engine -> dpp-core (one-way). dpp-core has zero knowledge of this repo.
 
@@ -120,9 +119,9 @@ cargo build -p dpp-cli                          # builds target/debug/odal
 ```
 
 ```bash
-# Prove it, offline: export a signed evidence dossier and verify it with no server
-./target/debug/odal passport evidence <dpp-id> > dossier.json
-./target/debug/odal verify dossier.json      # 8+ independent checks, exit 0 = verified
+# Generate a signed evidence dossier and verify it against the node
+./target/debug/odal passport evidence <dpp-id>   # generates + stores a dossier
+./target/debug/odal verify <dossier-id>          # 8+ independent checks, exit 0 = verified
 ```
 
 Full command reference: **[cli/README.md](cli/README.md)**.
@@ -152,13 +151,13 @@ Full command reference: **[cli/README.md](cli/README.md)**.
 
 Docker Compose: `docker/docker-compose.dev.yml`
 
-Migrations: `ops/pg/0001_extensions_roles_schemas.sql` through `0017_passport_transfer.sql` — applied via `PgDal::migrate` at startup if `DATABASE_MIGRATE_URL` is set. The audit table is append-only (DB trigger) and hash-chained (`0015`); the registry outbox (`0006`) is written inside the publish transaction and drained with backoff.
+Migrations: `ops/pg/0001_extensions_roles_schemas.sql` through `0021_evidence_dossier.sql` — applied via `PgDal::migrate` at startup if `DATABASE_MIGRATE_URL` is set. The audit table is append-only (DB trigger) and hash-chained (`0015`); the registry outbox (`0006`) is written inside the publish transaction and drained with backoff; evidence dossiers are append-only (`0021`).
 
 ---
 
 ## What Makes This Node Different (the trust layer, shipped)
 
-**Honesty is enforced, not promised.** Every trust-critical port reports its tier (`ghost` / `sandbox` / `live`) in `/health`; under `NODE_PROFILE=production` the node **refuses to start** while any required port resolves to a placeholder — a node cannot claim trust services it doesn't have. **History is tamper-evident:** every audit entry is hash-chained; a superuser edit is detected at the exact index. **Registration is never lost:** EU-registry intent is committed to a durable outbox in the same transaction as publish, then drained with retry/backoff — kill the node mid-publish and nothing is lost (tested). **Regulation ships as signed data:** compliance rulesets arrive as Ed25519-signed bundles, verified fail-closed and hot-swapped atomically; the active version is visible in `/health`. **Anyone can verify, offline:** a signed evidence dossier (passport, JWS, DID document, audit chain, transfer chain) exports in one call and verifies with zero network via [`dpp-evidence`](https://github.com/odal-node/dpp-core/tree/main/crates/dpp-evidence).
+**Honesty is enforced, not promised.** Every trust-critical port reports its tier (`ghost` / `sandbox` / `live`) in `/health`; under `NODE_PROFILE=production` the node **refuses to start** while any required port resolves to a placeholder — a node cannot claim trust services it doesn't have. **History is tamper-evident:** every audit entry is hash-chained; a superuser edit is detected at the exact index. **Registration is never lost:** EU-registry intent is committed to a durable outbox in the same transaction as publish, then drained with retry/backoff — kill the node mid-publish and nothing is lost (tested). **Regulation ships as signed data:** compliance rulesets arrive as Ed25519-signed bundles, verified fail-closed and hot-swapped atomically; the active version is visible in `/health`. **Evidence is generated and verified, not just claimed:** a signed dossier (passport, JWS, DID document, audit chain, transfer chain) is generated and stored in one call, then checked against its own signatures and hash chains via `odal verify` or the evidence API — see [docs/architecture/EVIDENCE-DOSSIER.md](docs/architecture/EVIDENCE-DOSSIER.md).
 
 ---
 

@@ -18,6 +18,7 @@ pub fn validate_textile_row(
     let mut errors: Vec<RowError> = Vec::new();
 
     let product_name = require_str(row, "productName", row_num, &mut errors);
+    let gtin = require_str(row, "gtin", row_num, &mut errors);
     let batch_id = require_str(row, "batchId", row_num, &mut errors);
     let manufacturer_name = require_str(row, "manufacturerName", row_num, &mut errors);
     let manufacturer_country = require_str(row, "manufacturerCountry", row_num, &mut errors);
@@ -60,6 +61,7 @@ pub fn validate_textile_row(
     }
 
     let textile_data = SectorData::Textile(TextileData {
+        gtin: gtin.expect("field verified present by errors.is_empty() guard above"),
         fibre_composition: fibres.expect("field verified present by errors.is_empty() guard above"),
         country_of_manufacturing: country_of_manufacturing
             .expect("field verified present by errors.is_empty() guard above"),
@@ -126,6 +128,7 @@ mod tests {
     fn snake_case_textile_row_validates_via_normalized_lookup() {
         let row = HashMap::from([
             ("product_name".to_string(), "Organic Cotton Tee".to_string()),
+            ("gtin".to_string(), "09506000134352".to_string()),
             ("batch_id".to_string(), "BATCH-T-001".to_string()),
             ("manufacturer_name".to_string(), "EcoWear".to_string()),
             ("manufacturer_country".to_string(), "BD".to_string()),
@@ -152,6 +155,7 @@ mod tests {
     fn textile_row() -> HashMap<String, String> {
         HashMap::from([
             ("productName".into(), "Organic Cotton Tee".into()),
+            ("gtin".into(), "09506000134352".into()),
             ("batchId".into(), "BATCH-T-001".into()),
             ("manufacturerName".into(), "EcoWear".into()),
             ("manufacturerCountry".into(), "BD".into()),
@@ -172,6 +176,7 @@ mod tests {
         assert_eq!(req.product_name, "Organic Cotton Tee");
         match req.sector_data.unwrap() {
             SectorData::Textile(t) => {
+                assert_eq!(t.gtin, "09506000134352");
                 assert_eq!(t.fibre_composition.len(), 1);
                 assert_eq!(t.fibre_composition[0].fibre, "cotton");
             }

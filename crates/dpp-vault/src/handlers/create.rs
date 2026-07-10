@@ -166,8 +166,9 @@ pub async fn create_handler(
         repairability_score: body
             .repairability_score
             .map(RepairabilityScore::from_scalar),
-        // Populated by the service's `apply_compliance` after creation.
+        // Populated by the service's `apply_compliance`/`apply_lint` after creation.
         compliance_result: None,
+        lint_result: None,
         sector_data: body.sector_data,
         status: PassportStatus::Draft,
         qr_code_url: None,

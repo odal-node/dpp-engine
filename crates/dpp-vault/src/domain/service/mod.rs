@@ -13,7 +13,7 @@
 //! - [`lifecycle`] — `suspend`, `archive`
 //! - [`eol`] — `declare_eol`
 //! - [`transfer`] — `initiate_transfer`, `accept_transfer`
-//! - [`evidence`] — `export_evidence` (N02 offline-verifiable dossier)
+//! - [`evidence`] — `generate_evidence`/`list_evidence`/`get_evidence`/`verify_evidence`
 //! - [`seal`] — reserved seat for the eIDAS seal step in `publish` (not wired yet)
 
 mod create;
@@ -33,8 +33,8 @@ use dpp_domain::ports::{
     passport_repo::PassportRepository, registry_sync::RegistrySyncPort,
 };
 use dpp_types::{
-    STANDALONE_OPERATOR_ID, audit::AuditRepository, operator::OperatorConfigRepository,
-    registry_sync::RegistrySyncOutbox, transfer::TransferStore,
+    STANDALONE_OPERATOR_ID, audit::AuditRepository, evidence::EvidenceDossierRepository,
+    operator::OperatorConfigRepository, registry_sync::RegistrySyncOutbox, transfer::TransferStore,
 };
 
 /// Core domain service for the passport lifecycle.
@@ -60,6 +60,9 @@ pub struct PassportService {
     /// Persistence for transfer-of-responsibility chains. `None` disables
     /// the transfer endpoints (test doubles without a transfer store).
     pub transfer_store: Option<Arc<dyn TransferStore>>,
+    /// Persistence for generated evidence dossiers. `None` disables the
+    /// evidence-generation endpoint (test doubles without an evidence store).
+    pub evidence_store: Option<Arc<dyn EvidenceDossierRepository>>,
     /// ISO 3166-1 alpha-2 country code of this operator, sourced from
     /// `OperatorConfig.country` at startup. Used in EU registry registration payloads.
     pub operator_country: String,
@@ -93,6 +96,7 @@ impl PassportService {
             archive,
             registry_outbox: None,
             transfer_store: None,
+            evidence_store: None,
             operator_country,
             registry_reader: None,
         }
@@ -103,6 +107,13 @@ impl PassportService {
     #[must_use]
     pub fn with_transfer_store(mut self, store: Arc<dyn TransferStore>) -> Self {
         self.transfer_store = Some(store);
+        self
+    }
+
+    /// Provide the evidence-dossier store, enabling dossier generation.
+    #[must_use]
+    pub fn with_evidence_store(mut self, store: Arc<dyn EvidenceDossierRepository>) -> Self {
+        self.evidence_store = Some(store);
         self
     }
 

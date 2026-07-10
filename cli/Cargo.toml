@@ -13,7 +13,7 @@ name = "odal"
 path = "src/main.rs"
 
 [dependencies]
-dpp-evidence = { workspace = true }
+dpp-types   = { workspace = true }
 clap        = { workspace = true }
 reqwest     = { workspace = true }
 serde       = { workspace = true }

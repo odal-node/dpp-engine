@@ -1,19 +1,24 @@
-//! `odal verify` — verify an evidence dossier fully offline, zero trust in
-//! the issuing node.
+//! `odal verify` — verify a stored dossier (by id) or an uploaded dossier
+//! file against the node.
 //!
-//! Exit codes match `dpp_evidence::VerificationReport::exit_code`'s
-//! documented convention: 0 verified, 1 tamper detected. A file that
-//! couldn't even be read or parsed as a dossier is a third case, exit 2 —
-//! `action_verify` returns `Err` for that, never a report.
+//! Exit codes match `VerificationReport::exit_code`'s documented convention:
+//! 0 verified, 1 tamper detected. A target that couldn't be reached, read,
+//! or parsed as a dossier is a third case, exit 2 — `action_verify` returns
+//! `Err` for that, never a report.
 
 use anyhow::Result;
 
-use crate::{core::verify::action_verify, stateless::render::render_verification_report};
+use crate::{
+    config::Config, core::verify::action_verify, http::OdalClient,
+    stateless::render::render_verification_report,
+};
 
-pub fn run_verify(file: &str) -> Result<()> {
-    match action_verify(file) {
+pub async fn run_verify(target: &str) -> Result<()> {
+    let cfg = Config::load()?;
+    let client = OdalClient::new(&cfg.api_key);
+    match action_verify(target, &client, &cfg).await {
         Ok(report) => {
-            render_verification_report(&report, file);
+            render_verification_report(&report, target);
             std::process::exit(report.exit_code());
         }
         Err(e) => {

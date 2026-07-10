@@ -1,6 +1,7 @@
 //! `create` and `update` — draft-passport writes, plus their private helpers
-//! `apply_patch` (validates and applies an update patch) and `apply_compliance`
-//! (backfills compliance-derived fields from the registered `ComplianceRegistry`).
+//! `apply_patch` (validates and applies an update patch), `apply_compliance`
+//! (backfills compliance-derived fields from the registered `ComplianceRegistry`),
+//! and `apply_lint` (refreshes the non-binding plausibility findings).
 
 use chrono::Utc;
 use dpp_common::event;
@@ -60,6 +61,7 @@ impl PassportService {
         }
 
         apply_compliance(&mut passport, &*self.compliance);
+        apply_lint(&mut passport);
 
         let created = self.repo.create(passport).await?;
 
@@ -112,6 +114,7 @@ impl PassportService {
         let pre_compliance_co2e = passport.co2e_per_unit.clone();
         let pre_compliance_repair = passport.repairability_score.clone();
         apply_compliance(&mut passport, &*self.compliance);
+        apply_lint(&mut passport);
 
         // Start delta from the patch body (already camelCase DB field names).
         let mut delta = patch;
@@ -126,6 +129,12 @@ impl PassportService {
                 && let Some(ref v) = passport.repairability_score
             {
                 m.insert("repairabilityScore".into(), serde_json::json!(v));
+            }
+            // Lint findings are cheap to recompute and always refreshed (unlike
+            // co2e/repairability above, which only backfill when the caller left
+            // them unset) — see PassportService::relint for the standalone re-check.
+            if let Some(ref lint) = passport.lint_result {
+                m.insert("lintResult".into(), serde_json::json!(lint));
             }
         }
 
@@ -176,6 +185,16 @@ fn apply_compliance(passport: &mut Passport, registry: &dyn ComplianceRegistry) 
             result.assessed_at = Some(Utc::now());
         }
         passport.compliance_result = Some(result);
+    }
+}
+
+/// Backfill `lint_result` from the `dpp-rules` plausibility lint pack.
+/// Unlike `apply_compliance`, always overwrites — the pack is cheap to
+/// re-run and freshness (not preserving a caller-supplied value) is the
+/// point. A no-op when the passport carries no sector data.
+fn apply_lint(passport: &mut Passport) {
+    if let Some(sector_data) = passport.sector_data.as_ref() {
+        passport.lint_result = Some(dpp_domain::LintResult::compute(sector_data));
     }
 }
 
@@ -240,6 +259,7 @@ mod tests {
             co2e_per_unit: None,
             repairability_score: None,
             compliance_result: None,
+            lint_result: None,
             sector_data: None,
             status: PassportStatus::Draft,
             qr_code_url: None,

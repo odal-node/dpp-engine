@@ -16,7 +16,7 @@ members = [
 ]
 
 [workspace.package]
-version     = "0.5.0"
+version     = "0.6.0"
 edition     = "2024"
 authors     = ["Odal Node <dev@odal-node.io>"]
 license     = "BSL-1.1"
@@ -40,7 +40,6 @@ dpp-plugin-traits = "0.7.0"
 dpp-registry      = "0.7.0"
 dpp-calc          = "0.7.0"
 dpp-rules         = { version = "0.7.0", features = ["bundle"] }
-dpp-evidence      = "0.7.0"
 
 # Web framework
 axum         = { version = "0.8", features = ["macros", "multipart"] }

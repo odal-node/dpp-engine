@@ -247,11 +247,11 @@ impl PassportService {
         // metadata on this publish's audit entry. `jws_signature` and
         // `public_jws_signature` are frozen at this moment and never re-signed
         // by later lifecycle transitions (suspend/archive/eol only touch
-        // `status`), so evidence export (N02) must recover *this* snapshot
-        // rather than reconstruct one from the passport's current — by then
-        // possibly mutated — row. A re-publish (Suspend -> Published) runs
-        // this same path again and appends a new "published" entry with a
-        // fresh snapshot; export always uses the most recent one.
+        // `status`), so evidence dossier generation must recover *this*
+        // snapshot rather than reconstruct one from the passport's current —
+        // by then possibly mutated — row. A re-publish (Suspend -> Published)
+        // runs this same path again and appends a new "published" entry with
+        // a fresh snapshot; generation always uses the most recent one.
         let entry = AuditEntry::new(
             &updated.id.to_string(),
             "published",
@@ -373,6 +373,7 @@ mod tests {
             co2e_per_unit: None,
             repairability_score: None,
             compliance_result: None,
+            lint_result: None,
             sector_data: None,
             status: PassportStatus::Draft,
             qr_code_url: None,

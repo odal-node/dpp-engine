@@ -1,4 +1,4 @@
-//! `odal evidence` — fetch a passport's signed offline-verifiable evidence dossier.
+//! `odal evidence` — generate and store a passport's signed evidence dossier.
 
 use anyhow::Result;
 

@@ -1,0 +1,92 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schema.odal-node.io/evidence/dossier-v1.schema.json",
+  "title": "Odal Node Evidence Dossier v1",
+  "description": "A self-contained, signed snapshot of a passport's full proof chain — see EVIDENCE-DOSSIER.md for the full specification, trust model, and rationale.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["manifest", "manifestJws", "fullView", "publicView", "didDocuments", "auditEntries"],
+  "properties": {
+    "manifest": { "$ref": "#/$defs/dossierManifest" },
+    "manifestJws": { "$ref": "#/$defs/compactJws" },
+    "fullView": { "$ref": "#/$defs/signedLayer" },
+    "publicView": { "$ref": "#/$defs/signedLayer" },
+    "didDocuments": {
+      "type": "object",
+      "description": "Keyed by DID. Always contains at least manifest.issuerDid.",
+      "additionalProperties": { "type": "object" }
+    },
+    "auditEntries": {
+      "type": "array",
+      "description": "The full hash-chained audit trail, ascending timestamp order.",
+      "items": { "$ref": "#/$defs/auditEntry" }
+    },
+    "transferChain": {
+      "description": "Present iff the passport has ever changed responsible operator. A dpp-domain core type — not strict here; see EVIDENCE-DOSSIER.md's Strictness section on why input_fidelity exists.",
+      "type": ["object", "null"]
+    },
+    "eolEvent": {
+      "description": "Present iff the passport was declared end-of-life.",
+      "type": ["object", "null"]
+    },
+    "checkpoint": {
+      "description": "Always null in v1 — the signed-checkpoint layer is not yet built. Present as a field for forward compatibility.",
+      "type": "null"
+    },
+    "calcReceipts": {
+      "description": "Always empty in v1 — dpp-calc invocation is not yet wired end to end.",
+      "type": "array",
+      "maxItems": 0
+    }
+  },
+  "$defs": {
+    "compactJws": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+$",
+      "description": "Compact EdDSA JWS: base64url(header).base64url(JCS-canonical payload).base64url(signature)."
+    },
+    "dossierManifest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["formatVersion", "passportId", "issuerDid", "createdAt", "nodeVersion", "contentHashes"],
+      "properties": {
+        "formatVersion": { "const": "1" },
+        "passportId": { "type": "string" },
+        "issuerDid": { "type": "string", "pattern": "^did:web:" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "nodeVersion": { "type": "string" },
+        "rulesetVersion": { "type": "string" },
+        "contentHashes": {
+          "type": "object",
+          "additionalProperties": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+        }
+      }
+    },
+    "signedLayer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["payload", "jws"],
+      "properties": {
+        "payload": { "type": "object" },
+        "jws": { "$ref": "#/$defs/compactJws" }
+      }
+    },
+    "auditEntry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "passportId", "actor", "action", "timestamp"],
+      "properties": {
+        "id": { "type": "string", "format": "uuid" },
+        "passportId": { "type": "string" },
+        "actor": { "type": "string" },
+        "action": { "type": "string" },
+        "previousStatus": { "type": ["string", "null"] },
+        "newStatus": { "type": ["string", "null"] },
+        "metadata": { "type": ["object", "null"] },
+        "timestamp": { "type": "string", "format": "date-time" },
+        "prevHash": { "type": "string" },
+        "entryHash": { "type": "string" }
+      }
+    }
+  }
+}

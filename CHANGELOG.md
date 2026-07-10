@@ -8,7 +8,45 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 **minor** bump may contain breaking changes, each listed below under a
 **Breaking** heading with a migration note.
 
-## [Unreleased]
+## [0.6.0] - 2026-07-10
+
+### Added
+
+- Evidence dossiers are now persisted: migration `0021_evidence_dossier.sql`
+  adds an append-only `odal.evidence_dossier` table, backed by
+  `PgEvidenceDossierRepo`.
+- New evidence endpoints: `POST /api/v1/dpp/{dppId}/evidence` generates and
+  stores a dossier; `GET /api/v1/evidence/{id}` fetches one; `POST
+  /api/v1/evidence/{id}/verify` verifies a stored dossier; `POST
+  /api/v1/evidence/verify` verifies an uploaded dossier document.
+- `odal verify <dossier-id | file>` now verifies against the node instead of
+  reading a local file only — same exit-code convention (0 verified, 1
+  tamper, 2 unreadable/unparseable/unreachable).
+
+### Changed
+
+- The evidence dossier wire format (`DossierV1`, `DossierManifest`,
+  `SignedLayer`) and the audit-trail wire type (`AuditEntry`) are now defined
+  in this repo's `dpp-types` crate. The verification engine (signature,
+  hash-chain, and transfer-chain checks) now lives in `dpp-vault`'s
+  `domain::verify` module and verifies JWS signatures via `dpp-crypto`
+  directly.
+- `odal passport evidence <id>` now generates and stores a dossier (`POST`)
+  instead of exporting one on the fly (`GET`).
+
+### Removed
+
+- The `dpp-evidence` crate dependency. Its dossier format and verification
+  engine are dissolved into this repository (see Changed); the crate itself
+  was removed from `dpp-core` and its crates.io release deleted.
+
+### Breaking
+
+- `GET /api/v1/dpp/{dppId}/evidence` now returns stored-dossier summaries
+  instead of assembling a dossier on the fly. To get a dossier document,
+  `POST` to the same path first, then `GET /api/v1/evidence/{id}`.
+- `odal verify` requires a reachable node; it no longer verifies a local
+  file with zero network.
 
 ## [0.5.0] - 2026-07-08
 

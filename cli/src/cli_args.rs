@@ -99,12 +99,12 @@ pub enum Commands {
         #[command(subcommand)]
         command: SchemaCommands,
     },
-    // ── Offline verification ─────────────────────────────────────────────────
-    /// Verify an evidence dossier fully offline, zero trust in the issuing
-    /// node (see `odal passport evidence` to export one)
+    // ── Evidence verification ────────────────────────────────────────────────
+    /// Verify an evidence dossier against the node (see `odal passport
+    /// evidence` to generate one)
     Verify {
-        /// Path to the evidence dossier JSON file
-        file: String,
+        /// Stored dossier id, or path to a dossier JSON file
+        target: String,
     },
 }
 
@@ -156,9 +156,8 @@ pub enum PassportCommands {
         /// Passport ID
         id: String,
     },
-    /// Export a signed, self-contained evidence dossier for offline
-    /// verification (`odal verify`) — proof + audit chain + transfer chain
-    /// in one file.
+    /// Generate and store a signed evidence dossier (`odal verify` checks
+    /// it) — proof + audit chain + transfer chain in one document.
     Evidence {
         /// Passport ID
         id: String,

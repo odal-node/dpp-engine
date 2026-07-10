@@ -12,6 +12,7 @@
 pub mod pool;
 pub mod repo_api_key;
 pub mod repo_audit;
+pub mod repo_evidence;
 pub mod repo_operator_config;
 pub mod repo_passport;
 pub mod repo_registry_identity;
@@ -22,6 +23,7 @@ pub use pool::PgDal;
 
 pub use repo_api_key::PgApiKeyRepo;
 pub use repo_audit::PgAuditRepo;
+pub use repo_evidence::PgEvidenceDossierRepo;
 pub use repo_operator_config::PgOperatorConfigRepo;
 pub use repo_passport::PgPassportRepo;
 pub use repo_registry_identity::PgRegistryIdentityRepo;
@@ -43,6 +45,9 @@ pub(crate) fn db_err(e: sqlx::Error) -> DppError {
         }
         if msg.contains("ODAL_AUDIT") {
             return DppError::Internal("audit entries are append-only".into());
+        }
+        if msg.contains("ODAL_EVIDENCE") {
+            return DppError::Internal("evidence dossiers are append-only".into());
         }
     }
     DppError::Internal(format!("database: {e}"))

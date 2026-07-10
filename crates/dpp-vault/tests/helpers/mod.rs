@@ -18,8 +18,8 @@ use testcontainers::{
 };
 
 use dpp_dal::pg::{
-    PgApiKeyRepo, PgAuditRepo, PgDal, PgOperatorConfigRepo, PgPassportRepo, PgRegistryIdentityRepo,
-    sqlx,
+    PgApiKeyRepo, PgAuditRepo, PgDal, PgEvidenceDossierRepo, PgOperatorConfigRepo, PgPassportRepo,
+    PgRegistryIdentityRepo, sqlx,
 };
 use dpp_domain::{
     DppError, GhostArchive, GhostRegistrySync,
@@ -279,7 +279,8 @@ async fn start_vault_with_identity(dal: PgDal, identity: Arc<dyn IdentityPort>) 
             Arc::new(GhostArchive),
             String::new(),
         )
-        .with_registry_reader(operator_repo.clone()),
+        .with_registry_reader(operator_repo.clone())
+        .with_evidence_store(Arc::new(PgEvidenceDossierRepo::new(dal.clone()))),
     );
     let operator_service = Arc::new(OperatorService::new(operator_repo));
     let api_key_service = Arc::new(ApiKeyService::new(api_key_repo));

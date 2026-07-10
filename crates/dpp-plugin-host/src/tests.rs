@@ -101,6 +101,7 @@ fn empty_host_reports_no_sector_plugin() {
 fn empty_host_compliance_returns_passthrough() {
     let host = WasmPluginHost::new();
     let data = SectorData::Textile(TextileData {
+        gtin: "09506000134352".into(),
         fibre_composition: vec![FibreEntry {
             fibre: "Cotton".into(),
             pct: 100.0,
@@ -220,6 +221,7 @@ fn enrich_input_non_object_passes_through() {
 fn generate_passport_payload_no_plugin_returns_unknown_sector() {
     let host = WasmPluginHost::new();
     let data = SectorData::Textile(TextileData {
+        gtin: "09506000134352".into(),
         fibre_composition: vec![FibreEntry {
             fibre: "Cotton".into(),
             pct: 100.0,

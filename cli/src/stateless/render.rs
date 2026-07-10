@@ -7,7 +7,7 @@ use std::io::Write as _;
 
 use anyhow::Result;
 use console::style;
-use dpp_evidence::{CheckStatus, VerificationReport};
+use dpp_types::evidence::{CheckStatus, VerificationReport};
 
 use crate::config::{Config, EnvKind};
 use crate::core::types::{
@@ -187,8 +187,8 @@ pub fn render_validation_report(report: &ValidationReport) {
 }
 
 /// Render an evidence dossier verification report (`odal verify`).
-pub fn render_verification_report(report: &VerificationReport, file: &str) {
-    println!("Verifying: {file}");
+pub fn render_verification_report(report: &VerificationReport, target: &str) {
+    println!("Verifying: {target}");
     println!("Trust anchor: {}\n", report.trust_anchor_note);
     for check in &report.checks {
         match &check.status {

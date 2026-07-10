@@ -69,6 +69,37 @@ impl OdalClient {
         Ok((status, body))
     }
 
+    /// POST raw JSON `bytes` to `url` with Bearer token, sent verbatim (no
+    /// reserialisation) — so a server-side content check sees exactly what
+    /// was on disk.
+    pub async fn post_bytes(&self, url: &str, bytes: Vec<u8>) -> Result<(StatusCode, String)> {
+        let resp = self
+            .inner
+            .post(url)
+            .bearer_auth(&self.bearer)
+            .header(reqwest::header::CONTENT_TYPE, "application/json")
+            .body(bytes)
+            .send()
+            .await?;
+        let status = resp.status();
+        let body = resp.text().await?;
+        Ok((status, body))
+    }
+
+    /// POST with an empty body to `url` with Bearer token — for endpoints
+    /// that take no request payload.
+    pub async fn post_empty(&self, url: &str) -> Result<(StatusCode, String)> {
+        let resp = self
+            .inner
+            .post(url)
+            .bearer_auth(&self.bearer)
+            .send()
+            .await?;
+        let status = resp.status();
+        let body = resp.text().await?;
+        Ok((status, body))
+    }
+
     /// PATCH JSON `payload` to `url` with Bearer token.
     pub async fn patch_json(
         &self,

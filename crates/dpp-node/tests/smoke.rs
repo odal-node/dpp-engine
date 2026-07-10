@@ -24,8 +24,8 @@ use base64::Engine as _;
 use dpp_crypto::identity::LocalIdentityService;
 use dpp_crypto::keystore::KeyStore;
 use dpp_dal::pg::{
-    PgApiKeyRepo, PgAuditRepo, PgDal, PgOperatorConfigRepo, PgPassportRepo, PgRegistryIdentityRepo,
-    PgTransferRepo, sqlx,
+    PgApiKeyRepo, PgAuditRepo, PgDal, PgEvidenceDossierRepo, PgOperatorConfigRepo, PgPassportRepo,
+    PgRegistryIdentityRepo, PgTransferRepo, sqlx,
 };
 use dpp_domain::{
     DppError, GhostArchive, GhostRegistrySync,
@@ -184,6 +184,7 @@ async fn start_node_with_dal(dal: PgDal) -> String {
             String::new(),
         )
         .with_transfer_store(Arc::new(PgTransferRepo::new(dal.clone())))
+        .with_evidence_store(Arc::new(PgEvidenceDossierRepo::new(dal.clone())))
         .with_registry_reader(operator_repo.clone()),
     );
     let operator_service = Arc::new(OperatorService::new(operator_repo));

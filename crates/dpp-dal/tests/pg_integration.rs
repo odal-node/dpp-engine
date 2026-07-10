@@ -25,7 +25,7 @@ use testcontainers::{
 };
 use uuid::Uuid;
 
-use dpp_dal::pg::{PgApiKeyRepo, PgAuditRepo, PgDal, PgPassportRepo, sqlx};
+use dpp_dal::pg::{PgApiKeyRepo, PgAuditRepo, PgDal, PgEvidenceDossierRepo, PgPassportRepo, sqlx};
 use dpp_domain::{
     domain::{
         passport::{FacilitySnapshot, ManufacturerInfo, Passport, PassportId},
@@ -37,6 +37,9 @@ use dpp_domain::{
 use dpp_types::{
     api_key::{ApiKey, ApiKeyRecord, ApiKeyRepository},
     audit::{AuditEntry, AuditRepository},
+    evidence::{
+        DossierManifest, DossierV1, EvidenceDossierRecord, EvidenceDossierRepository, SignedLayer,
+    },
 };
 
 struct TestPg {
@@ -111,6 +114,7 @@ fn make_passport() -> Passport {
         co2e_per_unit: None,
         repairability_score: None,
         compliance_result: None,
+        lint_result: None,
         sector_data: None,
         status: PassportStatus::Draft,
         qr_code_url: None,
@@ -434,4 +438,162 @@ async fn t8_app_role_can_read_every_table() {
             .await
             .unwrap_or_else(|e| panic!("odal_app cannot SELECT from {table}: {e}"));
     }
+}
+
+/// A structurally-valid but unsigned dossier — enough to persist/round-trip
+/// through `doc JSONB`; these tests exercise storage, not verification.
+fn minimal_dossier(passport_id: &str) -> DossierV1 {
+    DossierV1 {
+        manifest: DossierManifest {
+            format_version: "1".into(),
+            passport_id: passport_id.into(),
+            issuer_did: "did:web:pg-test.example".into(),
+            created_at: chrono::Utc::now(),
+            node_version: "test".into(),
+            ruleset_version: None,
+            content_hashes: std::collections::BTreeMap::new(),
+        },
+        manifest_jws: "x.y.z".into(),
+        full_view: SignedLayer {
+            payload: serde_json::json!({"passportId": passport_id}),
+            jws: "x.y.z".into(),
+        },
+        public_view: SignedLayer {
+            payload: serde_json::json!({"passportId": passport_id}),
+            jws: "x.y.z".into(),
+        },
+        did_documents: std::collections::BTreeMap::new(),
+        audit_entries: vec![],
+        transfer_chain: None,
+        eol_event: None,
+        checkpoint: None,
+        calc_receipts: vec![],
+    }
+}
+
+// T10 — evidence dossier round trip: insert, get, list summaries.
+#[tokio::test]
+async fn t10_evidence_dossier_round_trip() {
+    let pg = start_pg().await;
+    let passport_repo = PgPassportRepo::new(pg.dal.clone());
+    let passport = passport_repo
+        .create(make_passport())
+        .await
+        .expect("create passport");
+
+    let evidence = PgEvidenceDossierRepo::new(pg.dal.clone());
+    let dossier = minimal_dossier(&passport.id.to_string());
+    let record = EvidenceDossierRecord {
+        id: Uuid::now_v7(),
+        passport_id: passport.id,
+        actor: "test".into(),
+        created_at: chrono::Utc::now(),
+        doc_hash: "deadbeef".into(),
+        dossier,
+    };
+    evidence.insert(&record).await.expect("insert");
+
+    let fetched = evidence
+        .get(record.id)
+        .await
+        .expect("get")
+        .expect("must exist");
+    assert_eq!(fetched.doc_hash, record.doc_hash);
+    assert_eq!(fetched.actor, "test");
+    assert_eq!(
+        fetched.dossier.manifest.passport_id,
+        passport.id.to_string()
+    );
+
+    let summaries = evidence.list_by_passport(passport.id).await.expect("list");
+    assert_eq!(summaries.len(), 1);
+    assert_eq!(summaries[0].id, record.id);
+
+    assert!(
+        evidence.get(Uuid::now_v7()).await.expect("get").is_none(),
+        "unknown id must return None, not error"
+    );
+}
+
+// T11 — evidence dossier rows are immutable at the database layer, and a
+// dossier referencing an unknown passport is rejected by the FK.
+#[tokio::test]
+async fn t11_evidence_dossier_append_only_and_fk_enforced() {
+    let pg = start_pg().await;
+    let passport_repo = PgPassportRepo::new(pg.dal.clone());
+    let passport = passport_repo
+        .create(make_passport())
+        .await
+        .expect("create passport");
+
+    let evidence = PgEvidenceDossierRepo::new(pg.dal.clone());
+    let record = EvidenceDossierRecord {
+        id: Uuid::now_v7(),
+        passport_id: passport.id,
+        actor: "test".into(),
+        created_at: chrono::Utc::now(),
+        doc_hash: "deadbeef".into(),
+        dossier: minimal_dossier(&passport.id.to_string()),
+    };
+    evidence.insert(&record).await.expect("insert");
+
+    let admin = sqlx::postgres::PgPoolOptions::new()
+        .connect(&pg.admin_url)
+        .await
+        .expect("admin");
+    let res = sqlx::query("UPDATE odal.evidence_dossier SET actor = 'evil' WHERE id = $1")
+        .bind(record.id)
+        .execute(&admin)
+        .await;
+    assert!(res.is_err(), "evidence UPDATE must be rejected by trigger");
+    let res = sqlx::query("DELETE FROM odal.evidence_dossier WHERE id = $1")
+        .bind(record.id)
+        .execute(&admin)
+        .await;
+    assert!(res.is_err(), "evidence DELETE must be rejected by trigger");
+
+    let orphan = EvidenceDossierRecord {
+        id: Uuid::now_v7(),
+        passport_id: PassportId::new(),
+        actor: "test".into(),
+        created_at: chrono::Utc::now(),
+        doc_hash: "deadbeef".into(),
+        dossier: minimal_dossier(&Uuid::now_v7().to_string()),
+    };
+    let res = evidence.insert(&orphan).await;
+    assert!(
+        res.is_err(),
+        "insert for an unknown passport_id must fail the FK constraint"
+    );
+}
+
+// T12 — list_by_passport orders newest-first.
+#[tokio::test]
+async fn t12_evidence_dossier_list_orders_newest_first() {
+    let pg = start_pg().await;
+    let passport_repo = PgPassportRepo::new(pg.dal.clone());
+    let passport = passport_repo
+        .create(make_passport())
+        .await
+        .expect("create passport");
+
+    let evidence = PgEvidenceDossierRepo::new(pg.dal.clone());
+    let mk = || EvidenceDossierRecord {
+        id: Uuid::now_v7(),
+        passport_id: passport.id,
+        actor: "test".into(),
+        created_at: chrono::Utc::now(),
+        doc_hash: "deadbeef".into(),
+        dossier: minimal_dossier(&passport.id.to_string()),
+    };
+    let first = mk();
+    evidence.insert(&first).await.expect("insert first");
+    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    let second = mk();
+    evidence.insert(&second).await.expect("insert second");
+
+    let summaries = evidence.list_by_passport(passport.id).await.expect("list");
+    assert_eq!(summaries.len(), 2);
+    assert_eq!(summaries[0].id, second.id, "newest dossier must be first");
+    assert_eq!(summaries[1].id, first.id);
 }

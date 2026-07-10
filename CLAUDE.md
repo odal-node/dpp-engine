@@ -37,6 +37,7 @@ When editing existing code:
 
 When your changes create orphans:
 - Remove imports/variables/functions that YOUR changes made unused.
+
 - Don't remove pre-existing dead code unless asked.
 
 The test: Every changed line should trace directly to the user's request.
@@ -268,6 +269,11 @@ Background cleanup task runs every 6 hours, deleting completed/failed jobs older
 | POST | `/vault/api/v1/dpp/{dppId}/suspend` | Bearer | Suspend |
 | POST | `/vault/api/v1/dpp/{dppId}/archive` | Bearer | Archive |
 | GET | `/vault/api/v1/dpp/{dppId}/history` | Bearer | Audit trail |
+| POST | `/vault/api/v1/dpp/{dppId}/evidence` | Bearer | Generate + store an evidence dossier |
+| GET | `/vault/api/v1/dpp/{dppId}/evidence` | Bearer | List stored dossier summaries |
+| GET | `/vault/api/v1/evidence/{id}` | Bearer | Fetch a stored dossier document |
+| POST | `/vault/api/v1/evidence/{id}/verify` | Bearer | Verify a stored dossier |
+| POST | `/vault/api/v1/evidence/verify` | Bearer | Verify an uploaded dossier document |
 | GET | `/vault/api/v1/node/state` | Bearer | Node setup state (claimed / configured) |
 | GET | `/vault/api/v1/operator` | Bearer | Get operator config |
 | PATCH | `/vault/api/v1/operator` | Bearer | Update operator branding |

@@ -23,7 +23,10 @@ use crate::{
         archive::archive_handler,
         create::create_handler,
         eol::eol_handler,
-        evidence::evidence_handler,
+        evidence::{
+            generate_evidence_handler, get_evidence_handler, list_evidence_handler,
+            verify_document_handler, verify_evidence_handler,
+        },
         health::{health_handler, ready_handler},
         history::history_handler,
         info::info_handler,
@@ -71,7 +74,13 @@ pub fn build(state: AppState) -> Router {
             post(transfer_accept_handler),
         )
         .route("/dpp/{dppId}/history", get(history_handler))
-        .route("/dpp/{dppId}/evidence", get(evidence_handler))
+        .route(
+            "/dpp/{dppId}/evidence",
+            get(list_evidence_handler).post(generate_evidence_handler),
+        )
+        .route("/evidence/verify", post(verify_document_handler))
+        .route("/evidence/{id}", get(get_evidence_handler))
+        .route("/evidence/{id}/verify", post(verify_evidence_handler))
         // ── Node setup state ──────────────────────────────────────────
         .route("/node/state", get(node_state_handler))
         // ── Operator config ───────────────────────────────────────────

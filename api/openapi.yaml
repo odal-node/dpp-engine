@@ -380,11 +380,13 @@ components:
     EvidenceDossier:
       type: object
       description: |
-        A self-contained, signed export of a passport's full proof chain,
-        verifiable offline with zero trust in the issuing node. See
-        `dpp-evidence`'s `spec/dossier-v1.md` (in the `dpp-core` repository)
-        for the full specification, including the trust model and why
-        `calcReceipts`/`checkpoint` are always empty/`null` in format v1.
+        A self-contained, signed snapshot of a passport's full proof chain,
+        persisted by the node at generation time. Verification
+        (`POST /evidence/{id}/verify`) is an integrity check of the stored
+        dossier against its own signatures and hash chains. See
+        `docs/architecture/EVIDENCE-DOSSIER.md` for the full specification,
+        including why `calcReceipts`/`checkpoint` are always empty/`null` in
+        format v1.
       required: [manifest, manifestJws, fullView, publicView, didDocuments, auditEntries]
       properties:
         manifest:
@@ -421,6 +423,75 @@ components:
           description: Always empty in format v1 — `dpp-calc` invocation is not yet wired end to end.
           items:
             type: object
+
+    EvidenceDossierRecord:
+      type: object
+      description: A stored dossier snapshot — the dossier plus its persistence envelope.
+      required: [id, passportId, actor, createdAt, docHash, dossier]
+      properties:
+        id:
+          type: string
+          format: uuid
+        passportId:
+          type: string
+          format: uuid
+        actor:
+          type: string
+          description: Who requested generation.
+        createdAt:
+          type: string
+          format: date-time
+        docHash:
+          type: string
+          description: Hex SHA-256 of the JCS-canonicalised stored dossier document.
+        dossier:
+          $ref: "#/components/schemas/EvidenceDossier"
+
+    EvidenceDossierSummary:
+      type: object
+      description: Listing projection of a stored dossier — everything but the document.
+      required: [id, passportId, actor, createdAt, docHash]
+      properties:
+        id:
+          type: string
+          format: uuid
+        passportId:
+          type: string
+          format: uuid
+        actor:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        docHash:
+          type: string
+
+    CheckResult:
+      type: object
+      description: Outcome of a single named verification check.
+      required: [name, status]
+      properties:
+        name:
+          type: string
+          example: "audit_chain"
+        status:
+          type: string
+          enum: [pass, fail, absent]
+        detail:
+          type: string
+          description: Present when status is `fail` or `absent`.
+
+    VerificationReport:
+      type: object
+      required: [trustAnchorNote, checks]
+      properties:
+        trustAnchorNote:
+          type: string
+          example: "trust anchored to the dossier's embedded DID-document snapshot dated 2026-07-10T00:00:00Z"
+        checks:
+          type: array
+          items:
+            $ref: "#/components/schemas/CheckResult"
 
     OperatorConfig:
       type: object
@@ -792,9 +863,13 @@ components:
 
     ImportSyncResponse:
       type: object
-      required: [totalRows, successCount, errorCount, created, errors]
+      required: [jobId, totalRows, successCount, errorCount, created, errors]
       description: Returned for synchronous imports (≤ 100 valid rows) and dry runs.
       properties:
+        jobId:
+          type: string
+          format: uuid
+          description: The job this response's report was persisted under — retrievable later via the job-status endpoint.
         totalRows:
           type: integer
         successCount:
@@ -845,6 +920,10 @@ components:
           type: object
           nullable: true
           description: Populated on completion (created/errors) or failure (reason).
+        report:
+          type: object
+          nullable: true
+          description: The row-addressed findings report — populated for every job, dry-run or apply, independent of `result`.
 
     ApiError:
       type: object
@@ -1026,6 +1105,48 @@ paths:
                     type: integer
         "401":
           $ref: "#/components/responses/Unauthorized"
+
+  /vault/api/v1/dpp/by-identity:
+    get:
+      operationId: findDppByIdentity
+      summary: Find a DPP by exact compound identity
+      description: |
+        Look up a passport by exact (sector, GTIN, batch) match, across
+        `draft` and `active` statuses. Backs the import delta-matcher —
+        not intended as a general-purpose search (use `GET /dpps` for that).
+        `batchId` omitted matches only passports with no batch set.
+      tags: [DPP Management]
+      security:
+        - BearerApiKey: []
+        - BasicAuth: []
+      parameters:
+        - name: sector
+          in: query
+          required: true
+          schema:
+            type: string
+            example: "battery"
+        - name: gtin
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: batchId
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The matching DPP record.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PassportResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
 
   /vault/api/v1/dpp/{dppId}:
     get:
@@ -1247,19 +1368,54 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+  /vault/api/v1/dpp/{dppId}/lint:
+    post:
+      operationId: relintDpp
+      summary: Re-check plausibility-lint findings
+      description: |
+        Recomputes the `dpp-rules` plausibility lint pack against the DPP's
+        current sector data and persists the refreshed `lintResult` (pack
+        version, findings, assessed-at timestamp). Findings are non-binding —
+        arithmetic and physical-plausibility checks distinct from binding
+        compliance rules — and never gate publish or any other transition.
+
+        Works regardless of DPP status, including `active` (published):
+        re-checking does not retroactively affect the passport's JWS
+        signature, which is frozen over whatever `lintResult` looked like at
+        publish time. No request body is required.
+      tags: [DPP Management]
+      security:
+        - BearerApiKey: []
+        - BasicAuth: []
+      parameters:
+        - name: dppId
+          in: path
+          required: true
+          schema:
+            $ref: "#/components/schemas/DppId"
+      responses:
+        "200":
+          description: Lint findings refreshed. Returns the full passport record.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PassportResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
   /vault/api/v1/dpp/{dppId}/evidence:
-    get:
-      operationId: getDppEvidence
-      summary: Export a signed, offline-verifiable evidence dossier
+    post:
+      operationId: generateDppEvidence
+      summary: Generate and store a signed evidence dossier
       description: |
         Assembles a self-contained, signed dossier proving a passport's full
         proof chain — both JWS signatures, DID document snapshots, the
         hash-chained audit trail, and (when present) the transfer chain and
-        end-of-life record. Requires no trust in this node to verify: pair
-        with the `odal verify` CLI command, or the `dpp-evidence` crate
-        directly, to check it fully offline. See `dpp-evidence`'s
-        `spec/dossier-v1.md` in the `dpp-core` repository for the complete
-        format specification and trust model.
+        end-of-life record — and persists it. See
+        `docs/architecture/EVIDENCE-DOSSIER.md` for the complete format
+        specification.
 
         Authenticated tier only — the dossier's `fullView` member carries
         full-view (non-redacted) passport data. Requires the passport to have
@@ -1275,8 +1431,64 @@ paths:
           schema:
             $ref: "#/components/schemas/DppId"
       responses:
+        "201":
+          description: The stored dossier record.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EvidenceDossierRecord"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+    get:
+      operationId: listDppEvidence
+      summary: List stored evidence dossiers for a passport
+      description: Summaries only (no document body), newest first.
+      tags: [DPP Management]
+      security:
+        - BearerApiKey: []
+        - BasicAuth: []
+      parameters:
+        - name: dppId
+          in: path
+          required: true
+          schema:
+            $ref: "#/components/schemas/DppId"
+      responses:
         "200":
-          description: The evidence dossier.
+          description: Stored dossier summaries.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/EvidenceDossierSummary"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /vault/api/v1/evidence/{id}:
+    get:
+      operationId: getEvidenceDossier
+      summary: Fetch one stored dossier's document
+      tags: [DPP Management]
+      security:
+        - BearerApiKey: []
+        - BasicAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: The evidence dossier document.
           content:
             application/json:
               schema:
@@ -1285,8 +1497,64 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "404":
           $ref: "#/components/responses/NotFound"
-        "409":
-          $ref: "#/components/responses/Conflict"
+
+  /vault/api/v1/evidence/{id}/verify:
+    post:
+      operationId: verifyStoredEvidenceDossier
+      summary: Verify a stored dossier
+      description: |
+        An integrity check against the stored dossier's own signatures and
+        hash chains. A tamper is still a `200` response — the report's
+        `checks` name which check failed.
+      tags: [DPP Management]
+      security:
+        - BearerApiKey: []
+        - BasicAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: The verification report.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VerificationReport"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /vault/api/v1/evidence/verify:
+    post:
+      operationId: verifyUploadedEvidenceDossier
+      summary: Verify an uploaded dossier document
+      description: Same checks as the stored-dossier verify endpoint, run against an uploaded document instead.
+      tags: [DPP Management]
+      security:
+        - BearerApiKey: []
+        - BasicAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EvidenceDossier"
+      responses:
+        "200":
+          description: The verification report.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VerificationReport"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "422":
+          description: Not a valid dossier — malformed JSON or an unrecognised field.
 
   # ---- Operator Config (odal-vault) ----------------------------------------
 
@@ -1912,7 +2180,11 @@ paths:
 
         - ≤ 100 valid rows → processed synchronously, `200` with results.
         - `> 100` valid rows → an async job is queued, `202` with a `jobId`.
-        - `dry_run=true` → validate only, `200` with the would-be results.
+        - `mode=dry_run` → validate only, `200` with the would-be results.
+
+        Every import — dry-run or apply, sync or async — mints a job id and
+        persists a row-addressed report retrievable via the job-status
+        endpoint, even when this endpoint's own response is synchronous.
       tags: [Integrator]
       security:
         - BearerApiKey: []
@@ -1935,9 +2207,9 @@ paths:
                   type: string
                   format: binary
                   description: CSV or XLSX file.
-                dry_run:
+                mode:
                   type: string
-                  description: '"true" or "1" to validate without creating records.'
+                  description: '"dry_run" to validate without creating records; any other value (or omitted) means apply.'
       responses:
         "200":
           description: Synchronous import (or dry-run) results.
