@@ -28,8 +28,10 @@ use uuid::Uuid;
 use dpp_dal::pg::{PgApiKeyRepo, PgAuditRepo, PgDal, PgEvidenceDossierRepo, PgPassportRepo, sqlx};
 use dpp_domain::{
     domain::{
+        gtin::Gtin,
         passport::{FacilitySnapshot, ManufacturerInfo, Passport, PassportId},
-        sector::Sector,
+        product_identity::ProductIdentity,
+        sector::{BatteryChemistry, BatteryData, Sector, SectorData},
         status::PassportStatus,
     },
     ports::passport_repo::PassportRepository,
@@ -41,6 +43,7 @@ use dpp_types::{
         DossierManifest, DossierV1, EvidenceDossierRecord, EvidenceDossierRepository, SignedLayer,
     },
 };
+use sqlx::Row;
 
 struct TestPg {
     dal: PgDal,
@@ -133,6 +136,50 @@ fn make_passport() -> Passport {
         facility: None,
         seal: None,
     }
+}
+
+/// A battery passport carrying real `sectorData` (with `gtin`) and `status`,
+/// for the identity-lookup test — `make_passport()` deliberately leaves
+/// `sector_data: None`, which `find_by_identity` can never match.
+fn battery_passport_with(gtin: &str, batch: Option<&str>, status: PassportStatus) -> Passport {
+    let mut p = make_passport();
+    p.id = PassportId::new();
+    p.batch_id = batch.map(str::to_owned);
+    p.status = status;
+    p.sector_data = Some(SectorData::Battery(BatteryData {
+        gtin: Gtin::parse(gtin).expect("valid test gtin"),
+        battery_chemistry: BatteryChemistry::Lfp,
+        nominal_voltage_v: 3.2,
+        nominal_capacity_ah: 100.0,
+        expected_lifetime_cycles: 3000,
+        co2e_per_unit_kg: 85.4,
+        recycled_content_cobalt_pct: None,
+        recycled_content_lithium_pct: None,
+        recycled_content_nickel_pct: None,
+        state_of_health_pct: None,
+        rated_capacity_kwh: None,
+        carbon_footprint_class: None,
+        due_diligence_url: None,
+        cathode_material: None,
+        anode_material: None,
+        electrolyte_material: None,
+        critical_raw_materials: None,
+        disassembly_instructions_url: None,
+        soh_methodology: None,
+        operating_temp_min_c: None,
+        operating_temp_max_c: None,
+        rated_energy_wh: None,
+        recycled_content_lead_pct: None,
+        battery_weight_kg: None,
+        battery_type: None,
+        round_trip_efficiency_pct: None,
+        internal_resistance_mohm: None,
+        manufacturing_date: None,
+        manufacturing_place: None,
+        battery_model_id: None,
+        battery_passport_number: None,
+    }));
+    p
 }
 
 /// Build a facility snapshot carrying `value` (other fields are placeholders) for
@@ -438,6 +485,107 @@ async fn t8_app_role_can_read_every_table() {
             .await
             .unwrap_or_else(|e| panic!("odal_app cannot SELECT from {table}: {e}"));
     }
+}
+
+// T9 — find_by_identity matches an exact (sector, gtin, batch) across both
+// Draft and Published, ignores non-matching rows, and does so via
+// 0019_passport_identity_index.sql rather than a sequential scan.
+#[tokio::test]
+async fn t9_find_by_identity_matches_draft_and_published_via_index() {
+    let pg = start_pg().await;
+    let repo = PgPassportRepo::new(pg.dal.clone());
+
+    // Enough decoy rows that a seq scan and an index scan would visibly differ
+    // in the query plan — a handful of rows can fool the planner into a seq
+    // scan regardless of the index's existence.
+    for i in 0..200 {
+        let gtin = format!("{i:013}{}", check_digit_for(&format!("{i:013}")));
+        repo.create(battery_passport_with(
+            &gtin,
+            Some("DECOY"),
+            PassportStatus::Draft,
+        ))
+        .await
+        .expect("create decoy");
+    }
+
+    let draft = battery_passport_with("09506000134352", Some("BATCH-D"), PassportStatus::Draft);
+    let draft_id = draft.id;
+    repo.create(draft).await.expect("create draft");
+
+    let published = battery_passport_with("01234567890128", None, PassportStatus::Published);
+    let published_id = published.id;
+    repo.create(published).await.expect("create published");
+
+    let draft_identity = ProductIdentity {
+        sector: Sector::Battery,
+        gtin: "09506000134352".into(),
+        batch_id: Some("BATCH-D".into()),
+    };
+    let found = repo
+        .find_by_identity(&draft_identity)
+        .await
+        .expect("query")
+        .expect("draft must match");
+    assert_eq!(found.id, draft_id);
+
+    // batch_id: None must match only passports with no batch set — not "any batch".
+    let published_identity = ProductIdentity {
+        sector: Sector::Battery,
+        gtin: "01234567890128".into(),
+        batch_id: None,
+    };
+    let found = repo
+        .find_by_identity(&published_identity)
+        .await
+        .expect("query")
+        .expect("published must match");
+    assert_eq!(found.id, published_id);
+
+    let no_match = ProductIdentity {
+        sector: Sector::Battery,
+        gtin: "01234567890128".into(),
+        batch_id: Some("WRONG-BATCH".into()),
+    };
+    assert!(
+        repo.find_by_identity(&no_match)
+            .await
+            .expect("query")
+            .is_none(),
+        "a batch mismatch must not fall back to matching on gtin alone"
+    );
+
+    let plan_rows = sqlx::query(
+        "EXPLAIN SELECT doc FROM odal.passport \
+         WHERE status IN ('draft','active') \
+           AND sector = 'battery' \
+           AND doc->'sectorData'->>'gtin' = '09506000134352' \
+           AND doc->>'batchId' IS NOT DISTINCT FROM 'BATCH-D' \
+         LIMIT 1",
+    )
+    .fetch_all(pg.dal.pool())
+    .await
+    .expect("explain");
+    let plan: String = plan_rows
+        .iter()
+        .map(|r| r.get::<String, _>("QUERY PLAN"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        plan.contains("Index Scan") || plan.contains("Bitmap Index Scan"),
+        "expected idx_passport_identity to be used, got plan:\n{plan}"
+    );
+    assert!(
+        !plan.contains("Seq Scan"),
+        "find_by_identity must not fall back to a sequential scan, got plan:\n{plan}"
+    );
+}
+
+/// GS1 mod-10 check digit for a 13-digit data prefix — lets the decoy loop
+/// generate 200 distinct, individually valid GTIN-14s.
+fn check_digit_for(data13: &str) -> u8 {
+    let digits: Vec<u8> = data13.bytes().map(|b| b - b'0').collect();
+    dpp_domain::domain::gtin::gs1_check_digit(&digits)
 }
 
 /// A structurally-valid but unsigned dossier — enough to persist/round-trip
