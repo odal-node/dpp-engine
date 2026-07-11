@@ -81,7 +81,7 @@ qrcode       = "0.12"
 image        = "0.24"
 
 # HTTP client
-reqwest      = { version = "0.12", default-features = false, features = ["json", "stream", "multipart", "rustls-tls"] }
+reqwest      = { version = "0.13", default-features = false, features = ["json", "stream", "multipart", "rustls-tls"] }
 
 # Cache
 redis        = { version = "0.25", features = ["tokio-comp", "connection-manager"] }
