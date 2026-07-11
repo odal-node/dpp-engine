@@ -194,14 +194,23 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!(version = %active_ruleset.version(), "active ruleset");
 
     // ── Vault service state ────────────────────────────────────────────────────
-    let operator_country = db
+    let operator_country = match db
         .operator_repo
         .get(dpp_types::STANDALONE_OPERATOR_ID)
         .await
-        .ok()
-        .flatten()
-        .map(|c| c.country)
-        .unwrap_or_default();
+    {
+        Ok(cfg) => cfg.map(|c| c.country).unwrap_or_default(),
+        Err(e) => {
+            // Don't silently bake an empty country into every registry payload
+            // for the life of the process — a transient DB hiccup at boot must
+            // be visible, like every other fallible boot step in this file.
+            tracing::warn!(
+                error = %e,
+                "could not read operator config at boot — operator country left empty this run"
+            );
+            String::new()
+        }
+    };
 
     let compliance: Arc<dyn ComplianceRegistry> = plugin_host.clone();
     // Clone the registry-sync port for the outbox drain task before it is moved

@@ -35,36 +35,68 @@ pub struct TransferChainBreak {
 /// Verify every completed transfer record's signatures against the DID
 /// documents available in `did_documents` (keyed by DID).
 ///
-/// A record with no signature yet (still `Initiated`) is skipped — it has
-/// nothing to verify. A record whose signer's DID document is missing from
-/// `did_documents` fails closed (reported, not silently skipped) so a
-/// verifier never reports false-green on an unresolvable cross-operator DID.
+/// A **completed** record (has `completed_at`, not rejected/cancelled) must
+/// carry both operator signatures — an absent signature fails closed rather than
+/// being treated as "nothing to verify", so a record a producing node marked
+/// completed without signing can never pass with zero cryptographic checks. A
+/// still-`Initiated` record's not-yet-present signature is skipped. A record
+/// whose signer's DID document is missing from `did_documents` fails closed
+/// (reported, not silently skipped) so a verifier never reports false-green on
+/// an unresolvable cross-operator DID.
 ///
 /// # Errors
-/// [`TransferChainBreak`] at the first record with a bad or unverifiable
-/// signature.
+/// [`TransferChainBreak`] at the first record with a missing (on a completed
+/// record), bad, or unverifiable signature.
 pub fn verify_transfer_chain(
     chain: &TransferChain,
     did_documents: &BTreeMap<String, serde_json::Value>,
 ) -> Result<(), TransferChainBreak> {
     for (index, record) in chain.transfers.iter().enumerate() {
+        // A completed transfer must be fully signed by both parties.
+        let is_completed = record.completed_at.is_some()
+            && record.rejected_at.is_none()
+            && record.cancelled_at.is_none();
+
         let payload = record.signing_payload();
 
-        if let Some(sig) = &record.from_signature {
-            check_signature(&record.from_operator.did, sig, &payload, did_documents).map_err(
-                |reason| TransferChainBreak {
+        match &record.from_signature {
+            Some(sig) => {
+                check_signature(&record.from_operator.did, sig, &payload, did_documents).map_err(
+                    |reason| TransferChainBreak {
+                        index,
+                        issue: TransferSignatureIssue::From(reason),
+                    },
+                )?;
+            }
+            None if is_completed => {
+                return Err(TransferChainBreak {
                     index,
-                    issue: TransferSignatureIssue::From(reason),
-                },
-            )?;
+                    issue: TransferSignatureIssue::From(
+                        "completed transfer is missing the from-operator signature".into(),
+                    ),
+                });
+            }
+            None => {}
         }
-        if let Some(sig) = &record.to_signature {
-            check_signature(&record.to_operator.did, sig, &payload, did_documents).map_err(
-                |reason| TransferChainBreak {
+
+        match &record.to_signature {
+            Some(sig) => {
+                check_signature(&record.to_operator.did, sig, &payload, did_documents).map_err(
+                    |reason| TransferChainBreak {
+                        index,
+                        issue: TransferSignatureIssue::To(reason),
+                    },
+                )?;
+            }
+            None if is_completed => {
+                return Err(TransferChainBreak {
                     index,
-                    issue: TransferSignatureIssue::To(reason),
-                },
-            )?;
+                    issue: TransferSignatureIssue::To(
+                        "completed transfer is missing the to-operator signature".into(),
+                    ),
+                });
+            }
+            None => {}
         }
     }
     Ok(())
@@ -230,5 +262,69 @@ mod tests {
 
         let brk = verify_transfer_chain(&chain, &docs).expect_err("must fail closed");
         assert!(matches!(brk.issue, TransferSignatureIssue::To(_)));
+    }
+
+    #[test]
+    fn completed_record_without_signatures_fails_closed() {
+        // A record marked completed but carrying no signatures (a producing-node
+        // workflow bug) must fail closed, not pass with zero cryptographic checks.
+        let record = TransferRecord {
+            transfer_id: Uuid::now_v7(),
+            passport_id: PassportId::new(),
+            from_operator: operator("did:web:from.example"),
+            to_operator: operator("did:web:to.example"),
+            reason: TransferReason::Sale,
+            from_signature: None,
+            to_signature: None,
+            initiated_at: Utc::now(),
+            completed_at: Some(Utc::now()),
+            rejected_at: None,
+            cancelled_at: None,
+            notes: None,
+        };
+        let chain = TransferChain {
+            passport_id: record.passport_id,
+            original_operator: operator("did:web:from.example"),
+            transfers: vec![record],
+        };
+        // No DID docs needed — it must fail on the missing signature first.
+        let brk = verify_transfer_chain(&chain, &BTreeMap::new())
+            .expect_err("a completed but unsigned record must fail closed");
+        assert_eq!(brk.index, 0);
+        assert!(matches!(brk.issue, TransferSignatureIssue::From(_)));
+    }
+
+    #[test]
+    fn initiated_record_pending_countersignature_is_skipped() {
+        // Still-Initiated (not completed): from signed, awaiting the to-operator.
+        // The absent to-signature is skipped, not treated as a failure.
+        let from_key = SigningKey::from_bytes(&[1u8; 32]);
+        let mut record = TransferRecord {
+            transfer_id: Uuid::now_v7(),
+            passport_id: PassportId::new(),
+            from_operator: operator("did:web:from.example"),
+            to_operator: operator("did:web:to.example"),
+            reason: TransferReason::Sale,
+            from_signature: None,
+            to_signature: None,
+            initiated_at: Utc::now(),
+            completed_at: None,
+            rejected_at: None,
+            cancelled_at: None,
+            notes: None,
+        };
+        let payload = record.signing_payload();
+        record.from_signature = Some(sign(&from_key, &payload));
+        let chain = TransferChain {
+            passport_id: record.passport_id,
+            original_operator: operator("did:web:from.example"),
+            transfers: vec![record],
+        };
+        let mut docs = BTreeMap::new();
+        docs.insert("did:web:from.example".to_string(), did_doc_for(&from_key));
+        assert!(
+            verify_transfer_chain(&chain, &docs).is_ok(),
+            "an initiated (uncompleted) record must not fail on its pending countersignature"
+        );
     }
 }

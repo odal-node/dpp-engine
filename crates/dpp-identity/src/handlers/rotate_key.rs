@@ -37,13 +37,22 @@ pub async fn rotate_key_handler(
     State(state): State<AppState>,
     Json(body): Json<RotateRequest>,
 ) -> impl IntoResponse {
-    if body.operator_id.is_empty() {
-        return http_problem::unprocessable("operator_id is required").into_response();
+    if !super::sign::is_valid_operator_id(&body.operator_id) {
+        return http_problem::unprocessable(
+            "operator_id must be 1-64 characters of [A-Za-z0-9._:-]",
+        )
+        .into_response();
     }
 
-    // Archive first — best effort; log but don't abort on failure.
+    // Archive first — and ABORT if it fails. Generating a new key overwrites the
+    // current record, so proceeding without a successful archive would destroy
+    // the old key with no backup and permanently invalidate every JWS it signed.
     if let Err(e) = state.store.archive_key(&body.operator_id) {
-        tracing::warn!(operator_id = %body.operator_id, error = %e, "failed to archive old key before rotation");
+        tracing::error!(operator_id = %body.operator_id, error = %e, "aborting rotation — could not archive the current signing key");
+        return http_problem::internal_error(
+            "could not archive the current signing key; rotation aborted to avoid losing it",
+        )
+        .into_response();
     }
 
     let new_key = match state.store.generate_key(&body.operator_id) {

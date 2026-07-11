@@ -63,12 +63,22 @@ impl ResourceLimiter for HostState {
     fn table_growing(
         &mut self,
         _current: usize,
-        _desired: usize,
+        desired: usize,
         _maximum: Option<usize>,
     ) -> Result<bool, wasmtime::Error> {
-        Ok(true)
+        // Meter table growth like linear memory. Otherwise a single `table.grow`
+        // with a huge element count forces a large host-side allocation that
+        // fuel counts as only one instruction — a resource-limit bypass distinct
+        // from the (capped) linear-memory path. Ok(false) makes `table.grow`
+        // return -1 (the Wasm denial signal). Sector plugins use tiny indirect
+        // tables, so this ceiling is generous.
+        Ok(desired <= MAX_TABLE_ELEMENTS)
     }
 }
+
+/// Maximum number of elements a plugin's tables may grow to. A funcref/externref
+/// element is a few host bytes, so this caps table growth well under a MiB.
+const MAX_TABLE_ELEMENTS: usize = 100_000;
 
 /// Create a sandboxed `Store` with WASI disabled for filesystem and network.
 ///

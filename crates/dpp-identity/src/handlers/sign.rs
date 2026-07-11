@@ -12,6 +12,19 @@ use dpp_crypto::jws::signer;
 
 use crate::state::AppState;
 
+/// Whether `operator_id` is a well-formed identifier safe to key the on-disk
+/// key store by: 1–64 characters from `[A-Za-z0-9._:-]`.
+///
+/// Rejecting anything else bounds key auto-provisioning — a typo, retry, or
+/// garbage/oversized value can no longer silently grow the (never-pruned) key
+/// store with a brand-new key.
+pub(crate) fn is_valid_operator_id(id: &str) -> bool {
+    (1..=64).contains(&id.len())
+        && id
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b':' | b'-'))
+}
+
 /// Request body for the signing endpoint.
 #[derive(Debug, Deserialize)]
 pub struct SignRequest {
@@ -31,9 +44,14 @@ pub async fn sign_handler(
     State(state): State<AppState>,
     Json(body): Json<SignRequest>,
 ) -> impl IntoResponse {
-    if body.operator_id.is_empty() || body.passport_id.is_empty() || body.payload.is_empty() {
-        return http_problem::unprocessable("operator_id, passport_id, and payload are required")
-            .into_response();
+    if !is_valid_operator_id(&body.operator_id) {
+        return http_problem::unprocessable(
+            "operator_id must be 1-64 characters of [A-Za-z0-9._:-]",
+        )
+        .into_response();
+    }
+    if body.passport_id.is_empty() || body.payload.is_empty() {
+        return http_problem::unprocessable("passport_id and payload are required").into_response();
     }
 
     // Decode payload from base64
@@ -64,6 +82,23 @@ pub async fn sign_handler(
         Err(e) => {
             tracing::error!(operator_id = %body.operator_id, error = %e, "signing failed");
             http_problem::internal_error(e.to_string()).into_response()
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_valid_operator_id;
+
+    #[test]
+    fn operator_id_validation_bounds_provisioning() {
+        assert!(is_valid_operator_id("self_hosted"));
+        assert!(is_valid_operator_id("did:web:acme.example"));
+        // Rejected: empty, too long, or unsafe characters.
+        assert!(!is_valid_operator_id(""));
+        assert!(!is_valid_operator_id(&"x".repeat(65)));
+        for bad in ["../etc", "a b", "a/b", "a\nb", "a;b"] {
+            assert!(!is_valid_operator_id(bad), "should reject: {bad}");
         }
     }
 }

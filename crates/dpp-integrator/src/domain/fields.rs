@@ -2,9 +2,30 @@
 
 use std::collections::HashMap;
 
+use dpp_domain::domain::gtin::Gtin;
 use dpp_domain::domain::passport::MaterialEntry;
 
 use super::request::RowError;
+
+/// Push a `RowError` if `gtin` (when present) is not a structurally valid GS1
+/// GTIN-14 (14 digits + mod-10 check digit). Shared by the sector importers so
+/// steel/aluminium/tyre validate the checksum the same way the battery importer
+/// already does — a bad checksum must not pass through the pipeline unchecked.
+pub(super) fn validate_gtin_checksum(
+    gtin: Option<&str>,
+    row_num: usize,
+    errors: &mut Vec<RowError>,
+) {
+    if let Some(g) = gtin
+        && let Err(e) = Gtin::parse(g)
+    {
+        errors.push(RowError {
+            row: row_num,
+            field: "gtin".into(),
+            message: e.to_string(),
+        });
+    }
+}
 
 /// Normalize a header key for case/separator-insensitive matching: drop
 /// non-alphanumerics (`_`, `-`, spaces) and lowercase. So `manufacturerName`,

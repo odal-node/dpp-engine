@@ -7,7 +7,9 @@ use dpp_domain::domain::{
     sector::{AluminiumData, ProductionRoute, Sector, SectorData},
 };
 
-use crate::domain::fields::{optional_f64, optional_str, require_f64, require_str};
+use crate::domain::fields::{
+    optional_f64, optional_str, require_f64, require_str, validate_gtin_checksum,
+};
 use crate::domain::request::{CreatePassportRequest, RowError};
 
 /// Validate a single aluminium row and convert it to a vault `CreatePassportRequest`.
@@ -27,6 +29,7 @@ pub fn validate_aluminium_row(
     let manufacturer_name = require_str(row, "manufacturerName", row_num, &mut errors);
     let manufacturer_country = require_str(row, "manufacturerCountry", row_num, &mut errors);
     let gtin = require_str(row, "gtin", row_num, &mut errors);
+    validate_gtin_checksum(gtin.as_deref(), row_num, &mut errors);
     let alloy_grade = require_str(row, "alloyGrade", row_num, &mut errors);
     let production_route_raw = require_str(row, "productionRoute", row_num, &mut errors);
     let co2e = require_f64(row, "co2ePerTonneKg", row_num, &mut errors);

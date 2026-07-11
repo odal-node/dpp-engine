@@ -48,6 +48,42 @@ impl SealPort for QtspSealAdapter {
     }
 
     fn capabilities(&self) -> SealCapabilities {
-        GhostSeal.capabilities()
+        if self.qtsp_url.is_none() {
+            // Ghost-backed placeholder path — report exactly what `GhostSeal`
+            // actually does (its seal()/verify() succeed with synthetic values).
+            GhostSeal.capabilities()
+        } else {
+            // Configured, but the real CSC flow isn't implemented — seal() and
+            // verify() both return errors. Report no capability rather than
+            // advertising JAdES sealing the adapter cannot deliver, so a caller
+            // that checks capabilities() first isn't contradicted by seal().
+            SealCapabilities {
+                supported_formats: Vec::new(),
+                supported_modes: Vec::new(),
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn unconfigured_reports_ghost_capabilities() {
+        // The placeholder path genuinely produces (synthetic) seals.
+        let caps = QtspSealAdapter::new(None).capabilities();
+        assert!(!caps.supported_formats.is_empty());
+    }
+
+    #[test]
+    fn configured_but_unimplemented_reports_no_capability() {
+        // capabilities() must not contradict seal()/verify(), which error here.
+        let caps = QtspSealAdapter::new(Some("https://qtsp.example".into())).capabilities();
+        assert!(
+            caps.supported_formats.is_empty(),
+            "must not advertise sealing it cannot deliver"
+        );
+        assert!(caps.supported_modes.is_empty());
     }
 }

@@ -83,7 +83,7 @@ async fn import_json_records(
                     "Record {}: HTTP {} — {}",
                     i + 1,
                     status,
-                    &body[..body.len().min(200)]
+                    crate::stateless::render::truncate(&body, 200)
                 ));
             }
             Err(e) => {
@@ -174,7 +174,7 @@ async fn summarize_import_response(
     if !status.is_success() {
         anyhow::bail!(
             "Import failed (HTTP {status}): {}",
-            &body[..body.len().min(300)]
+            crate::stateless::render::truncate(body, 300)
         );
     }
     let resp: serde_json::Value =
@@ -197,7 +197,7 @@ async fn poll_import_job(client: &OdalClient, cfg: &Config, job_id: &str) -> Res
         if !status.is_success() {
             anyhow::bail!(
                 "Failed to poll import job (HTTP {status}): {}",
-                &body[..body.len().min(200)]
+                crate::stateless::render::truncate(&body, 200)
             );
         }
         let resp: serde_json::Value =

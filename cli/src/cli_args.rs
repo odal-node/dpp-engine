@@ -269,8 +269,10 @@ pub enum KeyCommands {
     },
     /// Adopt an existing API key secret as this profile's active credential
     Use {
-        /// The `odal_sk_…` secret to save
-        secret: String,
+        /// The `odal_sk_…` secret to save. If omitted, it is read from
+        /// `ODAL_API_SECRET` or prompted for without echoing to the terminal —
+        /// keeping the secret out of shell history and the process table.
+        secret: Option<String>,
     },
 }
 

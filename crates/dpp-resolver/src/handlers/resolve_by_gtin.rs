@@ -11,6 +11,11 @@ use serde_json::Value;
 
 use crate::state::AppState;
 
+/// The resolver's own public base URL (its GS1 Digital Link host). Hardcoded
+/// rather than derived from mutable passport data, matching the QR-code handler
+/// — this is what closes the open-redirect surface.
+const RESOLVER_BASE_URL: &str = "https://id.odal-node.io";
+
 /// Query parameters for the GS1 Digital Link resolver endpoint (`/01/{gtin}`).
 #[derive(Deserialize)]
 pub struct ByGtinQuery {
@@ -33,6 +38,17 @@ pub async fn resolve_by_gtin_handler(
     Query(query): Query<ByGtinQuery>,
     headers: HeaderMap,
 ) -> impl IntoResponse {
+    // Validate the GTIN at the edge before it reaches the server-to-server vault
+    // URL — a percent-decoded `../admin` must not path-traverse/SSRF the vault.
+    if !crate::domain::is_valid_gtin(&gtin) {
+        return (
+            StatusCode::NOT_FOUND,
+            [(header::CONTENT_TYPE, "application/json")],
+            r#"{"error":"NOT_FOUND","message":"No published DPP for this GTIN"}"#.to_owned(),
+        )
+            .into_response();
+    }
+
     let passport = match fetch_by_gtin(&state, &gtin).await {
         Ok(v) => v,
         Err(status) => {
@@ -52,13 +68,12 @@ pub async fn resolve_by_gtin_handler(
         }
     };
 
-    // Derive the resolver's public base URL from qrCodeUrl stored in the passport.
-    // Battery GS1 DL URL: https://id.odal-node.io/01/{gtin}/21/{uuid}
-    let base_url = passport
-        .get("qrCodeUrl")
-        .and_then(Value::as_str)
-        .and_then(resolver_base)
-        .unwrap_or_else(|| "https://id.odal-node.io".to_owned());
+    // The resolver's own trusted base URL. It is NOT derived from the passport's
+    // `qrCodeUrl`: that field is mutable and content-binding-exempt (tamperable),
+    // so trusting it would let an altered value 307-redirect the scan to an
+    // attacker host — the exact open redirect the QR-code handler hardcodes
+    // against.
+    let base_url = RESOLVER_BASE_URL;
 
     // Linkset request: ?linkType=linkset OR Accept: application/linkset+json
     let wants_linkset = query.link_type.as_deref() == Some("linkset")
@@ -69,7 +84,7 @@ pub async fn resolve_by_gtin_handler(
             .unwrap_or(false);
 
     if wants_linkset {
-        let body = serde_json::to_string(&build_linkset(&base_url, &gtin, &passport_id))
+        let body = serde_json::to_string(&build_linkset(base_url, &gtin, &passport_id))
             .unwrap_or_default();
         return (
             StatusCode::OK,
@@ -113,16 +128,6 @@ fn redirect(location: &str) -> axum::response::Response {
         "",
     )
         .into_response()
-}
-
-/// Extract `https://host` from a GS1 DL URL like
-/// `https://id.odal-node.io/01/{gtin}/21/{uuid}`.
-fn resolver_base(qr_code_url: &str) -> Option<String> {
-    let without_scheme = qr_code_url
-        .strip_prefix("https://")
-        .or_else(|| qr_code_url.strip_prefix("http://"))?;
-    let host = without_scheme.split('/').next()?;
-    Some(format!("https://{host}"))
 }
 
 /// Build a GS1 linkset per RFC 9264 / GS1 Digital Link standard.
@@ -170,15 +175,6 @@ async fn fetch_by_gtin(state: &AppState, gtin: &str) -> Result<Value, StatusCode
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn resolver_base_extracts_scheme_and_host() {
-        let url = "https://id.odal-node.io/01/09506000134352/21/some-uuid";
-        assert_eq!(
-            resolver_base(url),
-            Some("https://id.odal-node.io".to_owned())
-        );
-    }
 
     #[test]
     fn build_linkset_has_correct_structure() {

@@ -17,11 +17,16 @@ use crate::core::types::{
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
-fn truncate(s: &str, max: usize) -> String {
-    if s.len() <= max {
+/// Truncate to at most `max` characters (not bytes), appending `…` when cut.
+///
+/// Counts and slices by `char` so a multi-byte UTF-8 sequence landing on the
+/// cutoff can never panic the CLI (the byte-index `&s[..n]` form does).
+pub(crate) fn truncate(s: &str, max: usize) -> String {
+    if s.chars().count() <= max {
         s.to_owned()
     } else {
-        format!("{}…", &s[..max.saturating_sub(1)])
+        let head: String = s.chars().take(max.saturating_sub(1)).collect();
+        format!("{head}…")
     }
 }
 

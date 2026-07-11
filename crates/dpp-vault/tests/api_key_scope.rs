@@ -62,6 +62,44 @@ async fn write_scoped_credential_cannot_escalate() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn read_scoped_credential_cannot_mutate_passports() {
+    let pg = start_postgres().await;
+    let vault_url = start_vault(pg.dal.clone()).await;
+
+    // A least-privilege read-only key (documented for GET-only integrations).
+    let reader = TestClient::new(&vault_url, make_jwt_scoped("op", "read"));
+    let id = "00000000-0000-4000-8000-000000000000";
+
+    // Every passport-lifecycle mutation must reject a Read-scoped credential with
+    // 403 — the `can_write()` gate runs first, before any state change. Bodies are
+    // valid so each request reaches the handler rather than failing extraction.
+    let create = reader
+        .post_json(
+            "/api/v1/dpp",
+            json!({ "productName": "x", "manufacturer": { "name": "n", "address": "a" } }),
+        )
+        .await;
+    assert_eq!(create.status(), 403, "create must require write scope");
+
+    let update = reader
+        .put_json(&format!("/api/v1/dpp/{id}"), json!({}))
+        .await;
+    assert_eq!(update.status(), 403, "update must require write scope");
+
+    // publish / suspend / archive / transfer-accept take no request body of their
+    // own; eol and transfer-initiate share the identical first-line gate.
+    for path in [
+        format!("/api/v1/dpp/{id}/publish"),
+        format!("/api/v1/dpp/{id}/suspend"),
+        format!("/api/v1/dpp/{id}/archive"),
+        format!("/api/v1/dpp/{id}/transfer/accept"),
+    ] {
+        let r = reader.post_json(&path, json!({})).await;
+        assert_eq!(r.status(), 403, "{path} must require write scope");
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn admin_can_mint_least_privilege_key_and_scope_round_trips() {
     let pg = start_postgres().await;
     let vault_url = start_vault(pg.dal.clone()).await;

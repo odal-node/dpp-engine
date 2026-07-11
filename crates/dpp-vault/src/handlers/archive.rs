@@ -20,6 +20,13 @@ pub async fn archive_handler(
     Extension(auth): Extension<AuthContext>,
     Path(dpp_id): Path<String>,
 ) -> impl IntoResponse {
+    if !auth.scope.can_write() {
+        return api_error(
+            StatusCode::FORBIDDEN,
+            "FORBIDDEN",
+            "Archiving a passport requires a write-scoped credential.",
+        );
+    }
     let passport_id = match parse_passport_id(&dpp_id) {
         Ok(id) => id,
         Err(e) => return e,

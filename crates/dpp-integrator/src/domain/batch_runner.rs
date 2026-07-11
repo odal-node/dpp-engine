@@ -116,13 +116,16 @@ pub async fn run_batch(
                         .await
                         .map(|_| RowOutcome::Updated(id))
                 }
-                _ => retry_create(&client, &req, &token).await.map(|body| {
-                    let id = body
-                        .get("id")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("")
-                        .to_owned();
-                    RowOutcome::Created(id)
+                _ => retry_create(&client, &req, &token).await.and_then(|body| {
+                    match body.get("id").and_then(|v| v.as_str()) {
+                        // A 2xx response must carry a non-empty passport id;
+                        // recording a missing/empty id as a success would report
+                        // an unusable empty id and overstate success_count.
+                        Some(id) if !id.is_empty() => Ok(RowOutcome::Created(id.to_owned())),
+                        _ => Err(VaultClientError::Parse(
+                            "vault returned success without a passport id".into(),
+                        )),
+                    }
                 }),
             };
             (row_num, outcome)

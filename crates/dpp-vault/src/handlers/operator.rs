@@ -40,6 +40,9 @@ pub async fn operator_patch_handler(
             "Updating operator config requires an admin-scoped credential.",
         );
     }
+    if let Err(msg) = patch.validate() {
+        return api_error(StatusCode::BAD_REQUEST, "INVALID_CONFIG", &msg);
+    }
     match state
         .operator_service
         .update(STANDALONE_OPERATOR_ID, patch)

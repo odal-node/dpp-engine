@@ -25,8 +25,9 @@ impl PgApiKeyRepo {
     }
 
     fn key_from_row(r: &sqlx::postgres::PgRow) -> ApiKey {
-        // `scopes TEXT[]` may be NULL for keys written before scopes were
-        // enforced; `from_scopes` maps NULL/empty to Admin (pre-scope behaviour).
+        // `scopes TEXT[]` may be NULL for legacy pre-scope rows; `from_scopes`
+        // fails closed, mapping NULL/empty (and any unrecognized value) to the
+        // least-privilege Read rather than Admin.
         let scope = ApiKeyScope::from_scopes(
             &r.try_get::<Option<Vec<String>>, _>("scopes")
                 .ok()

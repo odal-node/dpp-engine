@@ -50,7 +50,7 @@ async fn publish_one(client: &OdalClient, vault_url: &str, id: &str) -> Result<P
     } else {
         let err = format!(
             "Failed to publish {id} (HTTP {status}): {}",
-            &body[..body.len().min(300)]
+            crate::stateless::render::truncate(&body, 300)
         );
         Ok(PublishSummary {
             published: 0,
@@ -118,7 +118,7 @@ async fn publish_all(client: &OdalClient, vault_url: &str) -> Result<PublishSumm
             Ok((status, resp_body)) => {
                 let err = format!(
                     "{name}: HTTP {status} — {}",
-                    &resp_body[..resp_body.len().min(200)]
+                    crate::stateless::render::truncate(&resp_body, 200)
                 );
                 errors.push(err.clone());
                 items.push(PassportPublishResult {

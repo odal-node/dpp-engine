@@ -7,7 +7,9 @@ use dpp_domain::domain::{
     sector::{ProductionRoute, Sector, SectorData, SteelData},
 };
 
-use crate::domain::fields::{optional_f64, optional_str, require_f64, require_str};
+use crate::domain::fields::{
+    optional_f64, optional_str, require_f64, require_str, validate_gtin_checksum,
+};
 use crate::domain::request::{CreatePassportRequest, RowError};
 
 /// Validate a single steel row and convert it to a vault `CreatePassportRequest`.
@@ -27,6 +29,7 @@ pub fn validate_steel_row(
     let manufacturer_name = require_str(row, "manufacturerName", row_num, &mut errors);
     let manufacturer_country = require_str(row, "manufacturerCountry", row_num, &mut errors);
     let gtin = require_str(row, "gtin", row_num, &mut errors);
+    validate_gtin_checksum(gtin.as_deref(), row_num, &mut errors);
     let co2e = require_f64(row, "co2ePerTonneSteel", row_num, &mut errors);
     let recycled = require_f64(row, "recycledScrapContentPct", row_num, &mut errors);
     let product_category = require_str(row, "productCategory", row_num, &mut errors);
@@ -118,5 +121,15 @@ mod tests {
         row.remove("co2ePerTonneSteel");
         let errs = validate_steel_row(&row, 2).expect_err("should fail");
         assert!(errs.iter().any(|e| e.field == "co2ePerTonneSteel"));
+    }
+
+    #[test]
+    fn steel_row_bad_gtin_checksum_returns_error() {
+        // Right length/digits but a wrong GS1 mod-10 check digit — this must be
+        // caught (matching the battery importer), not passed through.
+        let mut row = steel_row();
+        row.insert("gtin".into(), "09506000134353".into()); // valid is ...352
+        let errs = validate_steel_row(&row, 3).expect_err("bad GTIN checksum must fail");
+        assert!(errs.iter().any(|e| e.field == "gtin"));
     }
 }

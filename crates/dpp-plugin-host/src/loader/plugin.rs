@@ -18,6 +18,26 @@ use crate::runtime::{DEFAULT_FUEL, DEFAULT_MEMORY_CAP_BYTES, HostState, build_st
 /// Maximum bytes accepted from any plugin ABI output (4 MiB).
 const MAX_ABI_OUTPUT_BYTES: usize = 4 * 1024 * 1024;
 
+/// Whether unsigned plugin loading is explicitly opted into, from the
+/// `DPP_ALLOW_UNSIGNED_PLUGINS` value. Pure (takes the value) so it is testable
+/// without mutating the process-global environment.
+fn unsigned_allowed(env_value: Option<&str>) -> bool {
+    matches!(env_value, Some(v) if v.eq_ignore_ascii_case("true"))
+}
+
+/// Map a wasmtime call error, giving a fuel-exhaustion trap a distinct,
+/// host-controlled `"fuel exhausted"` prefix. Sandbox metrics are then classified
+/// from this prefix (and the host's `"memory cap exceeded"` bail), never by
+/// string-matching plugin-controlled error text — a plugin's structured error
+/// surfaces as `"plugin reported an error: …"` and so cannot spoof either signal.
+fn map_call_error(e: wasmtime::Error) -> anyhow::Error {
+    if e.downcast_ref::<wasmtime::Trap>() == Some(&wasmtime::Trap::OutOfFuel) {
+        anyhow::anyhow!("fuel exhausted: plugin exceeded its fuel budget")
+    } else {
+        anyhow::anyhow!("{e}")
+    }
+}
+
 /// A compiled, in-memory sector plugin ready to be instantiated per-request.
 pub struct LoadedPlugin {
     engine: Engine,
@@ -57,9 +77,23 @@ impl LoadedPlugin {
                 return Err(e);
             }
         } else {
+            // No trusted key configured. Unsigned loading is a development-only
+            // convenience and must be explicitly opted into — otherwise a
+            // misconfigured production deploy would silently run unverified
+            // plugins. Fail closed unless `DPP_ALLOW_UNSIGNED_PLUGINS=true`.
+            let allow_unsigned =
+                unsigned_allowed(std::env::var("DPP_ALLOW_UNSIGNED_PLUGINS").ok().as_deref());
+            if !allow_unsigned {
+                return Err(anyhow::anyhow!(
+                    "refusing to load unsigned plugin {}: no trusted key is configured and \
+                     DPP_ALLOW_UNSIGNED_PLUGINS is not set (production must provide a key)",
+                    path.display()
+                ));
+            }
             tracing::warn!(
                 path = %path.display(),
-                "loading Wasm plugin WITHOUT signature verification — not safe for production"
+                "loading Wasm plugin WITHOUT signature verification \
+                 (DPP_ALLOW_UNSIGNED_PLUGINS=true) — not safe for production"
             );
         }
 
@@ -277,7 +311,7 @@ fn call_generate_passport(
 
     let packed = generate
         .call(&mut *store, (input_ptr, input_len))
-        .map_err(w)?;
+        .map_err(map_call_error)?;
     let out_ptr = (packed >> 32) as usize;
     let out_len = (packed & 0xFFFF_FFFF) as usize;
 
@@ -335,7 +369,7 @@ fn call_calculate(
     // Returns a packed (ptr << 32 | len) u64
     let packed = calculate
         .call(&mut *store, (input_ptr, input_len))
-        .map_err(w)?;
+        .map_err(map_call_error)?;
     let out_ptr = (packed >> 32) as usize;
     let out_len = (packed & 0xFFFF_FFFF) as usize;
 
@@ -450,6 +484,26 @@ mod tests {
         build_plugin_wasm(DESCRIBE_JSON, Some(CALC_OK_JSON), None, Some(GEN_OK_JSON))
     }
 
+    /// Load a plugin without a trusted key — the development path. Opts into
+    /// unsigned loading explicitly, mirroring what a real dev/CI deploy must do.
+    fn load_unsigned(engine: &Engine, path: &Path, sector: &str) -> Result<LoadedPlugin> {
+        // Safe: every caller sets the same value, so concurrent sets are benign.
+        unsafe { std::env::set_var("DPP_ALLOW_UNSIGNED_PLUGINS", "true") };
+        LoadedPlugin::from_file(engine, path, sector, None)
+    }
+
+    #[test]
+    fn unsigned_allowed_only_when_explicitly_opted_in() {
+        // The refusal decision is a pure function of the env value, so it can be
+        // asserted deterministically without racing the process-global env.
+        assert!(super::unsigned_allowed(Some("true")));
+        assert!(super::unsigned_allowed(Some("TRUE")));
+        assert!(!super::unsigned_allowed(Some("false")));
+        assert!(!super::unsigned_allowed(Some("1")));
+        assert!(!super::unsigned_allowed(Some("")));
+        assert!(!super::unsigned_allowed(None));
+    }
+
     #[test]
     fn from_file_refuses_when_signature_verification_fails() {
         let engine = build_engine().unwrap();
@@ -476,7 +530,7 @@ mod tests {
         let wasm = wat::parse_str("(module)").unwrap();
         let path = write_plugin_file(&dir, &wasm);
 
-        let plugin = LoadedPlugin::from_file(&engine, &path, "battery", None)
+        let plugin = load_unsigned(&engine, &path, "battery")
             .expect("dev-mode load without a key must succeed even without describe()");
         assert!(plugin.capabilities.supported_schemas.is_empty());
         assert!(plugin.capabilities.capabilities.is_empty());
@@ -490,7 +544,7 @@ mod tests {
         let wasm = build_plugin_wasm(DESCRIBE_JSON, Some(CALC_OK_JSON), None, None);
         let path = write_plugin_file(&dir, &wasm);
 
-        let plugin = LoadedPlugin::from_file(&engine, &path, "battery", None).unwrap();
+        let plugin = load_unsigned(&engine, &path, "battery").unwrap();
 
         assert_eq!(plugin.capabilities.abi_version.major, 1);
         assert_eq!(
@@ -506,7 +560,7 @@ mod tests {
         let engine = build_engine().unwrap();
         let dir = TempDir::new().unwrap();
         let path = write_plugin_file(&dir, &full_plugin_wasm());
-        let plugin = LoadedPlugin::from_file(&engine, &path, "battery", None).unwrap();
+        let plugin = load_unsigned(&engine, &path, "battery").unwrap();
 
         let result = plugin
             .invoke_calculate(&serde_json::json!({"gtin": "irrelevant — fixture ignores input"}))
@@ -521,7 +575,7 @@ mod tests {
         let engine = build_engine().unwrap();
         let dir = TempDir::new().unwrap();
         let path = write_plugin_file(&dir, &full_plugin_wasm());
-        let plugin = LoadedPlugin::from_file(&engine, &path, "battery", None).unwrap();
+        let plugin = load_unsigned(&engine, &path, "battery").unwrap();
 
         let payload = plugin
             .invoke_generate_passport(&serde_json::json!({}))
@@ -536,7 +590,7 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let wasm = build_plugin_wasm(DESCRIBE_JSON, Some(CALC_ERR_JSON), None, None);
         let path = write_plugin_file(&dir, &wasm);
-        let plugin = LoadedPlugin::from_file(&engine, &path, "battery", None).unwrap();
+        let plugin = load_unsigned(&engine, &path, "battery").unwrap();
 
         let err = plugin
             .invoke_calculate(&serde_json::json!({}))
@@ -550,7 +604,7 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let wasm = build_plugin_wasm(DESCRIBE_JSON, Some("not json at all"), None, None);
         let path = write_plugin_file(&dir, &wasm);
-        let plugin = LoadedPlugin::from_file(&engine, &path, "battery", None).unwrap();
+        let plugin = load_unsigned(&engine, &path, "battery").unwrap();
 
         let err = plugin
             .invoke_calculate(&serde_json::json!({}))
@@ -567,7 +621,7 @@ mod tests {
         let oversized_len = (MAX_ABI_OUTPUT_BYTES + 1) as u32;
         let wasm = build_plugin_wasm(DESCRIBE_JSON, Some(CALC_OK_JSON), Some(oversized_len), None);
         let path = write_plugin_file(&dir, &wasm);
-        let plugin = LoadedPlugin::from_file(&engine, &path, "battery", None).unwrap();
+        let plugin = load_unsigned(&engine, &path, "battery").unwrap();
 
         let err = plugin
             .invoke_calculate(&serde_json::json!({}))
@@ -583,7 +637,7 @@ mod tests {
         // never exported — a partial/malformed plugin must fail predictably, not panic.
         let wasm = build_plugin_wasm(DESCRIBE_JSON, None, None, Some(GEN_OK_JSON));
         let path = write_plugin_file(&dir, &wasm);
-        let plugin = LoadedPlugin::from_file(&engine, &path, "battery", None).unwrap();
+        let plugin = load_unsigned(&engine, &path, "battery").unwrap();
 
         let err = plugin
             .invoke_calculate(&serde_json::json!({}))

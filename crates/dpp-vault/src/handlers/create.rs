@@ -50,6 +50,13 @@ pub async fn create_handler(
     Extension(auth): Extension<AuthContext>,
     Json(body): Json<CreateRequest>,
 ) -> impl IntoResponse {
+    if !auth.scope.can_write() {
+        return api_error(
+            StatusCode::FORBIDDEN,
+            "FORBIDDEN",
+            "Creating a passport requires a write-scoped credential.",
+        );
+    }
     if body.product_name.trim().is_empty() {
         return api_error(
             StatusCode::UNPROCESSABLE_ENTITY,

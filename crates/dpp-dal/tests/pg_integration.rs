@@ -453,6 +453,52 @@ async fn t6_patch_fields_merge() {
     assert_eq!(reread.schema_version, "2.0.0", "untouched fields survive");
 }
 
+// patch_fields must reject state-machine / integrity fields so it can't bypass
+// the state machine or desync the doc from its enforcing scalar column.
+#[tokio::test]
+async fn patch_fields_rejects_protected_fields() {
+    let pg = start_pg().await;
+    let repo = PgPassportRepo::new(pg.dal.clone());
+    let p = make_passport();
+    let id = p.id;
+    repo.create(p).await.expect("create");
+
+    let err = repo
+        .patch_fields(
+            id,
+            serde_json::json!({ "retentionLocked": true, "status": "active" }),
+        )
+        .await
+        .expect_err("protected fields must be rejected");
+    assert!(
+        matches!(err, dpp_domain::DppError::Validation(_)),
+        "got: {err:?}"
+    );
+
+    // The passport is untouched — still a retention-unlocked draft.
+    let reread = repo.find_by_id(id).await.unwrap().unwrap();
+    assert_eq!(reread.status, PassportStatus::Draft);
+    assert!(!reread.retention_locked);
+}
+
+// A LIKE wildcard in the GTIN must not widen the match to arbitrary passports.
+#[tokio::test]
+async fn find_published_by_gtin_rejects_like_metacharacters() {
+    let pg = start_pg().await;
+    let repo = PgPassportRepo::new(pg.dal.clone());
+    // Publish a passport so there's an active row a wildcard could otherwise hit.
+    let mut p = make_passport();
+    p.status = PassportStatus::Published;
+    repo.create(p).await.expect("create");
+
+    for bad in ["%", "_", "not-a-gtin", ""] {
+        assert!(
+            repo.find_published_by_gtin(bad).await.unwrap().is_none(),
+            "non-numeric gtin {bad:?} must never match"
+        );
+    }
+}
+
 // T8 — grant coverage: the app role can read every table a migration creates.
 // Catches the "0010's grants were a snapshot" lesson (0017 had to re-grant): a
 // migration that adds a table after 0010 must ship its own odal_app grant, or

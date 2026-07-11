@@ -20,6 +20,13 @@ pub async fn update_handler(
     Path(dpp_id): Path<String>,
     Json(body): Json<serde_json::Value>,
 ) -> impl IntoResponse {
+    if !auth.scope.can_write() {
+        return api_error(
+            StatusCode::FORBIDDEN,
+            "FORBIDDEN",
+            "Updating a passport requires a write-scoped credential.",
+        );
+    }
     let passport_id = match parse_passport_id(&dpp_id) {
         Ok(id) => id,
         Err(e) => return e,

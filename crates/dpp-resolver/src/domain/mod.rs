@@ -5,4 +5,4 @@
 
 mod id;
 
-pub use id::is_valid_dpp_id;
+pub use id::{is_valid_dpp_id, is_valid_gtin};

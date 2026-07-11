@@ -65,8 +65,12 @@ fn default_data_residency() -> String {
     "EU".to_owned()
 }
 
+/// ESPR-driven minimum data-retention floor (days, ~10 years). A configured
+/// retention shorter than this would violate the minimum-retention guarantee.
+pub const MIN_RETENTION_DAYS: i64 = 3650;
+
 fn default_retention_days() -> i64 {
-    3650
+    MIN_RETENTION_DAYS
 }
 
 impl OperatorConfig {
@@ -146,6 +150,24 @@ pub struct UpdateOperatorConfig {
 }
 
 impl UpdateOperatorConfig {
+    /// Validate the patch's invariants before it is applied.
+    ///
+    /// # Errors
+    /// Returns a message if `retention_policy_days` is present and below
+    /// [`MIN_RETENTION_DAYS`] (the ESPR minimum-retention floor) — the config
+    /// must never silently drop below the documented minimum-retention guarantee.
+    pub fn validate(&self) -> Result<(), String> {
+        if let Some(days) = self.retention_policy_days
+            && days < MIN_RETENTION_DAYS
+        {
+            return Err(format!(
+                "retentionPolicyDays must be at least {MIN_RETENTION_DAYS} \
+                 (ESPR minimum retention); got {days}"
+            ));
+        }
+        Ok(())
+    }
+
     /// Apply all `Some` fields from `self` onto `cfg` in-place.
     pub fn apply(&self, cfg: &mut OperatorConfig) {
         if let Some(ref v) = self.legal_name {
@@ -260,5 +282,46 @@ mod tests {
         cfg.contact_email = "ops@acme.example".into();
         assert!(!cfg.is_complete());
         assert_eq!(cfg.missing_fields(), vec!["address"]);
+    }
+
+    fn patch_with_retention(days: Option<i64>) -> UpdateOperatorConfig {
+        UpdateOperatorConfig {
+            legal_name: None,
+            trade_name: None,
+            address: None,
+            country: None,
+            contact_email: None,
+            did_web_url: None,
+            product_categories: None,
+            brand_primary: None,
+            brand_secondary: None,
+            brand_logo_url: None,
+            custom_domain: None,
+            data_residency: None,
+            retention_policy_days: days,
+            feature_flags: None,
+        }
+    }
+
+    #[test]
+    fn validate_rejects_retention_below_minimum() {
+        assert!(patch_with_retention(Some(-1)).validate().is_err());
+        assert!(patch_with_retention(Some(0)).validate().is_err());
+        assert!(
+            patch_with_retention(Some(MIN_RETENTION_DAYS - 1))
+                .validate()
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn validate_accepts_retention_at_or_above_minimum_and_absent() {
+        assert!(
+            patch_with_retention(Some(MIN_RETENTION_DAYS))
+                .validate()
+                .is_ok()
+        );
+        assert!(patch_with_retention(Some(5475)).validate().is_ok()); // ~15y
+        assert!(patch_with_retention(None).validate().is_ok());
     }
 }

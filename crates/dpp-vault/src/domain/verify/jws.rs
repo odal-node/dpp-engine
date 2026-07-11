@@ -11,16 +11,19 @@ use dpp_crypto::jws::{
     verify_jws,
 };
 
-/// Resolve the public key to verify `jws` against, from a DID document: try
-/// the `kid`-fingerprint match first (supports rotation-archived keys), then
-/// fall back to the primary key for JWS tokens signed before `kid` was added.
+/// Resolve the public key to verify `jws` against, from a DID document.
+///
+/// If the JWS carries a `kid`, it must resolve to a key by fingerprint (this
+/// includes rotation-archived keys). A present-but-unresolvable `kid` (revoked,
+/// rotated out, or simply wrong) returns `None` so the caller surfaces an
+/// accurate "kid does not resolve" diagnosis — it does **not** silently
+/// substitute the primary key. The primary-key fallback is reserved for legacy
+/// tokens signed before `kid` was added, i.e. tokens carrying no `kid` at all.
 pub(crate) fn resolve_public_key(jws: &str, did_document: &serde_json::Value) -> Option<String> {
-    if let Some(kid) = extract_kid_from_jws(jws)
-        && let Some(key) = extract_key_by_fingerprint(did_document, &kid)
-    {
-        return Some(key);
+    match extract_kid_from_jws(jws) {
+        Some(kid) => extract_key_by_fingerprint(did_document, &kid),
+        None => extract_primary_public_key(did_document),
     }
-    extract_primary_public_key(did_document)
 }
 
 /// Decode the payload segment of a compact JWS to raw bytes (post-base64,
@@ -72,6 +75,16 @@ mod tests {
         format!("{signing_input}.{}", b64.encode(sig.to_bytes()))
     }
 
+    fn sign_with_kid(signing_key: &SigningKey, payload: &serde_json::Value, kid: &str) -> String {
+        let b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD;
+        let header = b64
+            .encode(serde_json::to_vec(&serde_json::json!({"alg": "EdDSA", "kid": kid})).unwrap());
+        let body = b64.encode(canonicalize(payload).unwrap());
+        let signing_input = format!("{header}.{body}");
+        let sig = signing_key.sign(signing_input.as_bytes());
+        format!("{signing_input}.{}", b64.encode(sig.to_bytes()))
+    }
+
     fn did_doc_for(signing_key: &SigningKey) -> serde_json::Value {
         let b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD;
         let x = b64.encode(signing_key.verifying_key().to_bytes());
@@ -109,6 +122,24 @@ mod tests {
         let jws = sign(&signing_key, &serde_json::json!({"a": 1})); // header has no kid
         let key = resolve_public_key(&jws, &did_doc);
         assert!(key.is_some(), "must fall back to the primary key");
+    }
+
+    #[test]
+    fn resolve_returns_none_for_present_but_unresolvable_kid() {
+        // A kid that resolves to no key in the DID document (revoked/rotated
+        // out/wrong) must NOT silently substitute the primary key — return None
+        // so the caller reports the accurate "kid does not resolve" diagnosis.
+        let signing_key = SigningKey::from_bytes(&[7u8; 32]);
+        let did_doc = did_doc_for(&signing_key);
+        let jws = sign_with_kid(
+            &signing_key,
+            &serde_json::json!({"a": 1}),
+            "not-a-real-fingerprint",
+        );
+        assert!(
+            resolve_public_key(&jws, &did_doc).is_none(),
+            "an unresolvable kid must not fall back to the primary key"
+        );
     }
 
     #[test]

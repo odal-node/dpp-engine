@@ -142,8 +142,12 @@ impl RegistrySyncPort for EuRegistrySync {
                 operator_id: OperatorIdentifier {
                     scheme: "did".into(),
                     value: request.operator_identifier.clone(),
+                    // Wire the operator country that the request already carries
+                    // (sourced from OperatorConfig) instead of dropping it. The
+                    // operator legal `name` is not yet threaded through the port —
+                    // see the payload-validation note below.
                     name: String::new(),
-                    country: String::new(),
+                    country: request.country_code.clone(),
                     did: Some(request.operator_identifier.clone()),
                 },
                 sector: request.product_category.clone(),

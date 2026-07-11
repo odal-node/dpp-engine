@@ -52,6 +52,46 @@ fn required_issuer_cn() -> String {
     std::env::var("MTLS_REQUIRED_ISSUER_CN").unwrap_or_else(|_| "Odal Internal CA".to_owned())
 }
 
+/// Header the terminating proxy sets to prove that *it* — not a client that
+/// reached this listener directly — is the origin of the forwarded cert headers.
+pub const PROXY_AUTH_HEADER: &str = "X-Proxy-Auth";
+
+/// Constant-time byte comparison, so a wrong secret can't be recovered by timing.
+fn ct_eq(a: &[u8], b: &[u8]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut diff = 0u8;
+    for (x, y) in a.iter().zip(b) {
+        diff |= x ^ y;
+    }
+    diff == 0
+}
+
+/// Bind trust in the forwarded `X-Client-Cert-*` headers to the terminating
+/// proxy. When `MTLS_PROXY_SHARED_SECRET` is configured, the request must carry
+/// a matching [`PROXY_AUTH_HEADER`], so a caller that reaches this listener
+/// directly (bypassing the proxy, e.g. a network misconfiguration) cannot forge
+/// the cert headers. When the secret is unset, binding is disabled — logged as a
+/// warning so the deployment gap is visible rather than silent.
+fn proxy_binding_ok(request: &Request) -> bool {
+    let secret = match std::env::var("MTLS_PROXY_SHARED_SECRET") {
+        Ok(s) if !s.is_empty() => s,
+        _ => {
+            tracing::warn!(
+                "mTLS: MTLS_PROXY_SHARED_SECRET is not set — forwarded client-certificate \
+                 headers are trusted without proxy binding (set it in production)"
+            );
+            return true;
+        }
+    };
+    request
+        .headers()
+        .get(PROXY_AUTH_HEADER)
+        .and_then(|h| h.to_str().ok())
+        .is_some_and(|presented| ct_eq(presented.as_bytes(), secret.as_bytes()))
+}
+
 /// Extract the value of the `CN=` component from an RFC 4514 subject DN string.
 ///
 /// Matches both `CN=foo` and `cn=foo` (case-insensitive key).
@@ -81,6 +121,15 @@ pub async fn mtls_middleware(request: Request, next: Next) -> Response {
         .map(|v| v.eq_ignore_ascii_case("true"))
         .unwrap_or(false);
     let enforce = !allow_insecure;
+
+    // Before trusting any forwarded cert header, confirm the request actually
+    // came through the terminating proxy (when a binding secret is configured).
+    if enforce && !proxy_binding_ok(&request) {
+        tracing::warn!("mTLS: rejecting request — missing or invalid proxy binding secret");
+        return Problem::new(StatusCode::UNAUTHORIZED, "Unauthorized")
+            .with_detail("Request did not arrive through the trusted terminating proxy.")
+            .into_response();
+    }
 
     match request.headers().get(CLIENT_CERT_SUBJECT_HEADER) {
         Some(subject) => {
@@ -257,6 +306,52 @@ mod http_tests {
             .unwrap();
         unsafe { std::env::remove_var("MTLS_REQUIRED_ISSUER_CN") };
         assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+
+    /// Proxy secret configured, but the request carries no `X-Proxy-Auth` — even
+    /// with otherwise-valid cert headers it is rejected (didn't come via proxy).
+    #[tokio::test]
+    #[serial]
+    async fn proxy_secret_configured_rejects_unbound_request() {
+        unsafe { std::env::set_var("MTLS_PROXY_SHARED_SECRET", "s3cr3t") };
+        unsafe { std::env::set_var("MTLS_REQUIRED_ISSUER_CN", "Odal Internal CA") };
+        let response = build_test_router()
+            .oneshot(
+                Request::builder()
+                    .uri("/test")
+                    .header(CLIENT_CERT_SUBJECT_HEADER, "CN=odal-vault, O=Odal")
+                    .header(CLIENT_CERT_ISSUER_HEADER, "CN=Odal Internal CA, O=Odal")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        unsafe { std::env::remove_var("MTLS_PROXY_SHARED_SECRET") };
+        unsafe { std::env::remove_var("MTLS_REQUIRED_ISSUER_CN") };
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    /// Proxy secret configured and the matching `X-Proxy-Auth` present → 200.
+    #[tokio::test]
+    #[serial]
+    async fn proxy_secret_configured_allows_bound_request() {
+        unsafe { std::env::set_var("MTLS_PROXY_SHARED_SECRET", "s3cr3t") };
+        unsafe { std::env::set_var("MTLS_REQUIRED_ISSUER_CN", "Odal Internal CA") };
+        let response = build_test_router()
+            .oneshot(
+                Request::builder()
+                    .uri("/test")
+                    .header(PROXY_AUTH_HEADER, "s3cr3t")
+                    .header(CLIENT_CERT_SUBJECT_HEADER, "CN=odal-vault, O=Odal")
+                    .header(CLIENT_CERT_ISSUER_HEADER, "CN=Odal Internal CA, O=Odal")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        unsafe { std::env::remove_var("MTLS_PROXY_SHARED_SECRET") };
+        unsafe { std::env::remove_var("MTLS_REQUIRED_ISSUER_CN") };
+        assert_eq!(response.status(), StatusCode::OK);
     }
 
     /// Correct CN and correct issuer → 200.

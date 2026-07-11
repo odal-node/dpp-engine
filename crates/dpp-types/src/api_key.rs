@@ -17,8 +17,11 @@ use uuid::Uuid;
 ///   NOT key management or operator-config mutation.
 /// - `Admin` — everything, including `/api-keys` and operator-config `PATCH`.
 ///
-/// The default is `Admin` for backward compatibility (pre-scope keys and the
-/// bootstrap key remain fully capable). Issue `Write`/`Read` keys to integrations.
+/// The `#[default]` is `Admin`: creating a key without specifying a scope (the
+/// bootstrap key, or an omitted `scope` in a create request) is fully capable.
+/// A NULL/empty `scopes` *column*, by contrast, fails closed to `Read` (see
+/// [`ApiKeyScope::from_scopes`]) — only an explicit `admin` grants admin.
+/// Issue `Write`/`Read` keys to integrations.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ApiKeyScope {
@@ -54,20 +57,20 @@ impl ApiKeyScope {
 
     /// Collapse the DB `scopes TEXT[]` array into the effective (highest) scope.
     ///
-    /// A NULL/empty array — i.e. a key written before scopes were enforced —
-    /// maps to `Admin`, preserving the pre-scope "full access" behaviour. The
-    /// service only ever writes a single-element array, but reading the highest
-    /// privilege present keeps this robust to manual edits.
+    /// **Fails closed:** an empty/NULL array or any unrecognized scope string
+    /// maps to the least-privilege `Read`, never `Admin`. The service always
+    /// writes an explicit single-element scope, so a NULL/empty column only
+    /// arises from a legacy pre-scope row or a manual edit — neither of which
+    /// should silently grant admin. Reading the highest recognized privilege
+    /// present keeps this robust to manual multi-element edits.
     #[must_use]
     pub fn from_scopes(scopes: &[String]) -> Self {
-        if scopes.is_empty() || scopes.iter().any(|s| s == "admin") {
+        if scopes.iter().any(|s| s == "admin") {
             ApiKeyScope::Admin
         } else if scopes.iter().any(|s| s == "write") {
             ApiKeyScope::Write
-        } else if scopes.iter().any(|s| s == "read") {
-            ApiKeyScope::Read
         } else {
-            ApiKeyScope::Admin
+            ApiKeyScope::Read
         }
     }
 }
@@ -153,4 +156,52 @@ pub trait ApiKeyRepository: Send + Sync {
 
     /// Revoke a key by id. Returns `true` if the key existed and was revoked.
     async fn revoke(&self, id: Uuid) -> Result<bool, DppError>;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn scopes(vals: &[&str]) -> Vec<String> {
+        vals.iter().map(|s| (*s).to_owned()).collect()
+    }
+
+    #[test]
+    fn from_scopes_fails_closed_to_read() {
+        // Empty/NULL, unrecognized, and wrong-case values must all fail closed.
+        assert_eq!(ApiKeyScope::from_scopes(&[]), ApiKeyScope::Read);
+        assert_eq!(
+            ApiKeyScope::from_scopes(&scopes(&["superuser"])),
+            ApiKeyScope::Read
+        );
+        assert_eq!(
+            ApiKeyScope::from_scopes(&scopes(&["ADMIN"])), // not the literal "admin"
+            ApiKeyScope::Read
+        );
+    }
+
+    #[test]
+    fn from_scopes_recognizes_known_values_highest_wins() {
+        assert_eq!(
+            ApiKeyScope::from_scopes(&scopes(&["read"])),
+            ApiKeyScope::Read
+        );
+        assert_eq!(
+            ApiKeyScope::from_scopes(&scopes(&["write"])),
+            ApiKeyScope::Write
+        );
+        assert_eq!(
+            ApiKeyScope::from_scopes(&scopes(&["admin"])),
+            ApiKeyScope::Admin
+        );
+        // Highest recognized privilege present wins.
+        assert_eq!(
+            ApiKeyScope::from_scopes(&scopes(&["read", "admin"])),
+            ApiKeyScope::Admin
+        );
+        assert_eq!(
+            ApiKeyScope::from_scopes(&scopes(&["read", "write"])),
+            ApiKeyScope::Write
+        );
+    }
 }

@@ -70,7 +70,7 @@ impl WasmPluginHost {
             key,
         );
 
-        let payload = plugin
+        let mut payload = plugin
             .invoke_generate_passport(&input)
             .map_err(|e| ComplianceError {
                 kind: ComplianceErrorKind::Internal,
@@ -91,6 +91,17 @@ impl WasmPluginHost {
                 kind: ComplianceErrorKind::InvalidInput,
                 message: format!("generate_passport must return a JSON object, got {type_desc}"),
             });
+        }
+
+        // Host-side backstop mirroring compute()'s determination gate: a
+        // provisional (not-in-force) sector can never surface a binding
+        // compliance claim, even if the plugin ignores the advisory __isInForce
+        // flag and injects one into its generated output.
+        if !catalog().is_in_force(key)
+            && let Some(obj) = payload.as_object_mut()
+        {
+            obj.remove("complianceStatus");
+            obj.remove("complianceResult");
         }
 
         Ok(payload)
@@ -136,11 +147,12 @@ impl PluginHost for WasmPluginHost {
             Ok(r) => r,
             Err(e) => {
                 let msg = e.to_string();
-                // Fuel exhaustion is a distinct sandbox event — track it separately
-                // so the alert rule "any increment = sandbox limit actually firing"
-                // is unambiguous.
-                if msg.to_lowercase().contains("fuel") || msg.to_lowercase().contains("out of fuel")
-                {
+                // Classify sandbox events from HOST-controlled error prefixes,
+                // never from plugin-controlled text. A fuel trap is remapped to a
+                // "fuel exhausted" prefix and the memory cap bail to "memory cap
+                // exceeded"; a plugin's own error surfaces as "plugin reported an
+                // error: …", so it cannot spoof either metric/alert.
+                if msg.starts_with("fuel exhausted") {
                     metrics::counter!(
                         "plugin_fuel_exhausted_total",
                         "sector" => key.to_owned()
@@ -152,9 +164,7 @@ impl PluginHost for WasmPluginHost {
                         "Wasm plugin exhausted fuel budget"
                     );
                 }
-                // Memory cap is signalled by ResourceLimiter::memory_growing returning Err
-                // with a message containing "memory cap" (see runtime.rs).
-                if msg.contains("memory cap") {
+                if msg.starts_with("memory cap exceeded") {
                     metrics::counter!(
                         "plugin_mem_capped_total",
                         "sector" => key.to_owned()

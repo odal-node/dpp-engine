@@ -106,7 +106,7 @@ pub async fn dispatch(cmd: Commands) -> anyhow::Result<()> {
         } => run_key_revoke(&id).await,
         Commands::Key {
             command: KeyCommands::Use { secret },
-        } => run_key_use(&secret).await,
+        } => run_key_use(&resolve_api_secret(secret)?).await,
         Commands::Facility {
             command: FacilityCommands::List,
         } => run_facility_list().await,
@@ -222,4 +222,23 @@ pub async fn dispatch(cmd: Commands) -> anyhow::Result<()> {
         } => run_schema().await,
         Commands::Verify { target } => run_verify(&target).await,
     }
+}
+
+/// Resolve the API secret for `odal key use`, in order: the explicit CLI
+/// argument, the `ODAL_API_SECRET` environment variable, then an interactive
+/// no-echo prompt. Accepting the secret anywhere but `argv` is deliberate —
+/// a secret on the command line leaks into shell history and the process table.
+fn resolve_api_secret(arg: Option<String>) -> anyhow::Result<String> {
+    if let Some(secret) = arg {
+        return Ok(secret);
+    }
+    if let Ok(secret) = std::env::var("ODAL_API_SECRET")
+        && !secret.is_empty()
+    {
+        return Ok(secret);
+    }
+    let secret = inquire::Password::new("API secret (odal_sk_…):")
+        .without_confirmation()
+        .prompt()?;
+    Ok(secret)
 }

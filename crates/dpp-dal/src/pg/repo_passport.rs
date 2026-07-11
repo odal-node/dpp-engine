@@ -23,6 +23,30 @@ use dpp_domain::{
 
 use super::{PgDal, db_err};
 
+/// Fields `patch_fields` refuses to modify: passport identity, lifecycle state,
+/// retention lock, signatures, and seal. Each is governed by the publish
+/// pipeline / `update_status` and backs a scalar column that this JSONB-merge
+/// path does not rewrite — allowing them here would both bypass the state
+/// machine and desync the doc from its enforcing column (e.g. flipping
+/// `retentionLocked` in the doc while the `retention_locked` column stays
+/// `false`). Mirrors the `PassportRepository` default-impl guard in dpp-core.
+/// Serialized (camelCase) names.
+const PROTECTED_PATCH_FIELDS: [&str; 13] = [
+    "id",
+    "sector",
+    "status",
+    "retentionLocked",
+    "retentionUntil",
+    "jwsSignature",
+    "publicJwsSignature",
+    "seal",
+    "version",
+    "publishedAt",
+    "createdAt",
+    "supersedesId",
+    "schemaVersion",
+];
+
 /// Apply a passport update (scalar columns + `doc`) inside a caller-supplied
 /// transaction. Shared by [`PgPassportRepo::update`] and the transactional
 /// outbox's `commit_publish`, so the publish-write and the outbox insert commit
@@ -139,6 +163,13 @@ impl PassportRepository for PgPassportRepo {
     ///
     /// O(n) over active passports — acceptable for single-tenant MVP scale.
     async fn find_published_by_gtin(&self, gtin: &str) -> Result<Option<Passport>, DppError> {
+        // A GTIN is purely numeric. Reject anything else so LIKE metacharacters
+        // (`%`/`_`) in an untrusted value can't widen the pattern to match — and
+        // return — an arbitrary passport. A non-numeric value can never match a
+        // real GS1 Digital Link URL anyway.
+        if gtin.is_empty() || !gtin.bytes().all(|b| b.is_ascii_digit()) {
+            return Ok(None);
+        }
         // Battery GS1 DL URL: https://id.odal-node.io/01/{gtin}/21/{serialId}
         let row = sqlx::query(
             "SELECT doc FROM odal.passport \
@@ -216,6 +247,28 @@ impl PassportRepository for PgPassportRepo {
         id: PassportId,
         delta: serde_json::Value,
     ) -> Result<Passport, DppError> {
+        // Reject protected/state-machine fields up front: they are set only via
+        // the publish pipeline / update_status and back scalar columns this path
+        // does not rewrite, so patching them would bypass the state machine and
+        // desync the doc from its enforcing column.
+        if let Some(obj) = delta.as_object() {
+            let mut forbidden: Vec<&str> = PROTECTED_PATCH_FIELDS
+                .iter()
+                .copied()
+                .filter(|k| obj.contains_key(*k))
+                .collect();
+            if !forbidden.is_empty() {
+                forbidden.sort_unstable();
+                return Err(DppError::Validation(
+                    format!(
+                        "patch_fields cannot modify protected field(s): {}",
+                        forbidden.join(", ")
+                    )
+                    .into(),
+                ));
+            }
+        }
+
         let mut tx = self.dal.begin().await?;
         // Row lock makes concurrent patches serialise instead of clobbering.
         let row = sqlx::query("SELECT doc FROM odal.passport WHERE id = $1 FOR UPDATE")
@@ -237,17 +290,14 @@ impl PassportRepository for PgPassportRepo {
             }
         }
         let passport = Self::from_doc(doc.clone())?;
-        sqlx::query(
-            r#"UPDATE odal.passport SET
-                 status = COALESCE($2->>'status', status),
-                 doc    = $2
-               WHERE id = $1"#,
-        )
-        .bind(Self::uuid_of(id))
-        .bind(&doc)
-        .execute(&mut *tx)
-        .await
-        .map_err(db_err)?;
+        // Doc-only write: the scalar columns are all protected fields (rejected
+        // above), so they can never drift from the doc via this path.
+        sqlx::query("UPDATE odal.passport SET doc = $2 WHERE id = $1")
+            .bind(Self::uuid_of(id))
+            .bind(&doc)
+            .execute(&mut *tx)
+            .await
+            .map_err(db_err)?;
         tx.commit().await.map_err(db_err)?;
         Ok(passport)
     }

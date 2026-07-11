@@ -38,6 +38,13 @@ pub async fn transfer_initiate_handler(
     Path(dpp_id): Path<String>,
     Json(body): Json<TransferInitiateRequest>,
 ) -> impl IntoResponse {
+    if !auth.scope.can_write() {
+        return api_error(
+            StatusCode::FORBIDDEN,
+            "FORBIDDEN",
+            "Initiating a transfer requires a write-scoped credential.",
+        );
+    }
     let id = match parse_passport_id(&dpp_id) {
         Ok(i) => i,
         Err(e) => return e,
@@ -79,6 +86,13 @@ pub async fn transfer_accept_handler(
     Extension(auth): Extension<AuthContext>,
     Path(dpp_id): Path<String>,
 ) -> impl IntoResponse {
+    if !auth.scope.can_write() {
+        return api_error(
+            StatusCode::FORBIDDEN,
+            "FORBIDDEN",
+            "Accepting a transfer requires a write-scoped credential.",
+        );
+    }
     let id = match parse_passport_id(&dpp_id) {
         Ok(i) => i,
         Err(e) => return e,

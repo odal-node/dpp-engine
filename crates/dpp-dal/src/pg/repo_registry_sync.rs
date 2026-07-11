@@ -19,6 +19,22 @@ use dpp_types::{RegistrySyncCounts, RegistrySyncOutbox, RegistrySyncRow, Registr
 
 use super::{PgDal, db_err, repo_passport::update_passport_in_tx};
 
+/// Turn an `UPDATE` that matched no row into a `NotFound` rather than a silent
+/// `Ok(())` — a status update against an absent `passport_id` is a real error,
+/// not a no-op success.
+fn require_updated(
+    res: &sqlx::postgres::PgQueryResult,
+    passport_id: PassportId,
+) -> Result<(), DppError> {
+    if res.rows_affected() == 0 {
+        return Err(DppError::NotFound(format!(
+            "registry_sync row for passport {}",
+            passport_id.0
+        )));
+    }
+    Ok(())
+}
+
 /// PostgreSQL implementation of [`RegistrySyncOutbox`].
 pub struct PgRegistrySyncRepo {
     dal: PgDal,
@@ -53,10 +69,21 @@ impl RegistrySyncOutbox for PgRegistrySyncRepo {
         let mut tx = self.dal.begin().await?;
         // Same transaction as the passport write — the atomicity guarantee.
         update_passport_in_tx(&mut tx, passport).await?;
+        // A previously *rejected* row is re-queued with the corrected payload so
+        // a fixed passport can actually be resubmitted (and `due()`, which only
+        // selects 'pending', picks it back up). Rows already 'registered',
+        // 'pending', or carrying a status-intent are left untouched.
         sqlx::query(
             r#"INSERT INTO odal.registry_sync (passport_id, payload, status)
                VALUES ($1, $2, 'pending')
-               ON CONFLICT (passport_id) DO NOTHING"#,
+               ON CONFLICT (passport_id) DO UPDATE SET
+                 payload = EXCLUDED.payload,
+                 status = 'pending',
+                 attempts = 0,
+                 next_attempt_at = now(),
+                 message = NULL,
+                 updated_at = now()
+               WHERE odal.registry_sync.status = 'rejected'"#,
         )
         .bind(passport.id.0)
         .bind(&payload)
@@ -109,7 +136,7 @@ impl RegistrySyncOutbox for PgRegistrySyncRepo {
         passport_id: PassportId,
         registry_id: String,
     ) -> Result<(), DppError> {
-        sqlx::query(
+        let res = sqlx::query(
             r#"UPDATE odal.registry_sync SET
                  status = 'registered',
                  registry_id = $2,
@@ -124,7 +151,7 @@ impl RegistrySyncOutbox for PgRegistrySyncRepo {
         .execute(self.dal.pool())
         .await
         .map_err(db_err)?;
-        Ok(())
+        require_updated(&res, passport_id)
     }
 
     async fn mark_rejected(
@@ -132,7 +159,7 @@ impl RegistrySyncOutbox for PgRegistrySyncRepo {
         passport_id: PassportId,
         message: String,
     ) -> Result<(), DppError> {
-        sqlx::query(
+        let res = sqlx::query(
             r#"UPDATE odal.registry_sync SET
                  status = 'rejected',
                  message = $2,
@@ -145,7 +172,7 @@ impl RegistrySyncOutbox for PgRegistrySyncRepo {
         .execute(self.dal.pool())
         .await
         .map_err(db_err)?;
-        Ok(())
+        require_updated(&res, passport_id)
     }
 
     async fn mark_attempt_failed(
@@ -156,7 +183,7 @@ impl RegistrySyncOutbox for PgRegistrySyncRepo {
         // Exponential backoff on the *new* attempt count, capped at 1h, with
         // 0.75–1.25× jitter to avoid thundering-herd retries. `attempts` in the
         // expression is the pre-increment value the row already holds.
-        sqlx::query(
+        let res = sqlx::query(
             r#"UPDATE odal.registry_sync SET
                  attempts = attempts + 1,
                  message = $2,
@@ -171,7 +198,7 @@ impl RegistrySyncOutbox for PgRegistrySyncRepo {
         .execute(self.dal.pool())
         .await
         .map_err(db_err)?;
-        Ok(())
+        require_updated(&res, passport_id)
     }
 
     async fn pending_for(
