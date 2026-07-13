@@ -10,16 +10,19 @@
 //! - [`query`] — read paths: `find_*`, `list`, `count`, `history`
 //! - [`create`] — `create`, `update`, and their private helpers `apply_patch`/`apply_compliance`
 //! - [`publish`] — `publish` and its private helpers `validate_schema_for_publish`/`build_gs1_or_fallback_url`
+//! - [`lint`] — `relint` (advisory lint re-check; never blocks publish)
 //! - [`lifecycle`] — `suspend`, `archive`
 //! - [`eol`] — `declare_eol`
 //! - [`transfer`] — `initiate_transfer`, `accept_transfer`
 //! - [`evidence`] — `generate_evidence`/`list_evidence`/`get_evidence`/`verify_evidence`
 //! - [`seal`] — reserved seat for the eIDAS seal step in `publish` (not wired yet)
+//!
 
 mod create;
 mod eol;
 mod evidence;
 mod lifecycle;
+mod lint;
 mod publish;
 mod query;
 mod seal;

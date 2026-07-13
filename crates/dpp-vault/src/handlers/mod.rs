@@ -9,6 +9,7 @@ pub mod evidence;
 pub mod health;
 pub mod history;
 pub mod info;
+pub mod lint;
 pub mod list;
 pub mod node_state;
 pub mod operator;

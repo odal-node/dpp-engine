@@ -793,7 +793,14 @@ async fn local_component_cycle_is_rejected() {
     // A has no components; B lists A (B → A).
     let a_id = create_draft(&client, &base, &token, "Assembly A", &[]).await;
     let ref_to_a = format!("https://id.odal-node.io/dpp/{a_id}");
-    let b_id = create_draft(&client, &base, &token, "Assembly B", &[ref_to_a.clone()]).await;
+    let b_id = create_draft(
+        &client,
+        &base,
+        &token,
+        "Assembly B",
+        std::slice::from_ref(&ref_to_a),
+    )
+    .await;
 
     // componentRefs round-trips through create + read.
     let b: serde_json::Value = client

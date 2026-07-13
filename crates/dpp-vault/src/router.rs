@@ -30,6 +30,7 @@ use crate::{
         health::{health_handler, ready_handler},
         history::history_handler,
         info::info_handler,
+        lint::lint_handler,
         list::list_handler,
         node_state::node_state_handler,
         operator::{operator_get_handler, operator_patch_handler},
@@ -67,6 +68,7 @@ pub fn build(state: AppState) -> Router {
         .route("/dpps", get(list_handler))
         .route("/dpp/{dppId}", get(read_handler).put(update_handler))
         .route("/dpp/{dppId}/publish", post(publish_handler))
+        .route("/dpp/{dppId}/lint", post(lint_handler))
         .route("/dpp/{dppId}/suspend", post(suspend_handler))
         .route("/dpp/{dppId}/archive", post(archive_handler))
         .route("/dpp/{dppId}/eol", post(eol_handler))
