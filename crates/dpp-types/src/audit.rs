@@ -246,4 +246,26 @@ mod tests {
         let result: Result<AuditEntry, _> = serde_json::from_value(value);
         assert!(result.is_err(), "unknown field must fail to deserialize");
     }
+
+    use proptest::prelude::*;
+
+    proptest! {
+        /// A freshly linked chain of any length verifies; flipping one entry's
+        /// content after linking is detected as tampering at exactly that index.
+        #[test]
+        fn linked_chain_verifies_and_tamper_is_localized(
+            actions in proptest::collection::vec("[a-z]{1,8}", 1..12usize),
+            tamper_seed in any::<usize>(),
+        ) {
+            let mut es: Vec<AuditEntry> = actions.iter().map(|a| entry(a)).collect();
+            chain(&mut es);
+            prop_assert!(verify_audit_chain(&es).is_ok());
+
+            let idx = tamper_seed % es.len();
+            let flipped = format!("{}-x", es[idx].new_status.as_deref().unwrap_or("s"));
+            es[idx].new_status = Some(flipped);
+            let brk = verify_audit_chain(&es).expect_err("tamper must be detected");
+            prop_assert_eq!(brk.index, idx);
+        }
+    }
 }
