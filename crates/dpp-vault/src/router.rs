@@ -46,6 +46,10 @@ use crate::{
         suspend::suspend_handler,
         transfer::{transfer_accept_handler, transfer_initiate_handler},
         update::update_handler,
+        webhooks::{
+            webhooks_create_handler, webhooks_delete_handler, webhooks_list_handler,
+            webhooks_test_handler,
+        },
     },
     middleware::auth::auth_middleware,
     state::AppState,
@@ -94,6 +98,13 @@ pub fn build(state: AppState) -> Router {
             get(api_keys_list_handler).post(api_keys_create_handler),
         )
         .route("/api-keys/{id}", delete(api_keys_delete_handler))
+        // ── Webhooks (signed outbound delivery) ───────────────────────
+        .route(
+            "/webhooks",
+            get(webhooks_list_handler).post(webhooks_create_handler),
+        )
+        .route("/webhooks/{id}", delete(webhooks_delete_handler))
+        .route("/webhooks/{id}/test", post(webhooks_test_handler))
         // ── Facilities (Annex III) ────────────────────────────────────
         .route(
             "/facilities",

@@ -2,7 +2,7 @@
 
 use crate::cli_args::{
     Commands, FacilityCommands, KeyCommands, OperatorCommands, OperatorIdCommands,
-    PassportCommands, ProfileCommands, SchemaCommands,
+    PassportCommands, ProfileCommands, SchemaCommands, WebhookCommands,
 };
 use crate::commands::{
     bootstrap::run_bootstrap,
@@ -33,7 +33,25 @@ use crate::commands::{
     update::run_update,
     validate::run_validate,
     verify::run_verify,
+    webhook::{run_webhook_add, run_webhook_list, run_webhook_remove, run_webhook_test},
 };
+
+/// Resolve an API-key secret without requiring it as a shell argument (which
+/// would land in shell history and `ps`/`/proc/<pid>/cmdline`): use the flag if
+/// given, else the `ODAL_API_SECRET` env var, else a hidden interactive prompt.
+fn resolve_api_secret(arg: Option<String>) -> anyhow::Result<String> {
+    if let Some(s) = arg {
+        return Ok(s);
+    }
+    if let Ok(s) = std::env::var("ODAL_API_SECRET")
+        && !s.is_empty()
+    {
+        return Ok(s);
+    }
+    Ok(inquire::Password::new("API key secret:")
+        .without_confirmation()
+        .prompt()?)
+}
 
 pub fn should_enter_interactive() -> bool {
     use std::io::IsTerminal;
@@ -106,7 +124,7 @@ pub async fn dispatch(cmd: Commands) -> anyhow::Result<()> {
         } => run_key_revoke(&id).await,
         Commands::Key {
             command: KeyCommands::Use { secret },
-        } => run_key_use(&secret).await,
+        } => run_key_use(&resolve_api_secret(secret)?).await,
         Commands::Facility {
             command: FacilityCommands::List,
         } => run_facility_list().await,
@@ -145,6 +163,23 @@ pub async fn dispatch(cmd: Commands) -> anyhow::Result<()> {
         Commands::OperatorId {
             command: OperatorIdCommands::Remove { id },
         } => run_operator_id_remove(&id).await,
+        Commands::Webhook {
+            command: WebhookCommands::List,
+        } => run_webhook_list().await,
+        Commands::Webhook {
+            command:
+                WebhookCommands::Add {
+                    url,
+                    events,
+                    description,
+                },
+        } => run_webhook_add(url, events, description).await,
+        Commands::Webhook {
+            command: WebhookCommands::Test { id },
+        } => run_webhook_test(&id).await,
+        Commands::Webhook {
+            command: WebhookCommands::Remove { id },
+        } => run_webhook_remove(&id).await,
         Commands::Profile {
             command: ProfileCommands::List,
         } => run_profile_list(),

@@ -6,6 +6,7 @@ use std::sync::Arc;
 use dpp_domain::ports::registry_sync::RegistrySyncPort;
 use dpp_integrator::infra::job_store::JobStore;
 use dpp_types::registry_sync::RegistrySyncOutbox;
+use dpp_types::webhook::WebhookOutbox;
 
 /// Spawn the periodic cleanup of expired import jobs (every 6 hours).
 pub fn spawn_job_cleanup(store: Arc<dyn JobStore>) {
@@ -64,6 +65,54 @@ pub async fn spawn_registry_drain(
                     tracing::warn!(
                         stalled = c.stalled,
                         "registry outbox has stalled rows — manual investigation required"
+                    );
+                }
+            }
+        }
+    });
+}
+
+/// Log/gauge the webhook delivery outbox's outstanding state, then spawn the
+/// periodic drain loop. Each emitted event fans out to matching subscriptions
+/// (after-commit, in the vault service); this task performs the signed HTTP POST
+/// with backoff. A killed node loses nothing — `pending` rows redeliver on boot.
+pub async fn spawn_webhook_drain(outbox: Arc<dyn WebhookOutbox>, allow_private_targets: bool) {
+    match outbox.status_counts().await {
+        Ok(c) => {
+            tracing::info!(
+                pending = c.pending,
+                delivered = c.delivered,
+                exhausted = c.exhausted,
+                "webhook outbox reconciliation at boot"
+            );
+            metrics::gauge!("webhook_outbox_pending").set(c.pending as f64);
+            metrics::gauge!("webhook_outbox_exhausted").set(c.exhausted as f64);
+        }
+        Err(e) => tracing::warn!(error = %e, "webhook outbox boot reconciliation failed"),
+    }
+
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .build()
+        .unwrap_or_default();
+
+    tokio::spawn(async move {
+        loop {
+            tokio::time::sleep(DRAIN_INTERVAL).await;
+            dpp_node::infra::webhook_drain::drain_once(
+                &outbox,
+                &client,
+                DRAIN_BATCH,
+                allow_private_targets,
+            )
+            .await;
+            if let Ok(c) = outbox.status_counts().await {
+                metrics::gauge!("webhook_outbox_pending").set(c.pending as f64);
+                metrics::gauge!("webhook_outbox_exhausted").set(c.exhausted as f64);
+                if c.exhausted > 0 {
+                    tracing::warn!(
+                        exhausted = c.exhausted,
+                        "webhook outbox has exhausted deliveries — check receiver health"
                     );
                 }
             }

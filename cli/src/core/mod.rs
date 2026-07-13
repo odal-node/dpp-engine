@@ -7,3 +7,4 @@ pub mod registry_identity;
 pub mod schema;
 pub mod types;
 pub mod verify;
+pub mod webhook;

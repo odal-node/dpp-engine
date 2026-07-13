@@ -25,7 +25,7 @@ use dpp_crypto::identity::LocalIdentityService;
 use dpp_crypto::keystore::KeyStore;
 use dpp_dal::pg::{
     PgApiKeyRepo, PgAuditRepo, PgDal, PgEvidenceDossierRepo, PgOperatorConfigRepo, PgPassportRepo,
-    PgRegistryIdentityRepo, PgTransferRepo, sqlx,
+    PgRegistryIdentityRepo, PgTransferRepo, PgWebhookRepo, sqlx,
 };
 use dpp_domain::{
     DppError, GhostArchive, GhostRegistrySync,
@@ -39,6 +39,7 @@ use dpp_vault::{
     domain::{
         api_key_service::ApiKeyService, operator_service::OperatorService,
         registry_identity_service::RegistryIdentityService, service::PassportService,
+        webhook_service::WebhookService,
     },
     state::{AppState as VaultState, DbPing},
 };
@@ -192,12 +193,19 @@ async fn start_node_with_dal(dal: PgDal) -> String {
     let registry_identity_service = Arc::new(RegistryIdentityService::new(Arc::new(
         PgRegistryIdentityRepo::new(dal.clone()),
     )));
+    let webhook_repo = Arc::new(PgWebhookRepo::new(dal.clone()));
+    let webhook_service = Arc::new(WebhookService::new(
+        webhook_repo.clone(),
+        webhook_repo,
+        false,
+    ));
     let auth_provider: Arc<dyn dpp_types::auth::AuthProvider> = Arc::new(TestAuthProvider);
     let vault_state = VaultState {
         service,
         operator_service,
         api_key_service,
         registry_identity_service,
+        webhook_service,
         db_ping: Arc::new(PgPing(dal)),
         auth_provider,
         cors_allowed_origins: Vec::new(),

@@ -35,6 +35,7 @@ use dpp_domain::ports::{
 use dpp_types::{
     STANDALONE_OPERATOR_ID, audit::AuditRepository, evidence::EvidenceDossierRepository,
     operator::OperatorConfigRepository, registry_sync::RegistrySyncOutbox, transfer::TransferStore,
+    webhook::WebhookOutbox,
 };
 
 /// Core domain service for the passport lifecycle.
@@ -71,6 +72,11 @@ pub struct PassportService {
     /// create so changes made via the API/CLI take effect without a node restart.
     /// `None` disables stamping (e.g. in tests that don't exercise it).
     pub registry_reader: Option<Arc<dyn OperatorConfigRepository>>,
+    /// Delivery outbox for signed outbound webhooks. When present, each emitted
+    /// event is fanned out (after-commit, best-effort) to matching subscriptions;
+    /// the node's drain task performs the signed HTTP POST. `None` (test doubles
+    /// / deployments without webhooks) simply skips enqueue.
+    pub webhooks: Option<Arc<dyn WebhookOutbox>>,
 }
 
 impl PassportService {
@@ -99,6 +105,7 @@ impl PassportService {
             evidence_store: None,
             operator_country,
             registry_reader: None,
+            webhooks: None,
         }
     }
 
@@ -136,6 +143,14 @@ impl PassportService {
         self
     }
 
+    /// Provide the webhook delivery outbox, enabling signed outbound webhooks.
+    /// Each subsequent [`Self::emit`] fans the event out to matching subscriptions.
+    #[must_use]
+    pub fn with_webhooks(mut self, outbox: Arc<dyn WebhookOutbox>) -> Self {
+        self.webhooks = Some(outbox);
+        self
+    }
+
     /// Emit an event after a successful commit. Failures are logged, never
     /// propagated — the DB write is the source of truth.
     async fn emit(&self, event_type: &str, data: serde_json::Value) {
@@ -147,6 +162,29 @@ impl PassportService {
                 error = %e,
                 "failed to publish event (non-fatal)"
             );
+        }
+        // Fan the same event out to signed outbound webhooks. After-commit and
+        // best-effort, exactly like the NATS publish above: an enqueue failure is
+        // logged, never propagated. Once a delivery row exists the node's drain
+        // task owns retry/backoff.
+        if let Some(webhooks) = &self.webhooks {
+            match serde_json::to_string(&event) {
+                Ok(body) => {
+                    if let Err(e) = webhooks.enqueue(&event.event_type, &body).await {
+                        tracing::warn!(
+                            event_type = %event.event_type,
+                            event_id = %event.event_id,
+                            error = %e,
+                            "failed to enqueue webhook deliveries (non-fatal)"
+                        );
+                    }
+                }
+                Err(e) => tracing::warn!(
+                    event_type = %event.event_type,
+                    error = %e,
+                    "failed to serialise event for webhook enqueue (non-fatal)"
+                ),
+            }
         }
     }
 }

@@ -62,6 +62,12 @@ pub struct NodeConfig {
     /// Defaults to loopback so metrics are never served on the public API port;
     /// set to a private interface for remote scraping, or empty to disable.
     pub metrics_addr: Option<String>,
+
+    // ── Webhooks ────────────────────────────────────────────────────────────
+    /// Allow webhook targets on private/loopback addresses. Off by default (the
+    /// SSRF guard refuses non-public receivers); a self-hosting operator whose
+    /// receiver lives on their own internal network sets this to opt in.
+    pub webhook_allow_private_targets: bool,
 }
 
 impl NodeConfig {
@@ -118,6 +124,9 @@ impl NodeConfig {
                 Ok(s) => Some(s),
                 Err(_) => Some("127.0.0.1:9100".into()), // private default
             },
+            webhook_allow_private_targets: std::env::var("WEBHOOK_ALLOW_PRIVATE_TARGETS")
+                .map(|s| matches!(s.trim().to_ascii_lowercase().as_str(), "1" | "true" | "yes"))
+                .unwrap_or(false),
         })
     }
 }
@@ -165,6 +174,7 @@ mod tests {
             "LOG_LEVEL",
             "PLUGINS_DIR",
             "METRICS_ADDR",
+            "WEBHOOK_ALLOW_PRIVATE_TARGETS",
         ] {
             unsafe { std::env::remove_var(key) };
         }

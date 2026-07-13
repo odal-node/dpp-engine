@@ -1691,6 +1691,155 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+  # ---- Webhooks (odal-vault) -----------------------------------------------
+
+  /vault/api/v1/webhooks:
+    get:
+      operationId: listWebhooks
+      summary: List webhook subscriptions
+      description: |
+        Lists webhook subscriptions (active and retired). The signing secret is
+        never returned here — only in the create response. Admin-scoped.
+      tags: [Webhooks]
+      security:
+        - BearerApiKey: []
+        - BasicAuth: []
+      responses:
+        "200":
+          description: Subscriptions (secret redacted).
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    id: { type: string, format: uuid }
+                    url: { type: string }
+                    events:
+                      type: array
+                      items: { type: string }
+                    active: { type: boolean }
+                    description: { type: string, nullable: true }
+                    createdAt: { type: string, format: date-time }
+                    updatedAt: { type: string, format: date-time }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+    post:
+      operationId: createWebhook
+      summary: Create a webhook subscription
+      description: |
+        Register a receiver URL (must be https and resolve to a public host,
+        unless the node sets WEBHOOK_ALLOW_PRIVATE_TARGETS). The response includes
+        the `secret` — shown ONCE — used to verify the `X-Odal-Signature` header
+        on every delivery. Admin-scoped.
+      tags: [Webhooks]
+      security:
+        - BearerApiKey: []
+        - BasicAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [url]
+              properties:
+                url:
+                  type: string
+                  format: uri
+                  example: "https://hooks.example.com/odal"
+                events:
+                  type: array
+                  items: { type: string }
+                  description: 'Event subjects to receive, or ["*"] for all. Defaults to all.'
+                  example: ["dpp.passport.published", "dpp.passport.transferred"]
+                description:
+                  type: string
+      responses:
+        "201":
+          description: Subscription created. The `secret` field is shown ONCE.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id: { type: string, format: uuid }
+                  url: { type: string }
+                  events:
+                    type: array
+                    items: { type: string }
+                  active: { type: boolean }
+                  description: { type: string, nullable: true }
+                  createdAt: { type: string, format: date-time }
+                  updatedAt: { type: string, format: date-time }
+                  secret:
+                    type: string
+                    description: Signing secret — shown once, store it securely.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
+  /vault/api/v1/webhooks/{id}:
+    delete:
+      operationId: removeWebhook
+      summary: Remove a webhook subscription
+      description: |
+        Soft-removes a subscription (`active` set to false). Deliveries already
+        queued still drain; no new events are enqueued. Admin-scoped.
+      tags: [Webhooks]
+      security:
+        - BearerApiKey: []
+        - BasicAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "204":
+          description: Subscription removed.
+        "400":
+          description: Invalid subscription id.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /vault/api/v1/webhooks/{id}/test:
+    post:
+      operationId: testWebhook
+      summary: Send a test delivery
+      description: |
+        Enqueues a synthetic `dpp.webhook.test` delivery to the subscription so a
+        receiver can be proven end-to-end. Admin-scoped.
+      tags: [Webhooks]
+      security:
+        - BearerApiKey: []
+        - BasicAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "202":
+          description: Test delivery enqueued.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
   # ---- Node Setup State (odal-vault) ---------------------------------------
 
   /vault/api/v1/node/state:

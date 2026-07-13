@@ -54,6 +54,8 @@ chrono       = { workspace = true }
 ed25519-dalek = { workspace = true }
 hex          = { workspace = true }
 sha2         = { workspace = true }
+hmac         = { workspace = true }
+url          = { workspace = true }
 base64       = { workspace = true }
 serde_jcs    = { workspace = true }
 thiserror    = { workspace = true }
