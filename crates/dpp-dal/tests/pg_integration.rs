@@ -618,6 +618,7 @@ fn minimal_dossier(passport_id: &str) -> DossierV1 {
         eol_event: None,
         checkpoint: None,
         calc_receipts: vec![],
+        component_graph: None,
     }
 }
 

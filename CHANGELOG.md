@@ -8,10 +8,30 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 **minor** bump may contain breaking changes, each listed below under a
 **Breaking** heading with a migration note.
 
-## [0.6.0] - 2026-07-10
+## [Unreleased]
+
+## [0.6.0] - 2026-07-13
+
+This release consumes **dpp-core 0.8.0**, which adds the passport reference
+types, the bounded graph cycle/depth check, and the schema-lens registry the
+lineage, graph, and view features below build on.
 
 ### Added
 
+- Second-life lineage: a passport may cite a `parentPassportRef` (its
+  predecessor). The reference is verified by hash-pinning the referenced
+  passport's published JWS — passports do not publish an issuer DID, so this is
+  integrity-pinning, not signature verification. The resolver exposes the
+  `predecessor`/`successor` linkset.
+- Bill-of-materials graph: a passport may carry `componentRefs`.
+  `GET /api/v1/dpp/{dppId}/verify-tree` walks the component tree recursively and
+  verifies each node with bounded depth and node caps, path-based cycle
+  detection (diamonds are not cycles), and fail-closed handling. Evidence
+  dossiers embed and attest the component-graph report so tampering with it is
+  detectable; the resolver exposes the `hasComponent` linkset.
+- Schema views: `?schema_view=<version>` on the public reads (by id and by
+  GTIN) serves the passport upcast through the registered schema lenses,
+  returning `{ passport, schemaView }`.
 - Evidence dossiers are now persisted: migration `0021_evidence_dossier.sql`
   adds an append-only `odal.evidence_dossier` table, backed by
   `PgEvidenceDossierRepo`.
@@ -22,9 +42,29 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 - `odal verify <dossier-id | file>` now verifies against the node instead of
   reading a local file only — same exit-code convention (0 verified, 1
   tamper, 2 unreadable/unparseable/unreachable).
+- Signed outbound webhooks: operators register receiver URLs and the node POSTs
+  each passport event to them, HMAC-SHA256 signed. Migration `0022_webhooks.sql`
+  adds `odal.webhook_subscription` + a durable `odal.webhook_delivery` outbox,
+  backed by `PgWebhookRepo`; a background drain delivers with backoff and
+  survives restarts.
+- New endpoints: `GET`/`POST /api/v1/webhooks`, `DELETE /api/v1/webhooks/{id}`,
+  `POST /api/v1/webhooks/{id}/test` (admin-scoped). New CLI: `odal webhook
+  list | add | remove | test`. See `docs/guides/WEBHOOKS.md` for receiver
+  signature verification.
+- New event `dpp.passport.transferred`, emitted on transfer initiate/accept so
+  webhooks (and NATS) fire on handovers — previously transfer only wrote an
+  audit entry.
+- `WEBHOOK_ALLOW_PRIVATE_TARGETS` (default off): opt-in to deliver to private/
+  loopback receivers on a self-hosted node. Off by default, an SSRF guard
+  requires https + a public host.
+- Fuzz and property tests: cargo-fuzz targets (`parse_csv`,
+  `verify_dossier_json`) and proptest suites for the CSV parser, audit types,
+  the outbound-URL SSRF guard, and component-graph grading.
 
 ### Changed
 
+- An update that fails schema validation now returns `422 Unprocessable Entity`
+  instead of `500 Internal Server Error`.
 - The evidence dossier wire format (`DossierV1`, `DossierManifest`,
   `SignedLayer`) and the audit-trail wire type (`AuditEntry`) are now defined
   in this repo's `dpp-types` crate. The verification engine (signature,
