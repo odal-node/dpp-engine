@@ -46,6 +46,7 @@ use crate::{
         suspend::suspend_handler,
         transfer::{transfer_accept_handler, transfer_initiate_handler},
         update::update_handler,
+        verify_tree::verify_tree_handler,
         webhooks::{
             webhooks_create_handler, webhooks_delete_handler, webhooks_list_handler,
             webhooks_test_handler,
@@ -78,6 +79,7 @@ pub fn build(state: AppState) -> Router {
             post(transfer_accept_handler),
         )
         .route("/dpp/{dppId}/history", get(history_handler))
+        .route("/dpp/{dppId}/verify-tree", get(verify_tree_handler))
         .route(
             "/dpp/{dppId}/evidence",
             get(list_evidence_handler).post(generate_evidence_handler),

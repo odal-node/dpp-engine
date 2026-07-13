@@ -35,6 +35,11 @@ pub async fn update_handler(
             "CONFLICT",
             "DPP is not in a state that allows updates.",
         ),
+        Err(dpp_domain::DppError::Validation(errs)) => api_error(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "VALIDATION_ERROR",
+            &errs.to_display(),
+        ),
         Err(e) => internal_error(e),
     }
 }

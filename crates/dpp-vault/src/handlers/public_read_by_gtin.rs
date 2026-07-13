@@ -1,8 +1,7 @@
 use std::sync::OnceLock;
 
 use axum::{
-    Json,
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::StatusCode,
     response::IntoResponse,
 };
@@ -13,6 +12,7 @@ use dpp_domain::{AccessTier, SectorCatalog};
 use crate::state::AppState;
 
 use super::error::{api_error, internal_error};
+use super::public_read::{PublicReadQuery, respond_public_view};
 
 fn catalog() -> &'static SectorCatalog {
     static CATALOG: OnceLock<SectorCatalog> = OnceLock::new();
@@ -28,6 +28,7 @@ fn catalog() -> &'static SectorCatalog {
 pub async fn public_read_by_gtin_handler(
     State(state): State<AppState>,
     Path(gtin): Path<String>,
+    Query(query): Query<PublicReadQuery>,
 ) -> impl IntoResponse {
     match state.service.find_published_by_gtin(&gtin).await {
         Ok(Some(p)) => {
@@ -44,7 +45,12 @@ pub async fn public_read_by_gtin_handler(
                 policy.field_tiers.extend(sector_policy.field_tiers);
             }
             let decision = filter_by_access_tier(&full, &policy, AccessTier::Public);
-            (StatusCode::OK, Json(decision.filtered_data)).into_response()
+            respond_public_view(
+                decision.filtered_data,
+                p.sector.catalog_key(),
+                &p.schema_version,
+                query.schema_view.as_deref(),
+            )
         }
         Ok(None) => api_error(
             StatusCode::NOT_FOUND,

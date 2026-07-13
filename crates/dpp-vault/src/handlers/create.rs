@@ -8,10 +8,11 @@ use axum::{
 use serde::Deserialize;
 
 use chrono::Utc;
+use dpp_common::url_guard::validate_public_https_url;
 use dpp_digital_link::validate_gtin;
 use dpp_domain::{
     SectorCatalog,
-    domain::passport::{ManufacturerInfo, MaterialEntry, Passport, PassportId},
+    domain::passport::{ManufacturerInfo, MaterialEntry, Passport, PassportId, PassportRef},
     domain::sector::{CarbonFootprint, RepairabilityScore, Sector, SectorData},
     domain::status::PassportStatus,
     domain::validation::validate_sector_data,
@@ -38,6 +39,15 @@ pub struct CreateRequest {
     pub sector_data: Option<SectorData>,
     pub batch_id: Option<String>,
     pub schema_version: Option<String>,
+    /// Cross-operator predecessor this passport derives from (second-life
+    /// successor linkage). Shape-validated here; the hash is checked against the
+    /// fetched parent at verify time.
+    pub parent_passport_ref: Option<PassportRef>,
+    /// Cross-operator references to this product's constituent passports (its
+    /// bill of materials). Shape-validated here; local cycles/over-depth are
+    /// refused by the service.
+    #[serde(default)]
+    pub component_refs: Vec<PassportRef>,
 }
 
 /// `POST /api/v1/dpp` — validate fields and create a new passport in `Draft` status.
@@ -129,6 +139,21 @@ pub async fn create_handler(
         }
     }
 
+    // Lineage/BOM refs are fetched cross-operator at verify time, so hold each
+    // URI to the same SSRF guard as webhooks (https, no internal hosts) and
+    // require the pin to be a lowercase hex SHA-256. Local cycles among
+    // `componentRefs` are refused later by the service (it has the repo).
+    if let Some(ref parent) = body.parent_passport_ref
+        && let Err(e) = validate_passport_ref(parent, "parentPassportRef")
+    {
+        return api_error(StatusCode::UNPROCESSABLE_ENTITY, "VALIDATION_ERROR", &e);
+    }
+    for (i, r) in body.component_refs.iter().enumerate() {
+        if let Err(e) = validate_passport_ref(r, &format!("componentRefs[{i}]")) {
+            return api_error(StatusCode::UNPROCESSABLE_ENTITY, "VALIDATION_ERROR", &e);
+        }
+    }
+
     // Sector is the dispatch key: explicit if supplied, else derived from the
     // typed sector data, else Other.
     let sector = body
@@ -182,6 +207,8 @@ pub async fn create_handler(
         retention_locked: false,
         version: 1,
         supersedes_id: None,
+        parent_passport_ref: body.parent_passport_ref,
+        component_refs: body.component_refs,
         retention_until: None,
         product_id: None,
         operator_identifier: None,
@@ -237,6 +264,44 @@ fn has_unsafe_text(s: &str) -> bool {
             || ('\u{202A}'..='\u{202E}').contains(&c) // LRE, RLE, PDF, LRO, RLO
             || ('\u{2066}'..='\u{2069}').contains(&c) // LRI, RLI, FSI, PDI
     })
+}
+
+/// A `parentPassportRef.publicJwsHash` must be a lowercase hex SHA-256 digest —
+/// 64 hex chars, no uppercase — so it compares byte-for-byte against the
+/// recomputed hash of the fetched parent at verify time.
+fn is_lowercase_hex_sha256(s: &str) -> bool {
+    s.len() == 64
+        && s.bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+}
+
+/// Shape-validate a cross-operator passport reference: `https` + the SSRF guard
+/// on the URI, and a lowercase-hex SHA-256 pin. Returns a field-qualified
+/// message on failure (`field` names the offending JSON field).
+fn validate_passport_ref(r: &PassportRef, field: &str) -> Result<(), String> {
+    validate_public_https_url(&r.uri).map_err(|e| format!("{field}.uri: {e}"))?;
+    if !is_lowercase_hex_sha256(&r.public_jws_hash) {
+        return Err(format!(
+            "{field}.publicJwsHash must be a lowercase hex SHA-256 digest"
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod parent_ref_hash {
+    use super::is_lowercase_hex_sha256;
+
+    #[test]
+    fn accepts_only_64_lowercase_hex() {
+        assert!(is_lowercase_hex_sha256(
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        ));
+        assert!(!is_lowercase_hex_sha256(&"A".repeat(64))); // uppercase
+        assert!(!is_lowercase_hex_sha256(&"a".repeat(63))); // too short
+        assert!(!is_lowercase_hex_sha256(&"a".repeat(65))); // too long
+        assert!(!is_lowercase_hex_sha256(&"g".repeat(64))); // non-hex
+    }
 }
 
 #[cfg(test)]

@@ -96,6 +96,12 @@ pub struct DossierV1 {
     /// field for the same forward-compatibility reason as `checkpoint`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub calc_receipts: Vec<serde_json::Value>,
+    /// The recursive component-tree (bill-of-materials) verification report,
+    /// present iff the passport declares `component_refs`. Attested via
+    /// `content_hashes` — a tampered report fails `content_integrity`. `None`
+    /// for a unit with no modelled sub-assemblies.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub component_graph: Option<serde_json::Value>,
 }
 
 /// Canonical SHA-256 (hex) of a JSON value (RFC 8785 / JCS bytes).
@@ -138,6 +144,9 @@ pub fn compute_content_hashes(dossier: &DossierV1) -> BTreeMap<String, String> {
     }
     if let Some(eol) = &dossier.eol_event {
         hashes.insert("eolEvent".to_string(), content_hash(eol));
+    }
+    if let Some(graph) = &dossier.component_graph {
+        hashes.insert("componentGraph".to_string(), content_hash(graph));
     }
     hashes
 }

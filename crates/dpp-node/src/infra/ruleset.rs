@@ -55,7 +55,7 @@ pub fn sign_bundle(
         effective_date,
         act_citations,
         schema_versions,
-        content_sha256: content_hash(&content)?,
+        content_sha256: content_hash(&content),
     };
     let manifest_value = serde_json::to_value(&manifest)?;
     let manifest_jws = jws::sign(store, key_id, &manifest_value)?;
@@ -91,8 +91,7 @@ impl ActiveRuleset {
             effective_date: Utc::now(),
             act_citations: vec![],
             schema_versions: BTreeMap::new(),
-            content_sha256: content_hash(&content)
-                .expect("JCS canonicalisation of an empty object is infallible"),
+            content_sha256: content_hash(&content),
         };
         Self {
             current: RwLock::new(Arc::new(VerifiedRuleset { manifest, content })),

@@ -58,3 +58,4 @@ testcontainers-modules = { workspace = true }
 tokio                 = { workspace = true }
 flate2                = { workspace = true }
 ed25519-dalek         = { workspace = true }
+proptest              = { workspace = true }
