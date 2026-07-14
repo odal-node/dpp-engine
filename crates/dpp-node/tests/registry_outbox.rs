@@ -112,6 +112,8 @@ fn draft_passport() -> Passport {
         retention_locked: false,
         version: 1,
         supersedes_id: None,
+        parent_passport_ref: None,
+        component_refs: Vec::new(),
         retention_until: None,
         product_id: None,
         operator_identifier: Some("did:web:test.example".into()),

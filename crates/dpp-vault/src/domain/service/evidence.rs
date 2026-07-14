@@ -178,6 +178,21 @@ impl PassportService {
             .as_ref()
             .and_then(|r| r.ruleset_version.clone());
 
+        // Attest the component tree (BOM) when this passport declares one: verify
+        // it now and embed the report, bound into the dossier via content_hashes.
+        let component_graph = if passport.component_refs.is_empty() {
+            None
+        } else {
+            let report = crate::domain::verify::verify_tree(
+                &passport.component_refs,
+                crate::domain::verify::fetch_public_json,
+                dpp_domain::domain::graph::DEFAULT_DEPTH_CAP,
+                crate::domain::verify::DEFAULT_NODE_CAP,
+            )
+            .await;
+            Some(serde_json::to_value(report).map_err(|e| DppError::Serialisation(e.to_string()))?)
+        };
+
         let mut dossier = DossierV1 {
             manifest: DossierManifest {
                 format_version: "1".to_string(),
@@ -203,6 +218,7 @@ impl PassportService {
             eol_event,
             checkpoint: None,
             calc_receipts: Vec::new(),
+            component_graph,
         };
 
         dossier.manifest.content_hashes = compute_content_hashes(&dossier);

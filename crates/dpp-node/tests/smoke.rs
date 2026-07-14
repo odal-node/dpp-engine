@@ -25,8 +25,9 @@ use dpp_crypto::identity::LocalIdentityService;
 use dpp_crypto::keystore::KeyStore;
 use dpp_dal::pg::{
     PgApiKeyRepo, PgAuditRepo, PgDal, PgEvidenceDossierRepo, PgOperatorConfigRepo, PgPassportRepo,
-    PgRegistryIdentityRepo, PgTransferRepo, sqlx,
+    PgRegistryIdentityRepo, PgTransferRepo, PgWebhookRepo, sqlx,
 };
+use dpp_domain::domain::passport::PassportRef;
 use dpp_domain::{
     DppError, GhostArchive, GhostRegistrySync,
     compliance::passthrough_registry::PassthroughRegistry,
@@ -35,13 +36,16 @@ use dpp_identity_service::state::AppState as IdentityState;
 use dpp_integrator::{infra::vault_client::VaultHttpClient, state::AppState as IntegratorState};
 use dpp_node::infra::pg_job_store::PgJobStore;
 use dpp_types::auth::{AuthContext, AuthError, AuthProvider};
+use dpp_vault::domain::verify::{RefUnverifiable, RefVerification, verify_ref};
 use dpp_vault::{
     domain::{
         api_key_service::ApiKeyService, operator_service::OperatorService,
         registry_identity_service::RegistryIdentityService, service::PassportService,
+        webhook_service::WebhookService,
     },
     state::{AppState as VaultState, DbPing},
 };
+use sha2::{Digest, Sha256};
 
 /// Test-only auth provider: accepts the unsigned dev JWTs minted by `make_jwt`
 /// (structural + `exp` checks only). The shipped node uses real API-key /
@@ -192,12 +196,19 @@ async fn start_node_with_dal(dal: PgDal) -> String {
     let registry_identity_service = Arc::new(RegistryIdentityService::new(Arc::new(
         PgRegistryIdentityRepo::new(dal.clone()),
     )));
+    let webhook_repo = Arc::new(PgWebhookRepo::new(dal.clone()));
+    let webhook_service = Arc::new(WebhookService::new(
+        webhook_repo.clone(),
+        webhook_repo,
+        false,
+    ));
     let auth_provider: Arc<dyn dpp_types::auth::AuthProvider> = Arc::new(TestAuthProvider);
     let vault_state = VaultState {
         service,
         operator_service,
         api_key_service,
         registry_identity_service,
+        webhook_service,
         db_ping: Arc::new(PgPing(dal)),
         auth_provider,
         cors_allowed_origins: Vec::new(),
@@ -468,6 +479,10 @@ async fn route_inventory_matches_assembled_router() {
             reqwest::Method::GET,
             format!("/vault/api/v1/dpp/{FAKE_ID}/history"),
         ),
+        (
+            reqwest::Method::GET,
+            format!("/vault/api/v1/dpp/{FAKE_ID}/verify-tree"),
+        ),
         (reqwest::Method::GET, "/vault/api/v1/node/state".into()),
         (reqwest::Method::GET, "/vault/api/v1/operator".into()),
         (reqwest::Method::PATCH, "/vault/api/v1/operator".into()),
@@ -549,6 +564,282 @@ async fn route_inventory_matches_assembled_router() {
 // ---------------------------------------------------------------------------
 // Tier 2 — Full DPP lifecycle (requires Docker)
 // ---------------------------------------------------------------------------
+
+/// Create + publish a battery passport, optionally citing a parent, returning
+/// its id. Battery is in-force, so the caller must have seeded a default
+/// facility + primary operator identifier first.
+async fn publish_battery(
+    client: &reqwest::Client,
+    base: &str,
+    token: &str,
+    gtin: &str,
+    product_name: &str,
+    parent: Option<&PassportRef>,
+) -> String {
+    let mut body = serde_json::json!({
+        "productName": product_name,
+        "manufacturer": {"name": "SmokeTestCorp", "address": "Berlin, DE"},
+        "materials": [],
+        "schemaVersion": "1.0.0",
+        "sectorData": {
+            "sector": "battery",
+            "gtin": gtin,
+            "batteryChemistry": "LFP",
+            "nominalVoltageV": 48.0,
+            "nominalCapacityAh": 100.0,
+            "expectedLifetimeCycles": 3000,
+            "co2ePerUnitKg": 45.2
+        }
+    });
+    if let Some(p) = parent {
+        body["parentPassportRef"] =
+            serde_json::json!({ "uri": p.uri, "publicJwsHash": p.public_jws_hash });
+    }
+    let created: serde_json::Value = client
+        .post(format!("{base}/vault/api/v1/dpp"))
+        .bearer_auth(token)
+        .json(&body)
+        .send()
+        .await
+        .expect("create request failed")
+        .json()
+        .await
+        .expect("create response is JSON");
+    let id = created["id"]
+        .as_str()
+        .unwrap_or_else(|| panic!("id missing from create response: {created}"))
+        .to_owned();
+    let publish_resp = client
+        .post(format!("{base}/vault/api/v1/dpp/{id}/publish"))
+        .bearer_auth(token)
+        .json(&serde_json::json!({}))
+        .send()
+        .await
+        .expect("publish request failed");
+    let status = publish_resp.status();
+    assert!(
+        status.is_success(),
+        "publish failed: {status} {}",
+        publish_resp.text().await.unwrap_or_default()
+    );
+    id
+}
+
+/// Second-life successor: a published passport can cite a cross-operator parent
+/// via `parentPassportRef`, the pin verifies against the parent's live public
+/// JWS, and the parent ref survives redaction into the public view (so the
+/// resolver can advertise the `predecessor` lineage link).
+///
+/// The SSRF guard forbids citing a private/`http` host, so the successor cites a
+/// shape-valid `https://…` URL and `verify_ref` is driven with a fetch closure
+/// that bridges that URL to this local node's public view (production wires the
+/// SSRF-guarded `fetch_public_json` instead).
+#[tokio::test(flavor = "multi_thread")]
+async fn second_life_successor_verifies_against_pinned_parent() {
+    let (base, _container) = start_db_and_node().await;
+    let client = reqwest::Client::new();
+    let token = make_jwt("00000000-0000-0000-0000-000000000077");
+
+    // Battery is in-force: publish needs a default facility + primary operator id.
+    let facility_resp = client
+        .post(format!("{base}/vault/api/v1/facilities"))
+        .bearer_auth(&token)
+        .json(&serde_json::json!({
+            "name": "Default Plant", "identifierScheme": "gln",
+            "identifierValue": "4012345000009", "country": "DE", "isDefault": true
+        }))
+        .send()
+        .await
+        .expect("facility seed request failed");
+    assert!(facility_resp.status().is_success(), "facility seed failed");
+    let op_id_resp = client
+        .post(format!("{base}/vault/api/v1/operator-identifiers"))
+        .bearer_auth(&token)
+        .json(&serde_json::json!({ "scheme": "vat", "value": "DE123456789", "isPrimary": true }))
+        .send()
+        .await
+        .expect("operator-identifier seed request failed");
+    assert!(op_id_resp.status().is_success(), "operator-id seed failed");
+
+    // Publish the PARENT, then read the public JWS the successor will pin.
+    let parent_id = publish_battery(&client, &base, &token, "09506000134352", "Parent", None).await;
+    let parent_public: serde_json::Value = client
+        .get(format!("{base}/vault/public/dpp/{parent_id}"))
+        .send()
+        .await
+        .expect("parent public read failed")
+        .json()
+        .await
+        .expect("parent public view is JSON");
+    let parent_jws = parent_public["publicJwsSignature"]
+        .as_str()
+        .expect("a published passport carries a public JWS");
+    let pin = hex::encode(Sha256::digest(parent_jws.as_bytes()));
+
+    // Cite a shape-valid https URL (the SSRF guard forbids localhost); verify_ref
+    // is bridged to the local node below.
+    let cited_uri = format!("https://id.odal-node.io/dpp/{parent_id}");
+    let parent_ref = PassportRef {
+        uri: cited_uri.clone(),
+        public_jws_hash: pin.clone(),
+    };
+
+    // Publish the SUCCESSOR citing the parent.
+    let successor_id = publish_battery(
+        &client,
+        &base,
+        &token,
+        "09506000134369",
+        "Successor",
+        Some(&parent_ref),
+    )
+    .await;
+    let successor_public: serde_json::Value = client
+        .get(format!("{base}/vault/public/dpp/{successor_id}"))
+        .send()
+        .await
+        .expect("successor public read failed")
+        .json()
+        .await
+        .expect("successor public view is JSON");
+    assert_eq!(
+        successor_public["parentPassportRef"]["uri"].as_str(),
+        Some(cited_uri.as_str()),
+        "parentPassportRef must survive into the public view"
+    );
+
+    // A fetch closure bridging the cited https URL to the local node's parent JSON.
+    let bridged = {
+        let cited = cited_uri.clone();
+        let parent_json = parent_public.clone();
+        move |url: String| {
+            std::future::ready(if url == cited {
+                Ok(parent_json.clone())
+            } else {
+                Err(())
+            })
+        }
+    };
+
+    // Happy path: the pin matches the parent's live public JWS.
+    assert_eq!(
+        verify_ref(&parent_ref, &bridged).await,
+        RefVerification::Verified
+    );
+
+    // Tamper: a wrong pin over the same fetched signature fails closed.
+    let wrong = PassportRef {
+        uri: cited_uri.clone(),
+        public_jws_hash: "0".repeat(64),
+    };
+    assert_eq!(
+        verify_ref(&wrong, &bridged).await,
+        RefVerification::Unverifiable(RefUnverifiable::HashMismatch)
+    );
+
+    // Unreachable: an unmapped URL fails closed, never false-green.
+    let gone = PassportRef {
+        uri: "https://gone.example/dpp/x".into(),
+        public_jws_hash: pin,
+    };
+    assert_eq!(
+        verify_ref(&gone, &bridged).await,
+        RefVerification::Unverifiable(RefUnverifiable::Unreachable)
+    );
+}
+
+/// Local BOM cycles are refused at the API: if B lists A as a component, A
+/// cannot then be updated to list B — that would close an A → B → A cycle.
+/// Exercises the service's `guard_component_graph` over real drafts, and
+/// confirms `componentRefs` round-trips through create + read.
+#[tokio::test(flavor = "multi_thread")]
+async fn local_component_cycle_is_rejected() {
+    async fn create_draft(
+        client: &reqwest::Client,
+        base: &str,
+        token: &str,
+        name: &str,
+        component_uris: &[String],
+    ) -> String {
+        let refs: Vec<serde_json::Value> = component_uris
+            .iter()
+            .map(|u| serde_json::json!({ "uri": u, "publicJwsHash": "a".repeat(64) }))
+            .collect();
+        let created: serde_json::Value = client
+            .post(format!("{base}/vault/api/v1/dpp"))
+            .bearer_auth(token)
+            .json(&serde_json::json!({
+                "productName": name,
+                "manufacturer": {"name": "AssemblyCo", "address": "Berlin, DE"},
+                "materials": [],
+                "componentRefs": refs
+            }))
+            .send()
+            .await
+            .expect("create request failed")
+            .json()
+            .await
+            .expect("create response is JSON");
+        created["id"]
+            .as_str()
+            .unwrap_or_else(|| panic!("id missing: {created}"))
+            .to_owned()
+    }
+
+    let (base, _container) = start_db_and_node().await;
+    let client = reqwest::Client::new();
+    let token = make_jwt("00000000-0000-0000-0000-000000000066");
+
+    // A has no components; B lists A (B → A).
+    let a_id = create_draft(&client, &base, &token, "Assembly A", &[]).await;
+    let ref_to_a = format!("https://id.odal-node.io/dpp/{a_id}");
+    let b_id = create_draft(
+        &client,
+        &base,
+        &token,
+        "Assembly B",
+        std::slice::from_ref(&ref_to_a),
+    )
+    .await;
+
+    // componentRefs round-trips through create + read.
+    let b: serde_json::Value = client
+        .get(format!("{base}/vault/api/v1/dpp/{b_id}"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .expect("read B failed")
+        .json()
+        .await
+        .expect("B is JSON");
+    assert_eq!(
+        b["componentRefs"][0]["uri"].as_str(),
+        Some(ref_to_a.as_str()),
+        "componentRefs must round-trip through create + read"
+    );
+
+    // Updating A to list B closes the A → B → A cycle → refused with 422.
+    let ref_to_b = format!("https://id.odal-node.io/dpp/{b_id}");
+    let resp = client
+        .put(format!("{base}/vault/api/v1/dpp/{a_id}"))
+        .bearer_auth(&token)
+        .json(&serde_json::json!({
+            "componentRefs": [{ "uri": ref_to_b, "publicJwsHash": "a".repeat(64) }]
+        }))
+        .send()
+        .await
+        .expect("update A request failed");
+    assert_eq!(
+        resp.status(),
+        reqwest::StatusCode::UNPROCESSABLE_ENTITY,
+        "adding a component that cites back must be refused"
+    );
+    let body = resp.text().await.unwrap_or_default();
+    assert!(
+        body.contains("cycle"),
+        "the rejection should name the cycle, got: {body}"
+    );
+}
 
 #[tokio::test(flavor = "multi_thread")]
 async fn full_dpp_lifecycle_through_assembled_node() {

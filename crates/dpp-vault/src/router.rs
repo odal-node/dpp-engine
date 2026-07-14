@@ -30,6 +30,7 @@ use crate::{
         health::{health_handler, ready_handler},
         history::history_handler,
         info::info_handler,
+        lint::lint_handler,
         list::list_handler,
         node_state::node_state_handler,
         operator::{operator_get_handler, operator_patch_handler},
@@ -46,6 +47,11 @@ use crate::{
         suspend::suspend_handler,
         transfer::{transfer_accept_handler, transfer_initiate_handler},
         update::update_handler,
+        verify_tree::verify_tree_handler,
+        webhooks::{
+            webhooks_create_handler, webhooks_delete_handler, webhooks_list_handler,
+            webhooks_test_handler,
+        },
     },
     middleware::auth::auth_middleware,
     state::AppState,
@@ -62,6 +68,7 @@ pub fn build(state: AppState) -> Router {
         .route("/dpps", get(list_handler))
         .route("/dpp/{dppId}", get(read_handler).put(update_handler))
         .route("/dpp/{dppId}/publish", post(publish_handler))
+        .route("/dpp/{dppId}/lint", post(lint_handler))
         .route("/dpp/{dppId}/suspend", post(suspend_handler))
         .route("/dpp/{dppId}/archive", post(archive_handler))
         .route("/dpp/{dppId}/eol", post(eol_handler))
@@ -74,6 +81,7 @@ pub fn build(state: AppState) -> Router {
             post(transfer_accept_handler),
         )
         .route("/dpp/{dppId}/history", get(history_handler))
+        .route("/dpp/{dppId}/verify-tree", get(verify_tree_handler))
         .route(
             "/dpp/{dppId}/evidence",
             get(list_evidence_handler).post(generate_evidence_handler),
@@ -94,6 +102,13 @@ pub fn build(state: AppState) -> Router {
             get(api_keys_list_handler).post(api_keys_create_handler),
         )
         .route("/api-keys/{id}", delete(api_keys_delete_handler))
+        // ── Webhooks (signed outbound delivery) ───────────────────────
+        .route(
+            "/webhooks",
+            get(webhooks_list_handler).post(webhooks_create_handler),
+        )
+        .route("/webhooks/{id}", delete(webhooks_delete_handler))
+        .route("/webhooks/{id}/test", post(webhooks_test_handler))
         // ── Facilities (Annex III) ────────────────────────────────────
         .route(
             "/facilities",

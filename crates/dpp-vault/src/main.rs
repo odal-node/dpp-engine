@@ -8,7 +8,7 @@ use tracing_subscriber::{EnvFilter, fmt};
 use dpp_common::{event::NoOpEventBus, event_codes};
 use dpp_dal::pg::{
     PgApiKeyRepo, PgAuditRepo, PgDal, PgEvidenceDossierRepo, PgOperatorConfigRepo, PgPassportRepo,
-    PgRegistryIdentityRepo,
+    PgRegistryIdentityRepo, PgWebhookRepo,
 };
 use dpp_domain::{
     DppError, GhostArchive, GhostRegistrySync,
@@ -19,7 +19,7 @@ use dpp_vault::{
     config::Config,
     domain::{
         self, api_key_service::ApiKeyService, operator_service::OperatorService,
-        registry_identity_service::RegistryIdentityService,
+        registry_identity_service::RegistryIdentityService, webhook_service::WebhookService,
     },
     infra::{
         auth::{
@@ -64,6 +64,7 @@ async fn main() -> anyhow::Result<()> {
     let api_key_repo = Arc::new(PgApiKeyRepo::new(dal.clone()));
     let registry_repo = Arc::new(PgRegistryIdentityRepo::new(dal.clone()));
     let evidence_repo = Arc::new(PgEvidenceDossierRepo::new(dal.clone()));
+    let webhook_repo = Arc::new(PgWebhookRepo::new(dal.clone()));
 
     let identity = Arc::new(IdentityHttpClient::new(cfg.identity_service_url.clone()));
     let compliance = Arc::new(PassthroughRegistry::new());
@@ -120,11 +121,19 @@ async fn main() -> anyhow::Result<()> {
             String::new(),
         )
         .with_registry_reader(operator_repo.clone())
-        .with_evidence_store(evidence_repo),
+        .with_evidence_store(evidence_repo)
+        .with_webhooks(webhook_repo.clone()),
     );
     let operator_service = Arc::new(OperatorService::new(operator_repo));
     let api_key_service = Arc::new(ApiKeyService::new(api_key_repo.clone()));
     let registry_identity_service = Arc::new(RegistryIdentityService::new(registry_repo));
+    // Standalone vault has no dedicated SSRF opt-out setting; default to the safe
+    // deny-private posture (self-hosters wanting internal receivers run the node).
+    let webhook_service = Arc::new(WebhookService::new(
+        webhook_repo.clone(),
+        webhook_repo,
+        false,
+    ));
 
     // Auth: real API-key provider (+ optional local admin) — never a dev/unsigned
     // provider. Closes the standalone-vault auth-bypass (audit V0).
@@ -141,6 +150,7 @@ async fn main() -> anyhow::Result<()> {
         operator_service,
         api_key_service,
         registry_identity_service,
+        webhook_service,
         db_ping: Arc::new(PgPing(dal)),
         auth_provider,
         cors_allowed_origins: cfg.cors_allowed_origins.clone(),

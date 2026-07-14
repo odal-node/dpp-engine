@@ -81,6 +81,11 @@ pub enum Commands {
         #[command(subcommand)]
         command: OperatorIdCommands,
     },
+    /// Manage signed outbound webhooks (delivery of passport events)
+    Webhook {
+        #[command(subcommand)]
+        command: WebhookCommands,
+    },
     // ── Profiles / environments ──────────────────────────────────────────────
     /// Manage named connection profiles (dev / prod / …)
     Profile {
@@ -267,7 +272,11 @@ pub enum KeyCommands {
         /// API key id
         id: String,
     },
-    /// Adopt an existing API key secret as this profile's active credential
+    /// Adopt an existing API key secret as this profile's active credential.
+    ///
+    /// Prefer supplying the secret via the `ODAL_API_SECRET` environment
+    /// variable or the interactive prompt (omit the argument) so it does not
+    /// land in shell history or `ps`/`/proc/<pid>/cmdline`.
     Use {
         /// The `odal_sk_…` secret to save. If omitted, it is read from
         /// `ODAL_API_SECRET` or prompted for without echoing to the terminal —
@@ -340,6 +349,34 @@ pub enum OperatorIdCommands {
     /// Remove an operator identifier by id
     Remove {
         /// Operator identifier id
+        id: String,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum WebhookCommands {
+    /// List configured webhook subscriptions
+    List,
+    /// Add a subscription. Omit --events to receive all events.
+    Add {
+        /// Receiver URL (must be https)
+        url: String,
+        /// Event filter — comma-separated subjects, e.g.
+        /// `dpp.passport.published,dpp.passport.suspended`. Omit for all events.
+        #[arg(long, value_delimiter = ',')]
+        events: Vec<String>,
+        /// Optional human-readable label
+        #[arg(long)]
+        description: Option<String>,
+    },
+    /// Send a test delivery to a subscription
+    Test {
+        /// Webhook subscription id
+        id: String,
+    },
+    /// Remove a subscription by id
+    Remove {
+        /// Webhook subscription id
         id: String,
     },
 }

@@ -6,3 +6,4 @@ pub mod registry;
 pub mod registry_drain;
 pub mod ruleset;
 pub mod s3_archive;
+pub mod webhook_drain;

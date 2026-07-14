@@ -237,6 +237,73 @@ components:
             Sector schema version. When omitted, the sector's current version is
             used (e.g. battery 2.0.0); a supplied value is honoured.
           example: "1.0.0"
+        parentPassportRef:
+          $ref: "#/components/schemas/PassportRef"
+        componentRefs:
+          type: array
+          items:
+            $ref: "#/components/schemas/PassportRef"
+          description: >-
+            Cross-operator references to this product's constituent passports
+            (its bill of materials). Local cycles / over-depth are refused at
+            create/update; immutable after publish.
+
+    PassportRef:
+      type: object
+      required: [uri, publicJwsHash]
+      description: >-
+        A cross-operator reference to another passport: where to fetch it, and
+        the lowercase-hex SHA-256 of that passport's public JWS, which pins the
+        exact signed public view expected there.
+      properties:
+        uri:
+          type: string
+          format: uri
+          description: Resolvable https URI of the referenced passport.
+          example: "https://id.other-operator.example/dpp/0191b2c3-d4e5-7f80"
+        publicJwsHash:
+          type: string
+          pattern: "^[0-9a-f]{64}$"
+          description: Lowercase hex SHA-256 of the referenced passport's public JWS.
+
+    TreeReport:
+      type: object
+      required: [verified, nodes]
+      description: Result of recursively verifying a passport's component tree.
+      properties:
+        verified:
+          type: boolean
+          description: True iff every visited node verified.
+        nodes:
+          type: array
+          items:
+            $ref: "#/components/schemas/TreeNodeReport"
+
+    TreeNodeReport:
+      type: object
+      required: [path, verified]
+      properties:
+        path:
+          type: array
+          items:
+            type: string
+          description: Component-ref URIs from the root down to this node.
+        verified:
+          type: boolean
+        reason:
+          type: string
+          nullable: true
+          enum:
+            [
+              unreachable,
+              notPublished,
+              hashMismatch,
+              cycle,
+              depthExceeded,
+              nodeCapExceeded,
+              malformedRef,
+            ]
+          description: The failure reason when `verified` is false.
 
     PassportResponse:
       type: object
@@ -513,7 +580,7 @@ components:
           type: string
           minLength: 2
           maxLength: 2
-          example: "MK"
+          example: "DE"
         contactEmail:
           type: string
           format: email
@@ -1368,6 +1435,40 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+  /vault/api/v1/dpp/{dppId}/verify-tree:
+    get:
+      operationId: verifyDppTree
+      summary: Recursively verify a passport's component tree (BOM)
+      description: |
+        Walks the passport's `componentRefs` breadth-first, fetching each node
+        and checking its public JWS against the pinned hash. Fails closed on
+        every ambiguity, bounded by a depth cap and a total-node cap; the report
+        names the path from the root to any broken node.
+
+        Integrity only: this proves each node's signed public view is unchanged
+        (hash pin), not the cryptographic validity of the signature.
+      tags: [DPP Management]
+      security:
+        - BearerApiKey: []
+        - BasicAuth: []
+      parameters:
+        - name: dppId
+          in: path
+          required: true
+          schema:
+            $ref: "#/components/schemas/DppId"
+      responses:
+        "200":
+          description: The component-tree verification report.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TreeReport"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
   /vault/api/v1/dpp/{dppId}/lint:
     post:
       operationId: relintDpp
@@ -1691,6 +1792,155 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+  # ---- Webhooks (odal-vault) -----------------------------------------------
+
+  /vault/api/v1/webhooks:
+    get:
+      operationId: listWebhooks
+      summary: List webhook subscriptions
+      description: |
+        Lists webhook subscriptions (active and retired). The signing secret is
+        never returned here — only in the create response. Admin-scoped.
+      tags: [Webhooks]
+      security:
+        - BearerApiKey: []
+        - BasicAuth: []
+      responses:
+        "200":
+          description: Subscriptions (secret redacted).
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    id: { type: string, format: uuid }
+                    url: { type: string }
+                    events:
+                      type: array
+                      items: { type: string }
+                    active: { type: boolean }
+                    description: { type: string, nullable: true }
+                    createdAt: { type: string, format: date-time }
+                    updatedAt: { type: string, format: date-time }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+    post:
+      operationId: createWebhook
+      summary: Create a webhook subscription
+      description: |
+        Register a receiver URL (must be https and resolve to a public host,
+        unless the node sets WEBHOOK_ALLOW_PRIVATE_TARGETS). The response includes
+        the `secret` — shown ONCE — used to verify the `X-Odal-Signature` header
+        on every delivery. Admin-scoped.
+      tags: [Webhooks]
+      security:
+        - BearerApiKey: []
+        - BasicAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [url]
+              properties:
+                url:
+                  type: string
+                  format: uri
+                  example: "https://hooks.example.com/odal"
+                events:
+                  type: array
+                  items: { type: string }
+                  description: 'Event subjects to receive, or ["*"] for all. Defaults to all.'
+                  example: ["dpp.passport.published", "dpp.passport.transferred"]
+                description:
+                  type: string
+      responses:
+        "201":
+          description: Subscription created. The `secret` field is shown ONCE.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id: { type: string, format: uuid }
+                  url: { type: string }
+                  events:
+                    type: array
+                    items: { type: string }
+                  active: { type: boolean }
+                  description: { type: string, nullable: true }
+                  createdAt: { type: string, format: date-time }
+                  updatedAt: { type: string, format: date-time }
+                  secret:
+                    type: string
+                    description: Signing secret — shown once, store it securely.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
+  /vault/api/v1/webhooks/{id}:
+    delete:
+      operationId: removeWebhook
+      summary: Remove a webhook subscription
+      description: |
+        Soft-removes a subscription (`active` set to false). Deliveries already
+        queued still drain; no new events are enqueued. Admin-scoped.
+      tags: [Webhooks]
+      security:
+        - BearerApiKey: []
+        - BasicAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "204":
+          description: Subscription removed.
+        "400":
+          description: Invalid subscription id.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /vault/api/v1/webhooks/{id}/test:
+    post:
+      operationId: testWebhook
+      summary: Send a test delivery
+      description: |
+        Enqueues a synthetic `dpp.webhook.test` delivery to the subscription so a
+        receiver can be proven end-to-end. Admin-scoped.
+      tags: [Webhooks]
+      security:
+        - BearerApiKey: []
+        - BasicAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "202":
+          description: Test delivery enqueued.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
   # ---- Node Setup State (odal-vault) ---------------------------------------
 
   /vault/api/v1/node/state:
@@ -1946,13 +2196,34 @@ paths:
           required: true
           schema:
             $ref: "#/components/schemas/DppId"
+        - name: schema_view
+          in: query
+          required: false
+          description: >-
+            Request a read-time schema-upcast view. Set to a newer sector schema
+            version (e.g. `2.0.0`); the response becomes `{ passport, schemaView }`
+            — the canonical signed passport plus the derived view with lens
+            provenance. The original is never re-signed.
+          schema:
+            type: string
+          example: "2.0.0"
       responses:
         "200":
-          description: Published passport record.
+          description: >-
+            Published passport record. With `?schema_view`, the body is instead
+            `{ passport, schemaView }`.
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/PassportResponse"
+        "422":
+          description: >-
+            The requested `schema_view` is unavailable (no lens path, a downcast,
+            or the passport has no sector data).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
         "404":
           description: Not found or not published.
           content:
@@ -1982,13 +2253,30 @@ paths:
             type: string
             description: GS1 GTIN-14 (14 digits, mod-10 check digit).
             example: "09506000134352"
+        - name: schema_view
+          in: query
+          required: false
+          description: >-
+            Request a read-time schema-upcast view (see the by-id read). The
+            response becomes `{ passport, schemaView }`.
+          schema:
+            type: string
+          example: "2.0.0"
       responses:
         "200":
-          description: Published passport record.
+          description: >-
+            Published passport record. With `?schema_view`, the body is instead
+            `{ passport, schemaView }`.
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/PassportResponse"
+        "422":
+          description: The requested `schema_view` is unavailable.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
         "404":
           $ref: "#/components/responses/NotFound"
 

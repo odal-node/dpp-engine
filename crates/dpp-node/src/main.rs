@@ -35,6 +35,7 @@ use dpp_vault::{
     domain::{
         api_key_service::ApiKeyService, operator_service::OperatorService,
         registry_identity_service::RegistryIdentityService, service::PassportService,
+        webhook_service::WebhookService,
     },
     infra::auth::{
         api_key_provider::ApiKeyAuthProvider, composite_provider::CompositeAuthProvider,
@@ -235,12 +236,18 @@ async fn main() -> anyhow::Result<()> {
         .with_registry_reader(db.operator_repo.clone())
         .with_registry_outbox(db.registry_outbox.clone())
         .with_transfer_store(db.transfer_store.clone())
-        .with_evidence_store(db.evidence_store.clone()),
+        .with_evidence_store(db.evidence_store.clone())
+        .with_webhooks(db.webhook_outbox.clone()),
     );
     let operator_service = Arc::new(OperatorService::new(db.operator_repo.clone()));
     let api_key_service = Arc::new(ApiKeyService::new(db.api_key_repo.clone()));
     let registry_identity_service =
         Arc::new(RegistryIdentityService::new(db.registry_repo.clone()));
+    let webhook_service = Arc::new(WebhookService::new(
+        db.webhook_store.clone(),
+        db.webhook_outbox.clone(),
+        cfg.webhook_allow_private_targets,
+    ));
 
     // ── Auth provider (API key + optional local admin) ────────────────────────
     let mut providers: Vec<Box<dyn dpp_types::auth::AuthProvider>> =
@@ -256,6 +263,7 @@ async fn main() -> anyhow::Result<()> {
         operator_service,
         api_key_service,
         registry_identity_service,
+        webhook_service,
         db_ping: db.db_ping.clone(),
         auth_provider,
         cors_allowed_origins: cfg.cors_allowed_origins.clone(),
@@ -273,6 +281,8 @@ async fn main() -> anyhow::Result<()> {
     // ── Background tasks: expired-import-job cleanup + registry outbox drain ──
     boot::tasks::spawn_job_cleanup(db.job_store.clone());
     boot::tasks::spawn_registry_drain(db.registry_outbox.clone(), registry_sync_for_drain).await;
+    boot::tasks::spawn_webhook_drain(db.webhook_outbox.clone(), cfg.webhook_allow_private_targets)
+        .await;
 
     // ── Metrics: dedicated private listener (never the public API port) ────────
     // `/metrics` is deliberately NOT mounted on the public router — exposing

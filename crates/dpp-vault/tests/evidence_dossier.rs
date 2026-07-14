@@ -298,6 +298,8 @@ fn draft_passport() -> Passport {
         retention_locked: false,
         version: 1,
         supersedes_id: None,
+        parent_passport_ref: None,
+        component_refs: Vec::new(),
         retention_until: None,
         product_id: None,
         // Set directly rather than via a registry reader (none configured in

@@ -93,3 +93,6 @@ coverage/
 # -----------------------------------------------------------------------------
 pkg/
 wasm-pack.log
+
+# generated API reference (build artifact — never commit/publish pre-managed-infra)
+api/openapi.html

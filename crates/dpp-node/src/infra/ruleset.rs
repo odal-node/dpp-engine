@@ -92,7 +92,7 @@ impl ActiveRuleset {
             act_citations: vec![],
             schema_versions: BTreeMap::new(),
             content_sha256: content_hash(&content)
-                .expect("JCS canonicalisation of an empty object is infallible"),
+                .expect("baseline content is a static empty object; hashing cannot fail"),
         };
         Self {
             current: RwLock::new(Arc::new(VerifiedRuleset { manifest, content })),

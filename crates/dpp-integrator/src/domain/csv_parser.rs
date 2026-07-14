@@ -159,4 +159,25 @@ mod tests {
         let err = parse_csv(csv.as_bytes()).unwrap_err();
         assert!(matches!(err, ParseError::Csv(_)), "got: {err:?}");
     }
+
+    use proptest::prelude::*;
+
+    proptest! {
+        /// The CSV parser must never panic on arbitrary bytes, and every row it
+        /// returns must carry the same key set (the header columns).
+        #[test]
+        fn parse_csv_never_panics_and_rows_are_uniform(
+            bytes in proptest::collection::vec(any::<u8>(), 0..512)
+        ) {
+            if let Ok(rows) = parse_csv(&bytes)
+                && let Some(first) = rows.first()
+            {
+                let keys: std::collections::BTreeSet<&String> = first.keys().collect();
+                for row in &rows {
+                    let row_keys: std::collections::BTreeSet<&String> = row.keys().collect();
+                    prop_assert_eq!(&row_keys, &keys);
+                }
+            }
+        }
+    }
 }

@@ -155,6 +155,19 @@ pub fn verify_dossier(dossier: &DossierV1) -> VerificationReport {
         },
     });
 
+    // 9. Component graph (BOM) — the embedded recursive tree-verification report.
+    //    Tamper-evidence for the report itself comes from `content_integrity`
+    //    above; this check grades its verdict, distinguishing a real integrity
+    //    violation (Fail) from a node that merely couldn't be reached or fully
+    //    walked at snapshot time (Absent — incomplete, not tampered).
+    checks.push(CheckResult {
+        name: "component_graph".into(),
+        status: match &dossier.component_graph {
+            None => CheckStatus::Absent("no component graph on this passport".into()),
+            Some(report) => component_graph_status(report),
+        },
+    });
+
     VerificationReport {
         trust_anchor_note: format!(
             "trust anchored to the dossier's embedded DID-document snapshot dated {}",
@@ -162,6 +175,44 @@ pub fn verify_dossier(dossier: &DossierV1) -> VerificationReport {
         ),
         checks,
     }
+}
+
+/// Grade an embedded component-tree report. A real integrity violation
+/// (tamper / cycle / malformed ref) **fails**, with the path to the break. A
+/// node that was only unreachable, not-yet-published, or beyond the walk's
+/// bounds at snapshot time is reported as **incomplete** (Absent), not failed —
+/// so a dossier is never invalidated merely because a component was offline when
+/// it was assembled.
+fn component_graph_status(report: &serde_json::Value) -> CheckStatus {
+    const TAMPER: [&str; 3] = ["hashMismatch", "cycle", "malformedRef"];
+
+    let unverified: Vec<&serde_json::Value> = report
+        .get("nodes")
+        .and_then(serde_json::Value::as_array)
+        .map(Vec::as_slice)
+        .unwrap_or_default()
+        .iter()
+        .filter(|n| n.get("verified").and_then(serde_json::Value::as_bool) == Some(false))
+        .collect();
+
+    if unverified.is_empty() {
+        return CheckStatus::Pass;
+    }
+    if let Some(bad) = unverified.iter().find(|n| {
+        n.get("reason")
+            .and_then(serde_json::Value::as_str)
+            .is_some_and(|r| TAMPER.contains(&r))
+    }) {
+        let path = bad
+            .get("path")
+            .map(std::string::ToString::to_string)
+            .unwrap_or_else(|| "unknown".into());
+        return CheckStatus::Fail(format!("component tree integrity violation at {path}"));
+    }
+    CheckStatus::Absent(format!(
+        "{} component(s) could not be verified at snapshot time (unreachable or beyond walk bounds)",
+        unverified.len()
+    ))
 }
 
 /// Parse raw dossier bytes and verify them — the entry point the verify
@@ -343,6 +394,7 @@ mod tests {
             eol_event: None,
             checkpoint: None,
             calc_receipts: Vec::new(),
+            component_graph: None,
         };
 
         dossier.manifest.content_hashes = compute_content_hashes(&dossier);
@@ -362,6 +414,85 @@ mod tests {
         let report = verify_dossier(&dossier);
         assert!(report.all_verified(), "{report:?}");
         assert_eq!(report.exit_code(), 0);
+    }
+
+    /// Attach an attested component-graph report and re-bind + re-sign the
+    /// manifest so it is covered by `content_hashes`.
+    fn with_graph(signing_key: &SigningKey, graph: serde_json::Value) -> DossierV1 {
+        let mut dossier = valid_dossier(signing_key);
+        dossier.component_graph = Some(graph);
+        dossier.manifest.content_hashes = compute_content_hashes(&dossier);
+        let manifest_value = serde_json::to_value(&dossier.manifest).unwrap();
+        dossier.manifest_jws = sign(signing_key, &manifest_value);
+        dossier
+    }
+
+    #[test]
+    fn attested_component_graph_passes_when_report_is_verified() {
+        let signing_key = SigningKey::from_bytes(&[9u8; 32]);
+        let dossier = with_graph(
+            &signing_key,
+            serde_json::json!({ "verified": true, "nodes": [] }),
+        );
+        let report = verify_dossier(&dossier);
+        assert_eq!(*by_name(&report, "component_graph"), CheckStatus::Pass);
+        assert_eq!(*by_name(&report, "content_integrity"), CheckStatus::Pass);
+        assert!(report.all_verified());
+    }
+
+    #[test]
+    fn attested_component_graph_fails_when_report_shows_a_broken_node() {
+        let signing_key = SigningKey::from_bytes(&[9u8; 32]);
+        let dossier = with_graph(
+            &signing_key,
+            serde_json::json!({
+                "verified": false,
+                "nodes": [{ "path": ["u://leaf"], "verified": false, "reason": "hashMismatch" }]
+            }),
+        );
+        let report = verify_dossier(&dossier);
+        assert!(matches!(
+            by_name(&report, "component_graph"),
+            CheckStatus::Fail(_)
+        ));
+        // The report honestly reports a break; the dossier member itself is intact.
+        assert_eq!(*by_name(&report, "content_integrity"), CheckStatus::Pass);
+    }
+
+    #[test]
+    fn unreachable_component_is_incomplete_not_a_dossier_failure() {
+        let signing_key = SigningKey::from_bytes(&[9u8; 32]);
+        let dossier = with_graph(
+            &signing_key,
+            serde_json::json!({
+                "verified": false,
+                "nodes": [{ "path": ["u://remote"], "verified": false, "reason": "unreachable" }]
+            }),
+        );
+        let report = verify_dossier(&dossier);
+        // Unreachable-at-snapshot is incomplete, not tampered.
+        assert!(matches!(
+            by_name(&report, "component_graph"),
+            CheckStatus::Absent(_)
+        ));
+        // And it must not drag the whole dossier to failed.
+        assert!(report.all_verified());
+    }
+
+    #[test]
+    fn tampering_the_attested_graph_flips_content_integrity() {
+        let signing_key = SigningKey::from_bytes(&[9u8; 32]);
+        let mut dossier = with_graph(
+            &signing_key,
+            serde_json::json!({ "verified": true, "nodes": [] }),
+        );
+        // Alter the attested report without re-signing the manifest.
+        dossier.component_graph = Some(serde_json::json!({ "verified": false, "nodes": [] }));
+        let report = verify_dossier(&dossier);
+        assert!(matches!(
+            by_name(&report, "content_integrity"),
+            CheckStatus::Fail(_)
+        ));
     }
 
     #[test]
@@ -604,5 +735,18 @@ mod tests {
     fn malformed_json_is_a_parse_error() {
         let err = verify_dossier_json(b"not json").unwrap_err();
         assert!(matches!(err, DossierParseError::Json(_)));
+    }
+
+    use proptest::prelude::*;
+
+    proptest! {
+        /// Dossier verification parses attacker-supplied uploads — whatever bytes
+        /// it is handed, it must return Ok/Err and never panic.
+        #[test]
+        fn verify_dossier_json_never_panics(
+            bytes in proptest::collection::vec(any::<u8>(), 0..1024)
+        ) {
+            let _ = verify_dossier_json(&bytes);
+        }
     }
 }

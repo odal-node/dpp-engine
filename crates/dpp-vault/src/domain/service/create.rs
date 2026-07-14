@@ -5,16 +5,20 @@
 
 use chrono::Utc;
 use dpp_common::event;
+use std::collections::HashSet;
+
 use dpp_domain::{
     domain::{
         error::DppError,
-        passport::{Passport, PassportId},
+        graph::{ComponentEdges, DEFAULT_DEPTH_CAP, EdgeRejection, check_edge},
+        passport::{Passport, PassportId, PassportRef},
         sector::{CarbonFootprint, RepairabilityScore, SectorData},
         status::PassportStatus,
     },
     ports::compliance::ComplianceRegistry,
 };
 use dpp_types::{STANDALONE_OPERATOR_ID, audit::AuditEntry, auth::AuthContext};
+use uuid::Uuid;
 
 use super::PassportService;
 use super::catalog;
@@ -59,6 +63,9 @@ impl PassportService {
                     .unwrap_or(None);
             }
         }
+
+        self.guard_component_graph(passport.id, &passport.component_refs)
+            .await?;
 
         apply_compliance(&mut passport, &*self.compliance);
         apply_lint(&mut passport);
@@ -111,6 +118,8 @@ impl PassportService {
         // Validate patch fields using a temporary copy, then build a
         // minimal delta — only the changed fields are written (B-03).
         apply_patch(&mut passport, &patch)?;
+        self.guard_component_graph(id, &passport.component_refs)
+            .await?;
         let pre_compliance_co2e = passport.co2e_per_unit.clone();
         let pre_compliance_repair = passport.repairability_score.clone();
         apply_compliance(&mut passport, &*self.compliance);
@@ -160,6 +169,84 @@ impl PassportService {
 
         Ok(updated)
     }
+
+    /// Gather the local component subgraph reachable from `seeds`, bounded to a
+    /// fixed number of repo fetches. Returns `None` if the reachable graph is too
+    /// large to fully gather — the caller then fails closed rather than approve a
+    /// structure it could not fully check.
+    async fn local_component_edges(&self, seeds: &[PassportId]) -> Option<ComponentEdges> {
+        const MAX_GRAPH_NODES: usize = 256;
+        let mut edges = ComponentEdges::new();
+        let mut seen = HashSet::new();
+        let mut stack = seeds.to_vec();
+        while let Some(id) = stack.pop() {
+            if !seen.insert(id) {
+                continue;
+            }
+            if seen.len() > MAX_GRAPH_NODES {
+                return None;
+            }
+            // A ref that resolves to no local passport is another operator's —
+            // its cycle safety is a verify-time concern, so treat it as a leaf.
+            let Ok(Some(p)) = self.repo.find_by_id_any_status(id).await else {
+                continue;
+            };
+            let children: Vec<PassportId> = p
+                .component_refs
+                .iter()
+                .filter_map(|r| local_component_id(&r.uri))
+                .collect();
+            for &c in &children {
+                stack.push(c);
+            }
+            edges.insert(id, children);
+        }
+        Some(edges)
+    }
+
+    /// Refuse `component_refs` that would close a cycle in — or overflow the
+    /// depth of — the *local* component graph rooted at `parent`. Cross-operator
+    /// refs (no resolvable local id) are cycle-checked at verify time, not here.
+    async fn guard_component_graph(
+        &self,
+        parent: PassportId,
+        component_refs: &[PassportRef],
+    ) -> Result<(), DppError> {
+        let local_children: Vec<PassportId> = component_refs
+            .iter()
+            .filter_map(|r| local_component_id(&r.uri))
+            .collect();
+        if local_children.is_empty() {
+            return Ok(());
+        }
+        let edges = self
+            .local_component_edges(&local_children)
+            .await
+            .ok_or_else(|| {
+                DppError::Validation("componentRefs local graph too large to verify".into())
+            })?;
+        for &child in &local_children {
+            check_edge(&edges, parent, child, DEFAULT_DEPTH_CAP).map_err(|e| match e {
+                EdgeRejection::Cycle => DppError::Validation(
+                    format!("componentRefs would create a cycle via passport {child}").into(),
+                ),
+                EdgeRejection::DepthExceeded => DppError::Validation(
+                    format!("componentRefs exceed the maximum BOM depth of {DEFAULT_DEPTH_CAP}")
+                        .into(),
+                ),
+            })?;
+        }
+        Ok(())
+    }
+}
+
+/// Extract the local passport id a component ref points at, if its URI ends in a
+/// UUID this node could hold. A ref to another operator simply won't resolve to
+/// a local passport (the repo lookup returns `None`) and is treated as remote.
+fn local_component_id(uri: &str) -> Option<PassportId> {
+    let tail = uri.rsplit('/').next()?;
+    let tail = tail.split(['?', '#']).next()?;
+    Uuid::parse_str(tail).ok().map(PassportId)
 }
 
 fn apply_compliance(passport: &mut Passport, registry: &dyn ComplianceRegistry) {
@@ -223,6 +310,11 @@ fn apply_patch(passport: &mut Passport, patch: &serde_json::Value) -> Result<(),
         dpp_domain::validate_sector_data(&sector_data).map_err(DppError::Validation)?;
         passport.sector_data = Some(sector_data);
     }
+    if let Some(v) = obj.get("componentRefs") {
+        let refs: Vec<PassportRef> = serde_json::from_value(v.clone())
+            .map_err(|e| DppError::Validation(format!("invalid componentRefs: {e}").into()))?;
+        passport.component_refs = refs;
+    }
 
     Ok(())
 }
@@ -272,6 +364,8 @@ mod tests {
             retention_locked: false,
             version: 1,
             supersedes_id: None,
+            parent_passport_ref: None,
+            component_refs: Vec::new(),
             retention_until: None,
             product_id: None,
             operator_identifier: None,
@@ -351,5 +445,23 @@ mod tests {
         apply_compliance(&mut p, &NoopRegistry);
         assert!(p.co2e_per_unit.is_none());
         assert!(p.repairability_score.is_none());
+    }
+
+    #[test]
+    fn local_component_id_parses_only_a_trailing_uuid() {
+        use super::local_component_id;
+        let u = uuid::Uuid::now_v7();
+        assert_eq!(
+            local_component_id(&format!("https://id.odal-node.io/dpp/{u}")).map(|p| p.0),
+            Some(u)
+        );
+        // Query/fragment are stripped before parsing.
+        assert_eq!(
+            local_component_id(&format!("https://id.odal-node.io/dpp/{u}?v=1")).map(|p| p.0),
+            Some(u)
+        );
+        // A non-UUID tail (another operator's opaque URL) resolves to no local id.
+        assert!(local_component_id("https://id.other.example/dpp/opaque-slug").is_none());
+        assert!(local_component_id("").is_none());
     }
 }

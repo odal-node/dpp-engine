@@ -33,6 +33,7 @@ pub mod registry_identity;
 pub mod registry_sync;
 pub mod transfer;
 pub mod trust;
+pub mod webhook;
 
 pub use api_key::{ApiKey, ApiKeyRecord, ApiKeyRepository, CreateApiKeyRequest, NewApiKey};
 pub use audit::{
@@ -56,3 +57,7 @@ pub use registry_sync::{
 };
 pub use transfer::TransferStore;
 pub use trust::{NodeProfile, NodeTrustReport, TrustMode, TrustPort};
+pub use webhook::{
+    NewWebhookSubscription, WebhookCounts, WebhookDeliveryRow, WebhookDeliveryStatus,
+    WebhookOutbox, WebhookSubscription, WebhookSubscriptionStore,
+};

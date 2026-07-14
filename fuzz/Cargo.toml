@@ -1,0 +1,32 @@
+# cargo-fuzz crate — standalone (its own [workspace]) because it requires the
+# nightly toolchain + libFuzzer, unlike the stable-pinned parent workspace.
+# Run on Linux: `cargo +nightly fuzz run <target>` from the dpp-engine dir.
+[package]
+name = "dpp-engine-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+dpp-integrator = { path = "../crates/dpp-integrator" }
+dpp-vault = { path = "../crates/dpp-vault" }
+
+[[bin]]
+name = "parse_csv"
+path = "fuzz_targets/parse_csv.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "verify_dossier_json"
+path = "fuzz_targets/verify_dossier_json.rs"
+test = false
+doc = false
+bench = false
+
+[workspace]

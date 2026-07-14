@@ -2,7 +2,7 @@
 //! responsibility between operators, persisted as a `TransferChain`.
 
 use chrono::Utc;
-use dpp_common::event_codes;
+use dpp_common::{event, event_codes};
 use dpp_domain::domain::{
     error::DppError,
     passport::PassportId,
@@ -81,6 +81,17 @@ impl PassportService {
             }));
         self.audit.append(entry).await?;
 
+        self.emit(
+            event::subjects::PASSPORT_TRANSFERRED,
+            serde_json::json!({
+                "passportId": id.to_string(),
+                "phase": "initiated",
+                "transferId": record.transfer_id.to_string(),
+                "toOperator": record.to_operator.did,
+            }),
+        )
+        .await;
+
         Ok(record)
     }
 
@@ -141,6 +152,17 @@ impl PassportService {
                 "toOperator": record.to_operator.did,
             }));
         self.audit.append(entry).await?;
+
+        self.emit(
+            event::subjects::PASSPORT_TRANSFERRED,
+            serde_json::json!({
+                "passportId": id.to_string(),
+                "phase": "accepted",
+                "transferId": record.transfer_id.to_string(),
+                "toOperator": record.to_operator.did,
+            }),
+        )
+        .await;
 
         // Registry transfer notification is deferred (the registry's transfer API
         // is unpublished); the local chain is authoritative in the meantime.

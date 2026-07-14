@@ -2,7 +2,7 @@
 
 use crate::cli_args::{
     Commands, FacilityCommands, KeyCommands, OperatorCommands, OperatorIdCommands,
-    PassportCommands, ProfileCommands, SchemaCommands,
+    PassportCommands, ProfileCommands, SchemaCommands, WebhookCommands,
 };
 use crate::commands::{
     bootstrap::run_bootstrap,
@@ -33,7 +33,25 @@ use crate::commands::{
     update::run_update,
     validate::run_validate,
     verify::run_verify,
+    webhook::{run_webhook_add, run_webhook_list, run_webhook_remove, run_webhook_test},
 };
+
+/// Resolve an API-key secret without requiring it as a shell argument (which
+/// would land in shell history and `ps`/`/proc/<pid>/cmdline`): use the flag if
+/// given, else the `ODAL_API_SECRET` env var, else a hidden interactive prompt.
+fn resolve_api_secret(arg: Option<String>) -> anyhow::Result<String> {
+    if let Some(s) = arg {
+        return Ok(s);
+    }
+    if let Ok(s) = std::env::var("ODAL_API_SECRET")
+        && !s.is_empty()
+    {
+        return Ok(s);
+    }
+    Ok(inquire::Password::new("API key secret:")
+        .without_confirmation()
+        .prompt()?)
+}
 
 pub fn should_enter_interactive() -> bool {
     use std::io::IsTerminal;
@@ -145,6 +163,23 @@ pub async fn dispatch(cmd: Commands) -> anyhow::Result<()> {
         Commands::OperatorId {
             command: OperatorIdCommands::Remove { id },
         } => run_operator_id_remove(&id).await,
+        Commands::Webhook {
+            command: WebhookCommands::List,
+        } => run_webhook_list().await,
+        Commands::Webhook {
+            command:
+                WebhookCommands::Add {
+                    url,
+                    events,
+                    description,
+                },
+        } => run_webhook_add(url, events, description).await,
+        Commands::Webhook {
+            command: WebhookCommands::Test { id },
+        } => run_webhook_test(&id).await,
+        Commands::Webhook {
+            command: WebhookCommands::Remove { id },
+        } => run_webhook_remove(&id).await,
         Commands::Profile {
             command: ProfileCommands::List,
         } => run_profile_list(),
@@ -222,23 +257,4 @@ pub async fn dispatch(cmd: Commands) -> anyhow::Result<()> {
         } => run_schema().await,
         Commands::Verify { target } => run_verify(&target).await,
     }
-}
-
-/// Resolve the API secret for `odal key use`, in order: the explicit CLI
-/// argument, the `ODAL_API_SECRET` environment variable, then an interactive
-/// no-echo prompt. Accepting the secret anywhere but `argv` is deliberate —
-/// a secret on the command line leaks into shell history and the process table.
-fn resolve_api_secret(arg: Option<String>) -> anyhow::Result<String> {
-    if let Some(secret) = arg {
-        return Ok(secret);
-    }
-    if let Ok(secret) = std::env::var("ODAL_API_SECRET")
-        && !secret.is_empty()
-    {
-        return Ok(secret);
-    }
-    let secret = inquire::Password::new("API secret (odal_sk_…):")
-        .without_confirmation()
-        .prompt()?;
-    Ok(secret)
 }

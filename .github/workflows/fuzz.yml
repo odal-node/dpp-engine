@@ -1,0 +1,40 @@
+name: Fuzz (nightly)
+
+# cargo-fuzz needs nightly + Linux + libFuzzer, so it runs on a schedule rather
+# than per-commit (the stable `just check` gate does not build the fuzz crate).
+on:
+  schedule:
+    - cron: "0 3 * * *" # nightly 03:00 UTC
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  fuzz:
+    name: cargo-fuzz smoke
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [parse_csv, verify_dossier_json]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: dpp-engine
+      - uses: dtolnay/rust-toolchain@nightly
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: dpp-engine/fuzz
+      - name: Install cargo-fuzz
+        run: cargo install cargo-fuzz --locked
+      - name: Fuzz ${{ matrix.target }} (60s smoke)
+        working-directory: dpp-engine
+        run: cargo +nightly fuzz run ${{ matrix.target }} -- -max_total_time=60 -max_len=8192
+      - name: Upload crash artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-artifacts-${{ matrix.target }}
+          path: dpp-engine/fuzz/artifacts/

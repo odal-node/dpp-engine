@@ -84,7 +84,7 @@ pub async fn resolve_by_gtin_handler(
             .unwrap_or(false);
 
     if wants_linkset {
-        let body = serde_json::to_string(&build_linkset(base_url, &gtin, &passport_id))
+        let body = serde_json::to_string(&build_linkset(base_url, &gtin, &passport_id, &passport))
             .unwrap_or_default();
         return (
             StatusCode::OK,
@@ -130,11 +130,19 @@ fn redirect(location: &str) -> axum::response::Response {
         .into_response()
 }
 
-/// Build a GS1 linkset per RFC 9264 / GS1 Digital Link standard.
-fn build_linkset(base_url: &str, gtin: &str, passport_id: &str) -> serde_json::Value {
+/// Build a GS1 linkset per RFC 9264 / GS1 Digital Link standard. When the
+/// passport cites a predecessor (second-life successor linkage), the linkset
+/// also advertises an Odal `predecessor` relation pointing at the source
+/// passport, so a scanner can walk up the lineage.
+fn build_linkset(
+    base_url: &str,
+    gtin: &str,
+    passport_id: &str,
+    passport: &serde_json::Value,
+) -> serde_json::Value {
     let anchor = format!("{base_url}/01/{gtin}");
     let dpp_url = format!("{base_url}/dpp/{passport_id}");
-    serde_json::json!({
+    let mut linkset = serde_json::json!({
         "anchor": anchor,
         "linkset": [{
             "anchor": anchor,
@@ -145,7 +153,39 @@ fn build_linkset(base_url: &str, gtin: &str, passport_id: &str) -> serde_json::V
                 {"href": dpp_url, "type": "application/ld+json"}
             ]
         }]
-    })
+    });
+    if let Some(parent_uri) = passport
+        .get("parentPassportRef")
+        .and_then(|r| r.get("uri"))
+        .and_then(serde_json::Value::as_str)
+        && let Some(inner) = linkset["linkset"][0].as_object_mut()
+    {
+        inner.insert(
+            Gs1LinkType::Predecessor.as_gs1_uri().to_owned(),
+            serde_json::json!([{ "href": parent_uri, "type": "application/ld+json" }]),
+        );
+    }
+    // Bill of materials: one `hasComponent` relation per constituent passport, so
+    // a scanner can walk down into the assembly.
+    let component_links: Vec<serde_json::Value> = passport
+        .get("componentRefs")
+        .and_then(serde_json::Value::as_array)
+        .map(|refs| {
+            refs.iter()
+                .filter_map(|c| c.get("uri").and_then(serde_json::Value::as_str))
+                .map(|uri| serde_json::json!({ "href": uri, "type": "application/ld+json" }))
+                .collect()
+        })
+        .unwrap_or_default();
+    if !component_links.is_empty()
+        && let Some(inner) = linkset["linkset"][0].as_object_mut()
+    {
+        inner.insert(
+            Gs1LinkType::HasComponent.as_gs1_uri().to_owned(),
+            serde_json::Value::Array(component_links),
+        );
+    }
+    linkset
 }
 
 async fn fetch_by_gtin(state: &AppState, gtin: &str) -> Result<Value, StatusCode> {
@@ -178,7 +218,12 @@ mod tests {
 
     #[test]
     fn build_linkset_has_correct_structure() {
-        let ls = build_linkset("https://id.odal-node.io", "09506000134352", "abc-123");
+        let ls = build_linkset(
+            "https://id.odal-node.io",
+            "09506000134352",
+            "abc-123",
+            &serde_json::json!({}),
+        );
         assert_eq!(
             ls["anchor"].as_str().unwrap(),
             "https://id.odal-node.io/01/09506000134352"
@@ -186,5 +231,62 @@ mod tests {
         let inner = &ls["linkset"][0];
         assert!(inner.get("https://ref.gs1.org/voc/pip").is_some());
         assert!(inner.get("https://ref.gs1.org/voc/dpp").is_some());
+        // No lineage relation for a passport that cites no predecessor.
+        assert!(
+            inner
+                .get("https://ref.odal-node.io/voc/predecessor")
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn build_linkset_advertises_predecessor_when_cited() {
+        let passport = serde_json::json!({
+            "parentPassportRef": {
+                "uri": "https://id.other-op.example/dpp/parent-xyz",
+                "publicJwsHash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+            }
+        });
+        let ls = build_linkset(
+            "https://id.odal-node.io",
+            "09506000134352",
+            "abc-123",
+            &passport,
+        );
+        let predecessor = &ls["linkset"][0]["https://ref.odal-node.io/voc/predecessor"];
+        assert_eq!(
+            predecessor[0]["href"].as_str().unwrap(),
+            "https://id.other-op.example/dpp/parent-xyz"
+        );
+    }
+
+    #[test]
+    fn build_linkset_advertises_each_component() {
+        let passport = serde_json::json!({
+            "componentRefs": [
+                { "uri": "https://id.a.example/dpp/mod-1", "publicJwsHash": "aa" },
+                { "uri": "https://id.b.example/dpp/mod-2", "publicJwsHash": "bb" }
+            ]
+        });
+        let ls = build_linkset(
+            "https://id.odal-node.io",
+            "09506000134352",
+            "pack-1",
+            &passport,
+        );
+        let components = ls["linkset"][0]["https://ref.odal-node.io/voc/hasComponent"]
+            .as_array()
+            .expect("hasComponent relation present");
+        let hrefs: Vec<&str> = components
+            .iter()
+            .filter_map(|c| c["href"].as_str())
+            .collect();
+        assert_eq!(
+            hrefs,
+            [
+                "https://id.a.example/dpp/mod-1",
+                "https://id.b.example/dpp/mod-2"
+            ]
+        );
     }
 }
