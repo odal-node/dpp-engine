@@ -53,6 +53,11 @@ pub enum Commands {
         did_web_url: Option<String>,
         #[arg(long)]
         admin_user: Option<String>,
+        /// Prefer the `ADMIN_PASSWORD` environment variable instead: a value
+        /// passed here lands in shell history and is readable by other local
+        /// users via `ps`/`/proc/<pid>/cmdline` for the process lifetime.
+        /// `bootstrap` is the scripting/CI entrypoint (no interactive prompt);
+        /// interactive operators should run `odal` instead.
         #[arg(long)]
         admin_pass: Option<String>,
         /// Mint an additional key even if the node is already bootstrapped
