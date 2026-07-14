@@ -117,6 +117,23 @@ fn compile_wat_to_temp_file(wat_src: &str) -> tempfile::NamedTempFile {
     f
 }
 
+/// Load a plugin the same way [`LoadedPlugin::from_file`] with `trusted_key:
+/// None` used to, before unsigned loading required an explicit opt-in. These
+/// tests load throwaway WAT fixtures, not real sector plugins, so unsigned
+/// loading is the correct mode here — opt in for the duration of the call.
+///
+/// SAFETY: mutates a process-global env var; sound because nextest runs each
+/// `#[test]` in its own process (unlike `cargo test`, which would race this
+/// across threads in the same binary).
+fn load_unsigned_test_plugin(
+    engine: &wasmtime::Engine,
+    path: &std::path::Path,
+    sector_key: &str,
+) -> anyhow::Result<LoadedPlugin> {
+    unsafe { std::env::set_var("DPP_ALLOW_UNSIGNED_PLUGINS", "true") };
+    LoadedPlugin::from_file(engine, path, sector_key, None)
+}
+
 fn battery_sector_data() -> SectorData {
     // Minimal battery input — the passthrough plugin ignores it but the host
     // still serialises it and writes it to Wasm memory, exercising that path.
@@ -184,7 +201,7 @@ fn load_wat_plugin_and_invoke_calculate() {
     let engine = build_engine().expect("build engine failed");
     let tmp = compile_wat_to_temp_file(PASSTHROUGH_WAT);
 
-    let plugin = LoadedPlugin::from_file(&engine, tmp.path(), "battery", None)
+    let plugin = load_unsigned_test_plugin(&engine, tmp.path(), "battery")
         .expect("LoadedPlugin::from_file failed");
 
     let input = serde_json::json!({"chemistry": "LFP", "capacityKwh": 10.0});
@@ -207,7 +224,7 @@ fn register_plugin_and_compute_via_host() {
     let engine = build_engine().expect("build engine");
     let tmp = compile_wat_to_temp_file(PASSTHROUGH_WAT);
 
-    let plugin = LoadedPlugin::from_file(&engine, tmp.path(), "battery", None)
+    let plugin = load_unsigned_test_plugin(&engine, tmp.path(), "battery")
         .expect("LoadedPlugin::from_file failed");
 
     let host = WasmPluginHost::new();
@@ -234,7 +251,7 @@ fn fuel_exhaustion_returns_error_not_panic() {
     let engine = build_engine().expect("build engine");
     let tmp = compile_wat_to_temp_file(INFINITE_LOOP_WAT);
 
-    let plugin = LoadedPlugin::from_file(&engine, tmp.path(), "battery", None)
+    let plugin = load_unsigned_test_plugin(&engine, tmp.path(), "battery")
         .expect("LoadedPlugin::from_file failed");
 
     let input = serde_json::json!({});
@@ -269,7 +286,7 @@ fn memory_cap_rejects_over_budget_allocation() {
     let engine = build_engine().expect("build engine");
     let tmp = compile_wat_to_temp_file(MEMORY_OVERFLOW_WAT);
 
-    let plugin = LoadedPlugin::from_file(&engine, tmp.path(), "battery", None)
+    let plugin = load_unsigned_test_plugin(&engine, tmp.path(), "battery")
         .expect("LoadedPlugin::from_file failed");
 
     let input = serde_json::json!({});
