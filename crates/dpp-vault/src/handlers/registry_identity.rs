@@ -10,6 +10,7 @@ use axum::{
 use uuid::Uuid;
 
 use dpp_domain::domain::error::DppError;
+use dpp_types::STANDALONE_OPERATOR_ID;
 use dpp_types::registry_identity::{CreateFacilityRequest, CreateOperatorIdentifierRequest};
 
 use crate::{middleware::auth::AuthContext, state::AppState};
@@ -194,9 +195,16 @@ pub async fn operator_ids_create_handler(
     if let Some(resp) = require_admin(&auth) {
         return resp;
     }
+    // The identifier itself carries no per-entry country (an Art. 13 economic-
+    // operator identifier belongs to the operator, not a location) — reuse the
+    // operator's own registered country for the `dpp-registry` validation.
+    let operator_country = match state.operator_service.get(STANDALONE_OPERATOR_ID).await {
+        Ok(cfg) => cfg.country,
+        Err(e) => return internal_error(e),
+    };
     match state
         .registry_identity_service
-        .add_operator_identifier(body, &auth.user_id)
+        .add_operator_identifier(body, &operator_country, &auth.user_id)
         .await
     {
         Ok(o) => (StatusCode::CREATED, Json(o)).into_response(),

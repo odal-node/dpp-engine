@@ -160,9 +160,10 @@ impl RegistryIdentityService {
     pub async fn add_operator_identifier(
         &self,
         req: CreateOperatorIdentifierRequest,
+        operator_country: &str,
         actor: &str,
     ) -> Result<OperatorIdentifier, DppError> {
-        validate_operator_identifier(&req)?;
+        validate_operator_identifier(&req, operator_country)?;
         let identifier = OperatorIdentifier {
             id: Uuid::now_v7(),
             scheme: req.scheme.trim().to_lowercase(),
@@ -299,7 +300,15 @@ fn validate_facility(req: &CreateFacilityRequest) -> Result<(), DppError> {
 
 /// Validate an operator identifier via the `dpp-registry` scheme check
 /// (LEI ISO 7064, DUNS length, EORI/VAT prefix), plus non-empty fields.
-fn validate_operator_identifier(req: &CreateOperatorIdentifierRequest) -> Result<(), DppError> {
+///
+/// `operator_country` is the operator's own registered country (`OperatorConfig`):
+/// an Art. 13 identifier belongs to the operator, not a location, so it has no
+/// per-entry country of its own — the operator's country is reused for the
+/// `dpp-registry` validation, which requires a non-empty ISO code.
+fn validate_operator_identifier(
+    req: &CreateOperatorIdentifierRequest,
+    operator_country: &str,
+) -> Result<(), DppError> {
     if req.scheme.trim().is_empty() || req.value.trim().is_empty() {
         return Err(DppError::Validation("scheme and value are required".into()));
     }
@@ -310,9 +319,7 @@ fn validate_operator_identifier(req: &CreateOperatorIdentifierRequest) -> Result
             .label
             .clone()
             .unwrap_or_else(|| req.value.trim().to_owned()),
-        // Per-identifier country is not modelled; empty skips the country check,
-        // leaving the scheme/value structural validation (the part that matters here).
-        country: String::new(),
+        country: operator_country.trim().to_uppercase(),
         did: None,
     };
     oid.validate()
