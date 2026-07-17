@@ -8,7 +8,7 @@
 //!
 //! The DPP standard says nothing about notifying an operator's own ERP/PLM when a
 //! passport changes — outbound delivery is purely this deployment's operational
-//! concern. So the ports stay engine-side alongside [`RegistrySyncOutbox`], never
+//! concern. So the ports stay engine-side alongside `RegistrySyncOutbox`, never
 //! promoted to a core port.
 //!
 //! # Delivery guarantee
@@ -18,7 +18,7 @@
 //! is the source of truth); the tiny commit→enqueue window is the same one the
 //! NATS bus already accepts. Once a row exists it is loss-proof: transient
 //! failures back off and stay `pending`, so a killed node redelivers on restart.
-//! This is deliberately weaker than [`RegistrySyncOutbox`]'s transactional
+//! This is deliberately weaker than `RegistrySyncOutbox`'s transactional
 //! guarantee, because a missed webhook is an operational annoyance, not the
 //! legal violation a missed EU registration would be.
 

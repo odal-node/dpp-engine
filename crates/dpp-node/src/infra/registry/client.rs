@@ -34,7 +34,7 @@ use super::token::CachedToken;
 
 /// HTTP adapter for the EU Central DPP Registry.
 ///
-/// Implements `RegistrySyncPort` (see [`super::mapping`]) by making REST calls
+/// Implements `RegistrySyncPort` (see the `super::mapping` module) by making REST calls
 /// to the EU registry API, mapping between domain port types and bridge wire
 /// types.
 pub struct EuRegistrySync {

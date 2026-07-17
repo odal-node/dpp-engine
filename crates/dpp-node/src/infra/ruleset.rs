@@ -11,7 +11,7 @@
 //! checks) live in `dpp_rules::bundle` (Apache-2.0) — see that module's docs
 //! for the wire shape and why verification takes an injected [`JwsVerify`]
 //! rather than depending on a JWS crate directly. This file supplies the
-//! concrete verifier ([`DppCryptoVerifier`]), signing (needs a private key
+//! concrete verifier (`DppCryptoVerifier`), signing (needs a private key
 //! store), reading bundle files from disk, and the hot-swappable runtime
 //! state — all engine concerns that stay here.
 

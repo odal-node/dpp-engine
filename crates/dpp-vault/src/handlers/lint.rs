@@ -16,7 +16,7 @@ use super::error::{api_error, internal_error, parse_passport_id};
 ///
 /// Non-binding: findings never block publish and this endpoint never fails
 /// on their account. Works regardless of passport status (Draft or
-/// Published) — see [`dpp_vault::domain::service::PassportService::relint`].
+/// Published) — see [`crate::domain::service::PassportService::relint`].
 pub async fn lint_handler(
     State(state): State<AppState>,
     Extension(_auth): Extension<AuthContext>,

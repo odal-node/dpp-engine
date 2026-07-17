@@ -18,7 +18,7 @@
 //! This gates the standalone identity service's `/internal/sign` and
 //! `/internal/keys/rotate` endpoints — the only callers with the authority to
 //! produce a JWS signature or rotate an operator's signing key. Only a caller
-//! presenting a certificate whose subject `CN` equals [`ALLOWED_CN`]
+//! presenting a certificate whose subject `CN` equals `ALLOWED_CN`
 //! (`odal-vault`) *and* whose issuer `CN` matches `MTLS_REQUIRED_ISSUER_CN`
 //! may reach them — i.e. only the vault service, over a connection the
 //! terminating proxy has already verified. In the fused `dpp-node` binary
@@ -109,7 +109,7 @@ fn extract_cn(subject_dn: &str) -> Option<&str> {
 }
 
 /// Enforce mTLS: reject requests that do not carry a verified client certificate
-/// subject header, or whose `CN` does not equal [`ALLOWED_CN`], when the
+/// subject header, or whose `CN` does not equal `ALLOWED_CN`, when the
 /// `MTLS_ENFORCE` environment variable is set to `true`.
 pub async fn mtls_middleware(request: Request, next: Next) -> Response {
     // Fail CLOSED by default: the internal signing/rotation endpoints require a
