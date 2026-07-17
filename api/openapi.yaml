@@ -348,7 +348,7 @@ components:
           type: string
           format: uri
           nullable: true
-          description: "Set on publish to https://p.odal-node.io/{id}"
+          description: "GS1 Digital Link the carrier (QR) encodes, set on publish: {resolverBase}/01/{gtin}/21/{serial} for a trade item, else {resolverBase}/dpp/{id}. resolverBase is per-deployment (RESOLVER_BASE_URL, default https://id.odal-node.io)."
         jwsSignature:
           type: string
           nullable: true
@@ -1294,7 +1294,9 @@ paths:
         Transition a DPP from `draft` to `active`.
 
         On success:
-        1. `qrCodeUrl` is set to `https://p.odal-node.io/{id}`
+        1. `qrCodeUrl` is set to the passport's GS1 Digital Link carrier —
+           `{resolverBase}/01/{gtin}/21/{serial}` for a trade item, else
+           `{resolverBase}/dpp/{id}`
         2. The identity service signs the VC payload with Ed25519 (best-effort;
            signing failure does not block publish — `jwsSignature` may be null)
         3. `retentionLocked` is set to `true` permanently
@@ -2589,8 +2591,9 @@ paths:
       operationId: getDppQrCode
       summary: Get QR code for a DPP
       description: |
-        Returns a QR code image for the given DPP. The QR encodes the
-        resolver URL `https://p.odal-node.io/{dppId}`.
+        Returns a QR code image for the given DPP. The QR encodes the passport's
+        GS1 Digital Link on the resolver's configured base
+        (e.g. `https://id.odal-node.io/01/{gtin}/21/{serial}`).
         This endpoint is on the **resolver** service (port 8003).
       tags: [Public Resolver]
       parameters:

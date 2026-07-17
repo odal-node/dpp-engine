@@ -33,6 +33,7 @@ fn test_state(vault_base_url: String) -> AppState {
         vault_base_url,
         // Signature verification disabled for these resolution/caching e2e tests.
         operator_did_url: String::new(),
+        resolver_base_url: "https://id.odal-node.io".into(),
         cache: Cache::new_noop(),
         http: reqwest::Client::new(),
     }
@@ -61,6 +62,14 @@ fn sample_passport() -> serde_json::Value {
         "materials": [{"name": "Copper", "weightKg": 0.3}],
         "schemaVersion": "1.0.0"
     })
+}
+
+/// `sample_passport()` plus sector data carrying a GTIN — what a real
+/// carrier-bearing product passport looks like, for the QR tests.
+fn sample_passport_with_gtin() -> serde_json::Value {
+    let mut p = sample_passport();
+    p["sectorData"] = json!({ "sector": "electronics", "gtin": "09506000134352" });
+    p
 }
 
 fn sample_battery_passport() -> serde_json::Value {
@@ -142,7 +151,7 @@ async fn ready_returns_ok() {
 
 #[tokio::test]
 async fn qr_endpoint_returns_png() {
-    let passport = sample_passport();
+    let passport = sample_passport_with_gtin();
     let vault = {
         let p = passport.clone();
         Router::new().route(
@@ -179,6 +188,34 @@ async fn qr_endpoint_returns_png() {
         "response body must be valid PNG"
     );
     assert!(body.len() > 100, "PNG must not be empty");
+}
+
+/// A passport whose sector data carries no GTIN (e.g. an unsold-goods report,
+/// or here simply no `sectorData` at all) has no valid GS1 Digital Link
+/// carrier to print — the endpoint must fail closed, not encode a broken or
+/// misleading code.
+#[tokio::test]
+async fn qr_endpoint_returns_422_without_a_gtin() {
+    let passport = sample_passport();
+    let vault = {
+        let p = passport.clone();
+        Router::new().route(
+            "/public/dpp/{id}",
+            get(move || {
+                let pp = p.clone();
+                async move { axum::Json(pp) }
+            }),
+        )
+    };
+    let port = start_mock_vault(vault).await;
+    let app = router::build(test_state(format!("http://127.0.0.1:{port}")));
+
+    let req = Request::builder()
+        .uri("/dpp/00000000-0000-4000-9000-000000000001/qr")
+        .body(Body::empty())
+        .unwrap();
+    let resp = app.oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
 }
 
 // ---------------------------------------------------------------------------

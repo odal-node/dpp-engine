@@ -123,7 +123,7 @@ pub async fn resolve_html_handler(
         }
     };
 
-    let html = render_html(&dpp_id, &verified);
+    let html = render_html(&dpp_id, &verified, &state.resolver_base_url);
     state.cache.set(&cache_key, &html).await;
 
     (
@@ -146,7 +146,7 @@ pub async fn resolve_html_handler(
         .into_response()
 }
 
-fn render_html(dpp_id: &str, p: &serde_json::Value) -> String {
+fn render_html(dpp_id: &str, p: &serde_json::Value, resolver_base_url: &str) -> String {
     let product = p
         .get("productName")
         .and_then(|v| v.as_str())
@@ -161,17 +161,22 @@ fn render_html(dpp_id: &str, p: &serde_json::Value) -> String {
         .get("status")
         .and_then(|v| v.as_str())
         .unwrap_or("unknown"));
-    let gtin = esc(p.get("gtin").and_then(|v| v.as_str()).unwrap_or("-"));
-    let batch_id = esc(p.get("batchId").and_then(|v| v.as_str()).unwrap_or("-"));
-    let country = esc(p
-        .get("countryOfOrigin")
+    // `gtin` lives in the sector-specific payload, not on the passport itself
+    // (see `crate::domain::carrier_uri`'s doc comment for the JSON shape).
+    let gtin = esc(p
+        .get("sectorData")
+        .and_then(|sd| sd.get("gtin"))
         .and_then(|v| v.as_str())
         .unwrap_or("-"));
+    let batch_id = esc(p.get("batchId").and_then(|v| v.as_str()).unwrap_or("-"));
 
     let sector_html = sections::build_sector_section(p);
-    let qr_svg = build_qr_svg(dpp_id);
-    // Escape the id for HTML contexts (the QR above encodes the raw id).
+    let qr_svg = crate::domain::carrier_uri(p, resolver_base_url, dpp_id)
+        .map(|uri| build_qr_svg(&uri))
+        .unwrap_or_default();
+    // Escape the id for HTML contexts (the QR above encodes the carrier URI).
     let dpp_id = esc(dpp_id);
+    let page_url = format!("{}/dpp/{dpp_id}", resolver_base_url.trim_end_matches('/'));
 
     format!(
         r#"<!DOCTYPE html>
@@ -181,7 +186,7 @@ fn render_html(dpp_id: &str, p: &serde_json::Value) -> String {
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta property="og:title" content="{product}">
   <meta property="og:description" content="Digital Product Passport — {manufacturer}">
-  <meta property="og:url" content="https://passport.odal-node.io/dpp/{dpp_id}">
+  <meta property="og:url" content="{page_url}">
   <meta property="og:type" content="website">
   <title>DPP — {product}</title>
   <style>
@@ -220,7 +225,6 @@ fn render_html(dpp_id: &str, p: &serde_json::Value) -> String {
       <tr><th scope="row">Manufacturer</th><td>{manufacturer}</td></tr>
       <tr><th scope="row">GTIN</th><td>{gtin}</td></tr>
       <tr><th scope="row">Batch ID</th><td>{batch_id}</td></tr>
-      <tr><th scope="row">Country of Origin</th><td>{country}</td></tr>
     </table>
 
     {sector_html}
@@ -243,11 +247,9 @@ fn render_html(dpp_id: &str, p: &serde_json::Value) -> String {
     )
 }
 
-/// Render the DPP URL as an inline SVG QR code.
-fn build_qr_svg(dpp_id: &str) -> String {
-    let url = format!("https://passport.odal-node.io/dpp/{dpp_id}");
-
-    let code = match QrCode::new(url.as_bytes()) {
+/// Render a carrier URI as an inline SVG QR code.
+fn build_qr_svg(carrier_uri: &str) -> String {
+    let code = match QrCode::new(carrier_uri.as_bytes()) {
         Ok(c) => c,
         Err(_) => return String::new(),
     };
@@ -269,10 +271,10 @@ fn build_qr_svg(dpp_id: &str) -> String {
         }
     }
 
-    // Defense-in-depth: escape the URL in the SVG <title> text context. The id is
+    // Defense-in-depth: escape the URI in the SVG <title> text context. The id is
     // already constrained to a UUID at the handler edge, so this is belt-and-
-    // suspenders against any future change to how the URL is built.
-    let title_url = esc(&url);
+    // suspenders against any future change to how the URI is built.
+    let title_url = esc(carrier_uri);
     format!(
         r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {total} {total}" role="img" aria-label="QR code for this passport">
   <title>QR code: {title_url}</title>

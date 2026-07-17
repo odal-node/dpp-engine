@@ -11,11 +11,6 @@ use serde_json::Value;
 
 use crate::state::AppState;
 
-/// The resolver's own public base URL (its GS1 Digital Link host). Hardcoded
-/// rather than derived from mutable passport data, matching the QR-code handler
-/// — this is what closes the open-redirect surface.
-const RESOLVER_BASE_URL: &str = "https://id.odal-node.io";
-
 /// Query parameters for the GS1 Digital Link resolver endpoint (`/01/{gtin}`).
 #[derive(Deserialize)]
 pub struct ByGtinQuery {
@@ -73,7 +68,7 @@ pub async fn resolve_by_gtin_handler(
     // so trusting it would let an altered value 307-redirect the scan to an
     // attacker host — the exact open redirect the QR-code handler hardcodes
     // against.
-    let base_url = RESOLVER_BASE_URL;
+    let base_url = state.resolver_base_url.as_str();
 
     // Linkset request: ?linkType=linkset OR Accept: application/linkset+json
     let wants_linkset = query.link_type.as_deref() == Some("linkset")

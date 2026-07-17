@@ -1,5 +1,6 @@
-//! Handler for `GET /dpp/{dppId}/qr` — serves a PNG QR code derived from the
-//! verified resolver URL, not from the stored `qrCodeUrl` field.
+//! Handler for `GET /dpp/{dppId}/qr` — serves a PNG QR code encoding the
+//! passport's GS1 Digital Link URI, derived from verified passport fields,
+//! never from the stored `qrCodeUrl` field.
 
 use axum::{
     extract::{Path, State},
@@ -11,7 +12,7 @@ use image::{DynamicImage, GrayImage, ImageFormat, Luma};
 use qrcode::QrCode;
 use serde_json::Value;
 
-use crate::{infra::did, state::AppState};
+use crate::{domain::carrier_uri, infra::did, state::AppState};
 
 /// Fetch the passport JSON from the vault's public endpoint.
 ///
@@ -44,13 +45,17 @@ async fn fetch_passport(state: &AppState, dpp_id: &str) -> Result<Value, StatusC
         .map_err(|_| StatusCode::BAD_GATEWAY)
 }
 
-/// Generate and return a PNG QR code for the given DPP resolver URL.
+/// Generate and return a PNG QR code encoding the passport's GS1 Digital Link
+/// URI.
 ///
-/// The QR is built from the canonical resolver URL derived from the verified
-/// `dpp_id` — NOT from the stored `qrCodeUrl`, which is set *after* signing and
-/// is therefore content-binding-exempt and tamperable (red-team RT2-2). The
-/// passport's JWS is verified first, exactly as the HTML/JSON paths do, so the
-/// QR image fails closed on a tampered or unverifiable passport.
+/// The URI is built from `gtin` (`sectorData.gtin`) and `batchId`, read from
+/// the verified passport JSON — NOT from the stored `qrCodeUrl`, which is set
+/// *after* signing and is therefore content-binding-exempt and tamperable
+/// (red-team RT2-2). The passport's JWS is verified first, exactly as the
+/// HTML/JSON paths do, so the QR image fails closed on a tampered or
+/// unverifiable passport. A passport whose sector data carries no GTIN (e.g.
+/// an unsold-goods report) has no valid GS1 Digital Link carrier and fails
+/// closed with `422` rather than printing a broken or misleading code.
 pub async fn resolve_qr_handler(
     State(state): State<AppState>,
     Path(dpp_id): Path<String>,
@@ -88,11 +93,16 @@ pub async fn resolve_qr_handler(
         return (status, [(header::CONTENT_TYPE, "image/png")], Vec::new()).into_response();
     }
 
-    // Build the QR from the canonical resolver URL derived from the (verified)
-    // dpp_id — same URL the inline HTML SVG encodes — never the stored field.
-    let resolver_url = format!("https://passport.odal-node.io/dpp/{dpp_id}");
+    let Some(carrier_uri) = carrier_uri(&passport, &state.resolver_base_url, &dpp_id) else {
+        return (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            [(header::CONTENT_TYPE, "image/png")],
+            Vec::new(),
+        )
+            .into_response();
+    };
 
-    let code = match QrCode::new(resolver_url.as_bytes()) {
+    let code = match QrCode::new(carrier_uri.as_bytes()) {
         Ok(c) => c,
         Err(e) => {
             tracing::error!(dpp_id = %dpp_id, error = %e, "QR code generation failed");

@@ -68,6 +68,13 @@ pub struct NodeConfig {
     /// SSRF guard refuses non-public receivers); a self-hosting operator whose
     /// receiver lives on their own internal network sets this to opt in.
     pub webhook_allow_private_targets: bool,
+
+    // ── Resolver ────────────────────────────────────────────────────────────
+    /// Base URL the public resolver serves on, stamped into each passport's
+    /// carrier (QR) URL at publish. Defaults to `https://id.odal-node.io`; a
+    /// self-hoster sets `RESOLVER_BASE_URL` to their own domain so printed
+    /// labels carry it. Must match the resolver deployment's own base.
+    pub resolver_base_url: String,
 }
 
 impl NodeConfig {
@@ -79,7 +86,8 @@ impl NodeConfig {
     /// **Optional**: `DATABASE_MIGRATE_URL`, `NODE_PORT` / `PORT` (default 8001),
     /// `LOG_LEVEL` (default "info"), `CORS_ALLOWED_ORIGINS`, `ADMIN_USERNAME`,
     /// `ADMIN_PASSWORD`, `BATCH_CONCURRENCY` (default 20), `NATS_URL`,
-    /// `PLUGINS_DIR` (default "./plugins"), `METRICS_ADDR` (default "127.0.0.1:9100").
+    /// `PLUGINS_DIR` (default "./plugins"), `METRICS_ADDR` (default "127.0.0.1:9100"),
+    /// `RESOLVER_BASE_URL` (default `https://id.odal-node.io`).
     ///
     /// # Errors
     ///
@@ -127,6 +135,10 @@ impl NodeConfig {
             webhook_allow_private_targets: std::env::var("WEBHOOK_ALLOW_PRIVATE_TARGETS")
                 .map(|s| matches!(s.trim().to_ascii_lowercase().as_str(), "1" | "true" | "yes"))
                 .unwrap_or(false),
+            resolver_base_url: std::env::var("RESOLVER_BASE_URL")
+                .ok()
+                .filter(|s| !s.is_empty())
+                .unwrap_or_else(|| "https://id.odal-node.io".into()),
         })
     }
 }

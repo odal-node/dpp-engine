@@ -1,10 +1,10 @@
 //! `publish` — sign and publish a draft passport, plus its private helpers
 //! `validate_schema_for_publish` (fail-closed JSON Schema gate) and
-//! `build_gs1_or_fallback_url` (GS1 Digital Link URL for the QR code).
+//! `build_carrier_url` (GS1 Digital Link URL for the QR code).
 
 use chrono::Utc;
 use dpp_common::{event, event_codes};
-use dpp_digital_link::build_qr_url;
+use dpp_digital_link::{build_qr_url, short_serial};
 use dpp_domain::{
     domain::{
         error::DppError,
@@ -176,7 +176,7 @@ impl PassportService {
         }
         passport.updated_at = Utc::now();
         passport.jws_signature = Some(jws);
-        passport.qr_code_url = Some(build_gs1_or_fallback_url(&passport));
+        passport.qr_code_url = Some(build_carrier_url(&passport, &self.resolver_base_url));
         passport.retention_locked = true;
 
         // Public verifiability: also sign the *public (redacted) view* — the exact
@@ -328,27 +328,31 @@ fn validate_schema_for_publish(sector_data: &SectorData) -> Result<(), DppError>
         .map_err(DppError::from)
 }
 
-/// If the passport carries Battery sector data with a GTIN, produce a
-/// GS1 Digital Link URL (`/01/{gtin}/21/{id}`).  Otherwise fall back to
-/// the legacy resolver path.
-fn build_gs1_or_fallback_url(passport: &Passport) -> String {
-    const RESOLVER_BASE: &str = "https://id.odal-node.io";
-    const LEGACY_BASE: &str = "https://p.odal-node.io";
-
-    match passport.sector_data {
-        Some(SectorData::Battery(ref bd)) => build_qr_url(
-            RESOLVER_BASE,
-            bd.gtin.as_str(),
-            &passport.id.to_string(),
+/// Build the carrier (QR / Data Matrix) URL a passport should encode, on the
+/// node's configured resolver base.
+///
+/// When the sector data carries a GTIN — every trade-item sector — produces a
+/// GS1 Digital Link (`{base}/01/{gtin}[/10/{batch}]/21/{serial}`) with a
+/// GS1-conformant 20-char serial derived from the passport id. When it does not
+/// (an unsold-goods report or untyped record, which identify no trade item),
+/// points at the passport's own resolver page on the same configured base —
+/// never a hardcoded host.
+fn build_carrier_url(passport: &Passport, resolver_base: &str) -> String {
+    let base = resolver_base.trim_end_matches('/');
+    match passport.sector_data.as_ref().and_then(SectorData::gtin) {
+        Some(gtin) => build_qr_url(
+            base,
+            gtin,
+            &short_serial(passport.id.0.as_bytes()),
             passport.batch_id.as_deref(),
         ),
-        _ => format!("{LEGACY_BASE}/{}", passport.id),
+        None => format!("{base}/dpp/{}", passport.id),
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{build_gs1_or_fallback_url, validate_schema_for_publish};
+    use super::{build_carrier_url, validate_schema_for_publish};
     use chrono::Utc;
     use dpp_domain::domain::{
         error::DppError,
@@ -396,14 +400,45 @@ mod tests {
         }
     }
 
-    // ── build_gs1_or_fallback_url ────────────────────────────────────────────
+    // ── build_carrier_url ────────────────────────────────────────────────────
 
     #[test]
-    fn no_sector_data_uses_fallback_url() {
-        let p = stub(); // sector_data is None
-        let url = build_gs1_or_fallback_url(&p);
-        assert!(url.starts_with("https://p.odal-node.io/"));
-        assert!(url.contains(&p.id.to_string()));
+    fn no_gtin_points_at_resolver_dpp_page() {
+        // An unsold-goods report / untyped record carries no trade-item GTIN, so
+        // the carrier points at the passport's own page on the configured base —
+        // never the old hardcoded `p.odal-node.io` host.
+        let p = stub(); // sector_data is None → no GTIN
+        let url = build_carrier_url(&p, "https://id.example.com/");
+        assert_eq!(url, format!("https://id.example.com/dpp/{}", p.id));
+        assert!(!url.contains("p.odal-node.io"));
+    }
+
+    #[test]
+    fn gtin_sector_builds_gs1_dl_with_conformant_serial() {
+        use dpp_domain::domain::sector::ConstructionData;
+        let mut p = stub();
+        p.sector_data = Some(SectorData::Construction(ConstructionData {
+            gtin: "09506000134352".into(),
+            product_family: "cement".into(),
+            country_of_manufacture: "DE".into(),
+            co2e_per_functional_unit_kg: 100.0,
+            functional_unit: "per tonne".into(),
+            recycled_content_pct: None,
+            epd_url: None,
+            ce_marking: None,
+        }));
+        let url = build_carrier_url(&p, "https://id.example.com");
+        // Must be a parseable GS1 Digital Link — parse enforces the AI 21 cap, so
+        // a >20-char serial would make this fail.
+        let parsed = dpp_digital_link::DigitalLink::parse(&url)
+            .expect("carrier URL must be a parseable GS1 Digital Link");
+        let serial = parsed.serial.expect("serial present");
+        assert!(
+            serial.chars().count() <= 20,
+            "AI 21 serial must be ≤20 chars"
+        );
+        assert!(url.starts_with("https://id.example.com/01/09506000134352/21/"));
+        assert!(!url.contains("p.odal-node.io"));
     }
 
     // ── validate_schema_for_publish (Q-2) ────────────────────────────────────

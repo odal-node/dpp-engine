@@ -23,6 +23,7 @@ fn test_state_did(vault_base_url: String, operator_did_url: String) -> AppState 
     AppState {
         vault_base_url,
         operator_did_url,
+        resolver_base_url: "https://id.odal-node.io".into(),
         cache: Cache::new_noop(),
         http: reqwest::Client::new(),
     }

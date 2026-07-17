@@ -7,15 +7,15 @@
 //! best-effort event (`self.emit`, fire-after-commit — a failure is logged,
 //! never propagated, since the DB write is the source of truth).
 //!
-//! - [`query`] — read paths: `find_*`, `list`, `count`, `history`
-//! - [`create`] — `create`, `update`, and their private helpers `apply_patch`/`apply_compliance`
-//! - [`publish`] — `publish` and its private helpers `validate_schema_for_publish`/`build_gs1_or_fallback_url`
-//! - [`lint`] — `relint` (advisory lint re-check; never blocks publish)
-//! - [`lifecycle`] — `suspend`, `archive`
-//! - [`eol`] — `declare_eol`
-//! - [`transfer`] — `initiate_transfer`, `accept_transfer`
-//! - [`evidence`] — `generate_evidence`/`list_evidence`/`get_evidence`/`verify_evidence`
-//! - [`seal`] — reserved seat for the eIDAS seal step in `publish` (not wired yet)
+//! - `query` — read paths: `find_*`, `list`, `count`, `history`
+//! - `create` — `create`, `update`, and their private helpers `apply_patch`/`apply_compliance`
+//! - `publish` — `publish` and its private helpers `validate_schema_for_publish`/`build_carrier_url`
+//! - `lint` — `relint` (advisory lint re-check; never blocks publish)
+//! - `lifecycle` — `suspend`, `archive`
+//! - `eol` — `declare_eol`
+//! - `transfer` — `initiate_transfer`, `accept_transfer`
+//! - `evidence` — `generate_evidence`/`list_evidence`/`get_evidence`/`verify_evidence`
+//! - `seal` — reserved seat for the eIDAS seal step in `publish` (not wired yet)
 //!
 
 mod create;
@@ -80,6 +80,11 @@ pub struct PassportService {
     /// the node's drain task performs the signed HTTP POST. `None` (test doubles
     /// / deployments without webhooks) simply skips enqueue.
     pub webhooks: Option<Arc<dyn WebhookOutbox>>,
+    /// Base URL the resolver serves on, used to build each passport's carrier
+    /// (QR) URL at publish. Defaults to `https://id.odal-node.io`; set per
+    /// deployment (a self-hoster's own domain) via [`Self::with_resolver_base_url`]
+    /// so printed labels carry the operator's domain, not a hardcoded host.
+    pub resolver_base_url: String,
 }
 
 impl PassportService {
@@ -109,6 +114,7 @@ impl PassportService {
             operator_country,
             registry_reader: None,
             webhooks: None,
+            resolver_base_url: "https://id.odal-node.io".to_owned(),
         }
     }
 
@@ -147,10 +153,18 @@ impl PassportService {
     }
 
     /// Provide the webhook delivery outbox, enabling signed outbound webhooks.
-    /// Each subsequent [`Self::emit`] fans the event out to matching subscriptions.
+    /// Each subsequent `emit` fans the event out to matching subscriptions.
     #[must_use]
     pub fn with_webhooks(mut self, outbox: Arc<dyn WebhookOutbox>) -> Self {
         self.webhooks = Some(outbox);
+        self
+    }
+
+    /// Set the resolver base URL used to build passport carrier (QR) URLs at
+    /// publish. Defaults to `https://id.odal-node.io` when not set.
+    #[must_use]
+    pub fn with_resolver_base_url(mut self, base: String) -> Self {
+        self.resolver_base_url = base;
         self
     }
 
