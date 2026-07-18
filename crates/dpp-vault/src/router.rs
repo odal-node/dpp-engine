@@ -34,6 +34,7 @@ use crate::{
         list::list_handler,
         node_state::node_state_handler,
         operator::{operator_get_handler, operator_patch_handler},
+        plugins::install_plugin_handler,
         public_read::public_read_handler,
         public_read_by_gtin::public_read_by_gtin_handler,
         publish::publish_handler,
@@ -102,6 +103,8 @@ pub fn build(state: AppState) -> Router {
             get(api_keys_list_handler).post(api_keys_create_handler),
         )
         .route("/api-keys/{id}", delete(api_keys_delete_handler))
+        // ── Plugins (signed sector-plugin hot-install) ────────────────
+        .route("/plugins", post(install_plugin_handler))
         // ── Webhooks (signed outbound delivery) ───────────────────────
         .route(
             "/webhooks",

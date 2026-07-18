@@ -259,6 +259,8 @@ async fn main() -> anyhow::Result<()> {
     let auth_provider: Arc<dyn dpp_types::auth::AuthProvider> =
         Arc::new(CompositeAuthProvider::new(providers));
 
+    // The concrete plugin host backs `POST /api/v1/plugins` (admin hot-install).
+    let plugin_admin: Arc<dyn dpp_common::plugin_admin::PluginAdmin> = plugin_host.clone();
     let vault_state = VaultState {
         service,
         operator_service,
@@ -268,6 +270,7 @@ async fn main() -> anyhow::Result<()> {
         db_ping: db.db_ping.clone(),
         auth_provider,
         cors_allowed_origins: cfg.cors_allowed_origins.clone(),
+        plugin_admin: Some(plugin_admin),
     };
 
     // ── Integrator service state ────────────────────────────────────────────────

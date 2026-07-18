@@ -305,6 +305,7 @@ async fn start_vault_with_identity(dal: PgDal, identity: Arc<dyn IdentityPort>) 
         db_ping: Arc::new(PgPing(dal)),
         auth_provider,
         cors_allowed_origins: Vec::new(),
+        plugin_admin: None,
     };
 
     let app = router::build(state);

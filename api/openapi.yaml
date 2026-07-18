@@ -1523,7 +1523,7 @@ paths:
         Authenticated tier only — the dossier's `fullView` member carries
         full-view (non-redacted) passport data. Requires the passport to have
         been published at least once; a draft has no signature to export.
-      tags: [DPP Management]
+      tags: [Evidence Dossiers]
       security:
         - BearerApiKey: []
         - BasicAuth: []
@@ -1550,7 +1550,7 @@ paths:
       operationId: listDppEvidence
       summary: List stored evidence dossiers for a passport
       description: Summaries only (no document body), newest first.
-      tags: [DPP Management]
+      tags: [Evidence Dossiers]
       security:
         - BearerApiKey: []
         - BasicAuth: []
@@ -1578,7 +1578,7 @@ paths:
     get:
       operationId: getEvidenceDossier
       summary: Fetch one stored dossier's document
-      tags: [DPP Management]
+      tags: [Evidence Dossiers]
       security:
         - BearerApiKey: []
         - BasicAuth: []
@@ -1609,7 +1609,7 @@ paths:
         An integrity check against the stored dossier's own signatures and
         hash chains. A tamper is still a `200` response — the report's
         `checks` name which check failed.
-      tags: [DPP Management]
+      tags: [Evidence Dossiers]
       security:
         - BearerApiKey: []
         - BasicAuth: []
@@ -1637,7 +1637,7 @@ paths:
       operationId: verifyUploadedEvidenceDossier
       summary: Verify an uploaded dossier document
       description: Same checks as the stored-dossier verify endpoint, run against an uploaded document instead.
-      tags: [DPP Management]
+      tags: [Evidence Dossiers]
       security:
         - BearerApiKey: []
         - BasicAuth: []
@@ -1793,6 +1793,76 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "404":
           $ref: "#/components/responses/NotFound"
+
+  # ---- Plugins (odal-vault) ------------------------------------------------
+
+  /vault/api/v1/plugins:
+    post:
+      operationId: installPlugin
+      summary: Install a signed sector plugin
+      description: |
+        Verify, persist, and hot-swap a signed sector plugin — no node restart.
+
+        The node verifies the uploaded artifact's detached signature against its
+        pinned publisher key, gates the plugin's declared ABI, instantiate-smokes
+        the module, persists it (so a restart re-loads it), and atomically swaps
+        it into service. Any rejection is fail-closed — the previously installed
+        plugin keeps serving. Admin-scoped.
+
+        Both a portable `.wasm` (compiled on the node) and a precompiled `.cwasm`
+        (loaded only if it matches this node's engine) are accepted.
+      tags: [Plugins]
+      security:
+        - BearerApiKey: []
+        - BasicAuth: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [wasm, sig]
+              properties:
+                wasm:
+                  type: string
+                  format: binary
+                  description: >
+                    The `.wasm` or precompiled `.cwasm` plugin artifact. Its
+                    filename determines the sector when `sector` is omitted
+                    (`sector-<key>.wasm`) and whether it is treated as
+                    precompiled (`.cwasm`).
+                sig:
+                  type: string
+                  format: binary
+                  description: Detached Ed25519 signature over SHA-256 of the artifact bytes.
+                sector:
+                  type: string
+                  description: Sector key; derived from the filename if omitted.
+                  example: battery
+      responses:
+        "201":
+          description: Plugin verified, persisted, and now serving.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  sector:
+                    type: string
+                    example: battery
+                  abiVersion:
+                    type: string
+                    example: "1.1"
+        "400":
+          description: Malformed multipart body (missing `wasm`/`sig`, or the sector could not be determined).
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          description: A non-admin credential attempted to install a plugin.
+        "422":
+          description: The artifact was rejected — bad signature, incompatible ABI, or a non-instantiable/incompatible module.
+        "501":
+          description: This node has no plugin host configured; runtime install is unavailable.
 
   # ---- Webhooks (odal-vault) -----------------------------------------------
 
@@ -2676,10 +2746,14 @@ tags:
     description: Create, read, update, list, and audit Digital Product Passports.
   - name: DPP Lifecycle
     description: Lifecycle transitions — publish, suspend, archive.
+  - name: Evidence Dossiers
+    description: Signed, self-contained evidence dossiers — generate, fetch, and verify (stored or uploaded) offline, with zero trust in the issuing node.
   - name: Operator
     description: Operator configuration (branding, legal info, retention policy).
   - name: API Keys
     description: API key management — create, list, revoke.
+  - name: Plugins
+    description: Signed sector-plugin hot-install — verify, persist, hot-swap (admin-only).
   - name: Registry Identity
     description: Facilities (ESPR Annex III) and operator identifiers (Art. 13) stamped onto new passports.
   - name: Node

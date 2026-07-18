@@ -212,6 +212,7 @@ async fn start_node_with_dal(dal: PgDal) -> String {
         db_ping: Arc::new(PgPing(dal)),
         auth_provider,
         cors_allowed_origins: Vec::new(),
+        plugin_admin: None,
     };
 
     let identity_state = IdentityState {

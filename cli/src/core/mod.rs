@@ -3,6 +3,7 @@
 pub mod infra;
 pub mod onboarding;
 pub mod passport;
+pub mod plugin;
 pub mod registry_identity;
 pub mod schema;
 pub mod types;

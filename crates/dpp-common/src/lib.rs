@@ -6,6 +6,7 @@ pub mod event;
 pub mod event_codes;
 pub mod http_problem;
 pub mod metrics;
+pub mod plugin_admin;
 pub mod request_id;
 pub mod telemetry;
 pub mod url_guard;
