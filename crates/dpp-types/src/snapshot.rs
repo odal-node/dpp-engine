@@ -43,6 +43,19 @@ pub trait SnapshotStore: Send + Sync {
     /// live node remains the source of truth).
     async fn put_public_json(&self, dpp_id: &str, bytes: &[u8]) -> Result<(), DppError>;
 
+    /// Store (overwriting any prior) the pre-rendered public **page** for
+    /// `dpp_id`.
+    ///
+    /// Stored beside the JSON rather than instead of it: the JSON is the signed
+    /// artifact a verifier checks, the page is what a person scanning a QR code
+    /// actually needs to read. Serving only JSON would keep the passport
+    /// technically reachable while being useless to the consumer it exists for.
+    ///
+    /// # Errors
+    /// Propagates the object-storage failure; callers treat it as non-fatal (the
+    /// live node remains the source of truth).
+    async fn put_public_html(&self, dpp_id: &str, bytes: &[u8]) -> Result<(), DppError>;
+
     /// Remove any stored snapshot for `dpp_id`. Idempotent — a missing object is
     /// success, not an error.
     ///

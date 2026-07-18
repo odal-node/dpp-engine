@@ -104,6 +104,7 @@ impl PassportRepository for InMemoryPassportRepo {
 #[derive(Default, Clone)]
 struct InMemorySnapshotStore {
     objects: Arc<Mutex<HashMap<String, Vec<u8>>>>,
+    html: Arc<Mutex<HashMap<String, Vec<u8>>>>,
     fail: Arc<Mutex<bool>>,
 }
 
@@ -119,11 +120,22 @@ impl SnapshotStore for InMemorySnapshotStore {
             .insert(dpp_id.to_owned(), bytes.to_vec());
         Ok(())
     }
+    async fn put_public_html(&self, dpp_id: &str, bytes: &[u8]) -> Result<(), DppError> {
+        if *self.fail.lock().unwrap() {
+            return Err(DppError::Internal("object store unavailable".into()));
+        }
+        self.html
+            .lock()
+            .unwrap()
+            .insert(dpp_id.to_owned(), bytes.to_vec());
+        Ok(())
+    }
     async fn remove(&self, dpp_id: &str) -> Result<(), DppError> {
         if *self.fail.lock().unwrap() {
             return Err(DppError::Internal("object store unavailable".into()));
         }
         self.objects.lock().unwrap().remove(dpp_id);
+        self.html.lock().unwrap().remove(dpp_id);
         Ok(())
     }
 }
@@ -131,6 +143,13 @@ impl SnapshotStore for InMemorySnapshotStore {
 impl InMemorySnapshotStore {
     fn get(&self, dpp_id: &str) -> Option<Vec<u8>> {
         self.objects.lock().unwrap().get(dpp_id).cloned()
+    }
+    fn get_html(&self, dpp_id: &str) -> Option<String> {
+        self.html
+            .lock()
+            .unwrap()
+            .get(dpp_id)
+            .map(|b| String::from_utf8_lossy(b).into_owned())
     }
     fn set_failing(&self, failing: bool) {
         *self.fail.lock().unwrap() = failing;
@@ -213,6 +232,9 @@ impl FakeOutbox {
 // Harness
 // ---------------------------------------------------------------------------
 
+/// Resolver base the snapshot page's links and QR carrier are built against.
+const TEST_RESOLVER_BASE: &str = "https://dpp.example.test";
+
 fn passport(status: PassportStatus) -> Passport {
     Passport {
         id: PassportId::new(),
@@ -282,7 +304,7 @@ async fn drain_mirrors_a_published_passport() {
     outbox.enqueue(p.id).await.unwrap();
 
     let (o, r, s) = ports(&outbox, &repo, &store);
-    let stats = drain_once(&o, &r, &s, 50).await;
+    let stats = drain_once(&o, &r, &s, TEST_RESOLVER_BASE, 50).await;
 
     assert_eq!(stats.stored, 1);
     assert_eq!(stats.removed, 0);
@@ -296,6 +318,84 @@ async fn drain_mirrors_a_published_passport() {
     assert_eq!(v["productName"], "Drain Test Widget");
     assert_eq!(v["publicJwsSignature"], "public.jws.signature");
     assert!(v.get("jwsSignature").is_none(), "full-view JWS leaked: {v}");
+}
+
+#[tokio::test]
+async fn drain_stores_a_readable_page_beside_the_signed_json() {
+    // The JSON is what a verifier checks; the page is what the person who
+    // scanned the QR code actually reads. Serving only JSON would leave the
+    // passport technically reachable and practically useless.
+    let (outbox, repo, store) = (
+        FakeOutbox::default(),
+        InMemoryPassportRepo::default(),
+        InMemorySnapshotStore::default(),
+    );
+    let mut p = passport(PassportStatus::Published);
+    // `batchId` is Professional tier, and the page template renders it. That
+    // makes it the honest probe for "was this rendered from the public view or
+    // from the full passport?" — unlike the JWS fields, which the template
+    // never emits and which therefore cannot detect the mistake.
+    p.batch_id = Some("LOT-CONFIDENTIAL-42".into());
+    repo.create(p.clone()).await.unwrap();
+    outbox.enqueue(p.id).await.unwrap();
+
+    let (o, r, s) = ports(&outbox, &repo, &store);
+    drain_once(&o, &r, &s, TEST_RESOLVER_BASE, 50).await;
+
+    let html = store
+        .get_html(&p.id.to_string())
+        .expect("a published passport must be mirrored as a page too");
+
+    assert!(html.starts_with("<!DOCTYPE html>"), "not an HTML document");
+    assert!(html.contains("Drain Test Widget"), "product name missing");
+
+    // The banner is the honesty requirement: a saved copy must say it is a
+    // saved copy, on the page, where a consumer will actually see it.
+    assert!(
+        html.contains("saved copy"),
+        "a snapshot page must disclose that it is stale: {html}"
+    );
+
+    // The page must be rendered from the redacted public view, never the full
+    // passport — otherwise the static tier becomes a disclosure hole precisely
+    // because it renders HTML.
+    assert!(
+        !html.contains("LOT-CONFIDENTIAL-42"),
+        "a non-public field leaked into the snapshot page: {html}"
+    );
+}
+
+#[tokio::test]
+async fn retiring_a_snapshot_removes_the_page_too() {
+    // A retired passport that left its page behind would keep answering
+    // `published` to every human reader while the JSON was already gone.
+    let (outbox, repo, store) = (
+        FakeOutbox::default(),
+        InMemoryPassportRepo::default(),
+        InMemorySnapshotStore::default(),
+    );
+    let p = passport(PassportStatus::Published);
+    repo.create(p.clone()).await.unwrap();
+    outbox.enqueue(p.id).await.unwrap();
+
+    let (o, r, s) = ports(&outbox, &repo, &store);
+    drain_once(&o, &r, &s, TEST_RESOLVER_BASE, 50).await;
+    assert!(store.get_html(&p.id.to_string()).is_some());
+
+    repo.update_status(p.id, PassportStatus::Suspended)
+        .await
+        .unwrap();
+    outbox.push_row(p.id, 0);
+    drain_once(&o, &r, &s, TEST_RESOLVER_BASE, 50).await;
+
+    assert!(
+        store.get(&p.id.to_string()).is_none(),
+        "the signed JSON must be retired"
+    );
+    assert!(
+        store.get_html(&p.id.to_string()).is_none(),
+        "the readable page must be retired with it"
+    );
 }
 
 #[tokio::test]
@@ -321,7 +421,7 @@ async fn drain_retires_a_passport_that_left_the_public_tier() {
         outbox.enqueue(p.id).await.unwrap();
 
         let (o, r, s) = ports(&outbox, &repo, &store);
-        let stats = drain_once(&o, &r, &s, 50).await;
+        let stats = drain_once(&o, &r, &s, TEST_RESOLVER_BASE, 50).await;
 
         assert_eq!(stats.removed, 1, "{status:?} must retire the snapshot");
         assert!(
@@ -351,7 +451,7 @@ async fn a_stale_reconcile_never_resurrects_a_suspended_passport() {
 
     // First pass mirrors it — the passport really is public at this point.
     let (o, r, s) = ports(&outbox, &repo, &store);
-    drain_once(&o, &r, &s, 50).await;
+    drain_once(&o, &r, &s, TEST_RESOLVER_BASE, 50).await;
     assert!(store.get(&p.id.to_string()).is_some());
 
     // The passport is suspended. Queue a row that predates the suspension (the
@@ -361,7 +461,7 @@ async fn a_stale_reconcile_never_resurrects_a_suspended_passport() {
         .unwrap();
     outbox.push_row(p.id, 0);
 
-    let stats = drain_once(&o, &r, &s, 50).await;
+    let stats = drain_once(&o, &r, &s, TEST_RESOLVER_BASE, 50).await;
 
     assert_eq!(stats.stored, 0, "a stale row must never store");
     assert_eq!(stats.removed, 1);
@@ -385,11 +485,11 @@ async fn draining_the_same_row_twice_is_a_no_op() {
     outbox.enqueue(p.id).await.unwrap();
 
     let (o, r, s) = ports(&outbox, &repo, &store);
-    drain_once(&o, &r, &s, 50).await;
+    drain_once(&o, &r, &s, TEST_RESOLVER_BASE, 50).await;
     let first = store.get(&p.id.to_string()).expect("mirrored");
 
     outbox.push_row(p.id, 0);
-    drain_once(&o, &r, &s, 50).await;
+    drain_once(&o, &r, &s, TEST_RESOLVER_BASE, 50).await;
     let second = store.get(&p.id.to_string()).expect("still mirrored");
 
     assert_eq!(first, second, "a replayed reconcile must be byte-identical");
@@ -408,7 +508,7 @@ async fn a_failing_store_backs_off_and_leaves_the_row_pending() {
     store.set_failing(true);
 
     let (o, r, s) = ports(&outbox, &repo, &store);
-    let stats = drain_once(&o, &r, &s, 50).await;
+    let stats = drain_once(&o, &r, &s, TEST_RESOLVER_BASE, 50).await;
 
     assert_eq!(stats.retried, 1);
     assert_eq!(stats.stored, 0);
@@ -418,7 +518,7 @@ async fn a_failing_store_backs_off_and_leaves_the_row_pending() {
 
     // Once storage recovers, the same row converges.
     store.set_failing(false);
-    let stats = drain_once(&o, &r, &s, 50).await;
+    let stats = drain_once(&o, &r, &s, TEST_RESOLVER_BASE, 50).await;
     assert_eq!(stats.stored, 1);
     assert!(store.get(&p.id.to_string()).is_some());
 }
@@ -437,7 +537,7 @@ async fn a_row_at_the_attempt_cap_is_exhausted_not_retried_forever() {
     store.set_failing(true);
 
     let (o, r, s) = ports(&outbox, &repo, &store);
-    let stats = drain_once(&o, &r, &s, 50).await;
+    let stats = drain_once(&o, &r, &s, TEST_RESOLVER_BASE, 50).await;
 
     assert_eq!(stats.exhausted, 1);
     assert_eq!(stats.retried, 0);
@@ -461,7 +561,7 @@ async fn one_bad_row_does_not_stall_the_rest_of_the_pass() {
     outbox.enqueue(good.id).await.unwrap();
 
     let (o, r, s) = ports(&outbox, &repo, &store);
-    let stats = drain_once(&o, &r, &s, 50).await;
+    let stats = drain_once(&o, &r, &s, TEST_RESOLVER_BASE, 50).await;
 
     assert_eq!(stats.removed, 1, "the absent passport is retired");
     assert_eq!(stats.stored, 1, "the good row still drained");

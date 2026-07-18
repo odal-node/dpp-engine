@@ -1,6 +1,6 @@
 //! Textile sector HTML section, including the fibre-composition bar chart.
 
-use super::super::esc::esc;
+use crate::esc::esc;
 
 pub(super) fn build_textile_section(p: &serde_json::Value) -> String {
     let sd = match p.get("sectorData") {

@@ -314,6 +314,7 @@ async fn main() -> anyhow::Result<()> {
             db.snapshot_outbox.clone(),
             db.passport_repo.clone(),
             store,
+            cfg.resolver_base_url.clone(),
         )
         .await;
         // Repair sweep: covers reconciles the event-driven path never queued.

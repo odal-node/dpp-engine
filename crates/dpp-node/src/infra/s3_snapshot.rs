@@ -97,6 +97,10 @@ impl S3SnapshotStore {
     fn key(dpp_id: &str) -> String {
         format!("{dpp_id}/public.json")
     }
+
+    fn html_key(dpp_id: &str) -> String {
+        format!("{dpp_id}/public.html")
+    }
 }
 
 #[async_trait]
@@ -114,9 +118,33 @@ impl SnapshotStore for S3SnapshotStore {
         Ok(())
     }
 
+    async fn put_public_html(&self, dpp_id: &str, bytes: &[u8]) -> Result<(), DppError> {
+        self.client
+            .put_object()
+            .bucket(&self.bucket)
+            .key(Self::html_key(dpp_id))
+            .body(ByteStream::from(bytes.to_vec()))
+            .content_type("text/html; charset=utf-8")
+            .send()
+            .await
+            .map_err(|e| DppError::Internal(format!("snapshot S3 PUT (html) failed: {e}")))?;
+        Ok(())
+    }
+
     async fn remove(&self, dpp_id: &str) -> Result<(), DppError> {
         // S3 `DeleteObject` is idempotent — a missing key succeeds — so retiring
         // a snapshot for a passport that never had one is not an error.
+        //
+        // Both representations are retired, and the HTML goes first: if the pair
+        // is ever left half-removed, the survivor must be the signed JSON rather
+        // than the page a consumer would read and believe.
+        self.client
+            .delete_object()
+            .bucket(&self.bucket)
+            .key(Self::html_key(dpp_id))
+            .send()
+            .await
+            .map_err(|e| DppError::Internal(format!("snapshot S3 DELETE (html) failed: {e}")))?;
         self.client
             .delete_object()
             .bucket(&self.bucket)

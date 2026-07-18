@@ -5,6 +5,7 @@ members = [
     "crates/dpp-dal",
     "crates/dpp-vault",
     "crates/dpp-identity",
+    "crates/dpp-render",
     "crates/dpp-resolver",
     "crates/dpp-integrator",
     "crates/dpp-common",

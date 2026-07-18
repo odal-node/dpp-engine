@@ -12,7 +12,7 @@ mod toy;
 mod tyre;
 
 /// Build the sector-specific HTML section for every in-scope EU DPP sector.
-pub(super) fn build_sector_section(p: &serde_json::Value) -> String {
+pub(crate) fn build_sector_section(p: &serde_json::Value) -> String {
     let sector = p
         .get("sectorData")
         .and_then(|s| s.get("sector"))

@@ -139,6 +139,7 @@ pub async fn spawn_snapshot_drain(
     outbox: Arc<dyn SnapshotOutbox>,
     repo: Arc<dyn PassportRepository>,
     store: Arc<dyn SnapshotStore>,
+    resolver_base_url: String,
 ) {
     match outbox.status_counts().await {
         Ok(c) => {
@@ -157,7 +158,14 @@ pub async fn spawn_snapshot_drain(
     tokio::spawn(async move {
         loop {
             tokio::time::sleep(DRAIN_INTERVAL).await;
-            dpp_node::infra::snapshot_drain::drain_once(&outbox, &repo, &store, DRAIN_BATCH).await;
+            dpp_node::infra::snapshot_drain::drain_once(
+                &outbox,
+                &repo,
+                &store,
+                &resolver_base_url,
+                DRAIN_BATCH,
+            )
+            .await;
             if let Ok(c) = outbox.status_counts().await {
                 metrics::gauge!("snapshot_outbox_pending").set(c.pending as f64);
                 metrics::gauge!("snapshot_outbox_exhausted").set(c.exhausted as f64);

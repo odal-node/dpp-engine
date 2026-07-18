@@ -69,6 +69,7 @@ pub async fn drain_once(
     outbox: &Arc<dyn SnapshotOutbox>,
     repo: &Arc<dyn PassportRepository>,
     store: &Arc<dyn SnapshotStore>,
+    resolver_base_url: &str,
     batch: i64,
 ) -> DrainStats {
     let mut stats = DrainStats::default();
@@ -106,13 +107,9 @@ pub async fn drain_once(
         let started = std::time::Instant::now();
         let outcome = match &passport {
             Some(p) if p.status == PassportStatus::Published => {
-                match dpp_vault::public_view::render_public_snapshot(p) {
-                    Ok(bytes) => store
-                        .put_public_json(&dpp_id, &bytes)
-                        .await
-                        .map(|()| Action::Stored),
-                    Err(e) => Err(e),
-                }
+                store_published(store, &dpp_id, p, resolver_base_url)
+                    .await
+                    .map(|()| Action::Stored)
             }
             _ => store.remove(&dpp_id).await.map(|()| Action::Removed),
         };
@@ -140,6 +137,39 @@ pub async fn drain_once(
         }
     }
     stats
+}
+
+/// Mirror a published passport into the static tier in both representations.
+///
+/// The signed JSON is written **first** and the page second, deliberately: if
+/// the pair is ever left half-written, the survivor should be the artifact a
+/// verifier can check rather than a page a consumer would read and believe. The
+/// retire path in the store reverses the order for the same reason.
+///
+/// Both go through the renderers the live surfaces use — `public_view` for the
+/// JSON, `dpp_render` for the page — because a second implementation of either
+/// is precisely how the static tier would drift from what the node serves.
+async fn store_published(
+    store: &Arc<dyn SnapshotStore>,
+    dpp_id: &str,
+    passport: &dpp_domain::domain::passport::Passport,
+    resolver_base_url: &str,
+) -> Result<(), dpp_domain::DppError> {
+    let json = dpp_vault::public_view::render_public_snapshot(passport)?;
+    store.put_public_json(dpp_id, &json).await?;
+
+    // Render the page from the same public view the JSON carries, never from
+    // the full passport — the static tier must not become a confidential-data
+    // leak just because it renders HTML.
+    let view: serde_json::Value = serde_json::from_slice(&json)
+        .map_err(|e| dpp_domain::DppError::Serialisation(e.to_string()))?;
+    let html = dpp_render::render_page(
+        dpp_id,
+        &view,
+        resolver_base_url,
+        dpp_render::SnapshotNotice::AsOf(chrono::Utc::now()),
+    );
+    store.put_public_html(dpp_id, html.as_bytes()).await
 }
 
 /// Which way a reconcile resolved, so the tally can distinguish the two.

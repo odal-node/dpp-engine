@@ -22,6 +22,7 @@ dpp-domain        = { workspace = true }
 dpp-crypto        = { workspace = true }
 dpp-digital-link  = { workspace = true }
 dpp-common        = { path = "../dpp-common" }
+dpp-render        = { path = "../dpp-render" }
 
 axum          = { workspace = true }
 tokio         = { workspace = true }

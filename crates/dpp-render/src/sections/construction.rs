@@ -1,6 +1,6 @@
 //! Construction products sector HTML section.
 
-use super::super::esc::esc;
+use crate::esc::esc;
 
 pub(super) fn build_construction_section(p: &serde_json::Value) -> String {
     let sd = match p.get("sectorData") {
