@@ -54,7 +54,8 @@ pub use registry_identity::{
     RegistryIdentityRepository,
 };
 pub use registry_sync::{
-    RegistrySyncCounts, RegistrySyncOutbox, RegistrySyncRow, RegistrySyncStatus,
+    RegistryStatusIntent, RegistrySyncCounts, RegistrySyncOutbox, RegistrySyncRow,
+    RegistrySyncStatus,
 };
 pub use snapshot::{
     SnapshotOutbox, SnapshotOutboxCounts, SnapshotReconcileRow, SnapshotReconcileStatus,

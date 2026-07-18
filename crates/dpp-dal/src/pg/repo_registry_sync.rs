@@ -15,7 +15,10 @@ use dpp_domain::{
     DppError,
     domain::passport::{Passport, PassportId},
 };
-use dpp_types::{RegistrySyncCounts, RegistrySyncOutbox, RegistrySyncRow, RegistrySyncStatus};
+use dpp_types::{
+    RegistryStatusIntent, RegistrySyncCounts, RegistrySyncOutbox, RegistrySyncRow,
+    RegistrySyncStatus,
+};
 
 use super::{PgDal, db_err, repo_passport::update_passport_in_tx};
 
@@ -50,6 +53,10 @@ impl PgRegistrySyncRepo {
         RegistrySyncRow {
             passport_id: PassportId(row.get::<Uuid, _>("passport_id")),
             status: RegistrySyncStatus::from_db(&row.get::<String, _>("status")),
+            status_intent: row
+                .get::<Option<String>, _>("status_intent")
+                .as_deref()
+                .and_then(RegistryStatusIntent::from_db),
             registry_id: row.get::<Option<String>, _>("registry_id"),
             payload: row.get::<Option<serde_json::Value>, _>("payload"),
             message: row.get::<Option<String>, _>("message"),
@@ -71,8 +78,8 @@ impl RegistrySyncOutbox for PgRegistrySyncRepo {
         update_passport_in_tx(&mut tx, passport).await?;
         // A previously *rejected* row is re-queued with the corrected payload so
         // a fixed passport can actually be resubmitted (and `due()`, which only
-        // selects 'pending', picks it back up). Rows already 'registered',
-        // 'pending', or carrying a status-intent are left untouched.
+        // selects 'pending', picks it back up). Rows already 'registered' or
+        // 'pending' are left untouched.
         sqlx::query(
             r#"INSERT INTO odal.registry_sync (passport_id, payload, status)
                VALUES ($1, $2, 'pending')
@@ -90,6 +97,20 @@ impl RegistrySyncOutbox for PgRegistrySyncRepo {
         .execute(&mut *tx)
         .await
         .map_err(db_err)?;
+        // Re-publishing is what makes a recorded `suspended` intent obsolete —
+        // `Suspended -> Published` is a legal transition. Clear it unconditionally
+        // (the upsert above only fires for 'rejected' rows, and a 'registered'
+        // row can be carrying a stale intent too), so the future status-sync path
+        // can never push a suspension for a passport that is live again.
+        sqlx::query(
+            r#"UPDATE odal.registry_sync
+               SET status_intent = NULL, updated_at = now()
+               WHERE passport_id = $1 AND status_intent IS NOT NULL"#,
+        )
+        .bind(passport.id.0)
+        .execute(&mut *tx)
+        .await
+        .map_err(db_err)?;
         tx.commit().await.map_err(db_err)?;
         Ok(())
     }
@@ -97,19 +118,25 @@ impl RegistrySyncOutbox for PgRegistrySyncRepo {
     async fn enqueue_status(
         &self,
         passport_id: PassportId,
-        status: RegistrySyncStatus,
+        intent: RegistryStatusIntent,
     ) -> Result<(), DppError> {
-        // Upsert so a passport published before the outbox existed still gets a
-        // row. Status-push to the registry has no port method yet; this
-        // records the intent durably in the meantime.
+        // Writes `status_intent` only — never `status`. A passport suspended
+        // before its registration drained still owes that registration, so the
+        // queue state is left exactly as the drain and publish left it.
+        //
+        // Annotates an existing row; it never creates one. Rows are created by
+        // the publish transaction alone, so no row means the passport never
+        // published — and `Draft -> Archived` is legal, so `archive` reaches here
+        // for exactly those. Inserting would fabricate a payload-less row that
+        // the drain then marks `rejected`, raising an Art. 13 alarm for a
+        // passport that never owed a registration.
         sqlx::query(
-            r#"INSERT INTO odal.registry_sync (passport_id, status, updated_at)
-               VALUES ($1, $2, now())
-               ON CONFLICT (passport_id)
-               DO UPDATE SET status = EXCLUDED.status, updated_at = now()"#,
+            r#"UPDATE odal.registry_sync
+               SET status_intent = $2, updated_at = now()
+               WHERE passport_id = $1"#,
         )
         .bind(passport_id.0)
-        .bind(status.as_db())
+        .bind(intent.as_db())
         .execute(self.dal.pool())
         .await
         .map_err(db_err)?;
@@ -118,7 +145,8 @@ impl RegistrySyncOutbox for PgRegistrySyncRepo {
 
     async fn due(&self, limit: i64) -> Result<Vec<RegistrySyncRow>, DppError> {
         let rows = sqlx::query(
-            r#"SELECT passport_id, status, registry_id, payload, message, attempts, next_attempt_at
+            r#"SELECT passport_id, status, status_intent, registry_id, payload, message,
+                      attempts, next_attempt_at
                FROM odal.registry_sync
                WHERE status = 'pending' AND next_attempt_at <= now()
                ORDER BY next_attempt_at ASC
@@ -206,7 +234,8 @@ impl RegistrySyncOutbox for PgRegistrySyncRepo {
         passport_id: PassportId,
     ) -> Result<Option<RegistrySyncRow>, DppError> {
         let row = sqlx::query(
-            r#"SELECT passport_id, status, registry_id, payload, message, attempts, next_attempt_at
+            r#"SELECT passport_id, status, status_intent, registry_id, payload, message,
+                      attempts, next_attempt_at
                FROM odal.registry_sync
                WHERE passport_id = $1"#,
         )
@@ -223,7 +252,7 @@ impl RegistrySyncOutbox for PgRegistrySyncRepo {
                  count(*) FILTER (WHERE status = 'pending')                          AS pending,
                  count(*) FILTER (WHERE status = 'registered')                       AS registered,
                  count(*) FILTER (WHERE status = 'rejected')                         AS rejected,
-                 count(*) FILTER (WHERE status IN ('suspended','deactivated'))       AS status_intents,
+                 count(*) FILTER (WHERE status_intent IS NOT NULL)                   AS status_intents,
                  count(*) FILTER (WHERE status = 'pending' AND attempts >= $1)       AS stalled
                FROM odal.registry_sync"#,
         )
