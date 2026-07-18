@@ -174,6 +174,12 @@ impl SnapshotOutbox for InMemorySnapshotOutbox {
             })
             .collect())
     }
+    async fn enqueue_divergent(&self, _limit: i64) -> Result<u64, DppError> {
+        // The repair sweep is a database-level query with no service-side
+        // behaviour to exercise here; its semantics are pinned against real
+        // Postgres in `dpp-dal`'s pg_integration suite.
+        Ok(0)
+    }
     async fn mark_reconciled(&self, _id: uuid::Uuid) -> Result<(), DppError> {
         Ok(())
     }

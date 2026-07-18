@@ -147,6 +147,29 @@ pub trait SnapshotOutbox: Send + Sync {
     /// pending reconcile already subsumes any number of changes.
     async fn enqueue(&self, passport_id: PassportId) -> Result<(), DppError>;
 
+    /// Repair sweep: queue reconciles for passports whose static-tier state may
+    /// have drifted from the database, capped at `limit`. Returns how many rows
+    /// were queued or re-armed.
+    ///
+    /// This is what makes the tier's guarantee end-to-end rather than merely
+    /// "loss-proof once enqueued". [`Self::enqueue`] is called after commit, so
+    /// a crash in the window between the two loses the reconcile; a transaction
+    /// would close only that window, while a sweep also repairs what a
+    /// transaction never could — a row that exhausted its retries, and drift
+    /// left by any past code path that failed to enqueue at all.
+    ///
+    /// Targeted, not exhaustive: it queries for actual divergence signals
+    /// (never reconciled, exhausted, or reconciled before the passport last
+    /// changed) rather than re-uploading every passport on a timer, so a
+    /// converged deployment sweeps to zero work. Only passports that have been
+    /// published are considered — one never published can have nothing in the
+    /// public tier to repair.
+    ///
+    /// Not detected: an object deleted or restored *behind* the node, since
+    /// nothing in the database records that. Closing it means listing object
+    /// storage and diffing, which is a separate, heavier mechanism.
+    async fn enqueue_divergent(&self, limit: i64) -> Result<u64, DppError>;
+
     /// Rows due for a reconcile attempt (`pending`, `next_attempt_at <= now`),
     /// oldest first, capped at `limit`.
     async fn due(&self, limit: i64) -> Result<Vec<SnapshotReconcileRow>, DppError>;

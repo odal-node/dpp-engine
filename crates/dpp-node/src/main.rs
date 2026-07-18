@@ -316,6 +316,8 @@ async fn main() -> anyhow::Result<()> {
             store,
         )
         .await;
+        // Repair sweep: covers reconciles the event-driven path never queued.
+        boot::tasks::spawn_snapshot_sweep(db.snapshot_outbox.clone());
     }
 
     // ── Metrics: dedicated private listener (never the public API port) ────────

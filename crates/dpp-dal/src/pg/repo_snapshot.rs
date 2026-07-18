@@ -58,6 +58,47 @@ impl SnapshotOutbox for PgSnapshotOutboxRepo {
         Ok(())
     }
 
+    async fn enqueue_divergent(&self, limit: i64) -> Result<u64, DppError> {
+        // One statement: select the divergent passports and upsert them through
+        // the same re-arm path `enqueue` uses, so a swept row is indistinguishable
+        // from a lifecycle-queued one and the drain needs no special case.
+        //
+        // `published_at IS NOT NULL` restricts the sweep to passports that have
+        // been public at least once — a draft has nothing in the static tier to
+        // repair, and without this every draft ever created would be swept in
+        // forever on the "no outbox row" arm.
+        //
+        // `pending` rows are deliberately not matched: they are already queued
+        // and the drain owns them. Re-arming them here would reset their
+        // backoff every sweep and turn a failing row into a hot loop.
+        let res = sqlx::query(
+            r#"INSERT INTO odal.snapshot_outbox (passport_id)
+               SELECT p.id
+               FROM odal.passport p
+               LEFT JOIN odal.snapshot_outbox s ON s.passport_id = p.id
+               WHERE p.published_at IS NOT NULL
+                 AND (
+                       s.passport_id IS NULL
+                    OR s.status = 'exhausted'
+                    OR (s.status = 'reconciled' AND s.reconciled_at < p.updated_at)
+                 )
+               ORDER BY p.updated_at ASC
+               LIMIT $1
+               ON CONFLICT (passport_id) DO UPDATE SET
+                 status = 'pending',
+                 attempts = 0,
+                 next_attempt_at = now(),
+                 message = NULL,
+                 reconciled_at = NULL,
+                 updated_at = now()"#,
+        )
+        .bind(limit)
+        .execute(self.dal.pool())
+        .await
+        .map_err(db_err)?;
+        Ok(res.rows_affected())
+    }
+
     async fn due(&self, limit: i64) -> Result<Vec<SnapshotReconcileRow>, DppError> {
         let rows = sqlx::query(
             r#"SELECT id, passport_id, attempts

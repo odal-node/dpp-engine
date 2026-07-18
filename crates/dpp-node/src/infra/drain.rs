@@ -11,3 +11,12 @@
 /// in the contract (04-LEGAL §3.7) and pinned by a test against this constant —
 /// changing it is a contract change, not a tuning tweak.
 pub const DRAIN_INTERVAL: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// How often the continuity tier's repair sweep runs.
+///
+/// Deliberately far rarer than [`DRAIN_INTERVAL`]: the sweep is a backstop for
+/// divergence the event-driven path missed, not the path itself. It is also the
+/// only bound on how long a *lost* reconcile (one whose enqueue never landed)
+/// can leave the static tier stale — the drain interval bounds reconciles that
+/// were successfully queued, this one bounds the ones that were not.
+pub const SWEEP_INTERVAL: std::time::Duration = std::time::Duration::from_secs(3600);

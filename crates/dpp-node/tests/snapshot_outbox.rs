@@ -162,6 +162,12 @@ impl SnapshotOutbox for FakeOutbox {
         let rows = self.rows.lock().unwrap();
         Ok(rows.iter().take(limit as usize).cloned().collect())
     }
+    async fn enqueue_divergent(&self, _limit: i64) -> Result<u64, DppError> {
+        // The repair sweep is a database-level query; these tests drive the
+        // drain, which cannot tell a swept row from a lifecycle-queued one. Its
+        // semantics are pinned against real Postgres in `dpp-dal`.
+        Ok(0)
+    }
     async fn mark_reconciled(&self, id: uuid::Uuid) -> Result<(), DppError> {
         self.reconciled.lock().unwrap().push(id);
         self.rows.lock().unwrap().retain(|r| r.id != id);

@@ -23,9 +23,13 @@ pub fn spawn_job_cleanup(store: Arc<dyn JobStore>) {
     });
 }
 
-use dpp_node::infra::drain::DRAIN_INTERVAL;
+use dpp_node::infra::drain::{DRAIN_INTERVAL, SWEEP_INTERVAL};
 
 const DRAIN_BATCH: i64 = 50;
+/// Per-sweep cap. Larger than `DRAIN_BATCH` because a sweep only enqueues rows
+/// (one statement, no object-storage work); the drain still paces the actual
+/// reconciles at its own batch size.
+const SWEEP_BATCH: i64 = 500;
 const STALL_THRESHOLD: i32 = 8;
 
 /// Log/gauge the outbox's outstanding state, then spawn the periodic drain
@@ -165,6 +169,40 @@ pub async fn spawn_snapshot_drain(
                         "snapshot outbox has exhausted reconciles — the static tier may be stale"
                     );
                 }
+            }
+        }
+    });
+}
+
+/// Spawn the continuity tier's repair sweep.
+///
+/// The drain only ever sees reconciles that were successfully queued. This loop
+/// covers the ones that were not — a crash in the window between commit and
+/// enqueue, a row that exhausted its retries, or drift left by an earlier code
+/// path — by querying for passports whose static-tier state disagrees with the
+/// database and queueing them through the same path. It is what makes the tier's
+/// guarantee end-to-end rather than "loss-proof once enqueued".
+///
+/// Runs on [`SWEEP_INTERVAL`], far rarer than the drain: this is a backstop, not
+/// the primary path. Because it queries for divergence signals rather than
+/// sweeping everything, a converged deployment queues nothing.
+pub fn spawn_snapshot_sweep(outbox: Arc<dyn SnapshotOutbox>) {
+    tokio::spawn(async move {
+        loop {
+            tokio::time::sleep(SWEEP_INTERVAL).await;
+            match outbox.enqueue_divergent(SWEEP_BATCH).await {
+                Ok(0) => tracing::debug!("continuity snapshot sweep: nothing divergent"),
+                Ok(n) => {
+                    // Non-zero is worth an info line: in a healthy deployment the
+                    // event-driven path should have caught these, so a steady
+                    // trickle here means something upstream is dropping enqueues.
+                    metrics::counter!("snapshot_sweep_requeued_total").increment(n);
+                    tracing::info!(
+                        requeued = n,
+                        "continuity snapshot sweep queued divergent passports"
+                    );
+                }
+                Err(e) => tracing::warn!(error = %e, "continuity snapshot sweep failed"),
             }
         }
     });
