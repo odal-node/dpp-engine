@@ -10,6 +10,27 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ## [Unreleased]
 
+### Added
+
+- Signed sector-plugin hot-install: an admin can install or update a sector
+  plugin at runtime with no node restart. The node verifies the artifact's
+  detached signature against its pinned publisher key, gates the declared ABI,
+  instantiate-smokes it, persists it so a restart re-loads the same set, and
+  atomically hot-swaps it into service — fail-closed and last-good, so a rejected
+  artifact never overwrites the live file or the running plugin. Both a portable
+  `.wasm` (compiled on the node) and a precompiled `.cwasm` (loaded only if it
+  matches this node's engine) are accepted.
+- New endpoint: `POST /api/v1/plugins` (admin-scoped, `multipart/form-data`:
+  `wasm` + `sig`, optional `sector`). New CLI: `odal plugin install <file>`
+  (uploads the file and its sibling `<file>.sig`).
+
+### Changed
+
+- The plugin host now enforces ABI compatibility at load: a plugin whose
+  declared ABI the running host cannot honour is refused (fail-closed) instead
+  of being loaded and left to fail at dispatch. This applies to boot-time
+  discovery as well as runtime install.
+
 ## [0.6.0] - 2026-07-13
 
 This release consumes **dpp-core 0.8.0**, which adds the passport reference
