@@ -286,6 +286,10 @@ impl PassportService {
         )
         .await;
 
+        // Mirror the freshly-signed public view to the continuity tier so it
+        // stays reachable if the node goes down (non-blocking, non-fatal).
+        self.enqueue_snapshot_reconcile(updated.id).await;
+
         Ok(updated)
     }
 }

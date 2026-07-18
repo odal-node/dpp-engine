@@ -15,6 +15,7 @@
 //! Coverage map:
 //!   T1 roundtrip parity · T3 retention trigger immutability
 //!   T4 audit append-only trigger · T5 key-prefix uniqueness · T6 patch_fields merge
+//!   T13 snapshot reconcile outbox upsert/re-arm/due-filter
 
 #![cfg(feature = "integration-tests")]
 
@@ -25,7 +26,10 @@ use testcontainers::{
 };
 use uuid::Uuid;
 
-use dpp_dal::pg::{PgApiKeyRepo, PgAuditRepo, PgDal, PgEvidenceDossierRepo, PgPassportRepo, sqlx};
+use dpp_dal::pg::{
+    PgApiKeyRepo, PgAuditRepo, PgDal, PgEvidenceDossierRepo, PgPassportRepo, PgSnapshotOutboxRepo,
+    sqlx,
+};
 use dpp_domain::{
     domain::{
         gtin::Gtin,
@@ -42,6 +46,7 @@ use dpp_types::{
     evidence::{
         DossierManifest, DossierV1, EvidenceDossierRecord, EvidenceDossierRepository, SignedLayer,
     },
+    snapshot::SnapshotOutbox,
 };
 use sqlx::Row;
 
@@ -793,4 +798,106 @@ async fn t12_evidence_dossier_list_orders_newest_first() {
     assert_eq!(summaries.len(), 2);
     assert_eq!(summaries[0].id, second.id, "newest dossier must be first");
     assert_eq!(summaries[1].id, first.id);
+}
+
+// T13 — snapshot reconcile outbox: the upsert/drain semantics the in-memory
+// doubles in `dpp-node/tests/snapshot_outbox.rs` only *model*. Those tests prove
+// the drain converges; this one proves the SQL underneath actually behaves the
+// way they assume — the gap that let an unguarded upsert sit undetected on the
+// registry-sync path.
+#[tokio::test]
+async fn t13_snapshot_outbox_upsert_rearm_and_due_filter() {
+    let pg = start_pg().await;
+    let passport_repo = PgPassportRepo::new(pg.dal.clone());
+    let passport = passport_repo
+        .create(make_passport())
+        .await
+        .expect("create passport");
+
+    let outbox = PgSnapshotOutboxRepo::new(pg.dal.clone());
+
+    // Enqueue is drainable immediately.
+    outbox.enqueue(passport.id).await.expect("enqueue");
+    let due = outbox.due(50).await.expect("due");
+    assert_eq!(due.len(), 1, "a fresh reconcile must be due now");
+    assert_eq!(due[0].passport_id, passport.id);
+    assert_eq!(due[0].attempts, 0);
+
+    // Idempotence: a second change while one is still pending collapses into the
+    // same row rather than stacking a duplicate. This is the `passport_id UNIQUE`
+    // upsert doing the work the in-memory double asserts.
+    outbox.enqueue(passport.id).await.expect("enqueue again");
+    let due = outbox.due(50).await.expect("due");
+    assert_eq!(
+        due.len(),
+        1,
+        "repeat enqueues for one passport must collapse to a single pending row"
+    );
+    let counts = outbox.status_counts().await.expect("counts");
+    assert_eq!(counts.pending, 1);
+    assert_eq!(counts.reconciled, 0);
+
+    // A transient failure backs the row off: still pending, but no longer due
+    // (minimum backoff is 2^1 * 0.75 = 1.5s), so a hot loop cannot spin on it.
+    let row_id = due[0].id;
+    outbox
+        .mark_attempt_failed(row_id, "object store unavailable".into())
+        .await
+        .expect("mark failed");
+    assert!(
+        outbox.due(50).await.expect("due").is_empty(),
+        "a backed-off row must not be immediately due again"
+    );
+    assert_eq!(
+        outbox.status_counts().await.expect("counts").pending,
+        1,
+        "a backed-off row stays pending — nothing is lost"
+    );
+
+    // Terminal success removes it from the queue.
+    outbox
+        .mark_reconciled(row_id)
+        .await
+        .expect("mark reconciled");
+    assert!(outbox.due(50).await.expect("due").is_empty());
+    let counts = outbox.status_counts().await.expect("counts");
+    assert_eq!(counts.pending, 0);
+    assert_eq!(counts.reconciled, 1);
+
+    // Re-arm: a later state change must make a *reconciled* row drainable again,
+    // with a fresh attempt budget. Without this the tier would go permanently
+    // deaf to a passport after its first reconcile.
+    outbox.enqueue(passport.id).await.expect("re-enqueue");
+    let due = outbox.due(50).await.expect("due");
+    assert_eq!(
+        due.len(),
+        1,
+        "a new state change must re-arm a reconciled row"
+    );
+    assert_eq!(due[0].attempts, 0, "re-arm resets the retry budget");
+    assert_eq!(outbox.status_counts().await.expect("counts").reconciled, 0);
+
+    // Re-arm from `exhausted` too: giving up on a stale state must never make a
+    // passport permanently unreconcilable once it changes again.
+    let row_id = due[0].id;
+    outbox
+        .mark_exhausted(row_id, "gave up".into())
+        .await
+        .expect("mark exhausted");
+    assert!(outbox.due(50).await.expect("due").is_empty());
+    assert_eq!(outbox.status_counts().await.expect("counts").exhausted, 1);
+
+    outbox
+        .enqueue(passport.id)
+        .await
+        .expect("re-enqueue after exhaustion");
+    let due = outbox.due(50).await.expect("due");
+    assert_eq!(
+        due.len(),
+        1,
+        "an exhausted row must be re-armed by a later state change"
+    );
+    let counts = outbox.status_counts().await.expect("counts");
+    assert_eq!(counts.exhausted, 0);
+    assert_eq!(counts.pending, 1);
 }

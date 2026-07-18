@@ -3,9 +3,11 @@
 
 use std::sync::Arc;
 
+use dpp_domain::ports::passport_repo::PassportRepository;
 use dpp_domain::ports::registry_sync::RegistrySyncPort;
 use dpp_integrator::infra::job_store::JobStore;
 use dpp_types::registry_sync::RegistrySyncOutbox;
+use dpp_types::snapshot::{SnapshotOutbox, SnapshotStore};
 use dpp_types::webhook::WebhookOutbox;
 
 /// Spawn the periodic cleanup of expired import jobs (every 6 hours).
@@ -21,7 +23,8 @@ pub fn spawn_job_cleanup(store: Arc<dyn JobStore>) {
     });
 }
 
-const DRAIN_INTERVAL: std::time::Duration = std::time::Duration::from_secs(30);
+use dpp_node::infra::drain::DRAIN_INTERVAL;
+
 const DRAIN_BATCH: i64 = 50;
 const STALL_THRESHOLD: i32 = 8;
 
@@ -113,6 +116,53 @@ pub async fn spawn_webhook_drain(outbox: Arc<dyn WebhookOutbox>, allow_private_t
                     tracing::warn!(
                         exhausted = c.exhausted,
                         "webhook outbox has exhausted deliveries — check receiver health"
+                    );
+                }
+            }
+        }
+    });
+}
+
+/// Log/gauge the continuity-snapshot outbox's outstanding state, then spawn the
+/// periodic reconcile loop. Every change to a passport's public state enqueues a
+/// row (after-commit, in the vault service); this task re-reads each passport and
+/// makes object storage match — mirroring the public view for `Published`,
+/// retiring it otherwise. A killed node loses nothing: `pending` rows reconcile
+/// on boot.
+///
+/// [`DRAIN_INTERVAL`] bounds the suspend lag — see its docs before changing it.
+pub async fn spawn_snapshot_drain(
+    outbox: Arc<dyn SnapshotOutbox>,
+    repo: Arc<dyn PassportRepository>,
+    store: Arc<dyn SnapshotStore>,
+) {
+    match outbox.status_counts().await {
+        Ok(c) => {
+            tracing::info!(
+                pending = c.pending,
+                reconciled = c.reconciled,
+                exhausted = c.exhausted,
+                "continuity snapshot outbox reconciliation at boot"
+            );
+            metrics::gauge!("snapshot_outbox_pending").set(c.pending as f64);
+            metrics::gauge!("snapshot_outbox_exhausted").set(c.exhausted as f64);
+        }
+        Err(e) => tracing::warn!(error = %e, "snapshot outbox boot reconciliation failed"),
+    }
+
+    tokio::spawn(async move {
+        loop {
+            tokio::time::sleep(DRAIN_INTERVAL).await;
+            dpp_node::infra::snapshot_drain::drain_once(&outbox, &repo, &store, DRAIN_BATCH).await;
+            if let Ok(c) = outbox.status_counts().await {
+                metrics::gauge!("snapshot_outbox_pending").set(c.pending as f64);
+                metrics::gauge!("snapshot_outbox_exhausted").set(c.exhausted as f64);
+                if c.exhausted > 0 {
+                    // Exhausted here means the static tier may still be serving a
+                    // stale public view — a correctness signal, not just noise.
+                    tracing::warn!(
+                        exhausted = c.exhausted,
+                        "snapshot outbox has exhausted reconciles — the static tier may be stale"
                     );
                 }
             }

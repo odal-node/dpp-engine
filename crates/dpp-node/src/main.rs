@@ -8,6 +8,7 @@ use dpp_node::{
     infra::{
         nats_event_bus::NatsEventBus,
         s3_archive::{NoOpArchive, S3ArchiveAdapter, S3ArchiveConfig},
+        s3_snapshot::{S3SnapshotConfig, S3SnapshotStore},
     },
     router,
 };
@@ -222,24 +223,43 @@ async fn main() -> anyhow::Result<()> {
     // operator identifier (Art. 13) onto new passports, read live so changes made
     // via the API/CLI apply without a node restart. The registry outbox makes the
     // passport-publish write and its EU-registry registration enqueue atomic.
-    let service = Arc::new(
-        PassportService::new(
-            db.passport_repo.clone(),
-            identity,
-            compliance,
-            db.audit_repo.clone(),
-            event_bus,
-            registry_sync,
-            archive,
-            operator_country,
-        )
-        .with_registry_reader(db.operator_repo.clone())
-        .with_registry_outbox(db.registry_outbox.clone())
-        .with_transfer_store(db.transfer_store.clone())
-        .with_evidence_store(db.evidence_store.clone())
-        .with_webhooks(db.webhook_outbox.clone())
-        .with_resolver_base_url(cfg.resolver_base_url.clone()),
-    );
+    // Continuity snapshots: mirror published public views to a public bucket when
+    // SNAPSHOT_S3_BUCKET is configured; otherwise the tier is disabled (no-op).
+    let snapshot_store: Option<Arc<dyn dpp_types::snapshot::SnapshotStore>> =
+        match S3SnapshotConfig::from_env() {
+            Some(scfg) => {
+                tracing::info!(bucket = %scfg.bucket, "continuity snapshots: S3 tier active");
+                Some(Arc::new(S3SnapshotStore::new(scfg)))
+            }
+            None => {
+                tracing::info!("continuity snapshots: disabled — set SNAPSHOT_S3_BUCKET to enable");
+                None
+            }
+        };
+
+    let mut passport_service = PassportService::new(
+        db.passport_repo.clone(),
+        identity,
+        compliance,
+        db.audit_repo.clone(),
+        event_bus,
+        registry_sync,
+        archive,
+        operator_country,
+    )
+    .with_registry_reader(db.operator_repo.clone())
+    .with_registry_outbox(db.registry_outbox.clone())
+    .with_transfer_store(db.transfer_store.clone())
+    .with_evidence_store(db.evidence_store.clone())
+    .with_webhooks(db.webhook_outbox.clone())
+    .with_resolver_base_url(cfg.resolver_base_url.clone());
+    // Only arm the reconcile outbox when there is somewhere to reconcile *to*.
+    // Enqueuing rows no drain will ever consume would grow an unbounded backlog
+    // of `pending` and make the gauge lie about the tier's health.
+    if snapshot_store.is_some() {
+        passport_service = passport_service.with_snapshot_outbox(db.snapshot_outbox.clone());
+    }
+    let service = Arc::new(passport_service);
     let operator_service = Arc::new(OperatorService::new(db.operator_repo.clone()));
     let api_key_service = Arc::new(ApiKeyService::new(db.api_key_repo.clone()));
     let registry_identity_service =
@@ -287,6 +307,16 @@ async fn main() -> anyhow::Result<()> {
     boot::tasks::spawn_registry_drain(db.registry_outbox.clone(), registry_sync_for_drain).await;
     boot::tasks::spawn_webhook_drain(db.webhook_outbox.clone(), cfg.webhook_allow_private_targets)
         .await;
+    // Continuity tier: only spawn when object storage is configured — without a
+    // store there is nothing to reconcile against (and the vault never enqueues).
+    if let Some(store) = snapshot_store {
+        boot::tasks::spawn_snapshot_drain(
+            db.snapshot_outbox.clone(),
+            db.passport_repo.clone(),
+            store,
+        )
+        .await;
+    }
 
     // ── Metrics: dedicated private listener (never the public API port) ────────
     // `/metrics` is deliberately NOT mounted on the public router — exposing

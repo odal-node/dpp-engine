@@ -31,14 +31,15 @@ mod transfer;
 use std::sync::Arc;
 
 use dpp_common::event::{DppEvent, EventBus};
+use dpp_domain::domain::passport::PassportId;
 use dpp_domain::ports::{
     archive::ArchivePort, compliance::ComplianceRegistry, identity_port::IdentityPort,
     passport_repo::PassportRepository, registry_sync::RegistrySyncPort,
 };
 use dpp_types::{
     STANDALONE_OPERATOR_ID, audit::AuditRepository, evidence::EvidenceDossierRepository,
-    operator::OperatorConfigRepository, registry_sync::RegistrySyncOutbox, transfer::TransferStore,
-    webhook::WebhookOutbox,
+    operator::OperatorConfigRepository, registry_sync::RegistrySyncOutbox,
+    snapshot::SnapshotOutbox, transfer::TransferStore, webhook::WebhookOutbox,
 };
 
 /// Core domain service for the passport lifecycle.
@@ -80,6 +81,14 @@ pub struct PassportService {
     /// the node's drain task performs the signed HTTP POST. `None` (test doubles
     /// / deployments without webhooks) simply skips enqueue.
     pub webhooks: Option<Arc<dyn WebhookOutbox>>,
+    /// Durable reconcile queue for the static continuity tier. When present,
+    /// every change to a passport's public state (publish, suspend, archive,
+    /// end-of-life) enqueues a reconcile row after commit; the node's drain task
+    /// re-derives and mirrors — or retires — the public view, so a published
+    /// passport stays reachable under a stable path when the live node is down.
+    /// `None` disables the tier (test doubles / deployments without object
+    /// storage).
+    pub snapshot_outbox: Option<Arc<dyn SnapshotOutbox>>,
     /// Base URL the resolver serves on, used to build each passport's carrier
     /// (QR) URL at publish. Defaults to `https://id.odal-node.io`; set per
     /// deployment (a self-hoster's own domain) via [`Self::with_resolver_base_url`]
@@ -114,6 +123,7 @@ impl PassportService {
             operator_country,
             registry_reader: None,
             webhooks: None,
+            snapshot_outbox: None,
             resolver_base_url: "https://id.odal-node.io".to_owned(),
         }
     }
@@ -157,6 +167,15 @@ impl PassportService {
     #[must_use]
     pub fn with_webhooks(mut self, outbox: Arc<dyn WebhookOutbox>) -> Self {
         self.webhooks = Some(outbox);
+        self
+    }
+
+    /// Provide the continuity-snapshot reconcile outbox, enabling the static
+    /// public tier: every change to a passport's public state queues a reconcile
+    /// that the node's drain task converges against object storage.
+    #[must_use]
+    pub fn with_snapshot_outbox(mut self, outbox: Arc<dyn SnapshotOutbox>) -> Self {
+        self.snapshot_outbox = Some(outbox);
         self
     }
 
@@ -204,6 +223,31 @@ impl PassportService {
             }
         }
     }
+
+    /// Queue a continuity-tier reconcile for a passport whose public state just
+    /// changed — publish, suspend, archive, or end-of-life alike.
+    ///
+    /// Deliberately says only *which* passport changed, never *what to do*: the
+    /// drain re-reads the passport and derives put-or-remove from its current
+    /// status, so a retried or out-of-order reconcile converges instead of
+    /// racing (an explicit `put` could otherwise land after a `remove` and
+    /// resurrect a suspended passport's snapshot). Enqueue is after-commit and
+    /// best-effort — the same posture as [`Self::emit`] — but once the row
+    /// exists the node's drain task owns retry/backoff, so the object-storage
+    /// write no longer sits on the response path. A no-op when no outbox is
+    /// wired.
+    async fn enqueue_snapshot_reconcile(&self, passport_id: PassportId) {
+        let Some(outbox) = &self.snapshot_outbox else {
+            return;
+        };
+        if let Err(e) = outbox.enqueue(passport_id).await {
+            tracing::warn!(
+                passport_id = %passport_id,
+                error = %e,
+                "failed to enqueue continuity-snapshot reconcile (non-fatal)"
+            );
+        }
+    }
 }
 
 /// Process-wide sector catalog (manifests parsed once). Shared across the
@@ -218,4 +262,77 @@ fn schema_registry() -> &'static dpp_domain::schemas::VersionedSchemaRegistry {
     static REGISTRY: std::sync::OnceLock<dpp_domain::schemas::VersionedSchemaRegistry> =
         std::sync::OnceLock::new();
     REGISTRY.get_or_init(dpp_domain::schemas::VersionedSchemaRegistry::new)
+}
+
+#[cfg(test)]
+mod snapshot_render_tests {
+    use crate::public_view::{public_view, render_public_snapshot};
+    use chrono::Utc;
+    use dpp_domain::domain::{
+        passport::{ManufacturerInfo, Passport, PassportId},
+        sector::Sector,
+        status::PassportStatus,
+    };
+
+    fn published_stub() -> Passport {
+        Passport {
+            id: PassportId::new(),
+            batch_id: None,
+            product_name: "Snapshot Test".into(),
+            sector: Sector::Battery,
+            product_category: None,
+            manufacturer: ManufacturerInfo {
+                name: "ACME".into(),
+                address: "1 Street".into(),
+                did_web_url: None,
+            },
+            materials: vec![],
+            co2e_per_unit: None,
+            repairability_score: None,
+            compliance_result: None,
+            lint_result: None,
+            sector_data: None,
+            status: PassportStatus::Published,
+            qr_code_url: Some("https://id.example/01/09506000134352".into()),
+            jws_signature: Some("full.jws.signature".into()),
+            public_jws_signature: Some("public.jws.signature".into()),
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+            published_at: Some(Utc::now()),
+            schema_version: "1.0.0".into(),
+            retention_locked: true,
+            version: 1,
+            supersedes_id: None,
+            parent_passport_ref: None,
+            component_refs: Vec::new(),
+            retention_until: None,
+            product_id: None,
+            operator_identifier: None,
+            facility: None,
+            seal: None,
+        }
+    }
+
+    #[test]
+    fn snapshot_is_byte_identical_to_public_view_and_carries_jws() {
+        let p = published_stub();
+        let bytes = render_public_snapshot(&p).expect("render");
+
+        // Byte-identical to exactly what the live public read serves.
+        let full = serde_json::to_value(&p).unwrap();
+        let expected = serde_json::to_vec(&public_view(&full, p.sector.catalog_key())).unwrap();
+        assert_eq!(
+            bytes, expected,
+            "snapshot must match the live public view byte-for-byte"
+        );
+
+        // The public JWS travels with the snapshot, so a stale copy is still
+        // verifiably authentic — and the confidential full-view JWS never leaks.
+        let v: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(v["publicJwsSignature"], "public.jws.signature");
+        assert!(
+            v.get("jwsSignature").is_none(),
+            "the full-view JWS must not appear in the public snapshot: {v}"
+        );
+    }
 }

@@ -76,6 +76,10 @@ impl PassportService {
         )
         .await;
 
+        // Reconcile the continuity tier: a suspended passport must not keep
+        // being served as `active` from the static tier (non-fatal).
+        self.enqueue_snapshot_reconcile(updated.id).await;
+
         Ok(updated)
     }
 
@@ -164,6 +168,10 @@ impl PassportService {
             }),
         )
         .await;
+
+        // Reconcile the continuity tier — an archived passport leaves the
+        // public tier (non-fatal).
+        self.enqueue_snapshot_reconcile(updated.id).await;
 
         Ok(updated)
     }

@@ -31,6 +31,7 @@ pub mod evidence;
 pub mod operator;
 pub mod registry_identity;
 pub mod registry_sync;
+pub mod snapshot;
 pub mod transfer;
 pub mod trust;
 pub mod webhook;
@@ -54,6 +55,10 @@ pub use registry_identity::{
 };
 pub use registry_sync::{
     RegistrySyncCounts, RegistrySyncOutbox, RegistrySyncRow, RegistrySyncStatus,
+};
+pub use snapshot::{
+    SnapshotOutbox, SnapshotOutboxCounts, SnapshotReconcileRow, SnapshotReconcileStatus,
+    SnapshotStore,
 };
 pub use transfer::TransferStore;
 pub use trust::{NodeProfile, NodeTrustReport, TrustMode, TrustPort};

@@ -16,7 +16,7 @@ use std::sync::OnceLock;
 use serde_json::Value;
 
 use dpp_crypto::access::{SectorAccessPolicy, filter_by_access_tier};
-use dpp_domain::{AccessTier, SectorCatalog};
+use dpp_domain::{AccessTier, DppError, SectorCatalog, domain::passport::Passport};
 
 /// Embedded sector catalog, built once (used to resolve per-field access tiers).
 fn catalog() -> &'static SectorCatalog {
@@ -59,6 +59,24 @@ pub fn public_view(full: &Value, sector_key: &str) -> Value {
         obj.insert("sectorData".into(), serde_json::json!({ "sector": tag }));
     }
     view
+}
+
+/// Render the byte-identical public-view JSON for a passport — exactly what the
+/// public read serves (and what `publicJwsSignature` is signed over), so a stored
+/// continuity snapshot matches the live view and carries the public JWS.
+///
+/// Lives beside [`public_view`] rather than in the service so the snapshot drain
+/// (`dpp-node`) renders through the *same* source of truth the live read uses;
+/// a second renderer is exactly how the static tier would silently drift.
+///
+/// # Errors
+/// Returns [`DppError::Serialisation`] if the passport or its redacted view
+/// cannot be serialised.
+pub fn render_public_snapshot(passport: &Passport) -> Result<Vec<u8>, DppError> {
+    let full =
+        serde_json::to_value(passport).map_err(|e| DppError::Serialisation(e.to_string()))?;
+    let view = public_view(&full, passport.sector.catalog_key());
+    serde_json::to_vec(&view).map_err(|e| DppError::Serialisation(e.to_string()))
 }
 
 #[cfg(test)]

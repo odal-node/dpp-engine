@@ -82,6 +82,13 @@ impl PassportService {
         )
         .await;
 
+        // Reconcile the continuity tier: the live public read serves only
+        // `Published`, so a deactivated passport must stop being served from the
+        // static tier too — otherwise it keeps answering `published` under a
+        // valid signature for the rest of the bucket's life. The drain derives
+        // the retire from the passport's status (non-fatal).
+        self.enqueue_snapshot_reconcile(updated.id).await;
+
         Ok(updated)
     }
 }
