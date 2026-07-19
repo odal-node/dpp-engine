@@ -97,6 +97,21 @@ pub fn signed_public_view(passport: &Passport) -> Result<Value, DppError> {
     let mut view: Value = serde_json::from_slice(&bytes)
         .map_err(|e| DppError::Internal(format!("public signature payload not JSON: {e}")))?;
 
+    // Bind the proof to the row it was read from. The resolver performs the same
+    // check downstream, but it can no longer be the one to catch this: it now
+    // receives the signed payload itself, so its own id comparison is against
+    // the same blob and always agrees. This is the last point where the
+    // requested row's identity is known independently of the proof's contents,
+    // so a `public_jws_signature` column bearing another passport's otherwise
+    // valid, correctly-signed proof has to be refused here or nowhere.
+    let signed_id = view.get("id").and_then(Value::as_str).unwrap_or_default();
+    if signed_id != passport.id.to_string() {
+        return Err(DppError::Internal(format!(
+            "public signature payload is for passport {signed_id}, not {}",
+            passport.id
+        )));
+    }
+
     // Re-attach the proof so a consumer can verify the body it just received.
     // It is absent from the payload by construction — the field is `None` when
     // the view is signed, so the proof never signs over itself.
@@ -131,15 +146,14 @@ mod tests {
     /// verifying the served body saw a mismatch that was not tampering.
     #[test]
     fn serves_the_signed_payload_not_the_drifted_live_row() {
+        // The live row has since drifted: a re-lint restamped `lintResult`.
+        let mut passport = stub_passport();
         let signed_at_publish = json!({
-            "id": "00000000-0000-4000-9000-000000000001",
+            "id": passport.id.to_string(),
             "productName": "Widget",
             "lintResult": { "assessedAt": "2026-07-01T00:00:00Z" },
         });
         let jws = jws_over(&signed_at_publish);
-
-        // The live row has since drifted: a re-lint restamped `lintResult`.
-        let mut passport = stub_passport();
         passport.public_jws_signature = Some(jws.clone());
 
         let served = signed_public_view(&passport).expect("decodes");
@@ -159,6 +173,25 @@ mod tests {
         let mut passport = stub_passport();
         passport.public_jws_signature = None;
         assert!(signed_public_view(&passport).is_err());
+    }
+
+    /// A proof for a *different* passport must be refused, even though it is
+    /// well-formed and would verify against the operator DID. Serving the signed
+    /// payload means the resolver's own id check compares the payload to itself
+    /// and can no longer catch this — the vault is the last place that knows
+    /// which row was requested independently of the proof.
+    #[test]
+    fn proof_for_another_passport_is_refused() {
+        let mut passport = stub_passport();
+        let other = json!({
+            "id": "00000000-0000-4000-9000-00000000dead",
+            "productName": "Someone Else's Product",
+        });
+        passport.public_jws_signature = Some(jws_over(&other));
+        assert!(
+            signed_public_view(&passport).is_err(),
+            "served another passport's signed body under this passport's id"
+        );
     }
 
     #[test]
