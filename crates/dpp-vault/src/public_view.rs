@@ -1,9 +1,11 @@
 //! Canonical public (redacted) passport view.
 //!
-//! Single source of truth for what the unauthenticated `/public/dpp/{id}` route
-//! serves **and** what `publicJwsSignature` is signed over at publish time.
-//! Keeping the two identical is what lets anyone verify the public passport
-//! against the operator DID without a trusted resolver.
+//! [`public_view`] defines the redaction and is applied **once**, at publish
+//! time, to produce the payload `publicJwsSignature` signs. Every public route
+//! then serves that payload back via [`signed_public_view`] rather than
+//! re-deriving it, so what is served and what was signed cannot diverge — which
+//! is what lets anyone verify the public passport against the operator DID
+//! without a trusted resolver.
 //!
 //! ⬅️ Core-candidate: the redaction contract (which fields are public per
 //! access tier) is part of what the DPP standard promises third parties, not
