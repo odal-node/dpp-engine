@@ -21,7 +21,10 @@ use dpp_common::{
 use crate::{
     handlers::{
         health::{health_handler, ready_handler},
-        resolve_by_gtin::resolve_by_gtin_handler,
+        resolve_by_gtin::{
+            resolve_by_gtin_batch_handler, resolve_by_gtin_batch_serial_handler,
+            resolve_by_gtin_handler, resolve_by_gtin_serial_handler,
+        },
         resolve_html::resolve_html_handler,
         resolve_json::resolve_json_handler,
         resolve_qr::resolve_qr_handler,
@@ -40,7 +43,18 @@ pub fn build(state: AppState) -> Router {
         .route("/ready", get(ready_handler))
         .route("/dpp/{dppId}", get(content_negotiation_handler))
         .route("/dpp/{dppId}/qr", get(resolve_qr_handler))
+        // Every AI combination this node's carrier can print must resolve; all
+        // of them key on the GTIN. See `handlers::resolve_by_gtin`.
         .route("/01/{gtin}", get(resolve_by_gtin_handler))
+        .route(
+            "/01/{gtin}/21/{serial}",
+            get(resolve_by_gtin_serial_handler),
+        )
+        .route("/01/{gtin}/10/{batch}", get(resolve_by_gtin_batch_handler))
+        .route(
+            "/01/{gtin}/10/{batch}/21/{serial}",
+            get(resolve_by_gtin_batch_serial_handler),
+        )
         .layer(TraceLayer::new_for_http())
         .layer(middleware::from_fn(http_metrics_middleware))
         .layer(middleware::from_fn(inject_request_id))
