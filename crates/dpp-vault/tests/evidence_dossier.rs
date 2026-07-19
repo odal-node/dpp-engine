@@ -397,7 +397,8 @@ async fn publish_transfer_eol_then_generate_verifies_and_persists() {
 
     assert_eq!(record.actor, "evidence-test");
     assert_eq!(record.passport_id, published.id);
-    let recomputed = content_hash(&serde_json::to_value(&record.dossier).unwrap());
+    let recomputed = content_hash(&serde_json::to_value(&record.dossier).unwrap())
+        .expect("stored dossier canonicalises");
     assert_eq!(
         record.doc_hash, recomputed,
         "stored doc_hash must match a fresh recomputation over the stored dossier"
