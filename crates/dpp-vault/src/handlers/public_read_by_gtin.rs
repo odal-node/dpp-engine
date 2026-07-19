@@ -1,23 +1,14 @@
-use std::sync::OnceLock;
-
 use axum::{
     extract::{Path, Query, State},
     http::StatusCode,
     response::IntoResponse,
 };
 
-use dpp_crypto::access::{SectorAccessPolicy, filter_by_access_tier};
-use dpp_domain::{AccessTier, SectorCatalog};
-
+use crate::public_view::signed_public_view;
 use crate::state::AppState;
 
 use super::error::{api_error, internal_error};
 use super::public_read::{PublicReadQuery, respond_public_view};
-
-fn catalog() -> &'static SectorCatalog {
-    static CATALOG: OnceLock<SectorCatalog> = OnceLock::new();
-    CATALOG.get_or_init(SectorCatalog::new)
-}
 
 /// Public, unauthenticated lookup of a published passport by GTIN.
 ///
@@ -32,21 +23,16 @@ pub async fn public_read_by_gtin_handler(
 ) -> impl IntoResponse {
     match state.service.find_published_by_gtin(&gtin).await {
         Ok(Some(p)) => {
-            let full = match serde_json::to_value(&p) {
+            // Same signed payload the by-id route serves. Previously this
+            // handler re-derived the redaction inline, which also skipped
+            // `public_view`'s unknown-sector backstop; both routes now read the
+            // one view that was actually signed.
+            let view = match signed_public_view(&p) {
                 Ok(v) => v,
-                Err(e) => {
-                    return internal_error(dpp_domain::DppError::Serialisation(e.to_string()));
-                }
+                Err(e) => return internal_error(e),
             };
-            let mut policy = SectorAccessPolicy::passport_default();
-            if let Some(sector_policy) =
-                SectorAccessPolicy::from_catalog(catalog(), p.sector.catalog_key())
-            {
-                policy.field_tiers.extend(sector_policy.field_tiers);
-            }
-            let decision = filter_by_access_tier(&full, &policy, AccessTier::Public);
             respond_public_view(
-                decision.filtered_data,
+                view,
                 p.sector.catalog_key(),
                 &p.schema_version,
                 query.schema_view.as_deref(),

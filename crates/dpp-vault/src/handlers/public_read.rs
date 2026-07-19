@@ -12,7 +12,7 @@ use serde_json::Value;
 use dpp_domain::domain::status::PassportStatus;
 use dpp_domain::schemas::{LensRegistry, UpcastError};
 
-use crate::public_view::public_view;
+use crate::public_view::signed_public_view;
 use crate::state::AppState;
 
 use super::error::{api_error, internal_error, parse_passport_id};
@@ -55,13 +55,14 @@ pub async fn public_read_handler(
     // We look up by ID only (no operator filter) and check status afterwards.
     match state.service.find_by_id_any_status(passport_id).await {
         Ok(Some(p)) if p.status == PassportStatus::Published => {
-            let full = match serde_json::to_value(&p) {
+            // Serve the payload the public proof was computed over, not the live
+            // row: the two diverge for any Public field that changes after
+            // publish, and only the former verifies against the attached
+            // signature. See `signed_public_view`.
+            let view = match signed_public_view(&p) {
                 Ok(v) => v,
-                Err(e) => {
-                    return internal_error(dpp_domain::DppError::Serialisation(e.to_string()));
-                }
+                Err(e) => return internal_error(e),
             };
-            let view = public_view(&full, p.sector.catalog_key());
             respond_public_view(
                 view,
                 p.sector.catalog_key(),
