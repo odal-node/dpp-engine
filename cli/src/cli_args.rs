@@ -53,11 +53,12 @@ pub enum Commands {
         did_web_url: Option<String>,
         #[arg(long)]
         admin_user: Option<String>,
-        /// Prefer the `ADMIN_PASSWORD` environment variable instead: a value
-        /// passed here lands in shell history and is readable by other local
-        /// users via `ps`/`/proc/<pid>/cmdline` for the process lifetime.
-        /// `bootstrap` is the scripting/CI entrypoint (no interactive prompt);
-        /// interactive operators should run `odal` instead.
+        /// Admin password. Pass `-` to read it from stdin, or set
+        /// `ADMIN_PASSWORD`. A literal value here lands in shell history and is
+        /// readable by other local users via `ps`/`/proc/<pid>/cmdline` for the
+        /// process lifetime, so it warns. `bootstrap` is the scripting/CI
+        /// entrypoint (no interactive prompt); interactive operators should run
+        /// `odal` instead.
         #[arg(long)]
         admin_pass: Option<String>,
         /// Mint an additional key even if the node is already bootstrapped
@@ -279,13 +280,14 @@ pub enum KeyCommands {
     },
     /// Adopt an existing API key secret as this profile's active credential.
     ///
-    /// Prefer supplying the secret via the `ODAL_API_SECRET` environment
-    /// variable or the interactive prompt (omit the argument) so it does not
-    /// land in shell history or `ps`/`/proc/<pid>/cmdline`.
+    /// Prefer `-` (read from stdin), the `ODAL_API_SECRET` environment
+    /// variable, or the interactive prompt (omit the argument) so the secret
+    /// does not land in shell history or `ps`/`/proc/<pid>/cmdline`.
     Use {
-        /// The `odal_sk_…` secret to save. If omitted, it is read from
-        /// `ODAL_API_SECRET` or prompted for without echoing to the terminal —
-        /// keeping the secret out of shell history and the process table.
+        /// The `odal_sk_…` secret to save. Pass `-` to read it from stdin. If
+        /// omitted, it is read from `ODAL_API_SECRET` or prompted for without
+        /// echoing to the terminal. A literal value warns, because it is
+        /// visible in shell history and the process table.
         secret: Option<String>,
     },
 }

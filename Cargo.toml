@@ -24,22 +24,43 @@ repository  = "https://github.com/odal-node/dpp-engine"
 rust-version = "1.96"
 
 # ---------------------------------------------------------------------------
+# Debug-build profile
+#
+# `dpp-node`'s integration test binaries link 250+ object files across wasmtime,
+# aws-lc, sqlx and the AWS SDK. With full DWARF, linking several of them in
+# parallel exhausts memory on a 16 GB machine and the build dies at the *last*
+# CI stage — as `LINK : fatal error LNK1102: out of memory`, or, when rustc is
+# the one that runs out first, as a bare `STATUS_STACK_BUFFER_OVERRUN` abort
+# with no diagnostic. Both read as a code failure and are not one.
+#
+# `line-tables-only` keeps what this workspace actually debugs with — function
+# names, file and line numbers in backtraces and panics — and drops the
+# variable-level DWARF that makes those links enormous. The cost is variable
+# inspection under a step debugger, which is not how this codebase is worked on.
+# `test` inherits from `dev`, so this covers test binaries too.
+#
+# Raise this back to full debug only with a plan for the link memory.
+# ---------------------------------------------------------------------------
+[profile.dev]
+debug = "line-tables-only"
+
+# ---------------------------------------------------------------------------
 # Shared dependency versions — crates inherit these with `workspace = true`
 # ---------------------------------------------------------------------------
 [workspace.dependencies]
 # Core crates — consumed from crates.io (dpp-core is published independently at 0.9.0).
-dpp-domain = "0.9.0"
+dpp-domain = "0.10.0"
 
 # Engine-wide types (tenant, auth, audit, API keys) — engine-internal crate.
 dpp-types = { path = "crates/dpp-types" }
-dpp-crypto        = "0.9.0"
+dpp-crypto        = "0.10.0"
 # KeyStore lives in dpp-core/dpp-crypto; the identity service crate is dpp-identity
 # (dir: crates/dpp-identity, pkg: dpp-identity).
-dpp-digital-link  = "0.9.0"
-dpp-plugin-traits = "0.9.0"
-dpp-registry      = "0.9.0"
-dpp-calc          = "0.9.0"
-dpp-rules         = { version = "0.9.0", features = ["bundle"] }
+dpp-digital-link  = "0.10.0"
+dpp-plugin-traits = "0.10.0"
+dpp-registry      = "0.10.0"
+dpp-calc          = "0.10.0"
+dpp-rules         = { version = "0.10.0", features = ["bundle"] }
 
 # Web framework
 axum         = { version = "0.8", features = ["macros", "multipart"] }
