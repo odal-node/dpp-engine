@@ -36,7 +36,7 @@ jobs:
               JSON-LD, no authentication required.
             readme: crates/dpp-resolver/README.md
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           path: dpp-engine
 
