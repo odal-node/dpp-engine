@@ -16,7 +16,6 @@ use dpp_domain::{
     domain::{passport::PassportId, transfer::TransferChain},
 };
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 use crate::audit::AuditEntry;
@@ -106,21 +105,13 @@ pub struct DossierV1 {
 
 /// Canonical SHA-256 (hex) of a JSON value (RFC 8785 / JCS bytes).
 ///
-/// Exposed so the assembler builds the exact same hash a verifier will
-/// later recompute and check against — one hash function, two call sites.
+/// Re-exported from `dpp-core` rather than reimplemented. The integrity hash a
+/// dossier is attested with and the one the signed-ruleset channel is verified
+/// with must be the *same* function: two copies that agree today are two copies
+/// that can disagree tomorrow, and a mismatch would look like tampering.
 ///
-/// Fallible, matching `dpp_rules::canonical::content_hash` in dpp-core
-/// signature-for-signature: RFC 8785 rejects non-finite floats, so a hasher
-/// fed untrusted input must be able to say no rather than abort the process.
-/// Once core's canonical hasher is published, this becomes a re-export of it
-/// and the two can no longer drift.
-///
-/// # Errors
-/// Returns the underlying serialisation error if `value` cannot be
-/// JCS-canonicalised.
-pub fn content_hash(value: &serde_json::Value) -> Result<String, serde_json::Error> {
-    Ok(hex::encode(Sha256::digest(serde_jcs::to_vec(value)?)))
-}
+/// See `dpp_rules::canonical` for why it is fallible.
+pub use dpp_rules::canonical::content_hash;
 
 /// Compute the `content_hashes` map for a dossier's members, in the shape
 /// [`DossierManifest::content_hashes`] expects. Both the assembler (to

@@ -7,7 +7,6 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use dpp_domain::DppError;
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 /// The `prev_hash` of the first (genesis) entry in a passport's chain.
@@ -101,9 +100,18 @@ impl AuditEntry {
             "timestamp": self.timestamp,
             "prevHash": prev_hash,
         });
-        let bytes = serde_jcs::to_vec(&canonical)
-            .expect("JCS canonicalisation of audit content is infallible");
-        hex::encode(Sha256::digest(&bytes))
+        // Same canonical hasher the evidence dossier and the signed-ruleset
+        // channel use — one JCS implementation across both repos, so an audit
+        // chain and a dossier can never disagree about what a value hashes to.
+        //
+        // The `expect` is retained deliberately: unlike a dossier member, this
+        // input is assembled here from typed struct fields, and the only
+        // free-form part (`metadata`) has already survived `serde_json`
+        // deserialisation, which rejects the non-finite floats RFC 8785 refuses.
+        // Making this fallible would ripple a `Result` through the whole audit
+        // chain for a branch nothing can currently reach.
+        dpp_rules::canonical::content_hash(&canonical)
+            .expect("audit content is struct-built and already parsed; JCS cannot reject it")
     }
 }
 
@@ -172,6 +180,37 @@ mod tests {
     use super::*;
     use chrono::Utc;
     use uuid::Uuid;
+
+    /// Golden value: the chain hash of a fixed entry must never change.
+    ///
+    /// `chain_hash` output is **persisted** as `entry_hash` and every stored
+    /// audit chain is verified by recomputing it. A change to the hasher — a
+    /// different JCS implementation, a different SHA family, a reordered
+    /// canonical object — would silently invalidate every chain already in a
+    /// customer's database, and the other tests here would not notice because
+    /// they only assert relative properties (determinism, prev-sensitivity).
+    ///
+    /// If this test fails, the on-disk format changed. That is a migration, not
+    /// a patch.
+    #[test]
+    fn chain_hash_matches_its_persisted_golden_value() {
+        let fixed = AuditEntry {
+            id: Uuid::parse_str("019f7f0a-1077-7de0-b6c2-f03168422cbd").unwrap(),
+            passport_id: "019f7f0a-1077-7de0-b6c2-f03168422cbd".into(),
+            actor: "operator@example.com".into(),
+            action: "published".into(),
+            previous_status: Some("draft".into()),
+            new_status: Some("active".into()),
+            metadata: None,
+            timestamp: "2026-07-20T10:19:53.888797800Z".parse().unwrap(),
+            prev_hash: None,
+            entry_hash: None,
+        };
+        assert_eq!(
+            fixed.chain_hash(GENESIS_PREV_HASH),
+            "0592182c5db2456feb341752f9fb1e8f667ca1a8c25784f52d4bb005d0a05347"
+        );
+    }
 
     fn entry(action: &str) -> AuditEntry {
         AuditEntry {
