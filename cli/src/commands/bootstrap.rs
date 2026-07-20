@@ -29,6 +29,8 @@ pub async fn run_bootstrap(
     let mut cfg = Config::load()?;
 
     let user = from_flag_or_env(admin_user, "ADMIN_USERNAME", "Admin username")?;
+    // `--admin-pass -` reads the password from stdin; a literal value warns.
+    let admin_pass = crate::credentials::resolve_secret_arg(admin_pass, "set `$ADMIN_PASSWORD`")?;
     let pass = from_flag_or_env(admin_pass, "ADMIN_PASSWORD", "Admin password")?;
     let admin = OdalClient::with_local_admin(&user, &pass);
 
