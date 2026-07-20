@@ -73,7 +73,7 @@ jobs:
       # Context is the workspace root holding both checked-out repos. BuildKit
       # honours docker/<dockerfile>.dockerignore to keep the context small.
       - name: Build & push
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: ${{ matrix.dockerfile }}
