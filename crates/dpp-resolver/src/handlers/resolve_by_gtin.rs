@@ -1,4 +1,15 @@
-//! Handler for `GET /01/{gtin}` — GS1 Digital Link resolver conforming to GS1-CRSV1.
+//! Handlers for the GS1 Digital Link routes, conforming to GS1-CRSV1.
+//!
+//! A printed carrier may carry more than the GTIN. This node's own publisher
+//! emits `/01/{gtin}[/10/{batch}]/21/{serial}`, and a scanner reading any
+//! conformant label may present the same shape, so every AI combination the
+//! carrier can produce is mounted here.
+//!
+//! **Resolution is keyed on the GTIN alone.** The batch (AI 10) and serial
+//! (AI 21) segments are accepted and ignored: the serial this node prints is
+//! derived from the passport id for uniqueness on the label, not a lookup key,
+//! and no route may 404 merely because a label carried more precision than the
+//! resolver indexes.
 
 use axum::{
     extract::{Path, Query, State},
@@ -28,11 +39,52 @@ pub struct ByGtinQuery {
 /// - `?linkType=gs1:pip` / `?linkType=gs1:dpp` → 307 redirect to DPP page
 /// - Default (no qualifier) → 307 redirect to the HTML product page
 pub async fn resolve_by_gtin_handler(
-    State(state): State<AppState>,
+    state: State<AppState>,
     Path(gtin): Path<String>,
-    Query(query): Query<ByGtinQuery>,
+    query: Query<ByGtinQuery>,
     headers: HeaderMap,
 ) -> impl IntoResponse {
+    resolve_gtin(state, gtin, query, headers).await
+}
+
+/// `GET /01/{gtin}/21/{serial}` — GTIN + serial. Resolves on the GTIN.
+pub async fn resolve_by_gtin_serial_handler(
+    state: State<AppState>,
+    Path((gtin, _serial)): Path<(String, String)>,
+    query: Query<ByGtinQuery>,
+    headers: HeaderMap,
+) -> impl IntoResponse {
+    resolve_gtin(state, gtin, query, headers).await
+}
+
+/// `GET /01/{gtin}/10/{batch}` — GTIN + batch/lot. Resolves on the GTIN.
+pub async fn resolve_by_gtin_batch_handler(
+    state: State<AppState>,
+    Path((gtin, _batch)): Path<(String, String)>,
+    query: Query<ByGtinQuery>,
+    headers: HeaderMap,
+) -> impl IntoResponse {
+    resolve_gtin(state, gtin, query, headers).await
+}
+
+/// `GET /01/{gtin}/10/{batch}/21/{serial}` — the full shape this node's own
+/// carrier emits for a batched product. Resolves on the GTIN.
+pub async fn resolve_by_gtin_batch_serial_handler(
+    state: State<AppState>,
+    Path((gtin, _batch, _serial)): Path<(String, String, String)>,
+    query: Query<ByGtinQuery>,
+    headers: HeaderMap,
+) -> impl IntoResponse {
+    resolve_gtin(state, gtin, query, headers).await
+}
+
+/// Shared implementation: every GS1 Digital Link route resolves on the GTIN.
+async fn resolve_gtin(
+    State(state): State<AppState>,
+    gtin: String,
+    Query(query): Query<ByGtinQuery>,
+    headers: HeaderMap,
+) -> axum::response::Response {
     // Validate the GTIN at the edge before it reaches the server-to-server vault
     // URL — a percent-decoded `../admin` must not path-traverse/SSRF the vault.
     if !crate::domain::is_valid_gtin(&gtin) {

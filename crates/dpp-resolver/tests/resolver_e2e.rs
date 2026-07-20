@@ -575,3 +575,42 @@ async fn resolve_records_jws_verify_total() {
         "jws_verify_total not found in Prometheus output:\n{output}"
     );
 }
+
+// ── GS1 Digital Link: multi-AI carrier shapes ───────────────────────────────
+
+/// Every AI combination `dpp_digital_link::build_qr_url` can print must
+/// resolve. The publisher emits `/01/{gtin}[/10/{batch}]/21/{serial}`, so a
+/// GTIN-only route alone means this node's own printed QR codes 404. All four
+/// shapes resolve on the GTIN; batch and serial are accepted and ignored.
+#[tokio::test]
+async fn gs1_digital_link_resolves_every_carrier_ai_shape() {
+    let gtin = "09506000134352";
+    let vault = Router::new().route(
+        "/public/dpp/by-gtin/{gtin}",
+        get(|| async { axum::Json(sample_passport_with_gtin()) }),
+    );
+    let port = start_mock_vault(vault).await;
+    let base = format!("http://127.0.0.1:{port}");
+
+    for uri in [
+        format!("/01/{gtin}"),
+        format!("/01/{gtin}/21/A1B2C3D4E5F6G7H8J9K0"),
+        format!("/01/{gtin}/10/LOT-2026-07"),
+        format!("/01/{gtin}/10/LOT-2026-07/21/A1B2C3D4E5F6G7H8J9K0"),
+    ] {
+        let app = router::build(test_state(base.clone()));
+        let req = Request::builder().uri(&uri).body(Body::empty()).unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_ne!(
+            resp.status(),
+            StatusCode::NOT_FOUND,
+            "no route matched {uri} — a printed carrier of this shape would 404"
+        );
+        // The default (no linkType) outcome is a redirect to the product page.
+        assert!(
+            resp.status().is_redirection(),
+            "{uri} resolved to {} instead of a redirect",
+            resp.status()
+        );
+    }
+}

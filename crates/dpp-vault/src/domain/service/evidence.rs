@@ -30,7 +30,8 @@ impl PassportService {
         })?;
         let doc_hash = content_hash(
             &serde_json::to_value(&dossier).map_err(|e| DppError::Serialisation(e.to_string()))?,
-        );
+        )
+        .map_err(|e| DppError::Serialisation(e.to_string()))?;
         let record = EvidenceDossierRecord {
             id: Uuid::now_v7(),
             passport_id: id,
@@ -221,7 +222,8 @@ impl PassportService {
             component_graph,
         };
 
-        dossier.manifest.content_hashes = compute_content_hashes(&dossier);
+        dossier.manifest.content_hashes =
+            compute_content_hashes(&dossier).map_err(|e| DppError::Serialisation(e.to_string()))?;
         let manifest_value = serde_json::to_value(&dossier.manifest)
             .map_err(|e| DppError::Serialisation(e.to_string()))?;
         let signed = self.identity.sign_passport(id, &manifest_value).await?;

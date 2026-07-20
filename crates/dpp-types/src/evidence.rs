@@ -107,48 +107,58 @@ pub struct DossierV1 {
 /// Canonical SHA-256 (hex) of a JSON value (RFC 8785 / JCS bytes).
 ///
 /// Exposed so the assembler builds the exact same hash a verifier will
-/// later recompute and check against — one hash function, two call sites,
-/// mirroring `dpp-rules::bundle::verify::content_hash`.
-#[must_use]
-pub fn content_hash(value: &serde_json::Value) -> String {
-    let bytes = serde_jcs::to_vec(value).expect("JCS canonicalisation is infallible");
-    hex::encode(Sha256::digest(&bytes))
+/// later recompute and check against — one hash function, two call sites.
+///
+/// Fallible, matching `dpp_rules::canonical::content_hash` in dpp-core
+/// signature-for-signature: RFC 8785 rejects non-finite floats, so a hasher
+/// fed untrusted input must be able to say no rather than abort the process.
+/// Once core's canonical hasher is published, this becomes a re-export of it
+/// and the two can no longer drift.
+///
+/// # Errors
+/// Returns the underlying serialisation error if `value` cannot be
+/// JCS-canonicalised.
+pub fn content_hash(value: &serde_json::Value) -> Result<String, serde_json::Error> {
+    Ok(hex::encode(Sha256::digest(serde_jcs::to_vec(value)?)))
 }
 
 /// Compute the `content_hashes` map for a dossier's members, in the shape
 /// [`DossierManifest::content_hashes`] expects. Both the assembler (to
 /// build the manifest before signing) and the verifier (to recompute and
 /// compare) call this on the same dossier shape, so the two can never drift.
-#[must_use]
-pub fn compute_content_hashes(dossier: &DossierV1) -> BTreeMap<String, String> {
+///
+/// # Errors
+/// Returns the underlying serialisation error if any member cannot be
+/// serialised or JCS-canonicalised.
+pub fn compute_content_hashes(
+    dossier: &DossierV1,
+) -> Result<BTreeMap<String, String>, serde_json::Error> {
     let mut hashes = BTreeMap::new();
     hashes.insert(
         "fullView".to_string(),
-        content_hash(&dossier.full_view.payload),
+        content_hash(&dossier.full_view.payload)?,
     );
     hashes.insert(
         "publicView".to_string(),
-        content_hash(&dossier.public_view.payload),
+        content_hash(&dossier.public_view.payload)?,
     );
     hashes.insert(
         "auditEntries".to_string(),
-        content_hash(
-            &serde_json::to_value(&dossier.audit_entries).expect("audit entries serialise"),
-        ),
+        content_hash(&serde_json::to_value(&dossier.audit_entries)?)?,
     );
     if let Some(chain) = &dossier.transfer_chain {
         hashes.insert(
             "transferChain".to_string(),
-            content_hash(&serde_json::to_value(chain).expect("TransferChain serialises")),
+            content_hash(&serde_json::to_value(chain)?)?,
         );
     }
     if let Some(eol) = &dossier.eol_event {
-        hashes.insert("eolEvent".to_string(), content_hash(eol));
+        hashes.insert("eolEvent".to_string(), content_hash(eol)?);
     }
     if let Some(graph) = &dossier.component_graph {
-        hashes.insert("componentGraph".to_string(), content_hash(graph));
+        hashes.insert("componentGraph".to_string(), content_hash(graph)?);
     }
-    hashes
+    Ok(hashes)
 }
 
 /// Outcome of a single named check.

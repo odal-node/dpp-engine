@@ -64,7 +64,13 @@ const COMPARABLE_FIELDS: &[&str] = &[
 /// Hash the comparable subset of a request or passport JSON body, so a
 /// `CreatePassportRequest` and the persisted `Passport` it matches can be
 /// compared without needing the same Rust type on both sides.
-pub fn content_hash(value: &serde_json::Value) -> String {
+///
+/// **Not a tamper hash, and deliberately not named like one.** This covers a
+/// hand-picked field subset with plain `serde_json` (not JCS) and degrades to
+/// an empty digest rather than failing, all of which is fine for equality
+/// matching and disqualifying for integrity attestation. The integrity hasher
+/// is `dpp_types::evidence::content_hash`.
+pub fn comparable_fingerprint(value: &serde_json::Value) -> String {
     let mut canonical = serde_json::Map::new();
     for &field in COMPARABLE_FIELDS {
         if let Some(v) = value.get(field) {
@@ -123,7 +129,7 @@ pub async fn classify_row(
         .map(str::to_owned);
 
     let req_value = serde_json::to_value(req).unwrap_or_default();
-    if content_hash(&req_value) == content_hash(&existing) {
+    if comparable_fingerprint(&req_value) == comparable_fingerprint(&existing) {
         return Ok(Classification {
             action: RowAction::Unchanged,
             existing_id,
