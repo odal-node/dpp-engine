@@ -14,15 +14,16 @@ path = "src/lib.rs"
 
 [dependencies]
 dpp-domain  = { workspace = true }
+# Supplies the canonical JCS content hasher. Both the audit chain and the
+# evidence dossier use it, so this crate no longer needs serde_jcs/sha2/hex of
+# its own — and cannot grow a second, drifting implementation.
+dpp-rules   = { workspace = true }
 serde       = { workspace = true }
 serde_json  = { workspace = true }
-serde_jcs   = { workspace = true }
 thiserror   = { workspace = true }
 async-trait = { workspace = true }
 uuid        = { workspace = true }
 chrono      = { workspace = true }
-sha2        = { workspace = true }
-hex         = { workspace = true }
 
 [dev-dependencies]
 proptest    = { workspace = true }
