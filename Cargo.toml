@@ -164,7 +164,7 @@ testcontainers-modules = { version = "0.9", default-features = false }
 proptest              = "1"
 
 # Wasm plugin runtime
-wasmtime       = { version = "45", default-features = false, features = ["cranelift", "async", "component-model"] }
+wasmtime       = { version = "46", default-features = false, features = ["cranelift", "async", "component-model"] }
 wasmtime-wasi  = "45"
 
 # GS1 / JSON-LD
