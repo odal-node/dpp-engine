@@ -158,11 +158,30 @@ impl RegistrySyncPort for EuRegistrySync {
             },
         };
 
+        // Fail closed. A registration is a regulatory submission, and the
+        // registry runs its own conformity checks on receipt — sending a payload
+        // we have already judged invalid buys nothing and puts a known-bad
+        // record in front of a live registry. Refusing here also keeps the
+        // failure attached to the passport that caused it, rather than surfacing
+        // later as an opaque remote rejection.
         if let Err(e) = envelope.payload.validate() {
+            if !self.config.allow_invalid_payloads {
+                metrics::counter!("registry_payload_rejected_total").increment(1);
+                tracing::error!(
+                    passport_id = %request.passport_id,
+                    error = %e,
+                    "EU registry payload failed validation — refusing to submit"
+                );
+                return Err(DppError::Validation(
+                    format!("EU registry payload failed validation: {e}").into(),
+                ));
+            }
             tracing::warn!(
                 passport_id = %request.passport_id,
                 error = %e,
-                "EU registry payload failed B1 validation — sending anyway (pre-go-live)"
+                "EU registry payload failed validation — submitting anyway because \
+                 allow_invalid_payloads is set; this override is a deliberate local \
+                 decision and should not be set against the production registry"
             );
         }
 

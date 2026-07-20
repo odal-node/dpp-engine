@@ -7,6 +7,7 @@ use dpp_domain::domain::passport::PassportId;
 use dpp_registry::{EuRegistryResponse, registry::RegistryStatusCode};
 use uuid::Uuid;
 
+use dpp_domain::DppError;
 use dpp_domain::ports::registry_sync::{RegistrationRequest, RegistryStatus, RegistrySyncPort};
 
 use super::client::EuRegistrySync;
@@ -70,6 +71,13 @@ fn status_to_record_maps_pending() {
     assert_eq!(record.identifiers.registry_id, "EU-REG-2026-00003");
 }
 
+/// A registration request with realistic non-facility fields. Pair it with a
+/// facility snapshot (see [`valid_request`]) for a payload that validates.
+///
+/// The `country_code` and `data_carrier_uri` here used to be empty strings.
+/// That went unnoticed because registration was fail-open: every HTTP-layer
+/// register test was submitting a payload that did not validate, and the only
+/// signal was a `warn!` nobody asserted on.
 fn request_with_facility(facility: Option<dpp_domain::FacilitySnapshot>) -> RegistrationRequest {
     RegistrationRequest {
         passport_id: PassportId::new(),
@@ -77,11 +85,37 @@ fn request_with_facility(facility: Option<dpp_domain::FacilitySnapshot>) -> Regi
         facility_identifier: "LEGACY-FAC".into(),
         facility,
         product_category: "battery".into(),
-        data_carrier_uri: String::new(),
+        data_carrier_uri: "https://id.example.com/01/09506000134352/21/abc123".into(),
         schema_version: "2.0.0".into(),
         jws_signature: None,
         published_at: None,
+        country_code: "DE".into(),
+    }
+}
+
+/// The most-complete request the port can currently express.
+///
+/// ⚠️ It still does **not** validate: `RegistrationPayload` requires a non-empty
+/// `operatorId.name`, and `RegistrationRequest` carries no operator legal name
+/// for the mapping to populate — it is hardcoded to `String::new()`. Tests that
+/// exercise the HTTP layer therefore have to set `allow_invalid_payloads`.
+/// Remove that opt-in once the port carries the operator name.
+fn valid_request() -> RegistrationRequest {
+    request_with_facility(Some(dpp_domain::FacilitySnapshot {
+        scheme: "gln".into(),
+        value: "4012345000009".into(),
+        name: "Default Plant".into(),
+        country: "DE".into(),
+        address: Some("1 Allee, Berlin".into()),
+    }))
+}
+
+/// A request whose payload fails `RegistrationPayload::validate` — an empty
+/// country on the operator identifier.
+fn invalid_request() -> RegistrationRequest {
+    RegistrationRequest {
         country_code: String::new(),
+        ..valid_request()
     }
 }
 
@@ -254,6 +288,7 @@ fn mock_config(base_url: &str) -> EuRegistrySyncConfig {
         max_retries: 3,
         retry_base_delay: Duration::from_millis(1),
         request_timeout: Duration::from_secs(5),
+        allow_invalid_payloads: false,
     }
 }
 
@@ -275,10 +310,13 @@ async fn register_succeeds_and_maps_response() {
         .await
         .push_back((axum::http::StatusCode::OK, registered_response("EU-REG-1")));
     let base_url = mock_server::spawn(state.clone()).await;
-    let sync = EuRegistrySync::new(mock_config(&base_url)).unwrap();
+    // See `valid_request`: the port cannot yet express a payload that validates.
+    let mut config = mock_config(&base_url);
+    config.allow_invalid_payloads = true;
+    let sync = EuRegistrySync::new(config).unwrap();
 
     let record = sync
-        .register(request_with_facility(None))
+        .register(valid_request())
         .await
         .expect("register should succeed");
 
@@ -295,10 +333,13 @@ async fn register_fatal_4xx_does_not_retry() {
         serde_json::json!({"error": "invalid payload"}),
     ));
     let base_url = mock_server::spawn(state.clone()).await;
-    let sync = EuRegistrySync::new(mock_config(&base_url)).unwrap();
+    // See `valid_request`: the port cannot yet express a payload that validates.
+    let mut config = mock_config(&base_url);
+    config.allow_invalid_payloads = true;
+    let sync = EuRegistrySync::new(config).unwrap();
 
     let err = sync
-        .register(request_with_facility(None))
+        .register(valid_request())
         .await
         .expect_err("4xx should surface as an error");
 
@@ -326,10 +367,13 @@ async fn register_retries_on_5xx_then_exhausts() {
         }
     }
     let base_url = mock_server::spawn(state.clone()).await;
-    let sync = EuRegistrySync::new(mock_config(&base_url)).unwrap();
+    // See `valid_request`: the port cannot yet express a payload that validates.
+    let mut config = mock_config(&base_url);
+    config.allow_invalid_payloads = true;
+    let sync = EuRegistrySync::new(config).unwrap();
 
     let err = sync
-        .register(request_with_facility(None))
+        .register(valid_request())
         .await
         .expect_err("persistent 5xx should exhaust retries");
 
@@ -356,10 +400,13 @@ async fn register_retries_on_429_then_succeeds() {
         q.push_back((axum::http::StatusCode::OK, registered_response("EU-REG-2")));
     }
     let base_url = mock_server::spawn(state.clone()).await;
-    let sync = EuRegistrySync::new(mock_config(&base_url)).unwrap();
+    // See `valid_request`: the port cannot yet express a payload that validates.
+    let mut config = mock_config(&base_url);
+    config.allow_invalid_payloads = true;
+    let sync = EuRegistrySync::new(config).unwrap();
 
     let record = sync
-        .register(request_with_facility(None))
+        .register(valid_request())
         .await
         .expect("should succeed after one retry");
 
@@ -381,10 +428,12 @@ async fn register_unreachable_registration_endpoint_is_not_retried() {
 
     let mut config = mock_config(&base_url_alive);
     config.endpoint.base_url = format!("http://{dead_addr}");
+    // See `valid_request`: the port cannot yet express a payload that validates.
+    config.allow_invalid_payloads = true;
     let sync = EuRegistrySync::new(config).unwrap();
 
     let err = sync
-        .register(request_with_facility(None))
+        .register(valid_request())
         .await
         .expect_err("unreachable registry should error");
 
@@ -453,4 +502,64 @@ async fn notify_transfer_success() {
         .expect("notify_transfer should succeed");
 
     assert_eq!(record.status, RegistryStatus::Registered);
+}
+
+// ── Payload validation is fail-closed ───────────────────────────────────────
+
+/// A payload that fails local validation must not reach the registry. A
+/// registration is a regulatory submission, and the registry runs its own
+/// conformity checks on receipt — submitting a known-bad record buys nothing.
+#[tokio::test]
+async fn invalid_payload_is_refused_and_never_submitted() {
+    let state = Arc::new(MockState::default());
+    let base_url = mock_server::spawn(state.clone()).await;
+    let sync = EuRegistrySync::new(mock_config(&base_url)).unwrap();
+
+    let err = sync
+        .register(invalid_request())
+        .await
+        .expect_err("an invalid payload must be refused");
+
+    assert!(
+        matches!(err, DppError::Validation(_)),
+        "expected a validation error, got: {err:?}"
+    );
+    assert_eq!(
+        state.register_hits.load(Ordering::SeqCst),
+        0,
+        "the registry was contacted despite the payload failing validation"
+    );
+}
+
+/// The override exists because our local rules are an interpretation of the
+/// spec and may themselves be wrong — a false positive must be workable around
+/// without a code change. Setting it restores submission, loudly.
+#[tokio::test]
+async fn invalid_payload_is_submitted_when_the_override_is_set() {
+    let state = Arc::new(MockState::default());
+    state
+        .register_queue
+        .lock()
+        .await
+        .push_back((axum::http::StatusCode::OK, registered_response("EU-REG-9")));
+    let base_url = mock_server::spawn(state.clone()).await;
+
+    let mut config = mock_config(&base_url);
+    config.allow_invalid_payloads = true;
+    let sync = EuRegistrySync::new(config).unwrap();
+
+    let record = sync
+        .register(invalid_request())
+        .await
+        .expect("the override must permit submission");
+
+    assert_eq!(record.identifiers.registry_id, "EU-REG-9");
+    assert_eq!(state.register_hits.load(Ordering::SeqCst), 1);
+}
+
+/// The safe behaviour must be the one you get by doing nothing.
+#[test]
+fn overriding_validation_is_off_by_default() {
+    assert!(!EuRegistrySyncConfig::sandbox("id".into(), "secret".into()).allow_invalid_payloads);
+    assert!(!EuRegistrySyncConfig::production("id".into(), "secret".into()).allow_invalid_payloads);
 }
