@@ -1,13 +1,42 @@
 //! Passport JWS verification against the operator's `did:web` document.
 
+use std::collections::HashMap;
+use std::sync::OnceLock;
+use std::time::{Duration, Instant};
+
 use axum::http::StatusCode;
 use base64::Engine;
 use dpp_common::event_codes;
 use metrics;
 use serde_json::Value;
+use tokio::sync::RwLock;
 use tracing;
 
 use dpp_crypto::jws::verifier as jws;
+
+/// How long a fetched operator DID document is trusted before being refetched.
+///
+/// The document only changes on key rotation — a rare, operator-initiated
+/// event — so a multi-minute TTL trades a small propagation delay for
+/// eliminating a fetch on nearly every verification. Before this cache, every
+/// call to `verify_passport_jws` (3 of the 4 resolver routes, every
+/// cache-miss resolution) issued a fresh HTTP GET for a document that is
+/// identical across every `dpp_id` in this single-tenant deployment — the
+/// single biggest avoidable request amplification on the public hot path.
+const DID_DOC_CACHE_TTL: Duration = Duration::from_secs(300);
+
+struct CachedDid {
+    doc: Value,
+    fetched_at: Instant,
+}
+
+/// Keyed by URL (not just a single slot) so the cache degrades safely if this
+/// ever ran against more than one operator DID url — harmless overhead for
+/// the common single-tenant case where there is exactly one key.
+fn did_doc_cache() -> &'static RwLock<HashMap<String, CachedDid>> {
+    static CACHE: OnceLock<RwLock<HashMap<String, CachedDid>>> = OnceLock::new();
+    CACHE.get_or_init(|| RwLock::new(HashMap::new()))
+}
 
 /// Verify a published passport's **public** signature (`publicJwsSignature`)
 /// against the operator's did:web document and return the verified public view.
@@ -127,6 +156,10 @@ pub async fn verify_passport_jws(
 }
 
 async fn fetch_did(http: &reqwest::Client, url: &str) -> Result<Value, StatusCode> {
+    if let Some(doc) = cached_did_doc(url).await {
+        return Ok(doc);
+    }
+
     let resp = http.get(url).send().await.map_err(|e| {
         tracing::warn!(code = event_codes::DID_UNREACHABLE, url, error = %e, "could not fetch operator DID document");
         StatusCode::SERVICE_UNAVAILABLE
@@ -135,10 +168,29 @@ async fn fetch_did(http: &reqwest::Client, url: &str) -> Result<Value, StatusCod
         tracing::warn!(code = event_codes::DID_UNREACHABLE, url, status = %resp.status(), "operator DID endpoint returned non-2xx");
         return Err(StatusCode::SERVICE_UNAVAILABLE);
     }
-    resp.json().await.map_err(|e| {
+    let doc: Value = resp.json().await.map_err(|e| {
         tracing::warn!(code = event_codes::DID_UNREACHABLE, url, error = %e, "operator DID document is not valid JSON");
         StatusCode::SERVICE_UNAVAILABLE
-    })
+    })?;
+
+    did_doc_cache().write().await.insert(
+        url.to_owned(),
+        CachedDid {
+            doc: doc.clone(),
+            fetched_at: Instant::now(),
+        },
+    );
+
+    Ok(doc)
+}
+
+/// The cached document for `url`, if present and still within TTL — `None`
+/// on a cold cache or an expired entry, either of which falls through to a
+/// real fetch in the caller.
+async fn cached_did_doc(url: &str) -> Option<Value> {
+    let cache = did_doc_cache().read().await;
+    let entry = cache.get(url)?;
+    (entry.fetched_at.elapsed() < DID_DOC_CACHE_TTL).then(|| entry.doc.clone())
 }
 
 /// Decode the (already-verified) payload segment of a compact JWS into JSON.
@@ -152,7 +204,80 @@ fn decode_jws_payload(jws: &str) -> Option<Value> {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    use axum::{Router, extract::State, routing::get};
     use dpp_common::event_codes::MUTABLE_FIELDS;
+
+    use super::fetch_did;
+
+    async fn spawn_counting_did_server(doc: serde_json::Value) -> (String, Arc<AtomicUsize>) {
+        let hits = Arc::new(AtomicUsize::new(0));
+        let hits_for_route = hits.clone();
+        let app = Router::new().route(
+            "/.well-known/did.json",
+            get(move |State(doc): State<serde_json::Value>| {
+                let hits = hits_for_route.clone();
+                async move {
+                    hits.fetch_add(1, Ordering::SeqCst);
+                    axum::Json(doc)
+                }
+            }),
+        );
+        let app = app.with_state(doc);
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind mock DID server");
+        let port = listener.local_addr().unwrap().port();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.expect("mock DID serve");
+        });
+        (
+            format!("http://127.0.0.1:{port}/.well-known/did.json"),
+            hits,
+        )
+    }
+
+    /// Regression for the DID-caching fix: a second `fetch_did` call for the
+    /// same URL within the TTL must be served from cache, not the network —
+    /// before this, every call to `verify_passport_jws` refetched the
+    /// document, even though it is identical across every `dpp_id` in a
+    /// single-tenant deployment.
+    #[tokio::test]
+    async fn a_second_fetch_within_ttl_does_not_hit_the_network() {
+        let doc = serde_json::json!({"id": "did:web:cache-test.example"});
+        let (url, hits) = spawn_counting_did_server(doc.clone()).await;
+        let http = reqwest::Client::new();
+
+        let first = fetch_did(&http, &url).await.expect("first fetch");
+        assert_eq!(first, doc);
+        assert_eq!(hits.load(Ordering::SeqCst), 1);
+
+        let second = fetch_did(&http, &url).await.expect("second fetch");
+        assert_eq!(second, doc, "cached value must match what was fetched");
+        assert_eq!(
+            hits.load(Ordering::SeqCst),
+            1,
+            "a cache hit must not reach the network a second time"
+        );
+    }
+
+    /// Two different URLs must not collide in the cache — each is fetched
+    /// and cached independently.
+    #[tokio::test]
+    async fn different_urls_are_cached_independently() {
+        let doc_a = serde_json::json!({"id": "did:web:a.example"});
+        let doc_b = serde_json::json!({"id": "did:web:b.example"});
+        let (url_a, hits_a) = spawn_counting_did_server(doc_a.clone()).await;
+        let (url_b, hits_b) = spawn_counting_did_server(doc_b.clone()).await;
+        let http = reqwest::Client::new();
+
+        assert_eq!(fetch_did(&http, &url_a).await.unwrap(), doc_a);
+        assert_eq!(fetch_did(&http, &url_b).await.unwrap(), doc_b);
+        assert_eq!(hits_a.load(Ordering::SeqCst), 1);
+        assert_eq!(hits_b.load(Ordering::SeqCst), 1);
+    }
 
     // ── DAL D2: MUTABLE_FIELDS parity guard ─────────────────────────────────
 
