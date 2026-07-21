@@ -17,6 +17,7 @@
 //!   T4 audit append-only trigger · T5 key-prefix uniqueness · T6 patch_fields merge
 //!   T13 snapshot reconcile outbox upsert/re-arm/due-filter
 //!   T14 snapshot repair sweep selectivity
+//!   T15 snapshot outbox mark-* methods fail closed on an unknown row id
 
 #![cfg(feature = "integration-tests")]
 
@@ -1002,4 +1003,34 @@ async fn t14_snapshot_sweep_requeues_only_divergent_passports() {
         outbox.due(500).await.expect("due").is_empty(),
         "the backed-off row must stay backed off after a sweep"
     );
+}
+
+// T15 — snapshot outbox mark-* methods fail closed on an unknown row id.
+// Regression: `mark_reconciled`/`mark_attempt_failed`/`mark_exhausted`
+// previously discarded `rows_affected()` entirely, so a stale/wrong id
+// silently no-op'd instead of surfacing `NotFound` — inconsistent with the
+// registry-sync outbox's own `mark_*` methods, which already checked this.
+#[tokio::test]
+async fn t15_snapshot_outbox_mark_methods_fail_closed_on_unknown_id() {
+    let pg = start_pg().await;
+    let outbox = PgSnapshotOutboxRepo::new(pg.dal.clone());
+    let unknown_id = Uuid::now_v7();
+
+    let err = outbox
+        .mark_reconciled(unknown_id)
+        .await
+        .expect_err("mark_reconciled on an unknown row must fail, not silently succeed");
+    assert!(matches!(err, dpp_domain::DppError::NotFound(_)));
+
+    let err = outbox
+        .mark_attempt_failed(unknown_id, "irrelevant".into())
+        .await
+        .expect_err("mark_attempt_failed on an unknown row must fail, not silently succeed");
+    assert!(matches!(err, dpp_domain::DppError::NotFound(_)));
+
+    let err = outbox
+        .mark_exhausted(unknown_id, "irrelevant".into())
+        .await
+        .expect_err("mark_exhausted on an unknown row must fail, not silently succeed");
+    assert!(matches!(err, dpp_domain::DppError::NotFound(_)));
 }
