@@ -20,7 +20,7 @@ use dpp_digital_link::Gs1LinkType;
 use serde::Deserialize;
 use serde_json::Value;
 
-use crate::state::AppState;
+use crate::{infra::did, state::AppState};
 
 /// Query parameters for the GS1 Digital Link resolver endpoint (`/01/{gtin}`).
 #[derive(Deserialize)]
@@ -107,6 +107,24 @@ async fn resolve_gtin(
                 .into_response();
         }
     };
+
+    // Verify the public signature against the operator DID before trusting
+    // anything the vault returned — every other resolver route (by id) does
+    // this; resolving by GTIN must not be a second, unverified path to the
+    // same passport data. Fails closed, same as `resolve_json`/`resolve_html`.
+    let passport =
+        match did::verify_passport_jws(&state.http, &state.operator_did_url, &passport).await {
+            Ok(v) => v,
+            Err(status) => {
+                return (
+                status,
+                [(header::CONTENT_TYPE, "application/json")],
+                r#"{"error":"UNVERIFIED","message":"Passport signature could not be verified"}"#
+                    .to_owned(),
+            )
+                .into_response();
+            }
+        };
 
     let passport_id = match passport.get("id").and_then(Value::as_str) {
         Some(id) => id.to_owned(),

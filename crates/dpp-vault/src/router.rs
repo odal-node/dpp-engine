@@ -27,6 +27,7 @@ use crate::{
             generate_evidence_handler, get_evidence_handler, list_evidence_handler,
             verify_document_handler, verify_evidence_handler,
         },
+        find_by_identity::find_by_identity_handler,
         health::{health_handler, ready_handler},
         history::history_handler,
         info::info_handler,
@@ -67,6 +68,7 @@ pub fn build(state: AppState) -> Router {
         // ── DPP CRUD ──────────────────────────────────────────────────
         .route("/dpp", post(create_handler))
         .route("/dpps", get(list_handler))
+        .route("/dpp/by-identity", get(find_by_identity_handler))
         .route("/dpp/{dppId}", get(read_handler).put(update_handler))
         .route("/dpp/{dppId}/publish", post(publish_handler))
         .route("/dpp/{dppId}/lint", post(lint_handler))

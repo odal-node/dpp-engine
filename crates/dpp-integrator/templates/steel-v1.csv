@@ -1,0 +1,3 @@
+productName [REQUIRED],gtin [REQUIRED],batchId [OPTIONAL],manufacturerName [REQUIRED],manufacturerCountry [REQUIRED],co2ePerTonneSteel [REQUIRED],recycledScrapContentPct [REQUIRED],productCategory [REQUIRED],countryOfProduction [REQUIRED],productionRoute [REQUIRED],annualProductionTonnes [OPTIONAL]
+Hot-Rolled Coil S355,12345678901231,BATCH-2026-001,Thyssenkrupp Steel Europe,DE,1.85,28.0,flat,DE,electric-arc,500000
+Rebar Grade B500B,98765432109879,,ArcelorMittal SA,LU,2.10,15.0,long,LU,blast-furnace,

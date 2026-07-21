@@ -130,7 +130,7 @@ fn load_unsigned_test_plugin(
     path: &std::path::Path,
     sector_key: &str,
 ) -> anyhow::Result<LoadedPlugin> {
-    unsafe { std::env::set_var("DPP_ALLOW_UNSIGNED_PLUGINS", "true") };
+    unsafe { std::env::set_var("ALLOW_UNSIGNED_PLUGINS", "true") };
     LoadedPlugin::from_file(engine, path, sector_key, None)
 }
 

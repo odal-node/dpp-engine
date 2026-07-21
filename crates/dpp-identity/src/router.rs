@@ -20,6 +20,7 @@ use crate::{
         health::{health_handler, ready_handler},
         rotate_key::rotate_key_handler,
         sign::sign_handler,
+        verify::verify_handler,
     },
     middleware::mtls::mtls_middleware,
     state::AppState,
@@ -35,6 +36,7 @@ pub fn build(state: AppState) -> Router {
     // Only requests from `CN=odal-vault` are accepted when MTLS_ENFORCE=true.
     let internal = Router::new()
         .route("/internal/sign", post(sign_handler))
+        .route("/internal/verify", post(verify_handler))
         .route("/internal/keys/rotate", post(rotate_key_handler))
         .route_layer(middleware::from_fn(mtls_middleware))
         .layer(TraceLayer::new_for_http())
@@ -117,7 +119,11 @@ mod tests {
         };
         let app = super::build_public(state);
 
-        for path in ["/internal/sign", "/internal/keys/rotate"] {
+        for path in [
+            "/internal/sign",
+            "/internal/verify",
+            "/internal/keys/rotate",
+        ] {
             let req = Request::builder()
                 .method("POST")
                 .uri(path)

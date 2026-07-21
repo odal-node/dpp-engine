@@ -134,7 +134,10 @@ mod tests {
     // "load any wasm with a warning" path is closed end-to-end, not just in the
     // policy helper. Relies on PLUGIN_SIGNING_KEY / ALLOW_UNSIGNED_PLUGINS being
     // unset in the test environment (as the other boot tests already assume).
+    // `#[serial]` because it reads the same process-global env var that
+    // `allow_unsigned_plugins_env_var_actually_loads_a_real_plugin` mutates.
     #[test]
+    #[serial_test::serial]
     fn boot_refuses_unsigned_plugin_without_key() {
         if std::env::var("PLUGIN_SIGNING_KEY").is_ok()
             || std::env::var("ALLOW_UNSIGNED_PLUGINS").is_ok()
@@ -158,6 +161,60 @@ mod tests {
         assert!(
             err.to_string().contains("PLUGIN_SIGNING_KEY"),
             "error should explain the missing signing key, got: {err}"
+        );
+    }
+
+    /// A minimal, real (compilable) sector plugin: just enough to satisfy
+    /// `LoadedPlugin::from_file`'s `describe()` ABI-compatibility check.
+    fn minimal_plugin_wasm() -> Vec<u8> {
+        let describe_off = 4096u32;
+        let describe =
+            r#"{"abiVersion":{"major":1,"minor":0},"supportedSchemas":[],"capabilities":[]}"#;
+        let pack = |o: u32, l: u32| (((o as u64) << 32) | l as u64) as i64;
+        let esc = |s: &str| s.replace('\\', "\\\\").replace('"', "\\\"");
+        let wat = format!(
+            r#"(module
+  (memory (export "memory") 2)
+  (data (i32.const {describe_off}) "{d}")
+  (func (export "alloc") (param i32) (result i32) i32.const 1024)
+  (func (export "dealloc") (param i32) (param i32))
+  (func (export "describe") (result i64) i64.const {dp})
+)"#,
+            d = esc(describe),
+            dp = pack(describe_off, describe.len() as u32),
+        );
+        wat::parse_str(&wat).expect("minimal plugin fixture WAT must parse")
+    }
+
+    /// Regression: `dpp-node`'s own startup gate reads `ALLOW_UNSIGNED_PLUGINS`,
+    /// but the actual per-file load used to check a different variable
+    /// (`DPP_ALLOW_UNSIGNED_PLUGINS`) — an operator who set exactly what the
+    /// error message above tells them to would pass this gate, then have every
+    /// plugin silently fail to load one line later, with `boot()` still
+    /// returning `Ok` and only a log warning to notice. Proves both layers now
+    /// agree: a real (valid) unsigned plugin actually loads and registers.
+    #[test]
+    #[serial_test::serial]
+    fn allow_unsigned_plugins_env_var_actually_loads_a_real_plugin() {
+        if std::env::var("PLUGIN_SIGNING_KEY").is_ok() {
+            return; // environment opts into a different policy; skip
+        }
+        // Safety: test is `#[serial]`, so no concurrent env mutation in this process.
+        unsafe { std::env::set_var("ALLOW_UNSIGNED_PLUGINS", "true") };
+
+        let tmp = std::env::temp_dir().join(format!("odal-n5-{}", uuid::Uuid::now_v7()));
+        std::fs::create_dir_all(&tmp).unwrap();
+        std::fs::write(tmp.join("sector-battery.wasm"), minimal_plugin_wasm()).unwrap();
+
+        let result = boot(tmp.to_str().unwrap());
+
+        std::fs::remove_dir_all(&tmp).ok();
+        unsafe { std::env::remove_var("ALLOW_UNSIGNED_PLUGINS") };
+
+        let host = result.expect("boot must succeed when ALLOW_UNSIGNED_PLUGINS=true");
+        assert!(
+            host.has_any_plugin(),
+            "the unsigned plugin must actually be loaded and registered, not silently skipped"
         );
     }
 }

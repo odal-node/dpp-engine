@@ -7,7 +7,7 @@ use dpp_domain::domain::{
     sector::{FibreEntry, Sector, SectorData, TextileData},
 };
 
-use crate::domain::fields::{optional_f64, require_str};
+use crate::domain::fields::{optional_f64, require_str, validate_gtin_checksum};
 use crate::domain::request::{CreatePassportRequest, RowError};
 
 /// Validate a single textile row and convert it to a vault `CreatePassportRequest`.
@@ -19,6 +19,7 @@ pub fn validate_textile_row(
 
     let product_name = require_str(row, "productName", row_num, &mut errors);
     let gtin = require_str(row, "gtin", row_num, &mut errors);
+    validate_gtin_checksum(gtin.as_deref(), row_num, &mut errors);
     let batch_id = require_str(row, "batchId", row_num, &mut errors);
     let manufacturer_name = require_str(row, "manufacturerName", row_num, &mut errors);
     let manufacturer_country = require_str(row, "manufacturerCountry", row_num, &mut errors);
@@ -182,6 +183,17 @@ mod tests {
             }
             _ => panic!("expected textile sector data"),
         }
+    }
+
+    /// Regression: textile was the one sector validator that skipped the GTIN
+    /// checksum, so a malformed GTIN passed straight through the import
+    /// pipeline unchecked while every other sector already rejected it.
+    #[test]
+    fn textile_row_bad_gtin_checksum_returns_error() {
+        let mut row = textile_row();
+        row.insert("gtin".into(), "09506000134353".into()); // valid is ...352
+        let errs = validate_textile_row(&row, 3).expect_err("bad GTIN checksum must fail");
+        assert!(errs.iter().any(|e| e.field == "gtin"));
     }
 
     #[test]

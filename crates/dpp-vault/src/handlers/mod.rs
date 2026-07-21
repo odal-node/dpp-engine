@@ -6,6 +6,7 @@ pub mod create;
 pub mod eol;
 pub mod error;
 pub mod evidence;
+pub mod find_by_identity;
 pub mod health;
 pub mod history;
 pub mod info;
