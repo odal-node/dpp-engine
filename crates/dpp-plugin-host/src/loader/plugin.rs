@@ -42,6 +42,13 @@ fn map_call_error(e: wasmtime::Error) -> anyhow::Error {
 pub struct LoadedPlugin {
     engine: Engine,
     module: Module,
+    /// Built once at load time and reused by every invocation. `Linker`
+    /// depends only on the shared `Engine` — rebuilding it per call
+    /// re-registered the full WASI-p1 syscall surface plus 2 host functions
+    /// on every single `invoke_calculate`/`invoke_generate_passport`, the
+    /// dominant per-invocation cost. `instantiate` takes `&self`, so one
+    /// linker safely serves any number of concurrent instantiations.
+    linker: Linker<HostState>,
     pub sector_key: String,
     /// Capability declaration cached from `describe()` at load time.
     /// Used to configure per-invocation resource limits without an extra
@@ -125,15 +132,18 @@ impl LoadedPlugin {
                 .map_err(|e| anyhow::anyhow!("failed to compile {}: {e}", path.display()))?
         };
 
+        // Built once, reused by the describe() probe below and by every
+        // subsequent invocation (see the field doc on `LoadedPlugin::linker`).
+        let linker = crate::host_funcs::build_linker(engine)
+            .map_err(|e| anyhow::anyhow!("failed to build linker: {e}"))?;
+
         // Call describe() once at load time to cache capabilities and derive
         // per-invocation resource limits without an extra round-trip per call.
         // Falls back to host defaults if the export is absent (e.g. test WAT fixtures).
         let capabilities = {
             let mut probe_store = build_store(engine, None, None)
                 .map_err(|e| anyhow::anyhow!("failed to create probe store: {e}"))?;
-            let probe_linker = crate::host_funcs::build_linker(engine)
-                .map_err(|e| anyhow::anyhow!("failed to build probe linker: {e}"))?;
-            let probe_instance = probe_linker
+            let probe_instance = linker
                 .instantiate(&mut probe_store, &module)
                 .map_err(|e| anyhow::anyhow!("failed to instantiate plugin for describe(): {e}"))?;
             match call_describe(&mut probe_store, &probe_instance) {
@@ -188,6 +198,7 @@ impl LoadedPlugin {
         Ok(Self {
             engine: engine.clone(),
             module,
+            linker,
             sector_key: sector_key.to_owned(),
             capabilities,
         })
@@ -211,9 +222,8 @@ impl LoadedPlugin {
 
         let mut store: Store<HostState> = build_store(&self.engine, Some(fuel), Some(memory))
             .map_err(|e| anyhow::anyhow!("{e}"))?;
-        let linker: Linker<HostState> =
-            crate::host_funcs::build_linker(&self.engine).map_err(|e| anyhow::anyhow!("{e}"))?;
-        let instance = linker
+        let instance = self
+            .linker
             .instantiate(&mut store, &self.module)
             .map_err(|e| anyhow::anyhow!("{e}"))?;
 
@@ -259,9 +269,8 @@ impl LoadedPlugin {
 
         let mut store: Store<HostState> = build_store(&self.engine, Some(fuel), Some(memory))
             .map_err(|e| anyhow::anyhow!("{e}"))?;
-        let linker: Linker<HostState> =
-            crate::host_funcs::build_linker(&self.engine).map_err(|e| anyhow::anyhow!("{e}"))?;
-        let instance = linker
+        let instance = self
+            .linker
             .instantiate(&mut store, &self.module)
             .map_err(|e| anyhow::anyhow!("{e}"))?;
 

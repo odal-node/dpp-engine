@@ -2,9 +2,8 @@
 //! branching per row on the delta-matcher's classification.
 
 use std::collections::HashMap;
-use std::sync::Arc;
 
-use tokio::sync::Semaphore;
+use futures::stream::{self, StreamExt};
 use tracing;
 
 use crate::{
@@ -68,7 +67,14 @@ enum RowOutcome {
 /// what would happen to them; a row missing from `classifications` (should
 /// not happen — every valid row gets classified) defaults to `Create`.
 ///
-/// - Maximum `concurrency` requests run concurrently (Tokio semaphore).
+/// - Maximum `concurrency` requests run concurrently (`buffered`, not one
+///   `tokio::spawn` per row — see `matcher::classify_batch`'s doc comment for
+///   why: a large import can carry up to ~200k rows, and this is pure async
+///   I/O, not CPU-bound work that needs a separate task per row). `buffered`
+///   rather than `buffer_unordered`: the report's `created`/`updated`/`errors`
+///   lists must stay in row order for a human scanning a failed import to
+///   find "row 47" near position 47, not scattered by whichever request
+///   happened to finish first.
 /// - Vault `429` responses are retried with exponential backoff (max 3 attempts).
 /// - Vault `422` responses are recorded as row errors; the batch continues.
 /// - Vault `5xx` responses are recorded as row errors.
@@ -83,41 +89,41 @@ pub async fn run_batch(
     auth_token: &str,
     concurrency: usize,
 ) -> BatchResult {
-    let sem = Arc::new(Semaphore::new(concurrency.max(1)));
-    let mut handles = Vec::with_capacity(valid_rows.len());
+    let to_run: Vec<(usize, CreatePassportRequest, Classification)> = valid_rows
+        .into_iter()
+        .filter_map(|(row_num, req)| {
+            let classification = classifications
+                .get(&row_num)
+                .cloned()
+                .unwrap_or(Classification {
+                    action: RowAction::Create,
+                    existing_id: None,
+                });
+            if matches!(
+                classification.action,
+                RowAction::Unchanged | RowAction::ConflictPublished
+            ) {
+                None // zero vault calls — the report already names this row's action
+            } else {
+                Some((row_num, req, classification))
+            }
+        })
+        .collect();
 
-    for (row_num, req) in valid_rows {
-        let classification = classifications
-            .get(&row_num)
-            .cloned()
-            .unwrap_or(Classification {
-                action: RowAction::Create,
-                existing_id: None,
-            });
-        if matches!(
-            classification.action,
-            RowAction::Unchanged | RowAction::ConflictPublished
-        ) {
-            continue; // zero vault calls — the report already names this row's action
-        }
-
-        let sem = sem.clone();
-        let client = vault_client.clone();
-        let token = auth_token.to_owned();
-
-        handles.push(tokio::spawn(async move {
-            let _permit = sem.acquire().await.expect("semaphore closed unexpectedly");
+    let results: Vec<(usize, Result<RowOutcome, VaultClientError>)> = stream::iter(to_run)
+        .map(|(row_num, req, classification)| async move {
             let outcome = match classification.action {
                 RowAction::UpdateDraft => {
                     let id = classification
                         .existing_id
                         .expect("update_draft classification always carries the matched id");
-                    retry_update(&client, &id, &req, &token)
+                    retry_update(vault_client, &id, &req, auth_token)
                         .await
                         .map(|_| RowOutcome::Updated(id))
                 }
-                _ => retry_create(&client, &req, &token).await.and_then(|body| {
-                    match body.get("id").and_then(|v| v.as_str()) {
+                _ => retry_create(vault_client, &req, auth_token)
+                    .await
+                    .and_then(|body| match body.get("id").and_then(|v| v.as_str()) {
                         // A 2xx response must carry a non-empty passport id;
                         // recording a missing/empty id as a success would report
                         // an unusable empty id and overstate success_count.
@@ -125,57 +131,51 @@ pub async fn run_batch(
                         _ => Err(VaultClientError::Parse(
                             "vault returned success without a passport id".into(),
                         )),
-                    }
-                }),
+                    }),
             };
             (row_num, outcome)
-        }));
-    }
+        })
+        .buffered(concurrency.max(1))
+        .collect()
+        .await;
 
     let mut created: Vec<CreatedItem> = Vec::new();
     let mut updated: Vec<UpdatedItem> = Vec::new();
     let mut errors: Vec<RowError> = Vec::new();
 
-    for handle in handles {
-        match handle.await {
-            Ok((row_num, Ok(RowOutcome::Created(passport_id)))) => {
+    for (row_num, outcome) in results {
+        match outcome {
+            Ok(RowOutcome::Created(passport_id)) => {
                 created.push(CreatedItem {
                     row: row_num,
                     passport_id,
                 });
             }
-            Ok((row_num, Ok(RowOutcome::Updated(passport_id)))) => {
+            Ok(RowOutcome::Updated(passport_id)) => {
                 updated.push(UpdatedItem {
                     row: row_num,
                     passport_id,
                 });
             }
-            Ok((row_num, Err(VaultClientError::Validation(msg)))) => {
+            Err(VaultClientError::Validation(msg)) => {
                 errors.push(RowError {
                     row: row_num,
                     field: "request".into(),
                     message: msg,
                 });
             }
-            Ok((row_num, Err(VaultClientError::Unauthorised))) => {
+            Err(VaultClientError::Unauthorised) => {
                 errors.push(RowError {
                     row: row_num,
                     field: "auth".into(),
                     message: "Not authorised — check your Bearer token.".into(),
                 });
             }
-            Ok((row_num, Err(e))) => {
+            Err(e) => {
                 errors.push(RowError {
                     row: row_num,
                     field: "vault".into(),
                     message: e.to_string(),
-                });
-            }
-            Err(join_err) => {
-                errors.push(RowError {
-                    row: 0,
-                    field: "internal".into(),
-                    message: format!("Task panicked: {join_err}"),
                 });
             }
         }

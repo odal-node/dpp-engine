@@ -3,15 +3,12 @@
 use anyhow::{Result, bail};
 
 use crate::{
-    config::Config,
     core::{onboarding::action_node_state, passport::action_publish, types::PublishParams},
-    http::OdalClient,
     stateless::render::render_publish_summary,
 };
 
 pub async fn run_publish(id: Option<&str>) -> Result<()> {
-    let cfg = Config::load()?;
-    let client = OdalClient::new(&cfg.api_key);
+    let (client, cfg) = crate::http::load_client()?;
 
     // Fail fast (one round-trip) if the operator identity isn't complete — the
     // node would otherwise reject every passport individually at publish.

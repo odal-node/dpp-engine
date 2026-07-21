@@ -18,7 +18,7 @@ use dpp_types::{
     WebhookSubscriptionStore,
 };
 
-use super::{PgDal, db_err};
+use super::{PgDal, db_err, require_updated};
 
 /// PostgreSQL implementation of the webhook subscription store and delivery outbox.
 pub struct PgWebhookRepo {
@@ -173,7 +173,7 @@ impl WebhookOutbox for PgWebhookRepo {
     }
 
     async fn mark_delivered(&self, delivery_id: Uuid) -> Result<(), DppError> {
-        sqlx::query(
+        let res = sqlx::query(
             r#"UPDATE odal.webhook_delivery SET
                  status = 'delivered',
                  delivered_at = now(),
@@ -187,7 +187,7 @@ impl WebhookOutbox for PgWebhookRepo {
         .execute(self.dal.pool())
         .await
         .map_err(db_err)?;
-        Ok(())
+        require_updated(&res, "webhook_delivery row", delivery_id)
     }
 
     async fn mark_attempt_failed(
@@ -198,7 +198,7 @@ impl WebhookOutbox for PgWebhookRepo {
         // Exponential backoff on the *new* attempt count, capped at 1h, with
         // 0.75–1.25× jitter to avoid thundering-herd retries — identical to the
         // registry-sync outbox. `attempts` is the pre-increment value.
-        sqlx::query(
+        let res = sqlx::query(
             r#"UPDATE odal.webhook_delivery SET
                  attempts = attempts + 1,
                  message = $2,
@@ -214,11 +214,11 @@ impl WebhookOutbox for PgWebhookRepo {
         .execute(self.dal.pool())
         .await
         .map_err(db_err)?;
-        Ok(())
+        require_updated(&res, "webhook_delivery row", delivery_id)
     }
 
     async fn mark_exhausted(&self, delivery_id: Uuid, message: String) -> Result<(), DppError> {
-        sqlx::query(
+        let res = sqlx::query(
             r#"UPDATE odal.webhook_delivery SET
                  status = 'exhausted',
                  message = $2,
@@ -232,7 +232,7 @@ impl WebhookOutbox for PgWebhookRepo {
         .execute(self.dal.pool())
         .await
         .map_err(db_err)?;
-        Ok(())
+        require_updated(&res, "webhook_delivery row", delivery_id)
     }
 
     async fn status_counts(&self) -> Result<WebhookCounts, DppError> {

@@ -12,7 +12,10 @@ use serde::Deserialize;
 
 use crate::{middleware::auth::AuthContext, state::AppState};
 
-use super::error::{api_error, internal_error, parse_passport_id};
+use super::error::{
+    conflict_error, internal_error, not_found_error, parse_passport_id, require_write,
+    validation_error,
+};
 
 /// Body for initiating a transfer: the outgoing and incoming operators and the
 /// reason. In the managed single-node model the caller supplies both parties.
@@ -38,12 +41,8 @@ pub async fn transfer_initiate_handler(
     Path(dpp_id): Path<String>,
     Json(body): Json<TransferInitiateRequest>,
 ) -> impl IntoResponse {
-    if !auth.scope.can_write() {
-        return api_error(
-            StatusCode::FORBIDDEN,
-            "FORBIDDEN",
-            "Initiating a transfer requires a write-scoped credential.",
-        );
+    if let Some(resp) = require_write(&auth, "Initiating a transfer") {
+        return resp;
     }
     let id = match parse_passport_id(&dpp_id) {
         Ok(i) => i,
@@ -62,19 +61,11 @@ pub async fn transfer_initiate_handler(
         .await
     {
         Ok(r) => (StatusCode::OK, Json(r)).into_response(),
-        Err(dpp_domain::DppError::NotFound(_)) => {
-            api_error(StatusCode::NOT_FOUND, "NOT_FOUND", "DPP not found.")
+        Err(dpp_domain::DppError::NotFound(_)) => not_found_error("DPP not found."),
+        Err(dpp_domain::DppError::InvalidTransition { .. }) => {
+            conflict_error("Only a published DPP can be transferred.")
         }
-        Err(dpp_domain::DppError::InvalidTransition { .. }) => api_error(
-            StatusCode::CONFLICT,
-            "CONFLICT",
-            "Only a published DPP can be transferred.",
-        ),
-        Err(e @ dpp_domain::DppError::Validation(_)) => api_error(
-            StatusCode::UNPROCESSABLE_ENTITY,
-            "VALIDATION_ERROR",
-            &e.to_string(),
-        ),
+        Err(e @ dpp_domain::DppError::Validation(_)) => validation_error(&e.to_string()),
         Err(e) => internal_error(e),
     }
 }
@@ -86,12 +77,8 @@ pub async fn transfer_accept_handler(
     Extension(auth): Extension<AuthContext>,
     Path(dpp_id): Path<String>,
 ) -> impl IntoResponse {
-    if !auth.scope.can_write() {
-        return api_error(
-            StatusCode::FORBIDDEN,
-            "FORBIDDEN",
-            "Accepting a transfer requires a write-scoped credential.",
-        );
+    if let Some(resp) = require_write(&auth, "Accepting a transfer") {
+        return resp;
     }
     let id = match parse_passport_id(&dpp_id) {
         Ok(i) => i,
@@ -99,16 +86,10 @@ pub async fn transfer_accept_handler(
     };
     match state.service.accept_transfer(id, &auth).await {
         Ok(r) => (StatusCode::OK, Json(r)).into_response(),
-        Err(dpp_domain::DppError::NotFound(_)) => api_error(
-            StatusCode::NOT_FOUND,
-            "NOT_FOUND",
-            "No transfer to accept for this DPP.",
-        ),
-        Err(e @ dpp_domain::DppError::Validation(_)) => api_error(
-            StatusCode::UNPROCESSABLE_ENTITY,
-            "VALIDATION_ERROR",
-            &e.to_string(),
-        ),
+        Err(dpp_domain::DppError::NotFound(_)) => {
+            not_found_error("No transfer to accept for this DPP.")
+        }
+        Err(e @ dpp_domain::DppError::Validation(_)) => validation_error(&e.to_string()),
         Err(e) => internal_error(e),
     }
 }

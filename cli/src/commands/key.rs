@@ -13,8 +13,7 @@ use crate::{
 };
 
 pub async fn run_key_create(name: &str, activate: bool) -> Result<()> {
-    let mut cfg = Config::load()?;
-    let client = OdalClient::new(&cfg.api_key);
+    let (client, mut cfg) = crate::http::load_client()?;
     let result = action_key_create(
         &KeyCreateParams {
             name: name.to_owned(),
@@ -36,16 +35,14 @@ pub async fn run_key_create(name: &str, activate: bool) -> Result<()> {
 }
 
 pub async fn run_key_list() -> Result<()> {
-    let cfg = Config::load()?;
-    let client = OdalClient::new(&cfg.api_key);
+    let (client, cfg) = crate::http::load_client()?;
     let keys = action_key_list(&client, &cfg).await?;
     render_key_list(&keys);
     Ok(())
 }
 
 pub async fn run_key_revoke(id: &str) -> Result<()> {
-    let cfg = Config::load()?;
-    let client = OdalClient::new(&cfg.api_key);
+    let (client, cfg) = crate::http::load_client()?;
     action_key_revoke(&KeyRevokeParams { id: id.to_owned() }, &client, &cfg).await?;
     println!("API key {id} revoked.");
     Ok(())

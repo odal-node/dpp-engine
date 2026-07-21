@@ -4,7 +4,10 @@
 use anyhow::{Context, Result, bail};
 use serde_json::json;
 
-use crate::{config::Config, http::OdalClient};
+use crate::{
+    config::Config,
+    http::{OdalClient, describe_error},
+};
 
 /// A webhook subscription row for display (secret redacted).
 pub struct WebhookEntry {
@@ -59,7 +62,7 @@ pub async fn action_webhook_list(client: &OdalClient, cfg: &Config) -> Result<Ve
     let url = format!("{}/api/v1/webhooks", cfg.vault_url);
     let (status, body) = client.get(&url).await?;
     if !status.is_success() {
-        bail!("failed to list webhooks (HTTP {status}): {body}");
+        bail!("failed to list webhooks: {}", describe_error(status, &body));
     }
     Ok(array_body(&body).iter().map(entry_from).collect())
 }
@@ -83,7 +86,7 @@ pub async fn action_webhook_add(
     }
     let (status, body) = client.post_json(&url, &payload).await?;
     if !status.is_success() {
-        bail!("webhook creation failed (HTTP {status}): {body}");
+        bail!("webhook creation failed: {}", describe_error(status, &body));
     }
     let v: serde_json::Value = serde_json::from_str(&body).context("could not parse response")?;
     Ok(CreatedWebhook {
@@ -96,7 +99,7 @@ pub async fn action_webhook_remove(id: &str, client: &OdalClient, cfg: &Config) 
     let url = format!("{}/api/v1/webhooks/{id}", cfg.vault_url);
     let (status, body) = client.delete(&url).await?;
     if !status.is_success() {
-        bail!("remove failed (HTTP {status}): {body}");
+        bail!("remove failed: {}", describe_error(status, &body));
     }
     Ok(())
 }
@@ -105,7 +108,7 @@ pub async fn action_webhook_test(id: &str, client: &OdalClient, cfg: &Config) ->
     let url = format!("{}/api/v1/webhooks/{id}/test", cfg.vault_url);
     let (status, body) = client.post_empty(&url).await?;
     if !status.is_success() {
-        bail!("test delivery failed (HTTP {status}): {body}");
+        bail!("test delivery failed: {}", describe_error(status, &body));
     }
     Ok(())
 }

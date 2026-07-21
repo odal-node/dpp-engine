@@ -71,11 +71,11 @@ impl PassportService {
     /// Verify a stored dossier's signatures and hash chains.
     pub async fn verify_evidence(&self, dossier_id: Uuid) -> Result<VerificationReport, DppError> {
         let record = self.get_evidence(dossier_id).await?;
-        let bytes = serde_json::to_vec(&record.dossier)
-            .map_err(|e| DppError::Serialisation(e.to_string()))?;
-        crate::domain::verify::verify_dossier_json(&bytes).map_err(|e| {
-            DppError::Internal(format!("stored dossier {dossier_id} failed to parse: {e}"))
-        })
+        // The record already carries a typed `DossierV1` — verify it directly
+        // rather than serialising to bytes and re-parsing through
+        // `verify_dossier_json`, which exists for the *uploaded-document* path
+        // where the input genuinely starts as untyped bytes.
+        Ok(crate::domain::verify::verify_dossier(&record.dossier))
     }
 
     /// Assemble the evidence dossier for a passport. Requires the passport to

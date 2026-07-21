@@ -3,7 +3,10 @@
 use anyhow::{Context, Result};
 
 use super::super::types::{ListParams, PassportPage, PassportSummary};
-use crate::{config::Config, http::OdalClient};
+use crate::{
+    config::Config,
+    http::{OdalClient, describe_error},
+};
 
 /// Fetch one page of passports, optionally filtered by status and free-text `q`.
 /// Mirrors the vault's `GET /api/v1/dpps` (status + q + pagination + total).
@@ -28,7 +31,10 @@ pub async fn action_list(
 
     let (http_status, body) = client.get(&url).await?;
     if !http_status.is_success() {
-        anyhow::bail!("List request failed (HTTP {http_status}): {body}");
+        anyhow::bail!(
+            "List request failed: {}",
+            describe_error(http_status, &body)
+        );
     }
     let envelope: serde_json::Value =
         serde_json::from_str(&body).context("Failed to parse vault response as JSON")?;
@@ -63,7 +69,10 @@ pub async fn action_get(id: &str, client: &OdalClient, cfg: &Config) -> Result<s
     let url = format!("{}/api/v1/dpp/{id}", cfg.vault_url);
     let (http_status, body) = client.get(&url).await?;
     if !http_status.is_success() {
-        anyhow::bail!("Read request failed (HTTP {http_status}): {body}");
+        anyhow::bail!(
+            "Read request failed: {}",
+            describe_error(http_status, &body)
+        );
     }
     serde_json::from_str(&body).context("Failed to parse passport JSON")
 }

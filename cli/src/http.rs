@@ -189,3 +189,76 @@ impl OdalClient {
         Ok((status, body))
     }
 }
+
+/// Load the active profile and build an authenticated client from its API
+/// key — the standard startup glue every stateless command and console menu
+/// action needs before it can talk to the node.
+pub fn load_client() -> Result<(OdalClient, crate::config::Config)> {
+    let cfg = crate::config::Config::load()?;
+    let client = OdalClient::new(&cfg.api_key);
+    Ok((client, cfg))
+}
+
+/// Parsed subset of an RFC 7807 problem body — just enough to render a human
+/// sentence instead of the raw JSON.
+#[derive(serde::Deserialize)]
+struct ProblemBody {
+    title: String,
+    detail: Option<String>,
+}
+
+/// Render a non-2xx response as a human-readable message. Every node service
+/// (vault/identity/integrator/resolver) replies with an RFC 7807 problem body
+/// on error — this extracts `title`/`detail` from it. Falls back to the raw
+/// (truncated) body for anything that isn't that shape.
+pub fn describe_error(status: StatusCode, body: &str) -> String {
+    match serde_json::from_str::<ProblemBody>(body) {
+        Ok(p) => match p.detail.filter(|d| !d.is_empty()) {
+            Some(d) => format!("{} — {d}", p.title),
+            None => p.title,
+        },
+        Err(_) => format!(
+            "HTTP {status}: {}",
+            crate::stateless::render::truncate(body, 300)
+        ),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn describe_error_extracts_title_and_detail() {
+        let body = r#"{"type":"https://problems.odal-node.io/not-found","title":"Not Found","status":404,"detail":"passport abc123 does not exist"}"#;
+        assert_eq!(
+            describe_error(StatusCode::NOT_FOUND, body),
+            "Not Found — passport abc123 does not exist"
+        );
+    }
+
+    #[test]
+    fn describe_error_falls_back_when_detail_absent() {
+        let body = r#"{"type":"https://problems.odal-node.io/bad-request","title":"Bad Request","status":400}"#;
+        assert_eq!(describe_error(StatusCode::BAD_REQUEST, body), "Bad Request");
+    }
+
+    #[test]
+    fn describe_error_falls_back_for_non_problem_bodies() {
+        let msg = describe_error(StatusCode::BAD_GATEWAY, "<html>502 Bad Gateway</html>");
+        assert!(msg.starts_with("HTTP 502 Bad Gateway: "));
+        assert!(msg.contains("<html>502 Bad Gateway</html>"));
+    }
+
+    #[test]
+    fn describe_error_truncates_a_huge_fallback_body() {
+        let body = "x".repeat(1000);
+        let msg = describe_error(StatusCode::INTERNAL_SERVER_ERROR, &body);
+        assert!(
+            msg.len() < 350,
+            "expected a truncated message, got {} chars",
+            msg.len()
+        );
+        assert!(msg.ends_with('…'));
+    }
+}

@@ -9,7 +9,10 @@ use axum::{
 
 use crate::{middleware::auth::AuthContext, state::AppState};
 
-use super::error::{api_error, internal_error, parse_passport_id};
+use super::error::{
+    api_error, conflict_error, internal_error, not_found_error, parse_passport_id, require_write,
+    validation_error,
+};
 
 /// `POST /api/v1/dpp/{dppId}/publish` — Ed25519-sign and publish a draft passport.
 ///
@@ -21,12 +24,8 @@ pub async fn publish_handler(
     Extension(auth): Extension<AuthContext>,
     Path(dpp_id): Path<String>,
 ) -> impl IntoResponse {
-    if !auth.scope.can_write() {
-        return api_error(
-            StatusCode::FORBIDDEN,
-            "FORBIDDEN",
-            "Publishing a passport requires a write-scoped credential.",
-        );
+    if let Some(resp) = require_write(&auth, "Publishing a passport") {
+        return resp;
     }
     let passport_id = match parse_passport_id(&dpp_id) {
         Ok(id) => id,
@@ -58,21 +57,13 @@ pub async fn publish_handler(
 
     match state.service.publish(passport_id, &auth).await {
         Ok(p) => (StatusCode::OK, Json(p)).into_response(),
-        Err(dpp_domain::DppError::NotFound(_)) => {
-            api_error(StatusCode::NOT_FOUND, "NOT_FOUND", "DPP not found.")
+        Err(dpp_domain::DppError::NotFound(_)) => not_found_error("DPP not found."),
+        Err(dpp_domain::DppError::InvalidTransition { .. }) => {
+            conflict_error("DPP cannot be published from its current state.")
         }
-        Err(dpp_domain::DppError::InvalidTransition { .. }) => api_error(
-            StatusCode::CONFLICT,
-            "CONFLICT",
-            "DPP cannot be published from its current state.",
-        ),
         // Publish-time gates (Annex III completeness, binding compliance
         // violations, sector-data validation) surface as client errors, not 500s.
-        Err(dpp_domain::DppError::Validation(msg)) => api_error(
-            StatusCode::UNPROCESSABLE_ENTITY,
-            "VALIDATION_ERROR",
-            &msg.to_string(),
-        ),
+        Err(dpp_domain::DppError::Validation(msg)) => validation_error(&msg.to_string()),
         Err(e) => internal_error(e),
     }
 }

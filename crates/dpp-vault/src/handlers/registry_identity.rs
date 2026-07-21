@@ -15,21 +15,7 @@ use dpp_types::registry_identity::{CreateFacilityRequest, CreateOperatorIdentifi
 
 use crate::{middleware::auth::AuthContext, state::AppState};
 
-use super::error::{api_error, internal_error};
-
-/// Facility / operator-identifier management is an administrative action — a
-/// least-privilege key must not mutate the operator's registry identity.
-fn require_admin(auth: &AuthContext) -> Option<axum::response::Response> {
-    if auth.scope.is_admin() {
-        None
-    } else {
-        Some(api_error(
-            StatusCode::FORBIDDEN,
-            "FORBIDDEN",
-            "Registry-identity management requires an admin-scoped credential.",
-        ))
-    }
-}
+use super::error::{api_error, internal_error, not_found_error, require_admin, validation_error};
 
 // ── Facilities ───────────────────────────────────────────────────────────────
 
@@ -38,7 +24,7 @@ pub async fn facilities_list_handler(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthContext>,
 ) -> impl IntoResponse {
-    if let Some(resp) = require_admin(&auth) {
+    if let Some(resp) = require_admin(&auth, "Registry-identity management") {
         return resp;
     }
     match state.registry_identity_service.list_facilities().await {
@@ -53,7 +39,7 @@ pub async fn facilities_create_handler(
     Extension(auth): Extension<AuthContext>,
     Json(body): Json<CreateFacilityRequest>,
 ) -> impl IntoResponse {
-    if let Some(resp) = require_admin(&auth) {
+    if let Some(resp) = require_admin(&auth, "Registry-identity management") {
         return resp;
     }
     match state
@@ -62,11 +48,7 @@ pub async fn facilities_create_handler(
         .await
     {
         Ok(f) => (StatusCode::CREATED, Json(f)).into_response(),
-        Err(DppError::Validation(msg)) => api_error(
-            StatusCode::UNPROCESSABLE_ENTITY,
-            "VALIDATION_ERROR",
-            &msg.to_string(),
-        ),
+        Err(DppError::Validation(msg)) => validation_error(&msg.to_string()),
         Err(e) => internal_error(e),
     }
 }
@@ -77,7 +59,7 @@ pub async fn facilities_set_default_handler(
     Extension(auth): Extension<AuthContext>,
     Path(id): Path<String>,
 ) -> impl IntoResponse {
-    if let Some(resp) = require_admin(&auth) {
+    if let Some(resp) = require_admin(&auth, "Registry-identity management") {
         return resp;
     }
     let parsed = match Uuid::parse_str(&id) {
@@ -96,9 +78,7 @@ pub async fn facilities_set_default_handler(
         .await
     {
         Ok(()) => StatusCode::NO_CONTENT.into_response(),
-        Err(DppError::NotFound(_)) => {
-            api_error(StatusCode::NOT_FOUND, "NOT_FOUND", "Facility not found")
-        }
+        Err(DppError::NotFound(_)) => not_found_error("Facility not found"),
         Err(e) => internal_error(e),
     }
 }
@@ -110,7 +90,7 @@ pub async fn facilities_delete_handler(
     Extension(auth): Extension<AuthContext>,
     Path(id): Path<String>,
 ) -> impl IntoResponse {
-    if let Some(resp) = require_admin(&auth) {
+    if let Some(resp) = require_admin(&auth, "Registry-identity management") {
         return resp;
     }
     let parsed = match Uuid::parse_str(&id) {
@@ -129,14 +109,8 @@ pub async fn facilities_delete_handler(
         .await
     {
         Ok(()) => StatusCode::NO_CONTENT.into_response(),
-        Err(DppError::NotFound(_)) => {
-            api_error(StatusCode::NOT_FOUND, "NOT_FOUND", "Facility not found")
-        }
-        Err(DppError::Validation(msg)) => api_error(
-            StatusCode::UNPROCESSABLE_ENTITY,
-            "VALIDATION_ERROR",
-            &msg.to_string(),
-        ),
+        Err(DppError::NotFound(_)) => not_found_error("Facility not found"),
+        Err(DppError::Validation(msg)) => validation_error(&msg.to_string()),
         Err(e) => internal_error(e),
     }
 }
@@ -147,7 +121,7 @@ pub async fn facilities_audit_handler(
     Extension(auth): Extension<AuthContext>,
     Path(id): Path<String>,
 ) -> impl IntoResponse {
-    if let Some(resp) = require_admin(&auth) {
+    if let Some(resp) = require_admin(&auth, "Registry-identity management") {
         return resp;
     }
     let parsed = match Uuid::parse_str(&id) {
@@ -173,7 +147,7 @@ pub async fn operator_ids_list_handler(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthContext>,
 ) -> impl IntoResponse {
-    if let Some(resp) = require_admin(&auth) {
+    if let Some(resp) = require_admin(&auth, "Registry-identity management") {
         return resp;
     }
     match state
@@ -192,7 +166,7 @@ pub async fn operator_ids_create_handler(
     Extension(auth): Extension<AuthContext>,
     Json(body): Json<CreateOperatorIdentifierRequest>,
 ) -> impl IntoResponse {
-    if let Some(resp) = require_admin(&auth) {
+    if let Some(resp) = require_admin(&auth, "Registry-identity management") {
         return resp;
     }
     // The identifier itself carries no per-entry country (an Art. 13 economic-
@@ -208,11 +182,7 @@ pub async fn operator_ids_create_handler(
         .await
     {
         Ok(o) => (StatusCode::CREATED, Json(o)).into_response(),
-        Err(DppError::Validation(msg)) => api_error(
-            StatusCode::UNPROCESSABLE_ENTITY,
-            "VALIDATION_ERROR",
-            &msg.to_string(),
-        ),
+        Err(DppError::Validation(msg)) => validation_error(&msg.to_string()),
         Err(e) => internal_error(e),
     }
 }
@@ -223,7 +193,7 @@ pub async fn operator_ids_set_primary_handler(
     Extension(auth): Extension<AuthContext>,
     Path(id): Path<String>,
 ) -> impl IntoResponse {
-    if let Some(resp) = require_admin(&auth) {
+    if let Some(resp) = require_admin(&auth, "Registry-identity management") {
         return resp;
     }
     let parsed = match Uuid::parse_str(&id) {
@@ -242,11 +212,7 @@ pub async fn operator_ids_set_primary_handler(
         .await
     {
         Ok(()) => StatusCode::NO_CONTENT.into_response(),
-        Err(DppError::NotFound(_)) => api_error(
-            StatusCode::NOT_FOUND,
-            "NOT_FOUND",
-            "Operator identifier not found",
-        ),
+        Err(DppError::NotFound(_)) => not_found_error("Operator identifier not found"),
         Err(e) => internal_error(e),
     }
 }
@@ -258,7 +224,7 @@ pub async fn operator_ids_delete_handler(
     Extension(auth): Extension<AuthContext>,
     Path(id): Path<String>,
 ) -> impl IntoResponse {
-    if let Some(resp) = require_admin(&auth) {
+    if let Some(resp) = require_admin(&auth, "Registry-identity management") {
         return resp;
     }
     let parsed = match Uuid::parse_str(&id) {
@@ -277,16 +243,8 @@ pub async fn operator_ids_delete_handler(
         .await
     {
         Ok(()) => StatusCode::NO_CONTENT.into_response(),
-        Err(DppError::NotFound(_)) => api_error(
-            StatusCode::NOT_FOUND,
-            "NOT_FOUND",
-            "Operator identifier not found",
-        ),
-        Err(DppError::Validation(msg)) => api_error(
-            StatusCode::UNPROCESSABLE_ENTITY,
-            "VALIDATION_ERROR",
-            &msg.to_string(),
-        ),
+        Err(DppError::NotFound(_)) => not_found_error("Operator identifier not found"),
+        Err(DppError::Validation(msg)) => validation_error(&msg.to_string()),
         Err(e) => internal_error(e),
     }
 }
@@ -297,7 +255,7 @@ pub async fn operator_ids_audit_handler(
     Extension(auth): Extension<AuthContext>,
     Path(id): Path<String>,
 ) -> impl IntoResponse {
-    if let Some(resp) = require_admin(&auth) {
+    if let Some(resp) = require_admin(&auth, "Registry-identity management") {
         return resp;
     }
     let parsed = match Uuid::parse_str(&id) {
@@ -317,28 +275,5 @@ pub async fn operator_ids_audit_handler(
     {
         Ok(items) => (StatusCode::OK, Json(items)).into_response(),
         Err(e) => internal_error(e),
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use dpp_types::api_key::ApiKeyScope;
-
-    fn ctx(scope: ApiKeyScope) -> AuthContext {
-        AuthContext {
-            user_id: "test".into(),
-            scope,
-            key_id: None,
-        }
-    }
-
-    #[test]
-    fn admin_allowed_others_forbidden() {
-        assert!(require_admin(&ctx(ApiKeyScope::Admin)).is_none());
-        for scope in [ApiKeyScope::Write, ApiKeyScope::Read] {
-            let resp = require_admin(&ctx(scope)).expect("non-admin must be blocked");
-            assert_eq!(resp.status(), StatusCode::FORBIDDEN);
-        }
     }
 }

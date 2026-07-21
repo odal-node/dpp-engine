@@ -3,18 +3,13 @@
 
 use anyhow::Result;
 
-use crate::{
-    config::Config,
-    core::registry_identity::{
-        FacilityCreateParams, action_facility_add, action_facility_list, action_facility_remove,
-        action_facility_set_default,
-    },
-    http::OdalClient,
+use crate::core::registry_identity::{
+    FacilityCreateParams, action_facility_add, action_facility_list, action_facility_remove,
+    action_facility_set_default,
 };
 
 pub async fn run_facility_list() -> Result<()> {
-    let cfg = Config::load()?;
-    let client = OdalClient::new(&cfg.api_key);
+    let (client, cfg) = crate::http::load_client()?;
     let facilities = action_facility_list(&client, &cfg).await?;
     if facilities.is_empty() {
         println!("No facilities configured. Add one with `odal facility add`.");
@@ -47,8 +42,7 @@ pub async fn run_facility_add(
     address: Option<String>,
     default: bool,
 ) -> Result<()> {
-    let cfg = Config::load()?;
-    let client = OdalClient::new(&cfg.api_key);
+    let (client, cfg) = crate::http::load_client()?;
     let f = action_facility_add(
         &FacilityCreateParams {
             name,
@@ -73,16 +67,14 @@ pub async fn run_facility_add(
 }
 
 pub async fn run_facility_set_default(id: &str) -> Result<()> {
-    let cfg = Config::load()?;
-    let client = OdalClient::new(&cfg.api_key);
+    let (client, cfg) = crate::http::load_client()?;
     action_facility_set_default(id, &client, &cfg).await?;
     println!("Facility {id} is now the default.");
     Ok(())
 }
 
 pub async fn run_facility_remove(id: &str) -> Result<()> {
-    let cfg = Config::load()?;
-    let client = OdalClient::new(&cfg.api_key);
+    let (client, cfg) = crate::http::load_client()?;
     action_facility_remove(id, &client, &cfg).await?;
     println!("Facility {id} removed.");
     Ok(())
