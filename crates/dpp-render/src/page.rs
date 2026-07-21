@@ -1,6 +1,8 @@
 //! The public passport page — one renderer for the live read and the
 //! pre-rendered continuity snapshot.
 
+use std::fmt::Write as _;
+
 use chrono::{DateTime, Utc};
 use qrcode::QrCode;
 
@@ -162,14 +164,15 @@ pub fn build_qr_svg(carrier_uri: &str) -> String {
     let quiet = 4u32; // quiet zone in modules
     let total = (width as u32 + quiet * 2) * module_size;
 
-    let mut rects = String::new();
+    let mut rects = String::with_capacity(colors.len() * 48);
     for (i, color) in colors.iter().enumerate() {
         if *color == qrcode::Color::Dark {
             let x = (i as u32 % width as u32 + quiet) * module_size;
             let y = (i as u32 / width as u32 + quiet) * module_size;
-            rects.push_str(&format!(
+            let _ = write!(
+                rects,
                 r#"<rect x="{x}" y="{y}" width="{module_size}" height="{module_size}"/>"#
-            ));
+            );
         }
     }
 
