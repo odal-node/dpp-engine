@@ -134,7 +134,10 @@ mod tests {
     // "load any wasm with a warning" path is closed end-to-end, not just in the
     // policy helper. Relies on PLUGIN_SIGNING_KEY / ALLOW_UNSIGNED_PLUGINS being
     // unset in the test environment (as the other boot tests already assume).
+    // `#[serial]` because it reads the same process-global env var that
+    // `allow_unsigned_plugins_env_var_actually_loads_a_real_plugin` mutates.
     #[test]
+    #[serial_test::serial]
     fn boot_refuses_unsigned_plugin_without_key() {
         if std::env::var("PLUGIN_SIGNING_KEY").is_ok()
             || std::env::var("ALLOW_UNSIGNED_PLUGINS").is_ok()

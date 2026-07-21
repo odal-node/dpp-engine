@@ -48,11 +48,15 @@ pub async fn verify_handler(
         return (StatusCode::OK, Json(json!({"valid": false}))).into_response();
     }
 
+    // A structurally malformed signature segment (bad base64, wrong decoded
+    // length) is the caller presenting an invalid proof, not a server fault —
+    // fail closed the same as every other invalid-input path above, rather
+    // than a 500 that reads as "the service is broken."
     let sig_valid = match signer::verify(&state.store, &body.operator_id, &body.jws) {
         Ok(v) => v,
         Err(e) => {
-            tracing::error!(operator_id = %body.operator_id, error = %e, "verify failed");
-            return http_problem::internal_error(e.to_string()).into_response();
+            tracing::warn!(operator_id = %body.operator_id, error = %e, "malformed signature");
+            false
         }
     };
 
@@ -173,6 +177,30 @@ mod tests {
         let resp = post_json(
             &app,
             json!({"operator_id": "root", "jws": "not-a-jws", "payload": payload}),
+        )
+        .await;
+        assert_eq!(resp["valid"], false);
+    }
+
+    /// A JWS with the right shape (three dot-separated parts) but a signature
+    /// segment that isn't decodable base64 must still fail closed as `false`,
+    /// not 500 — `signer::verify` returns `Err` for this input, and a known
+    /// operator with a real key means we reach that call, unlike the
+    /// no-such-operator case above which never gets that far.
+    #[tokio::test]
+    async fn a_structurally_malformed_signature_segment_is_rejected_not_a_500() {
+        let store = temp_store();
+        store.generate_key("root").expect("provision key");
+        let payload = json!({"passportId": "abc"});
+
+        let app = app(store);
+        let resp = post_json(
+            &app,
+            json!({
+                "operator_id": "root",
+                "jws": "aGVhZGVy.cGF5bG9hZA.!!!not-valid-base64!!!",
+                "payload": payload
+            }),
         )
         .await;
         assert_eq!(resp["valid"], false);
