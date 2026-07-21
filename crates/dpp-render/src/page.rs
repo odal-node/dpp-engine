@@ -185,3 +185,146 @@ pub fn build_qr_svg(carrier_uri: &str) -> String {
 </svg>"#
     )
 }
+
+#[cfg(test)]
+mod tests {
+    use chrono::TimeZone;
+
+    use super::*;
+
+    // Same fixture id used in `carrier.rs`'s tests — first 10 bytes hex-encode
+    // to a fixed 20-char AI 21 serial, so the QR carrier URI is deterministic.
+    const DPP_ID: &str = "0190a9f0-1234-7abc-8def-0123456789ab";
+
+    /// Deliberately **not** a realistic Public-tier view: it includes `batchId`,
+    /// which `SectorAccessPolicy::passport_default` tiers as Professional (see
+    /// the README), so a genuine public read would never contain it. Used here
+    /// to test `render_page`'s raw mechanics — it renders whatever it is given,
+    /// by design — not to model what a real public render looks like.
+    fn unredacted_passport() -> serde_json::Value {
+        serde_json::json!({
+            "productName": "Organic Cotton T-Shirt",
+            "manufacturer": { "name": "Sample Textiles Co." },
+            "status": "active",
+            "batchId": "BATCH-42",
+            "sectorData": { "sector": "textile", "gtin": "09506000134352" }
+        })
+    }
+
+    #[test]
+    fn live_render_includes_core_fields_and_no_banner() {
+        let html = render_page(
+            DPP_ID,
+            &unredacted_passport(),
+            "https://id.odal-node.io",
+            SnapshotNotice::Live,
+        );
+        assert!(html.contains("Organic Cotton T-Shirt"));
+        assert!(html.contains("Sample Textiles Co."));
+        assert!(html.contains("badge-active"));
+        assert!(html.contains("BATCH-42"));
+        assert!(html.contains(DPP_ID));
+        assert!(
+            !html.contains("This is a saved copy"),
+            "live render must not show a snapshot banner"
+        );
+        assert!(html.starts_with("<!DOCTYPE html>"));
+    }
+
+    /// `batchId` is Professional-tier (see the README), so a genuine Public-tier
+    /// view never contains it — `dpp-vault::public_view` strips it before this
+    /// crate ever sees the passport. Pins the resulting fallback: the row still
+    /// renders, showing "-" rather than being silently omitted or erroring.
+    #[test]
+    fn batch_id_absent_from_a_realistic_public_view_falls_back_to_dash() {
+        let p = serde_json::json!({
+            "productName": "Organic Cotton T-Shirt",
+            "manufacturer": { "name": "Sample Textiles Co." },
+            "status": "active",
+            "sectorData": { "sector": "textile", "gtin": "09506000134352" }
+        });
+        let html = render_page(DPP_ID, &p, "https://id.odal-node.io", SnapshotNotice::Live);
+        assert!(
+            html.contains("<th scope=\"row\">Batch ID</th><td>-</td>"),
+            "expected batch id to fall back to a dash: {html}"
+        );
+    }
+
+    #[test]
+    fn snapshot_render_shows_dated_banner() {
+        let ts = Utc.with_ymd_and_hms(2026, 7, 19, 12, 30, 0).unwrap();
+        let html = render_page(
+            DPP_ID,
+            &unredacted_passport(),
+            "https://id.odal-node.io",
+            SnapshotNotice::AsOf(ts),
+        );
+        assert!(html.contains("snapshot-note"));
+        assert!(html.contains("2026-07-19 12:30"));
+    }
+
+    #[test]
+    fn missing_fields_fall_back_to_placeholders() {
+        let html = render_page(
+            DPP_ID,
+            &serde_json::json!({}),
+            "https://id.odal-node.io",
+            SnapshotNotice::Live,
+        );
+        assert!(html.contains("Unknown product"));
+        assert!(html.contains("badge-unknown"));
+        assert!(
+            html.contains(">-<"),
+            "gtin/batch must fall back to a dash, not be omitted"
+        );
+    }
+
+    /// `render_page` reads a fixed set of named fields off the passport — it must
+    /// not fall back to serializing unrecognised top-level data. Guards the same
+    /// leak-safe-by-construction property the section builders rely on, at the
+    /// whole-page level.
+    #[test]
+    fn unrecognised_fields_are_never_rendered() {
+        let mut p = unredacted_passport();
+        p["internalNotes"] = serde_json::json!("MARKER_INTERNAL_NOTES");
+        p["supplierCostEur"] = serde_json::json!("MARKER_SUPPLIER_COST");
+        let html = render_page(DPP_ID, &p, "https://id.odal-node.io", SnapshotNotice::Live);
+        assert!(!html.contains("MARKER_INTERNAL_NOTES"), "leaked: {html}");
+        assert!(!html.contains("MARKER_SUPPLIER_COST"), "leaked: {html}");
+    }
+
+    #[test]
+    fn dpp_id_is_html_escaped_defensively() {
+        // Real ids are validated at the resolver's edge before reaching this
+        // crate, but this crate offers no such guarantee on its own — belt and
+        // suspenders against a future caller that skips validation.
+        let id = "abc\"><script>alert(1)</script>";
+        let html = render_page(
+            id,
+            &unredacted_passport(),
+            "https://id.odal-node.io",
+            SnapshotNotice::Live,
+        );
+        assert!(
+            !html.contains("<script>"),
+            "unescaped id leaked a tag: {html}"
+        );
+        assert!(html.contains("&lt;script&gt;"));
+    }
+
+    #[test]
+    fn build_qr_svg_encodes_the_carrier_uri() {
+        let svg = build_qr_svg("https://id.odal-node.io/01/09506000134352/21/abc");
+        assert!(svg.starts_with("<svg"));
+        assert!(svg.contains("id.odal-node.io"));
+    }
+
+    #[test]
+    fn build_qr_svg_escapes_the_title() {
+        let svg = build_qr_svg("https://id.odal-node.io/\"><script>alert(1)</script>");
+        assert!(
+            !svg.contains("<script>"),
+            "unescaped uri leaked a tag: {svg}"
+        );
+    }
+}
