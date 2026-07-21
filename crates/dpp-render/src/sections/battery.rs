@@ -1,6 +1,6 @@
 //! Battery sector HTML section.
 
-use crate::esc::esc;
+use crate::fields::{f64_field, str_field, u64_field};
 
 pub(super) fn build_battery_section(p: &serde_json::Value) -> String {
     let sd = match p.get("sectorData") {
@@ -8,40 +8,15 @@ pub(super) fn build_battery_section(p: &serde_json::Value) -> String {
         None => return String::new(),
     };
 
-    let chemistry = esc(sd
-        .get("batteryChemistry")
-        .and_then(|v| v.as_str())
-        .unwrap_or("-"));
-    let voltage = sd
-        .get("nominalVoltageV")
-        .and_then(|v| v.as_f64())
-        .map(|v| format!("{v:.1} V"))
-        .unwrap_or_else(|| "-".into());
-    let capacity = sd
-        .get("nominalCapacityAh")
-        .and_then(|v| v.as_f64())
-        .map(|v| format!("{v:.1} Ah"))
-        .unwrap_or_else(|| "-".into());
-    let cycles = sd
-        .get("expectedLifetimeCycles")
-        .and_then(|v| v.as_u64())
-        .map(|v| format!("{v}"))
-        .unwrap_or_else(|| "-".into());
-    let co2e = sd
-        .get("co2ePerUnitKg")
-        .and_then(|v| v.as_f64())
-        .map(|v| format!("{v:.2} kg CO\u{2082}e"))
-        .unwrap_or_else(|| "Not disclosed".into());
-    let recycled_co = sd
-        .get("recycledContentCobaltPct")
-        .and_then(|v| v.as_f64())
-        .map(|v| format!("{v:.1}%"))
-        .unwrap_or_else(|| "-".into());
-    let recycled_li = sd
-        .get("recycledContentLithiumPct")
-        .and_then(|v| v.as_f64())
-        .map(|v| format!("{v:.1}%"))
-        .unwrap_or_else(|| "-".into());
+    let chemistry = str_field(sd, "batteryChemistry", "-");
+    let voltage = f64_field(sd, "nominalVoltageV", "-", |v| format!("{v:.1} V"));
+    let capacity = f64_field(sd, "nominalCapacityAh", "-", |v| format!("{v:.1} Ah"));
+    let cycles = u64_field(sd, "expectedLifetimeCycles", "-", |v| format!("{v}"));
+    let co2e = f64_field(sd, "co2ePerUnitKg", "Not disclosed", |v| {
+        format!("{v:.2} kg CO\u{2082}e")
+    });
+    let recycled_co = f64_field(sd, "recycledContentCobaltPct", "-", |v| format!("{v:.1}%"));
+    let recycled_li = f64_field(sd, "recycledContentLithiumPct", "-", |v| format!("{v:.1}%"));
 
     format!(
         r#"<h2>Battery Information</h2>
