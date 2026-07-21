@@ -17,7 +17,7 @@ members = [
 ]
 
 [workspace.package]
-version     = "0.7.0"
+version     = "0.8.0"
 edition     = "2024"
 authors     = ["Odal Node <dev@odal-node.io>"]
 license     = "BSL-1.1"

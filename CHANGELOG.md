@@ -10,6 +10,8 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-07-21
+
 ### Added
 
 - Signed sector-plugin hot-install: an admin can install or update a sector
@@ -23,6 +25,23 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 - New endpoint: `POST /api/v1/plugins` (admin-scoped, `multipart/form-data`:
   `wasm` + `sig`, optional `sector`). New CLI: `odal plugin install <file>`
   (uploads the file and its sibling `<file>.sig`).
+- Static continuity tier: publishing, suspending, archiving, or declaring
+  end-of-life on a passport now queues a reconcile that a background drain
+  converges against object storage — a published passport's signed public
+  JSON and a rendered, banner-marked HTML page stay reachable at a stable path
+  even while the node itself is down. An hourly repair sweep requeues any
+  passport whose static-tier state has drifted from the database, covering
+  reconciles lost between commit and enqueue as well as retries that were
+  exhausted.
+- The passport page renderer moved into its own shared crate (`dpp-render`) so
+  the live resolver read and the continuity snapshot render through one
+  implementation, closing the "two renderers" drift risk.
+- Full GS1 Digital Link AI-shape resolution: `/01/{gtin}[/10/{batch}][/21/{serial}]`
+  now resolves on the GTIN for every AI combination this node's own printed
+  carrier can produce, not just the bare GTIN.
+- `odal key use` and `odal bootstrap --admin-pass` accept the secret on stdin,
+  warning when it is instead passed as a literal CLI argument (shell history
+  and process-list exposure).
 
 ### Changed
 
@@ -30,6 +49,45 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   declared ABI the running host cannot honour is refused (fail-closed) instead
   of being loaded and left to fail at dispatch. This applies to boot-time
   discovery as well as runtime install.
+- The public passport view is now served from the payload actually signed at
+  publish time, not re-derived from the live row. A field that is public but
+  still mutable after publish (e.g. `lintResult`, re-stamped by every relint)
+  could previously drift from the frozen `publicJwsSignature` still attached
+  to it, so a consumer verifying the served body against its own signature
+  saw a mismatch that was not tampering.
+- `dpp-types`' content hasher now re-exports `dpp-core`'s canonical
+  implementation instead of a local copy, closing a duplicate-implementation
+  gap. Output is byte-identical to the prior implementation (verified against
+  a golden value on the persisted audit chain hash).
+
+### Fixed
+
+- The GTIN-based resolver route (`/01/{gtin}`) never verified a passport's JWS
+  against the operator DID, unlike every other resolver route — it served
+  whatever the vault returned unverified.
+- `dpp-vault` posted to `/internal/verify`, a route `dpp-identity` never
+  mounted; signature verification on transfer acceptance always silently
+  failed on any deployment running the standalone identity service.
+- `IdentityHttpClient::sign_passport` reparsed its own input payload as a W3C
+  verifiable credential, which fails for every real caller — publish,
+  evidence generation, and transfer all sign non-credential-shaped payloads —
+  whenever the identity service runs as a separate microservice.
+- `GET /api/v1/dpp/by-identity` existed as a handler but was never mounted in
+  the vault's router; the CSV/XLSX importer's identity-based matching was
+  calling a dead endpoint.
+- `ALLOW_UNSIGNED_PLUGINS` (the documented variable, and what `dpp-node`'s own
+  error message told operators to set) and `DPP_ALLOW_UNSIGNED_PLUGINS` (what
+  the loader actually checked) were two different environment variables
+  gating the same decision — following the documented instructions silently
+  loaded zero plugins.
+- The textile CSV importer was the one sector (of five) whose validator
+  skipped GTIN checksum validation; the shipped example template itself
+  carried two invalid-checksum GTINs as a result of that gap.
+- A structurally malformed signature segment on `/internal/verify` returned
+  `500` instead of failing closed with `{"valid": false}`.
+- Recording a passport status-change intent overwrote the EU registry-sync
+  queue state, so suspending or deactivating a passport before its
+  registration drained silently and permanently dropped that registration.
 
 ## [0.6.0] - 2026-07-13
 
