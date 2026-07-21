@@ -11,7 +11,7 @@ use serde::Deserialize;
 
 use crate::{middleware::auth::AuthContext, state::AppState};
 
-use super::error::{api_error, internal_error, parse_passport_id};
+use super::error::{api_error, internal_error, parse_passport_id, require_write};
 
 /// EOL request body: the typed reason plus optional circularity data. The
 /// passport id comes from the path; `declaredAt` is server-stamped.
@@ -40,12 +40,8 @@ pub async fn eol_handler(
     Path(dpp_id): Path<String>,
     Json(body): Json<EolRequest>,
 ) -> impl IntoResponse {
-    if !auth.scope.can_write() {
-        return api_error(
-            StatusCode::FORBIDDEN,
-            "FORBIDDEN",
-            "Declaring a passport end-of-life requires a write-scoped credential.",
-        );
+    if let Some(resp) = require_write(&auth, "Declaring a passport end-of-life") {
+        return resp;
     }
     let passport_id = match parse_passport_id(&dpp_id) {
         Ok(id) => id,

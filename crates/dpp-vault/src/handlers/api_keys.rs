@@ -11,23 +11,7 @@ use dpp_types::api_key::CreateApiKeyRequest;
 
 use crate::{middleware::auth::AuthContext, state::AppState};
 
-use super::error::{api_error, internal_error};
-
-/// Key management is an administrative action. A least-privilege
-/// (`write`/`read`) key must not be able to mint further keys (persistence) or
-/// revoke the operator's own keys (lockout). Returns a 403 response to short-
-/// circuit the handler when the caller is not admin-scoped.
-fn require_admin(auth: &AuthContext) -> Option<axum::response::Response> {
-    if auth.scope.is_admin() {
-        None
-    } else {
-        Some(api_error(
-            StatusCode::FORBIDDEN,
-            "FORBIDDEN",
-            "API key management requires an admin-scoped credential.",
-        ))
-    }
-}
+use super::error::{api_error, internal_error, require_admin};
 
 /// Self-lockout guard: a key may not revoke *itself*. Revoking the very
 /// credential used for this request would lock out the caller (and every client
@@ -53,7 +37,7 @@ pub async fn api_keys_list_handler(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthContext>,
 ) -> impl IntoResponse {
-    if let Some(resp) = require_admin(&auth) {
+    if let Some(resp) = require_admin(&auth, "API key management") {
         return resp;
     }
     match state.api_key_service.list().await {
@@ -69,7 +53,7 @@ pub async fn api_keys_create_handler(
     Extension(auth): Extension<AuthContext>,
     Json(body): Json<CreateApiKeyRequest>,
 ) -> impl IntoResponse {
-    if let Some(resp) = require_admin(&auth) {
+    if let Some(resp) = require_admin(&auth, "API key management") {
         return resp;
     }
     // Omitted scope defaults to Admin (backward compatible). Operators should
@@ -98,7 +82,7 @@ pub async fn api_keys_delete_handler(
     Extension(auth): Extension<AuthContext>,
     Path(id): Path<String>,
 ) -> impl IntoResponse {
-    if let Some(resp) = require_admin(&auth) {
+    if let Some(resp) = require_admin(&auth, "API key management") {
         return resp;
     }
     let parsed = match Uuid::parse_str(&id) {
@@ -120,38 +104,11 @@ pub async fn api_keys_delete_handler(
 
 #[cfg(test)]
 mod tests {
-    //! Regression guard: API-key management must require an admin-scoped
-    //! credential, so a leaked least-privilege key cannot mint or revoke keys.
+    //! Self-lockout guard: a key cannot revoke itself, but may revoke any other
+    //! key, and admin Basic auth (no key_id) may revoke anything.
     use super::*;
     use dpp_types::api_key::ApiKeyScope;
 
-    fn ctx(scope: ApiKeyScope) -> AuthContext {
-        AuthContext {
-            user_id: "test".into(),
-            scope,
-            key_id: None,
-        }
-    }
-
-    #[test]
-    fn admin_scope_allowed() {
-        assert!(require_admin(&ctx(ApiKeyScope::Admin)).is_none());
-    }
-
-    #[test]
-    fn write_scope_forbidden() {
-        let resp = require_admin(&ctx(ApiKeyScope::Write)).expect("write must be blocked");
-        assert_eq!(resp.status(), StatusCode::FORBIDDEN);
-    }
-
-    #[test]
-    fn read_scope_forbidden() {
-        let resp = require_admin(&ctx(ApiKeyScope::Read)).expect("read must be blocked");
-        assert_eq!(resp.status(), StatusCode::FORBIDDEN);
-    }
-
-    // Self-lockout guard: a key cannot revoke itself, but may revoke any other
-    // key, and admin Basic auth (no key_id) may revoke anything.
     fn ctx_with_key(key_id: Option<Uuid>) -> AuthContext {
         AuthContext {
             user_id: "test".into(),

@@ -10,7 +10,7 @@ use serde::Deserialize;
 
 use crate::{middleware::auth::AuthContext, state::AppState};
 
-use super::error::{api_error, internal_error, parse_passport_id};
+use super::error::{api_error, internal_error, parse_passport_id, require_write};
 
 /// Optional request body for the suspend endpoint.
 #[derive(Debug, Deserialize)]
@@ -30,12 +30,8 @@ pub async fn suspend_handler(
     Path(dpp_id): Path<String>,
     body: Option<Json<SuspendBody>>,
 ) -> impl IntoResponse {
-    if !auth.scope.can_write() {
-        return api_error(
-            StatusCode::FORBIDDEN,
-            "FORBIDDEN",
-            "Suspending a passport requires a write-scoped credential.",
-        );
+    if let Some(resp) = require_write(&auth, "Suspending a passport") {
+        return resp;
     }
     let passport_id = match parse_passport_id(&dpp_id) {
         Ok(id) => id,

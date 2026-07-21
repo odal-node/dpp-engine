@@ -9,7 +9,7 @@ use axum::{
 
 use crate::{middleware::auth::AuthContext, state::AppState};
 
-use super::error::{api_error, internal_error, parse_passport_id};
+use super::error::{api_error, internal_error, parse_passport_id, require_write};
 
 /// `POST /api/v1/dpp/{dppId}/archive` — permanently archive a published or suspended passport.
 ///
@@ -20,12 +20,8 @@ pub async fn archive_handler(
     Extension(auth): Extension<AuthContext>,
     Path(dpp_id): Path<String>,
 ) -> impl IntoResponse {
-    if !auth.scope.can_write() {
-        return api_error(
-            StatusCode::FORBIDDEN,
-            "FORBIDDEN",
-            "Archiving a passport requires a write-scoped credential.",
-        );
+    if let Some(resp) = require_write(&auth, "Archiving a passport") {
+        return resp;
     }
     let passport_id = match parse_passport_id(&dpp_id) {
         Ok(id) => id,

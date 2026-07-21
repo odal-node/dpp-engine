@@ -12,7 +12,7 @@ use serde::Deserialize;
 
 use crate::{middleware::auth::AuthContext, state::AppState};
 
-use super::error::{api_error, internal_error, parse_passport_id};
+use super::error::{api_error, internal_error, parse_passport_id, require_write};
 
 /// Body for initiating a transfer: the outgoing and incoming operators and the
 /// reason. In the managed single-node model the caller supplies both parties.
@@ -38,12 +38,8 @@ pub async fn transfer_initiate_handler(
     Path(dpp_id): Path<String>,
     Json(body): Json<TransferInitiateRequest>,
 ) -> impl IntoResponse {
-    if !auth.scope.can_write() {
-        return api_error(
-            StatusCode::FORBIDDEN,
-            "FORBIDDEN",
-            "Initiating a transfer requires a write-scoped credential.",
-        );
+    if let Some(resp) = require_write(&auth, "Initiating a transfer") {
+        return resp;
     }
     let id = match parse_passport_id(&dpp_id) {
         Ok(i) => i,
@@ -86,12 +82,8 @@ pub async fn transfer_accept_handler(
     Extension(auth): Extension<AuthContext>,
     Path(dpp_id): Path<String>,
 ) -> impl IntoResponse {
-    if !auth.scope.can_write() {
-        return api_error(
-            StatusCode::FORBIDDEN,
-            "FORBIDDEN",
-            "Accepting a transfer requires a write-scoped credential.",
-        );
+    if let Some(resp) = require_write(&auth, "Accepting a transfer") {
+        return resp;
     }
     let id = match parse_passport_id(&dpp_id) {
         Ok(i) => i,
