@@ -50,18 +50,18 @@ debug = "line-tables-only"
 # ---------------------------------------------------------------------------
 [workspace.dependencies]
 # Core crates — consumed from crates.io (dpp-core is published independently at 0.9.0).
-dpp-domain = "0.9.0"
+dpp-domain = "0.10.0"
 
 # Engine-wide types (tenant, auth, audit, API keys) — engine-internal crate.
 dpp-types = { path = "crates/dpp-types" }
-dpp-crypto        = "0.9.0"
+dpp-crypto        = "0.10.0"
 # KeyStore lives in dpp-core/dpp-crypto; the identity service crate is dpp-identity
 # (dir: crates/dpp-identity, pkg: dpp-identity).
-dpp-digital-link  = "0.9.0"
-dpp-plugin-traits = "0.9.0"
-dpp-registry      = "0.9.0"
-dpp-calc          = "0.9.0"
-dpp-rules         = { version = "0.9.0", features = ["bundle"] }
+dpp-digital-link  = "0.10.0"
+dpp-plugin-traits = "0.10.0"
+dpp-registry      = "0.10.0"
+dpp-calc          = "0.10.0"
+dpp-rules         = { version = "0.10.0", features = ["bundle"] }
 
 # Web framework
 axum         = { version = "0.8", features = ["macros", "multipart"] }

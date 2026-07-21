@@ -62,11 +62,12 @@ pub fn verify_dossier(dossier: &DossierV1) -> VerificationReport {
     //    manifest commits to.
     checks.push(CheckResult {
         name: "content_integrity".into(),
-        status: {
-            let recomputed = compute_content_hashes(dossier);
-            if recomputed == dossier.manifest.content_hashes {
-                CheckStatus::Pass
-            } else {
+        status: match compute_content_hashes(dossier) {
+            // A dossier whose members cannot be canonicalised cannot be
+            // attested at all — fail the check rather than abort the verifier.
+            Err(e) => CheckStatus::Fail(format!("cannot canonicalise dossier members: {e}")),
+            Ok(recomputed) if recomputed == dossier.manifest.content_hashes => CheckStatus::Pass,
+            Ok(recomputed) => {
                 let mismatched: Vec<&String> = recomputed
                     .keys()
                     .filter(|k| recomputed.get(*k) != dossier.manifest.content_hashes.get(*k))
@@ -397,7 +398,8 @@ mod tests {
             component_graph: None,
         };
 
-        dossier.manifest.content_hashes = compute_content_hashes(&dossier);
+        dossier.manifest.content_hashes =
+            compute_content_hashes(&dossier).expect("test dossier canonicalises");
         let manifest_value = serde_json::to_value(&dossier.manifest).unwrap();
         dossier.manifest_jws = sign(signing_key, &manifest_value);
         dossier
@@ -421,7 +423,8 @@ mod tests {
     fn with_graph(signing_key: &SigningKey, graph: serde_json::Value) -> DossierV1 {
         let mut dossier = valid_dossier(signing_key);
         dossier.component_graph = Some(graph);
-        dossier.manifest.content_hashes = compute_content_hashes(&dossier);
+        dossier.manifest.content_hashes =
+            compute_content_hashes(&dossier).expect("test dossier canonicalises");
         let manifest_value = serde_json::to_value(&dossier.manifest).unwrap();
         dossier.manifest_jws = sign(signing_key, &manifest_value);
         dossier
@@ -540,7 +543,8 @@ mod tests {
         // Re-derive content_hashes/manifest_jws to isolate the audit-chain
         // check specifically (otherwise content_integrity also flips, which
         // is correct but not what this test is isolating).
-        dossier.manifest.content_hashes = compute_content_hashes(&dossier);
+        dossier.manifest.content_hashes =
+            compute_content_hashes(&dossier).expect("test dossier canonicalises");
         let manifest_value = serde_json::to_value(&dossier.manifest).unwrap();
         dossier.manifest_jws = sign(&signing_key, &manifest_value);
 
@@ -617,7 +621,8 @@ mod tests {
         dossier
             .did_documents
             .insert("did:web:to.example".to_string(), did_doc_for(&to_key));
-        dossier.manifest.content_hashes = compute_content_hashes(&dossier);
+        dossier.manifest.content_hashes =
+            compute_content_hashes(&dossier).expect("test dossier canonicalises");
         let manifest_value = serde_json::to_value(&dossier.manifest).unwrap();
         dossier.manifest_jws = sign(&signing_key, &manifest_value);
 
@@ -633,7 +638,8 @@ mod tests {
                 .clone()
                 .map(|s| format!("{s}x"));
         }
-        dossier.manifest.content_hashes = compute_content_hashes(&dossier);
+        dossier.manifest.content_hashes =
+            compute_content_hashes(&dossier).expect("test dossier canonicalises");
         let manifest_value = serde_json::to_value(&dossier.manifest).unwrap();
         dossier.manifest_jws = sign(&signing_key, &manifest_value);
 
@@ -713,7 +719,8 @@ mod tests {
             original_operator: operator("did:web:from.example"),
             transfers: vec![record],
         });
-        dossier.manifest.content_hashes = compute_content_hashes(&dossier);
+        dossier.manifest.content_hashes =
+            compute_content_hashes(&dossier).expect("test dossier canonicalises");
         let manifest_value = serde_json::to_value(&dossier.manifest).unwrap();
         dossier.manifest_jws = sign(&signing_key, &manifest_value);
 

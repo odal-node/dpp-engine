@@ -91,6 +91,62 @@ pub fn rename_key(old: &str, new: &str) -> Result<()> {
     Ok(())
 }
 
+/// The conventional "read this from stdin" argument value.
+pub const STDIN_SENTINEL: &str = "-";
+
+/// Interpret a secret supplied as a command-line argument.
+///
+/// `-` means "read it from stdin", the usual Unix convention and the only form
+/// that is both scriptable and free of exposure: a literal argument is visible
+/// in shell history and, for the lifetime of the process, to any local user via
+/// `ps` or `/proc/<pid>/cmdline`. Environment variables are better but not
+/// equivalent — they are inherited by every child process and readable from
+/// `/proc/<pid>/environ` by the same user.
+///
+/// A literal value is still accepted, because removing it would break existing
+/// scripts, but it warns so the safer form is discoverable at the moment it
+/// matters.
+///
+/// # Errors
+/// If `-` was given and stdin cannot be read.
+pub fn resolve_secret_arg(arg: Option<String>, safer: &str) -> Result<Option<String>> {
+    let Some(value) = arg else {
+        return Ok(None);
+    };
+    if value == STDIN_SENTINEL {
+        return read_secret_from_stdin().map(Some);
+    }
+    eprintln!(
+        "warning: passing a secret as a command-line argument exposes it in shell \
+         history and to local users via `ps`. Use `-` to read it from stdin, or {safer}."
+    );
+    Ok(Some(value))
+}
+
+/// Read a single secret from stdin.
+fn read_secret_from_stdin() -> Result<String> {
+    use std::io::Read as _;
+    let mut buf = String::new();
+    std::io::stdin()
+        .read_to_string(&mut buf)
+        .context("Failed to read the secret from stdin")?;
+    parse_stdin_secret(&buf)
+}
+
+/// Trim the line ending a pipe, heredoc or `echo` leaves behind, and reject an
+/// empty read rather than storing a blank credential.
+///
+/// Only the *trailing* newline is removed: a secret is taken as the literal
+/// bytes otherwise, so leading or interior whitespace someone deliberately put
+/// in a passphrase survives.
+fn parse_stdin_secret(raw: &str) -> Result<String> {
+    let secret = raw.trim_end_matches(['\n', '\r']).to_owned();
+    if secret.is_empty() {
+        anyhow::bail!("no secret received on stdin");
+    }
+    Ok(secret)
+}
+
 #[cfg(unix)]
 fn restrict_permissions(path: &std::path::Path) -> Result<()> {
     use std::os::unix::fs::PermissionsExt;
@@ -119,6 +175,60 @@ mod tests {
         let back: CredentialsFile = toml::from_str(&s).unwrap();
         assert_eq!(back.keys.get("dev").unwrap(), "odal_sk_dev");
         assert_eq!(back.keys.get("prod").unwrap(), "odal_sk_prod");
+    }
+
+    /// Omitting the argument must stay "no value" so the caller can fall back
+    /// to its env var or prompt — the stdin handling must not swallow that.
+    #[test]
+    fn absent_argument_resolves_to_none() {
+        assert_eq!(resolve_secret_arg(None, "set $X").unwrap(), None);
+    }
+
+    /// A literal value is still honoured — removing it would break scripts —
+    /// but the caller gets it back unchanged, warning notwithstanding.
+    #[test]
+    fn literal_argument_is_passed_through() {
+        assert_eq!(
+            resolve_secret_arg(Some("odal_sk_literal".to_owned()), "set $X").unwrap(),
+            Some("odal_sk_literal".to_owned())
+        );
+    }
+
+    /// `-` is the stdin sentinel, not a secret whose value happens to be "-".
+    #[test]
+    fn stdin_sentinel_is_the_hyphen() {
+        assert_eq!(STDIN_SENTINEL, "-");
+    }
+
+    /// `echo secret | odal key use -` and the CRLF equivalent must both yield
+    /// the secret, not the secret plus a line ending that would fail auth in a
+    /// way nobody could diagnose from the error.
+    #[test]
+    fn stdin_secret_trims_the_trailing_line_ending() {
+        assert_eq!(parse_stdin_secret("odal_sk_abc\n").unwrap(), "odal_sk_abc");
+        assert_eq!(
+            parse_stdin_secret("odal_sk_abc\r\n").unwrap(),
+            "odal_sk_abc"
+        );
+        assert_eq!(parse_stdin_secret("odal_sk_abc").unwrap(), "odal_sk_abc");
+    }
+
+    /// Only the trailing line ending goes — a passphrase may legitimately
+    /// contain spaces, and silently trimming them would lock someone out.
+    #[test]
+    fn stdin_secret_preserves_interior_and_leading_whitespace() {
+        assert_eq!(
+            parse_stdin_secret("  pass phrase with spaces  \n").unwrap(),
+            "  pass phrase with spaces  "
+        );
+    }
+
+    /// An empty pipe must fail loudly rather than store a blank credential.
+    #[test]
+    fn stdin_secret_rejects_an_empty_read() {
+        assert!(parse_stdin_secret("").is_err());
+        assert!(parse_stdin_secret("\n").is_err());
+        assert!(parse_stdin_secret("\r\n").is_err());
     }
 
     #[test]

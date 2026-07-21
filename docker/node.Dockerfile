@@ -17,7 +17,7 @@
 ARG BUILD_MODE=published
 
 # ── Build deps shared by both modes ─────────────────────────────────────────────
-FROM rust:1.96-slim-bookworm AS builder-base
+FROM rust:1.97-slim-bookworm AS builder-base
 WORKDIR /build
 ENV RUSTC_WRAPPER=""
 

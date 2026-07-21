@@ -192,7 +192,12 @@ impl IdentityPort for MockIdentity {
         passport_id: PassportId,
         payload: &serde_json::Value,
     ) -> Result<SignedCredential, DppError> {
-        let payload_b64 = base64::engine::general_purpose::STANDARD
+        // base64url **without** padding — a compact JWS payload segment is
+        // defined that way (RFC 7515 §2), and anything that decodes a real JWS
+        // (the public read, the resolver) decodes it that way. Encoding the
+        // mock with the padded standard alphabet made it emit a string that is
+        // not a JWS, which no test noticed until a caller actually decoded it.
+        let payload_b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD
             .encode(serde_json::to_vec(payload).unwrap_or_default());
         Ok(SignedCredential {
             credential: PassportCredential {

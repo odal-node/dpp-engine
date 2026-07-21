@@ -41,7 +41,7 @@ use crate::commands::{
 /// would land in shell history and `ps`/`/proc/<pid>/cmdline`): use the flag if
 /// given, else the `ODAL_API_SECRET` env var, else a hidden interactive prompt.
 fn resolve_api_secret(arg: Option<String>) -> anyhow::Result<String> {
-    if let Some(s) = arg {
+    if let Some(s) = crate::credentials::resolve_secret_arg(arg, "set `ODAL_API_SECRET`")? {
         return Ok(s);
     }
     if let Ok(s) = std::env::var("ODAL_API_SECRET")
