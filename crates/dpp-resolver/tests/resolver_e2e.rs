@@ -4,8 +4,11 @@
 //! - QR PNG generation and cacheability
 //! - Content negotiation edge cases (no Accept, wildcard Accept)
 //! - HTML rendering with battery and textile sector data
-//! - Valid JWS passthrough (DID document serves matching key)
 //! - Health and readiness probes
+//!
+//! JWS verification itself (valid/tampered/missing signatures, DID
+//! reachability) is covered in `src/jws_verification_tests.rs`, driven
+//! through a real `operator_did_url`.
 //!
 //! All tests use mock vault servers (no Docker required).
 //!
@@ -417,90 +420,6 @@ async fn json_ld_response_includes_context() {
     assert_eq!(
         doc["productName"], "E2E Test Widget",
         "product name must be preserved"
-    );
-}
-
-// ---------------------------------------------------------------------------
-// Valid JWS signature passes through
-// ---------------------------------------------------------------------------
-
-#[tokio::test]
-async fn valid_jws_signature_passes_through() {
-    use base64::Engine;
-    use ed25519_dalek::{Signer, SigningKey};
-
-    let signing_key = SigningKey::generate(&mut rand::rngs::OsRng);
-    let b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD;
-    let pub_key_b64 = b64.encode(signing_key.verifying_key().as_bytes());
-
-    // Build a valid JWS over a passport payload.
-    let passport_payload = json!({
-        "id": "00000000-0000-4000-9000-000000000004",
-        "productName": "Signed Widget"
-    });
-    let header = r#"{"alg":"EdDSA","crv":"Ed25519"}"#;
-    let header_b64 = b64.encode(header);
-    let payload_b64 = b64.encode(serde_json::to_vec(&passport_payload).unwrap());
-    let signing_input = format!("{header_b64}.{payload_b64}");
-    let sig = signing_key.sign(signing_input.as_bytes());
-    let sig_b64 = b64.encode(sig.to_bytes());
-    let valid_jws = format!("{signing_input}.{sig_b64}");
-
-    // Serve DID document with matching public key.
-    let did_doc = json!({
-        "@context": ["https://www.w3.org/ns/did/v1"],
-        "id": "did:web:valid.example",
-        "verificationMethod": [{
-            "id": "did:web:valid.example#key-1",
-            "type": "JsonWebKey2020",
-            "controller": "did:web:valid.example",
-            "publicKeyJwk": {"kty": "OKP", "crv": "Ed25519", "x": pub_key_b64}
-        }],
-        "assertionMethod": ["did:web:valid.example#key-1"]
-    });
-    let did_router = {
-        let d = did_doc.clone();
-        Router::new().route(
-            "/.well-known/did.json",
-            get(move || {
-                let doc = d.clone();
-                async move { axum::Json(doc) }
-            }),
-        )
-    };
-    let did_port = start_mock_vault(did_router).await;
-    let did_url = format!("http://127.0.0.1:{did_port}/.well-known/did.json");
-
-    let passport = json!({
-        "id": "00000000-0000-4000-9000-000000000004",
-        "productName": "Signed Widget",
-        "status": "active",
-        "manufacturer": {"name": "Signed Corp", "address": "EU", "didWebUrl": did_url},
-        "jwsSignature": valid_jws
-    });
-    let vault = {
-        let p = passport.clone();
-        Router::new().route(
-            "/public/dpp/{id}",
-            get(move || {
-                let pp = p.clone();
-                async move { axum::Json(pp) }
-            }),
-        )
-    };
-    let vault_port = start_mock_vault(vault).await;
-    let app = router::build(test_state(format!("http://127.0.0.1:{vault_port}")));
-
-    let req = Request::builder()
-        .uri("/dpp/00000000-0000-4000-9000-000000000004")
-        .header("accept", "application/json")
-        .body(Body::empty())
-        .unwrap();
-    let resp = app.oneshot(req).await.unwrap();
-    assert_eq!(
-        resp.status(),
-        StatusCode::OK,
-        "valid JWS should pass verification and return 200"
     );
 }
 
