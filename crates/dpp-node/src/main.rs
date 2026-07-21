@@ -116,8 +116,10 @@ async fn main() -> anyhow::Result<()> {
 
     // ── EU Registry sync (ESPR Art. 13) ──────────────────────────────────────
     // If EU_REGISTRY_CLIENT_ID + SECRET are set, use the live (sandbox) adapter.
-    // Otherwise fall back to GhostRegistrySync so publish is never blocked before
-    // the EU registry launches (~19 Jul 2026).
+    // Otherwise fall back to GhostRegistrySync so publish is never blocked for a
+    // deployment that has not yet onboarded to the registry. (The registry became
+    // operational on 20 Jul 2026 under IR (EU) 2026/1778; registration
+    // obligations still follow each product's own delegated act.)
     let (registry_sync, registry_trust): (Arc<dyn RegistrySyncPort>, TrustMode) = match (
         std::env::var("EU_REGISTRY_CLIENT_ID")
             .ok()
@@ -128,7 +130,20 @@ async fn main() -> anyhow::Result<()> {
     ) {
         (Some(id), Some(secret)) => {
             use dpp_node::infra::registry::{EuRegistrySync, EuRegistrySyncConfig};
-            let reg_cfg = EuRegistrySyncConfig::sandbox(id, secret);
+            let mut reg_cfg = EuRegistrySyncConfig::sandbox(id, secret);
+            // Opt-in override: submit payloads that fail our local validation.
+            // Off unless explicitly set, so the safe behaviour is the one you get
+            // by doing nothing.
+            reg_cfg.allow_invalid_payloads = std::env::var("EU_REGISTRY_ALLOW_INVALID_PAYLOADS")
+                .is_ok_and(|v| v == "1" || v.eq_ignore_ascii_case("true"));
+            if reg_cfg.allow_invalid_payloads {
+                tracing::warn!(
+                    "EU registry sync: EU_REGISTRY_ALLOW_INVALID_PAYLOADS is set — payloads \
+                     that fail local validation will be submitted anyway. Intended for \
+                     working around a false positive in our own rules; do not leave this \
+                     set against the production registry."
+                );
+            }
             let adapter = EuRegistrySync::new(reg_cfg)
                 .context("Failed to build EU registry sync HTTP client")?;
             tracing::info!("EU registry sync: sandbox adapter active");
