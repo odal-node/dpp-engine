@@ -4,7 +4,10 @@ use anyhow::Result;
 use serde_json::json;
 
 use super::super::types::{ArchiveParams, AuditEntry, HistoryParams, SuspendParams};
-use crate::{config::Config, http::OdalClient};
+use crate::{
+    config::Config,
+    http::{OdalClient, describe_error},
+};
 
 pub async fn action_suspend(
     params: &SuspendParams,
@@ -31,7 +34,7 @@ async fn lifecycle_transition(
     let url = format!("{}/api/v1/dpp/{id}/{action}", cfg.vault_url);
     let (status, body) = client.post_json(&url, &json!({})).await?;
     if !status.is_success() {
-        anyhow::bail!("{action} failed (HTTP {status}): {body}");
+        anyhow::bail!("{action} failed: {}", describe_error(status, &body));
     }
     Ok(())
 }
@@ -44,7 +47,7 @@ pub async fn action_history(
     let url = format!("{}/api/v1/dpp/{}/history", cfg.vault_url, params.id);
     let (status, body) = client.get(&url).await?;
     if !status.is_success() {
-        anyhow::bail!("failed to fetch history (HTTP {status}): {body}");
+        anyhow::bail!("failed to fetch history: {}", describe_error(status, &body));
     }
     let arr: Vec<serde_json::Value> = serde_json::from_str(&body)
         .unwrap_or(serde_json::Value::Null)

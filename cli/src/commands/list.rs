@@ -3,9 +3,7 @@
 use anyhow::Result;
 
 use crate::{
-    config::Config,
     core::{passport::action_list, types::ListParams},
-    http::OdalClient,
     stateless::render::render_passport_list,
 };
 
@@ -17,8 +15,7 @@ pub async fn run_passport_list(
     limit: u32,
     json: bool,
 ) -> Result<()> {
-    let cfg = Config::load()?;
-    let client = OdalClient::new(&cfg.api_key);
+    let (client, cfg) = crate::http::load_client()?;
     let params = ListParams {
         status: status.map(str::to_owned),
         q: q.map(str::to_owned),

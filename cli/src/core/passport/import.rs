@@ -4,7 +4,10 @@ use anyhow::{Context, Result};
 use reqwest::StatusCode;
 
 use super::super::types::{ImportParams, ImportSummary, ProgressEvent};
-use crate::{config::Config, http::OdalClient};
+use crate::{
+    config::Config,
+    http::{OdalClient, describe_error},
+};
 
 pub async fn action_import(
     params: &ImportParams,
@@ -80,10 +83,9 @@ async fn import_json_records(
             Ok((status, body)) => {
                 failed += 1;
                 errors.push(format!(
-                    "Record {}: HTTP {} — {}",
+                    "Record {}: {}",
                     i + 1,
-                    status,
-                    crate::stateless::render::truncate(&body, 200)
+                    describe_error(status, &body)
                 ));
             }
             Err(e) => {
@@ -172,10 +174,7 @@ async fn summarize_import_response(
         return poll_import_job(client, cfg, job_id).await;
     }
     if !status.is_success() {
-        anyhow::bail!(
-            "Import failed (HTTP {status}): {}",
-            crate::stateless::render::truncate(body, 300)
-        );
+        anyhow::bail!("Import failed: {}", describe_error(status, body));
     }
     let resp: serde_json::Value =
         serde_json::from_str(body).context("Failed to parse import response")?;
@@ -196,8 +195,8 @@ async fn poll_import_job(client: &OdalClient, cfg: &Config, job_id: &str) -> Res
         let (status, body) = client.get(&url).await?;
         if !status.is_success() {
             anyhow::bail!(
-                "Failed to poll import job (HTTP {status}): {}",
-                crate::stateless::render::truncate(&body, 200)
+                "Failed to poll import job: {}",
+                describe_error(status, &body)
             );
         }
         let resp: serde_json::Value =

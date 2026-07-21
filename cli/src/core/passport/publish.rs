@@ -4,7 +4,10 @@ use anyhow::{Context, Result};
 use serde_json::json;
 
 use super::super::types::{PassportPublishResult, PublishParams, PublishSummary};
-use crate::{config::Config, http::OdalClient};
+use crate::{
+    config::Config,
+    http::{OdalClient, describe_error},
+};
 
 pub async fn action_publish(
     params: &PublishParams,
@@ -48,10 +51,7 @@ async fn publish_one(client: &OdalClient, vault_url: &str, id: &str) -> Result<P
             }],
         })
     } else {
-        let err = format!(
-            "Failed to publish {id} (HTTP {status}): {}",
-            crate::stateless::render::truncate(&body, 300)
-        );
+        let err = format!("Failed to publish {id}: {}", describe_error(status, &body));
         Ok(PublishSummary {
             published: 0,
             failed: 1,
@@ -75,7 +75,10 @@ async fn publish_all(client: &OdalClient, vault_url: &str) -> Result<PublishSumm
         .context("Failed to fetch draft passports")?;
 
     if !http_status.is_success() {
-        anyhow::bail!("Failed to list drafts (HTTP {http_status}): {body}");
+        anyhow::bail!(
+            "Failed to list drafts: {}",
+            describe_error(http_status, &body)
+        );
     }
 
     let envelope: serde_json::Value =
@@ -116,10 +119,7 @@ async fn publish_all(client: &OdalClient, vault_url: &str) -> Result<PublishSumm
                 published += 1;
             }
             Ok((status, resp_body)) => {
-                let err = format!(
-                    "{name}: HTTP {status} — {}",
-                    crate::stateless::render::truncate(&resp_body, 200)
-                );
+                let err = format!("{name}: {}", describe_error(status, &resp_body));
                 errors.push(err.clone());
                 items.push(PassportPublishResult {
                     id: id.to_owned(),

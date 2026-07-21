@@ -3,7 +3,10 @@
 use anyhow::{Context, Result};
 
 use super::super::types::{ExportParams, ExportResult};
-use crate::{config::Config, http::OdalClient};
+use crate::{
+    config::Config,
+    http::{OdalClient, describe_error},
+};
 
 pub async fn action_export(
     params: &ExportParams,
@@ -22,7 +25,10 @@ pub async fn action_export(
 
         let (http_status, body) = client.get(&url).await?;
         if !http_status.is_success() {
-            anyhow::bail!("Export request failed (HTTP {}): {}", http_status, body);
+            anyhow::bail!(
+                "Export request failed: {}",
+                describe_error(http_status, &body)
+            );
         }
 
         let envelope: serde_json::Value =

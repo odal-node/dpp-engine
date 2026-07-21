@@ -4,18 +4,15 @@ use anyhow::Result;
 use indicatif::{ProgressBar, ProgressStyle};
 
 use crate::{
-    config::Config,
     core::{
         passport::action_import,
         types::{ImportParams, ProgressEvent},
     },
-    http::OdalClient,
     stateless::render::render_import_result,
 };
 
 pub async fn run_import(file: &str) -> Result<()> {
-    let cfg = Config::load()?;
-    let client = OdalClient::new(&cfg.api_key);
+    let (client, cfg) = crate::http::load_client()?;
     let params = ImportParams {
         file: file.to_owned(),
     };

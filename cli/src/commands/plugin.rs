@@ -3,11 +3,10 @@
 
 use anyhow::Result;
 
-use crate::{config::Config, core::plugin::action_plugin_install, http::OdalClient};
+use crate::core::plugin::action_plugin_install;
 
 pub async fn run_plugin_install(file: &str) -> Result<()> {
-    let cfg = Config::load()?;
-    let client = OdalClient::new(&cfg.api_key);
+    let (client, cfg) = crate::http::load_client()?;
     let installed = action_plugin_install(file, &client, &cfg).await?;
     println!(
         "Installed sector '{}' (ABI {}) — verified, persisted, and now serving.",
