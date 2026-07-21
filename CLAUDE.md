@@ -312,6 +312,7 @@ The internal endpoints are mTLS-gated (`CN=odal-vault`).
 | GET | `/ready` | None | Ready |
 | GET | `/.well-known/did.json` | None | DID document |
 | POST | `/internal/sign` | mTLS | JWS signing |
+| POST | `/internal/verify` | mTLS | JWS verification |
 | POST | `/internal/keys/rotate` | mTLS | Key rotation |
 
 ### Resolver (standalone, port 8003)
