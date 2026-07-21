@@ -40,17 +40,12 @@ pub async fn get_template(
     let (content, filename): (&str, &str) = match sector.as_str() {
         "battery" => (BATTERY_TEMPLATE, "odal-battery-template.csv"),
         "textile" => (TEXTILE_TEMPLATE, "odal-textile-template.csv"),
-        "electronics" => {
-            return (
-                StatusCode::NOT_FOUND,
-                "Electronics sector template not yet available.",
-            )
-                .into_response();
-        }
         _ => {
             return (
                 StatusCode::NOT_FOUND,
-                format!("Unknown sector: '{sector}'. Valid values: battery, textile."),
+                format!(
+                    "No template available for sector: '{sector}'. Valid values: battery, textile."
+                ),
             )
                 .into_response();
         }
