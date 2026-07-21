@@ -158,7 +158,7 @@ wayland-client = { version = "0.31", features = ["dlopen"] }
 dirs         = "5"
 
 # Integration tests
-testcontainers        = "0.21"
+testcontainers        = "0.27"
 testcontainers-modules = { version = "0.9", default-features = false }
 
 # Property-based testing (dev-only)
