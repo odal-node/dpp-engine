@@ -24,6 +24,23 @@ pub fn internal_error(e: impl std::fmt::Display) -> Response {
     http_problem::internal_error("An internal error occurred.").into_response()
 }
 
+/// 404 Not Found — the standard response for a `DppError::NotFound` (or
+/// equivalent "no such record") case.
+pub fn not_found_error(detail: &str) -> Response {
+    api_error(StatusCode::NOT_FOUND, "NOT_FOUND", detail)
+}
+
+/// 409 Conflict — the standard response for a `DppError::InvalidTransition`
+/// (or other state-conflict) case.
+pub fn conflict_error(detail: &str) -> Response {
+    api_error(StatusCode::CONFLICT, "CONFLICT", detail)
+}
+
+/// 422 Unprocessable Entity — the standard response for a `DppError::Validation` case.
+pub fn validation_error(detail: &str) -> Response {
+    api_error(StatusCode::UNPROCESSABLE_ENTITY, "VALIDATION_ERROR", detail)
+}
+
 /// Parse a UUID string into a `PassportId`, returning an RFC 7807 400 on failure.
 #[allow(clippy::result_large_err)]
 pub fn parse_passport_id(s: &str) -> Result<dpp_domain::domain::passport::PassportId, Response> {
@@ -97,5 +114,23 @@ mod guard_tests {
     fn detail_message_interpolates_the_action() {
         let resp = require_admin(&ctx(ApiKeyScope::Read), "Widget management").unwrap();
         assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[test]
+    fn not_found_error_is_a_404() {
+        assert_eq!(not_found_error("x").status(), StatusCode::NOT_FOUND);
+    }
+
+    #[test]
+    fn conflict_error_is_a_409() {
+        assert_eq!(conflict_error("x").status(), StatusCode::CONFLICT);
+    }
+
+    #[test]
+    fn validation_error_is_a_422() {
+        assert_eq!(
+            validation_error("x").status(),
+            StatusCode::UNPROCESSABLE_ENTITY
+        );
     }
 }

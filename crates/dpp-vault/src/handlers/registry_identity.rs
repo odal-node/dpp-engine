@@ -15,7 +15,7 @@ use dpp_types::registry_identity::{CreateFacilityRequest, CreateOperatorIdentifi
 
 use crate::{middleware::auth::AuthContext, state::AppState};
 
-use super::error::{api_error, internal_error, require_admin};
+use super::error::{api_error, internal_error, not_found_error, require_admin, validation_error};
 
 // ── Facilities ───────────────────────────────────────────────────────────────
 
@@ -48,11 +48,7 @@ pub async fn facilities_create_handler(
         .await
     {
         Ok(f) => (StatusCode::CREATED, Json(f)).into_response(),
-        Err(DppError::Validation(msg)) => api_error(
-            StatusCode::UNPROCESSABLE_ENTITY,
-            "VALIDATION_ERROR",
-            &msg.to_string(),
-        ),
+        Err(DppError::Validation(msg)) => validation_error(&msg.to_string()),
         Err(e) => internal_error(e),
     }
 }
@@ -82,9 +78,7 @@ pub async fn facilities_set_default_handler(
         .await
     {
         Ok(()) => StatusCode::NO_CONTENT.into_response(),
-        Err(DppError::NotFound(_)) => {
-            api_error(StatusCode::NOT_FOUND, "NOT_FOUND", "Facility not found")
-        }
+        Err(DppError::NotFound(_)) => not_found_error("Facility not found"),
         Err(e) => internal_error(e),
     }
 }
@@ -115,14 +109,8 @@ pub async fn facilities_delete_handler(
         .await
     {
         Ok(()) => StatusCode::NO_CONTENT.into_response(),
-        Err(DppError::NotFound(_)) => {
-            api_error(StatusCode::NOT_FOUND, "NOT_FOUND", "Facility not found")
-        }
-        Err(DppError::Validation(msg)) => api_error(
-            StatusCode::UNPROCESSABLE_ENTITY,
-            "VALIDATION_ERROR",
-            &msg.to_string(),
-        ),
+        Err(DppError::NotFound(_)) => not_found_error("Facility not found"),
+        Err(DppError::Validation(msg)) => validation_error(&msg.to_string()),
         Err(e) => internal_error(e),
     }
 }
@@ -194,11 +182,7 @@ pub async fn operator_ids_create_handler(
         .await
     {
         Ok(o) => (StatusCode::CREATED, Json(o)).into_response(),
-        Err(DppError::Validation(msg)) => api_error(
-            StatusCode::UNPROCESSABLE_ENTITY,
-            "VALIDATION_ERROR",
-            &msg.to_string(),
-        ),
+        Err(DppError::Validation(msg)) => validation_error(&msg.to_string()),
         Err(e) => internal_error(e),
     }
 }
@@ -228,11 +212,7 @@ pub async fn operator_ids_set_primary_handler(
         .await
     {
         Ok(()) => StatusCode::NO_CONTENT.into_response(),
-        Err(DppError::NotFound(_)) => api_error(
-            StatusCode::NOT_FOUND,
-            "NOT_FOUND",
-            "Operator identifier not found",
-        ),
+        Err(DppError::NotFound(_)) => not_found_error("Operator identifier not found"),
         Err(e) => internal_error(e),
     }
 }
@@ -263,16 +243,8 @@ pub async fn operator_ids_delete_handler(
         .await
     {
         Ok(()) => StatusCode::NO_CONTENT.into_response(),
-        Err(DppError::NotFound(_)) => api_error(
-            StatusCode::NOT_FOUND,
-            "NOT_FOUND",
-            "Operator identifier not found",
-        ),
-        Err(DppError::Validation(msg)) => api_error(
-            StatusCode::UNPROCESSABLE_ENTITY,
-            "VALIDATION_ERROR",
-            &msg.to_string(),
-        ),
+        Err(DppError::NotFound(_)) => not_found_error("Operator identifier not found"),
+        Err(DppError::Validation(msg)) => validation_error(&msg.to_string()),
         Err(e) => internal_error(e),
     }
 }

@@ -19,7 +19,7 @@ use dpp_types::{NewWebhookSubscription, WebhookSubscription};
 
 use crate::{middleware::auth::AuthContext, state::AppState};
 
-use super::error::{api_error, internal_error, require_admin};
+use super::error::{api_error, internal_error, not_found_error, require_admin, validation_error};
 
 /// Create response — the redacted subscription plus the signing secret, shown once.
 #[derive(Serialize)]
@@ -63,11 +63,7 @@ pub async fn webhooks_create_handler(
             }),
         )
             .into_response(),
-        Err(DppError::Validation(msg)) => api_error(
-            StatusCode::UNPROCESSABLE_ENTITY,
-            "VALIDATION_ERROR",
-            &msg.to_string(),
-        ),
+        Err(DppError::Validation(msg)) => validation_error(&msg.to_string()),
         Err(e) => internal_error(e),
     }
 }
@@ -88,11 +84,7 @@ pub async fn webhooks_delete_handler(
     };
     match state.webhook_service.deactivate(parsed).await {
         Ok(()) => StatusCode::NO_CONTENT.into_response(),
-        Err(DppError::NotFound(_)) => api_error(
-            StatusCode::NOT_FOUND,
-            "NOT_FOUND",
-            "Webhook subscription not found",
-        ),
+        Err(DppError::NotFound(_)) => not_found_error("Webhook subscription not found"),
         Err(e) => internal_error(e),
     }
 }
@@ -112,11 +104,7 @@ pub async fn webhooks_test_handler(
     };
     match state.webhook_service.test(parsed).await {
         Ok(()) => StatusCode::ACCEPTED.into_response(),
-        Err(DppError::NotFound(_)) => api_error(
-            StatusCode::NOT_FOUND,
-            "NOT_FOUND",
-            "Webhook subscription not found",
-        ),
+        Err(DppError::NotFound(_)) => not_found_error("Webhook subscription not found"),
         Err(e) => internal_error(e),
     }
 }
