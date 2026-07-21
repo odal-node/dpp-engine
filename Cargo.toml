@@ -69,6 +69,7 @@ tokio        = { version = "1", features = ["full"] }
 tower        = "0.4"
 tower-http   = { version = "0.5", features = ["trace", "cors", "compression-br", "request-id", "catch-panic"] }
 hyper        = { version = "1", features = ["full"] }
+futures      = "0.3"
 
 # Serialisation
 serde        = { version = "1", features = ["derive"] }
