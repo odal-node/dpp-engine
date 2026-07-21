@@ -10,6 +10,9 @@ use serde::Deserialize;
 // Templates are embedded at compile time — zero runtime I/O on the hot path.
 const BATTERY_TEMPLATE: &str = include_str!("../../templates/battery-v1.csv");
 const TEXTILE_TEMPLATE: &str = include_str!("../../templates/textile-v1.csv");
+const STEEL_TEMPLATE: &str = include_str!("../../templates/steel-v1.csv");
+const ALUMINIUM_TEMPLATE: &str = include_str!("../../templates/aluminium-v1.csv");
+const TYRE_TEMPLATE: &str = include_str!("../../templates/tyre-v1.csv");
 
 /// Query parameters for the template download endpoint.
 #[derive(Debug, Deserialize)]
@@ -40,11 +43,15 @@ pub async fn get_template(
     let (content, filename): (&str, &str) = match sector.as_str() {
         "battery" => (BATTERY_TEMPLATE, "odal-battery-template.csv"),
         "textile" => (TEXTILE_TEMPLATE, "odal-textile-template.csv"),
+        "steel" => (STEEL_TEMPLATE, "odal-steel-template.csv"),
+        "aluminium" => (ALUMINIUM_TEMPLATE, "odal-aluminium-template.csv"),
+        "tyre" => (TYRE_TEMPLATE, "odal-tyre-template.csv"),
         _ => {
             return (
                 StatusCode::NOT_FOUND,
                 format!(
-                    "No template available for sector: '{sector}'. Valid values: battery, textile."
+                    "No template available for sector: '{sector}'. Valid values: battery, \
+                     textile, steel, aluminium, tyre."
                 ),
             )
                 .into_response();
@@ -76,7 +83,9 @@ pub async fn get_template(
 /// template actually ships (or vice versa) with nothing catching it.
 #[cfg(test)]
 mod template_validator_pairing {
-    use super::{BATTERY_TEMPLATE, TEXTILE_TEMPLATE};
+    use super::{
+        ALUMINIUM_TEMPLATE, BATTERY_TEMPLATE, STEEL_TEMPLATE, TEXTILE_TEMPLATE, TYRE_TEMPLATE,
+    };
     use crate::domain::{csv_parser, validate};
 
     fn assert_all_rows_validate(sector: &str, csv: &str) {
@@ -100,5 +109,20 @@ mod template_validator_pairing {
     #[test]
     fn textile_template_rows_pass_textile_validator() {
         assert_all_rows_validate("textile", TEXTILE_TEMPLATE);
+    }
+
+    #[test]
+    fn steel_template_rows_pass_steel_validator() {
+        assert_all_rows_validate("steel", STEEL_TEMPLATE);
+    }
+
+    #[test]
+    fn aluminium_template_rows_pass_aluminium_validator() {
+        assert_all_rows_validate("aluminium", ALUMINIUM_TEMPLATE);
+    }
+
+    #[test]
+    fn tyre_template_rows_pass_tyre_validator() {
+        assert_all_rows_validate("tyre", TYRE_TEMPLATE);
     }
 }
