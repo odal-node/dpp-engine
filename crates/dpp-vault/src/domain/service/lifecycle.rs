@@ -7,7 +7,7 @@ use dpp_domain::domain::{
     passport::{Passport, PassportId},
     status::PassportStatus,
 };
-use dpp_types::{audit::AuditEntry, auth::AuthContext, registry_sync::RegistrySyncStatus};
+use dpp_types::{audit::AuditEntry, auth::AuthContext, registry_sync::RegistryStatusIntent};
 
 use super::PassportService;
 
@@ -56,7 +56,7 @@ impl PassportService {
         // the EU registry once its status-push API exists). Non-fatal.
         if let Some(outbox) = &self.registry_outbox
             && let Err(e) = outbox
-                .enqueue_status(id, RegistrySyncStatus::Suspended)
+                .enqueue_status(id, RegistryStatusIntent::Suspended)
                 .await
         {
             tracing::warn!(
@@ -75,6 +75,10 @@ impl PassportService {
             }),
         )
         .await;
+
+        // Reconcile the continuity tier: a suspended passport must not keep
+        // being served as `active` from the static tier (non-fatal).
+        self.enqueue_snapshot_reconcile(updated.id).await;
 
         Ok(updated)
     }
@@ -144,7 +148,7 @@ impl PassportService {
         // to the EU registry once its status-push API exists). Non-fatal.
         if let Some(outbox) = &self.registry_outbox
             && let Err(e) = outbox
-                .enqueue_status(id, RegistrySyncStatus::Deactivated)
+                .enqueue_status(id, RegistryStatusIntent::Deactivated)
                 .await
         {
             tracing::warn!(
@@ -164,6 +168,10 @@ impl PassportService {
             }),
         )
         .await;
+
+        // Reconcile the continuity tier — an archived passport leaves the
+        // public tier (non-fatal).
+        self.enqueue_snapshot_reconcile(updated.id).await;
 
         Ok(updated)
     }

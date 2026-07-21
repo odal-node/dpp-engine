@@ -2,7 +2,7 @@
 
 use crate::cli_args::{
     Commands, FacilityCommands, KeyCommands, OperatorCommands, OperatorIdCommands,
-    PassportCommands, ProfileCommands, SchemaCommands, WebhookCommands,
+    PassportCommands, PluginCommands, ProfileCommands, SchemaCommands, WebhookCommands,
 };
 use crate::commands::{
     bootstrap::run_bootstrap,
@@ -22,6 +22,7 @@ use crate::commands::{
         run_operator_id_add, run_operator_id_list, run_operator_id_remove,
         run_operator_id_set_primary,
     },
+    plugin::run_plugin_install,
     profile::{
         run_profile_create, run_profile_list, run_profile_remove, run_profile_rename,
         run_profile_show, run_profile_use,
@@ -180,6 +181,9 @@ pub async fn dispatch(cmd: Commands) -> anyhow::Result<()> {
         Commands::Webhook {
             command: WebhookCommands::Remove { id },
         } => run_webhook_remove(&id).await,
+        Commands::Plugin {
+            command: PluginCommands::Install { file },
+        } => run_plugin_install(&file).await,
         Commands::Profile {
             command: ProfileCommands::List,
         } => run_profile_list(),

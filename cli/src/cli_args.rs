@@ -92,6 +92,11 @@ pub enum Commands {
         #[command(subcommand)]
         command: WebhookCommands,
     },
+    /// Install signed sector plugins (verified, persisted, hot-swapped)
+    Plugin {
+        #[command(subcommand)]
+        command: PluginCommands,
+    },
     // ── Profiles / environments ──────────────────────────────────────────────
     /// Manage named connection profiles (dev / prod / …)
     Profile {
@@ -357,6 +362,18 @@ pub enum OperatorIdCommands {
     Remove {
         /// Operator identifier id
         id: String,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum PluginCommands {
+    /// Install a signed sector plugin. Uploads the `.wasm` and its sibling
+    /// `<file>.sig`; the node verifies the signature against its pinned publisher
+    /// key, gates the ABI, persists it, and hot-swaps it into service — no restart.
+    Install {
+        /// Path to the `.wasm` plugin file (its detached signature must sit
+        /// alongside it as `<file>.sig`)
+        file: String,
     },
 }
 

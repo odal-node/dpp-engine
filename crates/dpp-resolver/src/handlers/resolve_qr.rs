@@ -12,7 +12,9 @@ use image::{DynamicImage, GrayImage, ImageFormat, Luma};
 use qrcode::QrCode;
 use serde_json::Value;
 
-use crate::{domain::carrier_uri, infra::did, state::AppState};
+use dpp_render::carrier_uri;
+
+use crate::{infra::did, state::AppState};
 
 /// Fetch the passport JSON from the vault's public endpoint.
 ///

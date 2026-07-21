@@ -12,6 +12,7 @@ pub mod lifecycle;
 pub mod list;
 pub mod operator;
 pub mod operator_id;
+pub mod plugin;
 pub mod profile;
 pub mod publish;
 pub mod schema;

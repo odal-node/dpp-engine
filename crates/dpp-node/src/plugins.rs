@@ -16,7 +16,6 @@ use dpp_plugin_host::{
 /// the compliance engine falls back to `PassthroughRegistry` for each sector.
 pub fn boot(plugins_dir: &str) -> Result<Arc<WasmPluginHost>> {
     let engine = build_engine().map_err(|e| anyhow::anyhow!("{e}"))?;
-    let host = Arc::new(WasmPluginHost::new());
     let dir = Path::new(plugins_dir);
 
     // If PLUGIN_SIGNING_KEY is set, it must be a valid 64-char hex Ed25519 public key.
@@ -35,6 +34,14 @@ pub fn boot(plugins_dir: &str) -> Result<Arc<WasmPluginHost>> {
             })?)
         }
     };
+
+    // The host keeps the engine, pinned key, and plugins dir so it can verify and
+    // persist runtime installs (`odal plugin install`) against the same policy.
+    let host = Arc::new(WasmPluginHost::with_runtime(
+        engine.clone(),
+        trusted_key,
+        dir.to_path_buf(),
+    ));
 
     let discovered = discover_plugins(dir)?;
 

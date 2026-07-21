@@ -154,6 +154,33 @@ impl OdalClient {
         Ok((status, body))
     }
 
+    /// Upload a signed plugin as `multipart/form-data` — a `wasm` file part
+    /// (filename preserved so the node can derive the sector) plus a `sig` part
+    /// carrying the detached Ed25519 signature. Mirrors `POST /api/v1/plugins`.
+    pub async fn install_plugin(
+        &self,
+        url: &str,
+        wasm_filename: &str,
+        wasm: Vec<u8>,
+        sig: Vec<u8>,
+    ) -> Result<(StatusCode, String)> {
+        let wasm_part = reqwest::multipart::Part::bytes(wasm).file_name(wasm_filename.to_owned());
+        let sig_part = reqwest::multipart::Part::bytes(sig);
+        let form = reqwest::multipart::Form::new()
+            .part("wasm", wasm_part)
+            .part("sig", sig_part);
+        let resp = self
+            .inner
+            .post(url)
+            .bearer_auth(&self.bearer)
+            .multipart(form)
+            .send()
+            .await?;
+        let status = resp.status();
+        let body = resp.text().await?;
+        Ok((status, body))
+    }
+
     /// GET `url` without auth (used for public health endpoints).
     pub async fn get_public(&self, url: &str) -> Result<(StatusCode, String)> {
         let resp = self.inner.get(url).send().await?;

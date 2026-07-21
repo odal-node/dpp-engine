@@ -12,6 +12,15 @@
 //!   (d) a terminal rejection marks the row `rejected` (alarm), never dropped;
 //!   (e) suspend/archive enqueue a durable status intent.
 //!
+//! And that a status intent is kept strictly out of the registration queue
+//! state (`ops/pg/0024`), since conflating them silently dropped registrations:
+//!
+//!   (f) suspending before the drain runs leaves the registration due;
+//!   (g) re-publishing clears a now-obsolete suspend intent;
+//!   (h) archiving a never-published draft creates no row, so it raises no
+//!       registration alarm;
+//!   plus: 0024 restores registrations already lost to the old write path.
+//!
 //! Run: `cargo test -p dpp-node --features integration-tests --test registry_outbox`
 
 #![cfg(feature = "integration-tests")]
@@ -44,7 +53,7 @@ use dpp_domain::{
     },
 };
 use dpp_node::infra::registry_drain::drain_once;
-use dpp_types::{RegistrySyncOutbox, RegistrySyncStatus};
+use dpp_types::{RegistryStatusIntent, RegistrySyncOutbox, RegistrySyncStatus};
 
 // ─── Harness ────────────────────────────────────────────────────────────────
 
@@ -290,6 +299,217 @@ async fn drain_backs_off_on_transient_and_marks_terminal_rejection() {
     assert_eq!(row.status, RegistrySyncStatus::Rejected);
 }
 
+// ─── 0024 heals rows the old write path already clobbered ─────────────────────
+
+/// Bring a fresh database up to the pre-0024 schema by applying every migration
+/// before it, so the damaged state can be reproduced and the repair exercised.
+/// Returns the privileged URL.
+async fn start_pg_before_0024() -> (String, testcontainers::ContainerAsync<GenericImage>) {
+    let image = GenericImage::new("postgres", "17")
+        .with_exposed_port(ContainerPort::Tcp(5432))
+        .with_wait_for(WaitFor::message_on_stderr(
+            "database system is ready to accept connections",
+        ))
+        .with_env_var("POSTGRES_USER", "postgres")
+        .with_env_var("POSTGRES_PASSWORD", "test")
+        .with_env_var("POSTGRES_DB", "odal");
+
+    let container = image.start().await.expect("start postgres container");
+    let port = container
+        .get_host_port_ipv4(5432)
+        .await
+        .expect("mapped port");
+    let admin_url = format!("postgres://postgres:test@127.0.0.1:{port}/odal");
+
+    tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
+
+    let admin = sqlx::postgres::PgPoolOptions::new()
+        .max_connections(1)
+        .connect(&admin_url)
+        .await
+        .expect("admin connect");
+    sqlx::query("CREATE ROLE odal_app LOGIN PASSWORD 'test'")
+        .execute(&admin)
+        .await
+        .expect("create app role");
+
+    let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../../ops/pg");
+    let mut files: Vec<_> = std::fs::read_dir(dir)
+        .expect("read ops/pg")
+        .filter_map(|e| e.ok().map(|e| e.path()))
+        .filter(|p| p.extension().is_some_and(|x| x == "sql"))
+        .collect();
+    files.sort();
+    for path in files {
+        let name = path.file_name().unwrap().to_string_lossy().to_string();
+        if name.starts_with("0024_") {
+            break; // stop at the migration under test
+        }
+        let sql = std::fs::read_to_string(&path).expect("read migration");
+        sqlx::raw_sql(&sql)
+            .execute(&admin)
+            .await
+            .unwrap_or_else(|e| panic!("apply {name}: {e}"));
+    }
+    admin.close().await;
+    (admin_url, container)
+}
+
+/// Insert a passport plus a `registry_sync` row in the shape the old
+/// `enqueue_status` left behind — an intent sitting in the `status` column.
+async fn insert_clobbered_row(
+    pool: &sqlx::PgPool,
+    status: &str,
+    registry_id: Option<&str>,
+) -> uuid::Uuid {
+    let id = uuid::Uuid::now_v7();
+    sqlx::query(
+        r#"INSERT INTO odal.passport (id, sector, status, schema_version, doc)
+           VALUES ($1, 'battery', 'suspended', '2.0.0', '{}'::jsonb)"#,
+    )
+    .bind(id)
+    .execute(pool)
+    .await
+    .expect("insert passport");
+    sqlx::query(
+        r#"INSERT INTO odal.registry_sync (passport_id, status, registry_id, payload)
+           VALUES ($1, $2, $3, '{}'::jsonb)"#,
+    )
+    .bind(id)
+    .bind(status)
+    .bind(registry_id)
+    .execute(pool)
+    .await
+    .expect("insert clobbered registry_sync row");
+    id
+}
+
+/// The repair in 0024 uses `registry_id` as the witness of what `status` held
+/// before the overwrite: set only by `mark_registered`, so its absence means the
+/// row was still `pending` and its registration was never sent. Those rows must
+/// come back to `pending` — that is what recovers the already-lost Art. 13
+/// registrations in an existing deployment.
+#[tokio::test(flavor = "multi_thread")]
+async fn migration_0024_restores_registrations_lost_before_the_fix() {
+    let (admin_url, _c) = start_pg_before_0024().await;
+    let admin = sqlx::postgres::PgPoolOptions::new()
+        .max_connections(1)
+        .connect(&admin_url)
+        .await
+        .expect("admin connect");
+
+    // Never registered — the registration is still owed.
+    let lost = insert_clobbered_row(&admin, "suspended", None).await;
+    // Already registered before the intent overwrote the column.
+    let registered = insert_clobbered_row(&admin, "deactivated", Some("EU-REG-EXISTING")).await;
+    // An untouched pending row must be left exactly as it is.
+    let untouched = insert_clobbered_row(&admin, "pending", None).await;
+
+    // Apply the migration under test straight from its file. (The other tests
+    // in this suite go through `PgDal::migrate`, which proves the runner picks
+    // 0024 up; here the manual 0001–0023 run leaves `_sqlx_migrations` empty, so
+    // the runner would try to replay them.)
+    let sql = std::fs::read_to_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../ops/pg/0024_registry_sync_status_intent.sql"
+    ))
+    .expect("read 0024");
+    sqlx::raw_sql(&sql)
+        .execute(&admin)
+        .await
+        .expect("apply 0024");
+    admin.close().await;
+
+    let dal = PgDal::connect(&admin_url).await.expect("connect");
+    let outbox: Arc<dyn RegistrySyncOutbox> = Arc::new(PgRegistrySyncRepo::new(dal.clone()));
+
+    // Assert on the raw columns, not the parsed enum: `RegistrySyncStatus::from_db`
+    // falls back to `Pending` for unrecognised values, so an unhealed 'suspended'
+    // row would read back as `Pending` and pass a typed assertion spuriously.
+    async fn raw(dal: &PgDal, id: uuid::Uuid) -> (String, Option<String>) {
+        sqlx::query_as(
+            "SELECT status, status_intent FROM odal.registry_sync WHERE passport_id = $1",
+        )
+        .bind(id)
+        .fetch_one(dal.pool())
+        .await
+        .expect("read row")
+    }
+
+    assert_eq!(
+        raw(&dal, lost).await,
+        ("pending".into(), Some("suspended".into())),
+        "an unsent registration must be restored to the due set"
+    );
+    assert_eq!(
+        raw(&dal, registered).await,
+        ("registered".into(), Some("deactivated".into())),
+        "a row that had reached the registry must not be re-queued"
+    );
+    assert_eq!(
+        raw(&dal, untouched).await,
+        ("pending".into(), None),
+        "an untouched pending row is left exactly as it was"
+    );
+
+    // The recovered registration is actually drainable again.
+    assert!(
+        outbox
+            .due(50)
+            .await
+            .unwrap()
+            .iter()
+            .any(|r| r.passport_id.0 == lost),
+        "recovered row is due for drain"
+    );
+}
+
+// ─── (f) a status intent must not dequeue an unsent registration ──────────────
+
+/// Publish, then suspend before the drain has run. The Art. 13 registration was
+/// never sent, so it is still owed — recording the suspend intent must not take
+/// it off the queue.
+///
+/// The window is wide, not a race: the drain runs every 30s, backoff pushes a
+/// retrying row out to an hour, and against the current `GhostRegistrySync` stub
+/// a row can stay pending indefinitely.
+#[tokio::test(flavor = "multi_thread")]
+async fn suspend_before_drain_must_not_drop_the_pending_registration() {
+    let (dal, _c) = start_pg().await;
+    let outbox: Arc<dyn RegistrySyncOutbox> = Arc::new(PgRegistrySyncRepo::new(dal.clone()));
+
+    let id = create_and_publish(&dal, &outbox).await;
+
+    // Precondition: the publish transaction queued the registration.
+    let due = outbox.due(50).await.unwrap();
+    assert!(
+        due.iter().any(|r| r.passport_id.0 == id.0),
+        "publish must leave the registration due for drain"
+    );
+
+    // Operator suspends the passport before the drain's next pass.
+    outbox
+        .enqueue_status(id, RegistryStatusIntent::Suspended)
+        .await
+        .unwrap();
+
+    let due_after = outbox.due(50).await.unwrap();
+    assert!(
+        due_after.iter().any(|r| r.passport_id.0 == id.0),
+        "recording a suspend intent must not dequeue the unsent registration"
+    );
+
+    // And the loss is real, not just a state-machine detail: the registry is
+    // never called for this passport.
+    let (port, calls) = mock(Outcome::Registered);
+    drain_once(&outbox, &port, 50).await;
+    assert_eq!(
+        calls.load(Ordering::SeqCst),
+        1,
+        "the owed registration must still reach the EU registry"
+    );
+}
+
 // ─── (e) suspend enqueues a durable status intent + counts ────────────────────
 
 #[tokio::test(flavor = "multi_thread")]
@@ -299,14 +519,100 @@ async fn suspend_enqueues_status_intent_and_counts_reflect_state() {
 
     let id = create_and_publish(&dal, &outbox).await;
     outbox
-        .enqueue_status(id, RegistrySyncStatus::Suspended)
+        .enqueue_status(id, RegistryStatusIntent::Suspended)
         .await
         .unwrap();
 
+    // The intent is recorded *alongside* the queue state, not over it.
     let row = outbox.pending_for(id).await.unwrap().unwrap();
-    assert_eq!(row.status, RegistrySyncStatus::Suspended);
+    assert_eq!(row.status_intent, Some(RegistryStatusIntent::Suspended));
+    assert_eq!(row.status, RegistrySyncStatus::Pending);
 
     let counts = outbox.status_counts(8).await.unwrap();
     assert_eq!(counts.status_intents, 1);
-    assert_eq!(counts.pending, 0);
+    assert_eq!(
+        counts.pending, 1,
+        "the registration is still owed and still counted"
+    );
+}
+
+// ─── (h) a passport that was never published owes no registration ─────────────
+
+/// `Draft -> Archived` is a legal transition, so `archive` reaches
+/// `enqueue_status` for passports that never published and therefore have no
+/// outbox row. Recording an intent must not invent one: a fabricated row has no
+/// payload, so the drain would mark it `rejected` and raise an Art. 13 alarm for
+/// a passport that never owed a registration. The outbox row is created by the
+/// publish transaction and by nothing else.
+#[tokio::test(flavor = "multi_thread")]
+async fn archiving_an_unpublished_draft_creates_no_outbox_row() {
+    let (dal, _c) = start_pg().await;
+    let outbox: Arc<dyn RegistrySyncOutbox> = Arc::new(PgRegistrySyncRepo::new(dal.clone()));
+    let repo = PgPassportRepo::new(dal.clone());
+
+    // A draft that is archived without ever being published.
+    let draft = draft_passport();
+    let id = draft.id;
+    repo.create(draft).await.expect("create draft");
+    outbox
+        .enqueue_status(id, RegistryStatusIntent::Deactivated)
+        .await
+        .expect("recording an intent for a never-published passport must not error");
+
+    assert_eq!(
+        outbox_row_count(&dal, id).await,
+        0,
+        "no registration was ever queued, so there is no row to annotate"
+    );
+
+    // Nothing to drain, and no false rejection raised.
+    let (port, calls) = mock(Outcome::Registered);
+    let stats = drain_once(&outbox, &port, 50).await;
+    assert_eq!(calls.load(Ordering::SeqCst), 0, "registry not called");
+    assert_eq!(
+        (stats.rejected, stats.skipped),
+        (0, 0),
+        "an unpublished passport must not raise a registration alarm"
+    );
+    assert_eq!(outbox.status_counts(8).await.unwrap().rejected, 0);
+}
+
+// ─── (g) re-publishing clears a now-obsolete suspend intent ───────────────────
+
+/// `Suspended -> Published` is a legal transition, so a recorded `suspended`
+/// intent goes stale the moment a passport is re-published. Clearing it on
+/// re-publish keeps the future status-sync path from pushing a suspension for a
+/// passport that is live again.
+#[tokio::test(flavor = "multi_thread")]
+async fn republish_clears_a_stale_suspend_intent() {
+    let (dal, _c) = start_pg().await;
+    let outbox: Arc<dyn RegistrySyncOutbox> = Arc::new(PgRegistrySyncRepo::new(dal.clone()));
+
+    let id = create_and_publish(&dal, &outbox).await;
+
+    // Drain the registration, then suspend.
+    let (port, _) = mock(Outcome::Registered);
+    drain_once(&outbox, &port, 50).await;
+    outbox
+        .enqueue_status(id, RegistryStatusIntent::Suspended)
+        .await
+        .unwrap();
+    let row = outbox.pending_for(id).await.unwrap().unwrap();
+    assert_eq!(row.status_intent, Some(RegistryStatusIntent::Suspended));
+
+    // Operator re-publishes the suspended passport.
+    let mut again = draft_passport();
+    again.id = id;
+    again.status = PassportStatus::Published;
+    let payload =
+        serde_json::to_value(RegistrationRequest::from_published_passport(&again, "DE")).unwrap();
+    outbox.commit_publish(&again, payload).await.unwrap();
+
+    let row = outbox.pending_for(id).await.unwrap().unwrap();
+    assert_eq!(row.status_intent, None, "stale suspend intent cleared");
+    assert_eq!(
+        row.status,
+        RegistrySyncStatus::Registered,
+        "an already-registered row stays registered"
+    );
 }

@@ -65,6 +65,26 @@ pub fn public_view(full: &Value, sector_key: &str) -> Value {
     view
 }
 
+/// Render the byte-identical public-view JSON for a passport — exactly what the
+/// public read serves (and what `publicJwsSignature` is signed over), so a stored
+/// continuity snapshot matches the live view and carries the public JWS.
+///
+/// Lives beside [`public_view`] rather than in the service so the snapshot drain
+/// (`dpp-node`) renders through the *same* source of truth the live read uses;
+/// a second renderer is exactly how the static tier would silently drift.
+/// Delegates to [`signed_public_view`] — not a raw [`public_view`] re-derivation
+/// — for the same reason: the live route serves the frozen signed payload, so a
+/// snapshot built any other way would drift from it the moment a Public field
+/// mutates after publish.
+///
+/// # Errors
+/// Returns whatever [`signed_public_view`] returns, plus
+/// [`DppError::Serialisation`] if the decoded view cannot be re-serialised.
+pub fn render_public_snapshot(passport: &Passport) -> Result<Vec<u8>, DppError> {
+    let view = signed_public_view(passport)?;
+    serde_json::to_vec(&view).map_err(|e| DppError::Serialisation(e.to_string()))
+}
+
 /// The public view **as actually signed**: the decoded payload of
 /// `publicJwsSignature`, with the proof re-attached.
 ///

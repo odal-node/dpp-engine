@@ -3,6 +3,7 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use dpp_common::plugin_admin::PluginAdmin;
 use dpp_types::auth::AuthProvider;
 
 use crate::domain::{
@@ -42,4 +43,7 @@ pub struct AppState {
     pub auth_provider: Arc<dyn AuthProvider>,
     /// Origins allowed for CORS requests (empty = CORS disabled).
     pub cors_allowed_origins: Vec<String>,
+    /// Runtime plugin administration (the Wasm plugin host). `None` on
+    /// deployments with no plugin host wired (e.g. the standalone vault binary).
+    pub plugin_admin: Option<Arc<dyn PluginAdmin>>,
 }

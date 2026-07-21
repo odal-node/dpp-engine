@@ -25,7 +25,12 @@ use sha2::{Digest, Sha256};
 /// 3. Publisher writes the 64-byte signature (or base64 thereof) to `{wasm}.sig`.
 /// 4. The host verifies `sig` against `digest` using the publisher's public key.
 pub(crate) fn verify_plugin_signature(wasm_path: &Path, trusted_key: &VerifyingKey) -> Result<()> {
-    let sig_path = wasm_path.with_extension("wasm.sig");
+    // Derive the detached-signature path by appending `.sig` to the full
+    // artifact filename, so both `foo.wasm` → `foo.wasm.sig` and (AOT)
+    // `foo.cwasm` → `foo.cwasm.sig` are handled by the one convention.
+    let mut sig_os = wasm_path.as_os_str().to_owned();
+    sig_os.push(".sig");
+    let sig_path = std::path::PathBuf::from(sig_os);
     anyhow::ensure!(
         sig_path.exists(),
         "signature file not found: {} — unsigned plugins cannot be loaded in verified mode",

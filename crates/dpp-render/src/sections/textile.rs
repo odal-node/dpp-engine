@@ -1,6 +1,6 @@
 //! Textile sector HTML section, including the fibre-composition bar chart.
 
-use super::super::esc::esc;
+use crate::esc::esc;
 
 pub(super) fn build_textile_section(p: &serde_json::Value) -> String {
     let sd = match p.get("sectorData") {
@@ -109,4 +109,68 @@ fn build_fibre_legend(fibres: &[(&str, f64)]) -> String {
         })
         .collect();
     format!(r#"<div style="margin-top:.4rem">{items}</div>"#)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn full_data_populates_all_fields() {
+        let p = serde_json::json!({"sectorData": {
+            "countryOfManufacturing": "Germany",
+            "careInstructions": "Machine wash cold",
+            "chemicalComplianceStandard": "OEKO-TEX Standard 100",
+            "recycledContentPct": 32.5,
+            "fibreComposition": [
+                { "fibre": "Organic Cotton", "pct": 80.0 },
+                { "fibre": "Elastane", "pct": 20.0 },
+            ],
+        }});
+        let html = build_textile_section(&p);
+        assert!(html.contains("Germany"));
+        assert!(html.contains("Machine wash cold"));
+        assert!(html.contains("OEKO-TEX Standard 100"));
+        assert!(html.contains("32.5%"));
+        assert!(html.contains("Organic Cotton"));
+        assert!(html.contains("Elastane"));
+    }
+
+    #[test]
+    fn missing_fields_fall_back_to_dashes() {
+        let p = serde_json::json!({"sectorData": {}});
+        let html = build_textile_section(&p);
+        assert!(html.contains("Textile Information"));
+        assert!(html.contains(">-<"));
+    }
+
+    #[test]
+    fn absent_sector_data_returns_empty_string() {
+        let p = serde_json::json!({});
+        assert_eq!(build_textile_section(&p), "");
+    }
+
+    /// The textile sector catalog (`dpp-core/crates/dpp-domain/sectors/textile.json`)
+    /// marks `svhcSubstances`, `disassemblyInstructions` and `sparePartsAvailable` as
+    /// professional-tier, not public. This section is expected to receive an
+    /// already-redacted Public-tier view and performs no filtering of its own — but
+    /// it also never names these fields, so even an unredacted passport renders
+    /// none of them. Guards that property against a future edit that starts
+    /// serializing `sectorData` wholesale instead of field-by-field.
+    #[test]
+    fn professional_tier_fields_are_never_rendered() {
+        let p = serde_json::json!({"sectorData": {
+            "countryOfManufacturing": "Germany",
+            "svhcSubstances": "MARKER_SVHC_SUBSTANCE",
+            "disassemblyInstructions": "MARKER_DISASSEMBLY_INSTRUCTIONS",
+            "sparePartsAvailable": "MARKER_SPARE_PARTS",
+        }});
+        let html = build_textile_section(&p);
+        assert!(!html.contains("MARKER_SVHC_SUBSTANCE"), "leaked: {html}");
+        assert!(
+            !html.contains("MARKER_DISASSEMBLY_INSTRUCTIONS"),
+            "leaked: {html}"
+        );
+        assert!(!html.contains("MARKER_SPARE_PARTS"), "leaked: {html}");
+    }
 }

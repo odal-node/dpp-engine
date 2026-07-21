@@ -3,9 +3,11 @@
 
 use std::sync::Arc;
 
+use dpp_domain::ports::passport_repo::PassportRepository;
 use dpp_domain::ports::registry_sync::RegistrySyncPort;
 use dpp_integrator::infra::job_store::JobStore;
 use dpp_types::registry_sync::RegistrySyncOutbox;
+use dpp_types::snapshot::{SnapshotOutbox, SnapshotStore};
 use dpp_types::webhook::WebhookOutbox;
 
 /// Spawn the periodic cleanup of expired import jobs (every 6 hours).
@@ -21,8 +23,13 @@ pub fn spawn_job_cleanup(store: Arc<dyn JobStore>) {
     });
 }
 
-const DRAIN_INTERVAL: std::time::Duration = std::time::Duration::from_secs(30);
+use dpp_node::infra::drain::{DRAIN_INTERVAL, SWEEP_INTERVAL};
+
 const DRAIN_BATCH: i64 = 50;
+/// Per-sweep cap. Larger than `DRAIN_BATCH` because a sweep only enqueues rows
+/// (one statement, no object-storage work); the drain still paces the actual
+/// reconciles at its own batch size.
+const SWEEP_BATCH: i64 = 500;
 const STALL_THRESHOLD: i32 = 8;
 
 /// Log/gauge the outbox's outstanding state, then spawn the periodic drain
@@ -115,6 +122,95 @@ pub async fn spawn_webhook_drain(outbox: Arc<dyn WebhookOutbox>, allow_private_t
                         "webhook outbox has exhausted deliveries — check receiver health"
                     );
                 }
+            }
+        }
+    });
+}
+
+/// Log/gauge the continuity-snapshot outbox's outstanding state, then spawn the
+/// periodic reconcile loop. Every change to a passport's public state enqueues a
+/// row (after-commit, in the vault service); this task re-reads each passport and
+/// makes object storage match — mirroring the public view for `Published`,
+/// retiring it otherwise. A killed node loses nothing: `pending` rows reconcile
+/// on boot.
+///
+/// [`DRAIN_INTERVAL`] bounds the suspend lag — see its docs before changing it.
+pub async fn spawn_snapshot_drain(
+    outbox: Arc<dyn SnapshotOutbox>,
+    repo: Arc<dyn PassportRepository>,
+    store: Arc<dyn SnapshotStore>,
+    resolver_base_url: String,
+) {
+    match outbox.status_counts().await {
+        Ok(c) => {
+            tracing::info!(
+                pending = c.pending,
+                reconciled = c.reconciled,
+                exhausted = c.exhausted,
+                "continuity snapshot outbox reconciliation at boot"
+            );
+            metrics::gauge!("snapshot_outbox_pending").set(c.pending as f64);
+            metrics::gauge!("snapshot_outbox_exhausted").set(c.exhausted as f64);
+        }
+        Err(e) => tracing::warn!(error = %e, "snapshot outbox boot reconciliation failed"),
+    }
+
+    tokio::spawn(async move {
+        loop {
+            tokio::time::sleep(DRAIN_INTERVAL).await;
+            dpp_node::infra::snapshot_drain::drain_once(
+                &outbox,
+                &repo,
+                &store,
+                &resolver_base_url,
+                DRAIN_BATCH,
+            )
+            .await;
+            if let Ok(c) = outbox.status_counts().await {
+                metrics::gauge!("snapshot_outbox_pending").set(c.pending as f64);
+                metrics::gauge!("snapshot_outbox_exhausted").set(c.exhausted as f64);
+                if c.exhausted > 0 {
+                    // Exhausted here means the static tier may still be serving a
+                    // stale public view — a correctness signal, not just noise.
+                    tracing::warn!(
+                        exhausted = c.exhausted,
+                        "snapshot outbox has exhausted reconciles — the static tier may be stale"
+                    );
+                }
+            }
+        }
+    });
+}
+
+/// Spawn the continuity tier's repair sweep.
+///
+/// The drain only ever sees reconciles that were successfully queued. This loop
+/// covers the ones that were not — a crash in the window between commit and
+/// enqueue, a row that exhausted its retries, or drift left by an earlier code
+/// path — by querying for passports whose static-tier state disagrees with the
+/// database and queueing them through the same path. It is what makes the tier's
+/// guarantee end-to-end rather than "loss-proof once enqueued".
+///
+/// Runs on [`SWEEP_INTERVAL`], far rarer than the drain: this is a backstop, not
+/// the primary path. Because it queries for divergence signals rather than
+/// sweeping everything, a converged deployment queues nothing.
+pub fn spawn_snapshot_sweep(outbox: Arc<dyn SnapshotOutbox>) {
+    tokio::spawn(async move {
+        loop {
+            tokio::time::sleep(SWEEP_INTERVAL).await;
+            match outbox.enqueue_divergent(SWEEP_BATCH).await {
+                Ok(0) => tracing::debug!("continuity snapshot sweep: nothing divergent"),
+                Ok(n) => {
+                    // Non-zero is worth an info line: in a healthy deployment the
+                    // event-driven path should have caught these, so a steady
+                    // trickle here means something upstream is dropping enqueues.
+                    metrics::counter!("snapshot_sweep_requeued_total").increment(n);
+                    tracing::info!(
+                        requeued = n,
+                        "continuity snapshot sweep queued divergent passports"
+                    );
+                }
+                Err(e) => tracing::warn!(error = %e, "continuity snapshot sweep failed"),
             }
         }
     });

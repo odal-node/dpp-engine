@@ -154,6 +154,9 @@ async fn main() -> anyhow::Result<()> {
         db_ping: Arc::new(PgPing(dal)),
         auth_provider,
         cors_allowed_origins: cfg.cors_allowed_origins.clone(),
+        // The standalone vault binary hosts no Wasm plugin engine; runtime
+        // plugin install is available only on the fused node.
+        plugin_admin: None,
     };
 
     let app = router::build(state);

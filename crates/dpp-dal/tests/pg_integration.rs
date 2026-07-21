@@ -15,6 +15,8 @@
 //! Coverage map:
 //!   T1 roundtrip parity · T3 retention trigger immutability
 //!   T4 audit append-only trigger · T5 key-prefix uniqueness · T6 patch_fields merge
+//!   T13 snapshot reconcile outbox upsert/re-arm/due-filter
+//!   T14 snapshot repair sweep selectivity
 
 #![cfg(feature = "integration-tests")]
 
@@ -25,7 +27,10 @@ use testcontainers::{
 };
 use uuid::Uuid;
 
-use dpp_dal::pg::{PgApiKeyRepo, PgAuditRepo, PgDal, PgEvidenceDossierRepo, PgPassportRepo, sqlx};
+use dpp_dal::pg::{
+    PgApiKeyRepo, PgAuditRepo, PgDal, PgEvidenceDossierRepo, PgPassportRepo, PgSnapshotOutboxRepo,
+    sqlx,
+};
 use dpp_domain::{
     domain::{
         gtin::Gtin,
@@ -42,6 +47,7 @@ use dpp_types::{
     evidence::{
         DossierManifest, DossierV1, EvidenceDossierRecord, EvidenceDossierRepository, SignedLayer,
     },
+    snapshot::SnapshotOutbox,
 };
 use sqlx::Row;
 
@@ -793,4 +799,207 @@ async fn t12_evidence_dossier_list_orders_newest_first() {
     assert_eq!(summaries.len(), 2);
     assert_eq!(summaries[0].id, second.id, "newest dossier must be first");
     assert_eq!(summaries[1].id, first.id);
+}
+
+// T13 — snapshot reconcile outbox: the upsert/drain semantics the in-memory
+// doubles in `dpp-node/tests/snapshot_outbox.rs` only *model*. Those tests prove
+// the drain converges; this one proves the SQL underneath actually behaves the
+// way they assume — the gap that let an unguarded upsert sit undetected on the
+// registry-sync path.
+#[tokio::test]
+async fn t13_snapshot_outbox_upsert_rearm_and_due_filter() {
+    let pg = start_pg().await;
+    let passport_repo = PgPassportRepo::new(pg.dal.clone());
+    let passport = passport_repo
+        .create(make_passport())
+        .await
+        .expect("create passport");
+
+    let outbox = PgSnapshotOutboxRepo::new(pg.dal.clone());
+
+    // Enqueue is drainable immediately.
+    outbox.enqueue(passport.id).await.expect("enqueue");
+    let due = outbox.due(50).await.expect("due");
+    assert_eq!(due.len(), 1, "a fresh reconcile must be due now");
+    assert_eq!(due[0].passport_id, passport.id);
+    assert_eq!(due[0].attempts, 0);
+
+    // Idempotence: a second change while one is still pending collapses into the
+    // same row rather than stacking a duplicate. This is the `passport_id UNIQUE`
+    // upsert doing the work the in-memory double asserts.
+    outbox.enqueue(passport.id).await.expect("enqueue again");
+    let due = outbox.due(50).await.expect("due");
+    assert_eq!(
+        due.len(),
+        1,
+        "repeat enqueues for one passport must collapse to a single pending row"
+    );
+    let counts = outbox.status_counts().await.expect("counts");
+    assert_eq!(counts.pending, 1);
+    assert_eq!(counts.reconciled, 0);
+
+    // A transient failure backs the row off: still pending, but no longer due
+    // (minimum backoff is 2^1 * 0.75 = 1.5s), so a hot loop cannot spin on it.
+    let row_id = due[0].id;
+    outbox
+        .mark_attempt_failed(row_id, "object store unavailable".into())
+        .await
+        .expect("mark failed");
+    assert!(
+        outbox.due(50).await.expect("due").is_empty(),
+        "a backed-off row must not be immediately due again"
+    );
+    assert_eq!(
+        outbox.status_counts().await.expect("counts").pending,
+        1,
+        "a backed-off row stays pending — nothing is lost"
+    );
+
+    // Terminal success removes it from the queue.
+    outbox
+        .mark_reconciled(row_id)
+        .await
+        .expect("mark reconciled");
+    assert!(outbox.due(50).await.expect("due").is_empty());
+    let counts = outbox.status_counts().await.expect("counts");
+    assert_eq!(counts.pending, 0);
+    assert_eq!(counts.reconciled, 1);
+
+    // Re-arm: a later state change must make a *reconciled* row drainable again,
+    // with a fresh attempt budget. Without this the tier would go permanently
+    // deaf to a passport after its first reconcile.
+    outbox.enqueue(passport.id).await.expect("re-enqueue");
+    let due = outbox.due(50).await.expect("due");
+    assert_eq!(
+        due.len(),
+        1,
+        "a new state change must re-arm a reconciled row"
+    );
+    assert_eq!(due[0].attempts, 0, "re-arm resets the retry budget");
+    assert_eq!(outbox.status_counts().await.expect("counts").reconciled, 0);
+
+    // Re-arm from `exhausted` too: giving up on a stale state must never make a
+    // passport permanently unreconcilable once it changes again.
+    let row_id = due[0].id;
+    outbox
+        .mark_exhausted(row_id, "gave up".into())
+        .await
+        .expect("mark exhausted");
+    assert!(outbox.due(50).await.expect("due").is_empty());
+    assert_eq!(outbox.status_counts().await.expect("counts").exhausted, 1);
+
+    outbox
+        .enqueue(passport.id)
+        .await
+        .expect("re-enqueue after exhaustion");
+    let due = outbox.due(50).await.expect("due");
+    assert_eq!(
+        due.len(),
+        1,
+        "an exhausted row must be re-armed by a later state change"
+    );
+    let counts = outbox.status_counts().await.expect("counts");
+    assert_eq!(counts.exhausted, 0);
+    assert_eq!(counts.pending, 1);
+}
+
+// T14 — the continuity tier's repair sweep: which passports it considers
+// divergent, and — just as important — which it leaves alone. The sweep is the
+// backstop for reconciles the event-driven path never queued, so its selectivity
+// is the whole design: too narrow and drift persists, too broad and every sweep
+// re-uploads the world.
+#[tokio::test]
+async fn t14_snapshot_sweep_requeues_only_divergent_passports() {
+    let pg = start_pg().await;
+    let passport_repo = PgPassportRepo::new(pg.dal.clone());
+    let outbox = PgSnapshotOutboxRepo::new(pg.dal.clone());
+
+    // A draft that was never published: nothing can be stale in the public tier,
+    // so it must never be swept in. Without the `published_at` guard every draft
+    // ever created would match the "no outbox row" arm forever.
+    let draft = passport_repo
+        .create(make_passport())
+        .await
+        .expect("create draft");
+
+    // A published passport that never got an outbox row — the shape left behind
+    // by a crash between commit and enqueue, or by an earlier code path that
+    // never enqueued at all.
+    let mut published = make_passport();
+    published.id = PassportId::new();
+    published.status = PassportStatus::Published;
+    let published = passport_repo.create(published).await.expect("create pub");
+    sqlx::query("UPDATE odal.passport SET status = 'active', published_at = now() WHERE id = $1")
+        .bind(published.id.0)
+        .execute(pg.dal.pool())
+        .await
+        .expect("mark published");
+
+    let swept = outbox.enqueue_divergent(500).await.expect("sweep");
+    assert_eq!(swept, 1, "only the published, never-reconciled passport");
+    let due = outbox.due(500).await.expect("due");
+    assert_eq!(due.len(), 1);
+    assert_eq!(due[0].passport_id, published.id);
+    assert!(
+        !due.iter().any(|r| r.passport_id == draft.id),
+        "a never-published draft must never be swept into the tier"
+    );
+
+    // Reconcile it. A converged passport must not be swept again — this is what
+    // keeps a steady-state deployment doing zero work.
+    outbox
+        .mark_reconciled(due[0].id)
+        .await
+        .expect("mark reconciled");
+    assert_eq!(
+        outbox.enqueue_divergent(500).await.expect("sweep"),
+        0,
+        "a converged passport must not be re-swept"
+    );
+    assert!(outbox.due(500).await.expect("due").is_empty());
+
+    // Touch the passport so it changed after its last reconcile: that is the
+    // commit-to-enqueue window, and the sweep must catch it.
+    sqlx::query("UPDATE odal.passport SET updated_at = now() WHERE id = $1")
+        .bind(published.id.0)
+        .execute(pg.dal.pool())
+        .await
+        .expect("touch");
+    assert_eq!(
+        outbox.enqueue_divergent(500).await.expect("sweep"),
+        1,
+        "a passport changed after its last reconcile must be re-swept"
+    );
+
+    // An exhausted row means the tier may still be serving something stale, so
+    // the sweep must re-arm it rather than leave it terminally given-up.
+    let row_id = outbox.due(500).await.expect("due")[0].id;
+    outbox
+        .mark_exhausted(row_id, "gave up".into())
+        .await
+        .expect("exhaust");
+    assert!(outbox.due(500).await.expect("due").is_empty());
+    assert_eq!(
+        outbox.enqueue_divergent(500).await.expect("sweep"),
+        1,
+        "an exhausted reconcile must be re-armed by the sweep"
+    );
+    assert_eq!(outbox.due(500).await.expect("due").len(), 1);
+
+    // A row already `pending` is the drain's to own. Re-arming it every sweep
+    // would reset its backoff and turn a failing reconcile into a hot loop.
+    let before = outbox.due(500).await.expect("due")[0].id;
+    outbox
+        .mark_attempt_failed(before, "transient".into())
+        .await
+        .expect("fail once");
+    assert_eq!(
+        outbox.enqueue_divergent(500).await.expect("sweep"),
+        0,
+        "a pending row must be left to the drain, backoff intact"
+    );
+    assert!(
+        outbox.due(500).await.expect("due").is_empty(),
+        "the backed-off row must stay backed off after a sweep"
+    );
 }

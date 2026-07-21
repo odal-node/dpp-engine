@@ -1,0 +1,16 @@
+[package]
+name        = "dpp-render"
+version     = { workspace = true }
+edition     = { workspace = true }
+authors     = { workspace = true }
+license     = { workspace = true }
+repository  = { workspace = true }
+description = "Shared HTML rendering of the public passport view"
+
+[dependencies]
+dpp-digital-link = { workspace = true }
+
+serde_json = { workspace = true }
+qrcode     = { workspace = true }
+uuid       = { workspace = true }
+chrono     = { workspace = true }

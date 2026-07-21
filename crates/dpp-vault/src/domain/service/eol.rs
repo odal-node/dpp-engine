@@ -8,7 +8,7 @@ use dpp_domain::domain::{
     passport::{Passport, PassportId},
     status::PassportStatus,
 };
-use dpp_types::{audit::AuditEntry, auth::AuthContext, registry_sync::RegistrySyncStatus};
+use dpp_types::{audit::AuditEntry, auth::AuthContext, registry_sync::RegistryStatusIntent};
 
 use super::PassportService;
 
@@ -61,7 +61,7 @@ impl PassportService {
         // EU registry once its status API exists). Non-fatal.
         if let Some(outbox) = &self.registry_outbox
             && let Err(e) = outbox
-                .enqueue_status(id, RegistrySyncStatus::Deactivated)
+                .enqueue_status(id, RegistryStatusIntent::Deactivated)
                 .await
         {
             tracing::warn!(
@@ -81,6 +81,13 @@ impl PassportService {
             }),
         )
         .await;
+
+        // Reconcile the continuity tier: the live public read serves only
+        // `Published`, so a deactivated passport must stop being served from the
+        // static tier too — otherwise it keeps answering `published` under a
+        // valid signature for the rest of the bucket's life. The drain derives
+        // the retire from the passport's status (non-fatal).
+        self.enqueue_snapshot_reconcile(updated.id).await;
 
         Ok(updated)
     }

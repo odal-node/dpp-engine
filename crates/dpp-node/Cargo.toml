@@ -24,6 +24,7 @@ dpp-common             = { path = "../dpp-common" }
 dpp-dal                = { path = "../dpp-dal" }
 dpp-types              = { workspace = true }
 dpp-vault              = { path = "../dpp-vault" }
+dpp-render             = { path = "../dpp-render" }
 dpp-identity   = { path = "../dpp-identity" }
 dpp-integrator         = { path = "../dpp-integrator" }
 dpp-registry           = { workspace = true }

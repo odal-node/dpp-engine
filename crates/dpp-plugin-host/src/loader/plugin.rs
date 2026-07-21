@@ -9,7 +9,7 @@ use ed25519_dalek::VerifyingKey;
 use wasmtime::{Engine, Instance, Linker, Module, Store};
 
 use dpp_domain::ports::compliance::ComplianceResult;
-use dpp_plugin_traits::{AbiResult, PluginCapabilities, PluginResult};
+use dpp_plugin_traits::{AbiResult, PluginCapabilities, PluginResult, check_compatibility};
 
 use super::signing::verify_plugin_signature;
 use crate::host::plugin_result_to_compliance;
@@ -97,9 +97,33 @@ impl LoadedPlugin {
             );
         }
 
-        tracing::info!(path = %path.display(), sector = sector_key, "compiling Wasm plugin");
-        let module = Module::from_file(engine, path)
-            .map_err(|e| anyhow::anyhow!("failed to compile {}: {e}", path.display()))?;
+        // A `.cwasm` artifact is a precompiled (AOT) module: deserialize it
+        // rather than compile. Everything else — signature policy above, the
+        // describe()/ABI gate below — is identical for both kinds.
+        let is_precompiled = path.extension().and_then(|e| e.to_str()) == Some("cwasm");
+        let module = if is_precompiled {
+            tracing::info!(path = %path.display(), sector = sector_key, "loading precompiled plugin (.cwasm)");
+            // Read the bytes and deserialize from memory rather than
+            // `deserialize_file` (which mmaps and would keep the file open — on
+            // Windows that blocks the install's promote-by-rename step).
+            let bytes = std::fs::read(path)
+                .map_err(|e| anyhow::anyhow!("failed to read {}: {e}", path.display()))?;
+            // SAFETY: the artifact's signature was verified against the pinned
+            // publisher key above (or the operator explicitly opted into unsigned
+            // dev mode), so the bytes are authentic rather than attacker-forged —
+            // the precondition `Module::deserialize` requires. wasmtime
+            // additionally validates its embedded engine/target/config header and
+            // returns an error (not UB) when this node's engine cannot load it.
+            unsafe {
+                Module::deserialize(engine, &bytes).map_err(|e| {
+                    anyhow::anyhow!("incompatible precompiled artifact {}: {e}", path.display())
+                })?
+            }
+        } else {
+            tracing::info!(path = %path.display(), sector = sector_key, "compiling Wasm plugin");
+            Module::from_file(engine, path)
+                .map_err(|e| anyhow::anyhow!("failed to compile {}: {e}", path.display()))?
+        };
 
         // Call describe() once at load time to cache capabilities and derive
         // per-invocation resource limits without an extra round-trip per call.
@@ -138,6 +162,28 @@ impl LoadedPlugin {
             abi_minor = capabilities.abi_version.minor,
             "plugin describe() cached"
         );
+
+        // Fail-closed ABI gate. The host must not register a plugin whose
+        // declared ABI/host-version contract it cannot honour — otherwise a
+        // future-major plugin would load and then trap or misbehave at dispatch.
+        // No schema is requested and no capability is required here: this gate
+        // answers only "can this host run this plugin's ABI at all" (dispatch-time
+        // schema selection is a separate concern). The `describe`-missing fallback
+        // above synthesises the host's own current ABI, so unversioned dev/test
+        // fixtures still pass.
+        let compat = check_compatibility(&capabilities, None, &[]);
+        if !compat.is_compatible() {
+            tracing::warn!(
+                code = event_codes::PLUGIN_REFUSED,
+                path = %path.display(),
+                sector = sector_key,
+                report = ?compat,
+                "Wasm plugin refused — ABI incompatible with host"
+            );
+            return Err(anyhow::anyhow!(
+                "plugin '{sector_key}' refused — ABI incompatible with host: {compat:?}"
+            ));
+        }
 
         Ok(Self {
             engine: engine.clone(),
@@ -404,6 +450,9 @@ mod tests {
     use tempfile::TempDir;
 
     const DESCRIBE_JSON: &str = r#"{"abiVersion":{"major":1,"minor":0},"supportedSchemas":[],"capabilities":["compute_metrics"],"maxFuel":500000,"maxMemoryBytes":1048576}"#;
+    // A plugin declaring a future major ABI the host cannot honour.
+    const DESCRIBE_JSON_ABI_MAJOR_2: &str =
+        r#"{"abiVersion":{"major":2,"minor":0},"supportedSchemas":[],"capabilities":[]}"#;
     const CALC_OK_JSON: &str =
         r#"{"ok":{"complianceStatus":"COMPLIANT","metrics":{"co2e_score":1.5}}}"#;
     const CALC_ERR_JSON: &str = r#"{"error":{"Internal":"boom"}}"#;
@@ -553,6 +602,27 @@ mod tests {
         );
         assert_eq!(plugin.capabilities.max_fuel, Some(500_000));
         assert_eq!(plugin.capabilities.max_memory_bytes, Some(1_048_576));
+    }
+
+    #[test]
+    fn from_file_refuses_abi_incompatible_plugin() {
+        let engine = build_engine().unwrap();
+        let dir = TempDir::new().unwrap();
+        // describe() advertises ABI major 2; the host is major 1, so the load
+        // gate must refuse it and surface the compatibility report.
+        let wasm = build_plugin_wasm(DESCRIBE_JSON_ABI_MAJOR_2, Some(CALC_OK_JSON), None, None);
+        let path = write_plugin_file(&dir, &wasm);
+
+        let err = match load_unsigned(&engine, &path, "battery") {
+            Ok(_) => panic!("ABI-incompatible plugin must be refused at load"),
+            Err(e) => e,
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("ABI incompatible"), "got: {msg}");
+        assert!(
+            msg.contains("AbiIncompatible"),
+            "report must name the status: {msg}"
+        );
     }
 
     #[test]

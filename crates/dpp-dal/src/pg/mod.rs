@@ -17,6 +17,7 @@ pub mod repo_operator_config;
 pub mod repo_passport;
 pub mod repo_registry_identity;
 pub mod repo_registry_sync;
+pub mod repo_snapshot;
 pub mod repo_transfer;
 pub mod repo_webhook;
 
@@ -29,6 +30,7 @@ pub use repo_operator_config::PgOperatorConfigRepo;
 pub use repo_passport::PgPassportRepo;
 pub use repo_registry_identity::PgRegistryIdentityRepo;
 pub use repo_registry_sync::PgRegistrySyncRepo;
+pub use repo_snapshot::PgSnapshotOutboxRepo;
 pub use repo_transfer::PgTransferRepo;
 pub use repo_webhook::PgWebhookRepo;
 /// Re-export so downstream crates (dpp-node's PgJobStore) can use the same
