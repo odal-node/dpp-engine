@@ -614,3 +614,113 @@ async fn gs1_digital_link_resolves_every_carrier_ai_shape() {
         );
     }
 }
+
+// ── GS1 Digital Link: signature verification ────────────────────────────────
+
+/// GTIN resolution is a second way to reach the same passport data as the
+/// id-based routes, so it must verify the public JWS against the operator DID
+/// exactly like they do — not a second, unverified path.
+#[tokio::test]
+async fn gtin_resolution_verifies_a_valid_signature() {
+    use base64::Engine;
+    use ed25519_dalek::{Signer, SigningKey};
+
+    let signing_key = SigningKey::generate(&mut rand::rngs::OsRng);
+    let b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD;
+    let pub_key_b64 = b64.encode(signing_key.verifying_key().as_bytes());
+
+    let gtin = "09506000134352";
+    let passport_id = "00000000-0000-4000-9000-0000000000aa";
+    let public_view = json!({ "id": passport_id, "productName": "Signed GTIN Widget" });
+    let header = r#"{"alg":"EdDSA","crv":"Ed25519"}"#;
+    let header_b64 = b64.encode(header);
+    let payload_b64 = b64.encode(serde_json::to_vec(&public_view).unwrap());
+    let signing_input = format!("{header_b64}.{payload_b64}");
+    let sig = signing_key.sign(signing_input.as_bytes());
+    let sig_b64 = b64.encode(sig.to_bytes());
+    let valid_jws = format!("{signing_input}.{sig_b64}");
+
+    let did_doc = json!({
+        "@context": ["https://www.w3.org/ns/did/v1"],
+        "id": "did:web:valid.example",
+        "verificationMethod": [{
+            "id": "did:web:valid.example#key-1",
+            "type": "JsonWebKey2020",
+            "controller": "did:web:valid.example",
+            "publicKeyJwk": {"kty": "OKP", "crv": "Ed25519", "x": pub_key_b64}
+        }],
+        "assertionMethod": ["did:web:valid.example#key-1"]
+    });
+    let did_router = {
+        let d = did_doc.clone();
+        Router::new().route(
+            "/.well-known/did.json",
+            get(move || {
+                let doc = d.clone();
+                async move { axum::Json(doc) }
+            }),
+        )
+    };
+    let did_port = start_mock_vault(did_router).await;
+    let did_url = format!("http://127.0.0.1:{did_port}/.well-known/did.json");
+
+    let passport = json!({
+        "id": passport_id,
+        "productName": "Signed GTIN Widget",
+        "sectorData": { "sector": "electronics", "gtin": gtin },
+        "publicJwsSignature": valid_jws
+    });
+    let vault = Router::new().route(
+        "/public/dpp/by-gtin/{gtin}",
+        get(move || {
+            let p = passport.clone();
+            async move { axum::Json(p) }
+        }),
+    );
+    let vault_port = start_mock_vault(vault).await;
+
+    let mut state = test_state(format!("http://127.0.0.1:{vault_port}"));
+    state.operator_did_url = did_url;
+    let app = router::build(state);
+
+    let req = Request::builder()
+        .uri(format!("/01/{gtin}"))
+        .body(Body::empty())
+        .unwrap();
+    let resp = app.oneshot(req).await.unwrap();
+    assert!(
+        resp.status().is_redirection(),
+        "a validly signed passport should resolve, got {}",
+        resp.status()
+    );
+}
+
+/// A passport with no public signature must not resolve by GTIN — the same
+/// fail-closed rule the id-based routes already enforce.
+#[tokio::test]
+async fn gtin_resolution_rejects_a_missing_signature() {
+    let gtin = "09506000134352";
+    let vault = Router::new().route(
+        "/public/dpp/by-gtin/{gtin}",
+        get(|| async { axum::Json(sample_passport_with_gtin()) }),
+    );
+    let vault_port = start_mock_vault(vault).await;
+
+    // A non-empty operator_did_url enables verification; it need not even be
+    // reachable, since a passport with no publicJwsSignature is rejected
+    // before the DID document is ever fetched.
+    let mut state = test_state(format!("http://127.0.0.1:{vault_port}"));
+    state.operator_did_url = "http://127.0.0.1:1/.well-known/did.json".into();
+    let app = router::build(state);
+
+    let req = Request::builder()
+        .uri(format!("/01/{gtin}"))
+        .body(Body::empty())
+        .unwrap();
+    let resp = app.oneshot(req).await.unwrap();
+    assert_eq!(
+        resp.status(),
+        StatusCode::CONFLICT,
+        "an unsigned passport must not resolve by GTIN"
+    );
+}
