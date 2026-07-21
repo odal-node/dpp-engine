@@ -19,7 +19,7 @@ use crate::runtime::{DEFAULT_FUEL, DEFAULT_MEMORY_CAP_BYTES, HostState, build_st
 const MAX_ABI_OUTPUT_BYTES: usize = 4 * 1024 * 1024;
 
 /// Whether unsigned plugin loading is explicitly opted into, from the
-/// `DPP_ALLOW_UNSIGNED_PLUGINS` value. Pure (takes the value) so it is testable
+/// `ALLOW_UNSIGNED_PLUGINS` value. Pure (takes the value) so it is testable
 /// without mutating the process-global environment.
 fn unsigned_allowed(env_value: Option<&str>) -> bool {
     matches!(env_value, Some(v) if v.eq_ignore_ascii_case("true"))
@@ -80,20 +80,20 @@ impl LoadedPlugin {
             // No trusted key configured. Unsigned loading is a development-only
             // convenience and must be explicitly opted into — otherwise a
             // misconfigured production deploy would silently run unverified
-            // plugins. Fail closed unless `DPP_ALLOW_UNSIGNED_PLUGINS=true`.
+            // plugins. Fail closed unless `ALLOW_UNSIGNED_PLUGINS=true`.
             let allow_unsigned =
-                unsigned_allowed(std::env::var("DPP_ALLOW_UNSIGNED_PLUGINS").ok().as_deref());
+                unsigned_allowed(std::env::var("ALLOW_UNSIGNED_PLUGINS").ok().as_deref());
             if !allow_unsigned {
                 return Err(anyhow::anyhow!(
                     "refusing to load unsigned plugin {}: no trusted key is configured and \
-                     DPP_ALLOW_UNSIGNED_PLUGINS is not set (production must provide a key)",
+                     ALLOW_UNSIGNED_PLUGINS is not set (production must provide a key)",
                     path.display()
                 ));
             }
             tracing::warn!(
                 path = %path.display(),
                 "loading Wasm plugin WITHOUT signature verification \
-                 (DPP_ALLOW_UNSIGNED_PLUGINS=true) — not safe for production"
+                 (ALLOW_UNSIGNED_PLUGINS=true) — not safe for production"
             );
         }
 
@@ -537,7 +537,7 @@ mod tests {
     /// unsigned loading explicitly, mirroring what a real dev/CI deploy must do.
     fn load_unsigned(engine: &Engine, path: &Path, sector: &str) -> Result<LoadedPlugin> {
         // Safe: every caller sets the same value, so concurrent sets are benign.
-        unsafe { std::env::set_var("DPP_ALLOW_UNSIGNED_PLUGINS", "true") };
+        unsafe { std::env::set_var("ALLOW_UNSIGNED_PLUGINS", "true") };
         LoadedPlugin::from_file(engine, path, sector, None)
     }
 

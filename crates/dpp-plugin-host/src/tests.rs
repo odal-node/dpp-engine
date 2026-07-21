@@ -373,7 +373,7 @@ fn write_wasm(dir: &tempfile::TempDir, name: &str, bytes: &[u8]) -> std::path::P
 /// Load a fixture in dev mode (no publisher key). Mirrors the loader tests'
 /// convention; every caller sets the same env value so concurrent sets are benign.
 fn load_dev(engine: &wasmtime::Engine, path: &Path) -> LoadedPlugin {
-    unsafe { std::env::set_var("DPP_ALLOW_UNSIGNED_PLUGINS", "true") };
+    unsafe { std::env::set_var("ALLOW_UNSIGNED_PLUGINS", "true") };
     LoadedPlugin::from_file(engine, path, "battery", None).expect("dev-mode load")
 }
 
@@ -486,7 +486,7 @@ fn rejected_reload_leaves_previous_plugin_serving() {
 
     // A replacement declaring a future major ABI: the load gate refuses it.
     let bad_path = write_wasm(&dir, "sector-battery-bad.wasm", &plugin_wasm(2, 0, 9.9));
-    unsafe { std::env::set_var("DPP_ALLOW_UNSIGNED_PLUGINS", "true") };
+    unsafe { std::env::set_var("ALLOW_UNSIGNED_PLUGINS", "true") };
     let rejected = LoadedPlugin::from_file(&engine, &bad_path, "battery", None);
     assert!(
         rejected.is_err(),
