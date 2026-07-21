@@ -241,7 +241,10 @@ fn component_graph_status(report: &serde_json::Value) -> CheckStatus {
 /// [`DossierParseError`] — see above.
 pub fn verify_dossier_json(bytes: &[u8]) -> Result<VerificationReport, DossierParseError> {
     let raw: serde_json::Value = serde_json::from_slice(bytes)?;
-    let dossier: DossierV1 = serde_json::from_value(raw.clone())?;
+    // Parsed a second time directly from `bytes` rather than `raw.clone()` —
+    // cheaper than deep-cloning an already-parsed `Value` tree, and this
+    // function runs on every dossier verify (both stored and uploaded).
+    let dossier: DossierV1 = serde_json::from_slice(bytes)?;
 
     let mut report = verify_dossier(&dossier);
     report.checks.push(input_fidelity_check(&raw, &dossier));
