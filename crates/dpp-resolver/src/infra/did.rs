@@ -1,7 +1,7 @@
 //! Passport JWS verification against the operator's `did:web` document.
 
 use std::collections::HashMap;
-use std::sync::OnceLock;
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use axum::http::StatusCode;
@@ -9,7 +9,7 @@ use base64::Engine;
 use dpp_common::event_codes;
 use metrics;
 use serde_json::Value;
-use tokio::sync::RwLock;
+use tokio::sync::{Mutex as AsyncMutex, RwLock};
 use tracing;
 
 use dpp_crypto::jws::verifier as jws;
@@ -36,6 +36,17 @@ struct CachedDid {
 fn did_doc_cache() -> &'static RwLock<HashMap<String, CachedDid>> {
     static CACHE: OnceLock<RwLock<HashMap<String, CachedDid>>> = OnceLock::new();
     CACHE.get_or_init(|| RwLock::new(HashMap::new()))
+}
+
+/// One lock per URL, so concurrent cache misses for the *same* URL serialize
+/// onto a single fetch instead of each issuing its own request. This is the
+/// exact scenario a burst of public traffic for one passport produces: many
+/// concurrent resolutions racing a cold or just-expired cache entry. Same
+/// unbounded-growth tradeoff as `did_doc_cache` above — harmless for the
+/// single-tenant common case of one key.
+fn fetch_locks() -> &'static Mutex<HashMap<String, Arc<AsyncMutex<()>>>> {
+    static LOCKS: OnceLock<Mutex<HashMap<String, Arc<AsyncMutex<()>>>>> = OnceLock::new();
+    LOCKS.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
 /// Verify a published passport's **public** signature (`publicJwsSignature`)
@@ -160,6 +171,23 @@ async fn fetch_did(http: &reqwest::Client, url: &str) -> Result<Value, StatusCod
         return Ok(doc);
     }
 
+    // Serialize concurrent misses for this URL onto one fetch: whoever gets
+    // here first does the real work; everyone else waits on the lock and then
+    // finds the cache already warm, rather than each firing its own request.
+    let lock = {
+        let mut locks = fetch_locks().lock().expect("fetch lock map poisoned");
+        locks
+            .entry(url.to_owned())
+            .or_insert_with(|| Arc::new(AsyncMutex::new(())))
+            .clone()
+    };
+    let _guard = lock.lock().await;
+
+    // A concurrent caller may have populated the cache while this one waited.
+    if let Some(doc) = cached_did_doc(url).await {
+        return Ok(doc);
+    }
+
     let resp = http.get(url).send().await.map_err(|e| {
         tracing::warn!(code = event_codes::DID_UNREACHABLE, url, error = %e, "could not fetch operator DID document");
         StatusCode::SERVICE_UNAVAILABLE
@@ -213,6 +241,16 @@ mod tests {
     use super::fetch_did;
 
     async fn spawn_counting_did_server(doc: serde_json::Value) -> (String, Arc<AtomicUsize>) {
+        spawn_counting_did_server_with_delay(doc, std::time::Duration::ZERO).await
+    }
+
+    /// Same as `spawn_counting_did_server`, but holds each response for `delay`
+    /// before answering — wide enough to make concurrent callers reliably
+    /// overlap on a cold cache, for the coalescing regression below.
+    async fn spawn_counting_did_server_with_delay(
+        doc: serde_json::Value,
+        delay: std::time::Duration,
+    ) -> (String, Arc<AtomicUsize>) {
         let hits = Arc::new(AtomicUsize::new(0));
         let hits_for_route = hits.clone();
         let app = Router::new().route(
@@ -221,6 +259,9 @@ mod tests {
                 let hits = hits_for_route.clone();
                 async move {
                     hits.fetch_add(1, Ordering::SeqCst);
+                    if !delay.is_zero() {
+                        tokio::time::sleep(delay).await;
+                    }
                     axum::Json(doc)
                 }
             }),
@@ -260,6 +301,37 @@ mod tests {
             hits.load(Ordering::SeqCst),
             1,
             "a cache hit must not reach the network a second time"
+        );
+    }
+
+    /// Regression for the cache-stampede fix: a burst of concurrent misses for
+    /// the *same* URL (a cold cache under a traffic spike — exactly the case
+    /// the cache exists to help with) must coalesce onto a single network
+    /// fetch, not fire one request per concurrent caller. The mock server
+    /// holds its response long enough that all five callers are guaranteed to
+    /// race a still-empty cache before any of them completes.
+    #[tokio::test]
+    async fn concurrent_misses_for_the_same_url_coalesce_to_one_fetch() {
+        let doc = serde_json::json!({"id": "did:web:stampede-test.example"});
+        let (url, hits) =
+            spawn_counting_did_server_with_delay(doc.clone(), std::time::Duration::from_millis(50))
+                .await;
+        let http = reqwest::Client::new();
+
+        let (a, b, c, d, e) = tokio::join!(
+            fetch_did(&http, &url),
+            fetch_did(&http, &url),
+            fetch_did(&http, &url),
+            fetch_did(&http, &url),
+            fetch_did(&http, &url),
+        );
+        for result in [a, b, c, d, e] {
+            assert_eq!(result.expect("fetch should succeed"), doc);
+        }
+        assert_eq!(
+            hits.load(Ordering::SeqCst),
+            1,
+            "5 concurrent misses for the same URL must coalesce to a single network fetch"
         );
     }
 

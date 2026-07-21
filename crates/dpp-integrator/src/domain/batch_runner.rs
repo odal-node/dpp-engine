@@ -67,10 +67,14 @@ enum RowOutcome {
 /// what would happen to them; a row missing from `classifications` (should
 /// not happen — every valid row gets classified) defaults to `Create`.
 ///
-/// - Maximum `concurrency` requests run concurrently (`buffer_unordered`, not
-///   one `tokio::spawn` per row — see `matcher::classify_batch`'s doc comment
-///   for why: a large import can carry up to ~200k rows, and this is pure
-///   async I/O, not CPU-bound work that needs a separate task per row).
+/// - Maximum `concurrency` requests run concurrently (`buffered`, not one
+///   `tokio::spawn` per row — see `matcher::classify_batch`'s doc comment for
+///   why: a large import can carry up to ~200k rows, and this is pure async
+///   I/O, not CPU-bound work that needs a separate task per row). `buffered`
+///   rather than `buffer_unordered`: the report's `created`/`updated`/`errors`
+///   lists must stay in row order for a human scanning a failed import to
+///   find "row 47" near position 47, not scattered by whichever request
+///   happened to finish first.
 /// - Vault `429` responses are retried with exponential backoff (max 3 attempts).
 /// - Vault `422` responses are recorded as row errors; the batch continues.
 /// - Vault `5xx` responses are recorded as row errors.
@@ -131,7 +135,7 @@ pub async fn run_batch(
             };
             (row_num, outcome)
         })
-        .buffer_unordered(concurrency.max(1))
+        .buffered(concurrency.max(1))
         .collect()
         .await;
 
