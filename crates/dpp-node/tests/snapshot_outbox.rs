@@ -13,6 +13,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
+use base64::Engine;
 use chrono::Utc;
 
 use dpp_domain::{
@@ -235,11 +236,24 @@ impl FakeOutbox {
 /// Resolver base the snapshot page's links and QR carrier are built against.
 const TEST_RESOLVER_BASE: &str = "https://dpp.example.test";
 
+/// A compact JWS whose payload segment decodes to `{"id": ..., "productName": ...}`
+/// — the minimal shape `dpp_vault::public_view::signed_public_view` needs to
+/// decode and bind to the row it was read from. Header and signature are
+/// placeholders: the drain only decodes this payload, it does not verify it.
+fn signed_view_jws(id: PassportId, product_name: &str) -> String {
+    let payload = serde_json::json!({ "id": id.to_string(), "productName": product_name });
+    let b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .encode(serde_json::to_vec(&payload).unwrap());
+    format!("aGVhZGVy.{b64}.c2ln")
+}
+
 fn passport(status: PassportStatus) -> Passport {
+    let id = PassportId::new();
+    let product_name = "Drain Test Widget";
     Passport {
-        id: PassportId::new(),
+        id,
         batch_id: None,
-        product_name: "Drain Test Widget".into(),
+        product_name: product_name.into(),
         sector: Sector::Textile,
         product_category: None,
         manufacturer: ManufacturerInfo {
@@ -256,7 +270,7 @@ fn passport(status: PassportStatus) -> Passport {
         status,
         qr_code_url: None,
         jws_signature: Some("full.jws.signature".into()),
-        public_jws_signature: Some("public.jws.signature".into()),
+        public_jws_signature: Some(signed_view_jws(id, product_name)),
         created_at: Utc::now(),
         updated_at: Utc::now(),
         published_at: Some(Utc::now()),
@@ -316,7 +330,10 @@ async fn drain_mirrors_a_published_passport() {
     // confidential full-view one.
     let v: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
     assert_eq!(v["productName"], "Drain Test Widget");
-    assert_eq!(v["publicJwsSignature"], "public.jws.signature");
+    assert_eq!(
+        v["publicJwsSignature"],
+        p.public_jws_signature.clone().unwrap()
+    );
     assert!(v.get("jwsSignature").is_none(), "full-view JWS leaked: {v}");
 }
 

@@ -266,7 +266,7 @@ fn schema_registry() -> &'static dpp_domain::schemas::VersionedSchemaRegistry {
 
 #[cfg(test)]
 mod snapshot_render_tests {
-    use crate::public_view::{public_view, render_public_snapshot};
+    use base64::Engine;
     use chrono::Utc;
     use dpp_domain::domain::{
         passport::{ManufacturerInfo, Passport, PassportId},
@@ -274,7 +274,18 @@ mod snapshot_render_tests {
         status::PassportStatus,
     };
 
-    fn published_stub() -> Passport {
+    use crate::public_view::{render_public_snapshot, signed_public_view};
+
+    /// A compact JWS whose payload segment decodes to `payload` — mirrors the
+    /// helper in `public_view`'s own tests, since `signed_public_view` decodes
+    /// rather than verifies.
+    fn jws_over(payload: &serde_json::Value) -> String {
+        let b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .encode(serde_json::to_vec(payload).unwrap());
+        format!("aGVhZGVy.{b64}.c2ln")
+    }
+
+    fn published_stub(public_jws_signature: Option<String>) -> Passport {
         Passport {
             id: PassportId::new(),
             batch_id: None,
@@ -295,7 +306,7 @@ mod snapshot_render_tests {
             status: PassportStatus::Published,
             qr_code_url: Some("https://id.example/01/09506000134352".into()),
             jws_signature: Some("full.jws.signature".into()),
-            public_jws_signature: Some("public.jws.signature".into()),
+            public_jws_signature,
             created_at: Utc::now(),
             updated_at: Utc::now(),
             published_at: Some(Utc::now()),
@@ -314,13 +325,24 @@ mod snapshot_render_tests {
     }
 
     #[test]
-    fn snapshot_is_byte_identical_to_public_view_and_carries_jws() {
-        let p = published_stub();
+    fn snapshot_is_byte_identical_to_signed_public_view_and_carries_jws() {
+        // id must match the stub's, since signed_public_view binds the proof
+        // to the row it claims to belong to.
+        let id = PassportId::new();
+        let mut p = published_stub(None);
+        p.id = id;
+        let signed_at_publish = serde_json::json!({
+            "id": id.to_string(),
+            "productName": "Snapshot Test",
+        });
+        let jws = jws_over(&signed_at_publish);
+        p.public_jws_signature = Some(jws.clone());
+
         let bytes = render_public_snapshot(&p).expect("render");
 
-        // Byte-identical to exactly what the live public read serves.
-        let full = serde_json::to_value(&p).unwrap();
-        let expected = serde_json::to_vec(&public_view(&full, p.sector.catalog_key())).unwrap();
+        // Byte-identical to exactly what the live public read serves — the
+        // decoded signed payload, not a fresh re-derivation.
+        let expected = serde_json::to_vec(&signed_public_view(&p).unwrap()).unwrap();
         assert_eq!(
             bytes, expected,
             "snapshot must match the live public view byte-for-byte"
@@ -329,7 +351,7 @@ mod snapshot_render_tests {
         // The public JWS travels with the snapshot, so a stale copy is still
         // verifiably authentic — and the confidential full-view JWS never leaks.
         let v: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
-        assert_eq!(v["publicJwsSignature"], "public.jws.signature");
+        assert_eq!(v["publicJwsSignature"], jws);
         assert!(
             v.get("jwsSignature").is_none(),
             "the full-view JWS must not appear in the public snapshot: {v}"
