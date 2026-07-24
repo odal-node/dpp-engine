@@ -78,6 +78,7 @@ pub async fn resolve_qr_handler(
     if let Some(cached_b64) = state.cache.get(&cache_key).await
         && let Ok(png) = base64::engine::general_purpose::STANDARD.decode(&cached_b64)
     {
+        record_qr_render(&state, &dpp_id);
         return (StatusCode::OK, [(header::CONTENT_TYPE, "image/png")], png).into_response();
     }
 
@@ -154,10 +155,20 @@ pub async fn resolve_qr_handler(
     let b64 = base64::engine::general_purpose::STANDARD.encode(&png_bytes);
     state.cache.set(&cache_key, &b64).await;
 
+    record_qr_render(&state, &dpp_id);
     (
         StatusCode::OK,
         [(header::CONTENT_TYPE, "image/png")],
         png_bytes,
     )
         .into_response()
+}
+
+/// Record a QR-image render for telemetry, when telemetry is configured. This is
+/// label production, tracked separately from consumer scans and never summed
+/// into them.
+fn record_qr_render(state: &AppState, dpp_id: &str) {
+    if let Some(counter) = &state.scan_counter {
+        counter.record_qr_render(dpp_id);
+    }
 }

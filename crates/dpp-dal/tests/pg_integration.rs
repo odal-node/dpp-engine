@@ -28,8 +28,8 @@ use testcontainers::{
 use uuid::Uuid;
 
 use dpp_dal::pg::{
-    PgApiKeyRepo, PgAuditRepo, PgDal, PgEvidenceDossierRepo, PgPassportRepo, PgSnapshotOutboxRepo,
-    sqlx,
+    PgApiKeyRepo, PgAuditRepo, PgDal, PgEvidenceDossierRepo, PgPassportRepo, PgScanTelemetryRepo,
+    PgSnapshotOutboxRepo, sqlx,
 };
 use dpp_domain::{
     domain::{
@@ -47,6 +47,7 @@ use dpp_types::{
     evidence::{
         DossierManifest, DossierV1, EvidenceDossierRecord, EvidenceDossierRepository, SignedLayer,
     },
+    scan::{QrRenderIncrement, ScanIncrement, ScanTelemetryRepository},
     snapshot::SnapshotOutbox,
 };
 use sqlx::Row;
@@ -1001,5 +1002,121 @@ async fn t14_snapshot_sweep_requeues_only_divergent_passports() {
     assert!(
         outbox.due(500).await.expect("due").is_empty(),
         "the backed-off row must stay backed off after a sweep"
+    );
+}
+
+/// Scan telemetry: upsert accumulation, per-passport and operator aggregates,
+/// the variant CHECK that keeps a QR render out of the scan table, and the
+/// retention prune.
+#[tokio::test]
+async fn t_scan_telemetry_upsert_stats_and_prune() {
+    let pg = start_pg().await;
+    let passport_repo = PgPassportRepo::new(pg.dal.clone());
+    let scan = PgScanTelemetryRepo::new(pg.dal.clone());
+
+    // scan_telemetry/qr_render FK the passport, so it must exist first.
+    let p = make_passport();
+    let id = p.id;
+    passport_repo.create(p).await.expect("create passport");
+
+    let today = chrono::Utc::now().date_naive();
+
+    // First flush: 2 html + 1 json scans, and 1 QR render.
+    scan.record_batch(
+        &[
+            ScanIncrement {
+                dpp_id: id,
+                day: today,
+                variant: "html".into(),
+                count: 2,
+            },
+            ScanIncrement {
+                dpp_id: id,
+                day: today,
+                variant: "json".into(),
+                count: 1,
+            },
+        ],
+        &[QrRenderIncrement {
+            dpp_id: id,
+            day: today,
+            count: 1,
+        }],
+    )
+    .await
+    .expect("record first batch");
+
+    // Second flush upserts onto the same (dpp, day, variant) row: html 2 -> 5.
+    scan.record_batch(
+        &[ScanIncrement {
+            dpp_id: id,
+            day: today,
+            variant: "html".into(),
+            count: 3,
+        }],
+        &[],
+    )
+    .await
+    .expect("record second batch");
+
+    let stats = scan.passport_stats(id, 30).await.expect("passport stats");
+    assert_eq!(stats.total_scans, 6, "5 html + 1 json");
+    assert_eq!(stats.scans_html, 5);
+    assert_eq!(stats.scans_json, 1);
+    assert_eq!(
+        stats.qr_renders, 1,
+        "renders reported separately, not summed"
+    );
+    assert_eq!(stats.daily.len(), 1);
+    assert_eq!(stats.daily[0].count, 6);
+
+    let op = scan.operator_stats(30).await.expect("operator stats");
+    assert_eq!(op.total_scans, 6);
+    assert_eq!(op.total_qr_renders, 1);
+    assert_eq!(op.distinct_passports_scanned, 1);
+
+    // Schema-as-policy: the variant CHECK forbids writing a QR render into the
+    // scan table, so the two metrics can never be conflated at the storage layer.
+    let bad = scan
+        .record_batch(
+            &[ScanIncrement {
+                dpp_id: id,
+                day: today,
+                variant: "qr".into(),
+                count: 1,
+            }],
+            &[],
+        )
+        .await;
+    assert!(
+        bad.is_err(),
+        "variant CHECK must reject 'qr' in scan_telemetry"
+    );
+
+    // Retention: a row past the horizon is pruned; the current window survives.
+    let old_day = today - chrono::Duration::days(800);
+    scan.record_batch(
+        &[ScanIncrement {
+            dpp_id: id,
+            day: old_day,
+            variant: "html".into(),
+            count: 9,
+        }],
+        &[],
+    )
+    .await
+    .expect("record old-dated batch");
+    let pruned = scan.prune(730).await.expect("prune");
+    assert!(
+        pruned.scans >= 1,
+        "the 800-day-old row is past the 730-day horizon"
+    );
+    let after = scan
+        .passport_stats(id, 30)
+        .await
+        .expect("stats after prune");
+    assert_eq!(
+        after.total_scans, 6,
+        "current-window data must survive the prune"
     );
 }

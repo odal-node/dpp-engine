@@ -3,6 +3,7 @@
 use std::sync::Arc;
 
 use crate::infra::cache::Cache;
+use crate::infra::scan_counter::ScanCounter;
 
 /// Shared Axum application state for the resolver.
 #[derive(Clone)]
@@ -23,4 +24,9 @@ pub struct AppState {
     pub cache: Arc<Cache>,
     /// HTTP client for outbound requests to the vault and the operator DID endpoint.
     pub http: reqwest::Client,
+    /// In-memory scan/QR-render accumulator, flushed to the node's internal
+    /// ingest endpoint. `None` when telemetry is not configured (no
+    /// `SCAN_INGEST_URL`) — the default for dev and tests, where the resolver
+    /// counts nothing and behaves exactly as before.
+    pub scan_counter: Option<Arc<ScanCounter>>,
 }

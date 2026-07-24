@@ -8,8 +8,8 @@ use async_trait::async_trait;
 
 use dpp_dal::pg::{
     PgApiKeyRepo, PgAuditRepo, PgDal, PgEvidenceDossierRepo, PgOperatorConfigRepo, PgPassportRepo,
-    PgRegistryIdentityRepo, PgRegistrySyncRepo, PgSnapshotOutboxRepo, PgTransferRepo,
-    PgWebhookRepo,
+    PgRegistryIdentityRepo, PgRegistrySyncRepo, PgScanTelemetryRepo, PgSnapshotOutboxRepo,
+    PgTransferRepo, PgWebhookRepo,
 };
 use dpp_domain::{DppError, ports::passport_repo::PassportRepository};
 use dpp_integrator::infra::job_store::JobStore;
@@ -17,8 +17,8 @@ use dpp_node::{config::NodeConfig, infra::pg_job_store::PgJobStore};
 use dpp_types::{
     api_key::ApiKeyRepository, audit::AuditRepository, evidence::EvidenceDossierRepository,
     operator::OperatorConfigRepository, registry_identity::RegistryIdentityRepository,
-    registry_sync::RegistrySyncOutbox, snapshot::SnapshotOutbox, transfer::TransferStore,
-    webhook::WebhookOutbox, webhook::WebhookSubscriptionStore,
+    registry_sync::RegistrySyncOutbox, scan::ScanTelemetryRepository, snapshot::SnapshotOutbox,
+    transfer::TransferStore, webhook::WebhookOutbox, webhook::WebhookSubscriptionStore,
 };
 use dpp_vault::state::DbPing;
 
@@ -34,6 +34,7 @@ pub struct DbComponents {
     pub webhook_outbox: Arc<dyn WebhookOutbox>,
     pub webhook_store: Arc<dyn WebhookSubscriptionStore>,
     pub snapshot_outbox: Arc<dyn SnapshotOutbox>,
+    pub scan_repo: Arc<dyn ScanTelemetryRepository>,
     pub job_store: Arc<dyn JobStore>,
     pub db_ping: Arc<dyn DbPing>,
 }
@@ -99,6 +100,7 @@ pub async fn init_db(cfg: &NodeConfig) -> anyhow::Result<DbComponents> {
         webhook_outbox: Arc::new(PgWebhookRepo::new(dal.clone())),
         webhook_store: Arc::new(PgWebhookRepo::new(dal.clone())),
         snapshot_outbox: Arc::new(PgSnapshotOutboxRepo::new(dal.clone())),
+        scan_repo: Arc::new(PgScanTelemetryRepo::new(dal.clone())),
         job_store: Arc::new(PgJobStore::new(dal.clone())),
         db_ping: Arc::new(PgPing(dal)),
     })

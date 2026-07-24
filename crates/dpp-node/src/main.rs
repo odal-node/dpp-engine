@@ -290,6 +290,7 @@ async fn main() -> anyhow::Result<()> {
         db_ping: db.db_ping.clone(),
         auth_provider,
         cors_allowed_origins: cfg.cors_allowed_origins.clone(),
+        scan_repo: db.scan_repo.clone(),
         plugin_admin: Some(plugin_admin),
     };
 
@@ -304,6 +305,7 @@ async fn main() -> anyhow::Result<()> {
 
     // ── Background tasks: expired-import-job cleanup + registry outbox drain ──
     boot::tasks::spawn_job_cleanup(db.job_store.clone());
+    boot::tasks::spawn_scan_prune(db.scan_repo.clone());
     boot::tasks::spawn_registry_drain(db.registry_outbox.clone(), registry_sync_for_drain).await;
     boot::tasks::spawn_webhook_drain(db.webhook_outbox.clone(), cfg.webhook_allow_private_targets)
         .await;

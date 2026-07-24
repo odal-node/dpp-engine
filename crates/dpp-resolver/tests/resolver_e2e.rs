@@ -39,6 +39,7 @@ fn test_state(vault_base_url: String) -> AppState {
         resolver_base_url: "https://id.odal-node.io".into(),
         cache: Cache::new_noop(),
         http: reqwest::Client::new(),
+        scan_counter: None,
     }
 }
 
@@ -642,4 +643,103 @@ async fn gtin_resolution_rejects_a_missing_signature() {
         StatusCode::CONFLICT,
         "an unsigned passport must not resolve by GTIN"
     );
+}
+
+// ---------------------------------------------------------------------------
+// Scan telemetry — counting model (terminal views only; QR renders separate)
+// ---------------------------------------------------------------------------
+
+/// The whole counting model in one test: a GS1 carrier scan hits `/01/{gtin}`
+/// (a redirect, not counted) then the terminal `/dpp/{id}` view (counted once),
+/// so one physical scan is one scan — never ×2. The QR-image endpoint is a
+/// render, tracked in its own bucket and never folded into scans.
+#[tokio::test]
+async fn scan_telemetry_counts_terminal_views_and_qr_separately() {
+    use std::sync::Arc;
+
+    use dpp_common::scan::ScanVariant;
+    use dpp_resolver::infra::scan_counter::ScanCounter;
+
+    let id = "00000000-0000-4000-9000-000000000001";
+    let passport = sample_passport_with_gtin();
+    let vault = {
+        let by_id = passport.clone();
+        let by_gtin = passport.clone();
+        Router::new()
+            .route(
+                "/public/dpp/{id}",
+                get(move || {
+                    let p = by_id.clone();
+                    async move { axum::Json(p) }
+                }),
+            )
+            .route(
+                "/public/dpp/by-gtin/{gtin}",
+                get(move || {
+                    let p = by_gtin.clone();
+                    async move { axum::Json(p) }
+                }),
+            )
+    };
+    let port = start_mock_vault(vault).await;
+
+    let counter = Arc::new(ScanCounter::default());
+    // Verification stays disabled (empty operator DID) so the redirect path
+    // resolves; the counting logic is what's under test here.
+    let mut state = test_state(format!("http://127.0.0.1:{port}"));
+    state.scan_counter = Some(counter.clone());
+    let app = router::build(state);
+
+    // 1) The GS1 redirect must not count as a scan.
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/01/09506000134352")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::TEMPORARY_REDIRECT);
+    assert!(
+        counter.drain().is_empty(),
+        "the /01 redirect must not be counted as a scan"
+    );
+
+    // 2) The terminal JSON view it points to counts exactly once.
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/dpp/{id}"))
+                .header("accept", "application/json")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    // 3) The QR image is a render, not a scan.
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/dpp/{id}/qr"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let batch = counter.drain();
+    assert_eq!(batch.scans.len(), 1, "exactly one scan aggregate");
+    assert_eq!(batch.scans[0].variant, ScanVariant::Json);
+    assert_eq!(batch.scans[0].count, 1);
+    assert_eq!(batch.scans[0].dpp_id, id);
+    assert_eq!(batch.qr_renders.len(), 1, "qr render tracked separately");
+    assert_eq!(batch.qr_renders[0].count, 1);
+    assert_eq!(batch.qr_renders[0].dpp_id, id);
 }

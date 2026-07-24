@@ -1437,6 +1437,97 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+  /vault/api/v1/dpp/{dppId}/stats:
+    get:
+      operationId: getDppScanStats
+      summary: Per-passport scan telemetry
+      description: |
+        Aggregate, privacy-safe resolution counts for one passport over a
+        trailing window. Scans and QR-image renders are reported as separate
+        fields and are never summed — a render is label production, not a
+        resolution. Nothing about the scanner (IP, agent, session) is collected
+        or returned; the counters carry no such fields. Returns zeros for a
+        passport that has never been scanned.
+      tags: [DPP Management]
+      security:
+        - BearerApiKey: []
+        - BasicAuth: []
+      parameters:
+        - name: dppId
+          in: path
+          required: true
+          schema:
+            $ref: "#/components/schemas/DppId"
+        - name: days
+          in: query
+          required: false
+          description: Trailing window in days (default 30, clamped to 1..=730).
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 730
+            default: 30
+      responses:
+        "200":
+          description: Aggregate scan counts for the passport.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  windowDays: { type: integer, example: 30 }
+                  totalScans: { type: integer, example: 128 }
+                  scansHtml: { type: integer, example: 96 }
+                  scansJson: { type: integer, example: 32 }
+                  qrRenders: { type: integer, example: 4 }
+                  daily:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        day: { type: string, format: date }
+                        count: { type: integer }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /vault/api/v1/stats:
+    get:
+      operationId: getOperatorScanStats
+      summary: Operator-wide scan telemetry rollup
+      description: |
+        Aggregate resolution counts across all of the operator's passports over
+        a trailing window — the "your passports were resolved N times" figure.
+        Scans and QR-image renders are separate; nothing about the scanner is
+        collected.
+      tags: [DPP Management]
+      security:
+        - BearerApiKey: []
+        - BasicAuth: []
+      parameters:
+        - name: days
+          in: query
+          required: false
+          description: Trailing window in days (default 30, clamped to 1..=730).
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 730
+            default: 30
+      responses:
+        "200":
+          description: Operator-wide aggregate scan counts.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  windowDays: { type: integer, example: 30 }
+                  totalScans: { type: integer, example: 4213 }
+                  totalQrRenders: { type: integer, example: 57 }
+                  distinctPassportsScanned: { type: integer, example: 312 }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
   /vault/api/v1/dpp/{dppId}/verify-tree:
     get:
       operationId: verifyDppTree

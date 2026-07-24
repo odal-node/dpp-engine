@@ -31,6 +31,7 @@ pub mod evidence;
 pub mod operator;
 pub mod registry_identity;
 pub mod registry_sync;
+pub mod scan;
 pub mod snapshot;
 pub mod transfer;
 pub mod trust;
@@ -56,6 +57,10 @@ pub use registry_identity::{
 pub use registry_sync::{
     RegistryStatusIntent, RegistrySyncCounts, RegistrySyncOutbox, RegistrySyncRow,
     RegistrySyncStatus,
+};
+pub use scan::{
+    DailyScanCount, OperatorScanStats, PassportScanStats, QrRenderIncrement, ScanIncrement,
+    ScanPruneCounts, ScanTelemetryRepository,
 };
 pub use snapshot::{
     SnapshotOutbox, SnapshotOutboxCounts, SnapshotReconcileRow, SnapshotReconcileStatus,

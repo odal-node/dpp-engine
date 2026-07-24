@@ -122,6 +122,17 @@ pub enum Commands {
         /// Stored dossier id, or path to a dossier JSON file
         target: String,
     },
+    // ── Insight ──────────────────────────────────────────────────────────────
+    /// Operator-wide scan telemetry — how often your passports were resolved
+    /// (per-passport detail: `odal passport stats <id>`)
+    Stats {
+        /// Trailing window in days (default 30)
+        #[arg(long, default_value = "30")]
+        days: u32,
+        /// Output raw JSON instead of a summary
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -171,6 +182,17 @@ pub enum PassportCommands {
     History {
         /// Passport ID
         id: String,
+    },
+    /// Show a passport's scan telemetry — resolutions and QR renders (aggregate)
+    Stats {
+        /// Passport ID
+        id: String,
+        /// Trailing window in days (default 30)
+        #[arg(long, default_value = "30")]
+        days: u32,
+        /// Output raw JSON instead of a summary
+        #[arg(long)]
+        json: bool,
     },
     /// Generate and store a signed evidence dossier (`odal verify` checks
     /// it) — proof + audit chain + transfer chain in one document.

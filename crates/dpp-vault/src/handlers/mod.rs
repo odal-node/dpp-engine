@@ -20,6 +20,8 @@ pub mod public_read_by_gtin;
 pub mod publish;
 pub mod read;
 pub mod registry_identity;
+pub mod scan_ingest;
+pub mod stats;
 pub mod suspend;
 pub mod transfer;
 pub mod update;

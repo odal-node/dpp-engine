@@ -269,6 +269,9 @@ Background cleanup task runs every 6 hours, deleting completed/failed jobs older
 | POST | `/vault/api/v1/dpp/{dppId}/suspend` | Bearer | Suspend |
 | POST | `/vault/api/v1/dpp/{dppId}/archive` | Bearer | Archive |
 | GET | `/vault/api/v1/dpp/{dppId}/history` | Bearer | Audit trail |
+| GET | `/vault/api/v1/dpp/{dppId}/stats` | Bearer | Per-passport scan telemetry (aggregate; scans + qrRenders, never summed) |
+| GET | `/vault/api/v1/stats` | Bearer | Operator-wide scan telemetry rollup |
+| POST | `/vault/internal/scan-batch` | mTLS (`CN=odal-resolver`) | Resolver scan-telemetry flush sink (off public + `/api/v1`) |
 | POST | `/vault/api/v1/dpp/{dppId}/evidence` | Bearer | Generate + store an evidence dossier |
 | GET | `/vault/api/v1/dpp/{dppId}/evidence` | Bearer | List stored dossier summaries |
 | GET | `/vault/api/v1/evidence/{id}` | Bearer | Fetch a stored dossier document |
@@ -324,6 +327,15 @@ The internal endpoints are mTLS-gated (`CN=odal-vault`).
 | GET | `/dpp/{dppId}` | None | Content-negotiated (HTML or JSON-LD) |
 | GET | `/dpp/{dppId}/qr` | None | QR code PNG |
 | GET | `/01/{gtin}` | None | GS1 Digital Link resolver (redirect / linkset) |
+
+> **Scan telemetry (privacy-safe aggregates).** When `SCAN_INGEST_URL` is set,
+> the resolver counts *terminal-view* resolutions (`/dpp/{dppId}` html + json)
+> per `(passport, day, variant)` in memory and flushes them to the node's
+> `POST /vault/internal/scan-batch` over mTLS. `/dpp/{dppId}/qr` is counted
+> **separately** (label production, never summed into scans); `/01/{gtin}` is a
+> redirect and is **not** counted (its followed terminal view is). No IP / agent /
+> session is recorded — the schema has no such column. Off entirely when
+> `SCAN_INGEST_URL` is unset (dev/test default).
 
 ## Serde Conventions
 

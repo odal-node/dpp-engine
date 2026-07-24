@@ -19,7 +19,7 @@ use testcontainers::{
 
 use dpp_dal::pg::{
     PgApiKeyRepo, PgAuditRepo, PgDal, PgEvidenceDossierRepo, PgOperatorConfigRepo, PgPassportRepo,
-    PgRegistryIdentityRepo, PgWebhookRepo, sqlx,
+    PgRegistryIdentityRepo, PgScanTelemetryRepo, PgWebhookRepo, sqlx,
 };
 use dpp_domain::{
     DppError, GhostArchive, GhostRegistrySync,
@@ -300,6 +300,7 @@ async fn start_vault_with_identity(dal: PgDal, identity: Arc<dyn IdentityPort>) 
         false,
     ));
     let auth_provider: Arc<dyn dpp_types::auth::AuthProvider> = Arc::new(TestAuthProvider);
+    let scan_repo = Arc::new(PgScanTelemetryRepo::new(dal.clone()));
 
     let state = AppState {
         service,
@@ -310,6 +311,7 @@ async fn start_vault_with_identity(dal: PgDal, identity: Arc<dyn IdentityPort>) 
         db_ping: Arc::new(PgPing(dal)),
         auth_provider,
         cors_allowed_origins: Vec::new(),
+        scan_repo,
         plugin_admin: None,
     };
 

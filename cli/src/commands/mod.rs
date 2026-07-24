@@ -16,6 +16,7 @@ pub mod plugin;
 pub mod profile;
 pub mod publish;
 pub mod schema;
+pub mod stats;
 pub mod status;
 pub mod up;
 pub mod update;

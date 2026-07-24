@@ -7,8 +7,34 @@ use dpp_domain::ports::passport_repo::PassportRepository;
 use dpp_domain::ports::registry_sync::RegistrySyncPort;
 use dpp_integrator::infra::job_store::JobStore;
 use dpp_types::registry_sync::RegistrySyncOutbox;
+use dpp_types::scan::ScanTelemetryRepository;
 use dpp_types::snapshot::{SnapshotOutbox, SnapshotStore};
 use dpp_types::webhook::WebhookOutbox;
+
+/// The scan-telemetry retention horizon: aggregate counters older than this are
+/// pruned daily. Rolling 24 months — long enough for year-over-year comparison,
+/// bounded so aggregates do not accumulate forever (the time-axis half of the
+/// privacy posture, alongside the schema's refusal to model the scanner).
+const SCAN_RETENTION_DAYS: i64 = 730;
+
+/// Spawn the periodic scan-telemetry retention prune (every 24 hours).
+pub fn spawn_scan_prune(repo: Arc<dyn ScanTelemetryRepository>) {
+    tokio::spawn(async move {
+        let interval = tokio::time::Duration::from_secs(24 * 3600);
+        loop {
+            tokio::time::sleep(interval).await;
+            match repo.prune(SCAN_RETENTION_DAYS).await {
+                Ok(c) if c.scans > 0 || c.qr_renders > 0 => tracing::info!(
+                    scans = c.scans,
+                    qr_renders = c.qr_renders,
+                    "scan telemetry retention prune"
+                ),
+                Ok(_) => tracing::debug!("scan telemetry prune: nothing past horizon"),
+                Err(e) => tracing::warn!(error = %e, "scan telemetry prune failed"),
+            }
+        }
+    });
+}
 
 /// Spawn the periodic cleanup of expired import jobs (every 6 hours).
 pub fn spawn_job_cleanup(store: Arc<dyn JobStore>) {

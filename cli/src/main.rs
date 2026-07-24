@@ -306,4 +306,30 @@ mod tests {
             panic!("expected Passport::History");
         }
     }
+
+    #[test]
+    fn parse_passport_stats() {
+        let cli = Cli::parse_from(["odal", "passport", "stats", "id-xyz", "--days", "7"]);
+        if let Some(Commands::Passport {
+            command: PassportCommands::Stats { id, days, json },
+        }) = cli.command
+        {
+            assert_eq!(id, "id-xyz");
+            assert_eq!(days, 7);
+            assert!(!json);
+        } else {
+            panic!("expected Passport::Stats");
+        }
+    }
+
+    #[test]
+    fn parse_operator_stats() {
+        let cli = Cli::parse_from(["odal", "stats", "--json"]);
+        if let Some(Commands::Stats { days, json }) = cli.command {
+            assert_eq!(days, 30, "default window");
+            assert!(json);
+        } else {
+            panic!("expected Stats");
+        }
+    }
 }

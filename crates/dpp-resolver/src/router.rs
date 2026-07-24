@@ -83,6 +83,10 @@ async fn content_negotiation_handler(
         Some(dpp_digital_link::DppMediaType::Html)
     );
 
+    // Keep a handle for telemetry before `state`/`path` are moved into the handler.
+    let scan_counter = state.scan_counter.clone();
+    let dpp_id = path.0.clone();
+
     let mut response = if wants_html {
         resolve_html_handler(state, path).await.into_response()
     } else {
@@ -90,6 +94,21 @@ async fn content_negotiation_handler(
             .await
             .into_response()
     };
+
+    // Count a scan only on a genuine terminal-view success (200) — the html/json
+    // handlers return their own non-2xx status for not-found/gone/unverifiable,
+    // so this never counts a miss, and it counts one physical scan once. The GS1
+    // `/01/{gtin}` redirect deliberately does not reach here and is not counted.
+    if let Some(counter) = scan_counter
+        && response.status().is_success()
+    {
+        let variant = if wants_html {
+            dpp_common::scan::ScanVariant::Html
+        } else {
+            dpp_common::scan::ScanVariant::Json
+        };
+        counter.record_scan(&dpp_id, variant);
+    }
 
     response
         .headers_mut()

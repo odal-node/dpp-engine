@@ -264,6 +264,54 @@ pub fn render_history(entries: &[AuditEntry], id: &str) {
     }
 }
 
+/// Read an integer field from a stats response, defaulting to 0.
+fn stat_i64(v: &serde_json::Value, key: &str) -> i64 {
+    v.get(key).and_then(serde_json::Value::as_i64).unwrap_or(0)
+}
+
+pub fn render_passport_stats(stats: &serde_json::Value, id: &str) {
+    let window = stat_i64(stats, "windowDays");
+    println!("Scan telemetry for {id} — last {window} days");
+    println!(
+        "  Resolutions : {} total   ({} page, {} data)",
+        stat_i64(stats, "totalScans"),
+        stat_i64(stats, "scansHtml"),
+        stat_i64(stats, "scansJson"),
+    );
+    println!(
+        "  QR renders  : {}   (label production — never counted as a resolution)",
+        stat_i64(stats, "qrRenders"),
+    );
+    if let Some(daily) = stats.get("daily").and_then(serde_json::Value::as_array) {
+        let daily: Vec<&serde_json::Value> =
+            daily.iter().filter(|d| stat_i64(d, "count") > 0).collect();
+        if !daily.is_empty() {
+            println!("  By day:");
+            for d in daily {
+                let day = d
+                    .get("day")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("-");
+                println!("    {day}   {}", stat_i64(d, "count"));
+            }
+        }
+    }
+}
+
+pub fn render_operator_stats(stats: &serde_json::Value) {
+    let window = stat_i64(stats, "windowDays");
+    println!("Scan telemetry — all passports, last {window} days");
+    println!("  Resolutions       : {}", stat_i64(stats, "totalScans"));
+    println!(
+        "  QR renders        : {}",
+        stat_i64(stats, "totalQrRenders")
+    );
+    println!(
+        "  Passports scanned : {}",
+        stat_i64(stats, "distinctPassportsScanned")
+    );
+}
+
 pub fn render_export(result: &ExportResult, output: Option<&str>) -> Result<()> {
     match output {
         Some(path) => {
