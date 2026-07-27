@@ -202,6 +202,27 @@
 # expires:    2026-10-25
 # release-on: calamine ships against quick-xml >= 0.41.0, or wayland-scanner
 #             does (drops the ignore-need for whichever path remains)
+#
+# --- RUSTSEC-2024-0436 -------------------------------------------------------
+# crate:      paste 1.0.15
+# path:       image -> exr -> pulp -> paste (proc-macro)   [SHIPPED, normal
+#             dependency, via dpp-resolver's QR-PNG encoding]
+# class:      reachable-accepted
+# rationale:  Unmaintained (informational, no known vulnerability). `paste` is
+#             a proc-macro code-generation helper pulled in by `pulp` (SIMD
+#             dispatch) via `exr` (OpenEXR support in the `image` crate),
+#             several format-backends removed from the PNG encoding
+#             dpp-resolver's `/dpp/{id}/qr` handler actually uses. No direct
+#             control over `pulp`'s choice of `paste`; the more targeted fix
+#             — dropping `image`'s default features to exclude EXR support
+#             dpp-resolver never uses — is dependency surgery outside this
+#             chunk's scope (gates, not remediation), tracked separately.
+# anchor:     — (reachable-accepted: manual sign-off, no code anchor)
+# owner:      founder
+# recorded:   2026-07-27
+# expires:    2026-10-25
+# release-on: `pulp`/`exr` drops `paste`, or `image`'s default features are
+#             trimmed to exclude EXR support
 ignore = [
     "RUSTSEC-2023-0071",
     "RUSTSEC-2026-0098",
@@ -212,4 +233,5 @@ ignore = [
     "RUSTSEC-2025-0134",
     "RUSTSEC-2026-0194",
     "RUSTSEC-2026-0195",
+    "RUSTSEC-2024-0436",
 ]
