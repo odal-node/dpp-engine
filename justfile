@@ -1,6 +1,6 @@
 # =============================================================================
 # justfile — Odal Node (dpp-engine) task runner
-# Install: cargo install just cargo-nextest cargo-audit
+# Install: cargo install just cargo-nextest cargo-audit cargo-deny
 # Some recipes need Docker (infra, integration tiers, image builds).
 # Usage:   just <recipe>
 # =============================================================================
@@ -95,11 +95,15 @@ mod-rs-check:
         exit 1
     fi
 
-# Run security audit against the RustSec advisory database
+# Run security audit against the RustSec advisory database. --deny yanked/
+# unmaintained so those stop passing silently (a yanked crate is a
+# maintainer's explicit "don't use this") — kept separate from vulnerability
+# denial (already the default) so the two classes can be tuned independently.
 audit:
-    cargo audit
+    cargo audit --deny yanked --deny unmaintained
     bash scripts/check-audit-register.sh
     bash scripts/check-audit-register.test.sh
+    cargo deny check bans licenses sources
 
 # Build documentation (engine does not gate docs with -D warnings yet)
 doc:
