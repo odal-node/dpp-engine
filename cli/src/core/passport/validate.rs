@@ -3,16 +3,18 @@
 use anyhow::{Context, Result};
 
 use super::super::types::{ValidationRecord, ValidationReport};
-use crate::{config::Config, http::OdalClient};
+use crate::{
+    config::Config,
+    http::{OdalClient, describe_error},
+};
 
 pub async fn action_validate(client: &OdalClient, cfg: &Config) -> Result<ValidationReport> {
     let url = format!("{}/api/v1/dpps?status=draft", cfg.vault_url);
     let (http_status, body) = client.get(&url).await?;
     if !http_status.is_success() {
         anyhow::bail!(
-            "Failed to fetch draft DPPs (HTTP {}): {}",
-            http_status,
-            body
+            "Failed to fetch draft DPPs: {}",
+            describe_error(http_status, &body)
         );
     }
 

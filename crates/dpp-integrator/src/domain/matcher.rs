@@ -9,10 +9,9 @@
 //! back to decide what to actually write in apply mode.
 
 use std::collections::HashMap;
-use std::sync::Arc;
 
+use futures::stream::{self, StreamExt};
 use sha2::{Digest, Sha256};
-use tokio::sync::Semaphore;
 
 use dpp_domain::domain::product_identity::ProductIdentity;
 
@@ -153,40 +152,41 @@ pub async fn classify_row(
 /// outcome as a genuine no-match, so a transient lookup failure degrades to
 /// the always-safe default (a possible duplicate, never a missed conflict)
 /// rather than silently dropping the row from the report.
+///
+/// Uses `buffer_unordered` rather than one `tokio::spawn` per row: a large
+/// import can carry up to ~200k rows, and pre-spawning that many tasks (each
+/// immediately blocking on a semaphore permit) queues all of them onto the
+/// runtime up front. `buffer_unordered` never has more than `concurrency`
+/// requests in flight, and — since matching is pure async I/O, not
+/// CPU-bound work — needs no separate task per row to get that concurrency.
 pub async fn classify_batch(
     rows: &[(usize, CreatePassportRequest)],
     vault_client: &VaultHttpClient,
     auth_token: &str,
     concurrency: usize,
 ) -> HashMap<usize, Classification> {
-    let sem = Arc::new(Semaphore::new(concurrency.max(1)));
-    let mut handles = Vec::with_capacity(rows.len());
+    // Own each row before streaming: a `Stream::map` closure that borrows
+    // per-item from `rows` runs into a higher-ranked-lifetime limitation that
+    // has nothing to do with this fix (the same shape error appears for any
+    // borrowing `.map` over a slice-backed stream). This clone is the same
+    // one the original per-row `tokio::spawn` already paid to satisfy its
+    // `'static` bound — moving it here is not a new cost.
+    let owned_rows: Vec<(usize, CreatePassportRequest)> = rows
+        .iter()
+        .map(|(row_num, req)| (*row_num, req.clone()))
+        .collect();
 
-    for (row_num, req) in rows {
-        let sem = sem.clone();
-        let client = vault_client.clone();
-        let token = auth_token.to_owned();
-        let req = req.clone();
-        let row_num = *row_num;
-
-        handles.push(tokio::spawn(async move {
-            let _permit = sem.acquire().await.expect("semaphore closed unexpectedly");
-            let classification =
-                classify_row(&client, &req, &token)
-                    .await
-                    .unwrap_or(Classification {
-                        action: RowAction::Create,
-                        existing_id: None,
-                    });
+    stream::iter(owned_rows)
+        .map(|(row_num, req)| async move {
+            let classification = classify_row(vault_client, &req, auth_token)
+                .await
+                .unwrap_or(Classification {
+                    action: RowAction::Create,
+                    existing_id: None,
+                });
             (row_num, classification)
-        }));
-    }
-
-    let mut result = HashMap::with_capacity(rows.len());
-    for handle in handles {
-        if let Ok((row_num, classification)) = handle.await {
-            result.insert(row_num, classification);
-        }
-    }
-    result
+        })
+        .buffer_unordered(concurrency.max(1))
+        .collect()
+        .await
 }

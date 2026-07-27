@@ -70,7 +70,6 @@ impl JobStore for PgJobStore {
     async fn insert(&self, job: ImportJob) -> anyhow::Result<()> {
         let (status, fail_reason) = Self::split_status(&job.status);
         let result = job.result.as_ref().map(serde_json::to_value).transpose()?;
-        let mut tx = self.dal.begin().await.map_err(|e| anyhow::anyhow!("{e}"))?;
         sqlx::query(
             r#"INSERT INTO odal.import_job
                  (id, status, fail_reason, total_rows, processed, result, created_at)
@@ -83,33 +82,28 @@ impl JobStore for PgJobStore {
         .bind(job.processed as i32)
         .bind(result)
         .bind(job.created_at)
-        .execute(&mut *tx)
+        .execute(self.dal.pool())
         .await?;
-        tx.commit().await?;
         Ok(())
     }
 
     async fn get(&self, id: Uuid) -> Option<ImportJob> {
-        let mut tx = self.dal.begin().await.ok()?;
         let row = sqlx::query("SELECT * FROM odal.import_job WHERE id = $1")
             .bind(id)
-            .fetch_optional(&mut *tx)
+            .fetch_optional(self.dal.pool())
             .await
             .ok()??;
-        tx.commit().await.ok()?;
         Self::row_to_job(&row)
     }
 
     async fn set_status(&self, id: Uuid, status: JobStatus) -> anyhow::Result<()> {
         let (status_str, fail_reason) = Self::split_status(&status);
-        let mut tx = self.dal.begin().await.map_err(|e| anyhow::anyhow!("{e}"))?;
         sqlx::query("UPDATE odal.import_job SET status = $2, fail_reason = $3 WHERE id = $1")
             .bind(id)
             .bind(status_str)
             .bind(fail_reason)
-            .execute(&mut *tx)
+            .execute(self.dal.pool())
             .await?;
-        tx.commit().await?;
         Ok(())
     }
 
@@ -117,7 +111,6 @@ impl JobStore for PgJobStore {
         // On completion every row has been processed, so `processed` reflects the
         // job total — matching the InMemoryJobStore reference and the JobStore contract.
         let result_json = serde_json::to_value(&result)?;
-        let mut tx = self.dal.begin().await.map_err(|e| anyhow::anyhow!("{e}"))?;
         sqlx::query(
             r#"UPDATE odal.import_job
                SET status = 'completed', processed = total_rows, result = $2
@@ -125,37 +118,30 @@ impl JobStore for PgJobStore {
         )
         .bind(id)
         .bind(result_json)
-        .execute(&mut *tx)
+        .execute(self.dal.pool())
         .await?;
-        tx.commit().await?;
         Ok(())
     }
 
     async fn record_report(&self, id: Uuid, report: ImportReport) -> anyhow::Result<()> {
         let report_json = serde_json::to_value(&report)?;
-        let mut tx = self.dal.begin().await.map_err(|e| anyhow::anyhow!("{e}"))?;
         sqlx::query("UPDATE odal.import_job SET report = $2 WHERE id = $1")
             .bind(id)
             .bind(report_json)
-            .execute(&mut *tx)
+            .execute(self.dal.pool())
             .await?;
-        tx.commit().await?;
         Ok(())
     }
 
     async fn cleanup(&self, max_age: chrono::Duration) {
         let cutoff = Utc::now() - max_age;
-        let Ok(mut tx) = self.dal.begin().await else {
-            tracing::warn!("import job cleanup: could not open transaction");
-            return;
-        };
         match sqlx::query("DELETE FROM odal.import_job WHERE created_at < $1")
             .bind(cutoff)
-            .execute(&mut *tx)
+            .execute(self.dal.pool())
             .await
         {
             Ok(res) => {
-                if tx.commit().await.is_ok() && res.rows_affected() > 0 {
+                if res.rows_affected() > 0 {
                     tracing::info!(removed = res.rows_affected(), "import job cleanup");
                 }
             }

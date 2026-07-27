@@ -56,3 +56,20 @@ pub(crate) fn db_err(e: sqlx::Error) -> DppError {
     }
     DppError::Internal(format!("database: {e}"))
 }
+
+/// Turn an `UPDATE`/`DELETE` that matched no row into `NotFound` rather than a
+/// silent success — a status transition against an absent or already-processed
+/// row is a real error, not a no-op. Shared by every outbox repo's mark-*
+/// methods so this can't drift into "surfaced in some, silently ignored in
+/// others" the way it previously had (registry_sync checked it, snapshot and
+/// webhook did not).
+pub(crate) fn require_updated(
+    res: &sqlx::postgres::PgQueryResult,
+    row_kind: &str,
+    id: impl std::fmt::Display,
+) -> Result<(), DppError> {
+    if res.rows_affected() == 0 {
+        return Err(DppError::NotFound(format!("{row_kind} {id}")));
+    }
+    Ok(())
+}

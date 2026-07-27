@@ -1,13 +1,12 @@
 use axum::{
     extract::{Path, Query, State},
-    http::StatusCode,
     response::IntoResponse,
 };
 
 use crate::public_view::signed_public_view;
 use crate::state::AppState;
 
-use super::error::{api_error, internal_error};
+use super::error::{internal_error, not_found_error};
 use super::public_read::{PublicReadQuery, respond_public_view};
 
 /// Public, unauthenticated lookup of a published passport by GTIN.
@@ -38,11 +37,7 @@ pub async fn public_read_by_gtin_handler(
                 query.schema_view.as_deref(),
             )
         }
-        Ok(None) => api_error(
-            StatusCode::NOT_FOUND,
-            "NOT_FOUND",
-            "No published DPP found for this GTIN.",
-        ),
+        Ok(None) => not_found_error("No published DPP found for this GTIN."),
         Err(e) => internal_error(e),
     }
 }

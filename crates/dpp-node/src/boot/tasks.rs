@@ -6,9 +6,9 @@ use std::sync::Arc;
 use dpp_domain::ports::passport_repo::PassportRepository;
 use dpp_domain::ports::registry_sync::RegistrySyncPort;
 use dpp_integrator::infra::job_store::JobStore;
-use dpp_types::registry_sync::RegistrySyncOutbox;
-use dpp_types::snapshot::{SnapshotOutbox, SnapshotStore};
-use dpp_types::webhook::WebhookOutbox;
+use dpp_types::registry_sync::{RegistrySyncCounts, RegistrySyncOutbox};
+use dpp_types::snapshot::{SnapshotOutbox, SnapshotOutboxCounts, SnapshotStore};
+use dpp_types::webhook::{WebhookCounts, WebhookOutbox};
 
 /// Spawn the periodic cleanup of expired import jobs (every 6 hours).
 pub fn spawn_job_cleanup(store: Arc<dyn JobStore>) {
@@ -32,6 +32,15 @@ const DRAIN_BATCH: i64 = 50;
 const SWEEP_BATCH: i64 = 500;
 const STALL_THRESHOLD: i32 = 8;
 
+/// Reflect the registry-sync outbox's counts onto its gauges. Shared by the
+/// boot-time reconciliation log and every post-drain re-check so the two
+/// can never silently report different gauge names for the same counts.
+fn set_registry_gauges(c: &RegistrySyncCounts) {
+    metrics::gauge!("registry_outbox_pending").set(c.pending as f64);
+    metrics::gauge!("registry_outbox_stalled").set(c.stalled as f64);
+    metrics::gauge!("registry_outbox_rejected").set(c.rejected as f64);
+}
+
 /// Log/gauge the outbox's outstanding state, then spawn the periodic drain
 /// loop (ESPR Art. 13). Publish enqueues each registration transactionally
 /// with the passport write; this task drains due rows against the registry
@@ -53,9 +62,7 @@ pub async fn spawn_registry_drain(
                 stalled = c.stalled,
                 "registry outbox reconciliation at boot"
             );
-            metrics::gauge!("registry_outbox_pending").set(c.pending as f64);
-            metrics::gauge!("registry_outbox_stalled").set(c.stalled as f64);
-            metrics::gauge!("registry_outbox_rejected").set(c.rejected as f64);
+            set_registry_gauges(&c);
         }
         Err(e) => tracing::warn!(error = %e, "registry outbox boot reconciliation failed"),
     }
@@ -65,9 +72,7 @@ pub async fn spawn_registry_drain(
             tokio::time::sleep(DRAIN_INTERVAL).await;
             dpp_node::infra::registry_drain::drain_once(&outbox, &registry_sync, DRAIN_BATCH).await;
             if let Ok(c) = outbox.status_counts(STALL_THRESHOLD).await {
-                metrics::gauge!("registry_outbox_pending").set(c.pending as f64);
-                metrics::gauge!("registry_outbox_stalled").set(c.stalled as f64);
-                metrics::gauge!("registry_outbox_rejected").set(c.rejected as f64);
+                set_registry_gauges(&c);
                 if c.stalled > 0 {
                     tracing::warn!(
                         stalled = c.stalled,
@@ -77,6 +82,14 @@ pub async fn spawn_registry_drain(
             }
         }
     });
+}
+
+/// Reflect the webhook outbox's counts onto its gauges. Shared by the
+/// boot-time reconciliation log and every post-drain re-check so the two
+/// can never silently report different gauge names for the same counts.
+fn set_webhook_gauges(c: &WebhookCounts) {
+    metrics::gauge!("webhook_outbox_pending").set(c.pending as f64);
+    metrics::gauge!("webhook_outbox_exhausted").set(c.exhausted as f64);
 }
 
 /// Log/gauge the webhook delivery outbox's outstanding state, then spawn the
@@ -92,8 +105,7 @@ pub async fn spawn_webhook_drain(outbox: Arc<dyn WebhookOutbox>, allow_private_t
                 exhausted = c.exhausted,
                 "webhook outbox reconciliation at boot"
             );
-            metrics::gauge!("webhook_outbox_pending").set(c.pending as f64);
-            metrics::gauge!("webhook_outbox_exhausted").set(c.exhausted as f64);
+            set_webhook_gauges(&c);
         }
         Err(e) => tracing::warn!(error = %e, "webhook outbox boot reconciliation failed"),
     }
@@ -114,8 +126,7 @@ pub async fn spawn_webhook_drain(outbox: Arc<dyn WebhookOutbox>, allow_private_t
             )
             .await;
             if let Ok(c) = outbox.status_counts().await {
-                metrics::gauge!("webhook_outbox_pending").set(c.pending as f64);
-                metrics::gauge!("webhook_outbox_exhausted").set(c.exhausted as f64);
+                set_webhook_gauges(&c);
                 if c.exhausted > 0 {
                     tracing::warn!(
                         exhausted = c.exhausted,
@@ -125,6 +136,14 @@ pub async fn spawn_webhook_drain(outbox: Arc<dyn WebhookOutbox>, allow_private_t
             }
         }
     });
+}
+
+/// Reflect the continuity-snapshot outbox's counts onto its gauges. Shared by
+/// the boot-time reconciliation log and every post-drain re-check so the two
+/// can never silently report different gauge names for the same counts.
+fn set_snapshot_gauges(c: &SnapshotOutboxCounts) {
+    metrics::gauge!("snapshot_outbox_pending").set(c.pending as f64);
+    metrics::gauge!("snapshot_outbox_exhausted").set(c.exhausted as f64);
 }
 
 /// Log/gauge the continuity-snapshot outbox's outstanding state, then spawn the
@@ -149,8 +168,7 @@ pub async fn spawn_snapshot_drain(
                 exhausted = c.exhausted,
                 "continuity snapshot outbox reconciliation at boot"
             );
-            metrics::gauge!("snapshot_outbox_pending").set(c.pending as f64);
-            metrics::gauge!("snapshot_outbox_exhausted").set(c.exhausted as f64);
+            set_snapshot_gauges(&c);
         }
         Err(e) => tracing::warn!(error = %e, "snapshot outbox boot reconciliation failed"),
     }
@@ -167,8 +185,7 @@ pub async fn spawn_snapshot_drain(
             )
             .await;
             if let Ok(c) = outbox.status_counts().await {
-                metrics::gauge!("snapshot_outbox_pending").set(c.pending as f64);
-                metrics::gauge!("snapshot_outbox_exhausted").set(c.exhausted as f64);
+                set_snapshot_gauges(&c);
                 if c.exhausted > 0 {
                     // Exhausted here means the static tier may still be serving a
                     // stale public view — a correctness signal, not just noise.

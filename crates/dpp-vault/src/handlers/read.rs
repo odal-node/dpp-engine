@@ -9,7 +9,7 @@ use axum::{
 
 use crate::{middleware::auth::AuthContext, state::AppState};
 
-use super::error::{api_error, internal_error, parse_passport_id};
+use super::error::{internal_error, not_found_error, parse_passport_id};
 
 /// `GET /api/v1/dpp/{dppId}` — fetch a passport in any status (authenticated).
 pub async fn read_handler(
@@ -24,9 +24,7 @@ pub async fn read_handler(
 
     match state.service.find_by_id(passport_id).await {
         Ok(p) => (StatusCode::OK, Json(p)).into_response(),
-        Err(dpp_domain::DppError::NotFound(_)) => {
-            api_error(StatusCode::NOT_FOUND, "NOT_FOUND", "DPP not found.")
-        }
+        Err(dpp_domain::DppError::NotFound(_)) => not_found_error("DPP not found."),
         Err(e) => internal_error(e),
     }
 }

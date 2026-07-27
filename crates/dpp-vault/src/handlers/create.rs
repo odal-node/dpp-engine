@@ -23,7 +23,7 @@ use uuid::Uuid;
 
 use crate::{middleware::auth::AuthContext, state::AppState};
 
-use super::error::{api_error, internal_error};
+use super::error::{api_error, internal_error, require_write};
 
 /// Request body for passport creation.
 #[derive(Debug, Deserialize)]
@@ -60,12 +60,8 @@ pub async fn create_handler(
     Extension(auth): Extension<AuthContext>,
     Json(body): Json<CreateRequest>,
 ) -> impl IntoResponse {
-    if !auth.scope.can_write() {
-        return api_error(
-            StatusCode::FORBIDDEN,
-            "FORBIDDEN",
-            "Creating a passport requires a write-scoped credential.",
-        );
+    if let Some(resp) = require_write(&auth, "Creating a passport") {
+        return resp;
     }
     if body.product_name.trim().is_empty() {
         return api_error(

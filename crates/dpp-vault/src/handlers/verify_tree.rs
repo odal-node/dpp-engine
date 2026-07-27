@@ -13,7 +13,7 @@ use dpp_domain::domain::graph::DEFAULT_DEPTH_CAP;
 use crate::domain::verify::{DEFAULT_NODE_CAP, fetch_public_json, verify_tree};
 use crate::{middleware::auth::AuthContext, state::AppState};
 
-use super::error::{api_error, internal_error, parse_passport_id};
+use super::error::{internal_error, not_found_error, parse_passport_id};
 
 /// `GET /api/v1/dpp/{dppId}/verify-tree` — walk `component_refs` from this
 /// passport, fetching and pin-checking each node, and return a per-node report
@@ -31,7 +31,7 @@ pub async fn verify_tree_handler(
     let root = match state.service.find_by_id(passport_id).await {
         Ok(p) => p,
         Err(dpp_domain::DppError::NotFound(_)) => {
-            return api_error(StatusCode::NOT_FOUND, "NOT_FOUND", "DPP not found.");
+            return not_found_error("DPP not found.");
         }
         Err(e) => return internal_error(e),
     };

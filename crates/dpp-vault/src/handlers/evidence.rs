@@ -11,7 +11,7 @@ use uuid::Uuid;
 
 use crate::{domain::verify::verify_dossier_json, middleware::auth::AuthContext, state::AppState};
 
-use super::error::{api_error, internal_error, parse_passport_id};
+use super::error::{api_error, conflict_error, internal_error, not_found_error, parse_passport_id};
 
 #[allow(clippy::result_large_err)]
 fn parse_dossier_id(s: &str) -> Result<Uuid, axum::response::Response> {
@@ -33,12 +33,8 @@ pub async fn generate_evidence_handler(
 
     match state.service.generate_evidence(passport_id, &auth).await {
         Ok(record) => (StatusCode::CREATED, Json(record)).into_response(),
-        Err(dpp_domain::DppError::NotFound(_)) => {
-            api_error(StatusCode::NOT_FOUND, "NOT_FOUND", "DPP not found.")
-        }
-        Err(dpp_domain::DppError::Validation(msg)) => {
-            api_error(StatusCode::CONFLICT, "CONFLICT", &msg.to_string())
-        }
+        Err(dpp_domain::DppError::NotFound(_)) => not_found_error("DPP not found."),
+        Err(dpp_domain::DppError::Validation(msg)) => conflict_error(&msg.to_string()),
         Err(e) => internal_error(e),
     }
 }
@@ -57,9 +53,7 @@ pub async fn list_evidence_handler(
 
     match state.service.list_evidence(passport_id).await {
         Ok(summaries) => (StatusCode::OK, Json(summaries)).into_response(),
-        Err(dpp_domain::DppError::NotFound(_)) => {
-            api_error(StatusCode::NOT_FOUND, "NOT_FOUND", "DPP not found.")
-        }
+        Err(dpp_domain::DppError::NotFound(_)) => not_found_error("DPP not found."),
         Err(e) => internal_error(e),
     }
 }
@@ -77,9 +71,7 @@ pub async fn get_evidence_handler(
 
     match state.service.get_evidence(dossier_id).await {
         Ok(record) => (StatusCode::OK, Json(record.dossier)).into_response(),
-        Err(dpp_domain::DppError::NotFound(_)) => {
-            api_error(StatusCode::NOT_FOUND, "NOT_FOUND", "Dossier not found.")
-        }
+        Err(dpp_domain::DppError::NotFound(_)) => not_found_error("Dossier not found."),
         Err(e) => internal_error(e),
     }
 }
@@ -97,9 +89,7 @@ pub async fn verify_evidence_handler(
 
     match state.service.verify_evidence(dossier_id).await {
         Ok(report) => (StatusCode::OK, Json(report)).into_response(),
-        Err(dpp_domain::DppError::NotFound(_)) => {
-            api_error(StatusCode::NOT_FOUND, "NOT_FOUND", "Dossier not found.")
-        }
+        Err(dpp_domain::DppError::NotFound(_)) => not_found_error("Dossier not found."),
         Err(e) => internal_error(e),
     }
 }

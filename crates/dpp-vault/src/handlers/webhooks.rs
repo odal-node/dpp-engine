@@ -19,21 +19,7 @@ use dpp_types::{NewWebhookSubscription, WebhookSubscription};
 
 use crate::{middleware::auth::AuthContext, state::AppState};
 
-use super::error::{api_error, internal_error};
-
-/// Webhook management requires an admin-scoped credential. Returns a 403 to
-/// short-circuit the handler otherwise.
-fn require_admin(auth: &AuthContext) -> Option<axum::response::Response> {
-    if auth.scope.is_admin() {
-        None
-    } else {
-        Some(api_error(
-            StatusCode::FORBIDDEN,
-            "FORBIDDEN",
-            "Webhook management requires an admin-scoped credential.",
-        ))
-    }
-}
+use super::error::{api_error, internal_error, not_found_error, require_admin, validation_error};
 
 /// Create response — the redacted subscription plus the signing secret, shown once.
 #[derive(Serialize)]
@@ -50,7 +36,7 @@ pub async fn webhooks_list_handler(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthContext>,
 ) -> impl IntoResponse {
-    if let Some(resp) = require_admin(&auth) {
+    if let Some(resp) = require_admin(&auth, "Webhook management") {
         return resp;
     }
     match state.webhook_service.list().await {
@@ -65,7 +51,7 @@ pub async fn webhooks_create_handler(
     Extension(auth): Extension<AuthContext>,
     Json(body): Json<NewWebhookSubscription>,
 ) -> impl IntoResponse {
-    if let Some(resp) = require_admin(&auth) {
+    if let Some(resp) = require_admin(&auth, "Webhook management") {
         return resp;
     }
     match state.webhook_service.create(body).await {
@@ -77,11 +63,7 @@ pub async fn webhooks_create_handler(
             }),
         )
             .into_response(),
-        Err(DppError::Validation(msg)) => api_error(
-            StatusCode::UNPROCESSABLE_ENTITY,
-            "VALIDATION_ERROR",
-            &msg.to_string(),
-        ),
+        Err(DppError::Validation(msg)) => validation_error(&msg.to_string()),
         Err(e) => internal_error(e),
     }
 }
@@ -93,7 +75,7 @@ pub async fn webhooks_delete_handler(
     Extension(auth): Extension<AuthContext>,
     Path(id): Path<String>,
 ) -> impl IntoResponse {
-    if let Some(resp) = require_admin(&auth) {
+    if let Some(resp) = require_admin(&auth, "Webhook management") {
         return resp;
     }
     let parsed = match Uuid::parse_str(&id) {
@@ -102,11 +84,7 @@ pub async fn webhooks_delete_handler(
     };
     match state.webhook_service.deactivate(parsed).await {
         Ok(()) => StatusCode::NO_CONTENT.into_response(),
-        Err(DppError::NotFound(_)) => api_error(
-            StatusCode::NOT_FOUND,
-            "NOT_FOUND",
-            "Webhook subscription not found",
-        ),
+        Err(DppError::NotFound(_)) => not_found_error("Webhook subscription not found"),
         Err(e) => internal_error(e),
     }
 }
@@ -117,7 +95,7 @@ pub async fn webhooks_test_handler(
     Extension(auth): Extension<AuthContext>,
     Path(id): Path<String>,
 ) -> impl IntoResponse {
-    if let Some(resp) = require_admin(&auth) {
+    if let Some(resp) = require_admin(&auth, "Webhook management") {
         return resp;
     }
     let parsed = match Uuid::parse_str(&id) {
@@ -126,37 +104,7 @@ pub async fn webhooks_test_handler(
     };
     match state.webhook_service.test(parsed).await {
         Ok(()) => StatusCode::ACCEPTED.into_response(),
-        Err(DppError::NotFound(_)) => api_error(
-            StatusCode::NOT_FOUND,
-            "NOT_FOUND",
-            "Webhook subscription not found",
-        ),
+        Err(DppError::NotFound(_)) => not_found_error("Webhook subscription not found"),
         Err(e) => internal_error(e),
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    //! Webhook management must require an admin-scoped credential.
-    use super::*;
-    use dpp_types::api_key::ApiKeyScope;
-
-    fn ctx(scope: ApiKeyScope) -> AuthContext {
-        AuthContext {
-            user_id: "test".into(),
-            scope,
-            key_id: None,
-        }
-    }
-
-    #[test]
-    fn admin_scope_allowed() {
-        assert!(require_admin(&ctx(ApiKeyScope::Admin)).is_none());
-    }
-
-    #[test]
-    fn write_scope_forbidden() {
-        let resp = require_admin(&ctx(ApiKeyScope::Write)).expect("write must be blocked");
-        assert_eq!(resp.status(), StatusCode::FORBIDDEN);
     }
 }

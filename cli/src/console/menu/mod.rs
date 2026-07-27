@@ -112,7 +112,7 @@ pub(super) fn print_err(e: impl std::fmt::Display) {
 }
 
 pub(super) fn client() -> Result<(crate::http::OdalClient, Config)> {
-    Config::load().map(|cfg| (crate::http::OdalClient::new(&cfg.api_key), cfg))
+    crate::http::load_client()
 }
 
 pub(super) fn hint(cmd: &str) {

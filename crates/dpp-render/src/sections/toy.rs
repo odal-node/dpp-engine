@@ -1,26 +1,16 @@
 //! Toy safety sector HTML section.
 
-use crate::esc::esc;
+use crate::fields::{bool_field, str_field};
 
 pub(super) fn build_toy_section(p: &serde_json::Value) -> String {
     let sd = match p.get("sectorData") {
         Some(v) => v,
         None => return String::new(),
     };
-    let age = esc(sd.get("ageGroup").and_then(|v| v.as_str()).unwrap_or("-"));
-    let material = esc(sd
-        .get("primaryMaterial")
-        .and_then(|v| v.as_str())
-        .unwrap_or("-"));
-    let country = esc(sd
-        .get("countryOfManufacture")
-        .and_then(|v| v.as_str())
-        .unwrap_or("-"));
-    let ce = sd
-        .get("ceMarking")
-        .and_then(|v| v.as_bool())
-        .map(|v| if v { "Yes" } else { "No" })
-        .unwrap_or("-");
+    let age = str_field(sd, "ageGroup", "-");
+    let material = str_field(sd, "primaryMaterial", "-");
+    let country = str_field(sd, "countryOfManufacture", "-");
+    let ce = bool_field(sd, "ceMarking", "-", "Yes", "No");
     format!(
         r#"<h2>Toy Safety Information</h2>
     <table aria-label="Toy data">

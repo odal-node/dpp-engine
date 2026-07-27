@@ -9,7 +9,7 @@ use dpp_types::{STANDALONE_OPERATOR_ID, operator::UpdateOperatorConfig};
 
 use crate::{middleware::auth::AuthContext, state::AppState};
 
-use super::error::{api_error, internal_error};
+use super::error::{api_error, internal_error, require_admin};
 
 /// `GET /api/v1/operator` — returns the node's operator config.
 ///
@@ -33,12 +33,8 @@ pub async fn operator_patch_handler(
     Extension(auth): Extension<AuthContext>,
     Json(patch): Json<UpdateOperatorConfig>,
 ) -> impl IntoResponse {
-    if !auth.scope.is_admin() {
-        return api_error(
-            StatusCode::FORBIDDEN,
-            "FORBIDDEN",
-            "Updating operator config requires an admin-scoped credential.",
-        );
+    if let Some(resp) = require_admin(&auth, "Updating operator config") {
+        return resp;
     }
     if let Err(msg) = patch.validate() {
         return api_error(StatusCode::BAD_REQUEST, "INVALID_CONFIG", &msg);
