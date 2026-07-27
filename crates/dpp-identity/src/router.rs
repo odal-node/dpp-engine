@@ -152,9 +152,14 @@ mod tests {
     }
 
     /// Wrong CN in client certificate → 403 Forbidden (enforcement on by default).
+    /// Sets the proxy-binding secret and its header first — without it the
+    /// request is rejected at the (now fail-closed) proxy-binding gate before
+    /// the CN is ever checked, which is a different case ([`dpp_common::mtls`]
+    /// covers that one).
     #[tokio::test]
     #[serial]
     async fn mtls_rejects_wrong_cn() {
+        unsafe { std::env::set_var("MTLS_PROXY_SHARED_SECRET", "s3cr3t") };
         let state = crate::state::AppState {
             store: Arc::new(temp_store()),
             did_web_base_url: "http://localhost".into(),
@@ -165,6 +170,7 @@ mod tests {
             .method("POST")
             .uri("/internal/sign")
             .header("content-type", "application/json")
+            .header(dpp_common::mtls::PROXY_AUTH_HEADER, "s3cr3t")
             .header(
                 crate::middleware::mtls::CLIENT_CERT_SUBJECT_HEADER,
                 "CN=some-other-service,O=Odal",
@@ -175,6 +181,7 @@ mod tests {
             .unwrap();
 
         let resp = app.oneshot(req).await.unwrap();
+        unsafe { std::env::remove_var("MTLS_PROXY_SHARED_SECRET") };
         assert_eq!(resp.status(), StatusCode::FORBIDDEN);
     }
 }

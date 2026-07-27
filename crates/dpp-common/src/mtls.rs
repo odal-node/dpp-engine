@@ -59,18 +59,19 @@ fn ct_eq(a: &[u8], b: &[u8]) -> bool {
 }
 
 /// Bind trust in the forwarded `X-Client-Cert-*` headers to the terminating
-/// proxy. When `MTLS_PROXY_SHARED_SECRET` is configured, the request must carry
-/// a matching [`PROXY_AUTH_HEADER`]; when it is unset, binding is disabled and a
-/// warning is logged so the deployment gap is visible rather than silent.
+/// proxy: the request must carry a matching [`PROXY_AUTH_HEADER`]. There is no
+/// shared-secret interim — when `MTLS_PROXY_SHARED_SECRET` is unset, binding
+/// fails closed, since a caller reaching the listener directly could otherwise
+/// forge the cert headers outright.
 fn proxy_binding_ok(request: &Request) -> bool {
     let secret = match std::env::var("MTLS_PROXY_SHARED_SECRET") {
         Ok(s) if !s.is_empty() => s,
         _ => {
             tracing::warn!(
-                "mTLS: MTLS_PROXY_SHARED_SECRET is not set — forwarded client-certificate \
-                 headers are trusted without proxy binding (set it in production)"
+                "mTLS: MTLS_PROXY_SHARED_SECRET is not set — rejecting (set it, or set \
+                 MTLS_ALLOW_INSECURE=true for local dev/CI)"
             );
-            return true;
+            return false;
         }
     };
     request
@@ -80,10 +81,32 @@ fn proxy_binding_ok(request: &Request) -> bool {
         .is_some_and(|presented| ct_eq(presented.as_bytes(), secret.as_bytes()))
 }
 
+/// Split an RFC 4514 DN string on unescaped commas — a `\,` inside a value
+/// (e.g. `CN=Doe\, Jane`) does not start a new RDN.
+fn split_dn(subject_dn: &str) -> impl Iterator<Item = &str> {
+    let mut parts = Vec::new();
+    let mut start = 0;
+    let bytes = subject_dn.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'\\' => i += 1, // skip the escaped character, whatever it is
+            b',' => {
+                parts.push(&subject_dn[start..i]);
+                start = i + 1;
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    parts.push(&subject_dn[start..]);
+    parts.into_iter()
+}
+
 /// Extract the value of the `CN=` component from an RFC 4514 subject DN string.
 /// Matches both `CN=foo` and `cn=foo` (case-insensitive key).
 fn extract_cn(subject_dn: &str) -> Option<&str> {
-    for part in subject_dn.split(',') {
+    for part in split_dn(subject_dn) {
         let part = part.trim();
         if let Some(value) = part
             .strip_prefix("CN=")
@@ -208,9 +231,182 @@ mod tests {
     }
 
     #[test]
+    fn extracts_cn_with_escaped_comma_in_a_later_component() {
+        // The trailing O= value has an escaped comma; it must not be mistaken
+        // for an RDN boundary that shifts what follows.
+        assert_eq!(
+            extract_cn(r"CN=odal-vault, O=Doe\, Jane, C=EU"),
+            Some("odal-vault")
+        );
+    }
+
+    #[test]
+    fn extracts_cn_when_the_cn_value_itself_has_an_escaped_comma() {
+        assert_eq!(extract_cn(r"CN=Doe\, Jane, O=Odal"), Some(r"Doe\, Jane"));
+    }
+
+    #[test]
     fn ct_eq_matches_only_identical() {
         assert!(ct_eq(b"secret", b"secret"));
         assert!(!ct_eq(b"secret", b"secreu"));
         assert!(!ct_eq(b"secret", b"secre"));
+    }
+}
+
+/// HTTP-level integration tests for [`enforce`] — spin up a minimal Axum router
+/// and drive it through `tower::ServiceExt::oneshot`.
+#[cfg(test)]
+mod http_tests {
+    use axum::{Router, body::Body, http::Request, middleware, routing::get};
+    use serial_test::serial;
+    use tower::ServiceExt;
+
+    use super::*;
+
+    // env::set_var/remove_var are unsafe in edition 2024 (process-global, not
+    // thread-safe). Sound here: every test is #[serial], so no two run concurrently.
+
+    const ALLOWED_CN: &str = "odal-vault";
+
+    async fn ok_handler() -> StatusCode {
+        StatusCode::OK
+    }
+
+    fn build_test_router() -> Router {
+        Router::new().route(
+            "/test",
+            get(ok_handler).route_layer(middleware::from_fn(|req, next| async move {
+                enforce(req, next, ALLOWED_CN).await
+            })),
+        )
+    }
+
+    /// No cert header → 401 (enforcement is on by default via MTLS_ALLOW_INSECURE absence).
+    #[tokio::test]
+    #[serial]
+    async fn missing_cert_returns_401_when_enforced() {
+        let response = build_test_router()
+            .oneshot(Request::builder().uri("/test").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    /// No `MTLS_PROXY_SHARED_SECRET` configured → fails closed (no shared-secret
+    /// interim), even with an otherwise-valid cert header.
+    #[tokio::test]
+    #[serial]
+    async fn missing_proxy_secret_returns_401_when_enforced() {
+        let response = build_test_router()
+            .oneshot(
+                Request::builder()
+                    .uri("/test")
+                    .header(CLIENT_CERT_SUBJECT_HEADER, "CN=odal-vault, O=Odal")
+                    .header(CLIENT_CERT_ISSUER_HEADER, "CN=Odal Internal CA, O=Odal")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    /// Proxy secret configured, but the request carries no `X-Proxy-Auth` — even
+    /// with otherwise-valid cert headers it is rejected (didn't come via proxy).
+    #[tokio::test]
+    #[serial]
+    async fn proxy_secret_configured_rejects_unbound_request() {
+        unsafe { std::env::set_var("MTLS_PROXY_SHARED_SECRET", "s3cr3t") };
+        let response = build_test_router()
+            .oneshot(
+                Request::builder()
+                    .uri("/test")
+                    .header(CLIENT_CERT_SUBJECT_HEADER, "CN=odal-vault, O=Odal")
+                    .header(CLIENT_CERT_ISSUER_HEADER, "CN=Odal Internal CA, O=Odal")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        unsafe { std::env::remove_var("MTLS_PROXY_SHARED_SECRET") };
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    /// Proxy secret configured and the matching `X-Proxy-Auth` present, correct
+    /// CN and issuer → 200.
+    #[tokio::test]
+    #[serial]
+    async fn valid_request_passes_when_enforced() {
+        unsafe { std::env::set_var("MTLS_PROXY_SHARED_SECRET", "s3cr3t") };
+        let response = build_test_router()
+            .oneshot(
+                Request::builder()
+                    .uri("/test")
+                    .header(PROXY_AUTH_HEADER, "s3cr3t")
+                    .header(CLIENT_CERT_SUBJECT_HEADER, "CN=odal-vault, O=Odal")
+                    .header(CLIENT_CERT_ISSUER_HEADER, "CN=Odal Internal CA, O=Odal")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        unsafe { std::env::remove_var("MTLS_PROXY_SHARED_SECRET") };
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    /// Wrong CN, bound request → 403.
+    #[tokio::test]
+    #[serial]
+    async fn wrong_cn_returns_403_when_enforced() {
+        unsafe { std::env::set_var("MTLS_PROXY_SHARED_SECRET", "s3cr3t") };
+        let response = build_test_router()
+            .oneshot(
+                Request::builder()
+                    .uri("/test")
+                    .header(PROXY_AUTH_HEADER, "s3cr3t")
+                    .header(CLIENT_CERT_SUBJECT_HEADER, "CN=evil-service, O=Attacker")
+                    .header(CLIENT_CERT_ISSUER_HEADER, "CN=Odal Internal CA, O=Odal")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        unsafe { std::env::remove_var("MTLS_PROXY_SHARED_SECRET") };
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+
+    /// Correct CN but unrecognised issuer, bound request → 403.
+    #[tokio::test]
+    #[serial]
+    async fn wrong_issuer_returns_403_when_enforced() {
+        unsafe { std::env::set_var("MTLS_PROXY_SHARED_SECRET", "s3cr3t") };
+        let response = build_test_router()
+            .oneshot(
+                Request::builder()
+                    .uri("/test")
+                    .header(PROXY_AUTH_HEADER, "s3cr3t")
+                    .header(CLIENT_CERT_SUBJECT_HEADER, "CN=odal-vault, O=Odal")
+                    .header(CLIENT_CERT_ISSUER_HEADER, "CN=Unknown CA, O=Evil")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        unsafe { std::env::remove_var("MTLS_PROXY_SHARED_SECRET") };
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+
+    /// `MTLS_ALLOW_INSECURE=true` bypasses every check, including the missing
+    /// proxy secret — local dev / CI escape hatch.
+    #[tokio::test]
+    #[serial]
+    async fn allow_insecure_bypasses_enforcement() {
+        unsafe { std::env::set_var("MTLS_ALLOW_INSECURE", "true") };
+        let response = build_test_router()
+            .oneshot(Request::builder().uri("/test").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        unsafe { std::env::remove_var("MTLS_ALLOW_INSECURE") };
+        assert_eq!(response.status(), StatusCode::OK);
     }
 }
