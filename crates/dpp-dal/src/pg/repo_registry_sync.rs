@@ -20,23 +20,7 @@ use dpp_types::{
     RegistrySyncStatus,
 };
 
-use super::{PgDal, db_err, repo_passport::update_passport_in_tx};
-
-/// Turn an `UPDATE` that matched no row into a `NotFound` rather than a silent
-/// `Ok(())` — a status update against an absent `passport_id` is a real error,
-/// not a no-op success.
-fn require_updated(
-    res: &sqlx::postgres::PgQueryResult,
-    passport_id: PassportId,
-) -> Result<(), DppError> {
-    if res.rows_affected() == 0 {
-        return Err(DppError::NotFound(format!(
-            "registry_sync row for passport {}",
-            passport_id.0
-        )));
-    }
-    Ok(())
-}
+use super::{PgDal, db_err, repo_passport::update_passport_in_tx, require_updated};
 
 /// PostgreSQL implementation of [`RegistrySyncOutbox`].
 pub struct PgRegistrySyncRepo {
@@ -179,7 +163,7 @@ impl RegistrySyncOutbox for PgRegistrySyncRepo {
         .execute(self.dal.pool())
         .await
         .map_err(db_err)?;
-        require_updated(&res, passport_id)
+        require_updated(&res, "registry_sync row for passport", passport_id.0)
     }
 
     async fn mark_rejected(
@@ -200,7 +184,7 @@ impl RegistrySyncOutbox for PgRegistrySyncRepo {
         .execute(self.dal.pool())
         .await
         .map_err(db_err)?;
-        require_updated(&res, passport_id)
+        require_updated(&res, "registry_sync row for passport", passport_id.0)
     }
 
     async fn mark_attempt_failed(
@@ -226,7 +210,7 @@ impl RegistrySyncOutbox for PgRegistrySyncRepo {
         .execute(self.dal.pool())
         .await
         .map_err(db_err)?;
-        require_updated(&res, passport_id)
+        require_updated(&res, "registry_sync row for passport", passport_id.0)
     }
 
     async fn pending_for(

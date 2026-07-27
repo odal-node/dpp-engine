@@ -4,7 +4,10 @@
 use anyhow::{Context, Result, bail};
 use serde_json::json;
 
-use crate::{config::Config, http::OdalClient};
+use crate::{
+    config::Config,
+    http::{OdalClient, describe_error},
+};
 
 /// A facility row for display.
 pub struct FacilityEntry {
@@ -63,7 +66,10 @@ pub async fn action_facility_list(client: &OdalClient, cfg: &Config) -> Result<V
     let url = format!("{}/api/v1/facilities", cfg.vault_url);
     let (status, body) = client.get(&url).await?;
     if !status.is_success() {
-        bail!("failed to list facilities (HTTP {status}): {body}");
+        bail!(
+            "failed to list facilities: {}",
+            describe_error(status, &body)
+        );
     }
     Ok(array_body(&body)
         .iter()
@@ -99,7 +105,10 @@ pub async fn action_facility_add(
     }
     let (status, body) = client.post_json(&url, &payload).await?;
     if !status.is_success() {
-        bail!("facility creation failed (HTTP {status}): {body}");
+        bail!(
+            "facility creation failed: {}",
+            describe_error(status, &body)
+        );
     }
     let f: serde_json::Value = serde_json::from_str(&body).context("could not parse response")?;
     Ok(FacilityEntry {
@@ -123,7 +132,7 @@ pub async fn action_facility_set_default(
     let url = format!("{}/api/v1/facilities/{id}/default", cfg.vault_url);
     let (status, body) = client.post_json(&url, &json!({})).await?;
     if !status.is_success() {
-        bail!("set-default failed (HTTP {status}): {body}");
+        bail!("set-default failed: {}", describe_error(status, &body));
     }
     Ok(())
 }
@@ -132,7 +141,7 @@ pub async fn action_facility_remove(id: &str, client: &OdalClient, cfg: &Config)
     let url = format!("{}/api/v1/facilities/{id}", cfg.vault_url);
     let (status, body) = client.delete(&url).await?;
     if !status.is_success() {
-        bail!("remove failed (HTTP {status}): {body}");
+        bail!("remove failed: {}", describe_error(status, &body));
     }
     Ok(())
 }
@@ -146,7 +155,10 @@ pub async fn action_operator_id_list(
     let url = format!("{}/api/v1/operator-identifiers", cfg.vault_url);
     let (status, body) = client.get(&url).await?;
     if !status.is_success() {
-        bail!("failed to list operator identifiers (HTTP {status}): {body}");
+        bail!(
+            "failed to list operator identifiers: {}",
+            describe_error(status, &body)
+        );
     }
     Ok(array_body(&body)
         .iter()
@@ -178,7 +190,10 @@ pub async fn action_operator_id_add(
     }
     let (status, body) = client.post_json(&url, &payload).await?;
     if !status.is_success() {
-        bail!("operator-identifier creation failed (HTTP {status}): {body}");
+        bail!(
+            "operator-identifier creation failed: {}",
+            describe_error(status, &body)
+        );
     }
     let o: serde_json::Value = serde_json::from_str(&body).context("could not parse response")?;
     Ok(OperatorIdEntry {
@@ -200,7 +215,7 @@ pub async fn action_operator_id_set_primary(
     let url = format!("{}/api/v1/operator-identifiers/{id}/primary", cfg.vault_url);
     let (status, body) = client.post_json(&url, &json!({})).await?;
     if !status.is_success() {
-        bail!("set-primary failed (HTTP {status}): {body}");
+        bail!("set-primary failed: {}", describe_error(status, &body));
     }
     Ok(())
 }
@@ -209,7 +224,7 @@ pub async fn action_operator_id_remove(id: &str, client: &OdalClient, cfg: &Conf
     let url = format!("{}/api/v1/operator-identifiers/{id}", cfg.vault_url);
     let (status, body) = client.delete(&url).await?;
     if !status.is_success() {
-        bail!("remove failed (HTTP {status}): {body}");
+        bail!("remove failed: {}", describe_error(status, &body));
     }
     Ok(())
 }

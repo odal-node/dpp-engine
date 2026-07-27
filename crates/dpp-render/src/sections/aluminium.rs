@@ -1,31 +1,19 @@
 //! Aluminium sector HTML section.
 
-use crate::esc::esc;
+use crate::fields::{f64_field, str_field};
 
 pub(super) fn build_aluminium_section(p: &serde_json::Value) -> String {
     let sd = match p.get("sectorData") {
         Some(v) => v,
         None => return String::new(),
     };
-    let grade = esc(sd.get("alloyGrade").and_then(|v| v.as_str()).unwrap_or("-"));
-    let route = esc(sd
-        .get("productionRoute")
-        .and_then(|v| v.as_str())
-        .unwrap_or("-"));
-    let country = esc(sd
-        .get("countryOfProduction")
-        .and_then(|v| v.as_str())
-        .unwrap_or("-"));
-    let co2e = sd
-        .get("co2ePerTonneKg")
-        .and_then(|v| v.as_f64())
-        .map(|v| format!("{v:.2} kg CO\u{2082}e / t"))
-        .unwrap_or_else(|| "-".into());
-    let recycled = sd
-        .get("recycledContentPct")
-        .and_then(|v| v.as_f64())
-        .map(|v| format!("{v:.1}%"))
-        .unwrap_or_else(|| "-".into());
+    let grade = str_field(sd, "alloyGrade", "-");
+    let route = str_field(sd, "productionRoute", "-");
+    let country = str_field(sd, "countryOfProduction", "-");
+    let co2e = f64_field(sd, "co2ePerTonneKg", "-", |v| {
+        format!("{v:.2} kg CO\u{2082}e / t")
+    });
+    let recycled = f64_field(sd, "recycledContentPct", "-", |v| format!("{v:.1}%"));
     format!(
         r#"<h2>Aluminium Product Information</h2>
     <table aria-label="Aluminium data">

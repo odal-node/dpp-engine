@@ -8,14 +8,10 @@
 
 use anyhow::Result;
 
-use crate::{
-    config::Config, core::verify::action_verify, http::OdalClient,
-    stateless::render::render_verification_report,
-};
+use crate::{core::verify::action_verify, stateless::render::render_verification_report};
 
 pub async fn run_verify(target: &str) -> Result<()> {
-    let cfg = Config::load()?;
-    let client = OdalClient::new(&cfg.api_key);
+    let (client, cfg) = crate::http::load_client()?;
     match action_verify(target, &client, &cfg).await {
         Ok(report) => {
             render_verification_report(&report, target);

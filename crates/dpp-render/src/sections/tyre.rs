@@ -1,30 +1,17 @@
 //! Tyre sector HTML section.
 
-use crate::esc::esc;
+use crate::fields::{f64_field, str_field};
 
 pub(super) fn build_tyre_section(p: &serde_json::Value) -> String {
     let sd = match p.get("sectorData") {
         Some(v) => v,
         None => return String::new(),
     };
-    let class = esc(sd.get("tyreClass").and_then(|v| v.as_str()).unwrap_or("-"));
-    let fuel = esc(sd
-        .get("fuelEfficiencyClass")
-        .and_then(|v| v.as_str())
-        .unwrap_or("-"));
-    let wet = esc(sd
-        .get("wetGripClass")
-        .and_then(|v| v.as_str())
-        .unwrap_or("-"));
-    let noise = sd
-        .get("externalRollingNoiseDb")
-        .and_then(|v| v.as_f64())
-        .map(|v| format!("{v:.0} dB"))
-        .unwrap_or_else(|| "-".into());
-    let noise_class = esc(sd
-        .get("noisePerformanceClass")
-        .and_then(|v| v.as_str())
-        .unwrap_or("-"));
+    let class = str_field(sd, "tyreClass", "-");
+    let fuel = str_field(sd, "fuelEfficiencyClass", "-");
+    let wet = str_field(sd, "wetGripClass", "-");
+    let noise = f64_field(sd, "externalRollingNoiseDb", "-", |v| format!("{v:.0} dB"));
+    let noise_class = str_field(sd, "noisePerformanceClass", "-");
     format!(
         r#"<h2>Tyre Labelling Information</h2>
     <table aria-label="Tyre data">

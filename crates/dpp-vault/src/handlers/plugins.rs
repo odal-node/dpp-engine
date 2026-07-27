@@ -15,22 +15,7 @@ use dpp_common::plugin_admin::PluginInstallError;
 
 use crate::{middleware::auth::AuthContext, state::AppState};
 
-use super::error::api_error;
-
-/// Installing executable plugin code is an administrative action — a
-/// least-privilege (`read`/`write`) key must never be able to swap the code the
-/// node runs.
-fn require_admin(auth: &AuthContext) -> Option<Response> {
-    if auth.scope.is_admin() {
-        None
-    } else {
-        Some(api_error(
-            StatusCode::FORBIDDEN,
-            "FORBIDDEN",
-            "Installing a plugin requires an admin-scoped credential.",
-        ))
-    }
-}
+use super::error::{api_error, require_admin};
 
 /// `POST /api/v1/plugins` — verify, persist, and hot-swap a signed sector plugin.
 ///
@@ -46,7 +31,7 @@ pub async fn install_plugin_handler(
     Extension(auth): Extension<AuthContext>,
     mut multipart: Multipart,
 ) -> Response {
-    if let Some(resp) = require_admin(&auth) {
+    if let Some(resp) = require_admin(&auth, "Installing a plugin") {
         return resp;
     }
 
@@ -154,26 +139,6 @@ fn install_error(e: PluginInstallError) -> Response {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use dpp_types::api_key::ApiKeyScope;
-
-    fn ctx(scope: ApiKeyScope) -> AuthContext {
-        AuthContext {
-            user_id: "test".into(),
-            scope,
-            key_id: None,
-        }
-    }
-
-    #[test]
-    fn admin_scope_allowed() {
-        assert!(require_admin(&ctx(ApiKeyScope::Admin)).is_none());
-    }
-
-    #[test]
-    fn non_admin_blocked() {
-        assert!(require_admin(&ctx(ApiKeyScope::Write)).is_some());
-        assert!(require_admin(&ctx(ApiKeyScope::Read)).is_some());
-    }
 
     #[test]
     fn derive_sector_strips_prefix_and_extension() {

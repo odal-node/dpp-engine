@@ -19,7 +19,7 @@ use uuid::Uuid;
 use dpp_domain::{DppError, domain::passport::PassportId};
 use dpp_types::{SnapshotOutbox, SnapshotOutboxCounts, SnapshotReconcileRow};
 
-use super::{PgDal, db_err};
+use super::{PgDal, db_err, require_updated};
 
 /// PostgreSQL implementation of [`SnapshotOutbox`].
 pub struct PgSnapshotOutboxRepo {
@@ -122,7 +122,7 @@ impl SnapshotOutbox for PgSnapshotOutboxRepo {
     }
 
     async fn mark_reconciled(&self, id: Uuid) -> Result<(), DppError> {
-        sqlx::query(
+        let res = sqlx::query(
             r#"UPDATE odal.snapshot_outbox SET
                  status = 'reconciled',
                  reconciled_at = now(),
@@ -136,14 +136,14 @@ impl SnapshotOutbox for PgSnapshotOutboxRepo {
         .execute(self.dal.pool())
         .await
         .map_err(db_err)?;
-        Ok(())
+        require_updated(&res, "snapshot_outbox row", id)
     }
 
     async fn mark_attempt_failed(&self, id: Uuid, message: String) -> Result<(), DppError> {
         // Exponential backoff on the *new* attempt count, capped at 1h, with
         // 0.75–1.25× jitter — identical to the registry-sync and webhook
         // outboxes. `attempts` is the pre-increment value.
-        sqlx::query(
+        let res = sqlx::query(
             r#"UPDATE odal.snapshot_outbox SET
                  attempts = attempts + 1,
                  message = $2,
@@ -159,11 +159,11 @@ impl SnapshotOutbox for PgSnapshotOutboxRepo {
         .execute(self.dal.pool())
         .await
         .map_err(db_err)?;
-        Ok(())
+        require_updated(&res, "snapshot_outbox row", id)
     }
 
     async fn mark_exhausted(&self, id: Uuid, message: String) -> Result<(), DppError> {
-        sqlx::query(
+        let res = sqlx::query(
             r#"UPDATE odal.snapshot_outbox SET
                  status = 'exhausted',
                  message = $2,
@@ -177,7 +177,7 @@ impl SnapshotOutbox for PgSnapshotOutboxRepo {
         .execute(self.dal.pool())
         .await
         .map_err(db_err)?;
-        Ok(())
+        require_updated(&res, "snapshot_outbox row", id)
     }
 
     async fn status_counts(&self) -> Result<SnapshotOutboxCounts, DppError> {

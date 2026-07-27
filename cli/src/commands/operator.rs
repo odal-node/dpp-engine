@@ -3,18 +3,15 @@
 use anyhow::Result;
 
 use crate::{
-    config::Config,
     core::{
         onboarding::{action_operator_set, action_operator_show},
         types::OperatorUpdateParams,
     },
-    http::OdalClient,
     stateless::render::render_operator,
 };
 
 pub async fn run_operator_show() -> Result<()> {
-    let cfg = Config::load()?;
-    let client = OdalClient::new(&cfg.api_key);
+    let (client, cfg) = crate::http::load_client()?;
     let v = action_operator_show(&client, &cfg).await?;
     render_operator(&v)?;
     Ok(())
@@ -30,8 +27,7 @@ pub async fn run_operator_set(
     did_web_url: Option<String>,
     retention_policy_days: Option<i64>,
 ) -> Result<()> {
-    let cfg = Config::load()?;
-    let client = OdalClient::new(&cfg.api_key);
+    let (client, cfg) = crate::http::load_client()?;
     let params = OperatorUpdateParams {
         legal_name,
         trade_name,

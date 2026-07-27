@@ -138,28 +138,12 @@ impl PassportService {
             }
         }
 
-        let mut payload =
-            serde_json::to_value(&passport).map_err(|e| DppError::Serialisation(e.to_string()))?;
-        // Signed-status channel (roadmap 1.2): include the post-publish status in
-        // the signed payload so the resolver can bind the status to the JWS and
-        // reject reversals (Published → Draft) as tampering.
-        payload["status"] = serde_json::json!("active");
-
-        let jws = self
-            .identity
-            .sign_passport(passport.id, &payload)
-            .await
-            .map(|c| c.jws)
-            .map_err(|e| {
-                metrics::counter!("signing_failures_total").increment(1);
-                tracing::error!(
-                    code = event_codes::JWS_UNSIGNED_PUBLISH_BLOCKED,
-                    error = %e,
-                    "publish aborted — signing failed; passport remains draft"
-                );
-                DppError::Signing(e.to_string())
-            })?;
-
+        // Every publish-time field is set before the single serialize below,
+        // so it captures everything both signatures need — avoiding the
+        // second full struct→JSON walk this used to require just to pick up
+        // 4-6 fields that changed after an earlier serialize. `jws_signature`
+        // is set only after signing (a payload can't sign over its own
+        // signature); `public_jws_signature` stays `None` throughout.
         passport.status = PassportStatus::Published;
         // publishedAt is set once, on first publish, and preserved across
         // suspend → re-publish cycles (dpp-core invariant).
@@ -175,20 +159,41 @@ impl PassportService {
             }
         }
         passport.updated_at = Utc::now();
-        passport.jws_signature = Some(jws);
         passport.qr_code_url = Some(build_carrier_url(&passport, &self.resolver_base_url));
         passport.retention_locked = true;
+
+        // `status` serialises to the API wire string ("active") via
+        // `PassportStatus`'s own `Serialize` impl — already reflects the
+        // mutation above, no manual patch needed.
+        let payload =
+            serde_json::to_value(&passport).map_err(|e| DppError::Serialisation(e.to_string()))?;
+
+        let jws = self
+            .identity
+            .sign_passport(passport.id, &payload)
+            .await
+            .map(|c| c.jws)
+            .map_err(|e| {
+                metrics::counter!("signing_failures_total").increment(1);
+                tracing::error!(
+                    code = event_codes::JWS_UNSIGNED_PUBLISH_BLOCKED,
+                    error = %e,
+                    "publish aborted — signing failed; passport remains draft"
+                );
+                DppError::Signing(e.to_string())
+            })?;
+        passport.jws_signature = Some(jws);
 
         // Public verifiability: also sign the *public (redacted) view* — the exact
         // payload the unauthenticated `/public/dpp/{id}` route serves — so anyone
         // can verify the public passport against the operator DID without trusting
-        // the resolver. `public_jws_signature` is `None` here, so it is never
-        // signed over itself; the full-payload `jws_signature` above stays
-        // Confidential for authenticated full-passport verification.
-        let public_view = crate::public_view::public_view(
-            &serde_json::to_value(&passport).map_err(|e| DppError::Serialisation(e.to_string()))?,
-            passport.sector.catalog_key(),
-        );
+        // the resolver. Derived from the same `payload` above rather than a
+        // second full serialize: `public_view` strips `jwsSignature`
+        // unconditionally, so `payload` still carrying the pre-signing value
+        // here is immaterial. `public_jws_signature` is `None` here, so it is
+        // never signed over itself; the full-payload `jws_signature` above
+        // stays Confidential for authenticated full-passport verification.
+        let public_view = crate::public_view::public_view(&payload, passport.sector.catalog_key());
         let public_jws = self
             .identity
             .sign_passport(passport.id, &public_view)

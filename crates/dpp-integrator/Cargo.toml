@@ -23,6 +23,7 @@ dpp-common  = { path = "../dpp-common" }
 async-trait   = { workspace = true }
 axum          = { workspace = true }
 tokio         = { workspace = true }
+futures       = { workspace = true }
 tower-http    = { workspace = true }
 serde         = { workspace = true }
 serde_json    = { workspace = true }

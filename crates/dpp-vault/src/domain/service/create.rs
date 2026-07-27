@@ -250,12 +250,11 @@ fn local_component_id(uri: &str) -> Option<PassportId> {
 }
 
 fn apply_compliance(passport: &mut Passport, registry: &dyn ComplianceRegistry) {
-    let sector_data = match passport.sector_data.clone() {
-        Some(sd) => sd,
-        None => return,
+    let Some(sector_data) = passport.sector_data.as_ref() else {
+        return;
     };
     let sector = sector_data.sector();
-    if let Ok(mut result) = registry.compute(sector, &sector_data) {
+    if let Ok(mut result) = registry.compute(sector, sector_data) {
         // Backfill the two display metrics only when the caller didn't supply them.
         if passport.co2e_per_unit.is_none() {
             passport.co2e_per_unit = result.co2e_score.map(CarbonFootprint::from_kg);

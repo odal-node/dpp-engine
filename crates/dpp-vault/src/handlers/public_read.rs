@@ -15,7 +15,7 @@ use dpp_domain::schemas::{LensRegistry, UpcastError};
 use crate::public_view::signed_public_view;
 use crate::state::AppState;
 
-use super::error::{api_error, internal_error, parse_passport_id};
+use super::error::{api_error, internal_error, not_found_error, parse_passport_id};
 
 /// Query params for the public read. `schema_view` requests a read-time upcast
 /// of the sector data to a newer schema version, served *alongside* the
@@ -75,14 +75,8 @@ pub async fn public_read_handler(
             "SUSPENDED",
             "This passport has been suspended.",
         ),
-        Ok(_) => api_error(
-            StatusCode::NOT_FOUND,
-            "NOT_FOUND",
-            "DPP not found or not published.",
-        ),
-        Err(dpp_domain::DppError::NotFound(_)) => {
-            api_error(StatusCode::NOT_FOUND, "NOT_FOUND", "DPP not found.")
-        }
+        Ok(_) => not_found_error("DPP not found or not published."),
+        Err(dpp_domain::DppError::NotFound(_)) => not_found_error("DPP not found."),
         Err(e) => internal_error(e),
     }
 }

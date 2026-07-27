@@ -4,7 +4,10 @@
 use anyhow::{Context, Result, bail};
 use std::path::Path;
 
-use crate::{config::Config, http::OdalClient};
+use crate::{
+    config::Config,
+    http::{OdalClient, describe_error},
+};
 
 /// An installed plugin as reported by the node.
 pub struct InstalledPlugin {
@@ -35,7 +38,7 @@ pub async fn action_plugin_install(
     let url = format!("{}/api/v1/plugins", cfg.vault_url);
     let (status, body) = client.install_plugin(&url, filename, wasm, sig).await?;
     if !status.is_success() {
-        bail!("plugin install failed ({status}): {body}");
+        bail!("plugin install failed: {}", describe_error(status, &body));
     }
     let v: serde_json::Value = serde_json::from_str(&body).unwrap_or(serde_json::Value::Null);
     Ok(InstalledPlugin {

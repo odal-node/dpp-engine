@@ -3,17 +3,12 @@
 
 use anyhow::Result;
 
-use crate::{
-    config::Config,
-    core::webhook::{
-        action_webhook_add, action_webhook_list, action_webhook_remove, action_webhook_test,
-    },
-    http::OdalClient,
+use crate::core::webhook::{
+    action_webhook_add, action_webhook_list, action_webhook_remove, action_webhook_test,
 };
 
 pub async fn run_webhook_list() -> Result<()> {
-    let cfg = Config::load()?;
-    let client = OdalClient::new(&cfg.api_key);
+    let (client, cfg) = crate::http::load_client()?;
     let hooks = action_webhook_list(&client, &cfg).await?;
     if hooks.is_empty() {
         println!("No webhooks configured. Add one with `odal webhook add <url>`.");
@@ -37,8 +32,7 @@ pub async fn run_webhook_add(
     events: Vec<String>,
     description: Option<String>,
 ) -> Result<()> {
-    let cfg = Config::load()?;
-    let client = OdalClient::new(&cfg.api_key);
+    let (client, cfg) = crate::http::load_client()?;
     let created = action_webhook_add(&url, events, description, &client, &cfg).await?;
     println!("Added webhook {} → {}", created.entry.id, created.entry.url);
     println!();
@@ -48,16 +42,14 @@ pub async fn run_webhook_add(
 }
 
 pub async fn run_webhook_remove(id: &str) -> Result<()> {
-    let cfg = Config::load()?;
-    let client = OdalClient::new(&cfg.api_key);
+    let (client, cfg) = crate::http::load_client()?;
     action_webhook_remove(id, &client, &cfg).await?;
     println!("Webhook {id} removed.");
     Ok(())
 }
 
 pub async fn run_webhook_test(id: &str) -> Result<()> {
-    let cfg = Config::load()?;
-    let client = OdalClient::new(&cfg.api_key);
+    let (client, cfg) = crate::http::load_client()?;
     action_webhook_test(id, &client, &cfg).await?;
     println!("Test delivery queued for webhook {id}.");
     Ok(())

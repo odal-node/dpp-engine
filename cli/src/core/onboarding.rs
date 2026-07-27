@@ -7,7 +7,10 @@ use super::types::{
     BootstrapParams, BootstrapResult, KeyCreateParams, KeyCreateResult, KeyEntry, KeyRevokeParams,
     NodeState, OperatorUpdateParams,
 };
-use crate::{config::Config, http::OdalClient};
+use crate::{
+    config::Config,
+    http::{OdalClient, describe_error},
+};
 
 /// Read the node's setup state — whether it has been claimed (≥1 API key) and
 /// whether the operator identity is complete. Used to keep bootstrap idempotent.
@@ -16,7 +19,10 @@ pub async fn action_node_state(client: &OdalClient, cfg: &Config) -> Result<Node
     let url = format!("{}/api/v1/node/state", cfg.vault_url);
     let (status, body) = client.get(&url).await?;
     if !status.is_success() {
-        bail!("failed to read node state (HTTP {status}): {body}");
+        bail!(
+            "failed to read node state: {}",
+            describe_error(status, &body)
+        );
     }
     let v: serde_json::Value =
         serde_json::from_str(&body).context("could not parse node state response")?;
@@ -64,7 +70,10 @@ pub async fn action_bootstrap(
         let op_url = format!("{}/api/v1/operator", cfg.vault_url);
         let (status, body) = admin_client.patch_json(&op_url, &patch).await?;
         if !status.is_success() {
-            bail!("operator setup failed (HTTP {status}) against {op_url}: {body}");
+            bail!(
+                "operator setup failed against {op_url}: {}",
+                describe_error(status, &body)
+            );
         }
     }
 
@@ -73,7 +82,7 @@ pub async fn action_bootstrap(
         .post_json(&key_url, &json!({ "name": "cli-bootstrap" }))
         .await?;
     if !status.is_success() {
-        bail!("API key creation failed (HTTP {status}): {body}");
+        bail!("API key creation failed: {}", describe_error(status, &body));
     }
 
     let parsed: serde_json::Value =
@@ -92,7 +101,10 @@ pub async fn action_operator_show(client: &OdalClient, cfg: &Config) -> Result<s
     let url = format!("{}/api/v1/operator", cfg.vault_url);
     let (status, body) = client.get(&url).await?;
     if !status.is_success() {
-        bail!("failed to fetch operator config (HTTP {status}): {body}");
+        bail!(
+            "failed to fetch operator config: {}",
+            describe_error(status, &body)
+        );
     }
     Ok(serde_json::from_str(&body).unwrap_or(serde_json::Value::String(body)))
 }
@@ -130,7 +142,7 @@ pub async fn action_operator_set(
     let url = format!("{}/api/v1/operator", cfg.vault_url);
     let (status, body) = client.patch_json(&url, &patch).await?;
     if !status.is_success() {
-        bail!("operator update failed (HTTP {status}): {body}");
+        bail!("operator update failed: {}", describe_error(status, &body));
     }
     Ok(())
 }
@@ -146,7 +158,7 @@ pub async fn action_key_create(
         .post_json(&url, &json!({ "name": params.name }))
         .await?;
     if !status.is_success() {
-        bail!("key creation failed (HTTP {status}): {body}");
+        bail!("key creation failed: {}", describe_error(status, &body));
     }
     let parsed: serde_json::Value =
         serde_json::from_str(&body).context("could not parse response")?;
@@ -166,7 +178,7 @@ pub async fn action_key_list(client: &OdalClient, cfg: &Config) -> Result<Vec<Ke
     let url = format!("{}/api/v1/api-keys", cfg.vault_url);
     let (status, body) = client.get(&url).await?;
     if !status.is_success() {
-        bail!("failed to list keys (HTTP {status}): {body}");
+        bail!("failed to list keys: {}", describe_error(status, &body));
     }
     let arr: Vec<serde_json::Value> = serde_json::from_str(&body)
         .unwrap_or(serde_json::Value::Null)
@@ -206,7 +218,7 @@ pub async fn action_key_revoke(
     let url = format!("{}/api/v1/api-keys/{}", cfg.vault_url, params.id);
     let (status, body) = client.delete(&url).await?;
     if !status.is_success() {
-        bail!("revoke failed (HTTP {status}): {body}");
+        bail!("revoke failed: {}", describe_error(status, &body));
     }
     Ok(())
 }

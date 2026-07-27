@@ -1,35 +1,19 @@
 //! Electronics sector HTML section.
 
-use crate::esc::esc;
+use crate::fields::{f64_field, str_field, u64_field};
 
 pub(super) fn build_electronics_section(p: &serde_json::Value) -> String {
     let sd = match p.get("sectorData") {
         Some(v) => v,
         None => return String::new(),
     };
-    let category = esc(sd
-        .get("productCategory")
-        .and_then(|v| v.as_str())
-        .unwrap_or("-"));
-    let efficiency = esc(sd
-        .get("energyEfficiencyClass")
-        .and_then(|v| v.as_str())
-        .unwrap_or("-"));
-    let co2e = sd
-        .get("co2ePerUnitKg")
-        .and_then(|v| v.as_f64())
-        .map(|v| format!("{v:.2} kg CO\u{2082}e"))
-        .unwrap_or_else(|| "Not disclosed".into());
-    let repair = sd
-        .get("repairabilityScore")
-        .and_then(|v| v.as_f64())
-        .map(|v| format!("{v:.1} / 10"))
-        .unwrap_or_else(|| "-".into());
-    let lifetime = sd
-        .get("expectedLifetimeYears")
-        .and_then(|v| v.as_u64())
-        .map(|v| format!("{v} years"))
-        .unwrap_or_else(|| "-".into());
+    let category = str_field(sd, "productCategory", "-");
+    let efficiency = str_field(sd, "energyEfficiencyClass", "-");
+    let co2e = f64_field(sd, "co2ePerUnitKg", "Not disclosed", |v| {
+        format!("{v:.2} kg CO\u{2082}e")
+    });
+    let repair = f64_field(sd, "repairabilityScore", "-", |v| format!("{v:.1} / 10"));
+    let lifetime = u64_field(sd, "expectedLifetimeYears", "-", |v| format!("{v} years"));
     format!(
         r#"<h2>Electronics Information</h2>
     <table aria-label="Electronics data">

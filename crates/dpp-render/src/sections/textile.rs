@@ -1,6 +1,7 @@
 //! Textile sector HTML section, including the fibre-composition bar chart.
 
 use crate::esc::esc;
+use crate::fields::{f64_field, str_field};
 
 pub(super) fn build_textile_section(p: &serde_json::Value) -> String {
     let sd = match p.get("sectorData") {
@@ -8,23 +9,10 @@ pub(super) fn build_textile_section(p: &serde_json::Value) -> String {
         None => return String::new(),
     };
 
-    let country = esc(sd
-        .get("countryOfManufacturing")
-        .and_then(|v| v.as_str())
-        .unwrap_or("-"));
-    let care = esc(sd
-        .get("careInstructions")
-        .and_then(|v| v.as_str())
-        .unwrap_or("-"));
-    let chemical = esc(sd
-        .get("chemicalComplianceStandard")
-        .and_then(|v| v.as_str())
-        .unwrap_or("-"));
-    let recycled = sd
-        .get("recycledContentPct")
-        .and_then(|v| v.as_f64())
-        .map(|v| format!("{v:.1}%"))
-        .unwrap_or_else(|| "-".into());
+    let country = str_field(sd, "countryOfManufacturing", "-");
+    let care = str_field(sd, "careInstructions", "-");
+    let chemical = str_field(sd, "chemicalComplianceStandard", "-");
+    let recycled = f64_field(sd, "recycledContentPct", "-", |v| format!("{v:.1}%"));
 
     // Fibre composition bar
     let fibres: Vec<(&str, f64)> = sd

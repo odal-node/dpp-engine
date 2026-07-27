@@ -4,7 +4,10 @@
 use anyhow::{Context, Result, bail};
 use dpp_types::evidence::VerificationReport;
 
-use crate::{config::Config, http::OdalClient};
+use crate::{
+    config::Config,
+    http::{OdalClient, describe_error},
+};
 
 /// `target` is either a path to a dossier JSON file on disk, or a stored
 /// dossier's id — whichever resolves is used.
@@ -28,7 +31,7 @@ pub async fn action_verify(
     };
 
     if !status.is_success() {
-        bail!("Verification failed (HTTP {status}): {body}");
+        bail!("Verification failed: {}", describe_error(status, &body));
     }
     serde_json::from_str(&body).context("Failed to parse verification report as JSON")
 }
