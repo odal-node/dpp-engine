@@ -170,8 +170,28 @@ Do not add `Co-Authored-By`, `Generated-By`, or any AI attribution tags in commi
 - Every change goes through a PR. No direct pushes to `main`.
 - All CI checks must pass: build, test, clippy.
 - PRs that modify port trait implementations must explain the core version targeted.
-- PRs that add a new dependency must state why in the PR description.
 - PR titles follow the same Conventional Commits format.
+
+### New Dependencies
+
+A PR that adds a new **direct** dependency states, in the PR description:
+
+- **What it's for** — the specific need, not "might be useful".
+- **What targets it compiles for** — does it pull anything platform-specific
+  (build scripts, `libc`/system headers, a proc-macro-only build-time cost)?
+- **Maintenance status** — last release, open advisories (`cargo audit`/
+  `cargo deny check`), whether it's a small crate with one maintainer or
+  something with an established team behind it.
+- **Does it touch untrusted input, secrets, or the network?** — the one that
+  actually matters. This engine's untrusted-input surfaces are enumerable:
+  uploaded XLSX/CSV (`dpp-integrator`), Wasm plugin binaries
+  (`dpp-plugin-host`), signed compliance rulesets, webhook targets, and
+  resolver requests. A dependency landing on any of those paths is a
+  different decision than one in the CLI's progress bar — say which it is.
+
+This is a checklist for the PR description, not a CI gate — a mechanical
+check here would just be theatre. It exists so the review has the same
+context the author had when picking the crate, not to block the PR.
 
 ### Branch Names
 
