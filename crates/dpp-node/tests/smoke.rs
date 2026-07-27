@@ -212,6 +212,7 @@ async fn start_node_with_dal(dal: PgDal) -> String {
         webhook_service,
         db_ping: Arc::new(PgPing(dal)),
         auth_provider,
+        local_auth_provider: None,
         cors_allowed_origins: Vec::new(),
         scan_repo,
         plugin_admin: None,

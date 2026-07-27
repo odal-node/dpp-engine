@@ -270,14 +270,20 @@ async fn main() -> anyhow::Result<()> {
         cfg.webhook_allow_private_targets,
     ));
 
-    // ── Auth provider (API key + optional local admin) ────────────────────────
-    let mut providers: Vec<Box<dyn dpp_types::auth::AuthProvider>> =
+    // ── Auth providers (Bearer: API key; Basic: optional local admin) ─────────
+    // Kept as two separate chains, not one composite, so the scheme a request
+    // arrives under decides which provider(s) may even be tried.
+    let providers: Vec<Box<dyn dpp_types::auth::AuthProvider>> =
         vec![Box::new(ApiKeyAuthProvider::new(db.api_key_repo.clone()))];
-    if let (Some(user), Some(pass)) = (&cfg.admin_username, &cfg.admin_password) {
-        providers.push(Box::new(LocalAuthProvider::new(user.clone(), pass.clone())));
-    }
     let auth_provider: Arc<dyn dpp_types::auth::AuthProvider> =
         Arc::new(CompositeAuthProvider::new(providers));
+    let local_auth_provider: Option<Arc<dyn dpp_types::auth::AuthProvider>> =
+        match (&cfg.admin_username, &cfg.admin_password) {
+            (Some(user), Some(pass)) => {
+                Some(Arc::new(LocalAuthProvider::new(user.clone(), pass.clone())))
+            }
+            _ => None,
+        };
 
     // The concrete plugin host backs `POST /api/v1/plugins` (admin hot-install).
     let plugin_admin: Arc<dyn dpp_common::plugin_admin::PluginAdmin> = plugin_host.clone();
@@ -289,6 +295,7 @@ async fn main() -> anyhow::Result<()> {
         webhook_service,
         db_ping: db.db_ping.clone(),
         auth_provider,
+        local_auth_provider,
         cors_allowed_origins: cfg.cors_allowed_origins.clone(),
         scan_repo: db.scan_repo.clone(),
         plugin_admin: Some(plugin_admin),

@@ -137,14 +137,20 @@ async fn main() -> anyhow::Result<()> {
     ));
 
     // Auth: real API-key provider (+ optional local admin) — never a dev/unsigned
-    // provider. Closes the standalone-vault auth-bypass (audit V0).
-    let mut providers: Vec<Box<dyn dpp_types::auth::AuthProvider>> =
+    // provider. Closes the standalone-vault auth-bypass (audit V0). Kept as two
+    // separate chains, not one composite, so the scheme a request arrives
+    // under decides which provider(s) may even be tried.
+    let providers: Vec<Box<dyn dpp_types::auth::AuthProvider>> =
         vec![Box::new(ApiKeyAuthProvider::new(api_key_repo.clone()))];
-    if let (Some(user), Some(pass)) = (&cfg.admin_username, &cfg.admin_password) {
-        providers.push(Box::new(LocalAuthProvider::new(user.clone(), pass.clone())));
-    }
     let auth_provider: Arc<dyn dpp_types::auth::AuthProvider> =
         Arc::new(CompositeAuthProvider::new(providers));
+    let local_auth_provider: Option<Arc<dyn dpp_types::auth::AuthProvider>> =
+        match (&cfg.admin_username, &cfg.admin_password) {
+            (Some(user), Some(pass)) => {
+                Some(Arc::new(LocalAuthProvider::new(user.clone(), pass.clone())))
+            }
+            _ => None,
+        };
 
     let state = AppState {
         service,
@@ -154,6 +160,7 @@ async fn main() -> anyhow::Result<()> {
         webhook_service,
         db_ping: Arc::new(PgPing(dal)),
         auth_provider,
+        local_auth_provider,
         cors_allowed_origins: cfg.cors_allowed_origins.clone(),
         scan_repo,
         // The standalone vault binary hosts no Wasm plugin engine; runtime
