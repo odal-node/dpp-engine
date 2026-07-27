@@ -118,6 +118,38 @@ for id in "${IGNORED_IDS[@]}"; do
   grep -qx "$id" <<< "$RAW_IDS" || fail "$id: does not appear in a raw (no .cargo/audit.toml) cargo-audit run — the advisory no longer fires; delete this entry, don't just leave it suppressed"
 done
 
+# Confirms `pkgspec` (a bare crate name, or `name@version` to disambiguate a
+# crate with multiple resolved versions) is absent from the dependency graph
+# under the given `cargo tree -i` edge filter ($2: "" for all edges, "-e
+# normal" for normal-only). `cargo tree` has two distinct "absent" shapes
+# that both mean the same thing here and must both count as confirmed: exit 0
+# with empty stdout (a bare name simply isn't in the graph), and a non-zero
+# exit whose stderr says "did not match any packages" (a version-pinned spec
+# naming a version that isn't resolved at all — the ambiguity that motivates
+# pinning `name@version` in the first place, see git history). Any other
+# non-zero exit (e.g. "is ambiguous", meaning the spec still matches more
+# than one resolved version) is a real problem, not a pass. Calls fail()
+# itself with a specific reason whenever it cannot confirm absence.
+graph_absent() {
+  local id="$1" pkgspec="$2" edge_flag="$3" out err_file err
+  err_file="$(mktemp)"
+  if out="$(cargo tree -i "$pkgspec" $edge_flag --target all 2>"$err_file")"; then
+    rm -f "$err_file"
+    if [[ -n "$out" ]]; then
+      fail "$id: '$pkgspec' resolves in the dependency graph"
+      return 1
+    fi
+    return 0
+  fi
+  err="$(cat "$err_file")"
+  rm -f "$err_file"
+  if grep -q "did not match any packages" <<< "$err"; then
+    return 0
+  fi
+  fail "$id: could not verify '$pkgspec' against the graph — $err"
+  return 1
+}
+
 # ── Check 4: class claims hold against the dependency graph ────────────────
 for id in "${BLOCK_IDS[@]}"; do
   class="${FIELD[$id|class]:-}"
@@ -131,21 +163,10 @@ for id in "${BLOCK_IDS[@]}"; do
 
   case "$class" in
     not-in-graph)
-      # Exit 0 + empty stdout: genuinely absent ("nothing to print" lands on
-      # stderr, discarded). Non-zero exit (e.g. an ambiguous package spec
-      # matching two resolved versions): cannot verify, must not pass silently.
-      if out="$(cargo tree -i "$pkgspec" --target all 2>/dev/null)"; then
-        [[ -z "$out" ]] || fail "$id: class is not-in-graph but '$pkgspec' resolves in the dependency graph"
-      else
-        fail "$id: could not verify '$pkgspec' against the graph (cargo tree exited non-zero — check for an ambiguous or invalid package spec)"
-      fi
+      graph_absent "$id" "$pkgspec" "" || true
       ;;
     dev-only|build-time-only)
-      if out="$(cargo tree -i "$pkgspec" -e normal --target all 2>/dev/null)"; then
-        [[ -z "$out" ]] || fail "$id: class is $class but '$pkgspec' resolves on a normal (non-dev) edge"
-      else
-        fail "$id: could not verify '$pkgspec' against the graph (cargo tree exited non-zero — check for an ambiguous or invalid package spec)"
-      fi
+      graph_absent "$id" "$pkgspec" "-e normal" || true
       ;;
     reachable-but-mitigated)
       # anchor is "path/to/file.rs::SYMBOL"
