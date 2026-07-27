@@ -98,8 +98,8 @@ mod-rs-check:
 # Run security audit against the RustSec advisory database
 audit:
     cargo audit
-    ./scripts/check-audit-register.sh
-    ./scripts/check-audit-register.test.sh
+    bash scripts/check-audit-register.sh
+    bash scripts/check-audit-register.test.sh
 
 # Build documentation (engine does not gate docs with -D warnings yet)
 doc:

@@ -16,7 +16,7 @@ FAIL=0
 
 expect_pass() {
   local name="$1" fixture="$2"
-  if ./scripts/check-audit-register.sh "$fixture" >/dev/null 2>&1; then
+  if bash scripts/check-audit-register.sh "$fixture" >/dev/null 2>&1; then
     echo "ok   - $name"
     PASS=$((PASS + 1))
   else
@@ -27,7 +27,7 @@ expect_pass() {
 
 expect_fail() {
   local name="$1" fixture="$2"
-  if ./scripts/check-audit-register.sh "$fixture" >/dev/null 2>&1; then
+  if bash scripts/check-audit-register.sh "$fixture" >/dev/null 2>&1; then
     echo "FAIL - $name (expected the checker to fail, it passed)"
     FAIL=$((FAIL + 1))
   else
