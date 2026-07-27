@@ -26,6 +26,7 @@ fn test_state_did(vault_base_url: String, operator_did_url: String) -> AppState 
         resolver_base_url: "https://id.odal-node.io".into(),
         cache: Cache::new_noop(),
         http: reqwest::Client::new(),
+        scan_counter: None,
     }
 }
 

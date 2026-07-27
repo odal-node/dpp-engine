@@ -25,7 +25,7 @@ use dpp_crypto::identity::LocalIdentityService;
 use dpp_crypto::keystore::KeyStore;
 use dpp_dal::pg::{
     PgApiKeyRepo, PgAuditRepo, PgDal, PgEvidenceDossierRepo, PgOperatorConfigRepo, PgPassportRepo,
-    PgRegistryIdentityRepo, PgTransferRepo, PgWebhookRepo, sqlx,
+    PgRegistryIdentityRepo, PgScanTelemetryRepo, PgTransferRepo, PgWebhookRepo, sqlx,
 };
 use dpp_domain::domain::passport::PassportRef;
 use dpp_domain::{
@@ -203,6 +203,7 @@ async fn start_node_with_dal(dal: PgDal) -> String {
         false,
     ));
     let auth_provider: Arc<dyn dpp_types::auth::AuthProvider> = Arc::new(TestAuthProvider);
+    let scan_repo = Arc::new(PgScanTelemetryRepo::new(dal.clone()));
     let vault_state = VaultState {
         service,
         operator_service,
@@ -212,6 +213,7 @@ async fn start_node_with_dal(dal: PgDal) -> String {
         db_ping: Arc::new(PgPing(dal)),
         auth_provider,
         cors_allowed_origins: Vec::new(),
+        scan_repo,
         plugin_admin: None,
     };
 

@@ -173,12 +173,42 @@ async fn main() -> anyhow::Result<()> {
     let resolver_base_url =
         std::env::var("RESOLVER_BASE_URL").unwrap_or_else(|_| "https://id.odal-node.io".into());
 
+    // Scan telemetry (privacy-safe aggregate resolution counts). Off unless
+    // SCAN_INGEST_URL is configured: the resolver then accumulates counts in
+    // memory and a background task flushes them to the node's internal,
+    // mTLS-gated ingest endpoint. Unset (dev/test) means the resolver counts
+    // nothing and behaves exactly as before.
+    let scan_counter = match std::env::var("SCAN_INGEST_URL") {
+        Ok(url) if !url.trim().is_empty() => {
+            let counter = Arc::new(dpp_resolver::infra::scan_counter::ScanCounter::default());
+            let flush_client =
+                build_scan_flush_client().context("Failed to build scan-telemetry flush client")?;
+            let interval_secs: u64 = std::env::var("SCAN_FLUSH_INTERVAL_SECS")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(300);
+            dpp_resolver::infra::scan_counter::spawn_scan_flush(
+                counter.clone(),
+                flush_client,
+                url,
+                Duration::from_secs(interval_secs),
+            );
+            tracing::info!(interval_secs, "scan telemetry enabled");
+            Some(counter)
+        }
+        _ => {
+            tracing::info!("scan telemetry disabled (SCAN_INGEST_URL unset)");
+            None
+        }
+    };
+
     let state = AppState {
         vault_base_url,
         operator_did_url,
         resolver_base_url,
         cache,
         http,
+        scan_counter,
     };
 
     // Per-IP rate limit (default 120 requests/minute; override with RATE_LIMIT_RPM).
@@ -219,6 +249,25 @@ async fn main() -> anyhow::Result<()> {
     .context("Server error")?;
 
     Ok(())
+}
+
+/// Build the reqwest client used to flush scan telemetry to the node's internal
+/// ingest endpoint. When `SCAN_FLUSH_CLIENT_IDENTITY` points at a PEM bundle
+/// (private key + certificate chain), the client presents it for mTLS — the
+/// terminating proxy verifies `CN=odal-resolver`. Without it (local dev over
+/// plain HTTP), a plain client is returned.
+fn build_scan_flush_client() -> anyhow::Result<reqwest::Client> {
+    let mut builder = reqwest::Client::builder().timeout(std::time::Duration::from_secs(10));
+    if let Ok(path) = std::env::var("SCAN_FLUSH_CLIENT_IDENTITY")
+        && !path.trim().is_empty()
+    {
+        let pem = std::fs::read(&path)
+            .with_context(|| format!("reading scan-flush client identity PEM: {path}"))?;
+        let identity =
+            reqwest::Identity::from_pem(&pem).context("parsing scan-flush client identity PEM")?;
+        builder = builder.identity(identity);
+    }
+    builder.build().context("building scan-flush client")
 }
 
 /// Strip embedded credentials from a connection URL before logging.

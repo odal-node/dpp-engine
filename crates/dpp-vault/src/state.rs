@@ -5,6 +5,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use dpp_common::plugin_admin::PluginAdmin;
 use dpp_types::auth::AuthProvider;
+use dpp_types::scan::ScanTelemetryRepository;
 
 use crate::domain::{
     api_key_service::ApiKeyService, operator_service::OperatorService,
@@ -41,6 +42,10 @@ pub struct AppState {
     pub db_ping: Arc<dyn DbPing>,
     /// Auth provider — CompositeAuthProvider (API key + local auth).
     pub auth_provider: Arc<dyn AuthProvider>,
+    /// Aggregate scan-telemetry counters — resolution counts and QR-render
+    /// counts. A bare port (like `db_ping`): the stats/ingest handlers call it
+    /// directly, there is no orchestration to wrap in a service.
+    pub scan_repo: Arc<dyn ScanTelemetryRepository>,
     /// Origins allowed for CORS requests (empty = CORS disabled).
     pub cors_allowed_origins: Vec<String>,
     /// Runtime plugin administration (the Wasm plugin host). `None` on

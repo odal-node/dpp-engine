@@ -10,7 +10,8 @@ use crate::{
     core::{
         passport::{
             action_archive, action_export, action_get, action_history, action_import, action_list,
-            action_publish, action_suspend, action_validate,
+            action_operator_stats, action_passport_stats, action_publish, action_suspend,
+            action_validate,
         },
         types::{
             ArchiveParams, ExportParams, HistoryParams, ImportParams, ListParams, PassportSummary,
@@ -19,8 +20,9 @@ use crate::{
     },
     http::OdalClient,
     stateless::render::{
-        render_export, render_history, render_import_result, render_passport_details,
-        render_publish_summary, render_validation_report,
+        render_export, render_history, render_import_result, render_operator_stats,
+        render_passport_details, render_passport_stats, render_publish_summary,
+        render_validation_report,
     },
 };
 
@@ -41,6 +43,7 @@ const PASSPORTS: &[MenuItem] = &[
     // MenuItem::new("Suspend", "serve 410 Gone for a passport"),
     // MenuItem::new("Archive", "permanently archive a passport"),
     // MenuItem::new("History", "show a passport's audit trail"),
+    MenuItem::new("Scan telemetry", "resolution counts across your passports"),
     MenuItem::new("Export", "export passports to JSON or CSV"),
     MenuItem::new("← Back", ""),
 ];
@@ -113,6 +116,18 @@ pub(super) async fn passports() -> Result<()> {
                         run_validate_inline(&client, &cfg).await?;
                         println!();
                     }
+                    Err(e) => print_err(e),
+                },
+                "Scan telemetry" => match client() {
+                    Ok((client, cfg)) => match action_operator_stats(30, &client, &cfg).await {
+                        Ok(stats) => {
+                            println!();
+                            render_operator_stats(&stats);
+                            hint("odal stats");
+                            println!();
+                        }
+                        Err(e) => print_err(e),
+                    },
                     Err(e) => print_err(e),
                 },
                 "Publish all drafts" => {
@@ -518,7 +533,7 @@ async fn passport_actions(
     p: &PassportSummary,
 ) -> Result<()> {
     loop {
-        let mut items = vec!["View details", "History"];
+        let mut items = vec!["View details", "History", "Scan telemetry"];
         match p.status.as_str() {
             "draft" => items.push("Publish"),
             "active" => {
@@ -559,6 +574,15 @@ async fn passport_actions(
                     Err(e) => print_err(e),
                 }
             }
+            "Scan telemetry" => match action_passport_stats(&p.id, 30, client, cfg).await {
+                Ok(stats) => {
+                    println!();
+                    render_passport_stats(&stats, &p.id);
+                    hint(&format!("odal passport stats {}", p.id));
+                    println!();
+                }
+                Err(e) => print_err(e),
+            },
             "Publish" => {
                 println!(
                     "\n  {} Publishing signs this draft with your Ed25519 key and makes it publicly verifiable.",

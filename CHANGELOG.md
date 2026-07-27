@@ -10,6 +10,24 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ## [Unreleased]
 
+### Added
+
+- Privacy-safe scan telemetry: aggregate resolution counts per passport, per day,
+  per surface — no IP, user agent, session, or per-event row exists in the schema,
+  so nothing about the scanner can leak. The resolver counts terminal-view
+  resolutions (`/dpp/{id}` html + json) in memory and flushes them to the node's
+  mTLS-gated `POST /vault/internal/scan-batch` (`CN=odal-resolver`); QR-image
+  renders are tracked as a **separate** metric and never summed into scans; the
+  `/01/{gtin}` redirect is not counted (its followed terminal view is). Operators
+  read the counts back via `GET /vault/api/v1/dpp/{id}/stats` and
+  `GET /vault/api/v1/stats`. Aggregates are pruned on a rolling 24-month horizon.
+  Off unless `SCAN_INGEST_URL` is configured on the resolver.
+- CLI surfacing of scan telemetry: `odal stats` (operator-wide rollup) and
+  `odal passport stats <id>` (per passport), both with `--days` and `--json`.
+- The identity service's mTLS client-cert middleware moved to `dpp-common::mtls`
+  and is now parameterised by the allowed subject CN, so the vault's scan-ingest
+  route and identity's internal endpoints share one audited implementation.
+
 ## [0.8.0] - 2026-07-21
 
 ### Added

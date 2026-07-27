@@ -46,6 +46,8 @@ use crate::{
             operator_ids_create_handler, operator_ids_delete_handler, operator_ids_list_handler,
             operator_ids_set_primary_handler,
         },
+        scan_ingest::{scan_ingest_handler, scan_ingest_mtls},
+        stats::{operator_stats_handler, passport_stats_handler},
         suspend::suspend_handler,
         transfer::{transfer_accept_handler, transfer_initiate_handler},
         update::update_handler,
@@ -85,6 +87,9 @@ pub fn build(state: AppState) -> Router {
         )
         .route("/dpp/{dppId}/history", get(history_handler))
         .route("/dpp/{dppId}/verify-tree", get(verify_tree_handler))
+        // ── Scan telemetry (aggregate, privacy-safe) ──────────────────
+        .route("/dpp/{dppId}/stats", get(passport_stats_handler))
+        .route("/stats", get(operator_stats_handler))
         .route(
             "/dpp/{dppId}/evidence",
             get(list_evidence_handler).post(generate_evidence_handler),
@@ -147,6 +152,13 @@ pub fn build(state: AppState) -> Router {
             auth_middleware,
         ));
 
+    // Internal service-to-service tree: not public, not Bearer-authenticated.
+    // The resolver (which holds no operator API key) flushes scan telemetry here,
+    // gated by client-certificate mTLS (`CN=odal-resolver`).
+    let internal = Router::new()
+        .route("/scan-batch", post(scan_ingest_handler))
+        .route_layer(middleware::from_fn(scan_ingest_mtls));
+
     let cors_layer = build_cors(&state.cors_allowed_origins);
 
     Router::new()
@@ -159,6 +171,7 @@ pub fn build(state: AppState) -> Router {
             get(public_read_by_gtin_handler),
         )
         .nest("/api/v1", authenticated)
+        .nest("/internal", internal)
         .layer(cors_layer)
         .layer(TraceLayer::new_for_http())
         .layer(middleware::from_fn(http_metrics_middleware))

@@ -29,6 +29,7 @@ use crate::commands::{
     },
     publish::run_publish,
     schema::run_schema,
+    stats::{run_operator_stats, run_passport_stats},
     status::run_status,
     up::run_up,
     update::run_update,
@@ -246,6 +247,9 @@ pub async fn dispatch(cmd: Commands) -> anyhow::Result<()> {
             command: PassportCommands::History { id },
         } => run_history(&id).await,
         Commands::Passport {
+            command: PassportCommands::Stats { id, days, json },
+        } => run_passport_stats(&id, days, json).await,
+        Commands::Passport {
             command: PassportCommands::Evidence { id, output },
         } => run_evidence(&id, output.as_deref()).await,
         Commands::Passport {
@@ -260,5 +264,6 @@ pub async fn dispatch(cmd: Commands) -> anyhow::Result<()> {
             command: SchemaCommands::Check,
         } => run_schema().await,
         Commands::Verify { target } => run_verify(&target).await,
+        Commands::Stats { days, json } => run_operator_stats(days, json).await,
     }
 }
