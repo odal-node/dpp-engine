@@ -27,14 +27,25 @@ chrono      = { workspace = true }
 base64      = { workspace = true }
 inquire     = { workspace = true }
 console     = { workspace = true }
-rfd         = { workspace = true }
+rfd         = { workspace = true, optional = true }
 dirs        = { workspace = true }
 
 # Forces wayland-client's "dlopen" feature (see workspace Cargo.toml) on the
 # same targets rfd's ashpd backend compiles for, so the wayland-sys build
 # script never probes pkg-config for wayland-client.pc.
 [target.'cfg(any(target_os = "linux", target_os = "freebsd", target_os = "dragonfly", target_os = "netbsd", target_os = "openbsd"))'.dependencies]
-wayland-client = { workspace = true }
+wayland-client = { workspace = true, optional = true }
+
+[features]
+# Native OS file-picker dialog (`Passports › Import`, `Verify`). Off by
+# default: `rfd` is the only path that pulls `quick-xml` 0.39 at build time
+# (via ashpd -> the Wayland stack on Linux/BSD, see .cargo/audit.toml) and,
+# more to the point, `odal` is meant to be a scriptable, API-driven control
+# plane (see docs/architecture) — a GUI dialog in that binary is an
+# opt-in shape, not the default one. With the feature off, the picker menu
+# option falls straight through to the existing typed-path prompt, which the
+# console menu already offers as an equal alternative.
+desktop = ["dep:rfd", "dep:wayland-client"]
 
 [dev-dependencies]
 tempfile    = "3"

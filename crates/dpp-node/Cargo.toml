@@ -60,10 +60,21 @@ url          = { workspace = true }
 base64       = { workspace = true }
 serde_jcs    = { workspace = true }
 thiserror    = { workspace = true }
-aws-sdk-s3   = { workspace = true }
+aws-sdk-s3   = { workspace = true, optional = true }
 
 [features]
-integration-tests = []
+# ESPR Art. 13 archive + continuity-snapshot S3/MinIO adapters. Off by
+# default: `aws-sdk-s3` is the only path in this workspace that still pulls
+# rustls 0.21 / rustls-webpki 0.101.7 (three suppressed advisories, see
+# .cargo/audit.toml) — with the feature off, that edge is genuinely absent
+# from the default build, not just documented as low-risk. The published
+# Docker image builds with this feature on (see docker/node.Dockerfile) so
+# the shipped binary keeps ESPR archival and continuity snapshots; a
+# from-source build wanting either must opt in explicitly.
+s3 = ["dep:aws-sdk-s3"]
+# Pulls in `s3` so the S3-backed integration tests (crates/dpp-node/tests/s3_archive.rs)
+# exercise the real adapter, not just NoOpArchive.
+integration-tests = ["s3"]
 
 [dev-dependencies]
 tower          = { version = "0.4", features = ["util"] }

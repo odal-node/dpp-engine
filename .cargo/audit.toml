@@ -36,66 +36,54 @@
 # --- RUSTSEC-2026-0098 -------------------------------------------------------
 # crate:      rustls-webpki 0.101.7
 # path:       aws-sdk-s3 -> aws-runtime -> aws-smithy-http-client -> rustls
-#             0.21.12 -> rustls-webpki 0.101.7   [SHIPPED, normal dependency]
-# class:      reachable-accepted
-# rationale:  Name-constraint bypass for URI names. Upstream-blocked: pulled
-#             by rustls 0.21 via hyper-rustls 0.24, the newest connector
-#             aws-smithy-http-client 1.1.13 (latest published) ships — no
-#             `cargo update` can move it until smithy migrates to rustls 0.23.
-#             S3 IS wired: `dpp-node/src/main.rs` constructs `S3ArchiveAdapter`
-#             under `TrustMode::Live` when `ARCHIVE_S3_BUCKET` is set, and
-#             `S3SnapshotStore` for the continuity tier — both compile this
-#             path in unconditionally, only their *construction* is
-#             env-gated. Per the advisory the bug is "reachable only after
-#             signature verification and requires misissuance [of a
-#             name-constrained CA] to exploit" — the SDK's default HTTPS
-#             client trusts the public CA store, which does not issue
-#             name-constrained intermediates for S3. No code-level mitigation
-#             exists today; this is an accepted residual risk, not a guarded
-#             one.
-# anchor:     — (reachable-accepted: manual sign-off, no code anchor)
+#             0.21.12 -> rustls-webpki 0.101.7   [NOT IN DEFAULT GRAPH]
+# class:      not-in-graph
+# rationale:  Name-constraint bypass for URI names. `aws-sdk-s3` (the only
+#             consumer of this edge) is now behind the non-default `s3`
+#             feature on `dpp-node` — the ESPR archive and continuity-
+#             snapshot adapters fall back to their NoOp/disabled forms
+#             without it. `cargo tree -i rustls-webpki@0.101.7` resolves
+#             nothing under default features; only `rustls-webpki 0.103.13`
+#             remains, via async-nats/sqlx/reqwest. `cargo audit` (which
+#             scans Cargo.lock's raw package list, not the feature-resolved
+#             graph) still reports this ID regardless — Cargo.lock stays
+#             valid for the `s3` feature too — so the entry stays, now
+#             honestly classed.
+# anchor:     cargo tree -i rustls-webpki@0.101.7 --target all
 # owner:      founder
 # recorded:   2026-07-27
-# expires:    2026-08-26
-# release-on: aws-smithy-http-client ships a rustls-0.23 connector, or a
-#             custom rustls-0.23 connector for aws-sdk-s3 is added
+# expires:    2026-10-25
+# release-on: aws-smithy-http-client ships a rustls-0.23 connector by
+#             default (drops the ignore-need for anyone who does build with
+#             `--features s3`)
 #
 # --- RUSTSEC-2026-0099 -------------------------------------------------------
 # crate:      rustls-webpki 0.101.7
 # path:       aws-sdk-s3 -> aws-runtime -> aws-smithy-http-client -> rustls
-#             0.21.12 -> rustls-webpki 0.101.7   [SHIPPED, normal dependency]
-# class:      reachable-accepted
+#             0.21.12 -> rustls-webpki 0.101.7   [NOT IN DEFAULT GRAPH]
+# class:      not-in-graph
 # rationale:  Name constraints were incorrectly accepted for certificates
-#             asserting a wildcard name. Same upstream block and same S3 path
-#             as RUSTSEC-2026-0098 (see that entry for the live-wiring detail).
-#             Per the advisory, also "reachable only after signature
-#             verification and requires misissuance to exploit" — the same
-#             public-CA-store argument applies. No code-level mitigation
-#             exists today; accepted residual risk.
-# anchor:     — (reachable-accepted: manual sign-off, no code anchor)
+#             asserting a wildcard name. Same upstream edge as RUSTSEC-2026-0098,
+#             now behind the non-default `s3` feature — see that entry.
+# anchor:     cargo tree -i rustls-webpki@0.101.7 --target all
 # owner:      founder
 # recorded:   2026-07-27
-# expires:    2026-08-26
-# release-on: aws-smithy-http-client ships a rustls-0.23 connector, or a
-#             custom rustls-0.23 connector for aws-sdk-s3 is added
+# expires:    2026-10-25
+# release-on: aws-smithy-http-client ships a rustls-0.23 connector by default
 #
 # --- RUSTSEC-2026-0104 -------------------------------------------------------
 # crate:      rustls-webpki 0.101.7
 # path:       aws-sdk-s3 -> aws-runtime -> aws-smithy-http-client -> rustls
-#             0.21.12 -> rustls-webpki 0.101.7   [SHIPPED, normal dependency]
-# class:      reachable-accepted
-# rationale:  Reachable panic parsing a CRL's `onlySomeReasons` extension,
-#             prior to signature verification. Same upstream block and S3
-#             path as -0098/-0099. Not practically reachable here: the panic
-#             requires CRL validation to be configured, and the SDK's default
-#             HTTPS client does not perform CRL checking. No code-level
-#             mitigation exists today; accepted residual risk.
-# anchor:     — (reachable-accepted: manual sign-off, no code anchor)
+#             0.21.12 -> rustls-webpki 0.101.7   [NOT IN DEFAULT GRAPH]
+# class:      not-in-graph
+# rationale:  Reachable panic parsing a CRL's `onlySomeReasons` extension.
+#             Same upstream edge as RUSTSEC-2026-0098/-0099, now behind the
+#             non-default `s3` feature — see that entry.
+# anchor:     cargo tree -i rustls-webpki@0.101.7 --target all
 # owner:      founder
 # recorded:   2026-07-27
-# expires:    2026-08-26
-# release-on: aws-smithy-http-client ships a rustls-0.23 connector, or a
-#             custom rustls-0.23 connector for aws-sdk-s3 is added
+# expires:    2026-10-25
+# release-on: aws-smithy-http-client ships a rustls-0.23 connector by default
 #
 # --- RUSTSEC-2025-0057 -------------------------------------------------------
 # crate:      fxhash 0.2.1
@@ -179,11 +167,14 @@
 #             ignore-need; the cap stays regardless, as defense in depth)
 #
 # --- RUSTSEC-2026-0195 -------------------------------------------------------
-# crate:      quick-xml 0.30.0 / 0.39.4
-# path:       (a) calamine 0.22.1 -> dpp-integrator -> dpp-node [SHIPPED]; (b)
-#             wayland-scanner 0.31.10 (proc-macro) -> dpp-cli [build-time code
-#             generation from vendored, non-attacker-controlled Wayland
-#             protocol XML — not a runtime input path]
+# crate:      quick-xml 0.30.0
+# path:       calamine 0.22.1 -> dpp-integrator -> dpp-node   [SHIPPED, normal
+#             dependency]. The other path this ID used to cover —
+#             wayland-scanner (proc-macro) -> ashpd -> rfd -> dpp-cli,
+#             quick-xml 0.39.4, build-time-only — is gone from the resolved
+#             graph entirely now that `rfd` is behind dpp-cli's non-default
+#             `desktop` feature (`cargo tree -i quick-xml@0.39.4` matches
+#             nothing under default features).
 # class:      reachable-but-mitigated
 # rationale:  Unbounded namespace-declaration allocation in `NsReader`,
 #             confirmed absent from calamine's own source (uses plain
@@ -191,16 +182,12 @@
 #             across ods.rs/xlsb.rs/xlsx.rs). Belt-and-suspenders: the same
 #             `MAX_ATTRS_PER_TAG` guard as -0194 also bounds the
 #             xmlns-declaration count per tag, so this path stays mitigated
-#             even if a future calamine version starts using NsReader. Path
-#             (b) is build-time-only (code-generates Rust bindings from
-#             vendored protocol XML; `wayland-scanner` is a proc-macro
-#             dependency, not attacker-reachable input) and doesn't change
-#             this entry's status either way.
+#             even if a future calamine version starts using NsReader.
 # anchor:     crates/dpp-integrator/src/domain/xlsx_parser.rs::MAX_ATTRS_PER_TAG
 # owner:      founder
 # recorded:   2026-07-27
 # expires:    2026-10-25
-# release-on: calamine ships against quick-xml >= 0.41.0, or wayland-scanner
+# release-on: calamine ships against quick-xml >= 0.41.0
 #             does (drops the ignore-need for whichever path remains)
 ignore = [
     "RUSTSEC-2023-0071",

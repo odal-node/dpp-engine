@@ -3,15 +3,7 @@
 mod boot;
 mod plugins;
 
-use dpp_node::{
-    config::NodeConfig,
-    infra::{
-        nats_event_bus::NatsEventBus,
-        s3_archive::{NoOpArchive, S3ArchiveAdapter, S3ArchiveConfig},
-        s3_snapshot::{S3SnapshotConfig, S3SnapshotStore},
-    },
-    router,
-};
+use dpp_node::{config::NodeConfig, infra::nats_event_bus::NatsEventBus, router};
 
 use std::sync::Arc;
 
@@ -144,16 +136,7 @@ async fn main() -> anyhow::Result<()> {
 
     // ── ESPR Art. 13 archive (S3/MinIO or NoOp) ──────────────────────────────
     let (archive, archive_trust): (Arc<dyn ArchivePort>, TrustMode) =
-        match S3ArchiveConfig::from_env() {
-            Some(cfg) => {
-                tracing::info!(bucket = %cfg.bucket, "ESPR archive: S3 adapter active");
-                (Arc::new(S3ArchiveAdapter::new(cfg)), TrustMode::Live)
-            }
-            None => {
-                tracing::info!("ESPR archive: no-op — set ARCHIVE_S3_BUCKET to enable");
-                (Arc::new(NoOpArchive), TrustMode::Ghost)
-            }
-        };
+        dpp_node::infra::s3_archive::from_env();
 
     let trust = boot::trust::build_and_enforce(registry_trust, archive_trust)?;
 
@@ -226,16 +209,7 @@ async fn main() -> anyhow::Result<()> {
     // Continuity snapshots: mirror published public views to a public bucket when
     // SNAPSHOT_S3_BUCKET is configured; otherwise the tier is disabled (no-op).
     let snapshot_store: Option<Arc<dyn dpp_types::snapshot::SnapshotStore>> =
-        match S3SnapshotConfig::from_env() {
-            Some(scfg) => {
-                tracing::info!(bucket = %scfg.bucket, "continuity snapshots: S3 tier active");
-                Some(Arc::new(S3SnapshotStore::new(scfg)))
-            }
-            None => {
-                tracing::info!("continuity snapshots: disabled — set SNAPSHOT_S3_BUCKET to enable");
-                None
-            }
-        };
+        dpp_node::infra::snapshot_store::from_env();
 
     let mut passport_service = PassportService::new(
         db.passport_repo.clone(),
