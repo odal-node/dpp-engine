@@ -1,4 +1,4 @@
-//! Bearer token authentication middleware for the vault's `/api/v1/*` routes.
+//! Bearer/Basic authentication middleware for the vault's `/api/v1/*` routes.
 
 use axum::{
     extract::{Request, State},
@@ -8,30 +8,46 @@ use axum::{
 };
 use dpp_common::{event_codes, http_problem};
 
-pub use dpp_types::auth::{AuthContext, AuthError};
+pub use dpp_types::auth::{AuthContext, AuthError, AuthProvider};
 
 use crate::state::AppState;
 
-/// Axum middleware that validates the `Authorization: Bearer` header and injects
-/// [`AuthContext`] into request extensions for downstream handlers.
+/// The two schemes this middleware recognises, and the opaque credential
+/// payload each carries (already stripped of the scheme prefix). Kept
+/// distinct end to end — see [`route`] for why.
+enum Credential {
+    Bearer(String),
+    Basic(String),
+}
+
+/// Axum middleware that validates the `Authorization` header (`Bearer` or
+/// `Basic`) and injects [`AuthContext`] into request extensions for
+/// downstream handlers.
 ///
-/// Rejects with `401 Unauthorized` if the header is missing, the token is
-/// invalid, or the token has expired. Returns `403 Forbidden` for a suspended
-/// operator — this cannot be overridden by another provider in the chain.
+/// Rejects with `401 Unauthorized` if the header is missing or malformed, the
+/// scheme is neither `Bearer` nor `Basic`, or the credential is invalid.
+/// Returns `403 Forbidden` for a suspended operator — this cannot be
+/// overridden by another provider in the chain.
 pub async fn auth_middleware(
     State(state): State<AppState>,
     mut request: Request,
     next: Next,
 ) -> Response {
-    let token = match extract_bearer(&request) {
-        Some(t) => t,
+    let credential = match extract_credential(&request) {
+        Some(c) => c,
         None => {
             metrics::counter!("auth_failures_total", "reason" => "missing").increment(1);
             return unauthorized("Missing or invalid Authorization header.");
         }
     };
 
-    match state.auth_provider.authenticate(&token).await {
+    match route(
+        credential,
+        state.auth_provider.as_ref(),
+        state.local_auth_provider.as_deref(),
+    )
+    .await
+    {
         Ok(ctx) => {
             request.extensions_mut().insert(ctx);
             next.run(request).await
@@ -50,10 +66,33 @@ pub async fn auth_middleware(
     }
 }
 
+/// Route a credential to the provider(s) for *its own* scheme — never the
+/// other one. A `Bearer` token is only ever tried against `bearer_provider`
+/// (API keys, and any future Bearer-scheme provider); a `Basic` credential is
+/// only ever tried against `basic_provider` (the local admin bootstrap
+/// credential). This is deliberate, not incidental: `LocalAuthProvider`
+/// itself just base64-decodes whatever string it is handed, so without this
+/// split a `Bearer base64(user:pass)` token would authenticate as admin too.
+async fn route(
+    credential: Credential,
+    bearer_provider: &dyn AuthProvider,
+    basic_provider: Option<&dyn AuthProvider>,
+) -> Result<AuthContext, AuthError> {
+    match credential {
+        Credential::Bearer(token) => bearer_provider.authenticate(&token).await,
+        Credential::Basic(token) => match basic_provider {
+            Some(p) => p.authenticate(&token).await,
+            None => Err(AuthError::Invalid(
+                "local admin auth is not configured".to_owned(),
+            )),
+        },
+    }
+}
+
 fn unauthorized(detail: &str) -> Response {
     (
         StatusCode::UNAUTHORIZED,
-        [(axum::http::header::WWW_AUTHENTICATE, "Bearer")],
+        [(axum::http::header::WWW_AUTHENTICATE, "Bearer, Basic")],
         Json(
             http_problem::Problem::new(StatusCode::UNAUTHORIZED, "Unauthorized")
                 .with_detail(detail),
@@ -62,29 +101,109 @@ fn unauthorized(detail: &str) -> Response {
         .into_response()
 }
 
-fn extract_bearer(request: &Request) -> Option<String> {
+fn extract_credential(request: &Request) -> Option<Credential> {
     let header = request.headers().get("Authorization")?.to_str().ok()?;
-    header.strip_prefix("Bearer ").map(|s| s.to_owned())
+    if let Some(t) = header.strip_prefix("Bearer ") {
+        return Some(Credential::Bearer(t.to_owned()));
+    }
+    if let Some(t) = header.strip_prefix("Basic ") {
+        return Some(Credential::Basic(t.to_owned()));
+    }
+    None
 }
 
 #[cfg(test)]
 mod tests {
+    use async_trait::async_trait;
+
     use super::*;
 
-    // F7 regression: 401 responses must carry WWW-Authenticate: Bearer so
-    // clients know how to authenticate (RFC 6750 §3).
+    // F7 regression: 401 responses must carry a WWW-Authenticate header
+    // naming every scheme this middleware accepts (RFC 6750 §3 / RFC 7617).
     #[test]
-    fn unauthorized_response_has_www_authenticate_bearer() {
+    fn unauthorized_response_has_www_authenticate_header() {
         use axum::http::header::WWW_AUTHENTICATE;
         let resp = unauthorized("test message");
-        assert!(
-            resp.headers().contains_key(WWW_AUTHENTICATE),
-            "401 must include WWW-Authenticate header"
-        );
         assert_eq!(
             resp.headers().get(WWW_AUTHENTICATE).unwrap(),
-            "Bearer",
-            "WWW-Authenticate must be 'Bearer'"
+            "Bearer, Basic"
         );
+    }
+
+    #[test]
+    fn extract_credential_recognises_bearer_and_basic() {
+        let bearer = Request::builder()
+            .header("Authorization", "Bearer abc")
+            .body(axum::body::Body::empty())
+            .unwrap();
+        assert!(matches!(
+            extract_credential(&bearer),
+            Some(Credential::Bearer(t)) if t == "abc"
+        ));
+
+        let basic = Request::builder()
+            .header("Authorization", "Basic def")
+            .body(axum::body::Body::empty())
+            .unwrap();
+        assert!(matches!(
+            extract_credential(&basic),
+            Some(Credential::Basic(t)) if t == "def"
+        ));
+
+        let none = Request::builder().body(axum::body::Body::empty()).unwrap();
+        assert!(extract_credential(&none).is_none());
+
+        let other_scheme = Request::builder()
+            .header("Authorization", "Digest xyz")
+            .body(axum::body::Body::empty())
+            .unwrap();
+        assert!(extract_credential(&other_scheme).is_none());
+    }
+
+    struct AlwaysFail;
+
+    #[async_trait]
+    impl AuthProvider for AlwaysFail {
+        async fn authenticate(&self, _: &str) -> Result<AuthContext, AuthError> {
+            Err(AuthError::Invalid("nope".to_owned()))
+        }
+    }
+
+    // The behavior this whole split exists for: a Basic-scheme credential
+    // authenticates as local admin, but the identical payload carried as a
+    // Bearer token does not — even though `LocalAuthProvider` itself doesn't
+    // care what scheme it arrived under.
+    #[tokio::test]
+    async fn basic_reaches_local_admin_bearer_with_the_same_payload_does_not() {
+        use base64::Engine;
+
+        let local = crate::infra::auth::local_provider::LocalAuthProvider::new(
+            "alice".to_owned(),
+            "secret123".to_owned(),
+        );
+        let payload = base64::engine::general_purpose::STANDARD.encode("alice:secret123");
+
+        let ok = route(
+            Credential::Basic(payload.clone()),
+            &AlwaysFail,
+            Some(&local),
+        )
+        .await;
+        assert!(
+            ok.is_ok(),
+            "Basic with valid admin credentials must authenticate"
+        );
+
+        let err = route(Credential::Bearer(payload), &AlwaysFail, Some(&local)).await;
+        assert!(
+            err.is_err(),
+            "Bearer carrying the same base64(user:pass) payload must NOT authenticate as admin"
+        );
+    }
+
+    #[tokio::test]
+    async fn basic_with_no_local_provider_configured_is_rejected() {
+        let err = route(Credential::Basic("anything".to_owned()), &AlwaysFail, None).await;
+        assert!(matches!(err, Err(AuthError::Invalid(_))));
     }
 }

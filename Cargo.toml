@@ -49,7 +49,9 @@ debug = "line-tables-only"
 # Shared dependency versions — crates inherit these with `workspace = true`
 # ---------------------------------------------------------------------------
 [workspace.dependencies]
-# Core crates — consumed from crates.io (dpp-core is published independently at 0.9.0).
+# Core crates — consumed from crates.io (dpp-core is published independently;
+# see the pins below for the version actually in use, and README.md's sync
+# note for the other places that must agree on a bump).
 dpp-domain = "0.10.0"
 
 # Engine-wide types (tenant, auth, audit, API keys) — engine-internal crate.

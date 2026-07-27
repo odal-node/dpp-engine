@@ -50,16 +50,20 @@ Issues in the following areas are particularly important:
 ## Out of Scope
 
 - Issues in dpp-core (report to the same email, but the core has its own security policy)
-- Vulnerabilities in upstream dependencies (report to the dependency maintainer)
 - Feature requests or non-security bugs (use GitHub Issues)
+
+A small number of upstream advisories are accepted risk rather than out of
+scope: the engine runs a dated, code-anchored suppression register
+(`.cargo/audit.toml`, enforced by `scripts/check-audit-register.sh`) for
+advisories that are either unreachable in the shipped binaries or upstream-
+blocked with no fixed release available. If you believe a suppressed advisory
+is in fact exploitable, report it — the register's own reachability claim may
+be wrong or stale, and that is exactly the kind of report we want.
 
 ## Supported Versions
 
-| Version | Supported |
-|---------|-----------|
-| 0.1.x (current) | Yes |
-
-Only the latest release receives security patches.
+Only the latest tagged minor release receives security patches — see
+[CHANGELOG.md](CHANGELOG.md) for the current version.
 
 ## Authentication Security
 
@@ -72,16 +76,23 @@ scanning all keys.
 ### Credential Handling
 
 - API keys, passwords, and Ed25519 private keys are never logged
-- The `DevAuthProvider` (unsigned JWT extraction) is only compiled when
-  the `integration-tests` feature flag is enabled
-- HTTP Basic auth credentials are read from environment variables, not
-  from the database or configuration files
+- No dev/unsigned bypass auth provider ships. Integration tests define their
+  own test-local auth stub rather than relying on a shipped bypass provider —
+  see [AUTH.md §3.4](docs/architecture/AUTH.md#34-devauthprovider--removed-phase-0--audit-finding-v0)
+- HTTP Basic auth credentials (`Authorization: Basic base64(user:pass)`) are
+  read from `ADMIN_USERNAME`/`ADMIN_PASSWORD` environment variables, not
+  from the database or configuration files, and are only ever matched
+  against the `Basic` scheme — a Bearer token can never authenticate as
+  local admin, see [AUTH.md §3.3](docs/architecture/AUTH.md#33-localauthprovider)
 
 ### PostgreSQL Access
 
 - `PgDal` uses a connection pool with the app role (`odal_app`); credentials are
   loaded from `DATABASE_URL` at startup and never written to disk
-- The app role cannot bypass Row-Level Security or run DDL
+- The app role cannot run DDL and cannot `DELETE` (one sanctioned exception).
+  The node is single-tenant; there is no Row-Level Security, because
+  isolation is an infrastructure boundary — one node per operator (ADR-005)
+  — not an in-process one
 - Migration credentials (`DATABASE_MIGRATE_URL`) are used only at startup and are
   not kept in the pool
 
@@ -103,11 +114,14 @@ access the host filesystem, network, or any other system resource.
 
 ## Security Tooling
 
-The following checks should be run before each release:
+Enforced in CI on every push, and by `just check` before a local commit:
 
-- `cargo audit` — checks dependencies against the RustSec Advisory Database
-- `cargo clippy -- -D warnings` — catches common correctness issues
-- `cargo test --workspace` — runs the full test suite
+- `cargo audit` plus `scripts/check-audit-register.sh` — checks dependencies
+  against the RustSec Advisory Database, and that every accepted-risk entry
+  in `.cargo/audit.toml` is current (dated, code-anchored, still reachable)
+- `cargo clippy --workspace --all-targets -- -D warnings` — catches common
+  correctness issues
+- `cargo test --workspace` (via `cargo nextest`) — runs the full test suite
 
 ## Cryptographic Design
 

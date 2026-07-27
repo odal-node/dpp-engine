@@ -23,12 +23,33 @@ impl PgDal {
     /// Single-tenant: there is one operator per node, so there is no
     /// operator-isolation boundary to enforce in-process — tenant isolation is
     /// an infrastructure concern (one node per operator). The DB carries no RLS.
+    ///
+    /// Refuses to connect as a superuser role: a superuser silently disables
+    /// the meaning of the append-only audit trigger (it cannot bind the table
+    /// owner), so a misconfigured `DATABASE_URL` pointing at a privileged role
+    /// instead of `odal_app` would quietly drop that guarantee. This guard is
+    /// specific to the app-role runtime connection — [`PgDal::migrate`]
+    /// legitimately requires a privileged role and is unaffected.
     pub async fn connect(database_url: &str) -> Result<Self, DppError> {
         let pool = PgPoolOptions::new()
             .max_connections(10)
             .connect(database_url)
             .await
             .map_err(db_err)?;
+
+        let is_superuser: bool =
+            sqlx::query_scalar("SELECT rolsuper FROM pg_roles WHERE rolname = current_user")
+                .fetch_one(&pool)
+                .await
+                .map_err(db_err)?;
+        if is_superuser {
+            return Err(DppError::Internal(
+                "DATABASE_URL connects as a superuser role — refusing to boot. \
+                 The app role must be a non-superuser (odal_app) so the \
+                 append-only audit trigger's guarantee actually holds."
+                    .to_owned(),
+            ));
+        }
 
         Ok(Self { pool })
     }

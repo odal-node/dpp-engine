@@ -35,8 +35,12 @@ async fn create_handler(
 
 The `auth_middleware` function wraps all `/api/v1/*` routes in `dpp-vault`. It runs before any handler and:
 
-1. Extracts the `Authorization` header
-2. Passes it to the `CompositeAuthProvider`
+1. Extracts the `Authorization` header and its scheme (`Bearer` or `Basic`)
+2. Routes by scheme: `Bearer` goes to the Bearer-scheme provider chain
+   (`CompositeAuthProvider`, §3.1); `Basic` goes to the local admin provider
+   (§3.3) — never the other way. This split is deliberate: `LocalAuthProvider`
+   just base64-decodes whatever string it is handed, so without it a `Bearer
+   base64(user:pass)` token would authenticate as admin too.
 3. On success: injects `AuthContext` into request extensions
 4. On failure: returns 401 Unauthorized
 
@@ -52,12 +56,18 @@ Public routes (`/health`, `/ready`, `/public/dpp/{id}`) are outside this middlew
 
 ### 3.1 CompositeAuthProvider
 
-Chains multiple providers. Each provider returns one of:
+Chains multiple **Bearer-scheme** providers (only `ApiKeyAuthProvider` today;
+a future `OAuthAuthProvider` would join here too — see §6). Each provider
+returns one of:
 - `Ok(AuthContext)` — authenticated successfully
-- `Err(NotApplicable)` — this provider doesn't handle this token format, try the next
-- `Err(...)` — hard failure (invalid key, expired, suspended)
+- `Err(AuthError::Suspended)` — hard failure, stops the chain immediately
+- `Err(AuthError::Invalid(_))` — this provider doesn't recognise the token
+  (wrong format, or a well-formed token it doesn't have a matching record
+  for); the chain tries the next provider
 
-The chain stops on the first success or hard failure.
+The chain stops on the first success or on `Suspended`; if every provider
+returns `Invalid`, the last error is returned. `Basic`-scheme credentials
+never reach this chain — see §3.3.
 
 ### 3.2 ApiKeyAuthProvider
 
@@ -87,7 +97,11 @@ Matches HTTP Basic authentication against environment variables.
 2. Compare against `ADMIN_USERNAME` and `ADMIN_PASSWORD` env vars
 3. If match: return an admin-scoped `AuthContext` with `key_id: None` (no backing key row)
 
-This provider is only active when both env vars are set. It provides a simple admin login for self-hosted deployments without needing to manage API keys.
+This provider is only active when both env vars are set, and is reached only
+via the `Basic` scheme — it is not part of `CompositeAuthProvider` (§3.1) and
+is never tried against a `Bearer` token, even one carrying the same
+`base64(user:pass)` payload. It provides a simple admin login for
+self-hosted deployments without needing to manage API keys.
 
 ### 3.4 DevAuthProvider — removed (Phase 0 / audit finding V0)
 
