@@ -232,6 +232,12 @@ jobs:
       - name: cargo audit
         working-directory: dpp-engine
         run: cargo audit
+      - name: Suppression register is current
+        working-directory: dpp-engine
+        run: ./scripts/check-audit-register.sh
+      - name: Suppression register checker self-test
+        working-directory: dpp-engine
+        run: ./scripts/check-audit-register.test.sh
 
   test-postgres:
     name: Postgres integration tests

@@ -1,87 +1,212 @@
 # cargo-audit configuration
 # https://github.com/rustsec/rustsec/blob/main/cargo-audit/README.md
+#
+# Every ignore entry below carries a structured header enforced by
+# `scripts/check-audit-register.sh` (wired into `just check` / CI): a
+# suppression rationale is a claim about the code, and prose claims rot
+# silently without something re-checking them. `class` states the
+# reachability claim as a checkable category, `anchor` is the code fact that
+# makes it true, `expires` forces re-verification on a clock instead of
+# leaving it to memory. See that script's header comment for the field
+# contract.
 
 [advisories]
-# RUSTSEC-2023-0071 — `rsa` 0.9.10 "Marvin Attack" timing side-channel (medium, 5.9).
-# No fixed upstream release exists. `rsa` is reachable only transitively via
-# `bollard` (the Docker API client) under `testcontainers`, which is a
-# dev-dependency used by the integration tests — it is NOT in the shipped
-# `dpp-node` / `dpp-resolver` binaries (`cargo tree -i rsa` finds no non-dev path).
-# Re-evaluate when a patched `rsa` releases or testcontainers drops the chain.
+# --- RUSTSEC-2023-0071 -------------------------------------------------------
+# crate:      rsa 0.9.10
+# path:       sqlx-mysql -> sqlx / sqlx-macros-core   [ORPHANED]
+# class:      not-in-graph
+# rationale:  `rsa` and `sqlx-mysql` are `[[package]]` entries in Cargo.lock
+#             (sqlx's own optional MySQL support), but neither is part of the
+#             actual resolved dependency graph: no crate enables sqlx's
+#             "mysql" feature (dpp-dal enables only postgres, runtime-tokio,
+#             tls-rustls, uuid, chrono, json, migrate, macros), `cargo
+#             metadata`'s resolve graph has no rsa or sqlx-mysql node, and
+#             neither produces a compiled artifact under target/debug/deps.
+#             The previous rationale (reachable via `bollard`/testcontainers)
+#             named the wrong path — its conclusion (not shipped) held, the
+#             claimed mechanism didn't.
+# anchor:     cargo tree -i rsa --target all
+# owner:      founder
+# recorded:   2026-07-27
+# expires:    2026-10-25
+# release-on: a `cargo update` prunes the orphaned Cargo.lock entries, which
+#             removes this ID from the lockfile (and the need for this
+#             suppression) entirely
 #
-# RUSTSEC-2026-0098 / -0099 / -0104 — `rustls-webpki` 0.101.7 (name-constraint
-# bypass for URI/wildcard names; reachable panic in CRL parsing).
-# Upstream-blocked: pulled by `rustls` 0.21 via `hyper-rustls` 0.24, which is
-# the newest connector `aws-smithy-http-client` 1.1.13 (latest published) ships —
-# no `cargo update` can move it until smithy migrates to rustls 0.23. The only
-# consumer is `aws-sdk-s3`'s default HTTPS client, and S3 is NOT yet wired into
-# `dpp-node` (no live code path exercises it). Even when wired, the specific
-# advisories are not practically reachable for an S3 client over public PKI:
-# the name-constraint bypasses require a name-constrained CA in the trust chain,
-# and the CRL panic requires CRL validation to be configured (the SDK default
-# does neither). Re-evaluate when smithy ships a rustls-0.23 client OR before
-# S3 is actually connected — at which point prefer a custom rustls-0.23 connector.
+# --- RUSTSEC-2026-0098 -------------------------------------------------------
+# crate:      rustls-webpki 0.101.7
+# path:       aws-sdk-s3 -> aws-runtime -> aws-smithy-http-client -> rustls
+#             0.21.12 -> rustls-webpki 0.101.7   [SHIPPED, normal dependency]
+# class:      reachable-accepted
+# rationale:  Name-constraint bypass for URI names. Upstream-blocked: pulled
+#             by rustls 0.21 via hyper-rustls 0.24, the newest connector
+#             aws-smithy-http-client 1.1.13 (latest published) ships — no
+#             `cargo update` can move it until smithy migrates to rustls 0.23.
+#             S3 IS wired: `dpp-node/src/main.rs` constructs `S3ArchiveAdapter`
+#             under `TrustMode::Live` when `ARCHIVE_S3_BUCKET` is set, and
+#             `S3SnapshotStore` for the continuity tier — both compile this
+#             path in unconditionally, only their *construction* is
+#             env-gated. Per the advisory the bug is "reachable only after
+#             signature verification and requires misissuance [of a
+#             name-constrained CA] to exploit" — the SDK's default HTTPS
+#             client trusts the public CA store, which does not issue
+#             name-constrained intermediates for S3. No code-level mitigation
+#             exists today; this is an accepted residual risk, not a guarded
+#             one.
+# anchor:     — (reachable-accepted: manual sign-off, no code anchor)
+# owner:      founder
+# recorded:   2026-07-27
+# expires:    2026-08-26
+# release-on: aws-smithy-http-client ships a rustls-0.23 connector, or a
+#             custom rustls-0.23 connector for aws-sdk-s3 is added
 #
-# RUSTSEC-2026-0188 — `wasmtime-wasi` 45.0.2 "WASI hard links and renames
-# bypass FilePerms for destination" (medium, 6.5). Fix requires >=45.0.3
-# (not yet published — 45.0.2 is still latest on the 45.x line as of this
-# writing) or the major bump to >=46.0.1. Not reachable in this project's
-# actual usage: `dpp-plugin-host::runtime::build_store` constructs the WASI
-# context with `WasiCtxBuilder::new().build_p1()` and NO preopened
-# directories (see also the doc comment on `host_funcs.rs` and
-# `sandbox.rs`: "no preopened directories, so no file reads or writes") —
-# the bypass requires WASI filesystem capabilities the plugin sandbox never
-# grants. Re-evaluate when a 45.0.3 patch ships, or before any change grants
-# plugins filesystem access.
+# --- RUSTSEC-2026-0099 -------------------------------------------------------
+# crate:      rustls-webpki 0.101.7
+# path:       aws-sdk-s3 -> aws-runtime -> aws-smithy-http-client -> rustls
+#             0.21.12 -> rustls-webpki 0.101.7   [SHIPPED, normal dependency]
+# class:      reachable-accepted
+# rationale:  Name constraints were incorrectly accepted for certificates
+#             asserting a wildcard name. Same upstream block and same S3 path
+#             as RUSTSEC-2026-0098 (see that entry for the live-wiring detail).
+#             Per the advisory, also "reachable only after signature
+#             verification and requires misissuance to exploit" — the same
+#             public-CA-store argument applies. No code-level mitigation
+#             exists today; accepted residual risk.
+# anchor:     — (reachable-accepted: manual sign-off, no code anchor)
+# owner:      founder
+# recorded:   2026-07-27
+# expires:    2026-08-26
+# release-on: aws-smithy-http-client ships a rustls-0.23 connector, or a
+#             custom rustls-0.23 connector for aws-sdk-s3 is added
 #
-# RUSTSEC-2025-0057 / -0119 / -0134 — `fxhash`, `number_prefix`,
-# `rustls-pemfile` are unmaintained (informational, no known vulnerability).
-# Checked whether the in-range patch each transitive consumer allows already
-# drops them (`cargo update -p inquire -p indicatif -p testcontainers
-# -p testcontainers-modules --dry-run` locks 0 packages) — it does not; the
-# fix requires a major-version bump of `inquire` (0.7->0.9, the entire `odal`
-# CLI's interactive prompts), `indicatif` (0.17->0.18, CLI progress bars), or
-# `testcontainers`/`testcontainers-modules` (0.21->0.27 / 0.9->0.15, the
-# Docker-backed integration-test harness for dpp-dal/dpp-vault). All three
-# are dev/CLI-only (no path into the shipped `dpp-node` / `dpp-resolver`
-# binaries) and each bump carries real breaking-change risk that needs a
-# real verification pass (Docker available, full CLI prompt walkthrough) —
-# deferred rather than rushed into a "fresh tree" commit. Re-evaluate when
-# bumping `inquire`/`indicatif`/`testcontainers` is scheduled as its own
-# reviewed change.
+# --- RUSTSEC-2026-0104 -------------------------------------------------------
+# crate:      rustls-webpki 0.101.7
+# path:       aws-sdk-s3 -> aws-runtime -> aws-smithy-http-client -> rustls
+#             0.21.12 -> rustls-webpki 0.101.7   [SHIPPED, normal dependency]
+# class:      reachable-accepted
+# rationale:  Reachable panic parsing a CRL's `onlySomeReasons` extension,
+#             prior to signature verification. Same upstream block and S3
+#             path as -0098/-0099. Not practically reachable here: the panic
+#             requires CRL validation to be configured, and the SDK's default
+#             HTTPS client does not perform CRL checking. No code-level
+#             mitigation exists today; accepted residual risk.
+# anchor:     — (reachable-accepted: manual sign-off, no code anchor)
+# owner:      founder
+# recorded:   2026-07-27
+# expires:    2026-08-26
+# release-on: aws-smithy-http-client ships a rustls-0.23 connector, or a
+#             custom rustls-0.23 connector for aws-sdk-s3 is added
 #
-# RUSTSEC-2026-0194 / -0195 — `quick-xml` <0.41.0 (O(N²) duplicate-attribute
-# scan; unbounded `NsReader` namespace allocation). Two independent paths,
-# both currently unfixable by a version bump:
-#   1. `dpp-integrator` -> `calamine` 0.22.1 (latest published: 0.35.0, which
-#      still pins `quick-xml = "0.39"` — itself vulnerable to -0194; no
-#      calamine release exists yet on a patched quick-xml). This path IS
-#      shipped (`dpp-integrator` -> `dpp-node`) and DOES parse untrusted
-#      uploaded XLSX, so it was not safe to just ignore: confirmed calamine
-#      uses a plain `quick_xml::Reader` (not `NsReader`), so -0195 does not
-#      apply; -0194 is mitigated in `xlsx_parser.rs`'s `precheck_xlsx`, which
-#      now caps attributes-per-tag (`MAX_ATTRS_PER_TAG`) across every XML
-#      part of the archive (not just worksheets, since calamine parses
-#      sharedStrings/styles/workbook.xml the same vulnerable way) before
-#      calamine ever opens the file, and does its own scan via
-#      `.attributes().with_checks(false)` so the guard isn't exploitable
-#      itself. Re-evaluate when calamine ships a quick-xml >=0.41.0 release
-#      and drop the cap's ignore-need (the cap itself is worth keeping
-#      regardless, as defense in depth).
-#   2. `dpp-cli` -> `rfd` -> `ashpd` -> `wayland-protocols`/`wayland-client`
-#      -> `wayland-scanner` 0.31.10 (latest published; pins `quick-xml =
-#      "^0.39"`, no fixed release exists yet). `wayland-scanner` only runs
-#      quick-xml at *build time*, code-generating Rust bindings from the
-#      Wayland protocol XML files vendored inside `wayland-protocols`'s own
-#      crate source — not attacker-reachable input, no runtime path. `rfd`
-#      pulls this in only for the Linux XDG-portal file-dialog backend.
-#      Re-evaluate when `wayland-scanner` releases a fix.
+# --- RUSTSEC-2025-0057 -------------------------------------------------------
+# crate:      fxhash 0.2.1
+# path:       inquire 0.7.5 -> dpp-cli   [SHIPPED in the `odal` CLI binary,
+#             normal dependency — not in dpp-node/dpp-resolver]
+# class:      reachable-accepted
+# rationale:  Unmaintained (informational, no known vulnerability). `inquire`
+#             pins fxhash for its interactive-prompt fuzzy matching; the fix
+#             requires inquire 0.7->0.9, a breaking bump to the entire `odal`
+#             CLI's interactive prompts, deferred pending a real verification
+#             pass rather than rushed in as a side effect of an unrelated
+#             change. Compiled into the shipped `odal` binary (not dev-only)
+#             — accepted given there is no known vulnerability, only an
+#             unmaintained notice.
+# anchor:     — (reachable-accepted: manual sign-off, no code anchor)
+# owner:      founder
+# recorded:   2026-07-27
+# expires:    2026-10-25
+# release-on: `inquire` ships a fxhash-free (or maintained-fork) release, or
+#             the 0.7->0.9 bump is scheduled as its own reviewed change
+#
+# --- RUSTSEC-2025-0119 -------------------------------------------------------
+# crate:      number_prefix 0.4.0
+# path:       indicatif 0.17.11 -> dpp-cli   [SHIPPED in the `odal` CLI binary,
+#             normal dependency — not in dpp-node/dpp-resolver]
+# class:      reachable-accepted
+# rationale:  Unmaintained (informational, no known vulnerability). `indicatif`
+#             pins number_prefix for progress-bar byte formatting; the fix
+#             requires indicatif 0.17->0.18, a breaking bump to the CLI's
+#             progress bars, deferred for the same reason as fxhash above.
+#             Compiled into the shipped `odal` binary — accepted given there
+#             is no known vulnerability, only an unmaintained notice.
+# anchor:     — (reachable-accepted: manual sign-off, no code anchor)
+# owner:      founder
+# recorded:   2026-07-27
+# expires:    2026-10-25
+# release-on: `indicatif` drops number_prefix, or the 0.17->0.18 bump is
+#             scheduled as its own reviewed change
+#
+# --- RUSTSEC-2025-0134 -------------------------------------------------------
+# crate:      rustls-pemfile 2.2.0
+# path:       bollard 0.17.1 -> testcontainers -> testcontainers-modules
+#             [dev-dependencies only]
+# class:      dev-only
+# rationale:  Unmaintained (informational, no known vulnerability). Pulled by
+#             `bollard` (the Docker API client) under `testcontainers`, the
+#             Docker-backed integration-test harness — absent from every
+#             normal-edge path, so it is not compiled into any shipped
+#             binary.
+# anchor:     cargo tree -i rustls-pemfile -e normal --target all
+# owner:      founder
+# recorded:   2026-07-27
+# expires:    2026-10-25
+# release-on: `bollard`/testcontainers drops rustls-pemfile or ships a
+#             maintained replacement
+#
+# --- RUSTSEC-2026-0194 -------------------------------------------------------
+# crate:      quick-xml 0.30.0
+# path:       calamine 0.22.1 -> dpp-integrator -> dpp-node   [SHIPPED, normal
+#             dependency, parses untrusted uploaded XLSX]
+# class:      reachable-but-mitigated
+# rationale:  O(N^2) duplicate-attribute-name scan on `BytesStart::attributes`
+#             with checks enabled (the default), and in `NsReader` internally.
+#             calamine 0.22.1 (latest published: 0.35.0, which still pins
+#             quick-xml "0.39" — itself vulnerable to -0194) has no patched
+#             release available. Mitigated in `xlsx_parser.rs`'s
+#             `precheck_xlsx`, which caps attributes-per-tag
+#             (`MAX_ATTRS_PER_TAG` = 64) across every XML part of the archive
+#             — not just worksheets, since calamine parses
+#             sharedStrings/styles/workbook.xml the same way — before
+#             calamine ever opens the file. The guard's own scan uses
+#             `.attributes().with_checks(false)` so it isn't exploitable
+#             itself. Bounding N to 64 makes the O(N^2) cost trivial
+#             regardless of which attribute-iteration API calamine uses
+#             internally.
+# anchor:     crates/dpp-integrator/src/domain/xlsx_parser.rs::MAX_ATTRS_PER_TAG
+# owner:      founder
+# recorded:   2026-07-27
+# expires:    2026-10-25
+# release-on: calamine ships against quick-xml >= 0.41.0 (drops the
+#             ignore-need; the cap stays regardless, as defense in depth)
+#
+# --- RUSTSEC-2026-0195 -------------------------------------------------------
+# crate:      quick-xml 0.30.0 / 0.39.4
+# path:       (a) calamine 0.22.1 -> dpp-integrator -> dpp-node [SHIPPED]; (b)
+#             wayland-scanner 0.31.10 (proc-macro) -> dpp-cli [build-time code
+#             generation from vendored, non-attacker-controlled Wayland
+#             protocol XML — not a runtime input path]
+# class:      reachable-but-mitigated
+# rationale:  Unbounded namespace-declaration allocation in `NsReader`,
+#             confirmed absent from calamine's own source (uses plain
+#             `quick_xml::Reader`, not `NsReader` — grepped, zero matches
+#             across ods.rs/xlsb.rs/xlsx.rs). Belt-and-suspenders: the same
+#             `MAX_ATTRS_PER_TAG` guard as -0194 also bounds the
+#             xmlns-declaration count per tag, so this path stays mitigated
+#             even if a future calamine version starts using NsReader. Path
+#             (b) is build-time-only (code-generates Rust bindings from
+#             vendored protocol XML; `wayland-scanner` is a proc-macro
+#             dependency, not attacker-reachable input) and doesn't change
+#             this entry's status either way.
+# anchor:     crates/dpp-integrator/src/domain/xlsx_parser.rs::MAX_ATTRS_PER_TAG
+# owner:      founder
+# recorded:   2026-07-27
+# expires:    2026-10-25
+# release-on: calamine ships against quick-xml >= 0.41.0, or wayland-scanner
+#             does (drops the ignore-need for whichever path remains)
 ignore = [
     "RUSTSEC-2023-0071",
     "RUSTSEC-2026-0098",
     "RUSTSEC-2026-0099",
     "RUSTSEC-2026-0104",
-    "RUSTSEC-2026-0188",
     "RUSTSEC-2025-0057",
     "RUSTSEC-2025-0119",
     "RUSTSEC-2025-0134",
