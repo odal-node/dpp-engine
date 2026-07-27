@@ -10,6 +10,8 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-07-27
+
 ### Added
 
 - Privacy-safe scan telemetry: aggregate resolution counts per passport, per day,
@@ -27,6 +29,21 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 - The identity service's mTLS client-cert middleware moved to `dpp-common::mtls`
   and is now parameterised by the allowed subject CN, so the vault's scan-ingest
   route and identity's internal endpoints share one audited implementation.
+
+### Fixed
+
+- **mTLS internal endpoints now fail closed when `MTLS_PROXY_SHARED_SECRET` is
+  unset**, instead of the previous fail-open behaviour. Any deployment of
+  `/internal/sign`, `/internal/verify`, `/internal/keys/rotate`, or
+  `/internal/scan-batch` that has not yet configured the proxy-binding secret
+  will start returning 401 until it does — set `MTLS_PROXY_SHARED_SECRET`, or
+  `MTLS_ALLOW_INSECURE=true` for local dev/CI.
+- The resolver's in-memory scan counter is now bounded (50,000 tracked keys per
+  metric) instead of growing without limit if the ingest endpoint is down or
+  under high-cardinality traffic; a batch rejected with a 4xx is dropped instead
+  of being retried forever.
+- The registry-sync, webhook, and continuity-snapshot outbox `mark_*` methods
+  now fail closed on an unknown row id instead of silently no-op'ing.
 
 ## [0.8.0] - 2026-07-21
 
