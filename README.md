@@ -151,7 +151,7 @@ Full command reference: **[cli/README.md](cli/README.md)**.
 
 Docker Compose: `docker/docker-compose.dev.yml`
 
-Migrations: `ops/pg/0001_extensions_roles_schemas.sql` through `0021_evidence_dossier.sql` — applied via `PgDal::migrate` at startup if `DATABASE_MIGRATE_URL` is set. The audit table is append-only (DB trigger) and hash-chained (`0015`); the registry outbox (`0006`) is written inside the publish transaction and drained with backoff; evidence dossiers are append-only (`0021`).
+Migrations: `ops/pg/0001_extensions_roles_schemas.sql` onward (see the directory for the current range; new migrations are only ever added, never renumbered) — applied via `PgDal::migrate` at startup if `DATABASE_MIGRATE_URL` is set. The audit table is append-only (DB trigger) and hash-chained (`0015`); the registry outbox (`0006`) is written inside the publish transaction and drained with backoff; evidence dossiers are append-only (`0021`).
 
 ---
 

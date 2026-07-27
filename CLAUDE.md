@@ -197,7 +197,7 @@ Router nesting:
 
 **PostgreSQL** accessed via `sqlx` through `PgDal` (connection pool). The app role (`odal_app`) cannot run DDL or (with one sanctioned exception) DELETE. Single-tenant: no Row-Level Security — one operator per node, so there is no in-process isolation boundary to enforce.
 
-**Schema:** `ops/pg/0001`–`0010_*.sql` — a clean, FK-ordered, append-only migration set (extensions/roles → operator → api_key → passport → audit → registry_sync → import_job → unsold_goods → identity → grants), applied via `PgDal::migrate(url)` at boot using a privileged role, or pre-applied by ops tooling. No RLS (single-tenant).
+**Schema:** `ops/pg/*.sql` — a clean, FK-ordered, append-only migration set (see the directory for the current range; new migrations are only ever added, never renumbered), applied via `PgDal::migrate(url)` at boot using a privileged role, or pre-applied by ops tooling. No RLS (single-tenant).
 
 **Repos:** `pg::PgPassportRepo`, `pg::PgAuditRepo`, `pg::PgApiKeyRepo`, `pg::PgOperatorConfigRepo` in `crates/dpp-dal/src/pg/`.
 
