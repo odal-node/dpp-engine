@@ -29,7 +29,10 @@ FROM builder-base AS builder-published
 COPY dpp-engine/ dpp-engine/
 WORKDIR /build/dpp-engine
 RUN rm -f .cargo/config.toml
-RUN cargo build --release -p dpp-node
+# `s3` is off by default (see dpp-node/Cargo.toml) so a bare `cargo build`
+# doesn't pull the AWS SDK's still-vulnerable rustls edge; the published
+# image opts back in so ESPR archival and continuity snapshots still work.
+RUN cargo build --release -p dpp-node --features s3
 
 # ── local: patch dpp-* to the sibling ../dpp-core source ─────────────────────────
 FROM builder-base AS builder-local
@@ -42,7 +45,7 @@ COPY dpp-engine/ dpp-engine/
 # the context via .dockerignore, so this is deterministic).
 COPY dpp-engine/.cargo/config.toml.example /build/dpp-engine/.cargo/config.toml
 WORKDIR /build/dpp-engine
-RUN cargo build --release -p dpp-node
+RUN cargo build --release -p dpp-node --features s3
 
 # Select the active builder from BUILD_MODE; only the chosen stage is built.
 FROM builder-${BUILD_MODE} AS builder

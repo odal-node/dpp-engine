@@ -17,11 +17,6 @@
 //! local dev. Leave it unset to target real AWS S3, Cloudflare R2, or Hetzner.
 
 use async_trait::async_trait;
-use aws_sdk_s3::{
-    Client,
-    config::{BehaviorVersion, Builder as ConfigBuilder, Credentials, Region},
-    primitives::ByteStream,
-};
 use chrono::Utc;
 use dpp_domain::{
     domain::{
@@ -30,10 +25,39 @@ use dpp_domain::{
     },
     ports::archive::{ArchivePort, ArchiveReceipt, ArchiveStatus, ArchiveVerification},
 };
+
+/// Build the archive adapter from env: the real S3 adapter if the `s3` build
+/// feature is enabled and `ARCHIVE_S3_BUCKET` is set, [`NoOpArchive`] otherwise.
+pub fn from_env() -> (std::sync::Arc<dyn ArchivePort>, dpp_types::trust::TrustMode) {
+    #[cfg(feature = "s3")]
+    if let Some(cfg) = S3ArchiveConfig::from_env() {
+        tracing::info!(bucket = %cfg.bucket, "ESPR archive: S3 adapter active");
+        return (
+            std::sync::Arc::new(S3ArchiveAdapter::new(cfg)),
+            dpp_types::trust::TrustMode::Live,
+        );
+    }
+    tracing::info!(
+        "ESPR archive: no-op — set ARCHIVE_S3_BUCKET (and build with --features s3) to enable"
+    );
+    (
+        std::sync::Arc::new(NoOpArchive),
+        dpp_types::trust::TrustMode::Ghost,
+    )
+}
+
+#[cfg(feature = "s3")]
+use aws_sdk_s3::{
+    Client,
+    config::{BehaviorVersion, Builder as ConfigBuilder, Credentials, Region},
+    primitives::ByteStream,
+};
+#[cfg(feature = "s3")]
 use sha2::{Digest, Sha256};
 
 // ─── Config ──────────────────────────────────────────────────────────────────
 
+#[cfg(feature = "s3")]
 pub struct S3ArchiveConfig {
     pub endpoint: Option<String>,
     pub bucket: String,
@@ -42,6 +66,7 @@ pub struct S3ArchiveConfig {
     pub region: String,
 }
 
+#[cfg(feature = "s3")]
 impl S3ArchiveConfig {
     /// Load from env vars. Returns `None` if `ARCHIVE_S3_BUCKET` is absent or empty.
     pub fn from_env() -> Option<Self> {
@@ -70,11 +95,13 @@ impl S3ArchiveConfig {
 
 // ─── Adapter ─────────────────────────────────────────────────────────────────
 
+#[cfg(feature = "s3")]
 pub struct S3ArchiveAdapter {
     client: Client,
     bucket: String,
 }
 
+#[cfg(feature = "s3")]
 impl S3ArchiveAdapter {
     pub fn new(cfg: S3ArchiveConfig) -> Self {
         let credentials = Credentials::new(
@@ -147,6 +174,7 @@ impl S3ArchiveAdapter {
     }
 }
 
+#[cfg(feature = "s3")]
 #[async_trait]
 impl ArchivePort for S3ArchiveAdapter {
     async fn archive(

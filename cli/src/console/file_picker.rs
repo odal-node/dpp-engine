@@ -40,6 +40,7 @@ pub async fn pick_dossier_file() -> Option<PathBuf> {
     .await
 }
 
+#[cfg(feature = "desktop")]
 async fn pick_file(
     title: &str,
     filter_name: &str,
@@ -55,10 +56,24 @@ async fn pick_file(
         .map(|handle| handle.path().to_path_buf())
 }
 
+/// Without the `desktop` feature there is no native dialog to open — callers
+/// already treat `None` as "fall back to typing a path", so this is a plain
+/// no-op, not an error.
+#[cfg(not(feature = "desktop"))]
+async fn pick_file(
+    _title: &str,
+    _filter_name: &str,
+    _filter_exts: &[&str],
+    _remember_key: &str,
+) -> Option<PathBuf> {
+    None
+}
+
 /// Where the dialog opens: the last successful pick's directory (per
 /// `remember_key`), then the user's Documents folder, then home, then the
 /// current directory. This is the difference between "technically a picker"
 /// and one that feels intuitive.
+#[cfg(feature = "desktop")]
 fn start_dir(remember_key: &str) -> PathBuf {
     last_dir(remember_key)
         .or_else(dirs::document_dir)
@@ -92,6 +107,7 @@ fn remember_dir(remember_key: &str, file: &Path) {
 
 /// The last remembered directory for `remember_key`, if it still resolves to
 /// a real directory (it may have been moved or deleted since).
+#[cfg(feature = "desktop")]
 fn last_dir(remember_key: &str) -> Option<PathBuf> {
     let raw = std::fs::read_to_string(state_path(remember_key).ok()?).ok()?;
     let dir = PathBuf::from(raw.trim());

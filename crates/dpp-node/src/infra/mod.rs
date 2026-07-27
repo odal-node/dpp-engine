@@ -7,6 +7,8 @@ pub mod registry;
 pub mod registry_drain;
 pub mod ruleset;
 pub mod s3_archive;
+#[cfg(feature = "s3")]
 pub mod s3_snapshot;
 pub mod snapshot_drain;
+pub mod snapshot_store;
 pub mod webhook_drain;

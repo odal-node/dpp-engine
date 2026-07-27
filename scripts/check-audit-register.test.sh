@@ -74,13 +74,14 @@ grep -q "RUSTSEC-2026-0188" "$STALE" # sanity: the insertion actually landed
 expect_fail "stale (already-fixed) advisory is rejected" "$STALE"
 
 # 4. A `class: not-in-graph` claim for a crate that IS in the graph is caught.
-#    Reuses the real rustls-webpki entry (genuinely in the graph, see
-#    RUSTSEC-2026-0098) with only its class field flipped.
+#    Reuses the real quick-xml entry (genuinely in the graph via calamine ->
+#    dpp-integrator on every build, not feature-gated) with only its class
+#    field flipped.
 WRONGCLASS="$SCRATCH/wrongclass.toml"
 awk '
-  /^# --- RUSTSEC-2026-0098/ { inblock = 1 }
-  /^# --- RUSTSEC-2026-0099/ { inblock = 0 }
-  inblock && /^# class:      reachable-accepted/ { sub(/reachable-accepted/, "not-in-graph") }
+  /^# --- RUSTSEC-2026-0194/ { inblock = 1 }
+  /^# --- RUSTSEC-2026-0195/ { inblock = 0 }
+  inblock && /^# class:      reachable-but-mitigated/ { sub(/reachable-but-mitigated/, "not-in-graph") }
   { print }
 ' .cargo/audit.toml > "$WRONGCLASS"
 grep -q "^# class:      not-in-graph" "$WRONGCLASS" # sanity: the flip actually landed
