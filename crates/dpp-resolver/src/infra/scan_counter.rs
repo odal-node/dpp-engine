@@ -18,6 +18,12 @@ use chrono::{NaiveDate, Utc};
 
 use dpp_common::scan::{QrRenderCount, ScanBatch, ScanCount, ScanVariant};
 
+/// Cap on distinct keys held per map, so a stuck ingest endpoint or a flood of
+/// distinct `dpp_id`s can't grow the resolver's memory without bound. Once at
+/// capacity, increments to keys not already tracked are dropped (existing keys
+/// keep counting) — an undercount, the safe direction for this number.
+const MAX_TRACKED_KEYS: usize = 50_000;
+
 /// Thread-safe accumulator of aggregate scan and QR-render counts.
 #[derive(Default)]
 pub struct ScanCounter {
@@ -25,19 +31,35 @@ pub struct ScanCounter {
     qr_renders: Mutex<HashMap<(String, NaiveDate), u64>>,
 }
 
+/// Increment `key`'s count in `map`. If `key` is new and `map` is already at
+/// [`MAX_TRACKED_KEYS`], the increment is dropped and a warning logged instead
+/// of growing the map further; an existing key keeps counting regardless.
+fn bump<K: std::hash::Hash + Eq + std::fmt::Debug>(map: &mut HashMap<K, u64>, key: K) {
+    if let Some(count) = map.get_mut(&key) {
+        *count += 1;
+    } else if map.len() < MAX_TRACKED_KEYS {
+        map.insert(key, 1);
+    } else {
+        tracing::warn!(
+            ?key,
+            "scan counter at capacity ({MAX_TRACKED_KEYS} keys) — dropping increment for new key"
+        );
+    }
+}
+
 impl ScanCounter {
     /// Record one successful terminal-view resolution of `dpp_id`.
     pub fn record_scan(&self, dpp_id: &str, variant: ScanVariant) {
         let day = Utc::now().date_naive();
         let mut m = self.scans.lock().unwrap();
-        *m.entry((dpp_id.to_owned(), day, variant)).or_insert(0) += 1;
+        bump(&mut m, (dpp_id.to_owned(), day, variant));
     }
 
     /// Record one successful QR-image render for `dpp_id` (label production).
     pub fn record_qr_render(&self, dpp_id: &str) {
         let day = Utc::now().date_naive();
         let mut m = self.qr_renders.lock().unwrap();
-        *m.entry((dpp_id.to_owned(), day)).or_insert(0) += 1;
+        bump(&mut m, (dpp_id.to_owned(), day));
     }
 
     /// Take everything accumulated so far, leaving the maps empty.
@@ -76,9 +98,11 @@ impl ScanCounter {
 }
 
 /// Drain the counter once and POST the batch to the node's internal ingest
-/// endpoint. A rejected (non-2xx) or failed flush is merged back so no window is
-/// lost; an empty counter is a no-op. Broken out from the loop so it is testable
-/// against a mock ingest server without waiting on a timer.
+/// endpoint. A transient failure (5xx, or the request itself failing) is
+/// merged back so no window is lost; a 4xx is a permanent rejection of this
+/// payload and is dropped rather than retried forever. An empty counter is a
+/// no-op. Broken out from the loop so it is testable against a mock ingest
+/// server without waiting on a timer.
 async fn flush_once(counter: &ScanCounter, client: &reqwest::Client, ingest_url: &str) {
     let batch = counter.drain();
     if batch.is_empty() {
@@ -86,6 +110,15 @@ async fn flush_once(counter: &ScanCounter, client: &reqwest::Client, ingest_url:
     }
     match client.post(ingest_url).json(&batch).send().await {
         Ok(resp) if resp.status().is_success() => {}
+        Ok(resp) if resp.status().is_client_error() => {
+            // A 4xx means the vault permanently rejected this payload (bad
+            // shape, wrong CN, ...) — retrying it verbatim would never
+            // succeed, so retaining it would just poison every future flush.
+            tracing::error!(
+                status = %resp.status(),
+                "scan flush rejected as invalid — dropping window, not retrying"
+            );
+        }
         Ok(resp) => {
             tracing::warn!(status = %resp.status(), "scan flush rejected — retaining for retry");
             counter.merge_back(batch);
@@ -99,7 +132,8 @@ async fn flush_once(counter: &ScanCounter, client: &reqwest::Client, ingest_url:
 
 /// Spawn the periodic flush loop: every `interval`, drain the counter and POST
 /// it to the node's internal ingest endpoint over the given (mTLS) client. A
-/// rejected or failed flush is retained and retried on the next tick.
+/// transiently rejected or failed flush is retained and retried on the next
+/// tick; a permanently rejected (4xx) one is dropped — see [`flush_once`].
 pub fn spawn_scan_flush(
     counter: std::sync::Arc<ScanCounter>,
     client: reqwest::Client,
@@ -138,6 +172,24 @@ mod tests {
 
         // Drain cleared the maps.
         assert!(c.drain().is_empty());
+    }
+
+    #[test]
+    fn caps_distinct_keys_but_keeps_counting_existing_ones() {
+        let mut m: HashMap<u32, u64> = HashMap::new();
+        for k in 0..MAX_TRACKED_KEYS as u32 {
+            bump(&mut m, k);
+        }
+        assert_eq!(m.len(), MAX_TRACKED_KEYS);
+
+        // A brand-new key past capacity is dropped, not inserted.
+        bump(&mut m, MAX_TRACKED_KEYS as u32);
+        assert_eq!(m.len(), MAX_TRACKED_KEYS);
+        assert_eq!(m.get(&(MAX_TRACKED_KEYS as u32)), None);
+
+        // An already-tracked key keeps incrementing regardless.
+        bump(&mut m, 0);
+        assert_eq!(m[&0], 2);
     }
 
     #[test]
@@ -216,5 +268,18 @@ mod tests {
         let retained = counter.drain();
         assert_eq!(retained.scans.len(), 1);
         assert_eq!(retained.scans[0].variant, ScanVariant::Json);
+    }
+
+    #[tokio::test]
+    async fn flush_once_drops_the_window_on_client_error() {
+        let (url, _captured) = mock_ingest(StatusCode::BAD_REQUEST).await;
+        let counter = ScanCounter::default();
+        counter.record_scan("abc", ScanVariant::Json);
+
+        flush_once(&counter, &reqwest::Client::new(), &url).await;
+
+        // The 400 means the payload was permanently rejected — retaining it
+        // would just poison every future flush, so it is dropped, not retried.
+        assert!(counter.drain().is_empty());
     }
 }
