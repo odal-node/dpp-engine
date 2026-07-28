@@ -74,17 +74,15 @@ grep -q "RUSTSEC-2026-0188" "$STALE" # sanity: the insertion actually landed
 expect_fail "stale (already-fixed) advisory is rejected" "$STALE"
 
 # 4. A `class: not-in-graph` claim for a crate that IS in the graph is caught.
-#    Reuses the real quick-xml entry (genuinely in the graph via calamine ->
-#    dpp-integrator on every build, not feature-gated) with only its class
-#    field flipped.
+#    Takes the real rsa entry (correctly `not-in-graph`, so every other field
+#    stays valid) and swaps only its `crate:` to `serde_json`, which every
+#    build resolves — so the graph check is the only thing that can fail.
 WRONGCLASS="$SCRATCH/wrongclass.toml"
 awk '
-  /^# --- RUSTSEC-2026-0194/ { inblock = 1 }
-  /^# --- RUSTSEC-2026-0195/ { inblock = 0 }
-  inblock && /^# class:      reachable-but-mitigated/ { sub(/reachable-but-mitigated/, "not-in-graph") }
+  /^# crate:      rsa/ { print "# crate:      serde_json"; next }
   { print }
 ' .cargo/audit.toml > "$WRONGCLASS"
-grep -q "^# class:      not-in-graph" "$WRONGCLASS" # sanity: the flip actually landed
+grep -q "^# crate:      serde_json" "$WRONGCLASS" # sanity: the swap actually landed
 expect_fail "not-in-graph claim for an in-graph crate is rejected" "$WRONGCLASS"
 
 # 5. The regression the shipped-graph check exists for: a crate absent under
@@ -97,9 +95,7 @@ expect_fail "not-in-graph claim for an in-graph crate is rejected" "$WRONGCLASS"
 #    the image — so the shipped-graph check is the only thing that can fail.
 SHIPPEDONLY="$SCRATCH/shipped-only.toml"
 awk '
-  /^# --- RUSTSEC-2023-0071/ { inblock = 1 }
-  inblock && /^# --- RUSTSEC-2026-0194/ { inblock = 0 }
-  inblock && /^# crate:/ { print "# crate:      aws-sdk-s3"; next }
+  /^# crate:      rsa/ { print "# crate:      aws-sdk-s3"; next }
   { print }
 ' .cargo/audit.toml > "$SHIPPEDONLY"
 grep -q "^# crate:      aws-sdk-s3" "$SHIPPEDONLY" # sanity: the swap landed

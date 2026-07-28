@@ -5,7 +5,7 @@
 use std::collections::HashMap;
 use std::io::{BufRead, Cursor, Read};
 
-use calamine::{DataType, Reader, Xlsx};
+use calamine::{Data, Reader, Xlsx};
 use quick_xml::Reader as XmlReader;
 use quick_xml::events::Event;
 use zip::ZipArchive;
@@ -25,16 +25,15 @@ const MAX_DENSE_CELLS: u64 = 5_000_000;
 const MAX_DECOMPRESSED_BYTES: u64 = 128 * 1024 * 1024;
 
 /// Maximum attributes accepted on a single XML start/empty tag anywhere in the
-/// archive. Guards RUSTSEC-2026-0194: quick-xml's default checked attribute
-/// iteration (`.attributes()`, `try_get_attribute`) does an `O(N²)` scan for
-/// duplicate names with no bound on `N`, and calamine (transitively pinned to
-/// a pre-0.41 quick-xml with no fixed release published yet) parses every XML
-/// part of an XLSX this way. A single crafted tag with tens of thousands of
-/// attributes can pin a CPU core for minutes. A legitimate XLSX tag never
-/// carries more than a handful of attributes (a `<c>` cell tops out around 6;
-/// the root `<worksheet>`/`<workbook>` tag's xmlns declarations top out
-/// around a dozen) — this cap rejects the file before calamine, or our own
-/// scan below, ever runs the vulnerable check against a pathological tag.
+/// archive. Defence in depth, not a patch: the quadratic duplicate-attribute
+/// scan this originally guarded (RUSTSEC-2026-0194) is fixed upstream, and
+/// both calamine and our own pre-scan now run quick-xml >= 0.41. The cap stays
+/// because it bounds the input rather than trusting the parser — a crafted tag
+/// with tens of thousands of attributes is still pathological work for any
+/// implementation, and this rejects it before calamine, or the scan below,
+/// touches it. A legitimate XLSX tag never carries more than a handful (a `<c>`
+/// cell tops out around 6; a root `<worksheet>`/`<workbook>` tag's xmlns
+/// declarations top out around a dozen).
 const MAX_ATTRS_PER_TAG: usize = 64;
 
 /// Parse XLSX bytes into a list of rows.
@@ -56,7 +55,6 @@ pub fn parse_xlsx(bytes: &[u8]) -> Result<Vec<HashMap<String, String>>, ParseErr
 
     let range = wb
         .worksheet_range(&first_sheet)
-        .ok_or(ParseError::Empty)?
         .map_err(|e| ParseError::Csv(format!("XLSX range error: {e}")))?;
 
     let mut rows_iter = range.rows();
@@ -97,13 +95,13 @@ pub fn parse_xlsx(bytes: &[u8]) -> Result<Vec<HashMap<String, String>>, ParseErr
     Ok(result)
 }
 
-fn cell_to_string(cell: &DataType) -> String {
+fn cell_to_string(cell: &Data) -> String {
     match cell {
-        DataType::Empty => String::new(),
-        DataType::Error(_) => String::new(),
-        DataType::Bool(b) => b.to_string(),
-        DataType::Int(i) => i.to_string(),
-        DataType::Float(f) => {
+        Data::Empty => String::new(),
+        Data::Error(_) => String::new(),
+        Data::Bool(b) => b.to_string(),
+        Data::Int(i) => i.to_string(),
+        Data::Float(f) => {
             // Avoid scientific notation for whole numbers (e.g. GTINs stored as floats)
             if f.fract() == 0.0 && f.abs() < 1e15_f64 {
                 format!("{:.0}", f)
@@ -111,12 +109,12 @@ fn cell_to_string(cell: &DataType) -> String {
                 f.to_string()
             }
         }
-        DataType::String(s) => s.trim().to_owned(),
+        Data::String(s) => s.trim().to_owned(),
         other => other.to_string(),
     }
 }
 
-fn cell_to_header(cell: &DataType) -> String {
+fn cell_to_header(cell: &Data) -> String {
     normalize_header(&cell_to_string(cell))
 }
 
@@ -150,7 +148,7 @@ impl<R: Read> Read for LimitedReader<'_, R> {
 /// - **dimension-bomb**: each worksheet's cell references are scanned and the
 ///   implied dense range (max-col × max-row) is capped (`MAX_DENSE_CELLS`).
 /// - **pathological attributes**: every XML part (not just worksheets) is
-///   scanned for tags exceeding `MAX_ATTRS_PER_TAG` (see RUSTSEC-2026-0194).
+///   scanned for tags exceeding `MAX_ATTRS_PER_TAG`.
 fn precheck_xlsx(bytes: &[u8]) -> Result<(), ParseError> {
     let mut zip = ZipArchive::new(Cursor::new(bytes))
         .map_err(|e| ParseError::Csv(format!("XLSX is not a valid zip: {e}")))?;
@@ -186,9 +184,10 @@ fn precheck_xlsx(bytes: &[u8]) -> Result<(), ParseError> {
 /// file.
 ///
 /// Deliberately uses `.attributes().with_checks(false)` rather than
-/// `.attributes()`/`try_get_attribute` — the checked variants are exactly the
-/// RUSTSEC-2026-0194 code path this scan exists to guard against, so using
-/// them here would make the guard itself exploitable.
+/// `.attributes()`/`try_get_attribute`: the checked variants do a duplicate-name
+/// scan over every attribute, so counting attributes with them would do the
+/// very work this guard exists to bound. Keep it unchecked here regardless of
+/// what the parser costs — a guard that scales with its input is not a guard.
 fn scan_xml_entry<R: BufRead>(reader: R, track_dimensions: bool) -> Result<(), ParseError> {
     let mut xml = XmlReader::from_reader(reader);
     let mut buf = Vec::new();
@@ -346,9 +345,9 @@ mod tests {
         );
     }
 
-    /// RUSTSEC-2026-0194 guard: a tag with far more attributes than any real
-    /// XLSX part uses must be rejected before calamine's checked attribute
-    /// iteration (the vulnerable `O(N²)` duplicate-name scan) ever sees it.
+    /// Attribute-bomb guard: a tag with far more attributes than any real XLSX
+    /// part uses must be rejected before calamine's checked attribute iteration
+    /// (a duplicate-name scan over every attribute) ever sees it.
     fn attr_bomb_xml(count: usize) -> Vec<u8> {
         let mut attrs = String::new();
         for i in 0..count {

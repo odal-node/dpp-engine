@@ -32,59 +32,6 @@
 # release-on: a `cargo update` prunes the orphaned Cargo.lock entries, which
 #             removes this ID from the lockfile (and the need for this
 #             suppression) entirely
-#
-# --- RUSTSEC-2026-0194 -------------------------------------------------------
-# crate:      quick-xml 0.30.0
-# path:       calamine 0.22.1 -> dpp-integrator -> dpp-node   [SHIPPED, normal
-#             dependency, parses untrusted uploaded XLSX]
-# class:      reachable-but-mitigated
-# rationale:  O(N^2) duplicate-attribute-name scan on `BytesStart::attributes`
-#             with checks enabled (the default), and in `NsReader` internally.
-#             calamine 0.22.1 (latest published: 0.35.0, which still pins
-#             quick-xml "0.39" — itself vulnerable to -0194) has no patched
-#             release available. Mitigated in `xlsx_parser.rs`'s
-#             `precheck_xlsx`, which caps attributes-per-tag
-#             (`MAX_ATTRS_PER_TAG` = 64) across every XML part of the archive
-#             — not just worksheets, since calamine parses
-#             sharedStrings/styles/workbook.xml the same way — before
-#             calamine ever opens the file. The guard's own scan uses
-#             `.attributes().with_checks(false)` so it isn't exploitable
-#             itself. Bounding N to 64 makes the O(N^2) cost trivial
-#             regardless of which attribute-iteration API calamine uses
-#             internally.
-# anchor:     crates/dpp-integrator/src/domain/xlsx_parser.rs::MAX_ATTRS_PER_TAG
-# owner:      founder
-# recorded:   2026-07-27
-# expires:    2026-10-25
-# release-on: calamine ships against quick-xml >= 0.41.0 (drops the
-#             ignore-need; the cap stays regardless, as defense in depth)
-#
-# --- RUSTSEC-2026-0195 -------------------------------------------------------
-# crate:      quick-xml 0.30.0
-# path:       calamine 0.22.1 -> dpp-integrator -> dpp-node   [SHIPPED, normal
-#             dependency]. The other path this ID used to cover —
-#             wayland-scanner (proc-macro) -> ashpd -> rfd -> dpp-cli,
-#             quick-xml 0.39.4, build-time-only — is gone from the resolved
-#             graph entirely now that `rfd` is behind dpp-cli's non-default
-#             `desktop` feature (`cargo tree -i quick-xml@0.39.4` matches
-#             nothing under default features).
-# class:      reachable-but-mitigated
-# rationale:  Unbounded namespace-declaration allocation in `NsReader`,
-#             confirmed absent from calamine's own source (uses plain
-#             `quick_xml::Reader`, not `NsReader` — grepped, zero matches
-#             across ods.rs/xlsb.rs/xlsx.rs). Belt-and-suspenders: the same
-#             `MAX_ATTRS_PER_TAG` guard as -0194 also bounds the
-#             xmlns-declaration count per tag, so this path stays mitigated
-#             even if a future calamine version starts using NsReader.
-# anchor:     crates/dpp-integrator/src/domain/xlsx_parser.rs::MAX_ATTRS_PER_TAG
-# owner:      founder
-# recorded:   2026-07-27
-# expires:    2026-10-25
-# release-on: calamine ships against quick-xml >= 0.41.0
-#             does (drops the ignore-need for whichever path remains)
-#
 ignore = [
     "RUSTSEC-2023-0071",
-    "RUSTSEC-2026-0194",
-    "RUSTSEC-2026-0195",
 ]
