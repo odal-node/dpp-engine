@@ -63,10 +63,11 @@ categories are checked against both a default build and the feature set the
 published image is built with, because a claim that holds only outside the
 shipped artefact is not a claim about what operators run.
 
-At least one entry is reachable in the shipped binaries and mitigated rather
-than fixed, because no patched upstream release exists yet. Read the register
-for the current set — it is the authoritative list, and this paragraph
-deliberately does not restate it.
+`.cargo/audit.toml` is the authoritative list, and this document deliberately
+does not restate what is in it — including how many entries there are or
+whether any is reachable. Read the file: every entry carries its own category,
+evidence and expiry date. A summary here would be a second copy of a fact whose
+home is that file, and it would go stale the first time an upstream fix lands.
 
 If you believe a suppressed advisory is in fact exploitable, report it — the
 register's own reachability claim may be wrong or stale, and that is exactly
