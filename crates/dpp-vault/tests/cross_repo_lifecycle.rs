@@ -45,8 +45,8 @@ async fn full_lifecycle_draft_to_archived() {
             "didWebUrl": "https://lifecycle.example.com/.well-known/did.json"
         },
         "materials": [
-            {"name": "Lithium", "weightKg": 0.8, "recycledPct": 30.0, "originCountry": "CL"},
-            {"name": "Aluminium", "weightKg": 0.3, "recycledPct": 90.0, "originCountry": "DE"}
+            {"name": "Lithium", "weightKg": 0.8, "recycledPct": 30.0, "countryOfOrigin": "CL"},
+            {"name": "Aluminium", "weightKg": 0.3, "recycledPct": 90.0, "countryOfOrigin": "DE"}
         ],
         "schemaVersion": "2.0.0",
         "sectorData": {
@@ -213,9 +213,9 @@ async fn materials_round_trip_with_optional_fields() {
         "productCategory": "ELECTRONICS",
         "manufacturer": {"name": "MatTest Inc", "address": "Seoul, KR"},
         "materials": [
-            {"name": "Copper", "weightKg": 0.2, "recycledPct": 45.0, "originCountry": "JP"},
+            {"name": "Copper", "weightKg": 0.2, "recycledPct": 45.0, "countryOfOrigin": "JP"},
             {"name": "Silicon", "weightKg": 0.05},
-            {"name": "Tin", "weightKg": 0.01, "originCountry": "ID"}
+            {"name": "Tin", "weightKg": 0.01, "countryOfOrigin": "ID"}
         ],
         "schemaVersion": "1.0.0"
     });
@@ -235,10 +235,10 @@ async fn materials_round_trip_with_optional_fields() {
     assert_eq!(materials.len(), 3);
     assert_eq!(materials[0]["name"], "Copper");
     assert_eq!(materials[0]["recycledPct"], 45.0);
-    assert_eq!(materials[0]["originCountry"], "JP");
+    assert_eq!(materials[0]["countryOfOrigin"], "JP");
     // Second entry has no optional fields — they should be null
     assert!(materials[1]["recycledPct"].is_null());
-    assert!(materials[1]["originCountry"].is_null());
+    assert!(materials[1]["countryOfOrigin"].is_null());
 }
 
 /// State machine: Draft → Suspended is invalid (dpp-core invariant).

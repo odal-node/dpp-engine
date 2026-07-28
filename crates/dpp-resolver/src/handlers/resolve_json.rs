@@ -8,8 +8,8 @@ use axum::{
 use dpp_common::http_problem;
 use serde_json::Value;
 
-use dpp_crypto::access::{SectorAccessPolicy, filter_by_access_tier};
-use dpp_domain::AccessTier;
+use dpp_crypto::access::{SectorAccessPolicy, filter_by_audience};
+use dpp_domain::Audience;
 use dpp_domain::SectorCatalog;
 
 use crate::{infra::did, state::AppState};
@@ -117,16 +117,16 @@ pub async fn resolve_json_handler(
 /// professional/confidential fields). Elevated tiers require an authenticated
 /// channel: the operator-authenticated vault API, or (future) an
 /// operator-signed tier token verified against the operator DID.
-fn parse_access_tier(_headers: &HeaderMap) -> AccessTier {
-    AccessTier::Public
+fn parse_access_tier(_headers: &HeaderMap) -> Audience {
+    Audience::Public
 }
 
 /// Apply two-level access tier filtering:
 /// 1. Top-level passport fields (jws, batchId, retentionLocked).
 /// 2. Sector-specific fields within `sectorData` (e.g. battery supply chain data).
-fn apply_access_tier_filter(passport: Value, tier: AccessTier) -> Value {
+fn apply_access_tier_filter(passport: Value, tier: Audience) -> Value {
     let passport_policy = SectorAccessPolicy::passport_default();
-    let decision = filter_by_access_tier(&passport, &passport_policy, tier);
+    let decision = filter_by_audience(&passport, &passport_policy, tier);
     let mut doc = decision.filtered_data;
 
     // Also filter sector data sub-object if present.
@@ -135,7 +135,7 @@ fn apply_access_tier_filter(passport: Value, tier: AccessTier) -> Value {
     {
         let sector_policy = detect_sector_policy(&sd);
         if let Some(policy) = sector_policy {
-            let inner = filter_by_access_tier(&sd, &policy, tier);
+            let inner = filter_by_audience(&sd, &policy, tier);
             obj.insert("sectorData".into(), inner.filtered_data);
         } else if is_tagged_unknown_sector(&sd) {
             // Fail closed (RT2-1 / RT2-5): the sub-object carries a `sector`
@@ -143,7 +143,7 @@ fn apply_access_tier_filter(passport: Value, tier: AccessTier) -> Value {
             // us which fields are public. Rather than leak professional /
             // confidential fields, drop everything except the sector
             // identifier at non-elevated tiers.
-            if tier == AccessTier::Public {
+            if tier == Audience::Public {
                 obj.insert("sectorData".into(), redacted_unknown_sector(&sd));
             } else {
                 obj.insert("sectorData".into(), sd);
@@ -256,7 +256,7 @@ mod security_regression {
                 "internalNotes": "trade secret"
             }
         });
-        let out = apply_access_tier_filter(passport, AccessTier::Public);
+        let out = apply_access_tier_filter(passport, Audience::Public);
         let sd = out.get("sectorData").expect("sectorData kept");
         // Only the sector identifier survives; the unknown sensitive fields drop.
         assert_eq!(
@@ -274,7 +274,7 @@ mod security_regression {
             "id": "x",
             "sectorData": { "someLegacyField": "value" }
         });
-        let out = apply_access_tier_filter(passport, AccessTier::Public);
+        let out = apply_access_tier_filter(passport, Audience::Public);
         let sd = out.get("sectorData").expect("sectorData kept");
         assert_eq!(
             sd.get("someLegacyField").and_then(Value::as_str),

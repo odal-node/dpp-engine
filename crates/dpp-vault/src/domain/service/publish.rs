@@ -427,9 +427,9 @@ mod tests {
         use dpp_domain::domain::sector::ConstructionData;
         let mut p = stub();
         p.sector_data = Some(SectorData::Construction(ConstructionData {
-            gtin: "09506000134352".into(),
+            gtin: dpp_domain::Gtin::parse("09506000134352").unwrap(),
             product_family: "cement".into(),
-            country_of_manufacture: "DE".into(),
+            country_of_origin: "DE".into(),
             co2e_per_functional_unit_kg: 100.0,
             functional_unit: "per tonne".into(),
             recycled_content_pct: None,

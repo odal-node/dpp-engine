@@ -9,7 +9,7 @@ pub(super) fn build_textile_section(p: &serde_json::Value) -> String {
         None => return String::new(),
     };
 
-    let country = str_field(sd, "countryOfManufacturing", "-");
+    let country = str_field(sd, "countryOfOrigin", "-");
     let care = str_field(sd, "careInstructions", "-");
     let chemical = str_field(sd, "chemicalComplianceStandard", "-");
     let recycled = f64_field(sd, "recycledContentPct", "-", |v| format!("{v:.1}%"));
@@ -105,8 +105,10 @@ mod tests {
 
     #[test]
     fn full_data_populates_all_fields() {
-        let p = serde_json::json!({"sectorData": {
-            "countryOfManufacturing": "Germany",
+        let p = crate::sections::typed_fixture(serde_json::json!({
+            "sector": "textile",
+            "gtin": "09506000134352",
+            "countryOfOrigin": "Germany",
             "careInstructions": "Machine wash cold",
             "chemicalComplianceStandard": "OEKO-TEX Standard 100",
             "recycledContentPct": 32.5,
@@ -114,7 +116,7 @@ mod tests {
                 { "fibre": "Organic Cotton", "pct": 80.0 },
                 { "fibre": "Elastane", "pct": 20.0 },
             ],
-        }});
+        }));
         let html = build_textile_section(&p);
         assert!(html.contains("Germany"));
         assert!(html.contains("Machine wash cold"));
@@ -148,7 +150,7 @@ mod tests {
     #[test]
     fn professional_tier_fields_are_never_rendered() {
         let p = serde_json::json!({"sectorData": {
-            "countryOfManufacturing": "Germany",
+            "countryOfOrigin": "Germany",
             "svhcSubstances": "MARKER_SVHC_SUBSTANCE",
             "disassemblyInstructions": "MARKER_DISASSEMBLY_INSTRUCTIONS",
             "sparePartsAvailable": "MARKER_SPARE_PARTS",

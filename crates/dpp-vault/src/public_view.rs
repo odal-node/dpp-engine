@@ -10,7 +10,7 @@
 //! ⬅️ Core-candidate: the redaction contract (which fields are public per
 //! access tier) is part of what the DPP standard promises third parties, not
 //! an operational choice this deployment makes — a plausible future home is
-//! `dpp-domain` alongside `AccessTier`. Not moved yet; recorded for the next
+//! `dpp-domain` alongside `Audience`. Not moved yet; recorded for the next
 //! core breaking revision.
 
 use std::sync::OnceLock;
@@ -18,9 +18,9 @@ use std::sync::OnceLock;
 use base64::Engine;
 use serde_json::Value;
 
-use dpp_crypto::access::{SectorAccessPolicy, filter_by_access_tier};
+use dpp_crypto::access::{SectorAccessPolicy, filter_by_audience};
 use dpp_domain::domain::passport::Passport;
-use dpp_domain::{AccessTier, DppError, SectorCatalog};
+use dpp_domain::{Audience, DppError, SectorCatalog};
 
 /// Embedded sector catalog, built once (used to resolve per-field access tiers).
 fn catalog() -> &'static SectorCatalog {
@@ -33,7 +33,9 @@ fn catalog() -> &'static SectorCatalog {
 pub fn public_policy(sector_key: &str) -> SectorAccessPolicy {
     let mut policy = SectorAccessPolicy::passport_default();
     if let Some(sector_policy) = SectorAccessPolicy::from_catalog(catalog(), sector_key) {
-        policy.field_tiers.extend(sector_policy.field_tiers);
+        policy
+            .field_disclosure
+            .extend(sector_policy.field_disclosure);
     }
     policy
 }
@@ -44,7 +46,7 @@ pub fn public_policy(sector_key: &str) -> SectorAccessPolicy {
 /// skips serialisation), so the proof never signs over itself.
 pub fn public_view(full: &Value, sector_key: &str) -> Value {
     let policy = public_policy(sector_key);
-    let mut view = filter_by_access_tier(full, &policy, AccessTier::Public).filtered_data;
+    let mut view = filter_by_audience(full, &policy, Audience::Public).filtered_data;
 
     // Fail closed for an unrecognised sector: with no catalog descriptor there is
     // no field-tier policy for its `sectorData`, so the default-Public pass above

@@ -9,7 +9,7 @@ pub(super) fn build_detergent_section(p: &serde_json::Value) -> String {
     };
     let product_type = str_field(sd, "productType", "-");
     let format = str_field(sd, "format", "-");
-    let country = str_field(sd, "countryOfManufacture", "-");
+    let country = str_field(sd, "countryOfOrigin", "-");
     let biodegradable = bool_field(
         sd,
         "biodegradable",
@@ -36,13 +36,18 @@ mod tests {
 
     #[test]
     fn full_data_populates_all_fields() {
-        let p = serde_json::json!({"sectorData": {
+        let p = crate::sections::typed_fixture(serde_json::json!({
+            "sector": "detergent",
+            "gtin": "09506000134352",
             "productType": "Laundry Detergent",
             "format": "Liquid",
-            "countryOfManufacture": "NL",
+            "countryOfOrigin": "NL",
             "biodegradable": true,
-            "surfactants": ["anionic", "nonionic"],
-        }});
+            "surfactants": [
+                { "name": "Sodium laureth sulfate", "biodegradable": true, "concentrationBand": "5-15%" },
+                { "name": "Alcohol ethoxylate", "biodegradable": true, "concentrationBand": "<5%" },
+            ],
+        }));
         let html = build_detergent_section(&p);
         assert!(html.contains("Laundry Detergent"));
         assert!(html.contains("Liquid"));

@@ -105,7 +105,7 @@ fn sample_textile_passport() -> serde_json::Value {
         "manufacturer": {"name": "FabriqGreen", "address": "Milan, IT"},
         "sectorData": {
             "sector": "textile",
-            "countryOfManufacturing": "IT",
+            "countryOfOrigin": "IT",
             "careInstructions": "Machine wash cold",
             "chemicalComplianceStandard": "OEKO-TEX 100",
             "recycledContentPct": 40.0,

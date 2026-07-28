@@ -7,7 +7,7 @@ use dpp_domain::domain::{
     sector::{FibreEntry, Sector, SectorData, TextileData},
 };
 
-use crate::domain::fields::{optional_f64, require_str, validate_gtin_checksum};
+use crate::domain::fields::{optional_f64, parse_gtin, require_str};
 use crate::domain::request::{CreatePassportRequest, RowError};
 
 /// Validate a single textile row and convert it to a vault `CreatePassportRequest`.
@@ -18,12 +18,12 @@ pub fn validate_textile_row(
     let mut errors: Vec<RowError> = Vec::new();
 
     let product_name = require_str(row, "productName", row_num, &mut errors);
-    let gtin = require_str(row, "gtin", row_num, &mut errors);
-    validate_gtin_checksum(gtin.as_deref(), row_num, &mut errors);
+    let gtin_raw = require_str(row, "gtin", row_num, &mut errors);
+    let gtin = parse_gtin(gtin_raw.as_deref(), row_num, &mut errors);
     let batch_id = require_str(row, "batchId", row_num, &mut errors);
     let manufacturer_name = require_str(row, "manufacturerName", row_num, &mut errors);
     let manufacturer_country = require_str(row, "manufacturerCountry", row_num, &mut errors);
-    let country_of_manufacturing = require_str(row, "countryOfManufacturing", row_num, &mut errors);
+    let country_of_origin = require_str(row, "countryOfOrigin", row_num, &mut errors);
     let care_instructions = require_str(row, "careInstructions", row_num, &mut errors);
     let chemical_compliance_standard =
         require_str(row, "chemicalComplianceStandard", row_num, &mut errors);
@@ -64,7 +64,7 @@ pub fn validate_textile_row(
     let textile_data = SectorData::Textile(TextileData {
         gtin: gtin.expect("field verified present by errors.is_empty() guard above"),
         fibre_composition: fibres.expect("field verified present by errors.is_empty() guard above"),
-        country_of_manufacturing: country_of_manufacturing
+        country_of_origin: country_of_origin
             .expect("field verified present by errors.is_empty() guard above"),
         care_instructions: care_instructions
             .expect("field verified present by errors.is_empty() guard above"),
@@ -133,7 +133,7 @@ mod tests {
             ("batch_id".to_string(), "BATCH-T-001".to_string()),
             ("manufacturer_name".to_string(), "EcoWear".to_string()),
             ("manufacturer_country".to_string(), "BD".to_string()),
-            ("country_of_manufacturing".to_string(), "BD".to_string()),
+            ("country_of_origin".to_string(), "BD".to_string()),
             (
                 "care_instructions".to_string(),
                 "30C machine wash".to_string(),
@@ -160,7 +160,7 @@ mod tests {
             ("batchId".into(), "BATCH-T-001".into()),
             ("manufacturerName".into(), "EcoWear".into()),
             ("manufacturerCountry".into(), "BD".into()),
-            ("countryOfManufacturing".into(), "BD".into()),
+            ("countryOfOrigin".into(), "BD".into()),
             ("careInstructions".into(), "30°C machine wash".into()),
             ("chemicalComplianceStandard".into(), "OEKO-TEX 100".into()),
             (
@@ -177,7 +177,7 @@ mod tests {
         assert_eq!(req.product_name, "Organic Cotton Tee");
         match req.sector_data.unwrap() {
             SectorData::Textile(t) => {
-                assert_eq!(t.gtin, "09506000134352");
+                assert_eq!(t.gtin.as_str(), "09506000134352");
                 assert_eq!(t.fibre_composition.len(), 1);
                 assert_eq!(t.fibre_composition[0].fibre, "cotton");
             }

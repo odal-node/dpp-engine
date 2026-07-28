@@ -8,8 +8,8 @@
     "didWebUrl": "https://ecotextile.example/.well-known/did.json"
   },
   "materials": [
-    { "name": "Organic Cotton", "weightKg": 0.18, "recycledPct": 0.0, "originCountry": "IN" },
-    { "name": "Recycled Polyester", "weightKg": 0.12, "recycledPct": 100.0, "originCountry": "TR" }
+    { "name": "Organic Cotton", "weightKg": 0.18, "recycledPct": 0.0, "countryOfOrigin": "IN" },
+    { "name": "Recycled Polyester", "weightKg": 0.12, "recycledPct": 100.0, "countryOfOrigin": "TR" }
   ],
   "co2ePerUnit": 3.2,
   "repairabilityScore": 6.0,
@@ -21,7 +21,7 @@
       { "fibre": "organic cotton", "pct": 60.0, "countryOfOrigin": "IN" },
       { "fibre": "recycled polyester", "pct": 40.0, "countryOfOrigin": "TR" }
     ],
-    "countryOfManufacturing": "GB",
+    "countryOfOrigin": "GB",
     "careInstructions": "Machine wash 30°C, do not bleach, iron low, line dry",
     "chemicalComplianceStandard": "OEKO-TEX STANDARD 100",
     "recycledContentPct": 40.0,

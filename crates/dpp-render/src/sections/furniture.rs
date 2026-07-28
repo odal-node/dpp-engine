@@ -9,7 +9,7 @@ pub(super) fn build_furniture_section(p: &serde_json::Value) -> String {
     };
     let product_type = str_field(sd, "productType", "-");
     let material = str_field(sd, "primaryMaterial", "-");
-    let country = str_field(sd, "countryOfManufacture", "-");
+    let country = str_field(sd, "countryOfOrigin", "-");
     let co2e = f64_field(sd, "co2ePerUnitKg", "Not disclosed", |v| {
         format!("{v:.2} kg CO\u{2082}e")
     });
@@ -32,13 +32,15 @@ mod tests {
 
     #[test]
     fn full_data_populates_all_fields() {
-        let p = serde_json::json!({"sectorData": {
+        let p = crate::sections::typed_fixture(serde_json::json!({
+            "sector": "furniture",
+            "gtin": "09506000134352",
             "productType": "Office Chair",
             "primaryMaterial": "Steel & Fabric",
-            "countryOfManufacture": "SE",
+            "countryOfOrigin": "SE",
             "co2ePerUnitKg": 18.4,
             "repairabilityScore": 6.0,
-        }});
+        }));
         let html = build_furniture_section(&p);
         assert!(html.contains("Office Chair"));
         assert!(

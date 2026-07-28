@@ -1342,7 +1342,7 @@ mod tests {
         // sparePartsAvailable=true triggers textile.repair_score_high_without_support
         // (dpp-rules::lint::textile) — and the CSV path never sets either of
         // those two fields, so this is a deterministic, always-firing trigger.
-        let header = "productName,gtin,batchId,manufacturerName,manufacturerCountry,fibreComposition,countryOfManufacturing,careInstructions,chemicalComplianceStandard,recycledContentPct,repairScore,carbonFootprintKgCo2e";
+        let header = "productName,gtin,batchId,manufacturerName,manufacturerCountry,fibreComposition,countryOfOrigin,careInstructions,chemicalComplianceStandard,recycledContentPct,repairScore,carbonFootprintKgCo2e";
         let row = format!(
             "Organic Cotton Tee,{VALID_GTIN},BATCH-T-1,EcoWear,BD,\"[{{\"\"fibre\"\":\"\"cotton\"\",\"\"pct\"\":100}}]\",BD,30C wash,OEKO-TEX 100,,9.0,"
         );

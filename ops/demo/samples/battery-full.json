@@ -8,9 +8,9 @@
     "didWebUrl": "https://greencell.example/.well-known/did.json"
   },
   "materials": [
-    { "name": "Lithium Iron Phosphate", "weightKg": 1.20, "recycledPct": 12.5, "originCountry": "CN" },
-    { "name": "Graphite", "weightKg": 0.40, "recycledPct": 5.0, "originCountry": "DE" },
-    { "name": "Aluminium casing", "weightKg": 0.30, "recycledPct": 90.0, "originCountry": "DE" }
+    { "name": "Lithium Iron Phosphate", "weightKg": 1.20, "recycledPct": 12.5, "countryOfOrigin": "CN" },
+    { "name": "Graphite", "weightKg": 0.40, "recycledPct": 5.0, "countryOfOrigin": "DE" },
+    { "name": "Aluminium casing", "weightKg": 0.30, "recycledPct": 90.0, "countryOfOrigin": "DE" }
   ],
   "co2ePerUnit": 45.2,
   "repairabilityScore": 7.5,

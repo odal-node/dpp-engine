@@ -12,6 +12,38 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ### Breaking
 
+- **Pinned to `dpp-core` 0.11.0**, which brings the following through to this
+  repo's surfaces.
+- **Sector country fields collapsed onto `countryOfOrigin`.** Aluminium,
+  construction, detergent, furniture, steel, textile and toy previously used
+  `countryOfManufacture` / `countryOfProduction` / `countryOfManufacturing`;
+  `MaterialEntry`'s `originCountry` becomes `countryOfOrigin` too. The
+  passport-level `manufacturerCountry` is a **different** field and is
+  unchanged. *Migration:* CSV import templates are updated in place — the
+  column is now `countryOfOrigin` (and `material_N_countryOfOrigin`); a file
+  built from an older template will fail validation with a missing-required-
+  field error naming the new column.
+- **Passports stored under 0.10.0 or earlier are not readable.** There is no
+  `serde` alias for the old field names, so an existing `doc` row either fails
+  to deserialise (the six sectors where the field is required) or silently
+  loses the value (textile's top-level field and `MaterialEntry`, both
+  optional). No migration ships: there are no deployed nodes and no operator
+  data, so a migration would be code that never runs. *Migration:* drop and
+  re-seed any development or staging database.
+- **The public view changed, so signatures over it changed.** `stateOfHealthPct`
+  and `lintResult` are now correctly excluded (both were disclosed; the state-of-
+  health leak is present in published 0.10.0 and earlier). Because
+  `publicJwsSignature` signs the public view, **a passport published before this
+  release will not verify against a view recomputed after it** — the bytes
+  differ. Continuity snapshots render through the same path and diverge the same
+  way, and the BOM graph pins components to a parent by `publicJwsHash`, which
+  also changes. All of these are correctness fixes; they are listed as breaking
+  because they invalidate artefacts produced earlier.
+- **The QR data-carrier URL changed for every passport.** `short_serial` was cut
+  from the leading bytes of a UUIDv7 — a millisecond timestamp — so serials
+  sorted in creation order and decoded to the creation instant. It now derives
+  from the random tail. The resolver is GTIN-keyed, so resolution is unaffected,
+  but a previously printed label no longer matches a freshly generated one.
 - **The local-admin credential is now sent as `Authorization: Basic`, not
   `Bearer`.** `auth_middleware` routes on the scheme: `Bearer` reaches only the
   API-key providers, `Basic` only the local-admin provider. Previously both
@@ -26,6 +58,15 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   bind it and the tamper-evidence guarantee silently stops holding. *Migration:*
   connect as `odal_app` (or any non-superuser); `DATABASE_MIGRATE_URL` is
   unaffected and still needs a privileged role.
+
+### Fixed
+
+- **The electronics public page never showed a repairability score.** The
+  section read `repairabilityScore` as a scalar, but `ElectronicsData` carries a
+  `RepairabilityScore` struct (`{ overall, criteria }`) — it has done since
+  before 0.10.0 — so the lookup always missed and rendered a dash. The section's
+  own test asserted against a hand-written bare float, which is why nothing
+  caught it. Furniture's field really is a scalar and was always correct.
 
 ### Security
 

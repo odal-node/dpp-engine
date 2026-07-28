@@ -7,23 +7,31 @@ use dpp_domain::domain::passport::MaterialEntry;
 
 use super::request::RowError;
 
-/// Push a `RowError` if `gtin` (when present) is not a structurally valid GS1
-/// GTIN-14 (14 digits + mod-10 check digit). Shared by the sector importers so
-/// steel/aluminium/tyre validate the checksum the same way the battery importer
-/// already does — a bad checksum must not pass through the pipeline unchecked.
-pub(super) fn validate_gtin_checksum(
+/// Parse `gtin` (when present) into the validated [`Gtin`] newtype, pushing a
+/// `RowError` instead if it is not a structurally valid GS1 GTIN-14 (14 digits +
+/// mod-10 check digit). Shared by the sector importers so steel/aluminium/tyre
+/// validate the checksum the same way the battery importer already does — a bad
+/// checksum must not pass through the pipeline unchecked.
+///
+/// Returns the parsed value rather than validating and discarding it: the sector
+/// structs now hold `Gtin`, and parsing once here means a call site cannot end up
+/// re-parsing a string it has already proven valid.
+pub(super) fn parse_gtin(
     gtin: Option<&str>,
     row_num: usize,
     errors: &mut Vec<RowError>,
-) {
-    if let Some(g) = gtin
-        && let Err(e) = Gtin::parse(g)
-    {
-        errors.push(RowError {
-            row: row_num,
-            field: "gtin".into(),
-            message: e.to_string(),
-        });
+) -> Option<Gtin> {
+    let g = gtin?;
+    match Gtin::parse(g) {
+        Ok(parsed) => Some(parsed),
+        Err(e) => {
+            errors.push(RowError {
+                row: row_num,
+                field: "gtin".into(),
+                message: e.to_string(),
+            });
+            None
+        }
     }
 }
 
@@ -189,7 +197,7 @@ pub(super) fn require_aliased(
 /// Maximum `material_N_*` column groups parsed from a row.
 const MAX_MATERIAL_COLUMNS: usize = 10;
 
-/// Parse `material_N_name` / `_weightKg` / `_recycledPct` / `_originCountry`
+/// Parse `material_N_name` / `_weightKg` / `_recycledPct` / `_countryOfOrigin`
 /// column groups into a bill of materials. Groups with a blank name are skipped
 /// (handles trailing empty material slots in templates).
 pub(super) fn parse_materials(row: &HashMap<String, String>) -> Vec<MaterialEntry> {
@@ -207,14 +215,14 @@ pub(super) fn parse_materials(row: &HashMap<String, String>) -> Vec<MaterialEntr
         let recycled_pct = get_field(row, &format!("material_{i}_recycledPct"))
             .and_then(|v| v.parse::<f64>().ok())
             .filter(|v| v.is_finite());
-        let origin_country = get_field(row, &format!("material_{i}_originCountry"))
+        let country_of_origin = get_field(row, &format!("material_{i}_countryOfOrigin"))
             .filter(|v| !v.trim().is_empty())
             .cloned();
         out.push(MaterialEntry {
             name,
             weight_kg,
             recycled_pct,
-            origin_country,
+            country_of_origin,
         });
     }
     out

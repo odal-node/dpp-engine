@@ -26,7 +26,7 @@ fn main() {
         "sectorData": {
             "sector": "textile",
             "gtin": "09506000134352",
-            "countryOfManufacturing": "Germany",
+            "countryOfOrigin": "Germany",
             "careInstructions": "Machine wash cold, tumble dry low",
             "chemicalComplianceStandard": "OEKO-TEX Standard 100",
             "recycledContentPct": 32.5,

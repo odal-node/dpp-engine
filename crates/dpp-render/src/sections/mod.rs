@@ -33,3 +33,25 @@ pub(crate) fn build_sector_section(p: &serde_json::Value) -> String {
         _ => String::new(),
     }
 }
+
+/// Round-trip a section fixture through `dpp_domain::SectorData`.
+///
+/// Every section renderer reads its fields by **string key** out of a
+/// `serde_json::Value` with a `"-"` fallback, so a field renamed in `dpp-core`
+/// does not break the build — it silently renders a dash. Until this existed,
+/// each section's test wrote its fixture as a hand-rolled JSON literal using the
+/// same stale key the renderer read, so production code and fixture stayed
+/// consistently wrong and the suite stayed green. That is exactly what happened
+/// to `countryOfManufacture`/`countryOfProduction`/`countryOfManufacturing` when
+/// core 0.11.0 collapsed them onto `countryOfOrigin`.
+///
+/// Passing a fixture through the typed struct binds it to core's serde contract:
+/// a renamed **required** field fails the deserialise, a renamed **optional**
+/// one comes back absent, and either way the section's assertion fails instead of
+/// the value quietly disappearing from the public page.
+#[cfg(test)]
+pub(super) fn typed_fixture(sector_data: serde_json::Value) -> serde_json::Value {
+    let typed: dpp_domain::domain::sector::SectorData = serde_json::from_value(sector_data)
+        .expect("section fixture must satisfy dpp-domain's SectorData contract");
+    serde_json::json!({ "sectorData": serde_json::to_value(typed).expect("serialize") })
+}

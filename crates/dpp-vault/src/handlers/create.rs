@@ -381,6 +381,12 @@ mod schema_validation {
             manufacturing_place: None,
             battery_model_id: None,
             battery_passport_number: None,
+            placed_on_market_date: None,
+            carbon_footprint_class_ruleset_id: None,
+            carbon_footprint_class_ruleset_version: None,
+            recycled_content_reporting_year: None,
+            state_of_health: None,
+            expected_lifetime: None,
         })
     }
 

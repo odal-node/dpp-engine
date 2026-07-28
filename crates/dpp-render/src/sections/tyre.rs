@@ -30,13 +30,15 @@ mod tests {
 
     #[test]
     fn full_data_populates_all_fields() {
-        let p = serde_json::json!({"sectorData": {
+        let p = crate::sections::typed_fixture(serde_json::json!({
+            "sector": "tyre",
+            "gtin": "09506000134352",
             "tyreClass": "C1",
             "fuelEfficiencyClass": "B",
             "wetGripClass": "A",
             "externalRollingNoiseDb": 68.0,
             "noisePerformanceClass": "1",
-        }});
+        }));
         let html = build_tyre_section(&p);
         assert!(html.contains(">C1<"));
         assert!(html.contains(">B<"));
