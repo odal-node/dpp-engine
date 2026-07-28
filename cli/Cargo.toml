@@ -39,13 +39,13 @@ wayland-client = { workspace = true, optional = true }
 
 [features]
 # Native OS file-picker dialog (`Passports › Import`, `Verify`). Off by
-# default: `rfd` is the only path that pulls `quick-xml` 0.39 at build time
-# (via ashpd -> the Wayland stack on Linux/BSD, see .cargo/audit.toml) and,
-# more to the point, `odal` is meant to be a scriptable, API-driven control
-# plane (see docs/architecture) — a GUI dialog in that binary is an
-# opt-in shape, not the default one. With the feature off, the picker menu
-# option falls straight through to the existing typed-path prompt, which the
-# console menu already offers as an equal alternative.
+# default because `odal` is meant to be a scriptable, API-driven control plane
+# (see docs/architecture) — a GUI dialog in that binary is an opt-in shape,
+# not the default one. It also keeps `rfd`'s ashpd/Wayland stack (a large,
+# Linux-desktop-only subtree) out of a server-side build. With the feature
+# off, the picker menu option falls straight through to the existing
+# typed-path prompt, which the console menu already offers as an equal
+# alternative.
 desktop = ["dep:rfd", "dep:wayland-client"]
 
 [dev-dependencies]

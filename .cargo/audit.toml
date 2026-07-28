@@ -33,113 +33,6 @@
 #             removes this ID from the lockfile (and the need for this
 #             suppression) entirely
 #
-# --- RUSTSEC-2026-0098 -------------------------------------------------------
-# crate:      rustls-webpki 0.101.7
-# path:       aws-sdk-s3 -> aws-runtime -> aws-smithy-http-client -> rustls
-#             0.21.12 -> rustls-webpki 0.101.7   [NOT IN DEFAULT GRAPH]
-# class:      not-in-graph
-# rationale:  Name-constraint bypass for URI names. `aws-sdk-s3` (the only
-#             consumer of this edge) is now behind the non-default `s3`
-#             feature on `dpp-node` — the ESPR archive and continuity-
-#             snapshot adapters fall back to their NoOp/disabled forms
-#             without it. `cargo tree -i rustls-webpki@0.101.7` resolves
-#             nothing under default features; only `rustls-webpki 0.103.13`
-#             remains, via async-nats/sqlx/reqwest. `cargo audit` (which
-#             scans Cargo.lock's raw package list, not the feature-resolved
-#             graph) still reports this ID regardless — Cargo.lock stays
-#             valid for the `s3` feature too — so the entry stays, now
-#             honestly classed.
-# anchor:     cargo tree -i rustls-webpki@0.101.7 --target all
-# owner:      founder
-# recorded:   2026-07-27
-# expires:    2026-10-25
-# release-on: aws-smithy-http-client ships a rustls-0.23 connector by
-#             default (drops the ignore-need for anyone who does build with
-#             `--features s3`)
-#
-# --- RUSTSEC-2026-0099 -------------------------------------------------------
-# crate:      rustls-webpki 0.101.7
-# path:       aws-sdk-s3 -> aws-runtime -> aws-smithy-http-client -> rustls
-#             0.21.12 -> rustls-webpki 0.101.7   [NOT IN DEFAULT GRAPH]
-# class:      not-in-graph
-# rationale:  Name constraints were incorrectly accepted for certificates
-#             asserting a wildcard name. Same upstream edge as RUSTSEC-2026-0098,
-#             now behind the non-default `s3` feature — see that entry.
-# anchor:     cargo tree -i rustls-webpki@0.101.7 --target all
-# owner:      founder
-# recorded:   2026-07-27
-# expires:    2026-10-25
-# release-on: aws-smithy-http-client ships a rustls-0.23 connector by default
-#
-# --- RUSTSEC-2026-0104 -------------------------------------------------------
-# crate:      rustls-webpki 0.101.7
-# path:       aws-sdk-s3 -> aws-runtime -> aws-smithy-http-client -> rustls
-#             0.21.12 -> rustls-webpki 0.101.7   [NOT IN DEFAULT GRAPH]
-# class:      not-in-graph
-# rationale:  Reachable panic parsing a CRL's `onlySomeReasons` extension.
-#             Same upstream edge as RUSTSEC-2026-0098/-0099, now behind the
-#             non-default `s3` feature — see that entry.
-# anchor:     cargo tree -i rustls-webpki@0.101.7 --target all
-# owner:      founder
-# recorded:   2026-07-27
-# expires:    2026-10-25
-# release-on: aws-smithy-http-client ships a rustls-0.23 connector by default
-#
-# --- RUSTSEC-2025-0057 -------------------------------------------------------
-# crate:      fxhash 0.2.1
-# path:       inquire 0.7.5 -> dpp-cli   [SHIPPED in the `odal` CLI binary,
-#             normal dependency — not in dpp-node/dpp-resolver]
-# class:      reachable-accepted
-# rationale:  Unmaintained (informational, no known vulnerability). `inquire`
-#             pins fxhash for its interactive-prompt fuzzy matching; the fix
-#             requires inquire 0.7->0.9, a breaking bump to the entire `odal`
-#             CLI's interactive prompts, deferred pending a real verification
-#             pass rather than rushed in as a side effect of an unrelated
-#             change. Compiled into the shipped `odal` binary (not dev-only)
-#             — accepted given there is no known vulnerability, only an
-#             unmaintained notice.
-# anchor:     — (reachable-accepted: manual sign-off, no code anchor)
-# owner:      founder
-# recorded:   2026-07-27
-# expires:    2026-10-25
-# release-on: `inquire` ships a fxhash-free (or maintained-fork) release, or
-#             the 0.7->0.9 bump is scheduled as its own reviewed change
-#
-# --- RUSTSEC-2025-0119 -------------------------------------------------------
-# crate:      number_prefix 0.4.0
-# path:       indicatif 0.17.11 -> dpp-cli   [SHIPPED in the `odal` CLI binary,
-#             normal dependency — not in dpp-node/dpp-resolver]
-# class:      reachable-accepted
-# rationale:  Unmaintained (informational, no known vulnerability). `indicatif`
-#             pins number_prefix for progress-bar byte formatting; the fix
-#             requires indicatif 0.17->0.18, a breaking bump to the CLI's
-#             progress bars, deferred for the same reason as fxhash above.
-#             Compiled into the shipped `odal` binary — accepted given there
-#             is no known vulnerability, only an unmaintained notice.
-# anchor:     — (reachable-accepted: manual sign-off, no code anchor)
-# owner:      founder
-# recorded:   2026-07-27
-# expires:    2026-10-25
-# release-on: `indicatif` drops number_prefix, or the 0.17->0.18 bump is
-#             scheduled as its own reviewed change
-#
-# --- RUSTSEC-2025-0134 -------------------------------------------------------
-# crate:      rustls-pemfile 2.2.0
-# path:       bollard 0.17.1 -> testcontainers -> testcontainers-modules
-#             [dev-dependencies only]
-# class:      dev-only
-# rationale:  Unmaintained (informational, no known vulnerability). Pulled by
-#             `bollard` (the Docker API client) under `testcontainers`, the
-#             Docker-backed integration-test harness — absent from every
-#             normal-edge path, so it is not compiled into any shipped
-#             binary.
-# anchor:     cargo tree -i rustls-pemfile -e normal --target all
-# owner:      founder
-# recorded:   2026-07-27
-# expires:    2026-10-25
-# release-on: `bollard`/testcontainers drops rustls-pemfile or ships a
-#             maintained replacement
-#
 # --- RUSTSEC-2026-0194 -------------------------------------------------------
 # crate:      quick-xml 0.30.0
 # path:       calamine 0.22.1 -> dpp-integrator -> dpp-node   [SHIPPED, normal
@@ -190,35 +83,8 @@
 # release-on: calamine ships against quick-xml >= 0.41.0
 #             does (drops the ignore-need for whichever path remains)
 #
-# --- RUSTSEC-2024-0436 -------------------------------------------------------
-# crate:      paste 1.0.15
-# path:       image -> exr -> pulp -> paste (proc-macro)   [SHIPPED, normal
-#             dependency, via dpp-resolver's QR-PNG encoding]
-# class:      reachable-accepted
-# rationale:  Unmaintained (informational, no known vulnerability). `paste` is
-#             a proc-macro code-generation helper pulled in by `pulp` (SIMD
-#             dispatch) via `exr` (OpenEXR support in the `image` crate),
-#             several format-backends removed from the PNG encoding
-#             dpp-resolver's `/dpp/{id}/qr` handler actually uses. No direct
-#             control over `pulp`'s choice of `paste`; the more targeted fix
-#             — dropping `image`'s default features to exclude EXR support
-#             dpp-resolver never uses — is dependency surgery outside this
-#             chunk's scope (gates, not remediation), tracked separately.
-# anchor:     — (reachable-accepted: manual sign-off, no code anchor)
-# owner:      founder
-# recorded:   2026-07-27
-# expires:    2026-10-25
-# release-on: `pulp`/`exr` drops `paste`, or `image`'s default features are
-#             trimmed to exclude EXR support
 ignore = [
     "RUSTSEC-2023-0071",
-    "RUSTSEC-2026-0098",
-    "RUSTSEC-2026-0099",
-    "RUSTSEC-2026-0104",
-    "RUSTSEC-2025-0057",
-    "RUSTSEC-2025-0119",
-    "RUSTSEC-2025-0134",
     "RUSTSEC-2026-0194",
     "RUSTSEC-2026-0195",
-    "RUSTSEC-2024-0436",
 ]
