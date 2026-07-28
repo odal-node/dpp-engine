@@ -178,9 +178,20 @@ registries = [
 # trees that don't always align. Denying outright needs a deliberately-sized
 # skip list, not a guess; "warn" keeps this visible without an immediate,
 # noisy red build. Revisit once a real skip list is curated.
+# Warn, not deny: this graph carries ~175 duplicate crate-versions (mostly
+# transitive churn in the AWS, wayland and hyper stacks). Denying without a
+# curated skip list would fail CI on day one and the reflex fix would be a
+# blanket skip, which is worse than a warning nobody suppressed. Revisit as
+# its own change, with the skip list justified entry by entry.
 multiple-versions = "warn"
 # Lint level for when a crate version requirement is `*`
-wildcards = "allow"
+# A wildcard version requirement accepts whatever the registry serves next.
+# There are none today; deny keeps it that way.
+wildcards = "deny"
+# The engine's own crates are declared `{ path = ... }`, which cargo-deny reads
+# as a wildcard requirement. That is not the hazard this check is for — the
+# hazard is a *registry* crate pinned to `*`. Exempt path deps only.
+allow-wildcard-paths = true
 # The graph highlighting used when creating dotgraphs for crates
 # with multiple versions
 # * lowest-version - The path to the lowest versioned duplicate is highlighted
@@ -256,10 +267,14 @@ skip-tree = [
 [sources]
 # Lint level for what to happen when a crate from a crate registry that is not
 # in the allow list is encountered
-unknown-registry = "warn"
+# Crates.io only. Both denied rather than warned: an unvetted registry or a
+# git dependency is how unreviewed code enters a build, and neither has a
+# legitimate use here — it also makes the "no calamine fork" decision
+# structural instead of remembered.
+unknown-registry = "deny"
 # Lint level for what to happen when a crate from a git repository that is not
 # in the allow list is encountered
-unknown-git = "warn"
+unknown-git = "deny"
 # List of URLs for allowed crate registries. Defaults to the crates.io index
 # if not specified. If it is specified but empty, no registries are allowed.
 allow-registry = ["https://github.com/rust-lang/crates.io-index"]
