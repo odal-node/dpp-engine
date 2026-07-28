@@ -48,7 +48,20 @@ plugins/*.wasm
 plugins/*.wasm.sig
 # Workspace-detached test fixtures (e.g. the wasm-fixture-tests abi-echo plugin).
 crates/*/tests/fixtures/*/target/
-Cargo.lock
+# Cargo.lock IS committed. This repo ships binaries (dpp-node, dpp-resolver,
+# odal) and a Docker image, so the lockfile is part of the artefact's
+# definition, not a developer convenience. Without it CI resolves a fresh
+# graph every run: `cargo audit` would scan a lockfile nobody reviewed, the
+# suppression register's version-pinned entries would drift out from under
+# their own rationales, `cargo deny check bans` would answer differently run
+# to run, and a release SBOM would describe nothing durable. Dependency
+# updates arrive as reviewed lockfile diffs, which is the point.
+# (dpp-core ignores its lockfile — correct, it is a published library.)
+#
+# The workspace-detached test fixtures are the exception: they path-depend on a
+# sibling ../dpp-core checkout that does not exist in a CI checkout of this
+# repo alone, so their lockfiles are machine-local by construction.
+crates/*/tests/fixtures/*/Cargo.lock
 **/*.rs.bak
 # Local dev override: [patch.crates-io] pointing core deps at the sibling
 # dpp-core checkout. Absent in CI/release, so published versions are used.
