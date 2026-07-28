@@ -170,6 +170,16 @@ pub fn build(state: AppState) -> Router {
             "/public/dpp/by-gtin/{gtin}",
             get(public_read_by_gtin_handler),
         )
+        // Audience-scoped read. Deliberately outside `/public` (a public URL
+        // whose body varies by caller breaks caching and the meaning of
+        // `publicJwsSignature`) and outside `/api/v1` (API keys are the
+        // operator's own machine access; a repairer holds a credential and no
+        // key, and requiring one would gate lawful access behind a commercial
+        // relationship).
+        .route(
+            "/credential/dpp/{dppId}",
+            get(crate::handlers::audience_read::audience_read_handler),
+        )
         .nest("/api/v1", authenticated)
         .nest("/internal", internal)
         .layer(cors_layer)

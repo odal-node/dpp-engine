@@ -161,6 +161,8 @@ async fn main() -> anyhow::Result<()> {
         db_ping: Arc::new(PgPing(dal)),
         auth_provider,
         local_auth_provider,
+        credential_directory: None,
+        trusted_issuers: None,
         cors_allowed_origins: cfg.cors_allowed_origins.clone(),
         scan_repo,
         // The standalone vault binary hosts no Wasm plugin engine; runtime

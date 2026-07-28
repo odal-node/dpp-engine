@@ -311,6 +311,8 @@ async fn start_vault_with_identity(dal: PgDal, identity: Arc<dyn IdentityPort>) 
         db_ping: Arc::new(PgPing(dal)),
         auth_provider,
         local_auth_provider: None,
+        credential_directory: None,
+        trusted_issuers: None,
         cors_allowed_origins: Vec::new(),
         scan_repo,
         plugin_admin: None,

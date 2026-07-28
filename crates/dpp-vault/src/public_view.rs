@@ -45,8 +45,23 @@ pub fn public_policy(sector_key: &str) -> SectorAccessPolicy {
 /// `publicJwsSignature` itself is absent at signing time (the field is `None` and
 /// skips serialisation), so the proof never signs over itself.
 pub fn public_view(full: &Value, sector_key: &str) -> Value {
+    audience_view(full, sector_key, Audience::Public)
+}
+
+/// Redact a full passport to the view a given [`Audience`] may see.
+///
+/// [`public_view`] is this with [`Audience::Public`]; the fail-closed
+/// unknown-sector backstop below is shared deliberately, because an
+/// unrecognised sector has no field policy for *any* audience, not just the
+/// public one — a credentialed reader must not receive more from an unmodelled
+/// sector than an anonymous one would.
+///
+/// Note this is **not** covered by `publicJwsSignature`, which signs only the
+/// public view. A non-public view is currently served unsigned; giving the
+/// legitimate-interest audience a verifiable artefact is tracked separately.
+pub fn audience_view(full: &Value, sector_key: &str, audience: Audience) -> Value {
     let policy = public_policy(sector_key);
-    let mut view = filter_by_audience(full, &policy, Audience::Public).filtered_data;
+    let mut view = filter_by_audience(full, &policy, audience).filtered_data;
 
     // Fail closed for an unrecognised sector: with no catalog descriptor there is
     // no field-tier policy for its `sectorData`, so the default-Public pass above

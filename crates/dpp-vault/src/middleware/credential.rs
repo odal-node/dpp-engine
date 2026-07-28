@@ -32,41 +32,52 @@
 //! document, the claims window is current, and the issuer is trusted to attest
 //! the audience the credential claims.
 //!
-//! It does **not** mean the credential is unrevoked.
-//! [`crate::infra::status_list::fetch_status_list_for`] is implemented and
-//! fail-closed but not yet wired. Until it is, a revoked credential still
-//! verifies here — so this type must not be the last gate before disclosure.
+//! Revocation is included: the status list is fetched after the signature holds
+//! (an unsigned document's status URL is attacker chosen) and handed to core's
+//! composed verifier, which treats an unreachable list as revoked whenever the
+//! credential declares a status.
 
-use axum::extract::Request;
-use axum::http::StatusCode;
+use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use base64::Engine;
 use dpp_common::http_problem;
 use dpp_crypto::jws::verifier::{
     extract_key_by_fingerprint, extract_kid_from_jws, extract_primary_public_key, verify_jws,
 };
-use dpp_crypto::{DppAccessCredential, TrustedIssuerRegistry, verify_credential_claims};
+use dpp_crypto::{DppAccessCredential, StatusList, TrustedIssuerRegistry};
 use dpp_domain::Audience;
 
 /// The header a caller presents an access credential in.
 pub const CREDENTIAL_HEADER: &str = "X-DPP-Credential";
 
-/// Resolves an issuer DID to its DID document.
+/// The network lookups credential verification needs.
 ///
 /// A port rather than a concrete fetcher so the verification logic below stays
-/// pure and testable: the network lives in the adapter, and a test supplies a
-/// document directly. Returning `None` for any failure — unreachable, malformed,
-/// unknown — keeps the fail-closed decision in one place rather than spreading
-/// error mapping through the verifier.
+/// pure and testable: the network lives in the adapter, and a test supplies
+/// documents directly. Returning `None` for any failure — unreachable,
+/// malformed, unknown — keeps the fail-closed decision in one place rather than
+/// spreading error mapping through the verifier.
+///
+/// Both lookups are on one trait because they share a client, a timeout and a
+/// fail-closed rule; see [`crate::infra::credential_directory`].
 #[async_trait::async_trait]
-pub trait IssuerDirectory: Send + Sync {
+pub trait CredentialDirectory: Send + Sync {
+    /// The issuer's `did:web` document, for the signing key.
     async fn did_document(&self, issuer_did: &str) -> Option<serde_json::Value>;
+
+    /// The credential's revocation status list.
+    ///
+    /// `None` means **revoked** whenever the credential declares a status —
+    /// core applies that policy, and it is why an unreachable list denies
+    /// rather than passes.
+    async fn status_list(&self, credential: &DppAccessCredential) -> Option<StatusList>;
 }
 
 /// A credential that verified against its issuer's published key, is within its
-/// validity window, and whose issuer is trusted for the audience it claims.
+/// validity window, is not revoked, and whose issuer is trusted for the audience
+/// it claims.
 ///
-/// Revocation is **not** checked — see the module docs.
+/// This is a grant: every check the engine can make has been made.
 #[derive(Debug, Clone)]
 pub struct VerifiedCredential(DppAccessCredential);
 
@@ -115,11 +126,11 @@ fn decode_payload(jws: &str) -> Option<DppAccessCredential> {
 /// consumers to register or supply a password, so an unauthenticated read is the
 /// product's baseline rather than a degraded case.
 pub async fn read_and_verify(
-    request: &Request,
-    issuers: &dyn IssuerDirectory,
+    headers: &HeaderMap,
+    directory: &dyn CredentialDirectory,
     trust: &dyn TrustedIssuerRegistry,
 ) -> CredentialOutcome {
-    let Some(raw) = request.headers().get(CREDENTIAL_HEADER) else {
+    let Some(raw) = headers.get(CREDENTIAL_HEADER) else {
         return CredentialOutcome::Absent;
     };
     let Ok(jws) = raw.to_str() else {
@@ -134,7 +145,7 @@ pub async fn read_and_verify(
 
     // Authenticate before doing anything with the claims: until the signature
     // verifies, `issuer` is a string the caller chose.
-    let Some(did_doc) = issuers.did_document(&credential.issuer).await else {
+    let Some(did_doc) = directory.did_document(&credential.issuer).await else {
         return CredentialOutcome::Rejected(reject("Credential issuer DID could not be resolved."));
     };
     let key = extract_kid_from_jws(jws)
@@ -149,22 +160,27 @@ pub async fn read_and_verify(
         return CredentialOutcome::Rejected(reject("Credential signature did not verify."));
     }
 
-    // `required_sector` is None: this layer does not know which passport is being
-    // read. Sector scoping belongs to the read handler, which does.
-    let result = verify_credential_claims(&credential, None, chrono::Utc::now());
+    // Only now that the signature holds is it worth spending a network round
+    // trip on revocation: an unsigned document's status URL is attacker chosen.
+    let status_list = directory.status_list(&credential).await;
+
+    // Claims, issuer trust and revocation in core's composed path, so the
+    // fail-closed revocation policy is applied where it is defined rather than
+    // re-implemented here. `required_sector`/`required_product_category` are
+    // None: this layer does not know which passport is being read — scoping
+    // belongs to the read handler, which does.
+    let result = dpp_crypto::verify_credential_with_revocation_and_trust(
+        &credential,
+        None,
+        None,
+        chrono::Utc::now(),
+        status_list.as_ref(),
+        trust,
+    );
     if !result.is_valid() {
         return CredentialOutcome::Rejected(reject(&format!(
-            "Credential claims are not valid: {result:?}"
+            "Credential is not valid: {result:?}"
         )));
-    }
-
-    // Authorise: a validly-signed credential from an issuer we do not trust for
-    // this audience grants nothing.
-    let claimed = credential.credential_subject.role.audience();
-    if !trust.is_trusted_for_audience(&credential.issuer, claimed) {
-        return CredentialOutcome::Rejected(reject(
-            "Credential issuer is not trusted to attest this audience.",
-        ));
     }
 
     CredentialOutcome::Verified(Box::new(VerifiedCredential(credential)))
@@ -256,21 +272,39 @@ mod tests {
         })
     }
 
-    struct Directory(Option<serde_json::Value>);
+    /// Stub directory: a DID document, and an optional status list.
+    ///
+    /// `status` is `None` by default, which is the *unrevoked* answer for a
+    /// credential that declares no status — the fixtures here do not. A
+    /// credential that *does* declare one and gets `None` is treated as revoked
+    /// by core, which `a_declared_status_that_cannot_be_fetched_denies` covers.
+    struct Directory {
+        doc: Option<serde_json::Value>,
+        status: Option<StatusList>,
+    }
 
-    #[async_trait::async_trait]
-    impl IssuerDirectory for Directory {
-        async fn did_document(&self, _issuer: &str) -> Option<serde_json::Value> {
-            self.0.clone()
+    impl Directory {
+        fn with(doc: Option<serde_json::Value>) -> Self {
+            Self { doc, status: None }
         }
     }
 
-    fn request_with(header: Option<&str>) -> Request {
-        let mut b = Request::builder();
-        if let Some(v) = header {
-            b = b.header(CREDENTIAL_HEADER, v);
+    #[async_trait::async_trait]
+    impl CredentialDirectory for Directory {
+        async fn did_document(&self, _issuer: &str) -> Option<serde_json::Value> {
+            self.doc.clone()
         }
-        b.body(axum::body::Body::empty()).expect("request")
+        async fn status_list(&self, _c: &DppAccessCredential) -> Option<StatusList> {
+            self.status.clone()
+        }
+    }
+
+    fn headers_with(header: Option<&str>) -> HeaderMap {
+        let mut h = HeaderMap::new();
+        if let Some(v) = header {
+            h.insert(CREDENTIAL_HEADER, v.parse().expect("header value"));
+        }
+        h
     }
 
     fn trusting() -> StaticTrustedIssuers {
@@ -286,7 +320,7 @@ mod tests {
     async fn absent_header_is_the_public_path_not_an_error() {
         // Public access must not require registration (toy and detergent
         // regulations state this outright), so "no credential" is the norm.
-        let out = read_and_verify(&request_with(None), &Directory(None), &trusting()).await;
+        let out = read_and_verify(&headers_with(None), &Directory::with(None), &trusting()).await;
         assert!(matches!(out, CredentialOutcome::Absent));
     }
 
@@ -299,8 +333,8 @@ mod tests {
             &credential(CredentialRole::AuthorisedRepairer, 30),
         );
         let out = read_and_verify(
-            &request_with(Some(&jws)),
-            &Directory(Some(did_doc(&key, &kid))),
+            &headers_with(Some(&jws)),
+            &Directory::with(Some(did_doc(&key, &kid))),
             &trusting(),
         )
         .await;
@@ -326,8 +360,8 @@ mod tests {
         let tampered = format!("{}.{}.{}", parts[0], B64.encode(&canonical), parts[2]);
 
         let out = read_and_verify(
-            &request_with(Some(&tampered)),
-            &Directory(Some(did_doc(&key, &kid))),
+            &headers_with(Some(&tampered)),
+            &Directory::with(Some(did_doc(&key, &kid))),
             &trusting(),
         )
         .await;
@@ -339,8 +373,8 @@ mod tests {
         let (key, kid) = key_and_kid();
         let jws = sign_credential(&key, &kid, &credential(CredentialRole::Recycler, 30));
         let out = read_and_verify(
-            &request_with(Some(&jws)),
-            &Directory(None), // DID unreachable
+            &headers_with(Some(&jws)),
+            &Directory::with(None), // DID unreachable
             &trusting(),
         )
         .await;
@@ -353,8 +387,8 @@ mod tests {
         let jws = sign_credential(&key, &kid, &credential(CredentialRole::Recycler, 30));
         let other = SigningKey::from_bytes(&[9u8; 32]);
         let out = read_and_verify(
-            &request_with(Some(&jws)),
-            &Directory(Some(did_doc(&other, &kid))), // issuer publishes a different key
+            &headers_with(Some(&jws)),
+            &Directory::with(Some(did_doc(&other, &kid))), // issuer publishes a different key
             &trusting(),
         )
         .await;
@@ -366,8 +400,8 @@ mod tests {
         let (key, kid) = key_and_kid();
         let jws = sign_credential(&key, &kid, &credential(CredentialRole::Recycler, -1));
         let out = read_and_verify(
-            &request_with(Some(&jws)),
-            &Directory(Some(did_doc(&key, &kid))),
+            &headers_with(Some(&jws)),
+            &Directory::with(Some(did_doc(&key, &kid))),
             &trusting(),
         )
         .await;
@@ -383,8 +417,8 @@ mod tests {
         let jws = sign_credential(&key, &kid, &credential(CredentialRole::Recycler, 30));
         let nobody = StaticTrustedIssuers::new(Vec::<String>::new(), Vec::<String>::new());
         let out = read_and_verify(
-            &request_with(Some(&jws)),
-            &Directory(Some(did_doc(&key, &kid))),
+            &headers_with(Some(&jws)),
+            &Directory::with(Some(did_doc(&key, &kid))),
             &nobody,
         )
         .await;
@@ -403,8 +437,8 @@ mod tests {
         );
         let li_only = StaticTrustedIssuers::new(vec![ISSUER], Vec::<String>::new());
         let out = read_and_verify(
-            &request_with(Some(&jws)),
-            &Directory(Some(did_doc(&key, &kid))),
+            &headers_with(Some(&jws)),
+            &Directory::with(Some(did_doc(&key, &kid))),
             &li_only,
         )
         .await;
@@ -420,19 +454,54 @@ mod tests {
         let mut doc = did_doc(&key, &kid);
         doc.as_object_mut().expect("obj").remove("assertionMethod");
         let out = read_and_verify(
-            &request_with(Some(&jws)),
-            &Directory(Some(doc)),
+            &headers_with(Some(&jws)),
+            &Directory::with(Some(doc)),
             &trusting(),
         )
         .await;
         assert!(matches!(out, CredentialOutcome::Rejected(_)));
     }
 
+    /// A credential declaring a revocation status whose list cannot be fetched
+    /// must be denied, not admitted. This is the fail-closed half of revocation:
+    /// an attacker who can make the status endpoint unreachable must not thereby
+    /// turn a revoked credential into a working one.
+    #[tokio::test]
+    async fn a_declared_status_that_cannot_be_fetched_denies() {
+        let (key, kid) = key_and_kid();
+        let mut cred = credential(CredentialRole::Recycler, 30);
+        cred.credential_status = Some(dpp_crypto::CredentialStatus {
+            id: "https://issuer.example/status#4".to_owned(),
+            status_type: "BitstringStatusListEntry".to_owned(),
+            status_list_index: Some("4".to_owned()),
+            status_list_credential: Some("https://issuer.example/status".to_owned()),
+        });
+        let jws = sign_credential(&key, &kid, &cred);
+        let out = read_and_verify(
+            &headers_with(Some(&jws)),
+            // signature resolves, but the status list does not
+            &Directory {
+                doc: Some(did_doc(&key, &kid)),
+                status: None,
+            },
+            &trusting(),
+        )
+        .await;
+        assert!(
+            matches!(out, CredentialOutcome::Rejected(_)),
+            "an unfetchable status list must deny"
+        );
+    }
+
     #[tokio::test]
     async fn a_malformed_envelope_is_rejected() {
         for bad in ["not a jws", "{\"still\":\"json\"}", "a.b"] {
-            let out =
-                read_and_verify(&request_with(Some(bad)), &Directory(None), &trusting()).await;
+            let out = read_and_verify(
+                &headers_with(Some(bad)),
+                &Directory::with(None),
+                &trusting(),
+            )
+            .await;
             assert!(
                 matches!(out, CredentialOutcome::Rejected(_)),
                 "{bad:?} must be rejected"

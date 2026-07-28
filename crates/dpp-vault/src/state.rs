@@ -43,6 +43,14 @@ pub struct AppState {
     /// Bearer-scheme auth provider — API keys (and any future Bearer-scheme
     /// provider, e.g. OAuth). Only tried for `Authorization: Bearer`.
     pub auth_provider: Arc<dyn AuthProvider>,
+    /// Network lookups for credential verification — issuer DID documents and
+    /// revocation status lists. `None` when credentialed access is unconfigured,
+    /// in which case the audience-scoped route serves the public view.
+    pub credential_directory:
+        Option<std::sync::Arc<dyn crate::middleware::credential::CredentialDirectory>>,
+    /// Which issuers may attest which audience. `None` alongside
+    /// `credential_directory`; the node reports the capability absent.
+    pub trusted_issuers: Option<std::sync::Arc<dyn dpp_crypto::TrustedIssuerRegistry>>,
     /// Basic-scheme auth provider — the local admin bootstrap credential.
     /// Only tried for `Authorization: Basic`; kept separate from
     /// `auth_provider` so a Bearer token can never authenticate as local
