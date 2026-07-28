@@ -54,11 +54,23 @@ Issues in the following areas are particularly important:
 
 A small number of upstream advisories are accepted risk rather than out of
 scope: the engine runs a dated, code-anchored suppression register
-(`.cargo/audit.toml`, enforced by `scripts/check-audit-register.sh`) for
-advisories that are either unreachable in the shipped binaries or upstream-
-blocked with no fixed release available. If you believe a suppressed advisory
-is in fact exploitable, report it — the register's own reachability claim may
-be wrong or stale, and that is exactly the kind of report we want.
+(`.cargo/audit.toml`, enforced by `scripts/check-audit-register.sh`). Every
+entry states its reachability as a checked category — not in the dependency
+graph, dev- or build-time only, reachable but mitigated by a named guard, or
+reachable and accepted — plus the code fact that makes the category true, an
+owner, and an expiry date after which CI fails until it is re-verified. The
+categories are checked against both a default build and the feature set the
+published image is built with, because a claim that holds only outside the
+shipped artefact is not a claim about what operators run.
+
+At least one entry is reachable in the shipped binaries and mitigated rather
+than fixed, because no patched upstream release exists yet. Read the register
+for the current set — it is the authoritative list, and this paragraph
+deliberately does not restate it.
+
+If you believe a suppressed advisory is in fact exploitable, report it — the
+register's own reachability claim may be wrong or stale, and that is exactly
+the kind of report we want.
 
 ## Supported Versions
 

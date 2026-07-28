@@ -213,13 +213,16 @@ If `DATABASE_MIGRATE_URL` is unset, migrations are assumed pre-applied.
 
 ### Auth
 
-`CompositeAuthProvider` chains two providers:
-1. `ApiKeyAuthProvider` — `Bearer odal_sk_...` (SHA-256 hash comparison against DB)
-2. `LocalAuthProvider` — Basic auth (ADMIN_USERNAME/ADMIN_PASSWORD env vars)
+`auth_middleware` routes on the `Authorization` **scheme**, and each scheme reaches only its own provider:
+
+1. `Bearer odal_sk_...` → `CompositeAuthProvider` → `ApiKeyAuthProvider` (SHA-256 hash comparison against DB). A future OAuth provider joins this chain.
+2. `Basic base64(user:pass)` → `LocalAuthProvider` (ADMIN_USERNAME/ADMIN_PASSWORD env vars), the bootstrap/lockout-recovery credential. `None` when either env var is unset.
+
+The split is load-bearing, not cosmetic: `LocalAuthProvider` base64-decodes whatever string it is handed, so if it sat in the Bearer chain a `Bearer base64(user:pass)` token would authenticate as admin. Anything sending the local-admin credential must use the `Basic` scheme — the CLI's `OdalClient::with_local_admin` does.
 
 There is **no** dev/unsigned-JWT provider in shipped code (the former `DevAuthProvider` was removed — it allowed an auth bypass). Integration tests define their own test-only provider.
 
-All `/api/v1/*` vault routes are wrapped in `auth_middleware` which extracts `AuthContext { user_id, plan }` from the token and injects it into request extensions. Single-tenant: `AuthContext` carries no operator/tenant scope.
+All `/api/v1/*` vault routes are wrapped in `auth_middleware`, which injects `AuthContext { user_id, scope, key_id }` into request extensions. Single-tenant: `AuthContext` carries no operator/tenant scope.
 
 ### Event Bus
 
