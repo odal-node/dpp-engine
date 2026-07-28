@@ -16,7 +16,8 @@ services:
 
   # ---------------------------------------------------------------------------
   # PostgreSQL — primary datastore
-  # App connects as odal_app (RLS-bound); migrations run as postgres superuser.
+  # App connects as odal_app (least-privilege, no DDL — the node refuses to boot
+  # as a superuser); migrations run as the postgres superuser.
   # [verify] pin to the current 17.x digest before any deploy beyond dev.
   # ---------------------------------------------------------------------------
   postgres:

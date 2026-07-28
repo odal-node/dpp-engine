@@ -18,6 +18,7 @@
 //!   T13 snapshot reconcile outbox upsert/re-arm/due-filter
 //!   T14 snapshot repair sweep selectivity
 //!   T15 snapshot outbox mark-* methods fail closed on an unknown row id
+//!   T16 PgDal::connect refuses a superuser role
 
 #![cfg(feature = "integration-tests")]
 
@@ -1150,4 +1151,17 @@ async fn t15_snapshot_outbox_mark_methods_fail_closed_on_unknown_id() {
         .await
         .expect_err("mark_exhausted on an unknown row must fail, not silently succeed");
     assert!(matches!(err, dpp_domain::DppError::NotFound(_)));
+}
+
+// T16 — `PgDal::connect` refuses a superuser role. A superuser silently
+// disables the append-only audit trigger's guarantee (it cannot bind the
+// table owner), so a `DATABASE_URL` misconfigured to a privileged role
+// instead of `odal_app` must fail loudly at boot, not connect quietly.
+#[tokio::test]
+async fn t16_connect_refuses_a_superuser_role() {
+    let pg = start_pg().await;
+    match PgDal::connect(&pg.admin_url).await {
+        Ok(_) => panic!("connecting as the postgres superuser must be refused"),
+        Err(e) => assert!(matches!(e, dpp_domain::DppError::Internal(_))),
+    }
 }

@@ -29,7 +29,12 @@ FROM builder-base AS builder-published
 COPY dpp-engine/ dpp-engine/
 WORKDIR /build/dpp-engine
 RUN rm -f .cargo/config.toml
-RUN cargo build --release -p dpp-node
+# `s3` is off by default (object storage is an optional deployment
+# dependency); the image opts in so ESPR archival and continuity snapshots
+# work out of the box. This is the artefact operators run — any claim about
+# what the shipped binary contains must be checked against *this* feature
+# set, not against a bare `cargo build`.
+RUN cargo build --release -p dpp-node --features s3
 
 # ── local: patch dpp-* to the sibling ../dpp-core source ─────────────────────────
 FROM builder-base AS builder-local
@@ -42,7 +47,7 @@ COPY dpp-engine/ dpp-engine/
 # the context via .dockerignore, so this is deterministic).
 COPY dpp-engine/.cargo/config.toml.example /build/dpp-engine/.cargo/config.toml
 WORKDIR /build/dpp-engine
-RUN cargo build --release -p dpp-node
+RUN cargo build --release -p dpp-node --features s3
 
 # Select the active builder from BUILD_MODE; only the chosen stage is built.
 FROM builder-${BUILD_MODE} AS builder

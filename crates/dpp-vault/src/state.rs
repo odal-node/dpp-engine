@@ -40,8 +40,15 @@ pub struct AppState {
     pub webhook_service: Arc<WebhookService>,
     /// Liveness probe for the backing database.
     pub db_ping: Arc<dyn DbPing>,
-    /// Auth provider — CompositeAuthProvider (API key + local auth).
+    /// Bearer-scheme auth provider — API keys (and any future Bearer-scheme
+    /// provider, e.g. OAuth). Only tried for `Authorization: Bearer`.
     pub auth_provider: Arc<dyn AuthProvider>,
+    /// Basic-scheme auth provider — the local admin bootstrap credential.
+    /// Only tried for `Authorization: Basic`; kept separate from
+    /// `auth_provider` so a Bearer token can never authenticate as local
+    /// admin, even if it happens to carry a valid `base64(user:pass)`
+    /// payload. `None` when `ADMIN_USERNAME`/`ADMIN_PASSWORD` are not both set.
+    pub local_auth_provider: Option<Arc<dyn AuthProvider>>,
     /// Aggregate scan-telemetry counters — resolution counts and QR-render
     /// counts. A bare port (like `db_ping`): the stats/ingest handlers call it
     /// directly, there is no orchestration to wrap in a service.

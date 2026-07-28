@@ -7,6 +7,7 @@ authors.workspace     = true
 license.workspace     = true
 repository.workspace  = true
 rust-version.workspace = true
+publish = false
 
 [lib]
 name = "dpp_node"
@@ -60,10 +61,21 @@ url          = { workspace = true }
 base64       = { workspace = true }
 serde_jcs    = { workspace = true }
 thiserror    = { workspace = true }
-aws-sdk-s3   = { workspace = true }
+aws-sdk-s3   = { workspace = true, optional = true }
 
 [features]
-integration-tests = []
+# ESPR Art. 13 archive + continuity-snapshot S3/MinIO adapters. Off by
+# default because object storage is an optional deployment dependency for a
+# self-hosted node, not because of an advisory: the AWS SDK's vulnerable TLS
+# edge was removed outright in the workspace `aws-sdk-s3` feature list (see
+# the comment there), so `--features s3` and the default build now resolve
+# the same rustls 0.23 stack. The published Docker image builds with this
+# feature on (see docker/node.Dockerfile), so gating it does not reduce
+# shipped risk and must never be relied on to.
+s3 = ["dep:aws-sdk-s3"]
+# Pulls in `s3` so the S3-backed integration tests (crates/dpp-node/tests/s3_archive.rs)
+# exercise the real adapter, not just NoOpArchive.
+integration-tests = ["s3"]
 
 [dev-dependencies]
 tower          = { version = "0.4", features = ["util"] }

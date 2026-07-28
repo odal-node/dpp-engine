@@ -49,7 +49,9 @@ debug = "line-tables-only"
 # Shared dependency versions — crates inherit these with `workspace = true`
 # ---------------------------------------------------------------------------
 [workspace.dependencies]
-# Core crates — consumed from crates.io (dpp-core is published independently at 0.9.0).
+# Core crates — consumed from crates.io (dpp-core is published independently;
+# see the pins below for the version actually in use, and README.md's sync
+# note for the other places that must agree on a bump).
 dpp-domain = "0.10.0"
 
 # Engine-wide types (tenant, auth, audit, API keys) — engine-internal crate.
@@ -102,15 +104,25 @@ jsonschema   = "0.17"
 
 # QR code
 qrcode       = "0.12"
-image        = "0.24"
+# PNG only — the sole use is encoding a QR code (dpp-resolver's resolve_qr).
+# The default feature set pulls decoders for every format the crate supports,
+# including the OpenEXR stack (exr -> pulp -> the unmaintained `paste`), none
+# of which this workspace can reach. Keep this list minimal: each format added
+# here is parser surface in a binary that serves public HTTP.
+image        = { version = "0.24", default-features = false, features = ["png"] }
 
 # HTTP client
-reqwest      = { version = "0.12", default-features = false, features = ["json", "stream", "multipart", "rustls-tls"] }
+# 0.13 renamed the TLS feature (`rustls-tls` -> `rustls`) and moved several
+# builder methods behind their own features, so `query` and `form` are now
+# explicit — without them `.query()` and `.form()` simply do not exist and the
+# failure is a missing-method error, not a feature hint. Keep the list minimal:
+# this client talks to the EU registry, webhook targets and the vault.
+reqwest      = { version = "0.13", default-features = false, features = ["json", "stream", "multipart", "query", "form", "rustls"] }
 url          = "2"
 
 # Cache
-redis        = { version = "0.25", features = ["tokio-comp", "connection-manager"] }
-deadpool-redis = "0.14"
+redis        = { version = "1.3", features = ["tokio-comp", "connection-manager"] }
+deadpool-redis = "0.23"
 
 # Telemetry
 tracing             = "0.1"
@@ -124,7 +136,7 @@ criterion    = { version = "0.5", features = ["html_reports"] }
 # Utilities
 uuid         = { version = "1", features = ["v7", "serde"] }
 chrono       = { version = "0.4", features = ["serde"] }
-thiserror    = "1"
+thiserror    = "2"
 anyhow       = "1"
 async-trait  = "0.1"
 dotenvy      = "0.15"
@@ -133,17 +145,28 @@ dotenvy      = "0.15"
 async-nats   = "0.49"
 
 # AWS S3 (MinIO / R2 compatible)
-aws-sdk-s3   = "1"
+#
+# Default features minus `rustls`. That feature is a legacy alias: it resolves
+# to aws-smithy-runtime/tls-rustls -> aws-smithy-http-client/legacy-rustls-ring,
+# which is rustls 0.21 + rustls-webpki 0.101.7 (three advisories) on hyper 0.14.
+# HTTPS does not need it — `default-https-client` (kept below) resolves to
+# aws-smithy-http-client/rustls-aws-lc, which is rustls 0.23 on hyper 1.x.
+# Enabling both pulled two TLS stacks into the binary and only the dead one was
+# vulnerable. Keep this list explicit: re-adding `rustls`, or dropping
+# `default-features = false`, silently restores the 0.21 edge.
+aws-sdk-s3   = { version = "1", default-features = false, features = [
+  "sigv4a", "http-1x", "default-https-client", "rt-tokio",
+] }
 
 # CSV / XLSX parsing (integrator)
-calamine     = "0.22"
+calamine     = "0.36"
 csv          = "1.3"
 
 # CLI
 clap         = { version = "4", features = ["derive", "env"] }
-indicatif    = "0.17"
+indicatif    = "0.18"
 toml         = "0.8"
-inquire      = "0.7"
+inquire      = "0.9"
 console      = "0.15"
 
 # Native OS file picker for `Passports › Import`. `xdg-portal` (not gtk3) keeps
@@ -159,15 +182,15 @@ wayland-client = { version = "0.31", features = ["dlopen"] }
 dirs         = "5"
 
 # Integration tests
-testcontainers        = "0.21"
-testcontainers-modules = { version = "0.9", default-features = false }
+testcontainers        = "0.27"
+testcontainers-modules = { version = "0.15", default-features = false }
 
 # Property-based testing (dev-only)
 proptest              = "1"
 
 # Wasm plugin runtime
-wasmtime       = { version = "45", default-features = false, features = ["cranelift", "async", "component-model"] }
-wasmtime-wasi  = "45"
+wasmtime       = { version = "46", default-features = false, features = ["cranelift", "async", "component-model"] }
+wasmtime-wasi  = "46"
 
 # GS1 / JSON-LD
 json-ld        = "0.21"
