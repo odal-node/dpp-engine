@@ -2164,7 +2164,7 @@ dependencies = [
  "async-trait",
  "base64",
  "chrono",
- "dpp-domain",
+ "dpp-domain 0.10.0",
  "ed25519-dalek 3.0.0",
  "flate2",
  "hex",
@@ -2186,7 +2186,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "chrono",
- "dpp-domain",
+ "dpp-domain 0.10.0",
  "dpp-types",
  "metrics",
  "serde",
@@ -2206,7 +2206,7 @@ version = "0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7b4cdf20691b0d7bd34d0c1a02dec9d88056c8dda0bb0d27e1205f05e2aeb22b"
 dependencies = [
- "dpp-domain",
+ "dpp-domain 0.10.0",
  "serde",
  "serde_json",
  "thiserror 2.0.19",
@@ -2220,8 +2220,26 @@ checksum = "212523110c04ce0bfdcfceabb833cc5caaf71bfb611e1ca211852cf85e7c8602"
 dependencies = [
  "async-trait",
  "chrono",
- "dpp-rules",
- "jsonschema",
+ "dpp-rules 0.10.0",
+ "jsonschema 0.46.10",
+ "semver",
+ "serde",
+ "serde_json",
+ "serde_with",
+ "thiserror 2.0.19",
+ "uuid",
+]
+
+[[package]]
+name = "dpp-domain"
+version = "0.11.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "810777f10c83b968fee7f57b1b90b38063d8046dd207e1d5af3f9320424d285e"
+dependencies = [
+ "async-trait",
+ "chrono",
+ "dpp-rules 0.11.0",
+ "jsonschema 0.48.5",
  "semver",
  "serde",
  "serde_json",
@@ -2254,7 +2272,7 @@ dependencies = [
  "dotenvy",
  "dpp-common",
  "dpp-crypto",
- "dpp-domain",
+ "dpp-domain 0.10.0",
  "serde",
  "serde_json",
  "serial_test",
@@ -2281,7 +2299,7 @@ dependencies = [
  "csv",
  "dotenvy",
  "dpp-common",
- "dpp-domain",
+ "dpp-domain 0.10.0",
  "futures",
  "metrics",
  "proptest",
@@ -2316,13 +2334,13 @@ dependencies = [
  "dpp-common",
  "dpp-crypto",
  "dpp-dal",
- "dpp-domain",
+ "dpp-domain 0.10.0",
  "dpp-identity",
  "dpp-integrator",
  "dpp-plugin-host",
  "dpp-registry",
  "dpp-render",
- "dpp-rules",
+ "dpp-rules 0.10.0",
  "dpp-types",
  "dpp-vault",
  "ed25519-dalek 2.2.0",
@@ -2357,7 +2375,7 @@ dependencies = [
  "base64",
  "criterion",
  "dpp-common",
- "dpp-domain",
+ "dpp-domain 0.10.0",
  "dpp-plugin-traits",
  "ed25519-dalek 2.2.0",
  "metrics",
@@ -2388,13 +2406,13 @@ dependencies = [
 
 [[package]]
 name = "dpp-registry"
-version = "0.10.0"
+version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "043a22d397a9ad6c0a77cb92e804488a3929fab1a7badb4d560652657cca7dd2"
+checksum = "0cf6ea8c1a48b765cd109ec59002db308d547c883550354054d86ede10506c22"
 dependencies = [
  "chrono",
- "dpp-domain",
- "dpp-rules",
+ "dpp-domain 0.11.0",
+ "dpp-rules 0.11.0",
  "getrandom 0.4.3",
  "serde",
  "serde_json",
@@ -2426,7 +2444,7 @@ dependencies = [
  "dpp-common",
  "dpp-crypto",
  "dpp-digital-link",
- "dpp-domain",
+ "dpp-domain 0.10.0",
  "dpp-render",
  "ed25519-dalek 2.2.0",
  "image 0.24.9",
@@ -2464,12 +2482,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "dpp-rules"
+version = "0.11.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7368825702acb3cee1344e3dc0e378650449aa995f6c3e0f7cb9ba1e54864c5e"
+
+[[package]]
 name = "dpp-seal"
 version = "0.9.0"
 dependencies = [
  "async-trait",
  "chrono",
- "dpp-domain",
+ "dpp-domain 0.10.0",
  "serde",
  "serde_json",
  "thiserror 2.0.19",
@@ -2483,8 +2507,8 @@ version = "0.9.0"
 dependencies = [
  "async-trait",
  "chrono",
- "dpp-domain",
- "dpp-rules",
+ "dpp-domain 0.10.0",
+ "dpp-rules 0.10.0",
  "proptest",
  "serde",
  "serde_json",
@@ -2506,7 +2530,7 @@ dependencies = [
  "dpp-crypto",
  "dpp-dal",
  "dpp-digital-link",
- "dpp-domain",
+ "dpp-domain 0.10.0",
  "dpp-registry",
  "dpp-types",
  "ed25519-dalek 2.2.0",
@@ -3192,6 +3216,8 @@ version = "0.17.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ed5909b6e89a2db4456e54cd5f673791d7eca6732202bbf2a9cc504fe2f9b84a"
 dependencies = [
+ "allocator-api2",
+ "equivalent",
  "foldhash 0.2.0",
  "serde",
  "serde_core",
@@ -3813,16 +3839,47 @@ dependencies = [
  "getrandom 0.3.4",
  "idna",
  "itoa",
- "jsonschema-regex",
+ "jsonschema-regex 0.46.10",
  "num-cmp",
  "num-traits",
  "percent-encoding",
- "referencing",
+ "referencing 0.46.10",
  "regex",
  "reqwest",
  "rustls",
  "serde",
  "serde_json",
+ "unicode-general-category",
+ "uuid-simd",
+]
+
+[[package]]
+name = "jsonschema"
+version = "0.48.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f05a6cff806294a7699d48761d4ae2bdebab7fa2eef05e4a0b83320f0ff46901"
+dependencies = [
+ "ahash",
+ "bytecount",
+ "data-encoding",
+ "email_address",
+ "fancy-regex",
+ "fraction",
+ "getrandom 0.3.4",
+ "idna",
+ "itoa",
+ "jsonschema-regex 0.48.5",
+ "jsonschema-value",
+ "num-cmp",
+ "num-traits",
+ "percent-encoding",
+ "referencing 0.48.5",
+ "regex",
+ "reqwest",
+ "rustls",
+ "serde",
+ "serde_json",
+ "strum",
  "unicode-general-category",
  "uuid-simd",
 ]
@@ -3834,6 +3891,29 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6dbd1086b01b9349fd4ef9a07433965af64c8ce8159abe633a189e4ff817bd13"
 dependencies = [
  "regex-syntax",
+]
+
+[[package]]
+name = "jsonschema-regex"
+version = "0.48.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "84708dd3f6c5327478a96f37378adb27deed6a626cf84d19de780d9e8ae84b17"
+dependencies = [
+ "regex-syntax",
+]
+
+[[package]]
+name = "jsonschema-value"
+version = "0.48.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fd8c04ab4ce60e42c4e302d3bd9d184652bb56f212495d2eea23573bcbf72556"
+dependencies = [
+ "ahash",
+ "bytecount",
+ "fraction",
+ "num-cmp",
+ "num-traits",
+ "serde_json",
 ]
 
 [[package]]
@@ -5090,6 +5170,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "referencing"
+version = "0.48.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "980e77f5cfffc592c0e7dfb6d20770a0b96a6ab94d403de7454ed9799505e4ba"
+dependencies = [
+ "ahash",
+ "fluent-uri",
+ "getrandom 0.3.4",
+ "hashbrown 0.17.1",
+ "itoa",
+ "micromap",
+ "parking_lot",
+ "percent-encoding",
+ "serde_json",
+]
+
+[[package]]
 name = "regalloc2"
 version = "0.15.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6121,6 +6218,27 @@ version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "152a0b65a590ff6c3da95cabe2353ee04e6167c896b28e3b14478c2636c922fc"
 dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
+]
+
+[[package]]
+name = "strum"
+version = "0.28.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9628de9b8791db39ceda2b119bbe13134770b56c138ec1d3af810d045c04f9bd"
+dependencies = [
+ "strum_macros",
+]
+
+[[package]]
+name = "strum_macros"
+version = "0.28.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ab85eea0270ee17587ed4156089e10b9e6880ee688791d45a905f5b1ca36f664"
+dependencies = [
+ "heck",
  "proc-macro2",
  "quote",
  "syn 2.0.119",

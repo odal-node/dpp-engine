@@ -61,7 +61,7 @@ dpp-crypto        = "0.10.0"
 # (dir: crates/dpp-identity, pkg: dpp-identity).
 dpp-digital-link  = "0.10.0"
 dpp-plugin-traits = "0.10.0"
-dpp-registry      = "0.10.0"
+dpp-registry      = "0.11.0"
 dpp-calc          = "0.10.0"
 dpp-rules         = { version = "0.10.0", features = ["bundle"] }
 
