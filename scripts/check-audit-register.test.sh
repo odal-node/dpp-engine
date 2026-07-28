@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Merge gate for check-audit-register.sh itself: proves the checker actually
-# goes red in the directions that let RUSTSEC-2026-0098/-0099/-0104 (F1) and
-# RUSTSEC-2026-0188 (F2) rot silently in the first place, without needing a
-# real scratch branch each time.
+# goes red in the directions that let RUSTSEC-2026-0098/-0099/-0104 and
+# RUSTSEC-2026-0188 rot silently in the first place, without needing a real
+# scratch branch each time.
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -86,6 +86,33 @@ awk '
 ' .cargo/audit.toml > "$WRONGCLASS"
 grep -q "^# class:      not-in-graph" "$WRONGCLASS" # sanity: the flip actually landed
 expect_fail "not-in-graph claim for an in-graph crate is rejected" "$WRONGCLASS"
+
+# 5. The regression the shipped-graph check exists for: a crate absent under
+#    default features but present in the artefact the Dockerfile actually
+#    builds (`-p dpp-node --features s3`). Three rustls-webpki advisories once
+#    sat behind a green `not-in-graph` claim for exactly this reason — the
+#    claim was checked against a build nobody ships. Reuses the real rsa entry
+#    (already `not-in-graph`, so every other field stays valid) with only its
+#    `crate:` swapped to `aws-sdk-s3`, which is optional by default and on in
+#    the image — so the shipped-graph check is the only thing that can fail.
+SHIPPEDONLY="$SCRATCH/shipped-only.toml"
+awk '
+  /^# --- RUSTSEC-2023-0071/ { inblock = 1 }
+  inblock && /^# --- RUSTSEC-2026-0194/ { inblock = 0 }
+  inblock && /^# crate:/ { print "# crate:      aws-sdk-s3"; next }
+  { print }
+' .cargo/audit.toml > "$SHIPPEDONLY"
+grep -q "^# crate:      aws-sdk-s3" "$SHIPPEDONLY" # sanity: the swap landed
+# Capture before grepping: under `set -o pipefail` the checker's non-zero exit
+# would win the pipeline and mask a successful match.
+SHIPPED_OUT="$(bash scripts/check-audit-register.sh "$SHIPPEDONLY" 2>&1 || true)"
+if grep -q "resolves in the shipped" <<< "$SHIPPED_OUT"; then
+  echo "ok   - not-in-graph claim true only outside the shipped build is rejected"
+  PASS=$((PASS + 1))
+else
+  echo "FAIL - not-in-graph claim true only outside the shipped build is rejected"
+  FAIL=$((FAIL + 1))
+fi
 
 echo ""
 echo "check-audit-register.test: $PASS passed, $FAIL failed"

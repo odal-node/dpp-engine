@@ -130,13 +130,14 @@ done
 # non-zero exit (e.g. "is ambiguous", meaning the spec still matches more
 # than one resolved version) is a real problem, not a pass. Calls fail()
 # itself with a specific reason whenever it cannot confirm absence.
-graph_absent() {
-  local id="$1" pkgspec="$2" edge_flag="$3" out err_file err
+graph_absent_in() {
+  local id="$1" pkgspec="$2" edge_flag="$3" build_label="$4"; shift 4
+  local out err_file err
   err_file="$(mktemp)"
-  if out="$(cargo tree -i "$pkgspec" $edge_flag --target all 2>"$err_file")"; then
+  if out="$(cargo tree -i "$pkgspec" $edge_flag --target all "$@" 2>"$err_file")"; then
     rm -f "$err_file"
     if [[ -n "$out" ]]; then
-      fail "$id: '$pkgspec' resolves in the dependency graph"
+      fail "$id: '$pkgspec' resolves in the $build_label dependency graph"
       return 1
     fi
     return 0
@@ -146,8 +147,25 @@ graph_absent() {
   if grep -q "did not match any packages" <<< "$err"; then
     return 0
   fi
-  fail "$id: could not verify '$pkgspec' against the graph — $err"
+  fail "$id: could not verify '$pkgspec' against the $build_label graph — $err"
   return 1
+}
+
+# A reachability claim has to hold for the artefact operators actually run,
+# not just for `cargo build` with no flags. The published image builds
+# `-p dpp-node --features s3` (docker/node.Dockerfile), so a crate that is
+# absent by default but present there is still shipped — which is exactly how
+# three rustls-webpki advisories once sat behind a green `not-in-graph` claim.
+# Every absence claim is therefore checked against both graphs. Keep
+# SHIPPED_BUILD in step with the Dockerfile.
+SHIPPED_BUILD=(-p dpp-node --features s3)
+
+graph_absent() {
+  local id="$1" pkgspec="$2" edge_flag="$3" ok=0
+  graph_absent_in "$id" "$pkgspec" "$edge_flag" "default" || ok=1
+  graph_absent_in "$id" "$pkgspec" "$edge_flag" "shipped (${SHIPPED_BUILD[*]})" \
+    "${SHIPPED_BUILD[@]}" || ok=1
+  return "$ok"
 }
 
 # ── Check 4: class claims hold against the dependency graph ────────────────
