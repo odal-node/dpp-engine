@@ -1,4 +1,4 @@
-productName,sector,gtin,manufacturerName,manufacturerCountry,batchId,fibreComposition,countryOfManufacturing,careInstructions,chemicalComplianceStandard
+productName,sector,gtin,manufacturerName,manufacturerCountry,batchId,fibreComposition,countryOfOrigin,careInstructions,chemicalComplianceStandard
 Glamor Basic Tee White XS,textile,3801234601001,Glamor Clothing,DE,BATCH-BULK-001,"[{""fibre"":""cotton"",""pct"":100.0}]",DE,Machine wash 40°C.,OEKO-TEX Standard 100
 Glamor Basic Tee White S,textile,3801234601002,Glamor Clothing,DE,BATCH-BULK-001,"[{""fibre"":""cotton"",""pct"":100.0}]",DE,Machine wash 40°C.,OEKO-TEX Standard 100
 Glamor Basic Tee White M,textile,3801234601003,Glamor Clothing,DE,BATCH-BULK-001,"[{""fibre"":""cotton"",""pct"":100.0}]",DE,Machine wash 40°C.,OEKO-TEX Standard 100

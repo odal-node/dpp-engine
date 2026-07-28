@@ -138,6 +138,17 @@ pub fn validate_battery_row(
         critical_raw_materials: None,
         disassembly_instructions_url: None,
         soh_methodology: None,
+        // Added in dpp-core 0.11.0, all optional and none of them carried by the
+        // CSV contract: Annex VII state-of-health / expected-lifetime blocks, the
+        // ruleset the carbon-footprint class was computed under, the Art. 8(1)
+        // reporting year, and the placed-on-market date. Left None until the
+        // template gains columns for them.
+        placed_on_market_date: None,
+        carbon_footprint_class_ruleset_id: None,
+        carbon_footprint_class_ruleset_version: None,
+        recycled_content_reporting_year: None,
+        state_of_health: None,
+        expected_lifetime: None,
         rated_energy_wh: None,
         internal_resistance_mohm: None,
         manufacturing_date: None,
@@ -264,7 +275,7 @@ mod tests {
             ("material_1_name".into(), "Lithium Iron Phosphate".into()),
             ("material_1_weightKg".into(), "1.20".into()),
             ("material_1_recycledPct".into(), "12.5".into()),
-            ("material_1_originCountry".into(), "CN".into()),
+            ("material_1_countryOfOrigin".into(), "CN".into()),
             ("material_2_name".into(), "Graphite".into()),
             ("material_2_weightKg".into(), "0.40".into()),
         ]);
@@ -285,7 +296,7 @@ mod tests {
         assert_eq!(materials[0].name, "Lithium Iron Phosphate");
         assert_eq!(materials[0].weight_kg, 1.20);
         assert_eq!(materials[0].recycled_pct, Some(12.5));
-        assert_eq!(materials[0].origin_country.as_deref(), Some("CN"));
+        assert_eq!(materials[0].country_of_origin.as_deref(), Some("CN"));
 
         // Extended battery fields carried through (no longer dropped).
         match req.sector_data.unwrap() {

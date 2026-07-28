@@ -33,7 +33,7 @@ async fn test_textile_create_publish_resolve() {
                 {"fibre": "cotton", "pct": 95.0},
                 {"fibre": "elastane", "pct": 5.0}
             ],
-            "countryOfManufacturing": "GB",
+            "countryOfOrigin": "GB",
             "careInstructions": "Wash at 30°C",
             "chemicalComplianceStandard": "OEKO-TEX 100"
         }

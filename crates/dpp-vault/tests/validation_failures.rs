@@ -67,7 +67,7 @@ async fn test_textile_fibre_sum_invalid() {
                 {"fibre": "cotton", "pct": 50.0},
                 {"fibre": "polyester", "pct": 40.0}
             ],
-            "countryOfManufacturing": "GB",
+            "countryOfOrigin": "GB",
             "careInstructions": "Wash cold",
             "chemicalComplianceStandard": "OEKO-TEX 100"
         }
@@ -153,7 +153,7 @@ async fn test_textile_empty_care_instructions() {
             "fibreComposition": [
                 {"fibre": "cotton", "pct": 100.0}
             ],
-            "countryOfManufacturing": "GB",
+            "countryOfOrigin": "GB",
             "careInstructions": "",
             "chemicalComplianceStandard": "OEKO-TEX 100"
         }

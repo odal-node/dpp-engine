@@ -9,7 +9,7 @@ pub(super) fn build_aluminium_section(p: &serde_json::Value) -> String {
     };
     let grade = str_field(sd, "alloyGrade", "-");
     let route = str_field(sd, "productionRoute", "-");
-    let country = str_field(sd, "countryOfProduction", "-");
+    let country = str_field(sd, "countryOfOrigin", "-");
     let co2e = f64_field(sd, "co2ePerTonneKg", "-", |v| {
         format!("{v:.2} kg CO\u{2082}e / t")
     });
@@ -32,16 +32,18 @@ mod tests {
 
     #[test]
     fn full_data_populates_all_fields() {
-        let p = serde_json::json!({"sectorData": {
+        let p = crate::sections::typed_fixture(serde_json::json!({
+            "sector": "aluminium",
+            "gtin": "09506000134352",
             "alloyGrade": "6061-T6",
-            "productionRoute": "Primary",
-            "countryOfProduction": "DE",
+            "productionRoute": "primary",
+            "countryOfOrigin": "DE",
             "co2ePerTonneKg": 8500.5,
             "recycledContentPct": 22.3,
-        }});
+        }));
         let html = build_aluminium_section(&p);
         assert!(html.contains("6061-T6"));
-        assert!(html.contains("Primary"));
+        assert!(html.contains("primary"));
         assert!(html.contains("DE"));
         assert!(html.contains("8500.50 kg CO\u{2082}e / t"));
         assert!(html.contains("22.3%"));

@@ -69,7 +69,7 @@ async fn test_passthrough_textile_stores_result() {
             "fibreComposition": [
                 {"fibre": "wool", "pct": 100.0}
             ],
-            "countryOfManufacturing": "GB",
+            "countryOfOrigin": "GB",
             "careInstructions": "Hand wash, dry flat",
             "chemicalComplianceStandard": "OEKO-TEX 100",
             "carbonFootprintKgCo2e": 12.7

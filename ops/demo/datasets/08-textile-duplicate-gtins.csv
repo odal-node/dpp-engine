@@ -1,4 +1,4 @@
-productName,sector,gtin,manufacturerName,manufacturerCountry,batchId,fibreComposition,countryOfManufacturing,careInstructions,chemicalComplianceStandard
+productName,sector,gtin,manufacturerName,manufacturerCountry,batchId,fibreComposition,countryOfOrigin,careInstructions,chemicalComplianceStandard
 Glamor T-Shirt White,textile,3801234500501,Glamor Clothing,DE,BATCH-DUP-001,"[{""fibre"":""cotton"",""pct"":100.0}]",DE,Machine wash 40°C.,OEKO-TEX Standard 100
 Glamor T-Shirt Black,textile,3801234500501,Glamor Clothing,DE,BATCH-DUP-001,"[{""fibre"":""cotton"",""pct"":100.0}]",DE,Machine wash 40°C.,OEKO-TEX Standard 100
 Glamor T-Shirt Red,textile,3801234500501,Glamor Clothing,DE,BATCH-DUP-002,"[{""fibre"":""cotton"",""pct"":100.0}]",DE,Machine wash 40°C.,OEKO-TEX Standard 100

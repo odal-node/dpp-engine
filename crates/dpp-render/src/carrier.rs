@@ -34,9 +34,16 @@ pub fn carrier_uri(passport: &Value, resolver_base_url: &str, dpp_id: &str) -> O
 mod tests {
     use super::*;
 
-    // A fixed UUID whose first 10 bytes hex-encode to this 20-char serial.
+    // A fixed UUID whose **last** 10 bytes hex-encode to this 20-char serial.
+    //
+    // dpp-core 0.11.0 moved `short_serial` off the leading bytes: a UUIDv7 opens
+    // with a millisecond timestamp, so the old serial sorted in creation order
+    // and its first twelve hex characters decoded to the passport's creation
+    // instant — a disclosure through the QR label itself. The serial now comes
+    // from the random tail. This changes the QR URL for a given passport; the
+    // resolver is GTIN-keyed, so resolution is unaffected.
     const DPP_ID: &str = "0190a9f0-1234-7abc-8def-0123456789ab";
-    const SERIAL: &str = "0190a9f012347abc8def";
+    const SERIAL: &str = "7abc8def0123456789ab";
 
     #[test]
     fn carrier_uri_builds_gs1_digital_link_with_short_serial() {

@@ -7,16 +7,14 @@ use dpp_domain::domain::{
     sector::{ProductionRoute, Sector, SectorData, SteelData},
 };
 
-use crate::domain::fields::{
-    optional_f64, optional_str, require_f64, require_str, validate_gtin_checksum,
-};
+use crate::domain::fields::{optional_f64, optional_str, parse_gtin, require_f64, require_str};
 use crate::domain::request::{CreatePassportRequest, RowError};
 
 /// Validate a single steel row and convert it to a vault `CreatePassportRequest`.
 ///
 /// Expected CSV columns: `productName`, `batchId` (opt), `manufacturerName`,
 /// `manufacturerCountry`, `gtin`, `co2ePerTonneSteel`, `recycledScrapContentPct`,
-/// `productCategory`, `countryOfProduction`, `productionRoute`,
+/// `productCategory`, `countryOfOrigin`, `productionRoute`,
 /// `annualProductionTonnes` (opt).
 pub fn validate_steel_row(
     row: &HashMap<String, String>,
@@ -28,12 +26,12 @@ pub fn validate_steel_row(
     let batch_id = optional_str(row, "batchId");
     let manufacturer_name = require_str(row, "manufacturerName", row_num, &mut errors);
     let manufacturer_country = require_str(row, "manufacturerCountry", row_num, &mut errors);
-    let gtin = require_str(row, "gtin", row_num, &mut errors);
-    validate_gtin_checksum(gtin.as_deref(), row_num, &mut errors);
+    let gtin_raw = require_str(row, "gtin", row_num, &mut errors);
+    let gtin = parse_gtin(gtin_raw.as_deref(), row_num, &mut errors);
     let co2e = require_f64(row, "co2ePerTonneSteel", row_num, &mut errors);
     let recycled = require_f64(row, "recycledScrapContentPct", row_num, &mut errors);
     let product_category = require_str(row, "productCategory", row_num, &mut errors);
-    let country_of_production = require_str(row, "countryOfProduction", row_num, &mut errors);
+    let country_of_origin = require_str(row, "countryOfOrigin", row_num, &mut errors);
     let production_route_raw = require_str(row, "productionRoute", row_num, &mut errors);
     let annual = optional_f64(row, "annualProductionTonnes", row_num, &mut errors);
 
@@ -68,7 +66,7 @@ pub fn validate_steel_row(
                 .expect("field verified present by errors.is_empty() guard above"),
             product_category: product_category
                 .expect("field verified present by errors.is_empty() guard above"),
-            country_of_production: country_of_production
+            country_of_origin: country_of_origin
                 .expect("field verified present by errors.is_empty() guard above"),
             production_route,
             annual_production_tonnes: annual,
@@ -96,7 +94,7 @@ mod tests {
             ("co2ePerTonneSteel".into(), "1.85".into()),
             ("recycledScrapContentPct".into(), "28.0".into()),
             ("productCategory".into(), "flat".into()),
-            ("countryOfProduction".into(), "DE".into()),
+            ("countryOfOrigin".into(), "DE".into()),
             ("productionRoute".into(), "electric-arc".into()),
         ])
     }

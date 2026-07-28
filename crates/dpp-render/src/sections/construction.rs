@@ -8,7 +8,7 @@ pub(super) fn build_construction_section(p: &serde_json::Value) -> String {
         None => return String::new(),
     };
     let family = str_field(sd, "productFamily", "-");
-    let country = str_field(sd, "countryOfManufacture", "-");
+    let country = str_field(sd, "countryOfOrigin", "-");
     let unit = str_field(sd, "functionalUnit", "unit");
     let co2e = f64_field(sd, "co2ePerFunctionalUnitKg", "-", |v| {
         format!("{v:.2} kg CO\u{2082}e / {unit}")
@@ -31,13 +31,15 @@ mod tests {
 
     #[test]
     fn full_data_populates_all_fields() {
-        let p = serde_json::json!({"sectorData": {
+        let p = crate::sections::typed_fixture(serde_json::json!({
+            "sector": "construction",
+            "gtin": "09506000134352",
             "productFamily": "Insulation Board",
-            "countryOfManufacture": "FR",
+            "countryOfOrigin": "FR",
             "functionalUnit": "m2",
             "co2ePerFunctionalUnitKg": 3.25,
             "ceMarking": true,
-        }});
+        }));
         let html = build_construction_section(&p);
         assert!(html.contains("Insulation Board"));
         assert!(html.contains("FR"));

@@ -75,7 +75,7 @@ pub fn find_issues(rec: &serde_json::Value) -> Vec<String> {
                 for f in &[
                     "gtin",
                     "fibreComposition",
-                    "countryOfManufacturing",
+                    "countryOfOrigin",
                     "careInstructions",
                     "chemicalComplianceStandard",
                 ] {
@@ -106,7 +106,7 @@ mod tests {
                 "sector": "textile",
                 "gtin": "09506000134352",
                 "fibreComposition": [{"fibre": "cotton", "pct": 100.0}],
-                "countryOfManufacturing": "DE",
+                "countryOfOrigin": "DE",
                 "careInstructions": "Machine wash 30°C",
                 "chemicalComplianceStandard": "OEKO-TEX 100"
             }
@@ -156,7 +156,7 @@ mod tests {
             "sectorData": {
                 "sector": "textile",
                 "fibreComposition": [{"fibre": "cotton", "pct": 100.0}],
-                "countryOfManufacturing": "DE",
+                "countryOfOrigin": "DE",
                 "careInstructions": "wash",
                 "chemicalComplianceStandard": "REACH"
             }
@@ -170,7 +170,7 @@ mod tests {
             "productName": "T-Shirt",
             "sectorData": {
                 "sector": "textile",
-                "countryOfManufacturing": "DE",
+                "countryOfOrigin": "DE",
                 "careInstructions": "wash",
                 "chemicalComplianceStandard": "REACH"
             }

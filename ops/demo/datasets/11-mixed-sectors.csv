@@ -1,4 +1,4 @@
-productName,sector,gtin,manufacturerName,manufacturerCountry,batchId,fibreComposition,countryOfManufacturing,careInstructions,chemicalComplianceStandard,batteryChemistry,nominalVoltageV,nominalCapacityAh,expectedLifetimeCycles,co2ePerUnitKg
+productName,sector,gtin,manufacturerName,manufacturerCountry,batchId,fibreComposition,countryOfOrigin,careInstructions,chemicalComplianceStandard,batteryChemistry,nominalVoltageV,nominalCapacityAh,expectedLifetimeCycles,co2ePerUnitKg
 Glamor Classic T-Shirt,textile,3801234500601,Glamor Clothing,DE,BATCH-MIX-001,"[{""fibre"":""cotton"",""pct"":100.0}]",DE,Machine wash 40°C.,OEKO-TEX Standard 100,,,,,
 Voltex EV Module 75kWh,battery,4901234567201,Voltex Battery GmbH,DE,VB-MIX-001,,,,,NMC811,400.0,188.0,2000,61.2
 Glamor Summer Dress,textile,3801234500602,Glamor Clothing,DE,BATCH-MIX-002,"[{""fibre"":""viscose"",""pct"":100.0}]",DE,Hand wash 30°C.,REACH Compliant,,,,,

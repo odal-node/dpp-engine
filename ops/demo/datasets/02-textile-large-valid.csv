@@ -1,4 +1,4 @@
-productName,sector,gtin,manufacturerName,manufacturerCountry,batchId,fibreComposition,countryOfManufacturing,careInstructions,chemicalComplianceStandard
+productName,sector,gtin,manufacturerName,manufacturerCountry,batchId,fibreComposition,countryOfOrigin,careInstructions,chemicalComplianceStandard
 Glamor Classic Crew Neck White,textile,3801234500001,Glamor Clothing,DE,BATCH-SS26-001,"[{""fibre"":""cotton"",""pct"":100.0}]",DE,Machine wash 40°C. Do not bleach. Iron medium.,OEKO-TEX Standard 100
 Glamor Classic Crew Neck Black,textile,3801234500002,Glamor Clothing,DE,BATCH-SS26-001,"[{""fibre"":""cotton"",""pct"":100.0}]",DE,Machine wash 40°C. Do not bleach. Iron medium.,OEKO-TEX Standard 100
 Glamor Classic Crew Neck Navy,textile,3801234500003,Glamor Clothing,DE,BATCH-SS26-001,"[{""fibre"":""cotton"",""pct"":100.0}]",DE,Machine wash 40°C. Do not bleach. Iron medium.,OEKO-TEX Standard 100

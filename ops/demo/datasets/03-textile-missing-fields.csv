@@ -1,4 +1,4 @@
-productName,sector,gtin,manufacturerName,manufacturerCountry,batchId,fibreComposition,countryOfManufacturing,careInstructions,chemicalComplianceStandard
+productName,sector,gtin,manufacturerName,manufacturerCountry,batchId,fibreComposition,countryOfOrigin,careInstructions,chemicalComplianceStandard
 ,textile,3801234500101,Glamor Clothing,DE,BATCH-ERR-001,"[{""fibre"":""cotton"",""pct"":100.0}]",DE,Machine wash 40°C.,OEKO-TEX Standard 100
 Glamor Dress No GTIN,textile,,Glamor Clothing,DE,BATCH-ERR-002,"[{""fibre"":""cotton"",""pct"":100.0}]",DE,Machine wash 40°C.,OEKO-TEX Standard 100
 Glamor Jacket No Fibre,textile,3801234500103,Glamor Clothing,DE,BATCH-ERR-003,,DE,Machine wash 30°C.,OEKO-TEX Standard 100

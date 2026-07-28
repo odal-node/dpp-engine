@@ -9,7 +9,7 @@ pub(super) fn build_toy_section(p: &serde_json::Value) -> String {
     };
     let age = str_field(sd, "ageGroup", "-");
     let material = str_field(sd, "primaryMaterial", "-");
-    let country = str_field(sd, "countryOfManufacture", "-");
+    let country = str_field(sd, "countryOfOrigin", "-");
     let ce = bool_field(sd, "ceMarking", "-", "Yes", "No");
     format!(
         r#"<h2>Toy Safety Information</h2>
@@ -28,12 +28,14 @@ mod tests {
 
     #[test]
     fn full_data_populates_all_fields() {
-        let p = serde_json::json!({"sectorData": {
+        let p = crate::sections::typed_fixture(serde_json::json!({
+            "sector": "toy",
+            "gtin": "09506000134352",
             "ageGroup": "3+",
             "primaryMaterial": "ABS Plastic",
-            "countryOfManufacture": "CN",
+            "countryOfOrigin": "CN",
             "ceMarking": true,
-        }});
+        }));
         let html = build_toy_section(&p);
         assert!(html.contains("3+"));
         assert!(html.contains("ABS Plastic"));

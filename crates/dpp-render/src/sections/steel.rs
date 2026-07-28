@@ -9,7 +9,7 @@ pub(super) fn build_steel_section(p: &serde_json::Value) -> String {
     };
     let route = str_field(sd, "productionRoute", "-");
     let category = str_field(sd, "productCategory", "-");
-    let country = str_field(sd, "countryOfProduction", "-");
+    let country = str_field(sd, "countryOfOrigin", "-");
     let co2e = f64_field(sd, "co2ePerTonneSteel", "-", |v| {
         format!("{v:.3} t CO\u{2082}e / t steel")
     });
@@ -32,15 +32,17 @@ mod tests {
 
     #[test]
     fn full_data_populates_all_fields() {
-        let p = serde_json::json!({"sectorData": {
-            "productionRoute": "EAF",
+        let p = crate::sections::typed_fixture(serde_json::json!({
+            "sector": "steel",
+            "gtin": "09506000134352",
+            "productionRoute": "electric-arc",
             "productCategory": "Flat Steel",
-            "countryOfProduction": "IT",
+            "countryOfOrigin": "IT",
             "co2ePerTonneSteel": 0.850,
             "recycledScrapContentPct": 65.0,
-        }});
+        }));
         let html = build_steel_section(&p);
-        assert!(html.contains("EAF"));
+        assert!(html.contains("electric-arc"));
         assert!(html.contains("Flat Steel"));
         assert!(html.contains("IT"));
         assert!(html.contains("0.850 t CO\u{2082}e / t steel"));
