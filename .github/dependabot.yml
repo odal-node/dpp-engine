@@ -1,4 +1,11 @@
 version: 2
+
+# Grouping is deliberate. A dependency family has to move as one set or it
+# cannot move at all: `aws-sdk-s3` could not leave its vulnerable rustls edge
+# until the whole smithy stack came with it, and a single-crate PR for any one
+# of them fails to resolve. Ungrouped weekly PRs also arrive faster than a solo
+# maintainer can review them, which is how two dependabot regressions reached
+# main in July. Frequency stays weekly; the batching is what changes.
 updates:
   - package-ecosystem: cargo
     directory: "/"
@@ -8,15 +15,34 @@ updates:
     labels:
       - dependencies
       - rust
-
-  - package-ecosystem: npm
-    directory: "/web/dashboard"
-    schedule:
-      interval: weekly
-      day: monday
-    labels:
-      - dependencies
-      - frontend
+    groups:
+      aws:
+        patterns:
+          - "aws-*"
+      web-stack:
+        patterns:
+          - "axum*"
+          - "tower*"
+          - "hyper*"
+          - "reqwest"
+      db-stack:
+        patterns:
+          - "sqlx*"
+          - "redis"
+          - "deadpool-*"
+      cli:
+        patterns:
+          - "clap*"
+          - "inquire"
+          - "indicatif"
+          - "console"
+          - "rfd"
+      test-stack:
+        patterns:
+          - "testcontainers*"
+          - "proptest"
+          - "criterion"
+          - "serial_test"
 
   - package-ecosystem: docker
     directory: "/docker"
@@ -27,6 +53,9 @@ updates:
       - dependencies
       - docker
 
+  # Actions are pinned to full commit SHAs — an unpinned third-party action is
+  # arbitrary code running against this repo's token. Dependabot understands
+  # that form and bumps the SHA together with its trailing `# vN` comment.
   - package-ecosystem: github-actions
     directory: "/"
     schedule:
@@ -35,3 +64,7 @@ updates:
     labels:
       - dependencies
       - ci
+    groups:
+      actions:
+        patterns:
+          - "*"

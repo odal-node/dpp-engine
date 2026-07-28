@@ -111,7 +111,16 @@ done
 RAW_DIR="$(mktemp -d)"
 trap 'rm -rf "$RAW_DIR"' EXIT
 cp Cargo.lock "$RAW_DIR/Cargo.lock"
-RAW_OUTPUT="$(cd "$RAW_DIR" && cargo audit --file Cargo.lock -q 2>&1 || true)"
+# The `cd` is what makes this run "raw": cargo-audit resolves .cargo/audit.toml
+# relative to the working directory, so from a scratch dir it reports the
+# unsuppressed set. `|| true` is scoped to the audit alone, not to `cd &&
+# audit` — cargo-audit exits non-zero whenever it finds anything, which is
+# expected here, but a failed `cd` must not be swallowed the same way: it would
+# leave RAW_OUTPUT empty and every suppression would read as stale.
+if ! RAW_OUTPUT="$(cd "$RAW_DIR" && { cargo audit --file Cargo.lock -q 2>&1 || true; })"; then
+  fail "could not enter scratch dir '$RAW_DIR' to run the unsuppressed audit"
+  RAW_OUTPUT=""
+fi
 RAW_IDS="$(grep -o 'RUSTSEC-[0-9]\{4\}-[0-9]\{4\}' <<< "$RAW_OUTPUT" | sort -u)"
 
 for id in "${IGNORED_IDS[@]}"; do
@@ -120,8 +129,8 @@ done
 
 # Confirms `pkgspec` (a bare crate name, or `name@version` to disambiguate a
 # crate with multiple resolved versions) is absent from the dependency graph
-# under the given `cargo tree -i` edge filter ($2: "" for all edges, "-e
-# normal" for normal-only). `cargo tree` has two distinct "absent" shapes
+# under the given edge mode ($3: "all" for every edge, "normal" to exclude
+# dev- and build-dependencies). `cargo tree` has two distinct "absent" shapes
 # that both mean the same thing here and must both count as confirmed: exit 0
 # with empty stdout (a bare name simply isn't in the graph), and a non-zero
 # exit whose stderr says "did not match any packages" (a version-pinned spec
@@ -131,10 +140,15 @@ done
 # than one resolved version) is a real problem, not a pass. Calls fail()
 # itself with a specific reason whenever it cannot confirm absence.
 graph_absent_in() {
-  local id="$1" pkgspec="$2" edge_flag="$3" build_label="$4"; shift 4
+  local id="$1" pkgspec="$2" edge_mode="$3" build_label="$4"; shift 4
   local out err_file err
+  # Built as an array rather than interpolated from a string: `cargo tree` needs
+  # `-e normal` as two argv entries, and an unquoted "$edge_flag" relied on word
+  # splitting to produce them (shellcheck SC2086).
+  local -a edge=()
+  [[ "$edge_mode" == "normal" ]] && edge=(-e normal)
   err_file="$(mktemp)"
-  if out="$(cargo tree -i "$pkgspec" $edge_flag --target all "$@" 2>"$err_file")"; then
+  if out="$(cargo tree -i "$pkgspec" "${edge[@]}" --target all "$@" 2>"$err_file")"; then
     rm -f "$err_file"
     if [[ -n "$out" ]]; then
       fail "$id: '$pkgspec' resolves in the $build_label dependency graph"
@@ -161,9 +175,9 @@ graph_absent_in() {
 SHIPPED_BUILD=(-p dpp-node --features s3)
 
 graph_absent() {
-  local id="$1" pkgspec="$2" edge_flag="$3" ok=0
-  graph_absent_in "$id" "$pkgspec" "$edge_flag" "default" || ok=1
-  graph_absent_in "$id" "$pkgspec" "$edge_flag" "shipped (${SHIPPED_BUILD[*]})" \
+  local id="$1" pkgspec="$2" edge_mode="$3" ok=0
+  graph_absent_in "$id" "$pkgspec" "$edge_mode" "default" || ok=1
+  graph_absent_in "$id" "$pkgspec" "$edge_mode" "shipped (${SHIPPED_BUILD[*]})" \
     "${SHIPPED_BUILD[@]}" || ok=1
   return "$ok"
 }
@@ -181,10 +195,10 @@ for id in "${BLOCK_IDS[@]}"; do
 
   case "$class" in
     not-in-graph)
-      graph_absent "$id" "$pkgspec" "" || true
+      graph_absent "$id" "$pkgspec" "all" || true
       ;;
     dev-only|build-time-only)
-      graph_absent "$id" "$pkgspec" "-e normal" || true
+      graph_absent "$id" "$pkgspec" "normal" || true
       ;;
     reachable-but-mitigated)
       # anchor is "path/to/file.rs::SYMBOL"
