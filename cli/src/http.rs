@@ -1,19 +1,23 @@
-//! HTTP client wrapper (`OdalClient`) that authenticates to the node with a bearer API key.
+//! HTTP client wrapper (`OdalClient`) that authenticates to the node with an
+//! API key (`Bearer`) or the local-admin credential (`Basic`).
 
 use anyhow::Result;
 use base64::Engine;
-use reqwest::{Client, StatusCode};
+use reqwest::{Client, StatusCode, header::AUTHORIZATION};
 
-/// Shared HTTP client wrapper that authenticates with the vault using a
-/// `Authorization: Bearer <token>` header.
+/// Shared HTTP client wrapper that authenticates with the vault via an
+/// `Authorization` header.
 ///
-/// The configured `api_key` is forwarded verbatim — an Odal API key
-/// (`odal_sk_…`) validated by the node's `ApiKeyAuthProvider`. (There is no
+/// The scheme is part of the credential, not an implementation detail: the
+/// node routes by scheme and will only try the API-key providers for `Bearer`
+/// and the local-admin provider for `Basic`. Sending the local-admin
+/// credential as `Bearer` authenticates as nothing at all. (There is no
 /// unsigned/dev-JWT fallback: the node accepts only real API keys and
 /// local-admin Basic auth.)
 pub struct OdalClient {
     inner: Client,
-    bearer: String,
+    /// Complete `Authorization` header value, scheme included.
+    authorization: String,
 }
 
 impl OdalClient {
@@ -23,12 +27,12 @@ impl OdalClient {
                 .timeout(std::time::Duration::from_secs(10))
                 .build()
                 .unwrap(),
-            bearer: api_key.into(),
+            authorization: format!("Bearer {}", api_key.into()),
         }
     }
 
     /// Build a client that authenticates with the node's **local admin**
-    /// credential — `Authorization: Bearer base64(user:pass)`, which the node's
+    /// credential — `Authorization: Basic base64(user:pass)`, which the node's
     /// `LocalAuthProvider` accepts. Used during first-run setup before any API
     /// key exists.
     pub fn with_local_admin(user: &str, pass: &str) -> Self {
@@ -39,19 +43,24 @@ impl OdalClient {
                 .timeout(std::time::Duration::from_secs(10))
                 .build()
                 .unwrap(),
-            bearer: token,
+            authorization: format!("Basic {token}"),
         }
     }
 
-    /// GET `url` with Bearer token. Returns the response body as a string.
+    /// GET `url` with the client's credential. Returns the response body as a string.
     pub async fn get(&self, url: &str) -> Result<(StatusCode, String)> {
-        let resp = self.inner.get(url).bearer_auth(&self.bearer).send().await?;
+        let resp = self
+            .inner
+            .get(url)
+            .header(AUTHORIZATION, &self.authorization)
+            .send()
+            .await?;
         let status = resp.status();
         let body = resp.text().await?;
         Ok((status, body))
     }
 
-    /// POST JSON `payload` to `url` with Bearer token.
+    /// POST JSON `payload` to `url` with the client's credential.
     pub async fn post_json(
         &self,
         url: &str,
@@ -60,7 +69,7 @@ impl OdalClient {
         let resp = self
             .inner
             .post(url)
-            .bearer_auth(&self.bearer)
+            .header(AUTHORIZATION, &self.authorization)
             .json(payload)
             .send()
             .await?;
@@ -69,14 +78,14 @@ impl OdalClient {
         Ok((status, body))
     }
 
-    /// POST raw JSON `bytes` to `url` with Bearer token, sent verbatim (no
+    /// POST raw JSON `bytes` to `url` with the client's credential, sent verbatim (no
     /// reserialisation) — so a server-side content check sees exactly what
     /// was on disk.
     pub async fn post_bytes(&self, url: &str, bytes: Vec<u8>) -> Result<(StatusCode, String)> {
         let resp = self
             .inner
             .post(url)
-            .bearer_auth(&self.bearer)
+            .header(AUTHORIZATION, &self.authorization)
             .header(reqwest::header::CONTENT_TYPE, "application/json")
             .body(bytes)
             .send()
@@ -86,13 +95,13 @@ impl OdalClient {
         Ok((status, body))
     }
 
-    /// POST with an empty body to `url` with Bearer token — for endpoints
+    /// POST with an empty body to `url` with the client's credential — for endpoints
     /// that take no request payload.
     pub async fn post_empty(&self, url: &str) -> Result<(StatusCode, String)> {
         let resp = self
             .inner
             .post(url)
-            .bearer_auth(&self.bearer)
+            .header(AUTHORIZATION, &self.authorization)
             .send()
             .await?;
         let status = resp.status();
@@ -100,7 +109,7 @@ impl OdalClient {
         Ok((status, body))
     }
 
-    /// PATCH JSON `payload` to `url` with Bearer token.
+    /// PATCH JSON `payload` to `url` with the client's credential.
     pub async fn patch_json(
         &self,
         url: &str,
@@ -109,7 +118,7 @@ impl OdalClient {
         let resp = self
             .inner
             .patch(url)
-            .bearer_auth(&self.bearer)
+            .header(AUTHORIZATION, &self.authorization)
             .json(payload)
             .send()
             .await?;
@@ -118,12 +127,12 @@ impl OdalClient {
         Ok((status, body))
     }
 
-    /// DELETE `url` with Bearer token.
+    /// DELETE `url` with the client's credential.
     pub async fn delete(&self, url: &str) -> Result<(StatusCode, String)> {
         let resp = self
             .inner
             .delete(url)
-            .bearer_auth(&self.bearer)
+            .header(AUTHORIZATION, &self.authorization)
             .send()
             .await?;
         let status = resp.status();
@@ -132,8 +141,9 @@ impl OdalClient {
     }
 
     /// Upload a file as `multipart/form-data` (field name `file`) to `url` with
-    /// Bearer token — the shape the integrator's `POST /api/v1/import/{sector}`
-    /// expects. The filename is preserved so the server can detect CSV vs XLSX.
+    /// the client's credential — the shape the integrator's
+    /// `POST /api/v1/import/{sector}` expects. The filename is preserved so the
+    /// server can detect CSV vs XLSX.
     pub async fn upload_file(
         &self,
         url: &str,
@@ -145,7 +155,7 @@ impl OdalClient {
         let resp = self
             .inner
             .post(url)
-            .bearer_auth(&self.bearer)
+            .header(AUTHORIZATION, &self.authorization)
             .multipart(form)
             .send()
             .await?;
@@ -172,7 +182,7 @@ impl OdalClient {
         let resp = self
             .inner
             .post(url)
-            .bearer_auth(&self.bearer)
+            .header(AUTHORIZATION, &self.authorization)
             .multipart(form)
             .send()
             .await?;
@@ -227,6 +237,21 @@ pub fn describe_error(status: StatusCode, body: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // The node routes by Authorization scheme: `Bearer` only ever reaches the
+    // API-key providers, `Basic` only ever reaches the local-admin provider.
+    // Sending the local-admin credential as `Bearer` therefore authenticates
+    // as nothing, which breaks first-run bootstrap — the one flow that has no
+    // API key yet to fall back on.
+    #[test]
+    fn credentials_carry_the_scheme_the_node_routes_on() {
+        let api_key = OdalClient::new("odal_sk_example");
+        assert_eq!(api_key.authorization, "Bearer odal_sk_example");
+
+        let admin = OdalClient::with_local_admin("alice", "secret123");
+        let expected = base64::engine::general_purpose::STANDARD.encode("alice:secret123");
+        assert_eq!(admin.authorization, format!("Basic {expected}"));
+    }
 
     #[test]
     fn describe_error_extracts_title_and_detail() {
