@@ -304,7 +304,12 @@ async fn drain_backs_off_on_transient_and_marks_terminal_rejection() {
 /// Bring a fresh database up to the pre-0024 schema by applying every migration
 /// before it, so the damaged state can be reproduced and the repair exercised.
 /// Returns the privileged URL.
-async fn start_pg_before_0024() -> (String, testcontainers::ContainerAsync<GenericImage>) {
+/// Returns `(admin_url, app_url, container)`. Both are needed: the admin URL
+/// does the privileged setup (role creation, hand-applying 0001–0023, seeding
+/// the clobbered rows), and the app URL is what `PgDal::connect` takes — it
+/// refuses a superuser role, since a superuser owns the audit table and the
+/// append-only trigger cannot bind it.
+async fn start_pg_before_0024() -> (String, String, testcontainers::ContainerAsync<GenericImage>) {
     let image = GenericImage::new("postgres", "17")
         .with_exposed_port(ContainerPort::Tcp(5432))
         .with_wait_for(WaitFor::message_on_stderr(
@@ -332,6 +337,7 @@ async fn start_pg_before_0024() -> (String, testcontainers::ContainerAsync<Gener
         .execute(&admin)
         .await
         .expect("create app role");
+    let app_url = format!("postgres://odal_app:test@127.0.0.1:{port}/odal");
 
     let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../../ops/pg");
     let mut files: Vec<_> = std::fs::read_dir(dir)
@@ -352,7 +358,7 @@ async fn start_pg_before_0024() -> (String, testcontainers::ContainerAsync<Gener
             .unwrap_or_else(|e| panic!("apply {name}: {e}"));
     }
     admin.close().await;
-    (admin_url, container)
+    (admin_url, app_url, container)
 }
 
 /// Insert a passport plus a `registry_sync` row in the shape the old
@@ -391,7 +397,7 @@ async fn insert_clobbered_row(
 /// registrations in an existing deployment.
 #[tokio::test(flavor = "multi_thread")]
 async fn migration_0024_restores_registrations_lost_before_the_fix() {
-    let (admin_url, _c) = start_pg_before_0024().await;
+    let (admin_url, app_url, _c) = start_pg_before_0024().await;
     let admin = sqlx::postgres::PgPoolOptions::new()
         .max_connections(1)
         .connect(&admin_url)
@@ -420,7 +426,7 @@ async fn migration_0024_restores_registrations_lost_before_the_fix() {
         .expect("apply 0024");
     admin.close().await;
 
-    let dal = PgDal::connect(&admin_url).await.expect("connect");
+    let dal = PgDal::connect(&app_url).await.expect("connect");
     let outbox: Arc<dyn RegistrySyncOutbox> = Arc::new(PgRegistrySyncRepo::new(dal.clone()));
 
     // Assert on the raw columns, not the parsed enum: `RegistrySyncStatus::from_db`
