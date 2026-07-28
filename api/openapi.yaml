@@ -62,8 +62,17 @@ components:
       type: http
       scheme: basic
       description: |
-        Local development fallback. Uses the `ADMIN_USERNAME` and
-        `ADMIN_PASSWORD` environment variables. Not available in production.
+        The operator's own bootstrap credential, from the `ADMIN_USERNAME` and
+        `ADMIN_PASSWORD` environment variables. It mints the first API key on a
+        fresh node — before any key exists — and is the lockout-recovery path
+        afterwards, since it carries no `keyId` and so can revoke any key.
+
+        Active in every environment where both variables are set; there is no
+        production gate. Leave them unset once an API key exists if you do not
+        want the path available.
+
+        Reached only via the `Basic` scheme. A `Bearer` token is never matched
+        against it, even one carrying the same `base64(user:pass)` payload.
 
     MutualTLS:
       type: mutualTLS
