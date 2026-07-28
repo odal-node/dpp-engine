@@ -1,5 +1,6 @@
 //! Infrastructure adapters: NATS event bus, PostgreSQL job store, EU registry sync, S3 archive.
 
+pub mod credential_issuers;
 pub mod drain;
 pub mod nats_event_bus;
 pub mod pg_job_store;
