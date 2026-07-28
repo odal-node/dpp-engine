@@ -66,3 +66,71 @@ impl Cache {
         Arc::new(Self { pool, ttl_secs: 0 })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Round-trips against a real Redis when one is reachable, and skips when
+    /// it is not. This crate has no container harness, and adding one for a
+    /// 68-line adapter is not worth a new dev-dependency in every build.
+    ///
+    /// It exists because the `redis`/`deadpool-redis` pair is the only
+    /// production dependency here that a version bump can break *silently*:
+    /// `Config::from_url`, `pool.get()` and the `AsyncCommands` methods all
+    /// keep compiling across majors while their behaviour moves underneath,
+    /// and `set` swallows its errors by design. Run it after bumping either:
+    ///
+    /// ```text
+    /// docker run -d --rm -p 6379:6379 redis:7-alpine
+    /// REDIS_URL=redis://127.0.0.1:6379 cargo test -p dpp-resolver cache::
+    /// ```
+    ///
+    /// Reachability is probed rather than inferred from `REDIS_URL` being set:
+    /// `.env` ships a `REDIS_URL` and the justfile has `set dotenv-load`, so
+    /// under `just check` the variable is always present whether or not a
+    /// server is listening. Skipping on an unset variable alone would fail the
+    /// gate for every developer who followed the setup guide without starting
+    /// Redis. Once a connection *is* established, the round-trip must hold —
+    /// that is the regression this guards.
+    #[tokio::test]
+    async fn round_trips_through_a_real_redis() {
+        // Skips silently rather than announcing it: the debug-print tripwire
+        // bans stdout/stderr macros anywhere under a service crate's src/, and
+        // this test lives inline rather than in tests/.
+        let Ok(url) = std::env::var("REDIS_URL") else {
+            return;
+        };
+        let cache = Cache::new(&url, 60).expect("pool");
+        let Ok(mut probe) = cache.pool.get().await else {
+            return; // nothing listening — not a failure of this adapter
+        };
+        if deadpool_redis::redis::cmd("PING")
+            .query_async::<String>(&mut probe)
+            .await
+            .is_err()
+        {
+            return;
+        }
+        drop(probe);
+
+        let key = format!("odal:test:{}", uuid::Uuid::now_v7());
+        assert_eq!(cache.get(&key).await, None, "unset key must miss");
+        cache.set(&key, "cached-body").await;
+        assert_eq!(
+            cache.get(&key).await,
+            Some("cached-body".to_owned()),
+            "value set through the pool must read back"
+        );
+    }
+
+    /// The no-op handle points at an unreachable port: every call must fall
+    /// through to a miss rather than error, because the resolver treats cache
+    /// failure and cache miss identically and the vault stays authoritative.
+    #[tokio::test]
+    async fn unreachable_redis_degrades_to_a_miss() {
+        let cache = Cache::new_noop();
+        assert_eq!(cache.get("anything").await, None);
+        cache.set("anything", "value").await; // must not panic
+    }
+}

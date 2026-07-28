@@ -10,6 +10,43 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ## [Unreleased]
 
+### Breaking
+
+- **The local-admin credential is now sent as `Authorization: Basic`, not
+  `Bearer`.** `auth_middleware` routes on the scheme: `Bearer` reaches only the
+  API-key providers, `Basic` only the local-admin provider. Previously both
+  arrived on the same chain, so a `Bearer base64(user:pass)` token
+  authenticated as admin — the scheme was decorative, and `AUTH.md` documented
+  a `Basic` header the middleware never accepted. *Migration:* send
+  `Authorization: Basic base64(user:pass)`. `odal bootstrap` and the console
+  first-run flow already do; any script minting the first API key by hand must
+  change, and will get a 401 until it does.
+- **The node refuses to boot when `DATABASE_URL` connects as a superuser
+  role.** A superuser owns the audit table, so the append-only trigger cannot
+  bind it and the tamper-evidence guarantee silently stops holding. *Migration:*
+  connect as `odal_app` (or any non-superuser); `DATABASE_MIGRATE_URL` is
+  unaffected and still needs a privileged role.
+
+### Security
+
+- Every dependency path carrying a known advisory is gone rather than
+  suppressed: the AWS SDK's legacy `rustls` alias feature (rustls 0.21 /
+  rustls-webpki 0.101.7, three advisories, present in the published image) and
+  the pre-0.41 `quick-xml` reached through `calamine` on the untrusted-XLSX
+  import path. `cargo audit` against an unsuppressed lockfile goes from 8
+  vulnerabilities and 5 warnings to 1 — an orphaned `rsa` entry that is not in
+  any resolved build graph. `image` is now PNG-only, dropping an OpenEXR
+  decoder stack the QR encoder never used.
+- Suppressions are now a dated, code-anchored register
+  (`.cargo/audit.toml` + `scripts/check-audit-register.sh`, in CI): each entry
+  states its reachability as a checked category, the code fact that makes it
+  true, an owner, and an expiry after which CI fails. Categories are verified
+  against both a default build and the feature set the published image builds
+  with — a claim true only outside the shipped artefact is not a claim about
+  what operators run.
+- Third-party GitHub Actions are pinned to full commit SHAs, and `Cargo.lock`
+  is tracked, so CI no longer resolves an unreviewed graph on every run.
+
 ## [0.9.0] - 2026-07-27
 
 ### Added

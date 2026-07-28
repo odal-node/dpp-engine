@@ -178,7 +178,7 @@ registries = [
 # trees that don't always align. Denying outright needs a deliberately-sized
 # skip list, not a guess; "warn" keeps this visible without an immediate,
 # noisy red build. Revisit once a real skip list is curated.
-# Warn, not deny: this graph carries ~175 duplicate crate-versions (mostly
+# Warn, not deny: this graph carries ~172 duplicate crate-versions (mostly
 # transitive churn in the AWS, wayland and hyper stacks). Denying without a
 # curated skip list would fail CI on day one and the reflex fix would be a
 # blanket skip, which is worse than a warning nobody suppressed. Revisit as
