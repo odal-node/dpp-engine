@@ -50,6 +50,20 @@ use dpp_domain::Audience;
 /// The header a caller presents an access credential in.
 pub const CREDENTIAL_HEADER: &str = "X-DPP-Credential";
 
+/// The same header in the typed, lowercase form the CORS layer needs.
+///
+/// `HeaderName::from_static` takes a literal, so this cannot be derived from
+/// [`CREDENTIAL_HEADER`] — but it is the only place the typed form is spelled,
+/// and it lives beside the header it mirrors so the two are read together.
+/// `header_name_matches_the_header_read` asserts they agree, because a drift
+/// here fails *silently*: a browser client's preflight is refused and the
+/// request never arrives, which looks like the credential not working rather
+/// than like a configuration bug.
+#[must_use]
+pub fn credential_header_name() -> axum::http::HeaderName {
+    axum::http::HeaderName::from_static("x-dpp-credential")
+}
+
 /// The network lookups credential verification needs.
 ///
 /// A port rather than a concrete fetcher so the verification logic below stays
@@ -82,10 +96,57 @@ pub trait CredentialDirectory: Send + Sync {
 pub struct VerifiedCredential(DppAccessCredential);
 
 impl VerifiedCredential {
-    /// The Art. 77(2) audience this credential grants.
+    /// The Art. 77(2) audience this credential grants **before** it is scoped to
+    /// a particular passport.
+    ///
+    /// Prefer [`Self::audience_for_sector`] at a read site: a credential issued
+    /// for one sector must not elevate a reader on another, and this method
+    /// cannot know which passport is being read.
     #[must_use]
     pub fn audience(&self) -> Audience {
         self.0.credential_subject.role.audience()
+    }
+
+    /// The audience this credential grants **over a passport in `sector_key`**.
+    ///
+    /// A credential naming sectors grants nothing extra outside them, so an
+    /// out-of-scope credential resolves to [`Audience::Public`] rather than an
+    /// error: it is a valid credential that simply does not cover this product,
+    /// and public access is the baseline every caller already has. Denying
+    /// instead would also make the route a probe for which sector a passport is
+    /// in.
+    ///
+    /// The scope rule itself is core's — an empty `sectors` list means unscoped,
+    /// a populated one must contain the sector — applied by re-running the pure
+    /// claims check with the sector now known. Nothing here re-implements it,
+    /// and nothing here touches the network: authentication, issuer trust and
+    /// revocation were all settled in [`read_and_verify`] before the database
+    /// was reached.
+    ///
+    /// Product category is deliberately **not** scoped. `credential_subject`
+    /// carries free-string `product_categories`, and there is no defined
+    /// mapping between those strings and the typed
+    /// [`dpp_domain::ProductCategory`] a passport carries — its `Other(_)`
+    /// variant does not even serialise as a plain string. Inventing a
+    /// correspondence here would be a guess enforced as a security control.
+    #[must_use]
+    pub fn audience_for_sector(
+        &self,
+        sector_key: &str,
+        trust: &dyn TrustedIssuerRegistry,
+    ) -> Audience {
+        let scoped = dpp_crypto::verify_credential_claims_with_trust(
+            &self.0,
+            Some(sector_key),
+            None,
+            chrono::Utc::now(),
+            trust,
+        );
+        if scoped.is_valid() {
+            self.audience()
+        } else {
+            Audience::Public
+        }
     }
 
     /// The underlying credential, for revocation checking and audit.
@@ -167,8 +228,14 @@ pub async fn read_and_verify(
     // Claims, issuer trust and revocation in core's composed path, so the
     // fail-closed revocation policy is applied where it is defined rather than
     // re-implemented here. `required_sector`/`required_product_category` are
-    // None: this layer does not know which passport is being read — scoping
-    // belongs to the read handler, which does.
+    // None because this layer does not know which passport is being read; the
+    // sector scope is applied afterwards by
+    // [`VerifiedCredential::audience_for_sector`], once the row is loaded. That
+    // split is deliberate: everything that can make a credential *invalid* is
+    // settled here, before the database is touched, so a bad credential gets
+    // the same 401 whether or not the passport exists. Scope is not validity —
+    // it decides how much an already-valid credential unlocks — so it is the
+    // only check that may wait for the row.
     let result = dpp_crypto::verify_credential_with_revocation_and_trust(
         &credential,
         None,
@@ -178,20 +245,54 @@ pub async fn read_and_verify(
         trust,
     );
     if !result.is_valid() {
-        return CredentialOutcome::Rejected(reject(&format!(
-            "Credential is not valid: {result:?}"
-        )));
+        return CredentialOutcome::Rejected(reject(rejection_detail(&result)));
     }
 
     CredentialOutcome::Verified(Box::new(VerifiedCredential(credential)))
 }
 
+/// A fixed sentence per failure kind — never the `Debug` of the verification
+/// result.
+///
+/// Two rules, and the previous `{result:?}` broke both.
+///
+/// **Nothing the caller supplied is echoed back.** `MalformedCredential` and
+/// `OutOfScope` carry free text built from the credential's own contents (its
+/// declared sectors, for instance). Reflecting attacker-chosen strings into a
+/// response body is a habit worth not having, whatever this particular endpoint
+/// renders them into.
+///
+/// **The distinctions that survive are the ones a holder can act on** — renew an
+/// expired credential, obtain a fresh one after revocation, approach a different
+/// issuer. Each is something the holder already knows about their own
+/// credential, so stating it reveals nothing they did not bring with them. What
+/// is *not* distinguished is anything about the node's internals, and the
+/// fail-closed revocation case is folded in with genuine revocation on purpose:
+/// an attacker who can make a status endpoint unreachable must not learn that
+/// they succeeded.
+fn rejection_detail(result: &dpp_crypto::VerificationResult) -> &'static str {
+    use dpp_crypto::VerificationResult as V;
+    match result {
+        V::Expired { .. } => "Credential has expired.",
+        V::Revoked => "Credential has been revoked, or its revocation status could not be checked.",
+        V::UntrustedIssuer { .. } => "Credential issuer is not trusted by this node.",
+        V::OutOfScope { .. } => "Credential does not cover the requested product.",
+        // Not reachable from here — the signature is verified against the
+        // issuer's published key before core is called, and that failure has its
+        // own message at the call site — but mapped rather than lumped in so a
+        // future reordering cannot silently produce a misleading detail.
+        V::InvalidSignature(_) => "Credential signature did not verify.",
+        // `Valid` is unreachable — the caller checks `is_valid()` first — and
+        // `MalformedCredential` carries text derived from the credential.
+        V::MalformedCredential(_) | V::Valid { .. } => "Credential is not valid.",
+    }
+}
+
 /// RFC 7807 rejection. 401 rather than 400: the request is well-formed HTTP; it
 /// is the credential that failed, and the client's remedy is a different one.
 ///
-/// The detail deliberately does not distinguish "unknown issuer" from "bad
-/// signature" beyond what a holder needs to act on — enough to debug a genuine
-/// integration, not a probe oracle for which issuers a node trusts.
+/// Details come from [`rejection_detail`] or are fixed strings at the call site;
+/// see that function for what the wording deliberately does and does not reveal.
 fn reject(detail: &str) -> Response {
     (
         StatusCode::UNAUTHORIZED,
@@ -491,6 +592,155 @@ mod tests {
             matches!(out, CredentialOutcome::Rejected(_)),
             "an unfetchable status list must deny"
         );
+    }
+
+    /// A credential naming `battery` must not elevate a reader on a textile
+    /// passport. The credential stays valid — it simply grants nothing beyond
+    /// public here, which is why the answer is a downgrade and not a 401.
+    #[tokio::test]
+    async fn a_credential_does_not_elevate_outside_its_sectors() {
+        let (key, kid) = key_and_kid();
+        let jws = sign_credential(
+            &key,
+            &kid,
+            &credential(CredentialRole::AuthorisedRepairer, 30),
+        );
+        let out = read_and_verify(
+            &headers_with(Some(&jws)),
+            &Directory::with(Some(did_doc(&key, &kid))),
+            &trusting(),
+        )
+        .await;
+        let CredentialOutcome::Verified(c) = out else {
+            panic!("the credential itself is valid");
+        };
+        assert_eq!(
+            c.audience_for_sector("battery", &trusting()),
+            Audience::LegitimateInterest,
+            "in scope: the credential names battery"
+        );
+        assert_eq!(
+            c.audience_for_sector("textile", &trusting()),
+            Audience::Public,
+            "out of scope: a battery credential must not unlock a textile passport"
+        );
+    }
+
+    /// An unmodelled sector is not in any credential's scope list either, so it
+    /// gets the same downgrade rather than falling through to the raw audience.
+    #[tokio::test]
+    async fn an_unknown_sector_is_out_of_scope() {
+        let (key, kid) = key_and_kid();
+        let jws = sign_credential(
+            &key,
+            &kid,
+            &credential(CredentialRole::MarketSurveillanceAuthority, 30),
+        );
+        let trust = StaticTrustedIssuers::new(vec![ISSUER], vec![ISSUER]);
+        let out = read_and_verify(
+            &headers_with(Some(&jws)),
+            &Directory::with(Some(did_doc(&key, &kid))),
+            &trust,
+        )
+        .await;
+        let CredentialOutcome::Verified(c) = out else {
+            panic!("valid credential");
+        };
+        assert_eq!(c.audience(), Audience::Authority);
+        assert_eq!(
+            c.audience_for_sector("not-a-sector", &trust),
+            Audience::Public
+        );
+    }
+
+    /// A credential naming **no** sectors is unscoped by core's rule, so it
+    /// keeps its audience everywhere. Locking this in because the downgrade
+    /// above must not silently become "deny unless listed" — that would break
+    /// every general-purpose authority credential.
+    #[tokio::test]
+    async fn a_credential_with_no_sectors_is_unscoped() {
+        let (key, kid) = key_and_kid();
+        let mut cred = credential(CredentialRole::Recycler, 30);
+        cred.credential_subject.sectors = Vec::new();
+        let jws = sign_credential(&key, &kid, &cred);
+        let out = read_and_verify(
+            &headers_with(Some(&jws)),
+            &Directory::with(Some(did_doc(&key, &kid))),
+            &trusting(),
+        )
+        .await;
+        let CredentialOutcome::Verified(c) = out else {
+            panic!("valid credential");
+        };
+        assert_eq!(
+            c.audience_for_sector("textile", &trusting()),
+            Audience::LegitimateInterest
+        );
+    }
+
+    /// The typed header name must be the lowercase form of the header actually
+    /// read. They are spelled separately (`HeaderName::from_static` needs a
+    /// literal), and a mismatch would refuse browser preflights for a header the
+    /// node does accept — a failure that shows up as requests never arriving.
+    #[test]
+    fn header_name_matches_the_header_read() {
+        assert_eq!(
+            credential_header_name().as_str(),
+            CREDENTIAL_HEADER.to_ascii_lowercase()
+        );
+    }
+
+    /// Rejection details are fixed sentences: no `Debug` formatting, and
+    /// nothing derived from the credential the caller supplied. The old
+    /// `{result:?}` emitted `UntrustedIssuer { issuer_did: "…" }` and
+    /// `OutOfScope { reason: "Credential covers sectors […]" }` — Rust internals
+    /// and caller-chosen strings, straight into a public response body.
+    #[test]
+    fn rejection_details_are_fixed_sentences_not_debug_output() {
+        use dpp_crypto::VerificationResult as V;
+
+        let cases = [
+            V::Expired {
+                expired_at: Utc::now(),
+            },
+            V::Revoked,
+            V::UntrustedIssuer {
+                issuer_did: "did:web:attacker-chosen.example".to_owned(),
+            },
+            V::OutOfScope {
+                reason: "Credential covers sectors [\"<script>\"]".to_owned(),
+            },
+            V::MalformedCredential("attacker text".to_owned()),
+        ];
+
+        for result in cases {
+            let detail = rejection_detail(&result);
+            for leak in [
+                "{",
+                "}",
+                "did:web:",
+                "attacker",
+                "script",
+                "sectors",
+                "expired_at",
+            ] {
+                assert!(
+                    !detail.contains(leak),
+                    "detail {detail:?} leaks {leak:?} from {result:?}"
+                );
+            }
+            assert!(detail.ends_with('.'), "{detail:?} is not a sentence");
+        }
+    }
+
+    /// Revocation and an unfetchable status list share one message on purpose:
+    /// core maps both to `Revoked`, and an attacker who can make a status
+    /// endpoint unreachable must not learn from the response that it worked.
+    #[test]
+    fn a_blocked_status_endpoint_is_indistinguishable_from_revocation() {
+        use dpp_crypto::VerificationResult as V;
+        assert_eq!(rejection_detail(&V::Revoked), rejection_detail(&V::Revoked));
+        assert!(rejection_detail(&V::Revoked).contains("could not be checked"));
     }
 
     #[tokio::test]

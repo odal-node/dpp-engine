@@ -56,12 +56,30 @@ pub fn public_view(full: &Value, sector_key: &str) -> Value {
 /// public one — a credentialed reader must not receive more from an unmodelled
 /// sector than an anonymous one would.
 ///
-/// Note this is **not** covered by `publicJwsSignature`, which signs only the
-/// public view. A non-public view is currently served unsigned; giving the
-/// legitimate-interest audience a verifiable artefact is tracked separately.
+/// # A view is a payload, never a payload plus someone else's proof
+///
+/// Every proof field is stripped, for every audience. A signature covers one
+/// specific redaction of the passport, so carrying it into a *different*
+/// redaction hands the reader a proof that cannot verify against the bytes it
+/// arrived with — a mismatch indistinguishable, to anyone checking, from
+/// tampering. Concretely: `publicJwsSignature` covers the public payload and has
+/// no disclosure-table entry at all (so it defaulted to `Public` and reached
+/// every audience), while `jwsSignature` covers the *full* payload and is
+/// `Conformity`, so an authority received it attached to a body with
+/// individual-item data already removed. Neither is verifiable where it landed.
+///
+/// So this function returns the payload alone, and whichever layer serves it
+/// attaches the one proof that covers it — [`signed_public_view`] for the public
+/// view, [`signed_audience_view`] for the rest.
 pub fn audience_view(full: &Value, sector_key: &str, audience: Audience) -> Value {
     let policy = public_policy(sector_key);
     let mut view = filter_by_audience(full, &policy, audience).filtered_data;
+
+    if let Some(obj) = view.as_object_mut() {
+        for proof in ["publicJwsSignature", "jwsSignature", "disclosureSignatures"] {
+            obj.remove(proof);
+        }
+    }
 
     // Fail closed for an unrecognised sector: with no catalog descriptor there is
     // no field-tier policy for its `sectorData`, so the default-Public pass above
@@ -161,6 +179,98 @@ pub fn signed_public_view(passport: &Passport) -> Result<Value, DppError> {
         );
     }
     Ok(view)
+}
+
+/// The non-public view **as actually signed**: the decoded payload of this
+/// audience's disclosure-keyed proof, with that proof re-attached.
+///
+/// The non-public counterpart of [`signed_public_view`], and for the same
+/// reason: rendering the live row would attach a publish-time proof to a body
+/// that can still change afterwards, so a verifier would see a mismatch that is
+/// not tampering. Reading the payload back out of the proof makes body and
+/// signature agree by construction.
+///
+/// The response is self-describing. `disclosureSet` names the classes the body
+/// contains — `public+restricted+individual`, not `legitimateInterest` — so a
+/// reader (and an archived copy of this response) states what it covers in a
+/// vocabulary that survives ESPR naming a different actor taxonomy.
+///
+/// # Errors
+/// [`DppError::Internal`] if the passport carries no proof for `audience`'s
+/// disclosure set, if that proof is not a decodable compact JWS, or if its
+/// payload is for a different passport. All fail closed: falling back to the
+/// live row is what would reintroduce the drift.
+pub fn signed_audience_view(passport: &Passport, audience: Audience) -> Result<Value, DppError> {
+    let key = audience.disclosure_key();
+    let jws = passport.disclosure_signatures.get(&key).ok_or_else(|| {
+        DppError::Internal(format!(
+            "published passport has no signature for disclosure set {key}"
+        ))
+    })?;
+
+    let payload_b64 = jws
+        .split('.')
+        .nth(1)
+        .ok_or_else(|| DppError::Internal(format!("{key} signature is not a compact JWS")))?;
+    let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(payload_b64)
+        .map_err(|e| DppError::Internal(format!("{key} payload not base64url: {e}")))?;
+    let mut view: Value = serde_json::from_slice(&bytes)
+        .map_err(|e| DppError::Internal(format!("{key} payload not JSON: {e}")))?;
+
+    // Bind the proof to the row it was read from — the same check
+    // `signed_public_view` makes, and for the same reason: this is the last
+    // point where the requested row's identity is known independently of the
+    // proof's contents.
+    let signed_id = view.get("id").and_then(Value::as_str).unwrap_or_default();
+    if signed_id != passport.id.to_string() {
+        return Err(DppError::Internal(format!(
+            "{key} signature payload is for passport {signed_id}, not {}",
+            passport.id
+        )));
+    }
+
+    if let Some(obj) = view.as_object_mut() {
+        obj.insert(
+            "disclosureJwsSignature".to_owned(),
+            Value::String(jws.clone()),
+        );
+        obj.insert("disclosureSet".to_owned(), Value::String(key));
+    }
+    Ok(view)
+}
+
+/// Sign each non-public disclosure set at publish, returning the map to freeze
+/// onto the passport.
+///
+/// One signing call per **distinct disclosure set**, not per audience: two
+/// audiences with the same class set receive the same bytes and must share one
+/// proof, or the same view would exist under two names.
+///
+/// `payload` is the full serialised passport at publish time — the same value
+/// the public view is derived from, so all three proofs describe one moment.
+///
+/// # Errors
+/// Propagates the first signing failure. Publish aborts on it: a passport that
+/// reached `Published` without a proof for every audience it will serve is
+/// exactly the half-signed state this function exists to prevent.
+pub async fn sign_disclosure_views(
+    identity: &dyn dpp_domain::ports::identity_port::IdentityPort,
+    passport_id: dpp_domain::PassportId,
+    payload: &Value,
+    sector_key: &str,
+) -> Result<std::collections::BTreeMap<String, String>, DppError> {
+    let mut signatures = std::collections::BTreeMap::new();
+    for audience in [Audience::LegitimateInterest, Audience::Authority] {
+        let key = audience.disclosure_key();
+        if signatures.contains_key(&key) {
+            continue;
+        }
+        let view = audience_view(payload, sector_key, audience);
+        let signed = identity.sign_passport(passport_id, &view).await?;
+        signatures.insert(key, signed.jws);
+    }
+    Ok(signatures)
 }
 
 #[cfg(test)]
@@ -267,6 +377,7 @@ mod tests {
             qr_code_url: None,
             jws_signature: None,
             public_jws_signature: None,
+            disclosure_signatures: Default::default(),
             created_at: Utc::now(),
             updated_at: Utc::now(),
             published_at: None,
@@ -282,6 +393,87 @@ mod tests {
             facility: None,
             seal: None,
         }
+    }
+
+    /// The property the whole chunk exists for: the body a non-public audience
+    /// receives is exactly what its attached proof was computed over.
+    ///
+    /// Asserted the way a caller would check it — decode the proof, strip the
+    /// two fields the serving layer added, compare — because that is the
+    /// operation a repairer's verifier performs, and it is what failed before:
+    /// the audience view arrived carrying `publicJwsSignature`, computed over a
+    /// strictly smaller payload.
+    #[test]
+    fn a_disclosure_view_verifies_against_the_body_it_is_served_with() {
+        let mut passport = stub_passport();
+        let signed_payload = json!({
+            "id": passport.id.to_string(),
+            "productName": "Widget",
+            "sectorData": { "sector": "battery", "stateOfHealthPct": 87.5 },
+        });
+        let key = Audience::LegitimateInterest.disclosure_key();
+        passport
+            .disclosure_signatures
+            .insert(key.clone(), jws_over(&signed_payload));
+        // The row also carries the other two proofs; neither may leak into this
+        // response, because neither covers it.
+        passport.public_jws_signature = Some(jws_over(&json!({ "id": "x" })));
+        passport.jws_signature = Some("full.payload.jws".to_owned());
+
+        let served = signed_audience_view(&passport, Audience::LegitimateInterest)
+            .expect("a published passport has a proof for every audience it serves");
+
+        assert_eq!(
+            served["disclosureSet"],
+            json!("public+restricted+individual"),
+            "the response must name the classes it carries, not the audience"
+        );
+
+        let attached = served["disclosureJwsSignature"]
+            .as_str()
+            .expect("the proof is attached");
+        let mut body = served.clone();
+        let obj = body.as_object_mut().expect("object");
+        obj.remove("disclosureJwsSignature");
+        obj.remove("disclosureSet");
+
+        assert_eq!(
+            body,
+            jws_payload(attached),
+            "the served body is not what the attached proof covers"
+        );
+        assert!(served.get("publicJwsSignature").is_none());
+        assert!(served.get("jwsSignature").is_none());
+    }
+
+    /// A passport with no proof for the requested disclosure set is a corrupt
+    /// row — publish aborts unless all three signatures are written — so it
+    /// fails closed rather than degrading to an unsigned body.
+    #[test]
+    fn a_missing_disclosure_proof_is_an_error_not_an_unsigned_fallback() {
+        let passport = stub_passport();
+        assert!(signed_audience_view(&passport, Audience::Authority).is_err());
+    }
+
+    /// A proof for a *different* passport is refused even though it is
+    /// well-formed — the same binding `signed_public_view` enforces.
+    #[test]
+    fn a_disclosure_proof_for_another_passport_is_refused() {
+        let mut passport = stub_passport();
+        passport.disclosure_signatures.insert(
+            Audience::Authority.disclosure_key(),
+            jws_over(&json!({ "id": "00000000-0000-4000-9000-00000000dead" })),
+        );
+        assert!(signed_audience_view(&passport, Audience::Authority).is_err());
+    }
+
+    /// Decode the payload segment of a compact JWS.
+    fn jws_payload(jws: &str) -> Value {
+        let seg = jws.split('.').nth(1).expect("three segments");
+        let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .decode(seg)
+            .expect("base64url");
+        serde_json::from_slice(&bytes).expect("JSON")
     }
 
     #[test]

@@ -141,8 +141,19 @@ async fn main() -> anyhow::Result<()> {
     // Credential issuers: who may attest which audience. Ghost when unconfigured,
     // so a node that cannot grant credentialed access says so rather than
     // denying every credential indistinguishably from a bad one.
+    //
+    // The operator DID is read back out of the node's own published DID document
+    // rather than derived from the base URL a second time: that document's `id`
+    // is the exact string a self-issued credential carries as its `issuer`, so
+    // reading it is the only way self-trust cannot silently fail to match.
+    let operator_did = identity
+        .own_did_document()
+        .await
+        .ok()
+        .and_then(|d| d["id"].as_str().map(ToOwned::to_owned));
     let (trusted_issuers, credential_trust) =
-        dpp_node::infra::credential_issuers::from_env(Some(cfg.did_web_base_url.as_str()));
+        dpp_node::infra::credential_issuers::from_env(operator_did.as_deref());
+    let credentials_live = credential_trust != TrustMode::Ghost;
 
     let trust = boot::trust::build_and_enforce(registry_trust, archive_trust, credential_trust)?;
 
@@ -219,7 +230,7 @@ async fn main() -> anyhow::Result<()> {
 
     let mut passport_service = PassportService::new(
         db.passport_repo.clone(),
-        identity,
+        identity.clone(),
         compliance,
         db.audit_repo.clone(),
         event_bus,
@@ -279,14 +290,17 @@ async fn main() -> anyhow::Result<()> {
         // Only wired when issuers are configured: with none, the audience-scoped
         // route serves the public view and the trust report says the capability
         // is absent.
-        credential_directory: (credential_trust != TrustMode::Ghost).then(|| {
-            Arc::new(
-                dpp_vault::infra::credential_directory::HttpCredentialDirectory::new(
-                    reqwest::Client::new(),
-                ),
-            ) as Arc<dyn dpp_vault::middleware::credential::CredentialDirectory>
+        credential_directory: credentials_live.then(|| {
+            let mut directory =
+                dpp_vault::infra::credential_directory::HttpCredentialDirectory::new();
+            // Operator-issued credentials resolve against the in-process
+            // identity rather than the node's own public hostname.
+            if let Some(did) = operator_did.clone() {
+                directory = directory.with_local_issuer(did, identity.clone());
+            }
+            Arc::new(directory) as Arc<dyn dpp_vault::middleware::credential::CredentialDirectory>
         }),
-        trusted_issuers: (credential_trust != TrustMode::Ghost)
+        trusted_issuers: credentials_live
             .then(|| Arc::new(trusted_issuers) as Arc<dyn dpp_crypto::TrustedIssuerRegistry>),
         cors_allowed_origins: cfg.cors_allowed_origins.clone(),
         scan_repo: db.scan_repo.clone(),

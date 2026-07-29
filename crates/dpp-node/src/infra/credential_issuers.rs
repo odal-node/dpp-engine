@@ -37,8 +37,37 @@ const ENV_AUTHORITY: &str = "CREDENTIAL_ISSUERS_AUTHORITY";
 /// When `true`, the node's own operator DID is trusted for every audience.
 const ENV_SELF: &str = "CREDENTIAL_ISSUERS_SELF";
 
+/// Trust is matched against `credential.issuer` by exact string equality, so an
+/// entry that is not a DID can never match anything. Admitting one would be
+/// worse than dropping it: a non-empty list reports the port `Live`, so the node
+/// would advertise credentialed access while denying every credential — the
+/// exact indistinguishable-denial failure this module exists to avoid. Refuse it
+/// loudly instead.
+fn is_did(candidate: &str) -> bool {
+    candidate.starts_with("did:")
+}
+
+fn keep_dids(source: &str, candidates: Vec<String>) -> Vec<String> {
+    candidates
+        .into_iter()
+        .filter(|c| {
+            if is_did(c) {
+                return true;
+            }
+            tracing::warn!(
+                source,
+                value = c.as_str(),
+                "ignoring trusted-issuer entry: not a DID. Trust is matched against \
+                 the credential's `issuer` by exact string equality, so this entry \
+                 could never match. Expected e.g. did:web:issuer.example"
+            );
+            false
+        })
+        .collect()
+}
+
 fn dids_from(var: &str) -> Vec<String> {
-    std::env::var(var)
+    let raw: Vec<String> = std::env::var(var)
         .ok()
         .map(|raw| {
             raw.split(',')
@@ -47,13 +76,16 @@ fn dids_from(var: &str) -> Vec<String> {
                 .map(ToOwned::to_owned)
                 .collect()
         })
-        .unwrap_or_default()
+        .unwrap_or_default();
+    keep_dids(var, raw)
 }
 
 /// Build the trusted-issuer registry from env, alongside the tier to report.
 ///
-/// `operator_did` is the node's own DID, trusted for every audience when
-/// `CREDENTIAL_ISSUERS_SELF=true`.
+/// `operator_did` is the node's own **DID** — not its base URL. Pass the `id` of
+/// the node's published DID document; that is the string a self-issued
+/// credential carries as `issuer`, and the two must be byte-identical for
+/// `CREDENTIAL_ISSUERS_SELF` to grant anything.
 pub fn from_env(operator_did: Option<&str>) -> (StaticTrustedIssuers, TrustMode) {
     let mut legitimate_interest = dids_from(ENV_LEGITIMATE_INTEREST);
     let mut authority = dids_from(ENV_AUTHORITY);
@@ -62,8 +94,10 @@ pub fn from_env(operator_did: Option<&str>) -> (StaticTrustedIssuers, TrustMode)
         .map(|v| v.eq_ignore_ascii_case("true"))
         .unwrap_or(false);
     if trust_self && let Some(did) = operator_did.filter(|d| !d.is_empty()) {
-        legitimate_interest.push(did.to_owned());
-        authority.push(did.to_owned());
+        for d in keep_dids(ENV_SELF, vec![did.to_owned()]) {
+            legitimate_interest.push(d.clone());
+            authority.push(d);
+        }
     }
 
     if legitimate_interest.is_empty() && authority.is_empty() {
@@ -175,6 +209,64 @@ mod tests {
         let (registry, mode) = from_env(Some(did));
         assert_eq!(mode, TrustMode::Live);
         assert!(registry.is_trusted_for_audience(did, Audience::Authority));
+        clear();
+    }
+
+    /// A base URL is not a DID. Passing one (the node's `DID_WEB_BASE_URL`
+    /// rather than its DID document's `id`) must not produce a `Live` node whose
+    /// every credential is denied as untrusted — the operator would see a
+    /// healthy trust report and an endpoint that grants nothing.
+    #[test]
+    #[serial]
+    fn a_base_url_is_refused_rather_than_trusted_as_a_did() {
+        clear();
+        unsafe { std::env::set_var(ENV_SELF, "true") };
+        let (registry, mode) = from_env(Some("http://localhost:8001"));
+        assert_eq!(
+            mode,
+            TrustMode::Ghost,
+            "a non-DID self entry must leave the node Ghost, not falsely Live"
+        );
+        assert!(!registry.is_trusted_for_audience("http://localhost:8001", Audience::Authority));
+        // The DID that credential subjects actually carry is likewise untrusted,
+        // because the base URL never became one.
+        assert!(!registry.is_trusted_for_audience("did:web:localhost%3A8001", Audience::Authority));
+        clear();
+    }
+
+    /// The same rule for operator-configured issuers: a typo'd https URL in the
+    /// env var is dropped, not admitted as an unmatchable entry.
+    #[test]
+    #[serial]
+    fn a_non_did_env_entry_is_dropped() {
+        clear();
+        unsafe {
+            std::env::set_var(
+                ENV_AUTHORITY,
+                "https://authority.example,did:web:authority.example",
+            );
+        }
+        let (registry, mode) = from_env(None);
+        assert_eq!(mode, TrustMode::Live, "the one real DID still configures");
+        assert!(registry.is_trusted_for_audience("did:web:authority.example", Audience::Authority));
+        assert!(
+            !registry.is_trusted_for_audience("https://authority.example", Audience::Authority)
+        );
+        clear();
+    }
+
+    /// The DID this node publishes is the string a self-issued credential
+    /// carries as `issuer`, so self-trust must match it exactly.
+    #[test]
+    #[serial]
+    fn self_trust_matches_the_published_did_exactly() {
+        clear();
+        let did = "did:web:localhost%3A8001";
+        unsafe { std::env::set_var(ENV_SELF, "true") };
+        let (registry, mode) = from_env(Some(did));
+        assert_eq!(mode, TrustMode::Live);
+        assert!(registry.is_trusted_for_audience(did, Audience::Authority));
+        assert!(registry.is_trusted_for_audience(did, Audience::LegitimateInterest));
         clear();
     }
 

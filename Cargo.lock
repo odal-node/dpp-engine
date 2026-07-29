@@ -2091,8 +2091,6 @@ checksum = "75b325c5dbd37f80359721ad39aca5a29fb04c89279657cffdda8736d0c0b9d2"
 [[package]]
 name = "dpp-calc"
 version = "0.11.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "780fd66e24d71c6726189cb9c08a8d3a27c8029a02f31b52dfb4eb63968e9540"
 dependencies = [
  "chrono",
  "hex",
@@ -2155,8 +2153,6 @@ dependencies = [
 [[package]]
 name = "dpp-crypto"
 version = "0.11.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "903c6fc73411a2aa4c3702b2300ea4d0c78917036f617ea42fb967581d7505c0"
 dependencies = [
  "aes-gcm",
  "anyhow",
@@ -2203,8 +2199,6 @@ dependencies = [
 [[package]]
 name = "dpp-digital-link"
 version = "0.11.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1959f5b10babc05b9ac19ef68f634003dcc7a8f1b1b8329354768a16df2359b6"
 dependencies = [
  "dpp-domain",
  "serde",
@@ -2215,8 +2209,6 @@ dependencies = [
 [[package]]
 name = "dpp-domain"
 version = "0.11.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "810777f10c83b968fee7f57b1b90b38063d8046dd207e1d5af3f9320424d285e"
 dependencies = [
  "async-trait",
  "chrono",
@@ -2377,8 +2369,6 @@ dependencies = [
 [[package]]
 name = "dpp-plugin-traits"
 version = "0.11.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fb4b516cb1c996ef6f15f9357b67cbeac9aa4d47563fe8c1ab3bfe7bb8e3d5cb"
 dependencies = [
  "semver",
  "serde",
@@ -2389,8 +2379,6 @@ dependencies = [
 [[package]]
 name = "dpp-registry"
 version = "0.11.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0cf6ea8c1a48b765cd109ec59002db308d547c883550354054d86ede10506c22"
 dependencies = [
  "chrono",
  "dpp-domain",
@@ -2451,8 +2439,6 @@ dependencies = [
 [[package]]
 name = "dpp-rules"
 version = "0.11.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7368825702acb3cee1344e3dc0e378650449aa995f6c3e0f7cb9ba1e54864c5e"
 dependencies = [
  "base64",
  "chrono",
@@ -2512,6 +2498,7 @@ dependencies = [
  "dpp-types",
  "ed25519-dalek 2.2.0",
  "flate2",
+ "futures",
  "hex",
  "metrics",
  "proptest",

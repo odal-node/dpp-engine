@@ -98,6 +98,7 @@ pub const MUTABLE_FIELDS: &[&str] = &[
     "status",
     "jwsSignature",
     "publicJwsSignature",
+    "disclosureSignatures",
     "qrCodeUrl",
     "publishedAt",
     "retentionLocked",

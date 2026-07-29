@@ -210,6 +210,31 @@ impl PassportService {
             })?;
         passport.public_jws_signature = Some(public_jws);
 
+        // Each non-public disclosure set gets its own proof over its own view.
+        // Without this an authority or a legitimate-interest holder receives a
+        // filtered body and no signature that covers it — and the audiences most
+        // likely to be making a safety or resale decision on the data are
+        // exactly the ones who cannot check it. Frozen here with its two
+        // siblings so all three describe the same moment, and keyed by
+        // disclosure set so the artefact names the data it covers rather than
+        // the actor vocabulary of one regulation.
+        passport.disclosure_signatures = crate::public_view::sign_disclosure_views(
+            self.identity.as_ref(),
+            passport.id,
+            &payload,
+            passport.sector.catalog_key(),
+        )
+        .await
+        .map_err(|e| {
+            metrics::counter!("signing_failures_total").increment(1);
+            tracing::error!(
+                code = event_codes::JWS_UNSIGNED_PUBLISH_BLOCKED,
+                error = %e,
+                "publish aborted — disclosure-view signing failed; passport remains draft"
+            );
+            DppError::Signing(e.to_string())
+        })?;
+
         // Persist the published passport. With the transactional outbox present,
         // the passport write and the EU-registry registration enqueue commit
         // atomically (ESPR Art. 13) — a Published passport can never exist
@@ -392,6 +417,7 @@ mod tests {
             qr_code_url: None,
             jws_signature: None,
             public_jws_signature: None,
+            disclosure_signatures: Default::default(),
             created_at: Utc::now(),
             updated_at: Utc::now(),
             published_at: None,

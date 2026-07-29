@@ -307,6 +307,7 @@ mod snapshot_render_tests {
             qr_code_url: Some("https://id.example/01/09506000134352".into()),
             jws_signature: Some("full.jws.signature".into()),
             public_jws_signature,
+            disclosure_signatures: Default::default(),
             created_at: Utc::now(),
             updated_at: Utc::now(),
             published_at: Some(Utc::now()),

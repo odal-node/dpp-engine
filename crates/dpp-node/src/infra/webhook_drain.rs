@@ -16,7 +16,6 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use hmac::{Hmac, Mac};
 use sha2::Sha256;
 
-use dpp_common::url_guard::ip_is_disallowed;
 use dpp_types::WebhookOutbox;
 
 type HmacSha256 = Hmac<Sha256>;
@@ -48,49 +47,18 @@ fn signature_header(secret: &str, timestamp: i64, body: &str) -> String {
     format!("t={timestamp},v1={digest}")
 }
 
-/// Delivery-time SSRF re-check: re-resolve the host *now* and refuse any
-/// private/loopback/metadata address (guards a hostname that resolves internal,
-/// and DNS rebinding between create and delivery). Skipped when `allow_private`.
+/// Delivery-time SSRF re-check, skipped when `allow_private`.
+///
+/// The check itself is `url_guard::assert_public_target`, shared with every
+/// other outbound fetch so there is one implementation of the rule. The
+/// `allow_private` opt-out is webhook-specific and stays here: a self-hosting
+/// operator may legitimately deliver to their *own* internal receiver, which is
+/// a target they chose. It must never be extended to a target a caller supplies.
 async fn assert_public_target(url_str: &str, allow_private: bool) -> Result<(), String> {
-    let url = reqwest::Url::parse(url_str).map_err(|e| format!("invalid URL: {e}"))?;
-    // Trust opt-in: skip the scheme + range guard entirely (internal receiver).
     if allow_private {
         return Ok(());
     }
-    if url.scheme() != "https" {
-        return Err("scheme is not https".into());
-    }
-    // `Host` parses IP literals correctly, including bracketed IPv6.
-    match url.host().ok_or("no host")? {
-        url::Host::Ipv4(ip) => reject_if_disallowed(std::net::IpAddr::V4(ip)),
-        url::Host::Ipv6(ip) => reject_if_disallowed(std::net::IpAddr::V6(ip)),
-        url::Host::Domain(host) => {
-            // Re-resolve now and check every answer (catches a hostname that
-            // resolves internal, and DNS rebinding between create and delivery).
-            let port = url.port_or_known_default().unwrap_or(443);
-            let addrs = tokio::net::lookup_host((host, port))
-                .await
-                .map_err(|e| format!("DNS resolution failed: {e}"))?;
-            let mut resolved = false;
-            for addr in addrs {
-                resolved = true;
-                reject_if_disallowed(addr.ip())?;
-            }
-            if resolved {
-                Ok(())
-            } else {
-                Err("host did not resolve".into())
-            }
-        }
-    }
-}
-
-fn reject_if_disallowed(ip: std::net::IpAddr) -> Result<(), String> {
-    if ip_is_disallowed(ip) {
-        Err(format!("host is a non-public address ({ip})"))
-    } else {
-        Ok(())
-    }
+    dpp_common::url_guard::assert_public_target(url_str).await
 }
 
 /// Record a transient failure: back off and retry, unless the attempt cap is

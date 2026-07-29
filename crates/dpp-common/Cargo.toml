@@ -28,6 +28,7 @@ async-trait         = { workspace = true }
 uuid                = { workspace = true }
 chrono              = { workspace = true }
 url                 = { workspace = true }
+tokio               = { workspace = true }
 
 [dev-dependencies]
 tokio               = { workspace = true }

@@ -354,8 +354,9 @@ mod tests {
     // ── DAL D2: MUTABLE_FIELDS parity guard ─────────────────────────────────
 
     /// `MUTABLE_FIELDS` must equal the DB retention trigger's `mutable_keys`
-    /// array (`0004_passport.sql`, amended by `0011_public_jws_mutable.sql`
-    /// and `0018_lint_result_mutable.sql`): the fields a retention-locked
+    /// array (`0004_passport.sql`, amended by `0011_public_jws_mutable.sql`,
+    /// `0018_lint_result_mutable.sql` and
+    /// `0027_disclosure_signatures_mutable.sql`): the fields a retention-locked
     /// passport may still change. Machine-checks the DAL D2 invariant so the
     /// two cannot silently diverge.
     #[test]
@@ -364,6 +365,9 @@ mod tests {
             "status",
             "jwsSignature",
             "publicJwsSignature",
+            // Re-signed on every publish, exactly like its two siblings above —
+            // a Suspended → Published transition runs the signing path again.
+            "disclosureSignatures",
             "qrCodeUrl",
             "publishedAt",
             "retentionLocked",

@@ -216,7 +216,15 @@ fn build_cors(allowed_origins: &[String]) -> CorsLayer {
             Method::DELETE,
             Method::OPTIONS,
         ])
-        .allow_headers([header::AUTHORIZATION, header::CONTENT_TYPE])
+        // `X-DPP-Credential` is allow-listed because the readers this route
+        // exists for — a repairer's portal, an authority's browser tool — are
+        // cross-origin browser clients. Without it their preflight is refused
+        // and the credential never reaches the node at all.
+        .allow_headers([
+            header::AUTHORIZATION,
+            header::CONTENT_TYPE,
+            crate::middleware::credential::credential_header_name(),
+        ])
         .allow_credentials(true)
         .max_age(std::time::Duration::from_secs(86400))
 }
@@ -224,6 +232,48 @@ fn build_cors(allowed_origins: &[String]) -> CorsLayer {
 #[cfg(test)]
 mod tests {
     use super::build_cors;
+
+    /// A browser client cannot send a header the preflight does not allow, so
+    /// omitting `X-DPP-Credential` here would make the credential route
+    /// unusable from exactly the readers it exists for — and it would fail
+    /// silently, as a request that never arrives rather than one that is
+    /// refused. Driven as a real preflight rather than by inspecting the layer,
+    /// because what matters is the response header a browser actually sees.
+    #[tokio::test]
+    async fn preflight_allows_the_credential_header() {
+        use axum::{Router, body::Body, http::Request, routing::get};
+        use tower::ServiceExt as _;
+
+        let app = Router::new()
+            .route("/credential/dpp/{id}", get(|| async { "ok" }))
+            .layer(super::build_cors(&["https://portal.example".to_owned()]));
+
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("OPTIONS")
+                    .uri("/credential/dpp/x")
+                    .header("origin", "https://portal.example")
+                    .header("access-control-request-method", "GET")
+                    .header("access-control-request-headers", "x-dpp-credential")
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("preflight");
+
+        let allowed = resp
+            .headers()
+            .get("access-control-allow-headers")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or_default()
+            .to_ascii_lowercase();
+
+        assert!(
+            allowed.contains("x-dpp-credential"),
+            "preflight did not allow the credential header; got {allowed:?}"
+        );
+    }
 
     #[test]
     fn empty_origins_returns_minimal_layer() {
