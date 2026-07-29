@@ -244,14 +244,33 @@ impl IdentityPort for MockIdentity {
 // ---------------------------------------------------------------------------
 
 pub async fn start_vault(dal: PgDal) -> String {
-    start_vault_with_identity(dal, Arc::new(MockIdentity)).await
+    start_vault_with_identity(dal, Arc::new(MockIdentity), None).await
 }
 
 pub async fn start_vault_failing_signer(dal: PgDal) -> String {
-    start_vault_with_identity(dal, Arc::new(FailingIdentity)).await
+    start_vault_with_identity(dal, Arc::new(FailingIdentity), None).await
 }
 
-async fn start_vault_with_identity(dal: PgDal, identity: Arc<dyn IdentityPort>) -> String {
+/// A vault with the credential path **configured** — the audience-scoped route
+/// resolves credentials instead of falling through to the public view.
+pub async fn start_vault_with_credentials(
+    dal: PgDal,
+    directory: Arc<dyn dpp_vault::middleware::credential::CredentialDirectory>,
+    trust: Arc<dyn dpp_crypto::TrustedIssuerRegistry>,
+) -> String {
+    start_vault_with_identity(dal, Arc::new(MockIdentity), Some((directory, trust))).await
+}
+
+type CredentialWiring = (
+    Arc<dyn dpp_vault::middleware::credential::CredentialDirectory>,
+    Arc<dyn dpp_crypto::TrustedIssuerRegistry>,
+);
+
+async fn start_vault_with_identity(
+    dal: PgDal,
+    identity: Arc<dyn IdentityPort>,
+    credentials: Option<CredentialWiring>,
+) -> String {
     struct PgPing(PgDal);
     #[async_trait]
     impl DbPing for PgPing {
@@ -311,6 +330,8 @@ async fn start_vault_with_identity(dal: PgDal, identity: Arc<dyn IdentityPort>) 
         db_ping: Arc::new(PgPing(dal)),
         auth_provider,
         local_auth_provider: None,
+        credential_directory: credentials.as_ref().map(|(d, _)| d.clone()),
+        trusted_issuers: credentials.as_ref().map(|(_, t)| t.clone()),
         cors_allowed_origins: Vec::new(),
         scan_repo,
         plugin_admin: None,

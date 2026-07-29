@@ -271,6 +271,7 @@ fn passport(status: PassportStatus) -> Passport {
         qr_code_url: None,
         jws_signature: Some("full.jws.signature".into()),
         public_jws_signature: Some(signed_view_jws(id, product_name)),
+        disclosure_signatures: Default::default(),
         created_at: Utc::now(),
         updated_at: Utc::now(),
         published_at: Some(Utc::now()),

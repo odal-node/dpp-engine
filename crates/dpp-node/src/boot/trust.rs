@@ -16,6 +16,7 @@ use dpp_types::trust::{NodeProfile, NodeTrustReport, TrustMode, TrustPort};
 pub fn build_and_enforce(
     registry_trust: TrustMode,
     archive_trust: TrustMode,
+    credential_trust: TrustMode,
 ) -> anyhow::Result<Arc<NodeTrustReport>> {
     let trust = Arc::new(NodeTrustReport::new(
         NodeProfile::from_env(),
@@ -33,6 +34,13 @@ pub fn build_and_enforce(
             TrustPort {
                 port: "archive",
                 mode: archive_trust,
+                required: false,
+            },
+            // Not required: a node serving only public passport views is fully
+            // functional, and public access must work without registration.
+            TrustPort {
+                port: "credential_issuers",
+                mode: credential_trust,
                 required: false,
             },
         ],

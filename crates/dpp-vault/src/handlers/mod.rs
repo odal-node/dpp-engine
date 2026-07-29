@@ -2,6 +2,7 @@
 
 pub mod api_keys;
 pub mod archive;
+pub mod audience_read;
 pub mod create;
 pub mod eol;
 pub mod error;

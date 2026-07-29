@@ -4,10 +4,12 @@
 //!
 //! - [`validate_webhook_url`] — synchronous, create-time. Requires `https`,
 //!   rejects IP-literal hosts in non-public ranges. Fast-fails obvious mistakes.
-//! - [`ip_is_disallowed`] — the range predicate the drain reuses after
-//!   **re-resolving** the host at delivery time, which is the authoritative
-//!   check (it catches a hostname that resolves to an internal address, and
-//!   DNS-rebinding between create and delivery).
+//! - [`assert_public_target`] — asynchronous, fetch-time. Requires `https` and
+//!   **re-resolves** the host at the moment of the request, which is the
+//!   authoritative check (it catches a hostname that resolves to an internal
+//!   address, and DNS-rebinding between validation and use). Every outbound
+//!   fetch to a target this node did not choose must go through it.
+//! - [`ip_is_disallowed`] — the range predicate the two above share.
 //!
 //! `allow_private` opts out of the range check: this node is single-tenant, so a
 //! self-hosting operator may legitimately deliver to their *own* internal
@@ -68,6 +70,58 @@ pub fn validate_public_https_url(raw: &str) -> Result<String, String> {
         return Err("URL host is a non-public address".into());
     }
     Ok(url.to_string())
+}
+
+/// Fetch-time SSRF check: require `https`, then **re-resolve the host now** and
+/// refuse if any answer is a non-public address.
+///
+/// This is the authoritative guard, and the only one that holds for a host name:
+/// [`validate_webhook_url`] and [`validate_public_https_url`] can only range-check
+/// IP literals, so a name that resolves internally passes them. Re-resolving at
+/// the moment of the request also closes DNS rebinding between validation and
+/// use.
+///
+/// Every answer is checked, not just the first — a name that resolves to one
+/// public and one internal address must be refused.
+///
+/// # Errors
+/// A human-readable reason when the scheme is not `https`, the URL has no host,
+/// resolution fails, the name resolves to nothing, or any resolved address is
+/// non-public.
+pub async fn assert_public_target(url_str: &str) -> Result<(), String> {
+    let url = Url::parse(url_str).map_err(|e| format!("invalid URL: {e}"))?;
+    if url.scheme() != "https" {
+        return Err("scheme is not https".into());
+    }
+    // `Host` parses IP literals correctly, including bracketed IPv6.
+    match url.host().ok_or("no host")? {
+        Host::Ipv4(ip) => reject_if_disallowed(IpAddr::V4(ip)),
+        Host::Ipv6(ip) => reject_if_disallowed(IpAddr::V6(ip)),
+        Host::Domain(host) => {
+            let port = url.port_or_known_default().unwrap_or(443);
+            let addrs = tokio::net::lookup_host((host, port))
+                .await
+                .map_err(|e| format!("DNS resolution failed: {e}"))?;
+            let mut resolved = false;
+            for addr in addrs {
+                resolved = true;
+                reject_if_disallowed(addr.ip())?;
+            }
+            if resolved {
+                Ok(())
+            } else {
+                Err("host did not resolve".into())
+            }
+        }
+    }
+}
+
+fn reject_if_disallowed(ip: IpAddr) -> Result<(), String> {
+    if ip_is_disallowed(ip) {
+        Err(format!("host is a non-public address ({ip})"))
+    } else {
+        Ok(())
+    }
 }
 
 /// True if `ip` must never be an outbound target: loopback, private, link-local,
@@ -137,6 +191,38 @@ mod tests {
         assert!(validate_public_https_url("https://169.254.169.254/latest/meta-data").is_err());
         assert!(validate_public_https_url("https://[::1]/dpp/x").is_err());
         assert!(validate_public_https_url("not a url").is_err());
+    }
+
+    /// The fetch-time guard refuses the same address ranges as the literal
+    /// checks, and refuses plain http. `localhost` is the case the literal
+    /// guards miss — it is a *name*, so only the resolving check catches it.
+    #[tokio::test]
+    async fn fetch_time_guard_refuses_internal_targets() {
+        for url in [
+            "http://example.com/.well-known/did.json",
+            "https://127.0.0.1/.well-known/did.json",
+            "https://[::1]/.well-known/did.json",
+            "https://10.0.0.5/.well-known/did.json",
+            "https://169.254.169.254/latest/meta-data",
+            "https://localhost:8080/.well-known/did.json",
+            "not a url",
+        ] {
+            assert!(
+                assert_public_target(url).await.is_err(),
+                "{url} must be refused"
+            );
+        }
+    }
+
+    /// A name that does not resolve is refused rather than passed through — the
+    /// guard fails closed on a DNS failure.
+    #[tokio::test]
+    async fn fetch_time_guard_refuses_an_unresolvable_host() {
+        assert!(
+            assert_public_target("https://nonexistent.invalid/.well-known/did.json")
+                .await
+                .is_err()
+        );
     }
 
     #[test]
