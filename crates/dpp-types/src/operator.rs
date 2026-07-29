@@ -65,8 +65,26 @@ fn default_data_residency() -> String {
     "EU".to_owned()
 }
 
-/// ESPR-driven minimum data-retention floor (days, ~10 years). A configured
-/// retention shorter than this would violate the minimum-retention guarantee.
+/// Minimum data-retention floor (days, 10 years). A configured retention
+/// shorter than this would violate the minimum-retention guarantee.
+///
+/// **Not an ESPR figure.** ESPR (EU) 2024/1781 Art. 9(2)(i) sets no number — it
+/// requires availability for "at least the expected lifetime of a specific
+/// product". The 10 years is read off the regimes that do state a figure:
+/// Reg. (EU) 2025/2509 (toys) and Reg. (EU) 2026/405 (detergents) both require
+/// the passport to be available for 10 years after placing on the market,
+/// "including in cases of insolvency, liquidation or cessation of activity",
+/// and Reg. (EU) 2024/3110 (CPR) imposes the same 10 years on the economic
+/// operator.
+///
+/// This is a **floor**, not the answer: the per-sector figure lives in the
+/// catalog as `SectorDescriptor::retention_years`, and a sector whose act
+/// demands more must carry it there. Two cases this constant deliberately does
+/// not express — CPR additionally requires the *construction DPP system* to
+/// stay accessible for **25 years**, which binds a passport service provider
+/// rather than a node; and the ESPR sectors' figure is tied to expected product
+/// lifetime, so their catalog value is an assumption rather than a citation.
+/// See `dpp-docs/reference/regulatory/ESPR-2024-1781-CITATION-MAP-2026-07.md`.
 pub const MIN_RETENTION_DAYS: i64 = 3650;
 
 fn default_retention_days() -> i64 {
