@@ -142,7 +142,7 @@ async-trait  = "0.1"
 dotenvy      = "0.15"
 
 # Event bus
-async-nats   = "0.49"
+async-nats   = "0.50"
 
 # AWS S3 (MinIO / R2 compatible)
 #
