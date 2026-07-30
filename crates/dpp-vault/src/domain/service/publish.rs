@@ -150,12 +150,28 @@ impl PassportService {
         if passport.published_at.is_none() {
             let now = Utc::now();
             passport.published_at = Some(now);
-            // Compute and seal retention_until once at first publish.
-            // Uses the sector's statutory minimum; a stricter delegated-act
-            // period can be set by the engine operator before publishing.
+            // Compute and seal retention_until once at first publish, from the
+            // catalog — the single source of the retention obligation, held
+            // beside the act that imposes it. A stricter delegated-act period
+            // can be set by the operator before publishing.
+            //
+            // Fail closed when the sector has no catalog entry: retention is a
+            // legal obligation and there is no safe default for one whose
+            // length is unknown. (Unreachable in practice — publish already
+            // refuses a sector with no registered schema — but the refusal is
+            // the correct behaviour rather than a substituted number.)
             if passport.retention_until.is_none() {
-                let years = passport.sector.minimum_retention_years() as i64;
-                passport.retention_until = Some(now + chrono::Duration::days(365 * years));
+                let key = passport.sector.catalog_key().to_owned();
+                let Some(years) = catalog().retention_years(&key) else {
+                    return Err(DppError::Validation(
+                        format!(
+                            "cannot publish: sector '{key}' has no catalog entry, so its                              retention period is unknown and no default is safe to assume"
+                        )
+                        .into(),
+                    ));
+                };
+                passport.retention_until =
+                    Some(now + chrono::Duration::days(365 * i64::from(years)));
             }
         }
         passport.updated_at = Utc::now();
@@ -297,7 +313,11 @@ impl PassportService {
 
         // ESPR Art. 13 third-party archive — fire-after-commit, non-blocking.
         // Failures are logged but never propagated; the DB write is the source of truth.
-        let retention_years = updated.sector.minimum_retention_years();
+        // Same single source as the seal above; by this point the passport has
+        // published, so the entry is known to exist.
+        let retention_years = catalog()
+            .retention_years(updated.sector.catalog_key())
+            .unwrap_or_default();
         if let Err(e) = self.archive.archive(&updated, retention_years).await {
             tracing::warn!(
                 passport_id = %updated.id,
