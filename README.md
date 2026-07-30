@@ -71,8 +71,9 @@ All core crates are consumed from crates.io (dpp-core is published independently
 | Core Crate | Used For |
 |---|---|
 | `dpp-domain` | Domain types, port traits, schema validation |
-| `dpp-crypto` | Ed25519 key management, JWS, DID builder, encrypted key store |
-| `dpp-digital-link` | GS1 Digital Link parser |
+| `dpp-crypto` | Ed25519 key management, JWS, encrypted key store |
+| `dpp-vc` | W3C Verifiable Credentials, `did:web` documents, status lists, `LocalIdentityService`, JSON-LD context |
+| `dpp-digital-link` | GS1 Digital Link parser and link-type negotiation |
 | `dpp-calc` | EU-methodology calculators (CO2e, repairability) |
 | `dpp-plugin-traits` | Wasm plugin ABI |
 | `dpp-registry` | EU registry interface types |

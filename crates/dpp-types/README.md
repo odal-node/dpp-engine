@@ -20,7 +20,7 @@ from here. The node is single-tenant (DECISION-0002): these types carry no tenan
 ## When NOT to use this crate
 
 - You need the DPP data model (`Passport`, `SectorData`) → `dpp-domain`.
-- You need cryptographic primitives or VC types → `dpp-crypto`.
+- You need cryptographic primitives → `dpp-crypto`; Verifiable Credential types → `dpp-vc`.
 
 ---
 

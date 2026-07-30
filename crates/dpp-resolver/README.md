@@ -74,6 +74,7 @@ rate-limited. The WASM/edge target uses the edge platform's own rate limiting.
 |---|---|
 | `dpp-domain` | `Passport` deserialization from the vault's JSON response |
 | `dpp-crypto` | Ed25519 JWS verification |
+| `dpp-vc` | JSON-LD `@context` for the `ld+json` response |
 | `dpp-vault` | Upstream data source — resolver fetches from `/public/dpp/{id}` |
 | `dpp-node` | Does **not** embed the resolver — it runs as a separate process |
 
