@@ -15,6 +15,20 @@ set dotenv-load
 test:
     cargo nextest run --workspace
 
+# Compile the Docker-backed integration tests without running them.
+#
+# `test` above omits `--features integration-tests`, so those suites are never
+# built locally — a stale import in one of them compiles fine here and fails in
+# CI, which is exactly what happened when the credential types moved to
+# `dpp-vc`. Running them needs Docker; *compiling* them does not, so the local
+# gate can at least prove they still build.
+check-integration:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    for c in dpp-dal dpp-vault dpp-plugin-host dpp-node; do
+        cargo test --no-run --quiet -p "$c" --features integration-tests
+    done
+
 # Run the Docker-backed integration tiers (dal, vault, plugin-host, node)
 test-integration:
     #!/usr/bin/env bash
@@ -110,7 +124,7 @@ doc:
     cargo doc --workspace --no-deps
 
 # Fast gate (no Docker) — mirrors CI jobs: fmt, clippy, debug-prints, test-unit, audit
-check: fmt-check lint debug-check subjects-check mod-rs-check test audit
+check: fmt-check lint debug-check subjects-check mod-rs-check test check-integration audit
 
 # Full local CI mirror — adds integration-feature clippy + the Docker tiers (needs Docker running)
 ci: check lint-integration test-integration test-pg

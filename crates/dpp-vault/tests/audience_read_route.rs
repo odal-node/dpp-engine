@@ -32,11 +32,11 @@ use helpers::{
 };
 use serde_json::{Value, json};
 
-use dpp_crypto::{
+use dpp_vault::middleware::credential::CredentialDirectory;
+use dpp_vc::{
     CredentialBuilder, CredentialRole, DppAccessCredential, DppCredentialSubject,
     StaticTrustedIssuers, StatusList,
 };
-use dpp_vault::middleware::credential::CredentialDirectory;
 
 const ISSUER: &str = "did:web:issuer.example";
 const KID: &str = "route-test-kid";
