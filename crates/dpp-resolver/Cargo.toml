@@ -19,6 +19,7 @@ crate-type = ["rlib"]
 # cdylib (Cloudflare Workers edge target) re-added when Workers deployment is active
 
 [dependencies]
+dpp-vc = { workspace = true }
 dpp-domain        = { workspace = true }
 dpp-crypto        = { workspace = true }
 dpp-digital-link  = { workspace = true }

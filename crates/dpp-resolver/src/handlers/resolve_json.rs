@@ -87,15 +87,13 @@ pub async fn resolve_json_handler(
         obj.insert("publicJwsSignature".into(), sig.clone());
     }
 
-    // Inject JSON-LD context
+    // Inject the JSON-LD context from `dpp-vc`, never a literal built here.
+    // This handler used to construct its own, referencing a URL that returned
+    // 404 — a remote context is fetched by the consumer at expansion time, so a
+    // dead one makes this door convey no linked data at all. One definition,
+    // one place to check.
     if let Some(obj) = doc.as_object_mut() {
-        obj.insert(
-            "@context".into(),
-            serde_json::json!([
-                "https://www.w3.org/ns/did/v1",
-                "https://odal-node.io/schemas/dpp/v1"
-            ]),
-        );
+        obj.insert("@context".into(), dpp_vc::context_value());
     }
 
     let body = serde_json::to_string(&doc).unwrap_or_default();
