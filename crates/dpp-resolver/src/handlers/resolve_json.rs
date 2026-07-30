@@ -8,9 +8,9 @@ use axum::{
 use dpp_common::http_problem;
 use serde_json::Value;
 
-use dpp_crypto::access::{SectorAccessPolicy, filter_by_audience};
 use dpp_domain::Audience;
 use dpp_domain::SectorCatalog;
+use dpp_domain::access::{SectorAccessPolicy, filter_by_audience};
 
 use crate::{infra::did, state::AppState};
 

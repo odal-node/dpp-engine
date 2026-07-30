@@ -1,7 +1,7 @@
 //! Round-trip: publish -> transfer -> declare EOL -> generate + persist the
 //! evidence dossier -> verify it via `PassportService::verify_evidence`.
 //!
-//! Uses real Ed25519 signing (`dpp_crypto::LocalIdentityService`, backed by a
+//! Uses real Ed25519 signing (`dpp_vc::LocalIdentityService`, backed by a
 //! throwaway on-disk keystore) and small in-memory port implementations —
 //! no Docker, no Postgres. This is deliberately a lighter, faster tier than
 //! the `integration-tests` feature's testcontainer-backed suite, chosen
@@ -236,7 +236,7 @@ fn auth() -> AuthContext {
 
 /// Builds a `PassportService` wired with real Ed25519 signing and in-memory
 /// ports, plus the DID the identity's did:web document actually publishes as
-/// (pathless form — see `dpp_crypto::identity::did_builder`).
+/// (pathless form — see `dpp_vc::did_builder`).
 async fn build_service() -> (PassportService, Arc<InMemoryEvidenceRepo>, String) {
     let key_path =
         std::env::temp_dir().join(format!("evidence-test-{}.json", uuid::Uuid::new_v4()));
@@ -245,7 +245,7 @@ async fn build_service() -> (PassportService, Arc<InMemoryEvidenceRepo>, String)
     store.generate_key("root").expect("generate key");
     let base_url = "evidence-test.example.com".to_owned();
     let issuer_did = format!("did:web:{}", base_url.replace(':', "%3A"));
-    let identity = Arc::new(dpp_crypto::LocalIdentityService::new(
+    let identity = Arc::new(dpp_vc::LocalIdentityService::new(
         Arc::new(store),
         "root".to_owned(),
         base_url,

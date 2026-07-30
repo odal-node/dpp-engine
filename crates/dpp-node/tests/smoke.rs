@@ -21,7 +21,6 @@ use testcontainers::{
 };
 
 use base64::Engine as _;
-use dpp_crypto::identity::LocalIdentityService;
 use dpp_crypto::keystore::KeyStore;
 use dpp_dal::pg::{
     PgApiKeyRepo, PgAuditRepo, PgDal, PgEvidenceDossierRepo, PgOperatorConfigRepo, PgPassportRepo,
@@ -45,6 +44,7 @@ use dpp_vault::{
     },
     state::{AppState as VaultState, DbPing},
 };
+use dpp_vc::LocalIdentityService;
 use sha2::{Digest, Sha256};
 
 /// Test-only auth provider: accepts the unsigned dev JWTs minted by `make_jwt`

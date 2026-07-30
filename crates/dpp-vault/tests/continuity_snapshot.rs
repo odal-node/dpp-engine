@@ -225,7 +225,7 @@ async fn build_service() -> (PassportService, InMemorySnapshotOutbox) {
     let store =
         dpp_crypto::keystore::KeyStore::open(&key_path, "test-pass").expect("open keystore");
     store.generate_key("root").expect("generate key");
-    let identity = Arc::new(dpp_crypto::LocalIdentityService::new(
+    let identity = Arc::new(dpp_vc::LocalIdentityService::new(
         Arc::new(store),
         "root".to_owned(),
         "snapshot-test.example.com".to_owned(),

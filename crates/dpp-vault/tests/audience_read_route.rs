@@ -115,7 +115,7 @@ impl CredentialDirectory for FixtureDirectory {
 
 fn wiring() -> (
     Arc<dyn CredentialDirectory>,
-    Arc<dyn dpp_crypto::TrustedIssuerRegistry>,
+    Arc<dyn dpp_vc::TrustedIssuerRegistry>,
 ) {
     (
         Arc::new(FixtureDirectory),

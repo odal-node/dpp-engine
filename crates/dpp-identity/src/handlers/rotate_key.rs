@@ -12,7 +12,7 @@ use dpp_common::http_problem;
 use serde::Deserialize;
 use serde_json::json;
 
-use dpp_crypto::identity::did_builder;
+use dpp_vc::did_builder;
 
 use crate::state::AppState;
 

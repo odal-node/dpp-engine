@@ -50,7 +50,7 @@ pub struct AppState {
         Option<std::sync::Arc<dyn crate::middleware::credential::CredentialDirectory>>,
     /// Which issuers may attest which audience. `None` alongside
     /// `credential_directory`; the node reports the capability absent.
-    pub trusted_issuers: Option<std::sync::Arc<dyn dpp_crypto::TrustedIssuerRegistry>>,
+    pub trusted_issuers: Option<std::sync::Arc<dyn dpp_vc::TrustedIssuerRegistry>>,
     /// Basic-scheme auth provider — the local admin bootstrap credential.
     /// Only tried for `Authorization: Basic`; kept separate from
     /// `auth_provider` so a Bearer token can never authenticate as local

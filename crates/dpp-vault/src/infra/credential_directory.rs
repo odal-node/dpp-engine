@@ -59,8 +59,8 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use dpp_crypto::{DppAccessCredential, StatusList};
 use dpp_domain::ports::identity_port::IdentityPort;
+use dpp_vc::{DppAccessCredential, StatusList};
 use futures::StreamExt;
 use reqwest::Client;
 
