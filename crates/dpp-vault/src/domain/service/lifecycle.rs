@@ -9,7 +9,7 @@ use dpp_domain::domain::{
 };
 use dpp_types::{audit::AuditEntry, auth::AuthContext, registry_sync::RegistryStatusIntent};
 
-use super::{PassportService, catalog};
+use super::{PassportService, retention_years_for};
 
 impl PassportService {
     /// Suspend a published passport.
@@ -106,14 +106,9 @@ impl PassportService {
         if passport.retention_locked
             && let Some(published_at) = passport.published_at
         {
-            // From the catalog, the single source of the obligation. An
-            // unknown sector blocks deletion rather than defaulting: the safe
-            // direction for a retention rule is to keep the data.
-            let retention_years = i64::from(
-                catalog()
-                    .retention_years(passport.sector.catalog_key())
-                    .unwrap_or(u32::MAX),
-            );
+            // Same resolver publish uses, so the guard and the sealed deadline
+            // agree by construction.
+            let retention_years = i64::from(retention_years_for(&passport.sector));
             let retention_end = published_at + chrono::Duration::days(365 * retention_years);
             if Utc::now() < retention_end {
                 tracing::warn!(

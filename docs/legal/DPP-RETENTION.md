@@ -15,11 +15,16 @@ Until 0.13.0 the value was also hardcoded as a match on the `Sector` enum, and
 that duplicate was what the engine actually applied when sealing
 `retention_until` at publish. The enum method is gone; there is one source.
 
-A sector with no catalog entry yields `None`, and callers **fail closed**:
-publish is refused rather than inventing a period, and deletion is blocked
-rather than assuming a short one. With the sector axis open a passport can carry
-a sector this build has never seen, and there is no safe default for a legal
-obligation of unknown length.
+A sector with no catalog entry falls back to a **ten-year floor**, applied
+identically when sealing `retention_until` at publish and when guarding
+deletion, so the guard and the sealed deadline cannot disagree.
+
+That case is reachable in normal use, not exotic: a passport carrying no sector
+data resolves to `Sector::Other`, and the open sector axis means a passport can
+name a product group this build has never seen. Ten years is the floor every
+sector in the table above declares, so applying it keeps the data at least as
+long as any known obligation requires — it is not a period invented for the
+occasion.
 
 
 | Sector | Expected retention period |
