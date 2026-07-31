@@ -114,7 +114,7 @@ impl IdentityPort for IdentityHttpClient {
         // itself is whatever the caller is signing (a public view, an
         // evidence manifest, a transfer record, ...) — never a
         // `PassportCredential` in its own right, so it cannot be reparsed as
-        // one. Mirrors `dpp_crypto::identity::local_service`'s in-process path.
+        // one. Mirrors `dpp_vc::local_service`'s in-process path.
         let canonical = dpp_crypto::jws::canonicalize(payload)
             .map_err(|e| DppError::Signing(format!("canonicalising payload: {e}")))?;
         let payload_hash = hex::encode(Sha256::digest(&canonical));

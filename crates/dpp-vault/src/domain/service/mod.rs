@@ -257,6 +257,27 @@ fn catalog() -> &'static dpp_domain::SectorCatalog {
     CATALOG.get_or_init(dpp_domain::SectorCatalog::new)
 }
 
+/// The retention floor applied when the catalog has no entry for a sector.
+///
+/// Not an invented number: every sector the catalog does describe declares ten
+/// years, and `docs/legal/DPP-RETENTION.md` records ">= 10 years" as the floor
+/// across all of them, pending delegated acts included.
+///
+/// A sector with no catalog entry is reachable — a passport carrying no sector
+/// data at all resolves to `Sector::Other`, and the open sector axis means a
+/// passport can name a product group this build has never seen. Refusing to
+/// publish those would be a larger behaviour change than sourcing retention
+/// warrants, so the floor applies and the data is kept at least as long as any
+/// known obligation requires.
+pub(crate) const RETENTION_FLOOR_YEARS: u32 = 10;
+
+/// Years of retention for a sector: the catalog's value, else the floor.
+pub(crate) fn retention_years_for(sector: &dpp_domain::Sector) -> u32 {
+    catalog()
+        .retention_years(sector.catalog_key())
+        .unwrap_or(RETENTION_FLOOR_YEARS)
+}
+
 /// Process-wide versioned JSON Schema registry (parsed once).
 fn schema_registry() -> &'static dpp_domain::schemas::VersionedSchemaRegistry {
     static REGISTRY: std::sync::OnceLock<dpp_domain::schemas::VersionedSchemaRegistry> =

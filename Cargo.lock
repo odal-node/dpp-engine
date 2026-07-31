@@ -2071,9 +2071,9 @@ checksum = "75b325c5dbd37f80359721ad39aca5a29fb04c89279657cffdda8736d0c0b9d2"
 
 [[package]]
 name = "dpp-calc"
-version = "0.12.0"
+version = "0.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cdb11869f716bf2d7fca84f679b8ce6c2c3a5280ef61154ad9e14ada89ae26d6"
+checksum = "4b9562ac7e03af1ef6680725b2e906d5b0f8b53f4ae6d892c392b629f418d5e2"
 dependencies = [
  "chrono",
  "hex",
@@ -2135,9 +2135,9 @@ dependencies = [
 
 [[package]]
 name = "dpp-crypto"
-version = "0.12.0"
+version = "0.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d34cd02ce2c1ccabefedc6070202fc0f6182b5ee9b4f18156b4c6c1a41a33091"
+checksum = "c9c57797f51fba0b11e62576d407919c42782c25772e304c9767a4fd2983aeaa"
 dependencies = [
  "aes-gcm",
  "anyhow",
@@ -2145,7 +2145,6 @@ dependencies = [
  "async-trait",
  "base64 0.23.0",
  "chrono",
- "dpp-domain",
  "ed25519-dalek 3.0.0",
  "flate2",
  "hex",
@@ -2183,9 +2182,9 @@ dependencies = [
 
 [[package]]
 name = "dpp-digital-link"
-version = "0.12.0"
+version = "0.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "760780eb765e747e58362420fe71f4208249fe99c0944f393ac51a7ffb7a35af"
+checksum = "52d3ee1ff906136d933c82c596b183c8a7d63c229d62d658cb140762632a117f"
 dependencies = [
  "dpp-domain",
  "serde",
@@ -2195,9 +2194,9 @@ dependencies = [
 
 [[package]]
 name = "dpp-domain"
-version = "0.12.0"
+version = "0.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "518a5953f479ba3b52f304752fbc58db8490d44db45142a4b3f60b8b09e17cd1"
+checksum = "1623d7719873a08d428d615f76326f1e4383d83239a172c30991ff8450ac72da"
 dependencies = [
  "async-trait",
  "chrono",
@@ -2236,6 +2235,7 @@ dependencies = [
  "dpp-common",
  "dpp-crypto",
  "dpp-domain",
+ "dpp-vc",
  "serde",
  "serde_json",
  "serial_test",
@@ -2306,6 +2306,7 @@ dependencies = [
  "dpp-rules",
  "dpp-types",
  "dpp-vault",
+ "dpp-vc",
  "ed25519-dalek 2.2.0",
  "futures",
  "hex",
@@ -2357,9 +2358,9 @@ dependencies = [
 
 [[package]]
 name = "dpp-plugin-traits"
-version = "0.12.0"
+version = "0.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d3cce51cc776c3fad0246c1fdf718cb78b2a1f8916c1dfa384da9f75add0f69a"
+checksum = "db2c35abc9fa974c385625908c0b52f220667e9e9a98b38cae74e3eff5e6fd14"
 dependencies = [
  "semver",
  "serde",
@@ -2369,9 +2370,9 @@ dependencies = [
 
 [[package]]
 name = "dpp-registry"
-version = "0.12.0"
+version = "0.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4718f30074d45a5f71d9d7b802b837f91726c5bcdd0f6b39c13d3e0bd08c4a13"
+checksum = "0ee0b31c66b8bf4462021e9162432831d038c34acb641209ff184ebd7cfb6c89"
 dependencies = [
  "chrono",
  "dpp-domain",
@@ -2410,6 +2411,7 @@ dependencies = [
  "dpp-digital-link",
  "dpp-domain",
  "dpp-render",
+ "dpp-vc",
  "ed25519-dalek 2.2.0",
  "image 0.24.9",
  "metrics",
@@ -2431,9 +2433,9 @@ dependencies = [
 
 [[package]]
 name = "dpp-rules"
-version = "0.12.0"
+version = "0.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f4f1c2dc49c9aec62898d224297f19dc96d33390b0fa5ac447f9f84841a8af26"
+checksum = "33551ce32e89871eaa5356b6397749ff7c93a40d5e8a07e7301661beea86718e"
 dependencies = [
  "base64 0.23.0",
  "chrono",
@@ -2491,6 +2493,7 @@ dependencies = [
  "dpp-domain",
  "dpp-registry",
  "dpp-types",
+ "dpp-vc",
  "ed25519-dalek 2.2.0",
  "flate2",
  "futures",
@@ -2511,6 +2514,27 @@ dependencies = [
  "tower-http 0.5.2",
  "tracing",
  "tracing-subscriber",
+ "uuid",
+]
+
+[[package]]
+name = "dpp-vc"
+version = "0.13.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "eba9a9b1cd093d81a827e5e797e3639f82f9f47368853bd5cfed7d90f1f1b897"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "base64 0.23.0",
+ "chrono",
+ "dpp-crypto",
+ "dpp-domain",
+ "flate2",
+ "hex",
+ "serde",
+ "serde_jcs 0.2.0",
+ "serde_json",
+ "sha2 0.11.0",
  "uuid",
 ]
 

@@ -1,7 +1,7 @@
 //! Trusted-issuer configuration for access credentials.
 //!
 //! Answers one question: may this issuer DID attest this audience? The policy
-//! itself lives in `dpp_crypto::StaticTrustedIssuers`; this module is the
+//! itself lives in `dpp_vc::StaticTrustedIssuers`; this module is the
 //! engine-side binding to configuration, plus the trust tier the node reports.
 //!
 //! # Why zero-config is Ghost, not deny-all
@@ -27,8 +27,8 @@
 //! operator vouching for its own authorised repair network is a real and
 //! defensible model, and it is deliberately opt-in rather than implied.
 
-use dpp_crypto::StaticTrustedIssuers;
 use dpp_types::trust::TrustMode;
+use dpp_vc::StaticTrustedIssuers;
 
 /// Comma-separated issuer DIDs trusted to attest a legitimate interest.
 const ENV_LEGITIMATE_INTEREST: &str = "CREDENTIAL_ISSUERS_LEGITIMATE_INTEREST";
@@ -126,8 +126,8 @@ pub fn from_env(operator_did: Option<&str>) -> (StaticTrustedIssuers, TrustMode)
 #[cfg(test)]
 mod tests {
     use super::*;
-    use dpp_crypto::TrustedIssuerRegistry;
     use dpp_domain::Audience;
+    use dpp_vc::TrustedIssuerRegistry;
     use serial_test::serial;
 
     fn clear() {

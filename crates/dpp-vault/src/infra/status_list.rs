@@ -1,6 +1,6 @@
 //! Engine-side status-list fetch — bridges core's pure bit-decode and the network.
 //!
-//! Core (`dpp_crypto::status_list`) handles decoding a W3C Bitstring Status List
+//! Core (`dpp_vc::status_list`) handles decoding a W3C Bitstring Status List
 //! credential once its `encodedList` is in hand. This module owns the HTTP GET of
 //! the credential and the JSON extraction of that field — the only piece that
 //! cannot live in the `no_std`/infra-free core.
@@ -9,12 +9,12 @@
 //!
 //! Returns `None` on ANY failure (missing status, unreachable URL, bad JSON,
 //! invalid encoding). Callers must pass the result directly to
-//! `dpp_crypto::credential::verify_credential_with_revocation`:
+//! `dpp_vc::credential::verify_credential_with_revocation`:
 //! a credential that declares a status but whose list is `None` is treated
 //! as **revoked** by core — the credential cannot grant access until the list
 //! is reachable and the bit is clear.
 
-use dpp_crypto::{DppAccessCredential, StatusList};
+use dpp_vc::{DppAccessCredential, StatusList};
 use reqwest::Client;
 
 /// Fetch and decode the W3C Bitstring Status List declared by `credential`.
@@ -76,7 +76,7 @@ pub async fn fetch_status_list_for(
 mod tests {
     use super::*;
     use axum::{Router, routing::get};
-    use dpp_crypto::{CredentialBuilder, CredentialRole, CredentialStatus, DppCredentialSubject};
+    use dpp_vc::{CredentialBuilder, CredentialRole, CredentialStatus, DppCredentialSubject};
     use flate2::{Compression, write::GzEncoder};
     use std::io::Write;
     use tokio::net::TcpListener;

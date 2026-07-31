@@ -6,7 +6,7 @@ use axum::{
 };
 use dpp_common::http_problem;
 
-use dpp_crypto::identity::did_builder;
+use dpp_vc::did_builder;
 
 use crate::state::AppState;
 

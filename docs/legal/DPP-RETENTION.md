@@ -7,7 +7,25 @@ EU ESPR Article 9 establishes that when placing a product on the EU market, the 
 1. Ensure the Digital Product Passport remains publicly accessible for the duration defined in the applicable delegated act.
 2. Make a backup copy of the DPP available through an independent certified third-party service provider, to guarantee access in the event of insolvency or cessation of activity.
 
-The retention period is set per sector by delegated act:
+The retention period is set per sector by delegated act, and its **single source
+in code is the sector catalog** — `SectorCatalog::retention_years`, read from
+each sector manifest so the period sits beside the act that imposes it.
+
+Until 0.13.0 the value was also hardcoded as a match on the `Sector` enum, and
+that duplicate was what the engine actually applied when sealing
+`retention_until` at publish. The enum method is gone; there is one source.
+
+A sector with no catalog entry falls back to a **ten-year floor**, applied
+identically when sealing `retention_until` at publish and when guarding
+deletion, so the guard and the sealed deadline cannot disagree.
+
+That case is reachable in normal use, not exotic: a passport carrying no sector
+data resolves to `Sector::Other`, and the open sector axis means a passport can
+name a product group this build has never seen. Ten years is the floor every
+sector in the table above declares, so applying it keeps the data at least as
+long as any known obligation requires — it is not a period invented for the
+occasion.
+
 
 | Sector | Expected retention period |
 |---|---|

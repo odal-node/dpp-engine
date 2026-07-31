@@ -256,14 +256,14 @@ pub async fn start_vault_failing_signer(dal: PgDal) -> String {
 pub async fn start_vault_with_credentials(
     dal: PgDal,
     directory: Arc<dyn dpp_vault::middleware::credential::CredentialDirectory>,
-    trust: Arc<dyn dpp_crypto::TrustedIssuerRegistry>,
+    trust: Arc<dyn dpp_vc::TrustedIssuerRegistry>,
 ) -> String {
     start_vault_with_identity(dal, Arc::new(MockIdentity), Some((directory, trust))).await
 }
 
 type CredentialWiring = (
     Arc<dyn dpp_vault::middleware::credential::CredentialDirectory>,
-    Arc<dyn dpp_crypto::TrustedIssuerRegistry>,
+    Arc<dyn dpp_vc::TrustedIssuerRegistry>,
 );
 
 async fn start_vault_with_identity(

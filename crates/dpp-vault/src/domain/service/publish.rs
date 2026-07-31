@@ -16,7 +16,7 @@ use dpp_domain::{
 };
 use dpp_types::{STANDALONE_OPERATOR_ID, audit::AuditEntry, auth::AuthContext};
 
-use super::PassportService;
+use super::{PassportService, retention_years_for};
 use super::{catalog, schema_registry};
 
 impl PassportService {
@@ -150,12 +150,14 @@ impl PassportService {
         if passport.published_at.is_none() {
             let now = Utc::now();
             passport.published_at = Some(now);
-            // Compute and seal retention_until once at first publish.
-            // Uses the sector's statutory minimum; a stricter delegated-act
-            // period can be set by the engine operator before publishing.
+            // Compute and seal retention_until once at first publish, from the
+            // catalog — the single source of the obligation, held beside the
+            // act that imposes it. A stricter delegated-act period can be set
+            // by the operator before publishing.
             if passport.retention_until.is_none() {
-                let years = passport.sector.minimum_retention_years() as i64;
-                passport.retention_until = Some(now + chrono::Duration::days(365 * years));
+                let years = retention_years_for(&passport.sector);
+                passport.retention_until =
+                    Some(now + chrono::Duration::days(365 * i64::from(years)));
             }
         }
         passport.updated_at = Utc::now();
@@ -297,7 +299,9 @@ impl PassportService {
 
         // ESPR Art. 13 third-party archive — fire-after-commit, non-blocking.
         // Failures are logged but never propagated; the DB write is the source of truth.
-        let retention_years = updated.sector.minimum_retention_years();
+        // Same resolver as the seal above, so the archived copy and the sealed
+        // deadline cannot disagree.
+        let retention_years = retention_years_for(&updated.sector);
         if let Err(e) = self.archive.archive(&updated, retention_years).await {
             tracing::warn!(
                 passport_id = %updated.id,
@@ -330,15 +334,16 @@ impl PassportService {
 /// draft may stay lenient. `Ok` covers a resolved-and-valid schema; `Err`
 /// covers both a resolved-but-invalid schema and no schema resolved at all.
 fn validate_schema_for_publish(sector_data: &SectorData) -> Result<(), DppError> {
-    let schema_key = sector_data.sector().catalog_key();
-    let Some(schema_version) = catalog().resolve_schema_version(schema_key, None) else {
+    let schema_key = sector_data.sector().catalog_key().to_owned();
+    let Some(schema_version) = catalog().resolve_schema_version(&schema_key, None) else {
         // Every built-in sector has a catalog entry (CI-enforced parity guard),
         // so this is unreachable via `SectorData`'s named variants today; the
         // only value that resolves here is `SectorData::Other`, which is itself
         // already blocked by `validate_sector_data` above (no "other" validator
         // is registered by default). Kept fail-closed as defence in depth for
         // when the open sector model gains a real per-sector validator.
-        metrics::counter!("publish_schema_unresolved_total", "sector" => schema_key).increment(1);
+        metrics::counter!("publish_schema_unresolved_total", "sector" => schema_key.clone())
+            .increment(1);
         tracing::warn!(
             sector = %schema_key,
             "publish blocked — no registered JSON Schema for this sector"
@@ -358,7 +363,7 @@ fn validate_schema_for_publish(sector_data: &SectorData) -> Result<(), DppError>
         obj.remove("sector");
     }
     schema_registry()
-        .validate_strict(schema_key, &schema_version, &sd_json)
+        .validate_strict(&schema_key, &schema_version, &sd_json)
         .map_err(DppError::from)
 }
 
@@ -484,7 +489,8 @@ mod tests {
         // the only value that can reach this branch, since every named sector
         // has a catalog entry (CI-enforced parity guard). Publish must refuse
         // it outright, not warn-and-pass.
-        let sd = SectorData::Other(serde_json::json!({"anything": "goes"}));
+        let sd = SectorData::other(serde_json::json!({"anything": "goes"}))
+            .expect("an untagged payload has no typed variant");
         let err = validate_schema_for_publish(&sd).unwrap_err();
         assert!(matches!(err, DppError::Validation(_)));
     }

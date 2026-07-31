@@ -19,6 +19,7 @@ path = "src/main.rs"
 
 [dependencies]
 dpp-domain  = { workspace = true }
+dpp-vc = { workspace = true }
 dpp-crypto  = { workspace = true }
 dpp-digital-link     = { workspace = true }
 dpp-registry = { workspace = true }

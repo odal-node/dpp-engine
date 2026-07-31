@@ -24,7 +24,7 @@ from what the resolver serves.
 no filtering of its own. The caller is responsible for passing the
 already-redacted **Public**-tier view; see `dpp-vault::public_view`, which is
 the single source of truth for which fields are public per sector (via
-`dpp-domain`'s `SectorCatalog` / `AccessTier`). In practice this crate stays
+`dpp-domain`'s `SectorCatalog` / `Audience`). In practice this crate stays
 leak-safe by construction: each section builder (`src/sections/*.rs`) reads
 named fields off `sectorData` individually rather than serializing it
 wholesale, so a field a section never names is never rendered regardless of
@@ -36,7 +36,7 @@ Public-tier view, not a full passport.** It's easy to hand-write a fixture
 that "looks public" but includes a field the redaction step would actually
 strip — that field will render here with no error, because this crate trusts
 its input. Two fields most likely to be gotten wrong, per
-`SectorAccessPolicy::passport_default` (`dpp-core/crates/dpp-crypto/src/access/policy.rs`):
+`SectorAccessPolicy::passport_default` (`dpp-core/crates/dpp-domain/src/access/policy.rs`):
 
 | Field | Tier | Why |
 |---|---|---|

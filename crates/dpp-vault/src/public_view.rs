@@ -18,7 +18,7 @@ use std::sync::OnceLock;
 use base64::Engine;
 use serde_json::Value;
 
-use dpp_crypto::access::{SectorAccessPolicy, filter_by_audience};
+use dpp_domain::access::{SectorAccessPolicy, filter_by_audience};
 use dpp_domain::domain::passport::Passport;
 use dpp_domain::{Audience, DppError, SectorCatalog};
 

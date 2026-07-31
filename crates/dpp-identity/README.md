@@ -86,6 +86,7 @@ src/
 | Crate | Role |
 |---|---|
 | `dpp-crypto` | `KeyStore` implementation, Ed25519 signing primitives |
+| `dpp-vc` | `LocalIdentityService`, `did:web` document builder |
 | `dpp-domain` | `IdentityPort` trait that this service implements |
 | `dpp-vault` | Calls this service to sign passports at publish time |
 | `dpp-node` | Mounts only `build_public()` under `/identity`; signing is in-process |

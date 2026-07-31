@@ -162,7 +162,7 @@ pub async fn create_handler(
     let sector = body
         .sector
         .or_else(|| body.sector_data.as_ref().map(|d| d.sector()))
-        .unwrap_or(Sector::Other);
+        .unwrap_or_else(|| Sector::Other("other".to_owned()));
 
     // Resolve the sector's current schema version (the service re-normalises this
     // on persist); never silently down-version to a hardcoded "1.0.0".
@@ -243,7 +243,8 @@ fn catalog() -> &'static SectorCatalog {
 /// service persists); sectors with no embedded schema are skipped. Returns the
 /// human-readable error string on failure.
 fn validate_against_schema(sd: &SectorData) -> Result<(), String> {
-    let key = sd.sector().catalog_key();
+    let sector = sd.sector();
+    let key = sector.catalog_key();
     let Some(version) = catalog().resolve_schema_version(key, None) else {
         return Ok(());
     };

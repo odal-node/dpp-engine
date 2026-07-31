@@ -20,6 +20,7 @@ path = "src/main.rs"
 [dependencies]
 # Service libraries
 dpp-domain = { workspace = true }
+dpp-vc = { workspace = true }
 dpp-crypto      = { workspace = true }
 dpp-common             = { path = "../dpp-common" }
 dpp-dal                = { path = "../dpp-dal" }

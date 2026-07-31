@@ -16,7 +16,6 @@ use dpp_common::{
     event::{EventBus, NoOpEventBus},
     event_codes,
 };
-use dpp_crypto::identity::LocalIdentityService;
 use dpp_crypto::keystore::KeyStore;
 use dpp_domain::ports::{
     archive::ArchivePort, compliance::ComplianceRegistry, registry_sync::RegistrySyncPort,
@@ -36,6 +35,7 @@ use dpp_vault::{
     },
     state::AppState as VaultState,
 };
+use dpp_vc::LocalIdentityService;
 
 /// The issuer key id the node signs with and publishes at its did:web document.
 const ISSUER_KEY_ID: &str = "root";
@@ -301,7 +301,7 @@ async fn main() -> anyhow::Result<()> {
             Arc::new(directory) as Arc<dyn dpp_vault::middleware::credential::CredentialDirectory>
         }),
         trusted_issuers: credentials_live
-            .then(|| Arc::new(trusted_issuers) as Arc<dyn dpp_crypto::TrustedIssuerRegistry>),
+            .then(|| Arc::new(trusted_issuers) as Arc<dyn dpp_vc::TrustedIssuerRegistry>),
         cors_allowed_origins: cfg.cors_allowed_origins.clone(),
         scan_repo: db.scan_repo.clone(),
         plugin_admin: Some(plugin_admin),

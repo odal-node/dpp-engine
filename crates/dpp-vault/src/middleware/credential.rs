@@ -44,8 +44,8 @@ use dpp_common::http_problem;
 use dpp_crypto::jws::verifier::{
     extract_key_by_fingerprint, extract_kid_from_jws, extract_primary_public_key, verify_jws,
 };
-use dpp_crypto::{DppAccessCredential, StatusList, TrustedIssuerRegistry};
 use dpp_domain::Audience;
+use dpp_vc::{DppAccessCredential, StatusList, TrustedIssuerRegistry};
 
 /// The header a caller presents an access credential in.
 pub const CREDENTIAL_HEADER: &str = "X-DPP-Credential";
@@ -135,7 +135,7 @@ impl VerifiedCredential {
         sector_key: &str,
         trust: &dyn TrustedIssuerRegistry,
     ) -> Audience {
-        let scoped = dpp_crypto::verify_credential_claims_with_trust(
+        let scoped = dpp_vc::verify_credential_claims_with_trust(
             &self.0,
             Some(sector_key),
             None,
@@ -236,7 +236,7 @@ pub async fn read_and_verify(
     // the same 401 whether or not the passport exists. Scope is not validity —
     // it decides how much an already-valid credential unlocks — so it is the
     // only check that may wait for the row.
-    let result = dpp_crypto::verify_credential_with_revocation_and_trust(
+    let result = dpp_vc::verify_credential_with_revocation_and_trust(
         &credential,
         None,
         None,
@@ -270,8 +270,8 @@ pub async fn read_and_verify(
 /// fail-closed revocation case is folded in with genuine revocation on purpose:
 /// an attacker who can make a status endpoint unreachable must not learn that
 /// they succeeded.
-fn rejection_detail(result: &dpp_crypto::VerificationResult) -> &'static str {
-    use dpp_crypto::VerificationResult as V;
+fn rejection_detail(result: &dpp_vc::VerificationResult) -> &'static str {
+    use dpp_vc::VerificationResult as V;
     match result {
         V::Expired { .. } => "Credential has expired.",
         V::Revoked => "Credential has been revoked, or its revocation status could not be checked.",
@@ -312,9 +312,7 @@ fn reject(detail: &str) -> Response {
 mod tests {
     use super::*;
     use chrono::{Duration, Utc};
-    use dpp_crypto::{
-        CredentialBuilder, CredentialRole, DppCredentialSubject, StaticTrustedIssuers,
-    };
+    use dpp_vc::{CredentialBuilder, CredentialRole, DppCredentialSubject, StaticTrustedIssuers};
     use ed25519_dalek::{Signer, SigningKey};
     use serde_json::json;
 
@@ -571,7 +569,7 @@ mod tests {
     async fn a_declared_status_that_cannot_be_fetched_denies() {
         let (key, kid) = key_and_kid();
         let mut cred = credential(CredentialRole::Recycler, 30);
-        cred.credential_status = Some(dpp_crypto::CredentialStatus {
+        cred.credential_status = Some(dpp_vc::CredentialStatus {
             id: "https://issuer.example/status#4".to_owned(),
             status_type: "BitstringStatusListEntry".to_owned(),
             status_list_index: Some("4".to_owned()),
@@ -697,7 +695,7 @@ mod tests {
     /// and caller-chosen strings, straight into a public response body.
     #[test]
     fn rejection_details_are_fixed_sentences_not_debug_output() {
-        use dpp_crypto::VerificationResult as V;
+        use dpp_vc::VerificationResult as V;
 
         let cases = [
             V::Expired {
@@ -738,7 +736,7 @@ mod tests {
     /// endpoint unreachable must not learn from the response that it worked.
     #[test]
     fn a_blocked_status_endpoint_is_indistinguishable_from_revocation() {
-        use dpp_crypto::VerificationResult as V;
+        use dpp_vc::VerificationResult as V;
         assert_eq!(rejection_detail(&V::Revoked), rejection_detail(&V::Revoked));
         assert!(rejection_detail(&V::Revoked).contains("could not be checked"));
     }
