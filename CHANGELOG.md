@@ -10,10 +10,44 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-07-31
+
+Pins `dpp-core` 0.13.0. Cut as a checkpoint ahead of the `dpp-core` 0.14.0
+repin, so the audience-scoped access work and three core repins land on a tag
+rather than accumulating unreleased.
+
 ### Breaking
 
-- **Pinned to `dpp-core` 0.11.0**, which brings the following through to this
-  repo's surfaces.
+- **Pinned to `dpp-core` 0.13.0.** This entry read *"Pinned to `dpp-core`
+  0.11.0"* and was two repins stale — corrected on release. The 0.11.0 items
+  below are unchanged and still apply; what 0.12.0 and 0.13.0 added on top is
+  recorded in the three entries that follow.
+
+- **`Passport` gains `disclosure_signatures`** (`dpp-core` 0.12.0), a
+  per-audience signature map. Stored passports carry it; the audience-scoped
+  read routes below are what serve from it.
+
+- **Core crate layout moved under the boundary refactor** (`dpp-core` 0.13.0).
+  The AAS projection and the verifiable-credential layer were carved into
+  `dpp-aas` and `dpp-vc`, so imports move: `dpp_crypto::TrustedIssuerRegistry`
+  is now `dpp_vc::TrustedIssuerRegistry`. **This repo does not depend on
+  `dpp-aas` at all** — the AAS projection has no engine consumer and is not
+  reachable over HTTP.
+  *Migration:* re-point `TrustedIssuerRegistry` imports; no wire or database
+  change.
+
+- **The resolver serves `dpp-core`'s inlined JSON-LD context** (`dpp-core`
+  0.13.0) instead of referencing remote context URLs. Both previous URLs
+  returned 404, so any consumer that actually dereferenced the context failed;
+  nothing was deployed, so nothing received them. The vocabulary is now inlined
+  rather than hosted, because serving a context document is a commitment to keep
+  a URL resolving for as long as any passport references it — years, under ESPR
+  retention.
+
+- **Retention is read from the sector catalog, with a floor applied rather than
+  a refusal** (`dpp-core` 0.13.0). A sector whose catalog retention falls below
+  the statutory floor previously caused the vault to refuse; it now clamps to
+  the floor.
 - **Sector country fields collapsed onto `countryOfOrigin`.** Aluminium,
   construction, detergent, furniture, steel, textile and toy previously used
   `countryOfManufacture` / `countryOfProduction` / `countryOfManufacturing`;
