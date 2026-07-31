@@ -1,7 +1,7 @@
 # Production Runbook — running Odal Node for real operators
 
 **Date:** 2026-07-03 · **Grounded in:** `docker/docker-compose.yml` (the `odal up` stack), `NodeConfig::from_env()` (`dpp-node/src/config.rs`), the trust-mode boot guard, the registry outbox, the signed ruleset channel.
-**Substrate decision this encodes:** ADR-005 (strict single-tenant node) + ADR-007 (one plain dedicated VM per operator; no k8s, no Firecracker until managed-operator count forces it).
+**Substrate this encodes:** a strictly single-tenant node, one plain dedicated VM per operator — no Kubernetes, and no microVM isolation until operator count forces it.
 
 ---
 
@@ -24,7 +24,7 @@
 ```
             Internet
                │ :443 (TLS)
-        ┌──────▼──────┐          One VM = one operator (ADR-005 boundary)
+        ┌──────▼──────┐          One VM = one operator (isolation boundary)
         │ Caddy proxy │          Hetzner/OVH-class, EU region, ~€10–25/mo [E]
         └──┬───────┬──┘          2 vCPU / 4 GB / 40 GB is ample [E]
    api.<op-domain> dpp.<op-domain>
@@ -36,11 +36,11 @@
           └── postgres · nats · redis (internal only, no host ports)
 ```
 
-**Why this beats the alternatives (the "why" you asked for):**
-- **It matches the sealed architecture.** ADR-005 made the node strictly single-tenant; an orchestrator's whole value is multiplexing tenants onto shared machines — the thing you deliberately forbid. One VM per operator makes the marketing sentence ("your own isolated node, zero shared data paths") *physically true* with zero additional code.
-- **It's the smallest ops surface a solo operator can carry.** The compose stack already exists and is `odal up`; systemd + docker + caddy is knowledge you keep for a decade. Kubernetes would add a control plane to operate, YAML to drift, and failure modes you'd learn during an incident — an ops tax with no payer (your BLUEPRINT lists it Post-MVP; correct).
-- **It prices correctly.** Managed operation is sold cost-plus on the Skopje cost base (ADR-002/C7). A ~€15/mo VM per operator keeps the unit economics legible and the margin honest. PaaS (Fly/Render/Heroku-class) triples the unit cost, complicates the EU-data-residency story, and hides the disk your keystore lives on.
-- **It scales by addition, not redesign.** Operator #2 = second VM + same compose + 30 minutes. The review trigger (ADR-007: >5 managed operators or a provisioning SLA) is the *earliest* point automation pays for itself.
+**Why this beats the alternatives:**
+- **It matches the architecture.** The node is strictly single-tenant; an orchestrator's whole value is multiplexing tenants onto shared machines — the thing this design deliberately forbids. One VM per operator makes "your own isolated node, zero shared data paths" *physically true* with zero additional code.
+- **It's the smallest ops surface a single administrator can carry.** The compose stack already exists and is `odal up`; systemd + docker + caddy is knowledge you keep for a decade. Kubernetes would add a control plane to operate, YAML to drift, and failure modes you'd learn during an incident — an ops tax with no payer.
+- **It keeps the deployment legible.** A dedicated VM keeps the data path, and the disk your keystore lives on, visible and under your control. PaaS platforms (Fly/Render/Heroku-class) complicate the EU-data-residency story and abstract away the storage your keys sit on.
+- **It scales by addition, not redesign.** A second operator is a second VM, the same compose file, and about thirty minutes. Automation only pays for itself once operator count or a provisioning commitment forces it.
 - **Failure isolation is absolute.** One operator's disk filling cannot touch another operator. For a compliance product, blast-radius honesty is a feature you can sell.
 
 ---
@@ -101,7 +101,7 @@ Auto-HTTPS, zero certificate ops. (Traefik equivalent if preferred; Caddy is les
 
 ## 4. Efficiency summary (the direct answer)
 
-The most efficient production shape for Odal today is **the shipped compose stack, one dedicated EU VM per operator, loopback-bound services behind Caddy, pinned image versions, nightly off-VM backups with a monthly restore drill, and `/health`-asserting monitoring** — because it is the only shape that simultaneously (a) keeps ADR-005's isolation claim physically true, (b) adds zero new operational technology for a solo operator, (c) keeps unit cost at cost-plus-priceable ~€15–25/mo [E], (d) already exists in the repo (`odal up`), and (e) leaves the honesty invariant intact — a "production" that can't lie about its trust tier. Efficiency here is not throughput (a single node trivially serves pilot loads — sub-20ms resolver SLAs are an H3 concern); it is **founder-hours per operator per month**, and this shape minimizes exactly that.
+The most efficient production shape for Odal today is **the shipped compose stack, one dedicated EU VM per operator, loopback-bound services behind Caddy, pinned image versions, nightly off-VM backups with a monthly restore drill, and `/health`-asserting monitoring** — because it is the only shape that simultaneously (a) keeps the isolation claim physically true, (b) adds zero new operational technology for a single administrator, (c) runs on commodity VM hardware, (d) already exists in the repo (`odal up`), and (e) leaves the honesty invariant intact — a "production" that can't lie about its trust tier. Efficiency here is not throughput (a single node trivially serves early workloads); it is **administrator-hours per operator per month**, and this shape minimizes exactly that.
 
 **Do-next order:** publish core 0.4.0 → provision your own demo VM as the permanent staging environment (§2 end-to-end, once, for yourself) → then Amor's VM is a 30-minute repeat with a filled-in checklist.
 
