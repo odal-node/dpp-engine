@@ -20,7 +20,9 @@
 [patch.crates-io]
 dpp-domain        = { path = "../dpp-core/crates/dpp-domain" }
 dpp-crypto        = { path = "../dpp-core/crates/dpp-crypto" }
+dpp-vc            = { path = "../dpp-core/crates/dpp-vc" }
 dpp-digital-link  = { path = "../dpp-core/crates/dpp-digital-link" }
+dpp-aas           = { path = "../dpp-core/crates/dpp-aas" }
 dpp-plugin-traits = { path = "../dpp-core/crates/dpp-plugin-traits" }
 dpp-registry      = { path = "../dpp-core/crates/dpp-registry" }
 dpp-calc          = { path = "../dpp-core/crates/dpp-calc" }

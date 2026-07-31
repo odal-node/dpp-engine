@@ -314,20 +314,17 @@ fn staging_dir_name() -> String {
 }
 
 impl PluginHost for WasmPluginHost {
-    fn has_plugin(&self, sector: &Sector) -> bool {
-        self.plugins
-            .read()
-            .unwrap()
-            .contains_key(sector.catalog_key())
+    fn has_plugin(&self, sector_key: &str) -> bool {
+        self.plugins.read().unwrap().contains_key(sector_key)
     }
 
-    #[tracing::instrument(skip(self, data), fields(sector = %sector.catalog_key()))]
+    #[tracing::instrument(skip(self, data), fields(sector = %sector_key))]
     fn compute(
         &self,
-        sector: &Sector,
+        sector_key: &str,
         data: &SectorData,
     ) -> Result<ComplianceResult, ComplianceError> {
-        let key = sector.catalog_key();
+        let key = sector_key;
         let plugin = self.get_plugin(key).ok_or_else(|| ComplianceError {
             kind: ComplianceErrorKind::UnknownSector,
             message: format!("no Wasm plugin loaded for sector '{key}'"),
@@ -410,11 +407,11 @@ impl PluginHost for WasmPluginHost {
 impl ComplianceRegistry for WasmPluginHost {
     fn compute(
         &self,
-        sector: Sector,
+        sector_key: &str,
         data: &SectorData,
     ) -> Result<ComplianceResult, ComplianceError> {
-        if self.has_plugin(&sector) {
-            PluginHost::compute(self, &sector, data)
+        if self.has_plugin(sector_key) {
+            PluginHost::compute(self, sector_key, data)
         } else {
             Ok(ComplianceResult::passthrough())
         }
