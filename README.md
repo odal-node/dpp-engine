@@ -136,7 +136,7 @@ Full command reference: **[cli/README.md](cli/README.md)**.
 |---|---|---|
 | GET | `/health` | None |
 | GET | `/ready` | None |
-| GET | `/dpp/{id}` | None — content-negotiated (HTML or JSON-LD via `Accept`) |
+| GET | `/dpp/{id}` | None — content-negotiated (HTML, JSON-LD, or AAS Environment via `Accept`) |
 | GET | `/dpp/{id}/qr` | None |
 | GET | `/01/{gtin}` | None — GS1 Digital Link resolution |
 

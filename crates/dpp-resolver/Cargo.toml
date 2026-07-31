@@ -23,6 +23,7 @@ dpp-vc = { workspace = true }
 dpp-domain        = { workspace = true }
 dpp-crypto        = { workspace = true }
 dpp-digital-link  = { workspace = true }
+dpp-aas           = { workspace = true }
 dpp-common        = { path = "../dpp-common" }
 dpp-render        = { path = "../dpp-render" }
 

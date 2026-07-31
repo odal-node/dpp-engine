@@ -22,7 +22,7 @@ No authentication required.
 |---|---|---|
 | `GET` | `/health` | Liveness probe |
 | `GET` | `/ready` | Readiness probe (Redis connection check) |
-| `GET` | `/dpp/{dppId}` | Resolve a passport — HTML or JSON-LD via `Accept` negotiation |
+| `GET` | `/dpp/{dppId}` | Resolve a passport — HTML, JSON-LD, or `application/aas+json` via `Accept` negotiation |
 | `GET` | `/dpp/{dppId}/qr` | Generate a QR code PNG for the passport URL |
 
 ### Content negotiation
@@ -39,7 +39,7 @@ Scan → resolver → Redis cache (TTL) → vault /public/dpp/{id}
                            ↓
                Ed25519 verification (did:web doc)
                            ↓
-                   HTML or JSON-LD response
+              HTML / JSON-LD / AAS response
 ```
 
 `Cache` wraps a `deadpool-redis` pool. On cache miss, the resolver fetches the

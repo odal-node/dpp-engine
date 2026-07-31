@@ -341,3 +341,177 @@ async fn access_tier_header_cannot_unlock_restricted_fields() {
         );
     }
 }
+
+// ─── AAS door ─────────────────────────────────────────────────────────────────
+
+/// A published battery passport carrying restricted and individual-tier fields.
+///
+/// Battery is used deliberately: it has the most non-public fields of any
+/// product group, and `stateOfHealthPct` is the field that was once served
+/// publicly, so it is the strongest fixture for a masking assertion.
+fn battery_passport_json() -> serde_json::Value {
+    json!({
+        "id": "00000000-0000-4000-8000-0000000000aa",
+        "productName": "Test Battery",
+        "sector": "battery",
+        "manufacturer": { "name": "Acme Corp", "address": "1 Main St, Berlin, DE" },
+        "materials": [],
+        "co2ePerUnit": null,
+        "repairabilityScore": null,
+        "sectorData": {
+            "sector": "battery",
+            "gtin": "09506000134352",
+            "batteryChemistry": "LFP",
+            "nominalVoltageV": 3.7,
+            "nominalCapacityAh": 50.0,
+            "expectedLifetimeCycles": 1000,
+            "co2ePerUnitKg": 85.0,
+            "anodeMaterial": [{ "name": "graphite", "weightPct": 45.0 }],
+            "cathodeMaterial": [{ "name": "lithium-iron-phosphate", "weightPct": 30.0 }],
+            "stateOfHealthPct": 97.5
+        },
+        "status": "active",
+        "qrCodeUrl": null,
+        "jwsSignature": null,
+        "createdAt": "2026-01-01T00:00:00Z",
+        "updatedAt": "2026-01-01T00:00:00Z",
+        "publishedAt": "2026-01-01T00:00:00Z",
+        "schemaVersion": "1.0.0"
+    })
+}
+
+async fn aas_app_serving(body: serde_json::Value) -> Router {
+    let vault = Router::new().route(
+        "/public/dpp/{id}",
+        get(move || {
+            let body = body.clone();
+            async move { axum::Json(body) }
+        }),
+    );
+    let port = start_mock_vault(vault).await;
+    router::build(test_state(format!("http://127.0.0.1:{port}")))
+}
+
+async fn get_aas(app: Router, id: &str) -> axum::response::Response {
+    let req = Request::builder()
+        .uri(format!("/dpp/{id}"))
+        .header("accept", "application/aas+json")
+        .body(Body::empty())
+        .unwrap();
+    app.oneshot(req).await.unwrap()
+}
+
+#[tokio::test]
+async fn aas_accept_returns_an_environment() {
+    let app = aas_app_serving(battery_passport_json()).await;
+    let resp = get_aas(app, "00000000-0000-4000-8000-0000000000aa").await;
+
+    assert_eq!(resp.status(), StatusCode::OK);
+    let ct = resp
+        .headers()
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .to_owned();
+    assert!(
+        ct.contains("application/aas+json"),
+        "expected application/aas+json, got: {ct}"
+    );
+
+    let bytes = axum::body::to_bytes(resp.into_body(), 1 << 20)
+        .await
+        .unwrap();
+    let env: serde_json::Value = serde_json::from_slice(&bytes).expect("valid JSON");
+    assert!(env["assetAdministrationShells"].is_array());
+    assert!(env["submodels"].is_array());
+    assert!(env["conceptDescriptions"].is_array());
+    assert_eq!(
+        env["assetAdministrationShells"].as_array().unwrap().len(),
+        1
+    );
+}
+
+/// The merge gate. Every field battery's catalog entry classifies non-public
+/// must be absent from a public AAS projection.
+#[tokio::test]
+async fn aas_door_emits_no_non_public_battery_field() {
+    let app = aas_app_serving(battery_passport_json()).await;
+    let resp = get_aas(app, "00000000-0000-4000-8000-0000000000aa").await;
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let bytes = axum::body::to_bytes(resp.into_body(), 1 << 20)
+        .await
+        .unwrap();
+    let body = String::from_utf8(bytes.to_vec()).expect("utf-8");
+
+    // Asserted by name rather than by re-reading the catalog, so that a change
+    // to the disclosure map cannot silently change what this test demands.
+    for field in [
+        "anodeMaterial",
+        "cathodeMaterial",
+        "electrolyteMaterial",
+        "criticalRawMaterials",
+        "disassemblyInstructionsUrl",
+        "sohMethodology",
+        "dueDiligenceUrl",
+        "stateOfHealthPct",
+    ] {
+        assert!(
+            !body.contains(field),
+            "non-public battery field '{field}' appears in the public AAS door's output"
+        );
+    }
+
+    // And it is not vacuous: the projection still carries its public content.
+    assert!(
+        body.contains("nominalVoltageV") || body.contains("ProductIdentification"),
+        "the public projection carries nothing at all"
+    );
+}
+
+#[tokio::test]
+async fn unacceptable_accept_returns_406_not_a_default_body() {
+    let app = aas_app_serving(battery_passport_json()).await;
+    let req = Request::builder()
+        .uri("/dpp/00000000-0000-4000-8000-0000000000aa")
+        .header("accept", "application/pdf")
+        .body(Body::empty())
+        .unwrap();
+
+    let resp = app.oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::NOT_ACCEPTABLE);
+}
+
+/// The permissive cases that must keep working, or every existing consumer of
+/// this route breaks.
+#[tokio::test]
+async fn wildcard_and_absent_accept_still_reach_the_json_default() {
+    for accept in ["*/*", "application/json", ""] {
+        let app = aas_app_serving(battery_passport_json()).await;
+        let mut builder = Request::builder().uri("/dpp/00000000-0000-4000-8000-0000000000aa");
+        if !accept.is_empty() {
+            builder = builder.header("accept", accept);
+        }
+        let resp = app
+            .oneshot(builder.body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(
+            resp.status(),
+            StatusCode::OK,
+            "Accept '{accept}' must still resolve, not 406"
+        );
+    }
+}
+
+/// Guard: the fixture above must be a genuinely valid passport. Without this,
+/// a fixture that silently stopped deserialising would turn every AAS
+/// assertion into a vacuous pass against a 502.
+#[test]
+fn battery_fixture_is_a_valid_passport() {
+    let value = battery_passport_json();
+    let parsed: Result<dpp_domain::Passport, _> = serde_json::from_value(value);
+    if let Err(e) = &parsed {
+        panic!("battery fixture is not a valid Passport: {e}");
+    }
+}

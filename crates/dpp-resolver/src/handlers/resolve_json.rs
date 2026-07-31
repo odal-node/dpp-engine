@@ -206,7 +206,7 @@ fn detect_sector_policy(sector_data: &Value) -> Option<SectorAccessPolicy> {
     SectorAccessPolicy::from_catalog(catalog(), key)
 }
 
-async fn fetch_passport(state: &AppState, dpp_id: &str) -> Result<Value, StatusCode> {
+pub(crate) async fn fetch_passport(state: &AppState, dpp_id: &str) -> Result<Value, StatusCode> {
     let url = format!("{}/public/dpp/{dpp_id}", state.vault_base_url);
     let resp = state
         .http

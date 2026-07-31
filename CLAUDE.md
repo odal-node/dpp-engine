@@ -346,7 +346,7 @@ The internal endpoints are mTLS-gated (`CN=odal-vault`).
 |--------|------|------|---------|
 | GET | `/health` | None | Health |
 | GET | `/ready` | None | Ready |
-| GET | `/dpp/{dppId}` | None | Content-negotiated (HTML or JSON-LD) |
+| GET | `/dpp/{dppId}` | None | Content-negotiated (HTML, JSON-LD, or AAS Environment); `406` for anything else |
 | GET | `/dpp/{dppId}/qr` | None | QR code PNG |
 | GET | `/01/{gtin}` | None | GS1 Digital Link resolver (redirect / linkset) |
 
