@@ -19,7 +19,8 @@ pub async fn health_handler() -> (StatusCode, Json<Value>) {
         Json(json!({
             "status": "ok",
             "service": env!("CARGO_PKG_NAME"),
-            "version": env!("CARGO_PKG_VERSION")
+            "version": env!("CARGO_PKG_VERSION"),
+            "coreVersion": dpp_domain::VERSION
         })),
     )
 }

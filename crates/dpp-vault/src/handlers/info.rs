@@ -7,6 +7,7 @@ pub async fn info_handler() -> impl IntoResponse {
         StatusCode::OK,
         Json(json!({
             "version": env!("CARGO_PKG_VERSION"),
+            "coreVersion": dpp_domain::VERSION,
             "authMethods": ["api_key", "local"],
             "features": ["passthrough_compliance"]
         })),

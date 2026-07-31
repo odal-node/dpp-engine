@@ -201,6 +201,7 @@ impl PassportService {
                 issuer_did,
                 created_at: chrono::Utc::now(),
                 node_version: env!("CARGO_PKG_VERSION").to_string(),
+                core_version: dpp_domain::VERSION.to_string(),
                 ruleset_version,
                 content_hashes: BTreeMap::new(),
             },

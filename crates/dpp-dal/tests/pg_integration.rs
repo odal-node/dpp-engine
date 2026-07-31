@@ -662,6 +662,7 @@ fn minimal_dossier(passport_id: &str) -> DossierV1 {
             issuer_did: "did:web:pg-test.example".into(),
             created_at: chrono::Utc::now(),
             node_version: "test".into(),
+            core_version: "test".into(),
             ruleset_version: None,
             content_hashes: std::collections::BTreeMap::new(),
         },
