@@ -80,10 +80,13 @@ async fn content_negotiation_handler(
     let headers = request.headers().clone();
 
     let res_req = dpp_digital_link::ResolutionRequest::from_accept_header(accept);
+    let allows_json = accept_allows_json(accept);
+    // `text/*` selects html only when nothing JSON-shaped is also acceptable,
+    // so a client offering both keeps receiving what it received before.
     let wants_html = matches!(
         res_req.media_type,
         Some(dpp_digital_link::DppMediaType::Html)
-    );
+    ) || (accept_names_text_wildcard(accept) && !allows_json);
     let wants_aas = accept_names_aas(accept);
 
     // Anything we cannot produce gets 406 rather than a body the caller did not
@@ -91,7 +94,7 @@ async fn content_negotiation_handler(
     // `Accept` still reaches the JSON-LD default, because RFC 9110 §12.5.1 says
     // a missing header means the client accepts anything — and because every
     // existing consumer relies on that path.
-    if !wants_html && !wants_aas && !accept_allows_json(accept) {
+    if !wants_html && !wants_aas && !allows_json {
         return not_acceptable(accept);
     }
 
@@ -136,15 +139,46 @@ async fn content_negotiation_handler(
     response
 }
 
-/// Whether the `Accept` header explicitly names the AAS media type.
+/// The media ranges in an `Accept` header the client is actually willing to
+/// take, lowercased, with `q=0` entries dropped.
 ///
-/// Matched here rather than through `DppMediaType`, which models the GS1
-/// link-type vocabulary and folds anything unrecognised into `Custom`.
-fn accept_names_aas(accept: &str) -> bool {
+/// RFC 9110 §12.5.1: `q=0` means "not acceptable". Listing a type and then
+/// rejecting it is the standard way to say *anything but this*, and reading the
+/// name while ignoring the weight inverts the client's request — `Accept:
+/// application/aas+json;q=0, application/ld+json` was served AAS, which is the
+/// one representation it asked not to receive.
+///
+/// Weights are used only to exclude. Ranking the survivors is `DppMediaType`'s
+/// job for the html/json split, and this route's third type is chosen by name.
+fn acceptable_ranges(accept: &str) -> Vec<String> {
     accept
         .split(',')
-        .map(|part| part.split(';').next().unwrap_or("").trim())
-        .any(|media| media.eq_ignore_ascii_case(AAS_MEDIA_TYPE))
+        .filter_map(|entry| {
+            let mut parts = entry.trim().split(';');
+            let media = parts.next()?.trim();
+            if media.is_empty() {
+                return None;
+            }
+            let refused = parts.any(|param| {
+                param
+                    .trim()
+                    .strip_prefix("q=")
+                    .and_then(|q| q.trim().parse::<f32>().ok())
+                    .is_some_and(|q| q <= 0.0)
+            });
+            (!refused).then(|| media.to_ascii_lowercase())
+        })
+        .collect()
+}
+
+/// Whether the `Accept` header explicitly asks for the AAS media type.
+///
+/// Matched by name rather than through `DppMediaType`, which models the GS1
+/// link-type vocabulary and folds anything unrecognised into `Custom`.
+fn accept_names_aas(accept: &str) -> bool {
+    acceptable_ranges(accept)
+        .iter()
+        .any(|media| media == AAS_MEDIA_TYPE)
 }
 
 /// Whether the JSON-LD default is a legitimate answer to this `Accept`.
@@ -157,15 +191,26 @@ fn accept_allows_json(accept: &str) -> bool {
     if accept.trim().is_empty() {
         return true;
     }
-    accept
-        .split(',')
-        .map(|part| part.split(';').next().unwrap_or("").trim())
-        .any(|media| {
-            media == "*/*"
-                || media.eq_ignore_ascii_case("application/*")
-                || media.eq_ignore_ascii_case("application/json")
-                || media.eq_ignore_ascii_case("application/ld+json")
-        })
+    acceptable_ranges(accept).iter().any(|media| {
+        media == "*/*"
+            || media == "application/*"
+            || media == "application/json"
+            || media == "application/ld+json"
+    })
+}
+
+/// Whether the `Accept` header carries the `text/*` subtype wildcard.
+///
+/// Deliberately does **not** cover `text/html`: which of html and json wins
+/// when both are named is `DppMediaType`'s decision, and taking it over here
+/// would change what an existing `Accept: text/html, application/json` client
+/// receives. This only covers the range that `DppMediaType` folds into
+/// `Custom` and that therefore used to earn a `406` — while its sibling
+/// `application/*` was honoured. That asymmetry was an oversight, not a policy.
+fn accept_names_text_wildcard(accept: &str) -> bool {
+    acceptable_ranges(accept)
+        .iter()
+        .any(|media| media == "text/*")
 }
 
 /// `406` naming what this route can actually produce, so a client can correct

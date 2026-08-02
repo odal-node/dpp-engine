@@ -34,9 +34,35 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   which identifies a trade item — has no AAS asset identity, and returns `406`
   rather than an Environment with an invented `globalAssetId`.
 
+  The Environment is **unsigned**, and every `200` says where the signed thing
+  is: `Link: <…/dpp/{id}>; rel="alternate"; type="application/ld+json"`. The
+  public proof covers the canonical payload, not this serialisation of it, so
+  attaching the signature here would hand a verifier a proof that fails against
+  the bytes it arrived with. `alternate` rather than `canonical` because the two
+  representations share one URL and are separated only by `Accept` — a
+  `canonical` relation would point the resource at itself. Errors carry no
+  `Link`.
+
   AAS reads are recorded as the `json` scan variant. Telling them apart from
   JSON-LD reads would need a migration, since the `variant` column is
   `CHECK`-constrained, and is only worth doing if the distinction is ever needed.
+
+- **A cross-door gate: the AAS door may withhold no less than the JSON-LD
+  door.** The two representations reach the same passport at the same URL
+  through entirely separate code — one filters here in the resolver, the other
+  delegates field selection to the core library — and each had its own masking
+  test with nothing comparing them. That is the shape that drifts: both tests
+  keep passing while the two definitions of "public" separate.
+
+  The comparison is driven from the served passport rather than a hand-written
+  list: any key the JSON-LD door dropped must also be absent from the AAS
+  projection. Structural names the AAS invents are not in the source, so they
+  cannot be used to smuggle a field past it.
+
+  The battery fixture now carries all ten of the fields battery's catalog entry
+  classifies non-public, up from three. Five of the eight assertions in the
+  existing AAS masking test named fields the fixture never carried, and could
+  not have failed.
 
 - **`coreVersion` on `/api/v1/info` and `/health`**, reporting the `dpp-core`
   version the node was built against.
@@ -64,6 +90,21 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   break every existing consumer. Only a header naming something the route
   genuinely cannot produce (`application/pdf`, say) now returns `406`, and the
   response names the three types that are available.
+
+### Fixed
+
+- **`Accept` weights are honoured.** `q=0` means "not acceptable" (RFC 9110
+  §12.5.1), and naming a type then weighting it to zero is the standard way to
+  say *anything but this*. `Accept: application/aas+json;q=0, application/ld+json`
+  was served AAS — the one representation it asked not to receive. This route
+  now agrees with `dpp-digital-link`'s own `Accept` parser, which has always
+  honoured `q`.
+
+- **`text/*` resolves to HTML instead of `406`.** Its sibling `application/*`
+  was already honoured; refusing the text subtype wildcard was an oversight, not
+  a policy. Narrow by design: `text/*` selects HTML only when nothing
+  JSON-shaped is also acceptable, so `Accept: text/*, application/json` returns
+  JSON-LD exactly as before.
 
 ### Changed
 
