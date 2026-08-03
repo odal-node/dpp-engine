@@ -69,8 +69,8 @@ dpp-rules         = { version = "0.13.0", features = ["bundle"] }
 # Web framework
 axum         = { version = "0.8", features = ["macros", "multipart"] }
 tokio        = { version = "1", features = ["full"] }
-tower        = "0.4"
-tower-http   = { version = "0.5", features = ["trace", "cors", "compression-br", "request-id", "catch-panic"] }
+tower        = "0.5"
+tower-http   = { version = "0.6", features = ["trace", "cors", "compression-br", "request-id", "catch-panic"] }
 hyper        = { version = "1", features = ["full"] }
 futures      = "0.3"
 

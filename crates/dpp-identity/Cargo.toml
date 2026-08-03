@@ -41,5 +41,5 @@ tracing-subscriber  = { workspace = true }
 [dev-dependencies]
 uuid          = { version = "1", features = ["v4"] }
 tracing-test  = "0.2"
-tower         = { version = "0.4", features = ["util"] }
+tower         = { version = "0.5", features = ["util"] }
 serial_test   = "3"

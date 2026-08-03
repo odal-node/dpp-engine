@@ -50,6 +50,6 @@ metrics             = { workspace = true }
 metrics-exporter-prometheus = { workspace = true }
 
 [dev-dependencies]
-tower         = { version = "0.4", features = ["util"] }
+tower         = { version = "0.5", features = ["util"] }
 ed25519-dalek = { workspace = true }
 rand          = { workspace = true }
