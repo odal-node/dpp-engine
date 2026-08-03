@@ -132,7 +132,7 @@ metrics                     = "0.23"
 metrics-exporter-prometheus = "0.15"
 
 # Benchmarking
-criterion    = { version = "0.5", features = ["html_reports"] }
+criterion    = { version = "0.8", features = ["html_reports"] }
 
 # Utilities
 uuid         = { version = "1", features = ["v7", "serde"] }

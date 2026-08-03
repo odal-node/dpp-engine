@@ -42,4 +42,4 @@ tracing-subscriber  = { workspace = true }
 uuid          = { version = "1", features = ["v4"] }
 tracing-test  = "0.2"
 tower         = { version = "0.4", features = ["util"] }
-serial_test   = "3"
+serial_test   = "4"
