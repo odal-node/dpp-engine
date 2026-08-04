@@ -2787,9 +2787,13 @@ paths:
               schema:
                 type: object
                 description: |
-                  An IDTA Asset Administration Shell `Environment` — shells,
-                  submodels and concept descriptions in one self-contained
-                  document.
+                  An IDTA Asset Administration Shell `Environment` — shells
+                  and submodels in one self-contained document.
+
+                  `conceptDescriptions` is **absent**, not empty. This node
+                  coins no concept descriptions, and the metamodel constrains
+                  that member to `minItems: 1`, so an empty array would make
+                  the whole document invalid.
 
                   **Public tier only.** The passport is filtered through the
                   disclosure seam before any AAS mapper sees it, so this door
@@ -2798,11 +2802,19 @@ paths:
                   channel and a different projection.
 
                   **Schema-valid, not conformance-certified.** Every
-                  Environment is validated in CI against the published
-                  `IDTA-01001-3-0-1` AAS JSON Schema (metamodel 3.0). That
-                  establishes metamodel validity only: it is not a claim of
-                  IDTA conformance, and it asserts nothing about whether a
-                  submodel matches a published submodel template.
+                  Environment is validated in `dpp-core`'s CI against IDTA's
+                  published AAS JSON Schemas for metamodel **3.0, 3.1 and
+                  3.2**, and must satisfy all three — no single revision is
+                  the strictest, so the intersection is the only target that
+                  means "loadable whichever revision your toolchain
+                  implements".
+
+                  That establishes metamodel validity only: it is not a claim
+                  of IDTA conformance, and it asserts nothing about whether a
+                  submodel matches a published submodel template. Note also
+                  that no AAS JSON Schema sets `additionalProperties`, so
+                  schema validity alone cannot rule out a member the metamodel
+                  does not define; `dpp-core` gates that separately.
 
                   **Unsigned, and it says so in a header.** This is a derived
                   representation of the signed canonical public view, which is
