@@ -10,6 +10,13 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-08-04
+
+Pins `dpp-core` 0.15.0 and opens the AAS door. The two belong in one release:
+the projection has existed in core for several releases with no consumer, and
+0.15.0 is the first version of it that emits a valid document — so this is the
+first pin on which serving it over HTTP is an honest thing to do.
+
 ### Added
 
 - **The AAS projection is served over content negotiation.** `GET /dpp/{id}`
@@ -106,25 +113,48 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   JSON-shaped is also acceptable, so `Accept: text/*, application/json` returns
   JSON-LD exactly as before.
 
-### Changed
-
-- **Pinned to `dpp-core` 0.14.1.** Port traits now dispatch on the sector's
-  catalog key rather than the `Sector` enum, so `PluginHost` and
-  `ComplianceRegistry` implementations take `&str` and call sites pass
-  `Sector::catalog_key()`. No wire or database change.
-
-- **`wasmtime` 46.0.1 → 46.0.2**, clearing RUSTSEC-2026-0222 and
-  RUSTSEC-2026-0223. Both are low-severity advisories against the Wasm sandbox's
-  internal state handling — type indices mixing between engines, and preemption
-  during bulk operations.
-
-### Fixed
-
 - **The local-core development override was missing two crates.** `dpp-vc` and
   `dpp-aas` were split out of their former homes in `dpp-core` 0.13.0 but never
   added to `.cargo/config.toml.example`, so `just core-local` silently produced
   a build with those two resolved from the registry and everything else from the
   working tree.
+
+- **`wasmtime` 46.0.1 → 46.0.2**, clearing RUSTSEC-2026-0222 and
+  RUSTSEC-2026-0223 — low-severity advisories against the Wasm sandbox's
+  internal state handling: type indices mixing between engines, and preemption
+  during bulk operations.
+
+  Shipped ahead of this release on its own, because it had to be. The advisories
+  were published on 2026-07-31, the same day `main` last ran CI, so nothing
+  re-ran to surface them: `main` was failing its own security audit and every
+  new branch inherited the failure. A security fix gated behind an unrelated
+  dependency repin is a security fix that waits for a release cycle.
+
+### Changed
+
+- **Pinned to `dpp-core` 0.15.0.** Two things come with it.
+
+  Port traits dispatch on the sector's catalog key rather than the `Sector`
+  enum, so `PluginHost` and `ComplianceRegistry` implementations take `&str` and
+  call sites pass `Sector::catalog_key()`. No wire or database change.
+
+  More importantly for the door above: **0.15.0 is the first release whose AAS
+  projection is actually valid.** Every earlier one emitted a document no AAS
+  parser would accept — `assetKind` missing, submodel references as bare
+  `{"id": …}` objects, `modelType: "Reference"` on an element class that does
+  not exist, empty arrays where the metamodel requires `minItems: 1`, and a
+  `kind` member on the shell that no JSON Schema catches because IDTA sets
+  `additionalProperties` nowhere. Serving AAS over HTTP on any earlier pin would
+  have published invalid documents to integrators.
+
+  Core now validates every Environment against metamodel 3.0, 3.1 **and** 3.2
+  and must satisfy all three, so this door's output is not tied to one
+  revision's reading of a rule.
+
+- **Line endings are normalised to LF** via a first `.gitattributes`, and PR
+  titles are gated on conventional commits in CI. The title gate exists because
+  a squashed PR *is* a commit on `main`, and several landed as prose or as a
+  branch name before anything checked.
 
 ## [0.10.0] - 2026-07-31
 
