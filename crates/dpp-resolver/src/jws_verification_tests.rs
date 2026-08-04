@@ -436,10 +436,35 @@ async fn aas_accept_returns_an_environment() {
     let env: serde_json::Value = serde_json::from_slice(&bytes).expect("valid JSON");
     assert!(env["assetAdministrationShells"].is_array());
     assert!(env["submodels"].is_array());
-    assert!(env["conceptDescriptions"].is_array());
     assert_eq!(
         env["assetAdministrationShells"].as_array().unwrap().len(),
         1
+    );
+
+    // `conceptDescriptions` must be **absent**, not an empty array. The AAS
+    // metamodel constrains it to `minItems: 1`, so `[]` makes the whole
+    // Environment invalid — and this crate coins no concept descriptions, so
+    // empty is the only value it could ever have. dpp-core 0.15.0 omits it;
+    // before that it emitted `[]`, and this assertion was the wrong way round.
+    assert!(
+        env.get("conceptDescriptions").is_none(),
+        "an empty conceptDescriptions array reached the wire: {env}"
+    );
+
+    // The shell carries no `kind`. It is not a member of
+    // `AssetAdministrationShell` in the metamodel — `kind` arrives through
+    // `HasKind`, which `Submodel` composes and the shell does not. No JSON
+    // Schema catches it (IDTA sets `additionalProperties` nowhere), so a strict
+    // AAS loader is what would reject the document. Asserted at this door
+    // because this is where the bytes actually reach an integrator.
+    let shell = &env["assetAdministrationShells"][0];
+    assert!(
+        shell.get("kind").is_none(),
+        "the shell carries a `kind` member, which the metamodel does not define: {shell}"
+    );
+    assert_eq!(
+        shell["assetInformation"]["assetKind"], "Instance",
+        "assetKind is the only required member of AssetInformation"
     );
 }
 
