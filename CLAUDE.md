@@ -154,7 +154,8 @@ dpp-plugin-host ←── dpp-node
 ## Dependencies on dpp-core
 
 All core crates are pinned to published registry versions in `[workspace.dependencies]`
-(`dpp-domain = "0.1.0"`, …) — this is what CI and release builds use. For local
+— read the pin there rather than from a copy in prose; this file said `0.1.0` for
+fourteen releases. That pin is what CI and release builds use. For local
 development, copy `.cargo/config.toml.example` to `.cargo/config.toml` (or run
 `just core-local`) to add a `[patch.crates-io]` override that points each core crate
 at the sibling `../dpp-core` working tree. That file is git-ignored, so it never
@@ -346,7 +347,7 @@ The internal endpoints are mTLS-gated (`CN=odal-vault`).
 |--------|------|------|---------|
 | GET | `/health` | None | Health |
 | GET | `/ready` | None | Ready |
-| GET | `/dpp/{dppId}` | None | Content-negotiated (HTML or JSON-LD) |
+| GET | `/dpp/{dppId}` | None | Content-negotiated (HTML, JSON-LD, or AAS Environment); `406` for anything else |
 | GET | `/dpp/{dppId}/qr` | None | QR code PNG |
 | GET | `/01/{gtin}` | None | GS1 Digital Link resolver (redirect / linkset) |
 

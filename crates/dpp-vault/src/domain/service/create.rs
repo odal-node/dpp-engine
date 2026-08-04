@@ -254,7 +254,7 @@ fn apply_compliance(passport: &mut Passport, registry: &dyn ComplianceRegistry) 
         return;
     };
     let sector = sector_data.sector();
-    if let Ok(mut result) = registry.compute(sector, sector_data) {
+    if let Ok(mut result) = registry.compute(sector.catalog_key(), sector_data) {
         // Backfill the two display metrics only when the caller didn't supply them.
         if passport.co2e_per_unit.is_none() {
             passport.co2e_per_unit = result.co2e_score.map(CarbonFootprint::from_kg);
@@ -377,7 +377,7 @@ mod tests {
     struct NoopRegistry;
 
     impl ComplianceRegistry for NoopRegistry {
-        fn compute(&self, _: Sector, _: &SectorData) -> Result<ComplianceResult, ComplianceError> {
+        fn compute(&self, _: &str, _: &SectorData) -> Result<ComplianceResult, ComplianceError> {
             Err(ComplianceError {
                 kind: ComplianceErrorKind::UnknownSector,
                 message: "noop".into(),

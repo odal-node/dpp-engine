@@ -377,6 +377,7 @@ mod tests {
                 issuer_did: "did:web:node.example".into(),
                 created_at: Utc::now(),
                 node_version: "test".into(),
+                core_version: "test".into(),
                 ruleset_version: None,
                 content_hashes: BTreeMap::new(),
             },

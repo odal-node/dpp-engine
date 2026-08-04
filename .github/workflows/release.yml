@@ -3,8 +3,10 @@ name: Release images
 # Build and publish the node + resolver container images to GHCR on a version
 # tag. Tag from a commit that already passed CI (see docs/governance/RELEASE.md).
 #
-# The Dockerfiles build dpp-engine alone; dpp-core is consumed from crates.io
-# (published independently at 0.1.0), so only this repo is checked out.
+# The Dockerfiles build dpp-engine alone; dpp-core is consumed from crates.io at
+# whatever the workspace Cargo.toml pins, so only this repo is checked out. The
+# version is deliberately not restated here — it read "0.1.0" for fourteen
+# releases, which is what a copied version number does.
 on:
   push:
     tags: ["v*"]

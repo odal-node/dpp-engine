@@ -97,9 +97,9 @@ fn empty_host_has_no_plugins() {
 fn empty_host_reports_no_sector_plugin() {
     use dpp_domain::ports::plugin_host_port::PluginHost;
     let host = WasmPluginHost::new();
-    assert!(!host.has_plugin(&Sector::Battery));
-    assert!(!host.has_plugin(&Sector::Textile));
-    assert!(!host.has_plugin(&Sector::Steel));
+    assert!(!host.has_plugin(Sector::Battery.catalog_key()));
+    assert!(!host.has_plugin(Sector::Textile.catalog_key()));
+    assert!(!host.has_plugin(Sector::Steel.catalog_key()));
 }
 
 #[test]
@@ -137,7 +137,7 @@ fn empty_host_compliance_returns_passthrough() {
         repair_count: None,
         pef_score: None,
     });
-    let result = ComplianceRegistry::compute(&host, Sector::Textile, &data).unwrap();
+    let result = ComplianceRegistry::compute(&host, Sector::Textile.catalog_key(), &data).unwrap();
     assert_eq!(
         result.compliance_status,
         ComplianceStatus::PassthroughNoValidation

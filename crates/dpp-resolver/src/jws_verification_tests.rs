@@ -341,3 +341,540 @@ async fn access_tier_header_cannot_unlock_restricted_fields() {
         );
     }
 }
+
+// ─── AAS door ─────────────────────────────────────────────────────────────────
+
+/// A published battery passport carrying restricted and individual-tier fields.
+///
+/// Battery is used deliberately: it has the most non-public fields of any
+/// product group, and `stateOfHealthPct` is the field that was once served
+/// publicly, so it is the strongest fixture for a masking assertion.
+fn battery_passport_json() -> serde_json::Value {
+    json!({
+        "id": "00000000-0000-4000-8000-0000000000aa",
+        "productName": "Test Battery",
+        "sector": "battery",
+        "manufacturer": { "name": "Acme Corp", "address": "1 Main St, Berlin, DE" },
+        "materials": [],
+        "co2ePerUnit": null,
+        "repairabilityScore": null,
+        "sectorData": {
+            "sector": "battery",
+            "gtin": "09506000134352",
+            "batteryChemistry": "LFP",
+            "nominalVoltageV": 3.7,
+            "nominalCapacityAh": 50.0,
+            "expectedLifetimeCycles": 1000,
+            "co2ePerUnitKg": 85.0,
+            "anodeMaterial": [{ "name": "graphite", "weightPct": 45.0 }],
+            "cathodeMaterial": [{ "name": "lithium-iron-phosphate", "weightPct": 30.0 }],
+            "electrolyteMaterial": [{ "name": "LiPF6", "weightPct": 12.0 }],
+            "criticalRawMaterials": [{ "name": "cobalt", "casNumber": "7440-48-4", "weightGrams": 40.0, "countryOfOrigin": "CD" }],
+            "disassemblyInstructionsUrl": "https://acme.example.com/disassembly",
+            "dueDiligenceUrl": "https://acme.example.com/due-diligence",
+            "sohMethodology": "IEC 62660-1 capacity fade",
+            "stateOfHealthPct": 97.5,
+            "stateOfHealth": { "parameterSet": "electricVehicle", "socePct": 97.5 },
+            "expectedLifetime": {
+                "energyThroughputKwh": 12000.0,
+                "capacityThroughputAh": 3200.0,
+                "fullEquivalentCycles": 850.0,
+                "harmfulEvents": {}
+            }
+        },
+        "status": "active",
+        "qrCodeUrl": null,
+        "jwsSignature": null,
+        "createdAt": "2026-01-01T00:00:00Z",
+        "updatedAt": "2026-01-01T00:00:00Z",
+        "publishedAt": "2026-01-01T00:00:00Z",
+        "schemaVersion": "1.0.0"
+    })
+}
+
+async fn aas_app_serving(body: serde_json::Value) -> Router {
+    let vault = Router::new().route(
+        "/public/dpp/{id}",
+        get(move || {
+            let body = body.clone();
+            async move { axum::Json(body) }
+        }),
+    );
+    let port = start_mock_vault(vault).await;
+    router::build(test_state(format!("http://127.0.0.1:{port}")))
+}
+
+async fn get_aas(app: Router, id: &str) -> axum::response::Response {
+    let req = Request::builder()
+        .uri(format!("/dpp/{id}"))
+        .header("accept", "application/aas+json")
+        .body(Body::empty())
+        .unwrap();
+    app.oneshot(req).await.unwrap()
+}
+
+#[tokio::test]
+async fn aas_accept_returns_an_environment() {
+    let app = aas_app_serving(battery_passport_json()).await;
+    let resp = get_aas(app, "00000000-0000-4000-8000-0000000000aa").await;
+
+    assert_eq!(resp.status(), StatusCode::OK);
+    let ct = resp
+        .headers()
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .to_owned();
+    assert!(
+        ct.contains("application/aas+json"),
+        "expected application/aas+json, got: {ct}"
+    );
+
+    let bytes = axum::body::to_bytes(resp.into_body(), 1 << 20)
+        .await
+        .unwrap();
+    let env: serde_json::Value = serde_json::from_slice(&bytes).expect("valid JSON");
+    assert!(env["assetAdministrationShells"].is_array());
+    assert!(env["submodels"].is_array());
+    assert_eq!(
+        env["assetAdministrationShells"].as_array().unwrap().len(),
+        1
+    );
+
+    // `conceptDescriptions` must be **absent**, not an empty array. The AAS
+    // metamodel constrains it to `minItems: 1`, so `[]` makes the whole
+    // Environment invalid — and this crate coins no concept descriptions, so
+    // empty is the only value it could ever have. dpp-core 0.15.0 omits it;
+    // before that it emitted `[]`, and this assertion was the wrong way round.
+    assert!(
+        env.get("conceptDescriptions").is_none(),
+        "an empty conceptDescriptions array reached the wire: {env}"
+    );
+
+    // The shell carries no `kind`. It is not a member of
+    // `AssetAdministrationShell` in the metamodel — `kind` arrives through
+    // `HasKind`, which `Submodel` composes and the shell does not. No JSON
+    // Schema catches it (IDTA sets `additionalProperties` nowhere), so a strict
+    // AAS loader is what would reject the document. Asserted at this door
+    // because this is where the bytes actually reach an integrator.
+    let shell = &env["assetAdministrationShells"][0];
+    assert!(
+        shell.get("kind").is_none(),
+        "the shell carries a `kind` member, which the metamodel does not define: {shell}"
+    );
+    assert_eq!(
+        shell["assetInformation"]["assetKind"], "Instance",
+        "assetKind is the only required member of AssetInformation"
+    );
+}
+
+/// The merge gate. Every field battery's catalog entry classifies non-public
+/// must be absent from a public AAS projection.
+#[tokio::test]
+async fn aas_door_emits_no_non_public_battery_field() {
+    let app = aas_app_serving(battery_passport_json()).await;
+    let resp = get_aas(app, "00000000-0000-4000-8000-0000000000aa").await;
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let bytes = axum::body::to_bytes(resp.into_body(), 1 << 20)
+        .await
+        .unwrap();
+    let body = String::from_utf8(bytes.to_vec()).expect("utf-8");
+
+    // Asserted by name rather than by re-reading the catalog, so that a change
+    // to the disclosure map cannot silently change what this test demands.
+    for field in [
+        "anodeMaterial",
+        "cathodeMaterial",
+        "electrolyteMaterial",
+        "criticalRawMaterials",
+        "disassemblyInstructionsUrl",
+        "sohMethodology",
+        "dueDiligenceUrl",
+        "stateOfHealthPct",
+    ] {
+        assert!(
+            !body.contains(field),
+            "non-public battery field '{field}' appears in the public AAS door's output"
+        );
+    }
+
+    // And it is not vacuous: the projection still carries its public content.
+    assert!(
+        body.contains("nominalVoltageV") || body.contains("ProductIdentification"),
+        "the public projection carries nothing at all"
+    );
+}
+
+#[tokio::test]
+async fn unacceptable_accept_returns_406_not_a_default_body() {
+    let app = aas_app_serving(battery_passport_json()).await;
+    let req = Request::builder()
+        .uri("/dpp/00000000-0000-4000-8000-0000000000aa")
+        .header("accept", "application/pdf")
+        .body(Body::empty())
+        .unwrap();
+
+    let resp = app.oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::NOT_ACCEPTABLE);
+}
+
+/// `q=0` means "not acceptable", so naming AAS and refusing it must not serve
+/// AAS.
+///
+/// Listing a type and weighting it to zero is the standard way to say *anything
+/// but this*. Reading the name and ignoring the weight served the client the one
+/// representation it asked not to receive — and left this route inconsistent
+/// with `dpp-digital-link`'s own `Accept` parser, which has always honoured `q`.
+#[tokio::test]
+async fn a_zero_weighted_aas_type_is_refused_not_served() {
+    let app = aas_app_serving(battery_passport_json()).await;
+    let req = Request::builder()
+        .uri("/dpp/00000000-0000-4000-8000-0000000000aa")
+        .header("accept", "application/aas+json;q=0, application/ld+json")
+        .body(Body::empty())
+        .unwrap();
+
+    let resp = app.oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let ct = resp
+        .headers()
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    assert!(
+        ct.contains("application/ld+json"),
+        "a q=0 AAS type was served anyway, got: {ct}"
+    );
+}
+
+/// `text/*` resolves to HTML rather than `406`.
+///
+/// Its sibling `application/*` was already honoured; refusing this one was an
+/// oversight.
+#[tokio::test]
+async fn a_text_subtype_wildcard_resolves_to_html() {
+    let app = aas_app_serving(battery_passport_json()).await;
+    let req = Request::builder()
+        .uri("/dpp/00000000-0000-4000-8000-0000000000aa")
+        .header("accept", "text/*")
+        .body(Body::empty())
+        .unwrap();
+
+    let resp = app.oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let ct = resp
+        .headers()
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    assert!(ct.contains("text/html"), "expected text/html, got: {ct}");
+}
+
+/// …but it must not take the decision away from a client that also accepts
+/// JSON. `Accept: text/*, application/json` resolved to JSON-LD before this
+/// route understood `text/*`, and still must.
+#[tokio::test]
+async fn a_text_wildcard_alongside_json_still_resolves_to_json() {
+    let app = aas_app_serving(battery_passport_json()).await;
+    let req = Request::builder()
+        .uri("/dpp/00000000-0000-4000-8000-0000000000aa")
+        .header("accept", "text/*, application/json")
+        .body(Body::empty())
+        .unwrap();
+
+    let resp = app.oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let ct = resp
+        .headers()
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    assert!(
+        ct.contains("application/ld+json"),
+        "expected application/ld+json, got: {ct}"
+    );
+}
+
+/// The permissive cases that must keep working, or every existing consumer of
+/// this route breaks.
+#[tokio::test]
+async fn wildcard_and_absent_accept_still_reach_the_json_default() {
+    for accept in ["*/*", "application/json", ""] {
+        let app = aas_app_serving(battery_passport_json()).await;
+        let mut builder = Request::builder().uri("/dpp/00000000-0000-4000-8000-0000000000aa");
+        if !accept.is_empty() {
+            builder = builder.header("accept", accept);
+        }
+        let resp = app
+            .oneshot(builder.body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(
+            resp.status(),
+            StatusCode::OK,
+            "Accept '{accept}' must still resolve, not 406"
+        );
+    }
+}
+
+/// The AAS body is built from the **signed** payload, not the served row.
+///
+/// Every other AAS test here runs with verification disabled, so none of them
+/// can tell the two apart — this is the only one that exercises the path the
+/// door actually takes in production. A passport is signed carrying one product
+/// name and then served carrying another; the projection must show what was
+/// signed. Rendering the live row instead would attach a publish-time proof to
+/// a body that can still change afterwards, which is the divergence
+/// `public_view.rs` exists to close, reintroduced through a second door.
+#[tokio::test]
+async fn the_aas_door_projects_the_signed_payload_not_the_live_row() {
+    let mut signed = battery_passport_json();
+    signed["productName"] = json!("Signed Battery");
+    let (jws, did_doc) = sign_jws(&signed);
+    let did_url = serve_did(did_doc).await;
+
+    // The row drifts after publish; the proof still covers the original.
+    let mut served = signed.clone();
+    served["productName"] = json!("Drifted Battery");
+    served["publicJwsSignature"] = json!(jws);
+
+    let vault = serve_vault(served).await;
+    let app = router::build(test_state_did(vault, did_url));
+    let resp = get_aas(app, "00000000-0000-4000-8000-0000000000aa").await;
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let bytes = axum::body::to_bytes(resp.into_body(), 1 << 20)
+        .await
+        .unwrap();
+    let body = String::from_utf8(bytes.to_vec()).expect("utf-8");
+
+    assert!(
+        body.contains("Signed Battery"),
+        "the projection does not carry the signed product name: {body}"
+    );
+    assert!(
+        !body.contains("Drifted Battery"),
+        "the projection carries the drifted live row rather than the signed payload"
+    );
+}
+
+// ─── cross-door agreement ─────────────────────────────────────────────────────
+
+/// Every object key in `value`, at any depth.
+fn keys_at_any_depth(value: &serde_json::Value, out: &mut std::collections::BTreeSet<String>) {
+    match value {
+        serde_json::Value::Object(map) => {
+            for (key, child) in map {
+                out.insert(key.clone());
+                keys_at_any_depth(child, out);
+            }
+        }
+        serde_json::Value::Array(items) => {
+            items.iter().for_each(|item| keys_at_any_depth(item, out));
+        }
+        _ => {}
+    }
+}
+
+/// Every `idShort` in `value`, at any depth — the AAS equivalent of a field name.
+fn id_shorts_at_any_depth(value: &serde_json::Value, out: &mut std::collections::BTreeSet<String>) {
+    match value {
+        serde_json::Value::Object(map) => {
+            if let Some(name) = map.get("idShort").and_then(|v| v.as_str()) {
+                out.insert(name.to_owned());
+            }
+            map.values()
+                .for_each(|child| id_shorts_at_any_depth(child, out));
+        }
+        serde_json::Value::Array(items) => {
+            items
+                .iter()
+                .for_each(|item| id_shorts_at_any_depth(item, out));
+        }
+        _ => {}
+    }
+}
+
+async fn body_of(app: Router, id: &str, accept: &str) -> serde_json::Value {
+    let req = Request::builder()
+        .uri(format!("/dpp/{id}"))
+        .header("accept", accept)
+        .body(Body::empty())
+        .unwrap();
+    let resp = app.oneshot(req).await.unwrap();
+    assert_eq!(
+        resp.status(),
+        StatusCode::OK,
+        "Accept '{accept}' must resolve"
+    );
+    let bytes = axum::body::to_bytes(resp.into_body(), 1 << 20)
+        .await
+        .unwrap();
+    serde_json::from_slice(&bytes).expect("a JSON body")
+}
+
+/// **The anti-drift gate.** Nothing the JSON-LD door withholds may appear in the
+/// AAS door's output.
+///
+/// The two doors reach the same passport at the same URL through entirely
+/// separate code: `resolve_json` applies `filter_by_audience` here in the
+/// resolver, while `resolve_aas` delegates field selection to `dpp-aas` in the
+/// core library. Each has its own masking test. Until now nothing compared them
+/// — which is exactly the shape that drifts, because both tests keep passing
+/// while the two definitions of "public" separate.
+///
+/// The comparison is driven from the *source* passport rather than from a
+/// hand-written list of expected names: any key the served passport carries that
+/// the JSON-LD door dropped must also be absent from the AAS projection. That
+/// needs no allowance for the structural names the AAS invents
+/// (`ProductIdentification`, `passportId`, …) — they are not in the source, so
+/// they never enter the comparison, and they cannot be used to smuggle one in.
+#[tokio::test]
+async fn the_aas_door_withholds_everything_the_json_door_withholds() {
+    let passport = battery_passport_json();
+    let id = "00000000-0000-4000-8000-0000000000aa";
+    let app = aas_app_serving(passport.clone()).await;
+
+    let json_ld = body_of(app.clone(), id, "application/ld+json").await;
+    let aas = body_of(app, id, "application/aas+json").await;
+
+    let mut source = std::collections::BTreeSet::new();
+    keys_at_any_depth(&passport, &mut source);
+    let mut public = std::collections::BTreeSet::new();
+    keys_at_any_depth(&json_ld, &mut public);
+    let mut projected = std::collections::BTreeSet::new();
+    id_shorts_at_any_depth(&aas, &mut projected);
+
+    let withheld: Vec<&String> = source.difference(&public).collect();
+
+    // Non-vacuity, anchored to battery's catalog entry rather than to a count:
+    // every field the catalog classifies non-public must actually have been
+    // withheld here, or the comparison below is being run against a passport
+    // that carried nothing worth withholding. Named explicitly so that
+    // reclassifying a field shows up as a diff in this list.
+    for field in [
+        "dueDiligenceUrl",
+        "criticalRawMaterials",
+        "disassemblyInstructionsUrl",
+        "cathodeMaterial",
+        "anodeMaterial",
+        "electrolyteMaterial",
+        "sohMethodology",
+        "stateOfHealth",
+        "stateOfHealthPct",
+        "expectedLifetime",
+    ] {
+        assert!(
+            withheld.iter().any(|w| *w == field),
+            "'{field}' is non-public in battery's catalog entry but the JSON-LD \
+             door did not withhold it — either the fixture stopped carrying it, \
+             or the public view has regressed"
+        );
+    }
+
+    let leaked: Vec<&&String> = withheld
+        .iter()
+        .filter(|field| projected.contains(**field))
+        .collect();
+    assert!(
+        leaked.is_empty(),
+        "the AAS door emits {leaked:?}, which the JSON-LD door withholds from the \
+         same passport at the same URL. Two definitions of 'public' have drifted, \
+         and this is the direction that leaks."
+    );
+
+    // The AAS door must also not be *emptier* by accident — a projection that
+    // carried nothing would satisfy the assertion above and be worthless.
+    assert!(
+        projected.len() > 5,
+        "the AAS projection carries almost nothing ({projected:?}); the gate above \
+         passed vacuously"
+    );
+}
+
+/// The AAS response points a verifier at the signed canonical view.
+///
+/// The body is unsigned and cannot carry the public proof — that signature
+/// covers the canonical payload, not this serialisation of it — so the `Link`
+/// header is the only thing standing between "here is some AAS" and "here is
+/// AAS, and here is the signed thing it derives from".
+///
+/// End-to-end through the router, on the uncached path. The cache-hit path
+/// shares this response constructor and is covered in `resolve_aas`'s own
+/// tests, since populating a cache hit here would need a live Redis.
+#[tokio::test]
+async fn the_aas_response_links_to_the_signed_canonical_view() {
+    let app = aas_app_serving(battery_passport_json()).await;
+    let resp = get_aas(app, "00000000-0000-4000-8000-0000000000aa").await;
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let link = resp
+        .headers()
+        .get(axum::http::header::LINK)
+        .and_then(|v| v.to_str().ok())
+        .expect("a 200 from the AAS door carries a Link header");
+
+    // `test_state` configures this base; the target must be the resolver's own
+    // URL for the same passport, not the passport's mutable `qrCodeUrl`.
+    assert_eq!(
+        link,
+        r#"<https://id.odal-node.io/dpp/00000000-0000-4000-8000-0000000000aa>; rel="alternate"; type="application/ld+json""#
+    );
+}
+
+/// A `406` carries no `Link`.
+///
+/// There is no representation to link *from*, and advertising an alternate on
+/// an error would tell a client the negotiation half-succeeded.
+#[tokio::test]
+async fn an_unacceptable_request_carries_no_link_header() {
+    let app = aas_app_serving(battery_passport_json()).await;
+    let req = Request::builder()
+        .uri("/dpp/00000000-0000-4000-8000-0000000000aa")
+        .header("accept", "application/pdf")
+        .body(Body::empty())
+        .unwrap();
+
+    let resp = app.oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::NOT_ACCEPTABLE);
+    assert!(
+        resp.headers().get(axum::http::header::LINK).is_none(),
+        "a 406 must not advertise an alternate representation"
+    );
+}
+
+/// The same passport yields byte-identical bytes twice, so the response can be
+/// cached and compared.
+#[tokio::test]
+async fn the_aas_body_is_byte_identical_across_requests() {
+    let app = aas_app_serving(battery_passport_json()).await;
+
+    let first = get_aas(app.clone(), "00000000-0000-4000-8000-0000000000aa").await;
+    let second = get_aas(app, "00000000-0000-4000-8000-0000000000aa").await;
+    assert_eq!(first.status(), StatusCode::OK);
+    assert_eq!(second.status(), StatusCode::OK);
+
+    let read = async |resp: axum::response::Response| {
+        axum::body::to_bytes(resp.into_body(), 1 << 20)
+            .await
+            .unwrap()
+    };
+    assert_eq!(
+        read(first).await,
+        read(second).await,
+        "two reads of an unchanged passport produced different bytes"
+    );
+}
+
+/// Guard: the fixture above must be a genuinely valid passport. Without this,
+/// a fixture that silently stopped deserialising would turn every AAS
+/// assertion into a vacuous pass against a 502.
+#[test]
+fn battery_fixture_is_a_valid_passport() {
+    let value = battery_passport_json();
+    let parsed: Result<dpp_domain::Passport, _> = serde_json::from_value(value);
+    if let Err(e) = &parsed {
+        panic!("battery fixture is not a valid Passport: {e}");
+    }
+}

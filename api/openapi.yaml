@@ -1033,6 +1033,23 @@ components:
             error: "NOT_FOUND"
             message: "DPP not found."
 
+    NotAcceptable:
+      description: |
+        No representation matches the request's `Accept` header. The response
+        body names the media types this resource can produce.
+
+        A passport carrying no GTIN — an unsold-goods report, or an untyped
+        sector — also gets this for `application/aas+json`: it identifies no
+        trade item, so it has no AAS asset identity and therefore no AAS
+        representation.
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/ApiError"
+          example:
+            error: "NOT_ACCEPTABLE"
+            message: "No representation matches 'application/pdf'. This resource is available as text/html, application/ld+json, or application/aas+json."
+
     ValidationError:
       description: One or more fields failed validation.
       content:
@@ -2731,10 +2748,23 @@ paths:
         Resolve a published Digital Product Passport by ID. This endpoint
         is the target of QR code scans. No authentication required.
 
+        Every representation is built from the **signed** public payload, not
+        the live database row, so the body and the proof it carries agree by
+        construction.
+
         Content negotiation via `Accept` header:
-        - `application/json` (default): returns JSON passport data
-        - `text/html`: returns the consumer-facing HTML passport page
-          with operator branding (logo, colours)
+        - `application/json` / `application/ld+json` (default): JSON-LD
+          passport data
+        - `text/html`: the consumer-facing HTML passport page with operator
+          branding (logo, colours)
+        - `application/aas+json`: an IDTA Asset Administration Shell
+          Environment (see below)
+
+        An absent, empty, `*/*`, `application/*`, `application/json` or
+        `application/ld+json` header all reach the JSON-LD default. Only a
+        header naming something this route cannot produce gets `406`.
+
+        Responses carry `Vary: Accept`.
       tags: [Public Resolver]
       parameters:
         - name: dppId
@@ -2753,8 +2783,65 @@ paths:
               schema:
                 type: string
                 description: Consumer-facing HTML passport page.
+            application/aas+json:
+              schema:
+                type: object
+                description: |
+                  An IDTA Asset Administration Shell `Environment` — shells
+                  and submodels in one self-contained document.
+
+                  `conceptDescriptions` is **absent**, not empty. This node
+                  coins no concept descriptions, and the metamodel constrains
+                  that member to `minItems: 1`, so an empty array would make
+                  the whole document invalid.
+
+                  **Public tier only.** The passport is filtered through the
+                  disclosure seam before any AAS mapper sees it, so this door
+                  never carries a field the JSON-LD door would withhold.
+                  Restricted and conformity-tier data require a credentialed
+                  channel and a different projection.
+
+                  **Schema-valid, not conformance-certified.** Every
+                  Environment is validated in `dpp-core`'s CI against IDTA's
+                  published AAS JSON Schemas for metamodel **3.0, 3.1 and
+                  3.2**, and must satisfy all three — no single revision is
+                  the strictest, so the intersection is the only target that
+                  means "loadable whichever revision your toolchain
+                  implements".
+
+                  That establishes metamodel validity only: it is not a claim
+                  of IDTA conformance, and it asserts nothing about whether a
+                  submodel matches a published submodel template. Note also
+                  that no AAS JSON Schema sets `additionalProperties`, so
+                  schema validity alone cannot rule out a member the metamodel
+                  does not define; `dpp-core` gates that separately.
+
+                  **Unsigned, and it says so in a header.** This is a derived
+                  representation of the signed canonical public view, which is
+                  what `application/ld+json` returns for this same URL. The
+                  public proof covers that payload, not this serialisation of
+                  it, so attaching the signature here would hand a verifier a
+                  proof that fails against the bytes it arrived with.
+
+                  Every `200` therefore carries:
+
+                  ```
+                  Link: <{resolverBase}/dpp/{dppId}>; rel="alternate"; type="application/ld+json"
+                  ```
+
+                  `alternate` rather than `canonical`: the two representations
+                  share one URL and are separated only by `Accept`, so a
+                  `canonical` relation would point this resource at itself.
+                  Follow the link with that `Accept` to obtain the signed
+                  payload and its proof.
+
+                  `resolverBase` is per-deployment (`RESOLVER_BASE_URL`,
+                  default `https://id.odal-node.io`). Error responses carry no
+                  `Link` — an error is not a representation of the passport.
         "404":
           $ref: "#/components/responses/NotFound"
+        "406":
+          $ref: "#/components/responses/NotAcceptable"
 
   /dpp/{dppId}/qr:
     get:

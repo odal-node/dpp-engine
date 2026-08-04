@@ -10,6 +10,152 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-08-04
+
+Pins `dpp-core` 0.15.0 and opens the AAS door. The two belong in one release:
+the projection has existed in core for several releases with no consumer, and
+0.15.0 is the first version of it that emits a valid document — so this is the
+first pin on which serving it over HTTP is an honest thing to do.
+
+### Added
+
+- **The AAS projection is served over content negotiation.** `GET /dpp/{id}`
+  with `Accept: application/aas+json` returns an IDTA Asset Administration
+  Shell Environment. This is the first time the AAS projection has been
+  reachable over HTTP at all — it has existed in the core library for several
+  releases with no consumer.
+
+  It is built from the **verified signed public payload**, never the live
+  database row, for the same reason the JSON-LD door is: body and signature
+  must agree by construction. An Environment assembled from current state would
+  drift from the view the operator actually signed.
+
+  Field selection is not made here. `dpp_aas::build_aas_environment` filters the
+  passport through the disclosure seam before any mapper sees it, so the door
+  cannot widen what a public caller receives. A test asserts, field by field,
+  that none of battery's eight restricted or individual-tier fields appears in
+  the public output — battery because it has the most non-public fields of any
+  product group, and because `stateOfHealthPct` was once served publicly.
+
+  A passport with no GTIN — unsold-goods reports and untyped sectors, neither of
+  which identifies a trade item — has no AAS asset identity, and returns `406`
+  rather than an Environment with an invented `globalAssetId`.
+
+  The Environment is **unsigned**, and every `200` says where the signed thing
+  is: `Link: <…/dpp/{id}>; rel="alternate"; type="application/ld+json"`. The
+  public proof covers the canonical payload, not this serialisation of it, so
+  attaching the signature here would hand a verifier a proof that fails against
+  the bytes it arrived with. `alternate` rather than `canonical` because the two
+  representations share one URL and are separated only by `Accept` — a
+  `canonical` relation would point the resource at itself. Errors carry no
+  `Link`.
+
+  AAS reads are recorded as the `json` scan variant. Telling them apart from
+  JSON-LD reads would need a migration, since the `variant` column is
+  `CHECK`-constrained, and is only worth doing if the distinction is ever needed.
+
+- **A cross-door gate: the AAS door may withhold no less than the JSON-LD
+  door.** The two representations reach the same passport at the same URL
+  through entirely separate code — one filters here in the resolver, the other
+  delegates field selection to the core library — and each had its own masking
+  test with nothing comparing them. That is the shape that drifts: both tests
+  keep passing while the two definitions of "public" separate.
+
+  The comparison is driven from the served passport rather than a hand-written
+  list: any key the JSON-LD door dropped must also be absent from the AAS
+  projection. Structural names the AAS invents are not in the source, so they
+  cannot be used to smuggle a field past it.
+
+  The battery fixture now carries all ten of the fields battery's catalog entry
+  classifies non-public, up from three. Five of the eight assertions in the
+  existing AAS masking test named fields the fixture never carried, and could
+  not have failed.
+
+- **`coreVersion` on `/api/v1/info` and `/health`**, reporting the `dpp-core`
+  version the node was built against.
+
+### Breaking
+
+- **The evidence dossier manifest carries `core_version`.** A dossier recorded
+  only the node version, so it attested a compliance determination without
+  naming the code that computed it — the regulatory logic, schemas and
+  disclosure policy behind a verdict live in the core library, and the two
+  version lines move independently.
+
+  *Migration:* the manifest uses `deny_unknown_fields`, so this is a format
+  change rather than an optional addition. No dossier exists outside tests, so
+  format `"1"` is simply defined to include it rather than carrying an optional
+  field permanently.
+
+- **An unacceptable `Accept` on `/dpp/{id}` now returns `406`** instead of
+  falling through to JSON-LD.
+
+  *Migration:* deliberately narrow, and almost certainly affects nobody. An
+  absent, empty, `*/*`, `application/*`, `application/json` or
+  `application/ld+json` header all still reach the JSON-LD default — `*/*` is
+  what curl and most HTTP clients send, and treating it as unacceptable would
+  break every existing consumer. Only a header naming something the route
+  genuinely cannot produce (`application/pdf`, say) now returns `406`, and the
+  response names the three types that are available.
+
+### Fixed
+
+- **`Accept` weights are honoured.** `q=0` means "not acceptable" (RFC 9110
+  §12.5.1), and naming a type then weighting it to zero is the standard way to
+  say *anything but this*. `Accept: application/aas+json;q=0, application/ld+json`
+  was served AAS — the one representation it asked not to receive. This route
+  now agrees with `dpp-digital-link`'s own `Accept` parser, which has always
+  honoured `q`.
+
+- **`text/*` resolves to HTML instead of `406`.** Its sibling `application/*`
+  was already honoured; refusing the text subtype wildcard was an oversight, not
+  a policy. Narrow by design: `text/*` selects HTML only when nothing
+  JSON-shaped is also acceptable, so `Accept: text/*, application/json` returns
+  JSON-LD exactly as before.
+
+- **The local-core development override was missing two crates.** `dpp-vc` and
+  `dpp-aas` were split out of their former homes in `dpp-core` 0.13.0 but never
+  added to `.cargo/config.toml.example`, so `just core-local` silently produced
+  a build with those two resolved from the registry and everything else from the
+  working tree.
+
+- **`wasmtime` 46.0.1 → 46.0.2**, clearing RUSTSEC-2026-0222 and
+  RUSTSEC-2026-0223 — low-severity advisories against the Wasm sandbox's
+  internal state handling: type indices mixing between engines, and preemption
+  during bulk operations.
+
+  Shipped ahead of this release on its own, because it had to be. The advisories
+  were published on 2026-07-31, the same day `main` last ran CI, so nothing
+  re-ran to surface them: `main` was failing its own security audit and every
+  new branch inherited the failure. A security fix gated behind an unrelated
+  dependency repin is a security fix that waits for a release cycle.
+
+### Changed
+
+- **Pinned to `dpp-core` 0.15.0.** Two things come with it.
+
+  Port traits dispatch on the sector's catalog key rather than the `Sector`
+  enum, so `PluginHost` and `ComplianceRegistry` implementations take `&str` and
+  call sites pass `Sector::catalog_key()`. No wire or database change.
+
+  More importantly for the door above: **0.15.0 is the first release whose AAS
+  projection is actually valid.** Every earlier one emitted a document no AAS
+  parser would accept — `assetKind` missing, submodel references as bare
+  `{"id": …}` objects, `modelType: "Reference"` on an element class that does
+  not exist, empty arrays where the metamodel requires `minItems: 1`, and a
+  `kind` member on the shell that no JSON Schema catches because IDTA sets
+  `additionalProperties` nowhere. Serving AAS over HTTP on any earlier pin would
+  have published invalid documents to integrators.
+
+  Core now validates every Environment against metamodel 3.0, 3.1 **and** 3.2
+  and must satisfy all three, so this door's output is not tied to one
+  revision's reading of a rule.
+
+- **Line endings are normalised to LF** via a first `.gitattributes`, and PR
+  titles are gated on conventional commits in CI. The title gate exists because
+  a squashed PR *is* a commit on `main`, and several landed as prose or as a
+  branch name before anything checked.
+
 ## [0.10.0] - 2026-07-31
 
 Pins `dpp-core` 0.13.0. Cut as a checkpoint ahead of the `dpp-core` 0.14.0

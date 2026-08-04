@@ -53,6 +53,13 @@ pub struct DossierManifest {
     pub issuer_did: String,
     pub created_at: DateTime<Utc>,
     pub node_version: String,
+    /// The `dpp-core` version this node was built against.
+    ///
+    /// Recorded alongside `node_version` because the two move independently:
+    /// the regulatory logic, schemas and disclosure policy behind a
+    /// determination live in core, not here. A dossier naming only the node
+    /// version cannot be traced back to the code that produced its verdict.
+    pub core_version: String,
     /// The `dpp-calc` ruleset version, when a determination ran. `None` for
     /// passthrough-only passports.
     #[serde(default, skip_serializing_if = "Option::is_none")]

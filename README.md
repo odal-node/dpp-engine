@@ -66,7 +66,7 @@ The engine ships as a **single binary** (`dpp-node`) that fuses all services und
 
 ### Dependencies on dpp-core
 
-All core crates are consumed from crates.io (dpp-core is published independently, version-pinned to `^0.12.0` — keep this line, the workspace `Cargo.toml`, and `.cargo/config.toml`'s sync note in agreement on every core bump; local dev can override to a sibling checkout via `.cargo/config.toml`, see `.cargo/config.toml.example`):
+All core crates are consumed from crates.io — dpp-core is published independently, and the pinned version lives in the workspace `Cargo.toml` under `[workspace.dependencies]`. It is deliberately not repeated here: this line asked three places to be kept in agreement on every core bump, and it still said `^0.12.0` while the workspace was on `0.14.1`. Local dev can override to a sibling checkout via `.cargo/config.toml` (see `.cargo/config.toml.example`).
 
 | Core Crate | Used For |
 |---|---|
@@ -136,7 +136,7 @@ Full command reference: **[cli/README.md](cli/README.md)**.
 |---|---|---|
 | GET | `/health` | None |
 | GET | `/ready` | None |
-| GET | `/dpp/{id}` | None — content-negotiated (HTML or JSON-LD via `Accept`) |
+| GET | `/dpp/{id}` | None — content-negotiated (HTML, JSON-LD, or AAS Environment via `Accept`) |
 | GET | `/dpp/{id}/qr` | None |
 | GET | `/01/{gtin}` | None — GS1 Digital Link resolution |
 

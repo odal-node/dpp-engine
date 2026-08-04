@@ -111,8 +111,9 @@ impl PassportService {
             // warnings (e.g. recycled-content thresholds not yet in force) never
             // block — they are surfaced on the persisted determination instead.
             if catalog().is_in_force(sector_data.sector().catalog_key())
-                && let Ok(determination) =
-                    self.compliance.compute(sector_data.sector(), sector_data)
+                && let Ok(determination) = self
+                    .compliance
+                    .compute(sector_data.sector().catalog_key(), sector_data)
                 && determination.has_violations()
             {
                 let summary = determination
