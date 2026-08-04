@@ -154,7 +154,8 @@ dpp-plugin-host ←── dpp-node
 ## Dependencies on dpp-core
 
 All core crates are pinned to published registry versions in `[workspace.dependencies]`
-(`dpp-domain = "0.1.0"`, …) — this is what CI and release builds use. For local
+— read the pin there rather than from a copy in prose; this file said `0.1.0` for
+fourteen releases. That pin is what CI and release builds use. For local
 development, copy `.cargo/config.toml.example` to `.cargo/config.toml` (or run
 `just core-local`) to add a `[patch.crates-io]` override that points each core crate
 at the sibling `../dpp-core` working tree. That file is git-ignored, so it never
