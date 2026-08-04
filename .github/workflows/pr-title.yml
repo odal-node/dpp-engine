@@ -1,0 +1,75 @@
+# A squashed PR *is* a commit on main, and its title becomes that commit's
+# subject. Nothing checked that title, so several merges landed as prose or as
+# a branch name:
+#
+#   Feat/continuity snapshots (#39)
+#   Fix six priority bugs found in the engine audit (#42)
+#   Repin to dpp-core 0.13.0: moved crates, JSON-LD context, catalog retention (#66)
+#
+# Correcting them now would mean rewriting published history, which is why this
+# is a gate rather than a habit: the cheapest moment to fix a commit subject is
+# before the merge button, and there is no second cheap moment.
+name: PR title
+
+on:
+  pull_request:
+    # `edited` matters as much as `opened`: a title corrected after review must
+    # re-run, and a title broken after approval must fail.
+    types: [opened, edited, synchronize, reopened]
+
+permissions:
+  contents: read
+
+jobs:
+  conventional-commit:
+    name: PR title is a conventional commit
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check title
+        env:
+          # Passed as an environment variable, never interpolated into the
+          # script body. A PR title is attacker-controlled text, and a
+          # `${{ … }}` expression inside `run:` is substituted before bash sees
+          # it, so a title containing a quote and a semicolon would execute.
+          TITLE: ${{ github.event.pull_request.title }}
+          # The repo's own name is not a scope: a repo's history is already
+          # scoped to that repo.
+          FORBIDDEN_SCOPES: 'engine|dpp-engine'
+        run: |
+          set -euo pipefail
+
+          TYPES='build|chore|ci|docs|feat|fix|perf|refactor|revert|style|test'
+
+          printf 'title: %s\n\n' "$TITLE"
+
+          if ! printf '%s' "$TITLE" | grep -qE "^(${TYPES})(\([a-z0-9._,-]+\))?!?: .+"; then
+            printf '::error::PR title is not a conventional commit\n'
+            printf '\n'
+            printf 'Expected:  type(scope): subject\n'
+            printf 'Got:       %s\n' "$TITLE"
+            printf '\n'
+            printf 'type must be one of: %s\n' "${TYPES//|/, }"
+            printf 'scope is optional, lowercase, and names the functional area\n'
+            printf '(resolver, vault, dal, docs) rather than the repo. Several may be\n'
+            printf 'comma-separated: test(resolver,plugin-host).\n'
+            printf '\n'
+            printf 'This title becomes the squash commit subject on main. Once a\n'
+            printf 'release is published from that commit it cannot be corrected\n'
+            printf 'without breaking the provenance link inside the published crate.\n'
+            exit 1
+          fi
+
+          SCOPE=$(printf '%s' "$TITLE" | sed -nE "s/^(${TYPES})\(([a-z0-9._,-]+)\).*/\2/p")
+          if [ -n "$SCOPE" ] && printf '%s' "$SCOPE" | grep -qE "^(${FORBIDDEN_SCOPES})$"; then
+            printf '::error::Scope %s is this repository own name\n' "$SCOPE"
+            printf 'Use the functional area touched: aas, domain, crypto, docs.\n'
+            exit 1
+          fi
+
+          # Advisory only. The squash appends " (#NN)", whose width varies, so a
+          # hard limit here would reject titles that end up fine.
+          if [ "${#TITLE}" -gt 50 ]; then
+            printf '::warning::Title is %s characters; the convention is under 50 before the (#NN) suffix\n' "${#TITLE}"
+          fi
+
+          printf 'OK\n'
