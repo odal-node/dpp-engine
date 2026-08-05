@@ -19,6 +19,7 @@ use dpp_common::{
 use dpp_crypto::keystore::KeyStore;
 use dpp_domain::ports::{
     archive::ArchivePort, compliance::ComplianceRegistry, registry_sync::RegistrySyncPort,
+    seal::SealPort,
 };
 use dpp_identity_service::state::AppState as IdentityState;
 use dpp_integrator::{infra::vault_client::VaultHttpClient, state::AppState as IntegratorState};
@@ -155,7 +156,50 @@ async fn main() -> anyhow::Result<()> {
         dpp_node::infra::credential_issuers::from_env(operator_did.as_deref());
     let credentials_live = credential_trust != TrustMode::Ghost;
 
-    let trust = boot::trust::build_and_enforce(registry_trust, archive_trust, credential_trust)?;
+    // ── eIDAS qualified seal (eID Easy Cloud Direct e-Sealing) ───────────────
+    // A partial configuration is an error rather than a silent ghost: dropping
+    // to no sealing because one of three variables was misspelled is exactly the
+    // downgrade the trust report exists to prevent, so it fails the boot.
+    let (seal, seal_client_id, seal_trust): (Arc<dyn SealPort>, String, TrustMode) =
+        match dpp_seal::EideasyConfig::from_env().context("eID Easy configuration")? {
+            Some(cfg) => {
+                // Sandbox is a real seal from a real API, but over eID Easy's test
+                // certificate — a distinct claim from both Ghost and Live.
+                let mode = match cfg.environment {
+                    dpp_seal::EideasyEnvironment::Sandbox => TrustMode::Sandbox,
+                    dpp_seal::EideasyEnvironment::Production => TrustMode::Live,
+                };
+                let client_id = cfg.client_id.clone();
+                tracing::info!(
+                    base_url = %cfg.base_url,
+                    mode = mode.as_str(),
+                    "eIDAS seal: eID Easy adapter active"
+                );
+                let adapter = dpp_seal::QtspSealAdapter::eideasy(cfg)
+                    .context("Failed to build eID Easy seal adapter")?;
+                (Arc::new(adapter), client_id, mode)
+            }
+            None => {
+                tracing::info!(
+                    "eIDAS seal: ghost (no QTSP) — set SEAL_PROVIDER=eideasy plus \
+                     SEAL_EIDEASY_BASE_URL + SEAL_EIDEASY_CLIENT_ID + SEAL_EIDEASY_HMAC_KEY \
+                     to enable"
+                );
+                (
+                    Arc::new(dpp_seal::QtspSealAdapter::ghost()),
+                    String::new(),
+                    TrustMode::Ghost,
+                )
+            }
+        };
+    let sealing_live = seal_trust != TrustMode::Ghost;
+
+    let trust = boot::trust::build_and_enforce(
+        seal_trust,
+        registry_trust,
+        archive_trust,
+        credential_trust,
+    )?;
 
     // ── Compliance Current: signed ruleset channel ────────────────────────────
     // Load the pinned, signed bundle if a channel is configured; otherwise stay
@@ -250,6 +294,13 @@ async fn main() -> anyhow::Result<()> {
     if snapshot_store.is_some() {
         passport_service = passport_service.with_snapshot_outbox(db.snapshot_outbox.clone());
     }
+    // Only arm the seal outbox against a real QTSP. A ghost-backed adapter would
+    // happily "seal" every row with a synthetic placeholder, filling the outbox
+    // with rows that report success and passports carrying `placeholder: true`
+    // seals — the ghost-as-real dishonesty the trust report exists to prevent.
+    if sealing_live {
+        passport_service = passport_service.with_seal_outbox(db.seal_outbox.clone());
+    }
     let service = Arc::new(passport_service);
     let operator_service = Arc::new(OperatorService::new(db.operator_repo.clone()));
     let api_key_service = Arc::new(ApiKeyService::new(db.api_key_repo.clone()));
@@ -322,6 +373,16 @@ async fn main() -> anyhow::Result<()> {
     boot::tasks::spawn_registry_drain(db.registry_outbox.clone(), registry_sync_for_drain).await;
     boot::tasks::spawn_webhook_drain(db.webhook_outbox.clone(), cfg.webhook_allow_private_targets)
         .await;
+    // Qualified sealing: only spawn against a real QTSP. A ghost-backed drain
+    // would stamp synthetic placeholder seals onto published passports and
+    // report them sealed.
+    if sealing_live {
+        boot::tasks::spawn_seal_drain(db.seal_outbox.clone(), seal.clone(), seal_client_id).await;
+        // The backstop for seals the event-driven path never queued, or that gave
+        // up during an outage. Without it a published passport can stay unsealed
+        // forever with nothing to notice.
+        boot::tasks::spawn_seal_sweep(db.seal_outbox.clone());
+    }
     // Continuity tier: only spawn when object storage is configured — without a
     // store there is nothing to reconcile against (and the vault never enqueues).
     if let Some(store) = snapshot_store {

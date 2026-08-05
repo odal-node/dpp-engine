@@ -5,9 +5,11 @@ use std::sync::Arc;
 
 use dpp_domain::ports::passport_repo::PassportRepository;
 use dpp_domain::ports::registry_sync::RegistrySyncPort;
+use dpp_domain::ports::seal::SealPort;
 use dpp_integrator::infra::job_store::JobStore;
 use dpp_types::registry_sync::{RegistrySyncCounts, RegistrySyncOutbox};
 use dpp_types::scan::ScanTelemetryRepository;
+use dpp_types::seal::{SealOutbox, SealOutboxCounts};
 use dpp_types::snapshot::{SnapshotOutbox, SnapshotOutboxCounts, SnapshotStore};
 use dpp_types::webhook::{WebhookCounts, WebhookOutbox};
 
@@ -220,6 +222,95 @@ pub async fn spawn_snapshot_drain(
                         "snapshot outbox has exhausted reconciles — the static tier may be stale"
                     );
                 }
+            }
+        }
+    });
+}
+
+fn set_seal_gauges(c: &SealOutboxCounts) {
+    metrics::gauge!("seal_outbox_pending").set(c.pending as f64);
+    metrics::gauge!("seal_outbox_exhausted").set(c.exhausted as f64);
+}
+
+/// Log/gauge the qualified-seal outbox's outstanding state, then spawn the
+/// periodic sealing loop. Publish enqueues a digest (after-commit, in the vault
+/// service); this task asks the QTSP to seal it and writes the envelope onto the
+/// passport. A killed node loses nothing: `pending` rows seal on boot.
+///
+/// Only spawned when a real QTSP is configured — see the `sealing_live` guard in
+/// `main`, which is also what stops the vault enqueueing rows nothing would
+/// drain.
+pub async fn spawn_seal_drain(
+    outbox: Arc<dyn SealOutbox>,
+    seal: Arc<dyn SealPort>,
+    client_id: String,
+) {
+    match outbox.status_counts().await {
+        Ok(c) => {
+            tracing::info!(
+                pending = c.pending,
+                sealed = c.sealed,
+                exhausted = c.exhausted,
+                "qualified-seal outbox reconciliation at boot"
+            );
+            set_seal_gauges(&c);
+        }
+        Err(e) => tracing::warn!(error = %e, "seal outbox boot reconciliation failed"),
+    }
+
+    tokio::spawn(async move {
+        loop {
+            tokio::time::sleep(DRAIN_INTERVAL).await;
+            dpp_node::infra::seal_drain::drain_once(&outbox, &seal, &client_id, DRAIN_BATCH).await;
+            if let Ok(c) = outbox.status_counts().await {
+                set_seal_gauges(&c);
+                if c.exhausted > 0 {
+                    // A published passport that gave up on sealing carries no
+                    // qualified seal at all — a compliance signal, not noise.
+                    tracing::warn!(
+                        exhausted = c.exhausted,
+                        "seal outbox has exhausted rows — those passports are published unsealed"
+                    );
+                }
+            }
+        }
+    });
+}
+
+/// How long an exhausted seal row is left alone before the sweep re-arms it.
+///
+/// A row reaches `exhausted` only after eight attempts with exponential backoff,
+/// so it almost always means the provider is down rather than the digest being
+/// unsealable. Six hours lets an outage clear before we spend another eight
+/// attempts on it, and bounds a genuinely unsealable passport to four retry
+/// cycles a day rather than one every sweep.
+const SEAL_EXHAUSTED_COOLDOWN_SECS: i64 = 6 * 3600;
+
+/// Spawn the qualified-seal repair sweep.
+///
+/// The drain only ever sees rows that were successfully queued. This covers the
+/// ones that were not: a crash between commit and enqueue leaves a published
+/// passport with no row at all, and an `exhausted` row is one that gave up
+/// during a provider outage. Both leave a passport published and unsealed, and
+/// neither is self-healing — a re-publish would work, but it changes the very
+/// signature the seal is supposed to attest to, so it is not a recovery an
+/// operator should have to perform.
+///
+/// Cannot double-bill: it only queues passports carrying no seal at all.
+pub fn spawn_seal_sweep(outbox: Arc<dyn SealOutbox>) {
+    tokio::spawn(async move {
+        loop {
+            tokio::time::sleep(SWEEP_INTERVAL).await;
+            match outbox
+                .enqueue_unsealed(SWEEP_BATCH, SEAL_EXHAUSTED_COOLDOWN_SECS)
+                .await
+            {
+                Ok(0) => tracing::debug!("seal sweep: every published passport is sealed"),
+                Ok(n) => tracing::warn!(
+                    queued = n,
+                    "seal sweep queued published passports that carry no qualified seal"
+                ),
+                Err(e) => tracing::warn!(error = %e, "seal sweep failed"),
             }
         }
     });

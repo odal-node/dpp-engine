@@ -25,6 +25,11 @@ thiserror   = { workspace = true }
 async-trait = { workspace = true }
 uuid        = { workspace = true }
 chrono      = { workspace = true }
+# The seal digest rule (SHA-256 of the compact JWS). Lives here so the vault,
+# which composes it at publish, and the DAL, which re-derives it in the repair
+# sweep, cannot grow two definitions of what a seal covers.
+sha2        = { workspace = true }
+hex         = { workspace = true }
 
 [dev-dependencies]
 proptest    = { workspace = true }

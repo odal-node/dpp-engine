@@ -10,6 +10,111 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ## [Unreleased]
 
+### Added
+
+- **eIDAS qualified sealing, end to end** (migration `0028_seal_outbox.sql`).
+  `dpp-seal` becomes a real adapter against eID Easy Cloud Direct e-Sealing,
+  which aggregates qualified QTSPs and returns
+  **CAdES**. `dpp-node` loads it — the crate had no dependent until now — and the
+  trust report's `seal` port stops being a hardcoded `ghost`, so
+  `NODE_PROFILE=production` can boot for the first time. Unconfigured, the
+  adapter still delegates to `GhostSeal` and production still refuses.
+
+  **What is sealed is `SHA-256(passport.jwsSignature)`** — the compact JWS
+  string as stored, not the canonicalized document. The JWS is frozen at
+  publish, while `lintResult`, `status` and `qrCodeUrl` stay mutable after it, so
+  a seal over the document would be silently invalidated by a later re-lint. It
+  is also reconstructible by anyone holding the passport with no canonicalization
+  step, and it makes the seal a countersignature: a QTSP attesting that this
+  operator signature existed at this time.
+
+  **Sealing is queued, not inline.** Publish commits and enqueues; a drain task
+  seals with backoff. Sealing is a paid third-party call, and putting it in the
+  publish path would couple every publish to that provider's availability —
+  trading a missing seal, which is visible and repairable, for a blocked
+  publication obligation, which is neither. A published passport can therefore
+  briefly carry no seal; it is absent, never a placeholder. The outbox is keyed
+  `(passportId, payloadHash)` rather than by passport alone, because a re-publish
+  re-signs and the new signature needs its own attestation.
+
+  **`verify()` is not implemented and says so**, returning a typed error. A
+  detached CAdES must be validated by an independent AdES validator against the
+  EU Trusted List — no Rust implementation exists — and this adapter will not
+  report a seal valid on a check it did not perform. The new route and the
+  dossier both state the same thing rather than letting their output read as a
+  verdict.
+
+- **`GET /vault/api/v1/dpp/{dppId}/seal`** returns the qualified seal together
+  with the JWS it covers and that JWS's digest. The seal needs its own route
+  because it is stripped from every audience view, public included: it covers the
+  **full**-payload signature, so attaching it to a redacted body would hand the
+  reader a proof that verifies against nothing they received. `404` when the
+  passport carries no seal — an unsealed passport has no seal resource rather
+  than an empty one.
+
+- **Evidence dossiers carry the qualified seal** as a `qualifiedSeal` member,
+  bound into `contentHashes` like every other member. A dossier is what an
+  authority is handed, and the seal is its one member carrying an eIDAS
+  Art. 35(2) presumption; it is also unreachable from a dossier otherwise, for
+  the same stripping reason above. Carries `signedOverJws` and `payloadHash`
+  alongside the envelope, so a verifier holding only the file has both the CAdES
+  and the preimage to check it against.
+
+- **A repair sweep for unsealed passports.** The drain only sees rows that were
+  successfully queued; this covers the two cases that leave a published passport
+  unsealed with nothing to notice — a crash between commit and enqueue, and a row
+  that exhausted its retries during a provider outage. Targeted, so a converged
+  deployment sweeps to zero work, and it only ever queues a passport carrying no
+  seal at all, so it cannot double-bill. Exhausted rows are held back for six
+  hours so sweep and drain do not hammer an outage together.
+
+- **A clock-skew hint on authentication failures.** `X-Timestamp` is inside the
+  signed message and eID Easy allows five minutes of drift, so a wrong node clock
+  produces a 401 byte-for-byte identical to a bad key. The adapter now compares
+  its timestamp against the provider's `Date` header and, when the drift alone
+  explains the rejection, says so — otherwise the operator rotates a perfectly
+  good credential and the failure persists. `429` is likewise typed separately
+  from a generic provider error, with `Retry-After` surfaced when present.
+
+### Changed
+
+- **Seal configuration is provider-neutral**: `SEAL_PROVIDER=eideasy|none` plus
+  `SEAL_EIDEASY_*`, replacing the bare `EIDEASY_*` names. Env var names are a
+  published interface, so a second QTSP should be a new value rather than a
+  config migration for every self-hoster. An unrecognised provider fails the
+  boot, as does setting the credentials without selecting the provider — both
+  would otherwise downgrade a node configured for qualified sealing into one
+  with none.
+
+- **`seal` joins the retention guard's mutable keys** (`0028_seal_outbox.sql`)
+  and `MUTABLE_FIELDS`. Without it the drain's write to an already-published,
+  already-retention-locked row is refused outright and no passport is ever
+  sealed. This does not weaken immutability, for the reason the signature fields
+  do not: what the guard protects is passport *content*, and a seal is a
+  statement about content frozen at a publish.
+
+- The `MUTABLE_FIELDS` parity test now **parses `ops/pg/*.sql`** instead of
+  comparing against a hardcoded copy. It claimed to machine-check that the Rust
+  constant and the database trigger cannot diverge, but compared two Rust
+  constants — it passed whenever those two agreed, whether or not the SQL that
+  actually governs the trigger had been touched.
+
+### Fixed
+
+- **An exhausted seal row was terminal forever.** `enqueue` used
+  `ON CONFLICT DO NOTHING`, so a passport whose seal burned its retry budget
+  during a provider outage stayed published and unsealed with no way back short
+  of re-publishing — which changes the very signature the seal attests to. An
+  `exhausted` row is now re-armed, because it has no artifact and nothing was
+  delivered to pay for; a `sealed` row still never is, since that would buy the
+  same attestation twice. Caught by review before the feature shipped.
+
+### Removed
+
+- The `csc` module. It modelled the Cloud Signature Consortium `credentials/sign`
+  flow with OAuth2 and JAdES, which is not the API, the auth model, or the
+  envelope format of the provider being onboarded.
+
 ## [0.11.0] - 2026-08-04
 
 Pins `dpp-core` 0.15.0 and opens the AAS door. The two belong in one release:

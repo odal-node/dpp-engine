@@ -108,6 +108,23 @@ pub struct DossierV1 {
     /// for a unit with no modelled sub-assemblies.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub component_graph: Option<serde_json::Value>,
+    /// The passport's eIDAS qualified seal, present iff one has been applied.
+    ///
+    /// A dossier is what an authority is handed, and the qualified seal is the
+    /// one artefact in it carrying an Art. 35(2) presumption — so omitting it
+    /// would leave the strongest evidence out of the evidence package. It is not
+    /// reachable any other way from a dossier: the seal is stripped from every
+    /// audience view, including `public_view` and `full_view`, because it covers
+    /// the full-payload signature rather than any redaction.
+    ///
+    /// Carries the seal envelope plus `signedOverJws` and `payloadHash`, so a
+    /// verifier holding only the dossier has the CAdES *and* the preimage to
+    /// check it against. Attested via `content_hashes` like every other member.
+    ///
+    /// `None` for a passport whose seal is still queued, or for a node with no
+    /// QTSP configured — absent, never a placeholder.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub qualified_seal: Option<serde_json::Value>,
 }
 
 /// Canonical SHA-256 (hex) of a JSON value (RFC 8785 / JCS bytes).
@@ -155,6 +172,9 @@ pub fn compute_content_hashes(
     }
     if let Some(graph) = &dossier.component_graph {
         hashes.insert("componentGraph".to_string(), content_hash(graph)?);
+    }
+    if let Some(seal) = &dossier.qualified_seal {
+        hashes.insert("qualifiedSeal".to_string(), content_hash(seal)?);
     }
     Ok(hashes)
 }

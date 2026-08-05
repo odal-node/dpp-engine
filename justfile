@@ -42,6 +42,20 @@ test-integration:
 test-pg:
     cargo nextest run -p dpp-dal --features integration-tests --test pg_integration
 
+# Simulate the whole eIDAS sealing loop and print every record it produces
+# (needs Docker). Publish -> outbox -> drain -> seal on the passport, with real
+# Postgres, real Ed25519 signing and the real adapter over real HTTP; only the
+# provider endpoint is a local stand-in, and it verifies the HMAC by recomputing
+# it over the bytes it received. Use this to inspect what a seal actually looks
+# like before eID Easy sandbox credentials exist.
+seal-sim:
+    cargo test -p dpp-node --features integration-tests --test seal_outbox -- --nocapture --test-threads=1
+
+# The database-level half of the same feature: migration 0028, the retention
+# guard, the (passport_id, payload_hash) key and the payload_hash CHECK.
+test-seal-db:
+    cargo nextest run -p dpp-dal --features integration-tests --test pg_seal_outbox
+
 # Run clippy (all warnings are errors)
 lint:
     cargo clippy --workspace --all-targets -- -D warnings

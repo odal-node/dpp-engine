@@ -10,10 +10,9 @@ use dpp_common::event_codes;
 use dpp_types::trust::{NodeProfile, NodeTrustReport, TrustMode, TrustPort};
 
 /// Build the node's trust report from each port's resolved tier and enforce
-/// the deployment profile. The seal port is not yet wired, so it always
-/// resolves to Ghost for now: a production node cannot boot until a real
-/// QTSP seal exists, which is the honest posture.
+/// the deployment profile.
 pub fn build_and_enforce(
+    seal_trust: TrustMode,
     registry_trust: TrustMode,
     archive_trust: TrustMode,
     credential_trust: TrustMode,
@@ -23,7 +22,7 @@ pub fn build_and_enforce(
         vec![
             TrustPort {
                 port: "seal",
-                mode: TrustMode::Ghost,
+                mode: seal_trust,
                 required: true,
             },
             TrustPort {

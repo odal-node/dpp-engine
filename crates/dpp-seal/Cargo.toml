@@ -1,6 +1,6 @@
 [package]
 name        = "dpp-seal"
-description = "eIDAS qualified seal adapter — CSC/QTSP wire types and stub adapter for Odal Node"
+description = "eIDAS qualified seal adapter — eID Easy Cloud Direct e-Sealing backend for Odal Node"
 version.workspace     = true
 edition.workspace     = true
 authors.workspace     = true
@@ -19,5 +19,15 @@ chrono       = { workspace = true }
 async-trait  = { workspace = true }
 tracing      = { workspace = true }
 
+# eID Easy Cloud Direct e-Sealing: an HMAC-SHA256 over the exact request bytes.
+reqwest      = { workspace = true }
+hmac         = { workspace = true }
+sha2         = { workspace = true }
+base64       = { workspace = true }
+hex          = { workspace = true }
+url          = { workspace = true }
+zeroize      = { workspace = true }
+
 [dev-dependencies]
 tokio = { workspace = true }
+axum  = { workspace = true }
