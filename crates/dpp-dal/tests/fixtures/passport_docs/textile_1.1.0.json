@@ -1,0 +1,44 @@
+{
+  "id": "019f3aa5-579d-73c1-a3e6-a8002df5e06b",
+  "sector": "textile",
+  "status": "draft",
+  "batchId": "BATCH-BULK-005",
+  "version": 1,
+  "facility": {
+    "name": "Example Textile Plant",
+    "value": "3212321321312",
+    "scheme": "dsad",
+    "country": "DE"
+  },
+  "createdAt": "2026-07-07T03:35:42.237342866Z",
+  "materials": [],
+  "qrCodeUrl": null,
+  "updatedAt": "2026-07-07T03:35:42.237342966Z",
+  "sectorData": {
+    "sector": "textile",
+    "gtin": "09506000134352",
+    "careInstructions": "Hand wash cold. Iron damp.",
+    "fibreComposition": [{ "pct": 100.0, "fibre": "linen" }],
+    "countryOfOrigin": "DE",
+    "chemicalComplianceStandard": "EU REACH Annex XVII"
+  },
+  "co2ePerUnit": null,
+  "productName": "Example Linen Shirt White L",
+  "publishedAt": null,
+  "jwsSignature": null,
+  "manufacturer": {
+    "name": "Example Clothing GmbH",
+    "address": "DE",
+    "didWebUrl": null
+  },
+  "schemaVersion": "1.1.0",
+  "retentionLocked": false,
+  "complianceResult": {
+    "co2eScore": null,
+    "assessedAt": "2026-07-07T03:35:42.256055605Z",
+    "complianceStatus": "PASSTHROUGH_NO_VALIDATION",
+    "recycledContentPct": null,
+    "repairabilityIndex": null
+  },
+  "repairabilityScore": null
+}
