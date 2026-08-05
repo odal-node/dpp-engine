@@ -47,12 +47,21 @@ use dpp_domain::{
     ports::{
         passport_repo::PassportRepository,
         registry_sync::{
-            RegistrationRequest, RegistryIdentifiers, RegistryRecord, RegistryStatus,
-            RegistrySyncPort,
+            RegisteringOperator, RegistrationGranularity, RegistrationRequest, RegistryIdentifiers,
+            RegistryRecord, RegistryStatus, RegistrySyncPort,
         },
     },
 };
 use dpp_node::infra::registry_drain::drain_once;
+
+/// The operator identity these tests register under. Matches what the node
+/// builds from operator config at boot.
+fn test_operator() -> RegisteringOperator<'static> {
+    RegisteringOperator {
+        legal_name: "Test Operator GmbH",
+        country: "DE",
+    }
+}
 use dpp_types::{RegistryStatusIntent, RegistrySyncOutbox, RegistrySyncStatus};
 
 // ─── Harness ────────────────────────────────────────────────────────────────
@@ -140,8 +149,12 @@ async fn create_and_publish(dal: &PgDal, outbox: &Arc<dyn RegistrySyncOutbox>) -
     repo.create(p.clone()).await.expect("create draft");
     p.status = PassportStatus::Published;
     p.published_at = Some(Utc::now());
-    let payload =
-        serde_json::to_value(RegistrationRequest::from_published_passport(&p, "DE")).unwrap();
+    let payload = serde_json::to_value(RegistrationRequest::from_published_passport(
+        &p,
+        test_operator(),
+        RegistrationGranularity::Item,
+    ))
+    .unwrap();
     outbox
         .commit_publish(&p, payload)
         .await
@@ -244,8 +257,12 @@ async fn publish_is_atomic_idempotent_and_drains_exactly_once() {
     let mut again = draft_passport();
     again.id = id;
     again.status = PassportStatus::Published;
-    let payload =
-        serde_json::to_value(RegistrationRequest::from_published_passport(&again, "DE")).unwrap();
+    let payload = serde_json::to_value(RegistrationRequest::from_published_passport(
+        &again,
+        test_operator(),
+        RegistrationGranularity::Item,
+    ))
+    .unwrap();
     outbox.commit_publish(&again, payload).await.unwrap();
     assert_eq!(outbox_row_count(&dal, id).await, 1, "still exactly one row");
 
@@ -611,8 +628,12 @@ async fn republish_clears_a_stale_suspend_intent() {
     let mut again = draft_passport();
     again.id = id;
     again.status = PassportStatus::Published;
-    let payload =
-        serde_json::to_value(RegistrationRequest::from_published_passport(&again, "DE")).unwrap();
+    let payload = serde_json::to_value(RegistrationRequest::from_published_passport(
+        &again,
+        test_operator(),
+        RegistrationGranularity::Item,
+    ))
+    .unwrap();
     outbox.commit_publish(&again, payload).await.unwrap();
 
     let row = outbox.pending_for(id).await.unwrap().unwrap();

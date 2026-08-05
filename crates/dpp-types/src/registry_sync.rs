@@ -1,7 +1,7 @@
 //! Transactional outbox for EU Central Registry synchronisation.
 //!
 //! ESPR Art. 13 requires every published passport to be registered with the EU
-//! Central Registry (live 19 Jul 2026). Registration must never be lost: a
+//! Central Registry (operational 20 Jul 2026). Registration must never be lost: a
 //! killed node, an unreachable registry, or a rejected payload must all leave a
 //! durable, inspectable record rather than a swallowed log line.
 //!

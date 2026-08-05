@@ -37,7 +37,7 @@ use dpp_types::{
     },
     transfer::TransferStore,
 };
-use dpp_vault::domain::service::PassportService;
+use dpp_vault::domain::service::{OperatorIdentity, PassportService};
 
 // ---------------------------------------------------------------------------
 // In-memory ports (no Docker/Postgres — see module doc comment)
@@ -261,7 +261,10 @@ async fn build_service() -> (PassportService, Arc<InMemoryEvidenceRepo>, String)
         Arc::new(dpp_common::event::NoOpEventBus),
         Arc::new(GhostRegistrySync),
         Arc::new(GhostArchive),
-        "DE".to_owned(),
+        OperatorIdentity {
+            legal_name: "Test Operator GmbH".to_owned(),
+            country: "DE".to_owned(),
+        },
     )
     .with_transfer_store(Arc::new(InMemoryTransferStore::default()))
     .with_evidence_store(evidence_store.clone());

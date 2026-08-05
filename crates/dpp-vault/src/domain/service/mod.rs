@@ -44,6 +44,22 @@ use dpp_types::{
     snapshot::SnapshotOutbox, transfer::TransferStore, webhook::WebhookOutbox,
 };
 
+/// This node's operator, as the EU registry needs to see it.
+///
+/// The two fields travel together because they are read from the same
+/// `OperatorConfig` row and both land on the registration payload's operator
+/// identifier. Grouping them also keeps two same-typed strings from being
+/// passed positionally, where a swap would file registrations under a legal
+/// name of `"DE"` without the compiler objecting.
+#[derive(Debug, Clone, Default)]
+pub struct OperatorIdentity {
+    /// Legal name of the economic operator (`OperatorConfig.legal_name`).
+    /// The registry rejects a registration whose operator carries no name.
+    pub legal_name: String,
+    /// ISO 3166-1 alpha-2 country of registration (`OperatorConfig.country`).
+    pub country: String,
+}
+
 /// Core domain service for the passport lifecycle.
 ///
 /// Orchestrates create / update / publish / suspend / archive and history
@@ -70,9 +86,9 @@ pub struct PassportService {
     /// Persistence for generated evidence dossiers. `None` disables the
     /// evidence-generation endpoint (test doubles without an evidence store).
     pub evidence_store: Option<Arc<dyn EvidenceDossierRepository>>,
-    /// ISO 3166-1 alpha-2 country code of this operator, sourced from
-    /// `OperatorConfig.country` at startup. Used in EU registry registration payloads.
-    pub operator_country: String,
+    /// This operator's own legal identity, sourced from `OperatorConfig` at
+    /// startup and stamped onto every EU registry registration payload.
+    pub operator: OperatorIdentity,
     /// Reader for the operator's registry identity (default facility per ESPR
     /// Annex III, primary operator identifier per Art. 13). Read **live** on
     /// create so changes made via the API/CLI take effect without a node restart.
@@ -115,7 +131,7 @@ impl PassportService {
         events: Arc<dyn EventBus>,
         registry_sync: Arc<dyn RegistrySyncPort>,
         archive: Arc<dyn ArchivePort>,
-        operator_country: String,
+        operator: OperatorIdentity,
     ) -> Self {
         Self {
             repo,
@@ -128,7 +144,7 @@ impl PassportService {
             registry_outbox: None,
             transfer_store: None,
             evidence_store: None,
-            operator_country,
+            operator,
             registry_reader: None,
             webhooks: None,
             snapshot_outbox: None,

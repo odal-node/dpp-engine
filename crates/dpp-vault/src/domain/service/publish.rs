@@ -12,7 +12,7 @@ use dpp_domain::{
         sector::SectorData,
         status::PassportStatus,
     },
-    ports::registry_sync::RegistrationRequest,
+    ports::registry_sync::{RegisteringOperator, RegistrationGranularity, RegistrationRequest},
 };
 use dpp_types::{STANDALONE_OPERATOR_ID, audit::AuditEntry, auth::AuthContext};
 
@@ -246,8 +246,17 @@ impl PassportService {
         // doubles), fall back to a plain update.
         let updated = match &self.registry_outbox {
             Some(outbox) => {
-                let reg_req =
-                    RegistrationRequest::from_published_passport(&passport, &self.operator_country);
+                let reg_req = RegistrationRequest::from_published_passport(
+                    &passport,
+                    RegisteringOperator {
+                        legal_name: &self.operator.legal_name,
+                        country: &self.operator.country,
+                    },
+                    // Item level: the granularity the battery product group is
+                    // defined at, and the only one the registry accepts today.
+                    // Set per product group once further delegated acts land.
+                    RegistrationGranularity::Item,
+                );
                 let payload = serde_json::to_value(&reg_req)
                     .map_err(|e| DppError::Serialisation(e.to_string()))?;
                 match outbox.commit_publish(&passport, payload).await {

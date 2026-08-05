@@ -38,8 +38,10 @@ use dpp_types::auth::{AuthContext, AuthError, AuthProvider};
 use dpp_vault::domain::verify::{RefUnverifiable, RefVerification, verify_ref};
 use dpp_vault::{
     domain::{
-        api_key_service::ApiKeyService, operator_service::OperatorService,
-        registry_identity_service::RegistryIdentityService, service::PassportService,
+        api_key_service::ApiKeyService,
+        operator_service::OperatorService,
+        registry_identity_service::RegistryIdentityService,
+        service::{OperatorIdentity, PassportService},
         webhook_service::WebhookService,
     },
     state::{AppState as VaultState, DbPing},
@@ -185,7 +187,10 @@ async fn start_node_with_dal(dal: PgDal) -> String {
             event_bus,
             registry_sync,
             Arc::new(GhostArchive),
-            String::new(),
+            OperatorIdentity {
+                legal_name: "Test Operator GmbH".to_owned(),
+                country: "DE".to_owned(),
+            },
         )
         .with_transfer_store(Arc::new(PgTransferRepo::new(dal.clone())))
         .with_evidence_store(Arc::new(PgEvidenceDossierRepo::new(dal.clone())))

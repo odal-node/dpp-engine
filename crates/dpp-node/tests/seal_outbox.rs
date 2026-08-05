@@ -60,7 +60,7 @@ use dpp_seal::eideasy::client::{ESEAL_PATH, hmac_message};
 use dpp_types::SealOutbox;
 use dpp_types::api_key::ApiKeyScope;
 use dpp_types::auth::AuthContext;
-use dpp_vault::domain::service::PassportService;
+use dpp_vault::domain::service::{OperatorIdentity, PassportService};
 
 type HmacSha256 = Hmac<Sha256>;
 
@@ -284,7 +284,10 @@ async fn publish_then_drain_seals_the_passport_end_to_end() {
         Arc::new(dpp_common::event::NoOpEventBus),
         Arc::new(GhostRegistrySync),
         Arc::new(GhostArchive),
-        "MK".to_owned(),
+        OperatorIdentity {
+            legal_name: "Test Operator GmbH".to_owned(),
+            country: "MK".to_owned(),
+        },
     )
     .with_seal_outbox(seal_outbox.clone());
 
@@ -432,7 +435,10 @@ async fn a_republish_needs_and_gets_its_own_seal() {
         Arc::new(dpp_common::event::NoOpEventBus),
         Arc::new(GhostRegistrySync),
         Arc::new(GhostArchive),
-        "MK".to_owned(),
+        OperatorIdentity {
+            legal_name: "Test Operator GmbH".to_owned(),
+            country: "MK".to_owned(),
+        },
     )
     .with_seal_outbox(seal_outbox.clone());
 

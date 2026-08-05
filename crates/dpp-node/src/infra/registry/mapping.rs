@@ -8,13 +8,14 @@ use dpp_domain::{
     domain::error::DppError,
     domain::passport::PassportId,
     ports::registry_sync::{
-        RegistrationRequest, RegistryIdentifiers, RegistryRecord, RegistryStatus, RegistrySyncPort,
+        RegistrationGranularity, RegistrationRequest, RegistryIdentifiers, RegistryRecord,
+        RegistryStatus, RegistrySyncPort,
     },
 };
 use dpp_registry::{
-    EuRegistryEnvelope, EuRegistryResponse, FacilityIdentifier, OperatorIdentifier,
-    ProductIdentifier, ProductItemIdentifier, RegistrationPayload, StatusResponse,
-    TransferNotification,
+    EuRegistryEnvelope, EuRegistryResponse, FacilityIdentifier, Granularity, OperatorIdentifier,
+    ProductIdentifier, ProductItemIdentifier, RegistrationLevel, RegistrationPayload,
+    StatusResponse, TransferNotification,
 };
 use uuid::Uuid;
 
@@ -95,6 +96,40 @@ pub(super) fn facility_identifier_for(request: &RegistrationRequest) -> Facility
     }
 }
 
+/// Map the port's granularity and linked model onto the registry's registration
+/// level.
+///
+/// The batch identifier is not linked here: the port carries no batch, and a
+/// linked-but-blank identifier is refused. Absence is the lawful encoding of
+/// "this product has no batch design".
+pub(super) fn level_for(request: &RegistrationRequest) -> RegistrationLevel {
+    let granularity = match request.granularity {
+        RegistrationGranularity::Model => Granularity::Model,
+        RegistrationGranularity::Batch => Granularity::Batch,
+        RegistrationGranularity::Item => Granularity::Item,
+    };
+    let level = RegistrationLevel::new(granularity);
+    match &request.model_id {
+        Some(model_id) => level.with_model(model_id.clone()),
+        None => level,
+    }
+}
+
+/// The item identifier, which exists only at item level.
+///
+/// A model- or batch-level registration covers every unit it groups, so naming
+/// one contradicts the level the registry validates on submission.
+pub(super) fn item_id_for(request: &RegistrationRequest) -> Option<ProductItemIdentifier> {
+    match request.granularity {
+        RegistrationGranularity::Item => Some(ProductItemIdentifier {
+            scheme: "serial".into(),
+            value: request.passport_id.to_string(),
+            batch_id: None,
+        }),
+        RegistrationGranularity::Model | RegistrationGranularity::Batch => None,
+    }
+}
+
 /// Extract GTIN-14 from a GS1 Digital Link URI.
 ///
 /// GS1 DL format: `https://host/01/{gtin14}[/extra/segments]`.
@@ -116,7 +151,7 @@ impl RegistrySyncPort for EuRegistrySync {
         let base_url = &self.config.endpoint.base_url;
 
         // Extract GTIN from the GS1 Digital Link URI when present; fall back to
-        // passport_id scheme so the payload is never invalid even pre-go-live.
+        // passport_id scheme so the payload carries a product identifier either way.
         let (product_scheme, product_value) = extract_gtin_from_gs1_dl(&request.data_carrier_uri)
             .map(|g| ("gtin".to_owned(), g))
             .unwrap_or_else(|| ("passport_id".to_owned(), request.passport_id.to_string()));
@@ -133,20 +168,17 @@ impl RegistrySyncPort for EuRegistrySync {
                     value: product_value,
                     label: None,
                 },
-                item_id: ProductItemIdentifier {
-                    scheme: "serial".into(),
-                    value: request.passport_id.to_string(),
-                    batch_id: None,
-                },
+                level: level_for(&request),
+                item_id: item_id_for(&request),
                 facility_id: facility_identifier_for(&request),
                 operator_id: OperatorIdentifier {
                     scheme: "did".into(),
                     value: request.operator_identifier.clone(),
-                    // Wire the operator country that the request already carries
-                    // (sourced from OperatorConfig) instead of dropping it. The
-                    // operator legal `name` is not yet threaded through the port —
-                    // see the payload-validation note below.
-                    name: String::new(),
+                    // Both sourced from OperatorConfig and carried by the port.
+                    // The registry requires a legal-entity name on the operator
+                    // identifier, so an empty one fails validation below rather
+                    // than reaching the registry.
+                    name: request.operator_name.clone(),
                     country: request.country_code.clone(),
                     did: Some(request.operator_identifier.clone()),
                 },
@@ -158,11 +190,30 @@ impl RegistrySyncPort for EuRegistrySync {
             },
         };
 
+        // Fail closed. A registration is a regulatory submission, and the
+        // registry runs its own conformity checks on receipt — sending a payload
+        // we have already judged invalid buys nothing and puts a known-bad
+        // record in front of a live registry. Refusing here also keeps the
+        // failure attached to the passport that caused it, rather than surfacing
+        // later as an opaque remote rejection.
         if let Err(e) = envelope.payload.validate() {
+            if !self.config.allow_invalid_payloads {
+                metrics::counter!("registry_payload_rejected_total").increment(1);
+                tracing::error!(
+                    passport_id = %request.passport_id,
+                    error = %e,
+                    "EU registry payload failed validation — refusing to submit"
+                );
+                return Err(DppError::Validation(
+                    format!("EU registry payload failed validation: {e}").into(),
+                ));
+            }
             tracing::warn!(
                 passport_id = %request.passport_id,
                 error = %e,
-                "EU registry payload failed B1 validation — sending anyway (pre-go-live)"
+                "EU registry payload failed validation — submitting anyway because \
+                 allow_invalid_payloads is set; this override is a deliberate local \
+                 decision and should not be set against the production registry"
             );
         }
 
