@@ -103,7 +103,7 @@ Auto-HTTPS, zero certificate ops. (Traefik equivalent if preferred; Caddy is les
 
 The most efficient production shape for Odal today is **the shipped compose stack, one dedicated EU VM per operator, loopback-bound services behind Caddy, pinned image versions, nightly off-VM backups with a monthly restore drill, and `/health`-asserting monitoring** — because it is the only shape that simultaneously (a) keeps the isolation claim physically true, (b) adds zero new operational technology for a single administrator, (c) runs on commodity VM hardware, (d) already exists in the repo (`odal up`), and (e) leaves the honesty invariant intact — a "production" that can't lie about its trust tier. Efficiency here is not throughput (a single node trivially serves early workloads); it is **administrator-hours per operator per month**, and this shape minimizes exactly that.
 
-**Do-next order:** publish core 0.4.0 → provision your own demo VM as the permanent staging environment (§2 end-to-end, once, for yourself) → then Amor's VM is a 30-minute repeat with a filled-in checklist.
+**Do-next order:** provision a demo VM as the permanent staging environment (§2 end-to-end, once) → after that, each operator VM is a 30-minute repeat with a filled-in checklist.
 
 ## 5. Go-live checklist (print per operator)
 DNS + DID origin decided ✚ VM hardened, loopback bindings ✚ TLS live ✚ `.env` complete, `chmod 600`, secrets in manager + sealed copy ✚ versions pinned (ODAL_VERSION + postgres digest) ✚ first boot green ✚ §2.6 smoke ×7 recorded ✚ backup cron live + first restore drill dated ✚ monitoring probes asserting trust_mode ✚ upgrade ritual + custody mode written into the operator record.
