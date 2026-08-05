@@ -4,7 +4,10 @@ use std::time::{Duration, Instant};
 
 use serde::Deserialize;
 
-#[derive(Debug, Clone, Deserialize)]
+/// `Debug` is hand-written on both types below. A bearer token is a credential
+/// for as long as it lives, and the token path is precisely where a failed
+/// refresh gets debug-printed into an error context.
+#[derive(Clone, Deserialize)]
 pub(super) struct TokenResponse {
     pub(super) access_token: String,
     pub(super) expires_in: u64,
@@ -12,10 +15,28 @@ pub(super) struct TokenResponse {
     pub(super) token_type: String,
 }
 
-#[derive(Debug)]
+impl std::fmt::Debug for TokenResponse {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TokenResponse")
+            .field("access_token", &dpp_common::config::REDACTED)
+            .field("expires_in", &self.expires_in)
+            .field("token_type", &self.token_type)
+            .finish()
+    }
+}
+
 pub(super) struct CachedToken {
     pub(super) access_token: String,
     pub(super) expires_at: Instant,
+}
+
+impl std::fmt::Debug for CachedToken {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CachedToken")
+            .field("access_token", &dpp_common::config::REDACTED)
+            .field("expires_at", &self.expires_at)
+            .finish()
+    }
 }
 
 impl CachedToken {
@@ -49,5 +70,30 @@ mod tests {
             expires_at: Instant::now() + Duration::from_secs(3600),
         };
         assert!(!t.is_expired());
+    }
+
+    #[test]
+    fn debug_does_not_print_bearer_tokens() {
+        let cached = CachedToken {
+            access_token: "bearer-must-not-leak".into(),
+            expires_at: Instant::now(),
+        };
+        let rendered = format!("{cached:?}");
+        assert!(
+            !rendered.contains("bearer-must-not-leak"),
+            "CachedToken Debug leaked the token: {rendered}"
+        );
+
+        let response: TokenResponse = serde_json::from_str(
+            r#"{"access_token":"response-must-not-leak","expires_in":3600,"token_type":"Bearer"}"#,
+        )
+        .expect("parses");
+        let rendered = format!("{response:?}");
+        assert!(
+            !rendered.contains("response-must-not-leak"),
+            "TokenResponse Debug leaked the token: {rendered}"
+        );
+        // Non-secret fields survive, so the type stays diagnosable.
+        assert!(rendered.contains("3600"), "{rendered}");
     }
 }
