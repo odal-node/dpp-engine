@@ -316,6 +316,7 @@ async fn main() -> anyhow::Result<()> {
     .with_registry_reader(db.operator_repo.clone())
     .with_registry_outbox(db.registry_outbox.clone())
     .with_transfer_store(db.transfer_store.clone())
+    .with_transfer_outbox(db.transfer_outbox.clone())
     .with_evidence_store(db.evidence_store.clone())
     .with_webhooks(db.webhook_outbox.clone())
     .with_resolver_base_url(cfg.resolver_base_url.clone());
@@ -401,7 +402,9 @@ async fn main() -> anyhow::Result<()> {
     // ── Background tasks: expired-import-job cleanup + registry outbox drain ──
     boot::tasks::spawn_job_cleanup(db.job_store.clone());
     boot::tasks::spawn_scan_prune(db.scan_repo.clone());
-    boot::tasks::spawn_registry_drain(db.registry_outbox.clone(), registry_sync_for_drain).await;
+    boot::tasks::spawn_registry_drain(db.registry_outbox.clone(), registry_sync_for_drain.clone())
+        .await;
+    boot::tasks::spawn_transfer_drain(db.transfer_outbox.clone(), registry_sync_for_drain).await;
     boot::tasks::spawn_webhook_drain(db.webhook_outbox.clone(), cfg.webhook_allow_private_targets)
         .await;
     // Qualified sealing: only spawn against a real QTSP. A ghost-backed drain

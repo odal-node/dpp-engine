@@ -40,8 +40,9 @@ use dpp_domain::ports::{
 };
 use dpp_types::{
     STANDALONE_OPERATOR_ID, audit::AuditRepository, evidence::EvidenceDossierRepository,
-    operator::OperatorConfigRepository, registry_sync::RegistrySyncOutbox, seal::SealOutbox,
-    snapshot::SnapshotOutbox, transfer::TransferStore, webhook::WebhookOutbox,
+    operator::OperatorConfigRepository, registry_sync::RegistrySyncOutbox,
+    registry_transfer::RegistryTransferOutbox, seal::SealOutbox, snapshot::SnapshotOutbox,
+    transfer::TransferStore, webhook::WebhookOutbox,
 };
 
 /// This node's operator, as the EU registry needs to see it.
@@ -83,6 +84,13 @@ pub struct PassportService {
     /// Persistence for transfer-of-responsibility chains. `None` disables
     /// the transfer endpoints (test doubles without a transfer store).
     pub transfer_store: Option<Arc<dyn TransferStore>>,
+    /// Transactional outbox for EU registry transfer notifications. When present
+    /// (the Postgres node), accepting a transfer persists the chain and enqueues
+    /// the notification atomically, and the node's drain task notifies the
+    /// registry with backoff — so a killed node never loses a handover the
+    /// registry is owed. `None` (test doubles / in-memory stores) falls back to
+    /// a plain chain write.
+    pub transfer_outbox: Option<Arc<dyn RegistryTransferOutbox>>,
     /// Persistence for generated evidence dossiers. `None` disables the
     /// evidence-generation endpoint (test doubles without an evidence store).
     pub evidence_store: Option<Arc<dyn EvidenceDossierRepository>>,
@@ -143,6 +151,7 @@ impl PassportService {
             archive,
             registry_outbox: None,
             transfer_store: None,
+            transfer_outbox: None,
             evidence_store: None,
             operator,
             registry_reader: None,
@@ -175,6 +184,15 @@ impl PassportService {
     #[must_use]
     pub fn with_registry_outbox(mut self, outbox: Arc<dyn RegistrySyncOutbox>) -> Self {
         self.registry_outbox = Some(outbox);
+        self
+    }
+
+    /// Provide the transactional outbox for EU registry transfer notifications.
+    /// With it, accepting a transfer commits the chain and enqueues the
+    /// notification in one transaction.
+    #[must_use]
+    pub fn with_transfer_outbox(mut self, outbox: Arc<dyn RegistryTransferOutbox>) -> Self {
+        self.transfer_outbox = Some(outbox);
         self
     }
 
