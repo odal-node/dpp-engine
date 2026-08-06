@@ -1876,7 +1876,8 @@ paths:
       summary: Get DPP audit history
       description: |
         Returns the chronological audit trail for a passport: creation,
-        status transitions, field updates, etc.
+        status transitions, field updates, etc. Unbounded — returns the full
+        trail with no pagination or limit.
       tags: [DPP Management]
       security:
         - BearerApiKey: []
@@ -1912,7 +1913,7 @@ paths:
         resolution. Nothing about the scanner (IP, agent, session) is collected
         or returned; the counters carry no such fields. Returns zeros for a
         passport that has never been scanned.
-      tags: [DPP Management]
+      tags: [Scan Telemetry]
       security:
         - BearerApiKey: []
         - BasicAuth: []
@@ -1963,7 +1964,7 @@ paths:
         a trailing window — the "your passports were resolved N times" figure.
         Scans and QR-image renders are separate; nothing about the scanner is
         collected.
-      tags: [DPP Management]
+      tags: [Scan Telemetry]
       security:
         - BearerApiKey: []
         - BasicAuth: []
@@ -2133,6 +2134,10 @@ paths:
     get:
       operationId: getEvidenceDossier
       summary: Fetch one stored dossier's document
+      description: >-
+        Returns the dossier document itself — the same shape
+        `POST .../evidence` returns on generation, not the summary wrapper
+        the list endpoint shows.
       tags: [Evidence Dossiers]
       security:
         - BearerApiKey: []
@@ -2592,7 +2597,7 @@ paths:
         "401":
           $ref: "#/components/responses/Unauthorized"
 
-  # ---- Registry Identity: Facilities (odal-vault) --------------------------
+  # ---- Facilities (odal-vault) ----------------------------------------------
 
   /vault/api/v1/facilities:
     get:
@@ -2601,7 +2606,7 @@ paths:
       description: |
         Lists the operator's facilities (ESPR Annex III). The `isDefault`
         facility is stamped onto new passports. Requires an admin-scoped key.
-      tags: [Registry Identity]
+      tags: [Facilities]
       security:
         - BearerApiKey: []
         - BasicAuth: []
@@ -2624,7 +2629,7 @@ paths:
       description: |
         Add a facility. The identifier is validated by scheme — a `gln` must
         pass the GS1 mod-10 check digit. Requires an admin-scoped key.
-      tags: [Registry Identity]
+      tags: [Facilities]
       security:
         - BearerApiKey: []
         - BasicAuth: []
@@ -2652,7 +2657,11 @@ paths:
     delete:
       operationId: removeFacility
       summary: Remove a facility
-      tags: [Registry Identity]
+      description: >-
+        Retires the facility (soft-delete): the row is kept as Annex III
+        provenance for passports that already stamped its identifier — never
+        hard-deleted. Requires an admin-scoped key.
+      tags: [Facilities]
       security:
         - BearerApiKey: []
         - BasicAuth: []
@@ -2680,7 +2689,7 @@ paths:
       description: |
         Append-only mutation history for one facility (added, retired,
         set-default), oldest first. Requires an admin-scoped key.
-      tags: [Registry Identity]
+      tags: [Facilities]
       security:
         - BearerApiKey: []
         - BasicAuth: []
@@ -2709,8 +2718,10 @@ paths:
     post:
       operationId: setDefaultFacility
       summary: Set the default facility
-      description: Makes this facility the sole default, stamped onto new passports.
-      tags: [Registry Identity]
+      description: >-
+        Makes this facility the sole default, stamped onto new passports.
+        Requires an admin-scoped key.
+      tags: [Facilities]
       security:
         - BearerApiKey: []
         - BasicAuth: []
@@ -2731,7 +2742,7 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
-  # ---- Registry Identity: Operator Identifiers (odal-vault) ----------------
+  # ---- Operator Identifiers (odal-vault) -------------------------------------
 
   /vault/api/v1/operator-identifiers:
     get:
@@ -2740,7 +2751,7 @@ paths:
       description: |
         Lists the operator's economic-operator identifiers (ESPR Art. 13). The
         `isPrimary` identifier is stamped onto new passports. Admin scope required.
-      tags: [Registry Identity]
+      tags: [Operator Identifiers]
       security:
         - BearerApiKey: []
         - BasicAuth: []
@@ -2764,7 +2775,7 @@ paths:
         Add an economic-operator identifier. Validated by scheme — LEI uses
         ISO 7064 MOD 97-10; DUNS is 9 digits; EORI/VAT require a country prefix.
         Requires an admin-scoped key.
-      tags: [Registry Identity]
+      tags: [Operator Identifiers]
       security:
         - BearerApiKey: []
         - BasicAuth: []
@@ -2792,7 +2803,11 @@ paths:
     delete:
       operationId: removeOperatorIdentifier
       summary: Remove an operator identifier
-      tags: [Registry Identity]
+      description: >-
+        Retires the identifier (soft-delete): the row is kept as Art. 13
+        provenance for passports that already stamped its value — never
+        hard-deleted. Requires an admin-scoped key.
+      tags: [Operator Identifiers]
       security:
         - BearerApiKey: []
         - BasicAuth: []
@@ -2820,7 +2835,7 @@ paths:
       description: |
         Append-only mutation history for one operator identifier (added,
         retired, set-primary), oldest first. Requires an admin-scoped key.
-      tags: [Registry Identity]
+      tags: [Operator Identifiers]
       security:
         - BearerApiKey: []
         - BasicAuth: []
@@ -2849,8 +2864,10 @@ paths:
     post:
       operationId: setPrimaryOperatorIdentifier
       summary: Set the primary operator identifier
-      description: Makes this identifier the sole primary, stamped onto new passports.
-      tags: [Registry Identity]
+      description: >-
+        Makes this identifier the sole primary, stamped onto new passports.
+        Requires an admin-scoped key.
+      tags: [Operator Identifiers]
       security:
         - BearerApiKey: []
         - BasicAuth: []
@@ -3690,6 +3707,8 @@ tags:
     description: Create, read, update, list, and audit Digital Product Passports.
   - name: DPP Lifecycle
     description: Lifecycle transitions — publish, suspend, archive.
+  - name: Scan Telemetry
+    description: Aggregate, privacy-safe resolution counts — per-passport and operator-wide rollups.
   - name: Evidence Dossiers
     description: Signed, self-contained evidence dossiers — generate, fetch, and verify (stored or uploaded) offline, with zero trust in the issuing node.
   - name: Operator
@@ -3698,8 +3717,12 @@ tags:
     description: API key management — create, list, revoke.
   - name: Plugins
     description: Signed sector-plugin hot-install — verify, persist, hot-swap (admin-only).
-  - name: Registry Identity
-    description: Facilities (ESPR Annex III) and operator identifiers (Art. 13) stamped onto new passports.
+  - name: Webhooks
+    description: Signed outbound event delivery — subscribe, list, remove, test.
+  - name: Facilities
+    description: Manufacturing/processing facilities (ESPR Annex III) stamped onto new passports.
+  - name: Operator Identifiers
+    description: Economic-operator identifiers (ESPR Art. 13) stamped onto new passports.
   - name: Node
     description: Node setup/readiness state.
   - name: Identity
