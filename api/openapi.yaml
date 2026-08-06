@@ -1012,6 +1012,296 @@ components:
           type: string
           example: "productName is required"
 
+    # ---- End-of-life -----------------------------------------------------
+
+    DerogationRef:
+      type: object
+      required: [category]
+      description: >-
+        A recognised derogation from the ESPR Art. 25 destruction ban. The
+        category list is fixed by the applicable delegated act; validated
+        against that list at the engine boundary, not by this schema.
+      properties:
+        category:
+          type: string
+          description: The derogation category as named by the delegated act.
+          example: "health-and-safety"
+        actCitation:
+          type: string
+          nullable: true
+          description: The act/article this derogation is grounded in (e.g. an OJ/CELEX ref).
+
+    DeactivationReason:
+      description: >-
+        Why a passport reached end-of-life, internally tagged by `kind`.
+        Destruction alone requires a `derogation` citing the lawful basis.
+      oneOf:
+        - type: object
+          required: [kind]
+          properties:
+            kind: { type: string, enum: [recycled] }
+        - type: object
+          required: [kind, derogation]
+          properties:
+            kind: { type: string, enum: [destroyed] }
+            derogation:
+              $ref: "#/components/schemas/DerogationRef"
+        - type: object
+          required: [kind]
+          properties:
+            kind: { type: string, enum: [exported] }
+        - type: object
+          required: [kind]
+          properties:
+            kind: { type: string, enum: [lost] }
+      example: { kind: "recycled" }
+
+    EolRequest:
+      type: object
+      required: [reason]
+      description: Request body for declaring a passport end-of-life.
+      properties:
+        reason:
+          $ref: "#/components/schemas/DeactivationReason"
+        declaredBy:
+          type: string
+          nullable: true
+          description: DID of the declaring operator; defaults to the authenticated actor.
+        materialRecovery:
+          type: object
+          nullable: true
+          description: Optional recovered-material summary (Battery Annex XIII circularity).
+        notes:
+          type: string
+          nullable: true
+
+    # ---- Transfer of responsibility ---------------------------------------
+
+    OperatorRole:
+      type: string
+      description: The role of an economic operator in the DPP supply chain.
+      enum:
+        - manufacturer
+        - importer
+        - distributor
+        - authorisedRepresentative
+        - remanufacturer
+        - repurposer
+        - preparerForReuse
+        - repairer
+        - recycler
+
+    ResponsibleOperator:
+      type: object
+      required: [did, name, role, country]
+      description: An economic operator responsible for a DPP (ESPR "responsible economic operator").
+      properties:
+        did:
+          type: string
+          example: "did:web:acme.example.com"
+        name:
+          type: string
+        role:
+          $ref: "#/components/schemas/OperatorRole"
+        euOperatorId:
+          type: string
+          nullable: true
+          description: EU-assigned economic operator identifier, if available.
+        euOperatorIdScheme:
+          type: string
+          nullable: true
+          description: 'Scheme euOperatorId is expressed in — "vat", "lei", "eori", "duns".'
+        country:
+          type: string
+          minLength: 2
+          maxLength: 2
+          description: ISO 3166-1 alpha-2 country code of the operator's establishment.
+
+    TransferReason:
+      type: string
+      description: The reason for a transfer of DPP responsibility.
+      enum:
+        - sale
+        - return
+        - remanufacturing
+        - repurposing
+        - preparationForReuse
+        - import
+        - insolvencySuccession
+
+    TransferInitiateRequest:
+      type: object
+      required: [fromOperator, toOperator, reason]
+      properties:
+        fromOperator:
+          allOf:
+            - $ref: "#/components/schemas/ResponsibleOperator"
+          description: The current (outgoing) responsible operator — must match the chain head.
+        toOperator:
+          allOf:
+            - $ref: "#/components/schemas/ResponsibleOperator"
+          description: The incoming responsible operator taking over the DPP.
+        reason:
+          $ref: "#/components/schemas/TransferReason"
+        notes:
+          type: string
+          nullable: true
+
+    TransferRecord:
+      type: object
+      required: [transferId, passportId, fromOperator, toOperator, reason, initiatedAt]
+      description: A single transfer-of-responsibility event, dual-signed by the outgoing and incoming operators.
+      properties:
+        transferId:
+          type: string
+          format: uuid
+        passportId:
+          type: string
+          format: uuid
+        fromOperator:
+          $ref: "#/components/schemas/ResponsibleOperator"
+        toOperator:
+          $ref: "#/components/schemas/ResponsibleOperator"
+        reason:
+          $ref: "#/components/schemas/TransferReason"
+        fromSignature:
+          type: string
+          nullable: true
+          description: Compact JWS from the outgoing operator, authorising the handover.
+        toSignature:
+          type: string
+          nullable: true
+          description: Compact JWS from the incoming operator, accepting responsibility.
+        initiatedAt:
+          type: string
+          format: date-time
+        completedAt:
+          type: string
+          format: date-time
+          nullable: true
+        rejectedAt:
+          type: string
+          format: date-time
+          nullable: true
+        cancelledAt:
+          type: string
+          format: date-time
+          nullable: true
+        notes:
+          type: string
+          nullable: true
+
+    # ---- Registry-identity audit -------------------------------------------
+
+    RegistryIdentityAudit:
+      type: object
+      required: [id, operatorId, entityType, entityId, action, actor, ts]
+      description: >-
+        An immutable audit record for a registry-identity mutation (a
+        facility per Annex III or an operator identifier per Art. 13).
+        Append-only.
+      properties:
+        id:
+          type: string
+          format: uuid
+        operatorId:
+          type: string
+        entityType:
+          type: string
+          enum: [facility, operator_identifier]
+        entityId:
+          type: string
+          format: uuid
+        action:
+          type: string
+          enum: [added, retired, set_default, set_primary]
+        actor:
+          type: string
+          description: user_id of the actor who performed the change.
+        snapshot:
+          type: object
+          nullable: true
+          description: The full record at the time of the action, for reconstruction.
+        ts:
+          type: string
+          format: date-time
+
+    # ---- Scan telemetry (internal) -----------------------------------------
+
+    ScanVariant:
+      type: string
+      enum: [html, json]
+
+    ScanCount:
+      type: object
+      required: [dppId, day, variant, count]
+      description: One aggregated scan increment since the resolver's last flush.
+      properties:
+        dppId:
+          type: string
+          description: The resolved passport id, as an opaque string (validated at ingest).
+        day:
+          type: string
+          format: date
+        variant:
+          $ref: "#/components/schemas/ScanVariant"
+        count:
+          type: integer
+          minimum: 0
+
+    QrRenderCount:
+      type: object
+      required: [dppId, day, count]
+      description: One aggregated QR-render increment since the resolver's last flush.
+      properties:
+        dppId:
+          type: string
+        day:
+          type: string
+          format: date
+        count:
+          type: integer
+          minimum: 0
+
+    ScanBatch:
+      type: object
+      required: [scans, qrRenders]
+      description: The full flush payload the resolver sends to the vault.
+      properties:
+        scans:
+          type: array
+          items:
+            $ref: "#/components/schemas/ScanCount"
+        qrRenders:
+          type: array
+          items:
+            $ref: "#/components/schemas/QrRenderCount"
+
+    # ---- Internal identity verification ------------------------------------
+
+    VerifyRequest:
+      type: object
+      required: [operator_id, jws, payload]
+      description: "Internal verification request. Field names are snake_case (internal contract)."
+      properties:
+        operator_id:
+          type: string
+          description: Operator id whose key the signature is checked against.
+          example: "self_hosted"
+        jws:
+          type: string
+          description: The compact JWS to verify.
+        payload:
+          description: The payload the caller expects the JWS to have been signed over.
+
+    VerifyResponse:
+      type: object
+      required: [valid]
+      properties:
+        valid:
+          type: boolean
+          description: True iff the signature verifies against the named operator's key AND was signed over exactly this payload.
+
   responses:
     Unauthorized:
       description: Missing or invalid authentication credentials.
@@ -1429,6 +1719,124 @@ paths:
           $ref: "#/components/responses/NotFound"
         "409":
           $ref: "#/components/responses/Conflict"
+
+  /vault/api/v1/dpp/{dppId}/eol:
+    post:
+      operationId: declareDppEol
+      summary: Declare a DPP end-of-life
+      description: |
+        Transition a `published` or `suspended` DPP to `deactivated`
+        (terminal). The record is retained, never deleted — the passport
+        outlives the product. Destruction (`reason.kind: destroyed`) is only
+        lawful with a recognised derogation from the unsold-goods destruction
+        ban (ESPR Art. 25 delegated act).
+      tags: [DPP Lifecycle]
+      security:
+        - BearerApiKey: []
+        - BasicAuth: []
+      parameters:
+        - name: dppId
+          in: path
+          required: true
+          schema:
+            $ref: "#/components/schemas/DppId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EolRequest"
+      responses:
+        "200":
+          description: DPP deactivated. Returns the full passport record.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PassportResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+  /vault/api/v1/dpp/{dppId}/transfer/initiate:
+    post:
+      operationId: initiateDppTransfer
+      summary: Initiate a transfer of responsibility
+      description: |
+        The outgoing operator signs a pending handover onto the passport's
+        transfer chain. Only a `published` DPP can be transferred. In the
+        managed single-node model the caller supplies both the outgoing and
+        incoming operator; the node signs on the outgoing operator's behalf.
+      tags: [DPP Lifecycle]
+      security:
+        - BearerApiKey: []
+        - BasicAuth: []
+      parameters:
+        - name: dppId
+          in: path
+          required: true
+          schema:
+            $ref: "#/components/schemas/DppId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TransferInitiateRequest"
+      responses:
+        "200":
+          description: Transfer initiated (pending acceptance).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TransferRecord"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
+  /vault/api/v1/dpp/{dppId}/transfer/accept:
+    post:
+      operationId: acceptDppTransfer
+      summary: Accept a pending transfer of responsibility
+      description: |
+        The incoming operator's signature completes a pending handover: the
+        outgoing operator's signature is verified before the node countersigns
+        on the incoming operator's behalf, and the incoming operator becomes
+        the passport's current responsible operator.
+      tags: [DPP Lifecycle]
+      security:
+        - BearerApiKey: []
+        - BasicAuth: []
+      parameters:
+        - name: dppId
+          in: path
+          required: true
+          schema:
+            $ref: "#/components/schemas/DppId"
+      responses:
+        "200":
+          description: Transfer completed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TransferRecord"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          description: No pending transfer to accept for this DPP.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "422":
+          $ref: "#/components/responses/ValidationError"
 
   # ---- Audit History (odal-vault) ------------------------------------------
 
@@ -2235,6 +2643,38 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+  /vault/api/v1/facilities/{id}/audit:
+    get:
+      operationId: getFacilityAudit
+      summary: Facility audit trail
+      description: |
+        Append-only mutation history for one facility (added, retired,
+        set-default), oldest first. Requires an admin-scoped key.
+      tags: [Registry Identity]
+      security:
+        - BearerApiKey: []
+        - BasicAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: List of audit entries for this facility.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/RegistryIdentityAudit"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
   /vault/api/v1/facilities/{id}/default:
     post:
       operationId: setDefaultFacility
@@ -2342,6 +2782,38 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+
+  /vault/api/v1/operator-identifiers/{id}/audit:
+    get:
+      operationId: getOperatorIdentifierAudit
+      summary: Operator-identifier audit trail
+      description: |
+        Append-only mutation history for one operator identifier (added,
+        retired, set-primary), oldest first. Requires an admin-scoped key.
+      tags: [Registry Identity]
+      security:
+        - BearerApiKey: []
+        - BasicAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: List of audit entries for this operator identifier.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/RegistryIdentityAudit"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
 
   /vault/api/v1/operator-identifiers/{id}/primary:
     post:
@@ -2469,6 +2941,92 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+  # ---- Credentialed Access (odal-vault) --------------------------------------
+  # Deliberately outside both `/public` (a public URL whose body varies by
+  # caller breaks caching and the meaning of `publicJwsSignature`) and
+  # `/api/v1` (API keys are the operator's own machine access; a repairer or
+  # authority holds a credential and no key).
+
+  /vault/credential/dpp/{dppId}:
+    get:
+      operationId: readDppByCredential
+      summary: Audience-scoped read of a published DPP
+      description: |
+        Reads a published passport filtered to the caller's audience. No
+        `X-DPP-Credential` header returns the same signed public view as
+        `/public/dpp/{dppId}`. A verified credential returns the passport
+        filtered to that audience's disclosure classes (ESPR Art. 77(2)),
+        carrying the proof computed over that view. Credentialed reads are
+        recorded to the passport's audit trail; anonymous reads are not.
+
+        Returns the public view (not an error) when credential verification
+        is not configured on this node.
+      tags: [Credentialed Access]
+      parameters:
+        - name: dppId
+          in: path
+          required: true
+          schema:
+            $ref: "#/components/schemas/DppId"
+        - name: X-DPP-Credential
+          in: header
+          required: false
+          description: A verifiable access credential. Absent means public access.
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Passport filtered to the resolved audience.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PassportResponse"
+        "401":
+          description: The presented credential failed verification.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "404":
+          description: Not found or not published.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "410":
+          description: This passport has been suspended.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+
+  # ---- Internal (mTLS service-to-service, odal-vault) ------------------------
+
+  /vault/internal/scan-batch:
+    post:
+      operationId: ingestScanBatch
+      summary: Flush a scan-telemetry batch (internal, mTLS)
+      description: |
+        The mTLS-gated sink the public resolver flushes its in-memory
+        aggregate scan/QR-render counters to (`CN=odal-resolver` only). The
+        resolver holds no operator API key and no database of its own.
+      tags: [Vault (internal)]
+      security:
+        - MutualTLS: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ScanBatch"
+      responses:
+        "204":
+          description: Batch ingested.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
   /vault/health:
     get:
       operationId: vaultHealth
@@ -2568,6 +3126,40 @@ paths:
                 $ref: "#/components/schemas/SignResponse"
         "400":
           description: Payload is not valid base64 or not valid JSON.
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
+  /internal/verify:
+    servers:
+      - url: http://localhost:8002
+        description: "odal-identity standalone (mTLS internal)"
+    post:
+      operationId: internalVerify
+      summary: Verify a JWS this service issued (internal, mTLS)
+      description: |
+        Checks a compact JWS against the named operator's key *and* confirms
+        it was signed over the given payload — a validly-signed JWS for
+        different content does not pass. Never errors on a signature that
+        simply fails to verify; that is `{ "valid": false }`, not a fault.
+        Service-to-service only — gated by mTLS (`CN=odal-vault`).
+      tags: [Identity (internal)]
+      security:
+        - MutualTLS: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/VerifyRequest"
+      responses:
+        "200":
+          description: >-
+            Verification result. Always `200` — an unverifiable signature is
+            `{ "valid": false }`, not an error status.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VerifyResponse"
         "422":
           $ref: "#/components/responses/ValidationError"
 
@@ -2907,6 +3499,137 @@ paths:
         "404":
           description: No published DPP for this GTIN, or unknown link type.
 
+  /01/{gtin}/21/{serial}:
+    get:
+      operationId: resolveByGtinSerial
+      summary: GS1 Digital Link resolver — GTIN + serial
+      description: |
+        A printed carrier may encode more than the GTIN — this node's own
+        publisher emits `/01/{gtin}/21/{serial}` for a serialised trade item.
+        **Resolution is keyed on the GTIN alone**: `serial` is accepted so no
+        conformant carrier 404s for carrying more precision than the resolver
+        indexes, but it is not looked up. Same behaviour as `/01/{gtin}`
+        otherwise (`linkType` / `Accept` negotiation).
+      tags: [Public Resolver]
+      parameters:
+        - name: gtin
+          in: path
+          required: true
+          schema:
+            type: string
+            example: "09506000134352"
+        - name: serial
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Accepted and ignored — not a resolution key.
+        - name: linkType
+          in: query
+          required: false
+          schema:
+            type: string
+          description: "e.g. linkset, gs1:pip, gs1:dpp"
+      responses:
+        "200":
+          description: RFC 9264 linkset (when a linkset is requested).
+          content:
+            application/linkset+json:
+              schema:
+                type: object
+        "307":
+          description: Redirect to the DPP page (`Location` header).
+        "404":
+          description: No published DPP for this GTIN, or unknown link type.
+
+  /01/{gtin}/10/{batch}:
+    get:
+      operationId: resolveByGtinBatch
+      summary: GS1 Digital Link resolver — GTIN + batch/lot
+      description: |
+        Accepts the batch/lot segment (AI 10) a carrier may include.
+        **Resolution is keyed on the GTIN alone**: `batch` is accepted and
+        ignored, not looked up. Same behaviour as `/01/{gtin}` otherwise
+        (`linkType` / `Accept` negotiation).
+      tags: [Public Resolver]
+      parameters:
+        - name: gtin
+          in: path
+          required: true
+          schema:
+            type: string
+            example: "09506000134352"
+        - name: batch
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Accepted and ignored — not a resolution key.
+        - name: linkType
+          in: query
+          required: false
+          schema:
+            type: string
+          description: "e.g. linkset, gs1:pip, gs1:dpp"
+      responses:
+        "200":
+          description: RFC 9264 linkset (when a linkset is requested).
+          content:
+            application/linkset+json:
+              schema:
+                type: object
+        "307":
+          description: Redirect to the DPP page (`Location` header).
+        "404":
+          description: No published DPP for this GTIN, or unknown link type.
+
+  /01/{gtin}/10/{batch}/21/{serial}:
+    get:
+      operationId: resolveByGtinBatchSerial
+      summary: GS1 Digital Link resolver — GTIN + batch/lot + serial
+      description: |
+        The full shape this node's own carrier emits for a batched,
+        serialised trade item. **Resolution is keyed on the GTIN alone**:
+        `batch` and `serial` are accepted and ignored. Same behaviour as
+        `/01/{gtin}` otherwise (`linkType` / `Accept` negotiation).
+      tags: [Public Resolver]
+      parameters:
+        - name: gtin
+          in: path
+          required: true
+          schema:
+            type: string
+            example: "09506000134352"
+        - name: batch
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Accepted and ignored — not a resolution key.
+        - name: serial
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Accepted and ignored — not a resolution key.
+        - name: linkType
+          in: query
+          required: false
+          schema:
+            type: string
+          description: "e.g. linkset, gs1:pip, gs1:dpp"
+      responses:
+        "200":
+          description: RFC 9264 linkset (when a linkset is requested).
+          content:
+            application/linkset+json:
+              schema:
+                type: object
+        "307":
+          description: Redirect to the DPP page (`Location` header).
+        "404":
+          description: No published DPP for this GTIN, or unknown link type.
+
   /health:
     get:
       operationId: resolverHealth
@@ -2953,6 +3676,12 @@ tags:
     description: CSV/XLSX bulk import — templates, upload, async job polling.
   - name: Public (Vault)
     description: Unauthenticated vault endpoints for inter-service communication.
+  - name: Credentialed Access
+    description: >-
+      Audience-scoped passport reads authenticated by a verifiable credential
+      rather than an API key — repairers, market-surveillance authorities.
+  - name: Vault (internal)
+    description: mTLS service-to-service telemetry ingestion (resolver → vault only).
   - name: Public Resolver
     description: Unauthenticated public endpoints for QR scan resolution.
   - name: Health
