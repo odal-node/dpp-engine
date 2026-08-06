@@ -282,6 +282,23 @@ impl RegistrySyncOutbox for PgRegistrySyncRepo {
         Ok(row.as_ref().map(Self::row_to_sync))
     }
 
+    async fn unregistered_published_count(&self) -> Result<i64, DppError> {
+        // Published, but no queue row — the registration nobody is tracking.
+        // `status` lives inside the passport's JSONB doc, and the wire form of
+        // `PassportStatus::Published` is `"active"`, not `"Published"`.
+        let count: i64 = sqlx::query_scalar(
+            r#"SELECT count(*) FROM odal.passport p
+               WHERE p.doc->>'status' = 'active'
+                 AND NOT EXISTS (
+                   SELECT 1 FROM odal.registry_sync r WHERE r.passport_id = p.id
+                 )"#,
+        )
+        .fetch_one(self.dal.pool())
+        .await
+        .map_err(db_err)?;
+        Ok(count)
+    }
+
     async fn status_counts(&self, stall_threshold: i32) -> Result<RegistrySyncCounts, DppError> {
         let row = sqlx::query(
             r#"SELECT

@@ -314,6 +314,9 @@ mod tests {
         ) -> Result<RegistrySyncCounts, DppError> {
             Ok(RegistrySyncCounts::default())
         }
+        async fn unregistered_published_count(&self) -> Result<i64, DppError> {
+            unreachable!("the transfer drain never reconciles registrations")
+        }
     }
 
     enum Outcome {
@@ -350,7 +353,9 @@ mod tests {
                 .unwrap()
                 .push((record.clone(), registry_id.to_owned()));
             let status = match self.outcome {
-                Outcome::Notified => RegistryStatus::Transferred,
+                // A notified transfer leaves the registration `Registered` — the
+                // registry amends the record, it does not restatus it.
+                Outcome::Notified => RegistryStatus::Registered,
                 Outcome::Rejected => RegistryStatus::Rejected,
                 Outcome::Transient => {
                     return Err(DppError::Internal("registry unreachable".into()));

@@ -309,7 +309,7 @@ async fn publish_is_atomic_idempotent_and_drains_exactly_once() {
     // (b) drain once with a healthy port → registered; a second pass is a no-op,
     // so the registry is called exactly once across the (simulated) restart.
     let (port, calls) = mock(Outcome::Registered);
-    let s1 = drain_once(&outbox, &port, 50).await;
+    let s1 = drain_once(&outbox, &port, None, 50).await;
     assert_eq!(s1.registered, 1);
     let after = outbox.pending_for(id).await.unwrap().unwrap();
     assert_eq!(after.status, RegistrySyncStatus::Registered);
@@ -319,7 +319,7 @@ async fn publish_is_atomic_idempotent_and_drains_exactly_once() {
         outbox.due(50).await.unwrap().is_empty(),
         "registered row not due"
     );
-    let s2 = drain_once(&outbox, &port, 50).await;
+    let s2 = drain_once(&outbox, &port, None, 50).await;
     assert_eq!(s2.registered, 0);
     assert_eq!(calls.load(Ordering::SeqCst), 1, "registered exactly once");
 }
@@ -334,7 +334,7 @@ async fn drain_backs_off_on_transient_and_marks_terminal_rejection() {
     // (c) transient failure → attempts++, still pending, pushed into the future.
     let transient_id = create_and_publish(&dal, &outbox).await;
     let (port_t, _) = mock(Outcome::Transient);
-    let st = drain_once(&outbox, &port_t, 50).await;
+    let st = drain_once(&outbox, &port_t, None, 50).await;
     assert_eq!(st.retried, 1);
     let row = outbox.pending_for(transient_id).await.unwrap().unwrap();
     assert_eq!(row.status, RegistrySyncStatus::Pending);
@@ -351,7 +351,7 @@ async fn drain_backs_off_on_transient_and_marks_terminal_rejection() {
     // (d) terminal rejection → row rejected (kept for a human, never dropped).
     let rejected_id = create_and_publish(&dal, &outbox).await;
     let (port_r, _) = mock(Outcome::Rejected);
-    let sr = drain_once(&outbox, &port_r, 50).await;
+    let sr = drain_once(&outbox, &port_r, None, 50).await;
     assert_eq!(sr.rejected, 1);
     let row = outbox.pending_for(rejected_id).await.unwrap().unwrap();
     assert_eq!(row.status, RegistrySyncStatus::Rejected);
@@ -566,7 +566,7 @@ async fn suspend_before_drain_must_not_drop_the_pending_registration() {
     // And the loss is real, not just a state-machine detail: the registry is
     // never called for this passport.
     let (port, calls) = mock(Outcome::Registered);
-    drain_once(&outbox, &port, 50).await;
+    drain_once(&outbox, &port, None, 50).await;
     assert_eq!(
         calls.load(Ordering::SeqCst),
         1,
@@ -631,7 +631,7 @@ async fn archiving_an_unpublished_draft_creates_no_outbox_row() {
 
     // Nothing to drain, and no false rejection raised.
     let (port, calls) = mock(Outcome::Registered);
-    let stats = drain_once(&outbox, &port, 50).await;
+    let stats = drain_once(&outbox, &port, None, 50).await;
     assert_eq!(calls.load(Ordering::SeqCst), 0, "registry not called");
     assert_eq!(
         (stats.rejected, stats.skipped),
@@ -656,7 +656,7 @@ async fn republish_clears_a_stale_suspend_intent() {
 
     // Drain the registration, then suspend.
     let (port, _) = mock(Outcome::Registered);
-    drain_once(&outbox, &port, 50).await;
+    drain_once(&outbox, &port, None, 50).await;
     outbox
         .enqueue_status(id, RegistryStatusIntent::Suspended)
         .await
@@ -697,7 +697,7 @@ async fn an_accepted_submission_is_not_yet_a_registration() {
     let id = create_and_publish(&dal, &outbox).await;
 
     let (port, calls) = mock(Outcome::Pending);
-    let stats = drain_once(&outbox, &port, 10).await;
+    let stats = drain_once(&outbox, &port, None, 10).await;
 
     assert_eq!(calls.load(Ordering::SeqCst), 1);
     assert_eq!(stats.submitted, 1);
@@ -726,7 +726,7 @@ async fn a_submitted_row_is_polled_not_resubmitted() {
 
     // First pass: accepted for validation.
     let (port, calls, polls) = mock_with_poll(Outcome::Pending, Outcome::Registered);
-    drain_once(&outbox, &port, 10).await;
+    drain_once(&outbox, &port, None, 10).await;
     assert_eq!(calls.load(Ordering::SeqCst), 1);
     assert_eq!(polls.load(Ordering::SeqCst), 0);
 
@@ -738,7 +738,7 @@ async fn a_submitted_row_is_polled_not_resubmitted() {
         .expect("make the row due");
 
     // Second pass: the verdict arrives via a poll.
-    let stats = drain_once(&outbox, &port, 10).await;
+    let stats = drain_once(&outbox, &port, None, 10).await;
 
     assert_eq!(
         calls.load(Ordering::SeqCst),
@@ -761,7 +761,7 @@ async fn a_deactivated_record_is_terminal_but_not_rejected() {
     let id = create_and_publish(&dal, &outbox).await;
 
     let (port, _calls) = mock(Outcome::Deactivated);
-    let stats = drain_once(&outbox, &port, 10).await;
+    let stats = drain_once(&outbox, &port, None, 10).await;
 
     assert_eq!(stats.deactivated, 1);
     assert_eq!(stats.rejected, 0);
@@ -777,4 +777,134 @@ async fn a_deactivated_record_is_terminal_but_not_rejected() {
         outbox.due(10).await.unwrap().is_empty(),
         "a deactivated row is terminal and stops draining"
     );
+}
+
+// ─── reconciliation: published passports nobody is tracking ──────────────────
+
+/// A passport published before this outbox existed (or lost to an older write
+/// path) owes a registration with nothing tracking it. The reconciliation count
+/// surfaces those without fabricating a row that could never drain.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_published_passport_with_no_outbox_row_is_counted() {
+    let (dal, _c) = start_pg().await;
+    let outbox: Arc<dyn RegistrySyncOutbox> = Arc::new(PgRegistrySyncRepo::new(dal.clone()));
+    let repo = PgPassportRepo::new(dal.clone());
+
+    // A passport written straight to Published, bypassing commit_publish — the
+    // shape of every passport that predates the outbox.
+    let mut orphan = draft_passport();
+    orphan.status = PassportStatus::Published;
+    orphan.published_at = Some(Utc::now());
+    repo.create(orphan.clone()).await.expect("create orphan");
+
+    assert_eq!(
+        outbox
+            .unregistered_published_count()
+            .await
+            .expect("count query"),
+        1,
+        "a Published passport with no outbox row must be visible"
+    );
+    assert!(
+        outbox.pending_for(orphan.id).await.unwrap().is_none(),
+        "and it must NOT have been given a fabricated row"
+    );
+
+    // A properly published passport does not add to the count.
+    create_and_publish(&dal, &outbox).await;
+    assert_eq!(
+        outbox
+            .unregistered_published_count()
+            .await
+            .expect("count query"),
+        1,
+        "a passport published through the outbox is tracked, not orphaned"
+    );
+}
+
+/// A draft is not owed a registration, so it is not an orphan.
+#[tokio::test(flavor = "multi_thread")]
+async fn an_unpublished_draft_is_not_counted_as_unregistered() {
+    let (dal, _c) = start_pg().await;
+    let outbox: Arc<dyn RegistrySyncOutbox> = Arc::new(PgRegistrySyncRepo::new(dal.clone()));
+    let repo = PgPassportRepo::new(dal.clone());
+
+    repo.create(draft_passport()).await.expect("create draft");
+
+    assert_eq!(
+        outbox
+            .unregistered_published_count()
+            .await
+            .expect("count query"),
+        0
+    );
+}
+
+// ─── verified-operator status gates the drain ────────────────────────────────
+
+/// Set the operator's verification date, returning the repo the drain reads.
+async fn operator_verified_at(
+    dal: &PgDal,
+    at: Option<chrono::DateTime<Utc>>,
+) -> Arc<dyn dpp_types::operator::OperatorConfigRepository> {
+    let repo = dpp_dal::pg::PgOperatorConfigRepo::new(dal.clone());
+    let mut cfg = dpp_types::OperatorConfig::empty(dpp_types::STANDALONE_OPERATOR_ID);
+    cfg.legal_name = "Test Operator GmbH".into();
+    cfg.address = "Berlin".into();
+    cfg.country = "DE".into();
+    cfg.contact_email = "ops@example.com".into();
+    cfg.registry_verified_at = at;
+    dpp_types::operator::OperatorConfigRepository::upsert(&repo, cfg)
+        .await
+        .expect("seed operator config");
+    Arc::new(repo)
+}
+
+/// Verified status lapses after three years. Submitting past that earns an
+/// opaque remote refusal, so the drain holds instead — and holds *without*
+/// touching the rows, so re-verification resumes everything untouched.
+#[tokio::test(flavor = "multi_thread")]
+async fn an_expired_operator_holds_the_drain_without_losing_rows() {
+    let (dal, _c) = start_pg().await;
+    let outbox: Arc<dyn RegistrySyncOutbox> = Arc::new(PgRegistrySyncRepo::new(dal.clone()));
+    let id = create_and_publish(&dal, &outbox).await;
+
+    let expired =
+        operator_verified_at(&dal, Some(Utc::now() - chrono::Duration::days(365 * 3 + 1))).await;
+    let (port, calls) = mock(Outcome::Registered);
+    let stats = drain_once(&outbox, &port, Some(&expired), 50).await;
+
+    assert_eq!(
+        calls.load(Ordering::SeqCst),
+        0,
+        "an unverified operator must not reach the registry"
+    );
+    assert_eq!(stats, Default::default(), "nothing was processed");
+
+    let row = outbox.pending_for(id).await.unwrap().expect("row survives");
+    assert_eq!(row.status, RegistrySyncStatus::Pending);
+    assert_eq!(
+        row.attempts, 0,
+        "holding is not a failed attempt — the row must not back off"
+    );
+
+    // Re-verify, and the same pass now goes through.
+    let current = operator_verified_at(&dal, Some(Utc::now())).await;
+    let stats = drain_once(&outbox, &port, Some(&current), 50).await;
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    assert_eq!(stats.registered, 1);
+}
+
+/// Never verified is the same refusal: there is no verified status to rely on.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_never_verified_operator_also_holds_the_drain() {
+    let (dal, _c) = start_pg().await;
+    let outbox: Arc<dyn RegistrySyncOutbox> = Arc::new(PgRegistrySyncRepo::new(dal.clone()));
+    create_and_publish(&dal, &outbox).await;
+
+    let never = operator_verified_at(&dal, None).await;
+    let (port, calls) = mock(Outcome::Registered);
+    drain_once(&outbox, &port, Some(&never), 50).await;
+
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
 }

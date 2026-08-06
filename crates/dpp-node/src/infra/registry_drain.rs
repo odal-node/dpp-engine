@@ -37,9 +37,29 @@ pub struct DrainStats {
 pub async fn drain_once(
     outbox: &Arc<dyn RegistrySyncOutbox>,
     registry_sync: &Arc<dyn RegistrySyncPort>,
+    operator: Option<&Arc<dyn dpp_types::operator::OperatorConfigRepository>>,
     batch: i64,
 ) -> DrainStats {
     let mut stats = DrainStats::default();
+
+    // Verified-operator status is not permanent: it ends when the eID means
+    // used expire, and at the latest three years after verification. An expired
+    // operator cannot register anything, so submitting would earn an opaque
+    // remote refusal. Hold the whole pass instead — re-verification makes every
+    // held row drainable again, and nothing is lost meanwhile.
+    if let Some(repo) = operator
+        && let Ok(Some(cfg)) = repo.get(dpp_types::STANDALONE_OPERATOR_ID).await
+        && !cfg.registry_verification_is_current(chrono::Utc::now())
+    {
+        tracing::warn!(
+            verified_at = ?cfg.registry_verified_at,
+            expires_at = ?cfg.registry_verification_expires_at(),
+            "registry outbox drain held — operator is not currently verified with the EU \
+             registry; re-verify to resume registration"
+        );
+        metrics::counter!("registry_outbox_held_unverified_total").increment(1);
+        return stats;
+    }
     let due = match outbox.due(batch).await {
         Ok(rows) => rows,
         Err(e) => {

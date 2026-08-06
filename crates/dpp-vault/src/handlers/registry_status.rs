@@ -80,6 +80,27 @@ struct PassportRegistryView {
     /// Every handover notification recorded for this passport, newest first.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     transfers: Vec<TransferView>,
+    /// Who is responsible for this passport **now**, from its transfer chain.
+    ///
+    /// Reported separately because the passport's own `operatorIdentifier` is
+    /// the operator that *published* it, frozen at publish and covered by the
+    /// signature — it is not rewritten by a transfer and cannot be. For a
+    /// passport that has changed hands the two differ, and that difference is a
+    /// fact about the product, not a defect. `None` when the passport has never
+    /// been transferred, in which case the passport's own field is current.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    current_operator: Option<CurrentOperatorView>,
+}
+
+/// The operator responsible for a passport today, per its transfer chain.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CurrentOperatorView {
+    did: String,
+    name: String,
+    country: String,
+    /// How many completed handovers this passport has been through.
+    transfer_count: usize,
 }
 
 /// `GET /api/v1/registry` response.
@@ -87,10 +108,36 @@ struct PassportRegistryView {
 #[serde(rename_all = "camelCase")]
 struct RegistryRollupView {
     configured: bool,
+    /// Whether this operator may currently register anything at all.
+    verification: VerificationView,
     #[serde(skip_serializing_if = "Option::is_none")]
     registrations: Option<RegistrationCounts>,
     #[serde(skip_serializing_if = "Option::is_none")]
     transfers: Option<TransferCounts>,
+}
+
+/// The operator's verified-registry standing.
+///
+/// Verified status ends when the electronic identification means used expire,
+/// and at the latest three years after verification. An operator that lets it
+/// lapse cannot register or amend anything until it verifies again, so this is
+/// reported whether or not the queues are configured.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct VerificationView {
+    /// `false` both when never verified and when lapsed — the registry refuses
+    /// either way, though they are different situations to act on.
+    current: bool,
+    /// `None` when never verified.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    verified_at: Option<chrono::DateTime<chrono::Utc>>,
+    /// The three-year cap. The eID means may expire sooner, which this cannot
+    /// see, so it is an upper bound rather than a promise.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    expires_at: Option<chrono::DateTime<chrono::Utc>>,
+    /// Days remaining, negative once lapsed. Absent when never verified.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    days_remaining: Option<i64>,
 }
 
 #[derive(Serialize)]
@@ -101,9 +148,20 @@ struct RegistrationCounts {
     registered: i64,
     rejected: i64,
     deactivated: i64,
+    /// Status changes owed to the registry. Nothing drains these — the registry
+    /// publishes no status-push API — so they are held durably and counted here
+    /// rather than accumulating out of sight.
     status_intents: i64,
     /// Rows that have retried past the point of self-recovery.
     stalled: i64,
+    /// Published passports with **no** outbox row at all.
+    ///
+    /// These owe a registration nobody is tracking: passports published before
+    /// the outbox existed, or lost to an older write path. They are reported,
+    /// not repaired — the queued payload is what a drain replays, and there is
+    /// none to rebuild, so fabricating a row would create an entry that can
+    /// never drain.
+    unregistered_published: i64,
 }
 
 #[derive(Serialize)]
@@ -142,6 +200,7 @@ pub async fn passport_registry_handler(
                 configured: false,
                 registration: None,
                 transfers: Vec::new(),
+                current_operator: None,
             }),
         )
             .into_response();
@@ -178,6 +237,26 @@ pub async fn passport_registry_handler(
         None => Vec::new(),
     };
 
+    // Only report a current operator when the chain says responsibility has
+    // actually moved. An untransferred passport's own field is still current,
+    // and echoing it here would imply a handover that never happened.
+    let current_operator = match state.service.transfer_store.as_ref() {
+        Some(store) => match store.get_chain(passport_id).await {
+            Ok(Some(chain)) if chain.transfer_count() > 0 => {
+                let op = chain.current_operator();
+                Some(CurrentOperatorView {
+                    did: op.did.clone(),
+                    name: op.name.clone(),
+                    country: op.country.clone(),
+                    transfer_count: chain.transfer_count(),
+                })
+            }
+            Ok(_) => None,
+            Err(e) => return internal_error(format!("reading transfer chain: {e}")),
+        },
+        None => None,
+    };
+
     (
         StatusCode::OK,
         Json(PassportRegistryView {
@@ -185,6 +264,7 @@ pub async fn passport_registry_handler(
             configured: true,
             registration,
             transfers,
+            current_operator,
         }),
     )
         .into_response()
@@ -195,16 +275,24 @@ pub async fn registry_rollup_handler(
     State(state): State<AppState>,
     Extension(_auth): Extension<AuthContext>,
 ) -> impl IntoResponse {
+    let verification = verification_view(&state).await;
+
     let Some(outbox) = state.service.registry_outbox.as_ref() else {
         return (
             StatusCode::OK,
             Json(RegistryRollupView {
                 configured: false,
+                verification,
                 registrations: None,
                 transfers: None,
             }),
         )
             .into_response();
+    };
+
+    let unregistered_published = match outbox.unregistered_published_count().await {
+        Ok(n) => n,
+        Err(e) => return internal_error(format!("counting unregistered published passports: {e}")),
     };
 
     let registrations = match outbox.status_counts(STALL_THRESHOLD).await {
@@ -216,6 +304,7 @@ pub async fn registry_rollup_handler(
             deactivated: c.deactivated,
             status_intents: c.status_intents,
             stalled: c.stalled,
+            unregistered_published,
         },
         Err(e) => return internal_error(format!("reading registry counts: {e}")),
     };
@@ -237,9 +326,42 @@ pub async fn registry_rollup_handler(
         StatusCode::OK,
         Json(RegistryRollupView {
             configured: true,
+            verification,
             registrations: Some(registrations),
             transfers,
         }),
     )
         .into_response()
+}
+
+/// The operator's verified-registry standing, read live from operator config.
+///
+/// A read failure reports "not current" rather than erroring the whole rollup:
+/// an operator asking "can I register?" is better served by a conservative no
+/// than by a 500.
+async fn verification_view(state: &AppState) -> VerificationView {
+    let config = match state.service.registry_reader.as_ref() {
+        Some(reader) => reader
+            .get(dpp_types::STANDALONE_OPERATOR_ID)
+            .await
+            .ok()
+            .flatten(),
+        None => None,
+    };
+    let Some(config) = config else {
+        return VerificationView {
+            current: false,
+            verified_at: None,
+            expires_at: None,
+            days_remaining: None,
+        };
+    };
+    let now = chrono::Utc::now();
+    let expires_at = config.registry_verification_expires_at();
+    VerificationView {
+        current: config.registry_verification_is_current(now),
+        verified_at: config.registry_verified_at,
+        expires_at,
+        days_remaining: expires_at.map(|e| (e - now).num_days()),
+    }
 }

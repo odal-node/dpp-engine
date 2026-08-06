@@ -82,6 +82,7 @@ fn set_registry_gauges(c: &RegistrySyncCounts) {
 pub async fn spawn_registry_drain(
     outbox: Arc<dyn RegistrySyncOutbox>,
     registry_sync: Arc<dyn RegistrySyncPort>,
+    operator: Option<Arc<dyn dpp_types::operator::OperatorConfigRepository>>,
 ) {
     // Boot reconciliation: log outstanding registry-sync state so a restart
     // surfaces (never hides) queued/rejected/stalled registrations.
@@ -105,7 +106,13 @@ pub async fn spawn_registry_drain(
     tokio::spawn(async move {
         loop {
             tokio::time::sleep(DRAIN_INTERVAL).await;
-            dpp_node::infra::registry_drain::drain_once(&outbox, &registry_sync, DRAIN_BATCH).await;
+            dpp_node::infra::registry_drain::drain_once(
+                &outbox,
+                &registry_sync,
+                operator.as_ref(),
+                DRAIN_BATCH,
+            )
+            .await;
             if let Ok(c) = outbox.status_counts(STALL_THRESHOLD).await {
                 set_registry_gauges(&c);
                 if c.stalled > 0 {

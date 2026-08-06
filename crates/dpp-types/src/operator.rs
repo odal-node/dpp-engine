@@ -55,10 +55,49 @@ pub struct OperatorConfig {
     pub retention_policy_days: i64,
     /// Feature flags as an opaque JSON object; resolved at boot by the node.
     pub feature_flags: Option<serde_json::Value>,
+    /// When this operator completed EU registry identity verification.
+    ///
+    /// `None` means never verified — the right state for a deployment that has
+    /// not onboarded, and distinct from "verified, date unknown". See
+    /// [`OperatorConfig::registry_verification_expires_at`] for what it implies.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub registry_verified_at: Option<DateTime<Utc>>,
     /// Row creation timestamp.
     pub created_at: Option<DateTime<Utc>>,
     /// Last-update timestamp.
     pub updated_at: Option<DateTime<Utc>>,
+}
+
+/// The regulation's hard cap on how long verified-operator status lasts,
+/// regardless of the electronic identification means used.
+pub const REGISTRY_VERIFICATION_MAX_YEARS: i64 = 3;
+
+impl OperatorConfig {
+    /// When this operator's verified-registry status lapses, or `None` if it
+    /// was never verified.
+    ///
+    /// This is the **three-year cap** measured from the verification date. The
+    /// eID means used may expire sooner, in which case status ends then — that
+    /// earlier date is not modelled here because nothing in this system knows
+    /// it. So this is an upper bound: verification never lasts longer than this,
+    /// and may end before it.
+    #[must_use]
+    pub fn registry_verification_expires_at(&self) -> Option<DateTime<Utc>> {
+        self.registry_verified_at
+            .map(|at| at + chrono::Duration::days(365 * REGISTRY_VERIFICATION_MAX_YEARS))
+    }
+
+    /// Whether this operator may currently register passports with the EU
+    /// registry.
+    ///
+    /// `false` both when never verified and when verification has lapsed — the
+    /// registry refuses either way, so they are one answer here even though
+    /// they are different situations to an operator reading a status page.
+    #[must_use]
+    pub fn registry_verification_is_current(&self, now: DateTime<Utc>) -> bool {
+        self.registry_verification_expires_at()
+            .is_some_and(|expiry| now < expiry)
+    }
 }
 
 fn default_data_residency() -> String {
@@ -113,6 +152,7 @@ impl OperatorConfig {
             data_residency: default_data_residency(),
             retention_policy_days: default_retention_days(),
             feature_flags: None,
+            registry_verified_at: None,
             created_at: None,
             updated_at: None,
         }
@@ -347,5 +387,54 @@ mod tests {
         );
         assert!(patch_with_retention(Some(5475)).validate().is_ok()); // ~15y
         assert!(patch_with_retention(None).validate().is_ok());
+    }
+}
+
+#[cfg(test)]
+mod verification_tests {
+    use super::*;
+
+    fn config_verified(at: Option<DateTime<Utc>>) -> OperatorConfig {
+        OperatorConfig {
+            registry_verified_at: at,
+            ..OperatorConfig::empty("op")
+        }
+    }
+
+    /// Never verified is not "verified long ago" — there is no expiry to report,
+    /// and the operator cannot register.
+    #[test]
+    fn a_never_verified_operator_has_no_expiry_and_cannot_register() {
+        let cfg = config_verified(None);
+        assert!(cfg.registry_verification_expires_at().is_none());
+        assert!(!cfg.registry_verification_is_current(Utc::now()));
+    }
+
+    /// The regulation caps verified status at three years from verification.
+    #[test]
+    fn verification_expires_three_years_after_it_was_granted() {
+        let verified_at = Utc::now() - chrono::Duration::days(365);
+        let cfg = config_verified(Some(verified_at));
+        let expiry = cfg.registry_verification_expires_at().expect("has expiry");
+        assert_eq!(expiry, verified_at + chrono::Duration::days(365 * 3));
+        assert!(cfg.registry_verification_is_current(Utc::now()));
+    }
+
+    /// A day past the cap and registration is closed until re-verification.
+    #[test]
+    fn verification_lapses_once_the_cap_passes() {
+        let cfg = config_verified(Some(Utc::now() - chrono::Duration::days(365 * 3 + 1)));
+        assert!(!cfg.registry_verification_is_current(Utc::now()));
+    }
+
+    /// The boundary belongs to the expired side: at the instant of expiry the
+    /// status is no longer current.
+    #[test]
+    fn the_expiry_instant_is_not_current() {
+        let verified_at = Utc::now() - chrono::Duration::days(365 * 3);
+        let cfg = config_verified(Some(verified_at));
+        let expiry = cfg.registry_verification_expires_at().unwrap();
+        assert!(!cfg.registry_verification_is_current(expiry));
+        assert!(cfg.registry_verification_is_current(expiry - chrono::Duration::seconds(1)));
     }
 }

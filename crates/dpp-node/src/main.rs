@@ -405,8 +405,12 @@ async fn main() -> anyhow::Result<()> {
     // ── Background tasks: expired-import-job cleanup + registry outbox drain ──
     boot::tasks::spawn_job_cleanup(db.job_store.clone());
     boot::tasks::spawn_scan_prune(db.scan_repo.clone());
-    boot::tasks::spawn_registry_drain(db.registry_outbox.clone(), registry_sync_for_drain.clone())
-        .await;
+    boot::tasks::spawn_registry_drain(
+        db.registry_outbox.clone(),
+        registry_sync_for_drain.clone(),
+        Some(db.operator_repo.clone()),
+    )
+    .await;
     boot::tasks::spawn_transfer_drain(
         db.transfer_outbox.clone(),
         db.registry_outbox.clone(),

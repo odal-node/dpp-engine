@@ -293,4 +293,16 @@ pub trait RegistrySyncOutbox: Send + Sync {
     /// have reached `stall_threshold`). Feeds boot reconciliation logs and the
     /// `registry_outbox_*` gauges.
     async fn status_counts(&self, stall_threshold: i32) -> Result<RegistrySyncCounts, DppError>;
+
+    /// How many **Published** passports have no outbox row at all.
+    ///
+    /// A published passport owes a registration; one with no row owes it with
+    /// nothing tracking it. That happens for passports published before this
+    /// outbox existed, or lost to an older write path.
+    ///
+    /// This reports, it does not repair. A drain replays the *queued payload*,
+    /// and for these there is none to rebuild — inventing a row would create an
+    /// entry that can never drain, trading a visible gap for an invisible one.
+    /// Re-publishing is the repair, and that is an operator's decision.
+    async fn unregistered_published_count(&self) -> Result<i64, DppError>;
 }
