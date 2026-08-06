@@ -404,7 +404,12 @@ async fn main() -> anyhow::Result<()> {
     boot::tasks::spawn_scan_prune(db.scan_repo.clone());
     boot::tasks::spawn_registry_drain(db.registry_outbox.clone(), registry_sync_for_drain.clone())
         .await;
-    boot::tasks::spawn_transfer_drain(db.transfer_outbox.clone(), registry_sync_for_drain).await;
+    boot::tasks::spawn_transfer_drain(
+        db.transfer_outbox.clone(),
+        db.registry_outbox.clone(),
+        registry_sync_for_drain,
+    )
+    .await;
     boot::tasks::spawn_webhook_drain(db.webhook_outbox.clone(), cfg.webhook_allow_private_targets)
         .await;
     // Qualified sealing: only spawn against a real QTSP. A ghost-backed drain

@@ -99,16 +99,33 @@ pub(super) fn facility_identifier_for(request: &RegistrationRequest) -> Facility
 
 /// Map a domain [`ResponsibleOperator`] onto the registry's operator identifier.
 ///
-/// Scheme and value mirror the registration path (`did`), so the same operator
-/// is named the same way whether it is being registered or transferred to.
-/// `eu_operator_id`, when present, is the more authoritative identifier but
-/// carries no scheme this crate can assert, so it is not guessed at here.
+/// Prefers the EU-assigned identifier when the operator holds one *and* states
+/// its scheme: an EORI or VAT number is what a registry and a customs authority
+/// can act on, where a DID is meaningful only inside this system. Falls back to
+/// the DID, which every responsible operator has by construction.
+///
+/// A value without a scheme is never used — that is the pairing this whole
+/// mapping exists to keep honest.
 pub(super) fn operator_identifier_for(operator: &ResponsibleOperator) -> OperatorIdentifier {
+    let eu_identifier = operator
+        .eu_operator_id
+        .as_ref()
+        .zip(operator.eu_operator_id_scheme.as_ref())
+        .filter(|(value, scheme)| !value.trim().is_empty() && !scheme.trim().is_empty());
+
+    let (scheme, value) = match eu_identifier {
+        Some((value, scheme)) => (scheme.clone(), value.clone()),
+        None => ("did".to_owned(), operator.did.clone()),
+    };
+
     OperatorIdentifier {
-        scheme: "did".into(),
-        value: operator.did.clone(),
+        scheme,
+        value,
         name: operator.name.clone(),
         country: operator.country.clone(),
+        // The DID is always known for a responsible operator, and stays on the
+        // identifier as the in-system handle regardless of which scheme the
+        // registry is given.
         did: Some(operator.did.clone()),
     }
 }
@@ -189,7 +206,13 @@ impl RegistrySyncPort for EuRegistrySync {
                 item_id: item_id_for(&request),
                 facility_id: facility_identifier_for(&request),
                 operator_id: OperatorIdentifier {
-                    scheme: "did".into(),
+                    // The scheme the port carries, not a guess. This used to be
+                    // hardcoded `"did"`, which told the registry that every
+                    // VAT/LEI/EORI/DUNS identifier was a DID — a false statement
+                    // no structural check catches, since `did` is the one scheme
+                    // accepted without verification. An empty scheme now fails
+                    // validation rather than defaulting to a claim.
+                    scheme: request.operator_identifier_scheme.clone(),
                     value: request.operator_identifier.clone(),
                     // Both sourced from OperatorConfig and carried by the port.
                     // The registry requires a legal-entity name on the operator
@@ -197,7 +220,9 @@ impl RegistrySyncPort for EuRegistrySync {
                     // than reaching the registry.
                     name: request.operator_name.clone(),
                     country: request.country_code.clone(),
-                    did: Some(request.operator_identifier.clone()),
+                    // Only a DID belongs in the DID field.
+                    did: (request.operator_identifier_scheme == "did")
+                        .then(|| request.operator_identifier.clone()),
                 },
                 sector: request.product_category.clone(),
                 schema_version: request.schema_version.clone(),
@@ -361,13 +386,21 @@ impl RegistrySyncPort for EuRegistrySync {
         .map_err(|e| e.into_dpp_error())
     }
 
-    async fn notify_transfer(&self, record: &TransferRecord) -> Result<RegistryRecord, DppError> {
+    async fn notify_transfer(
+        &self,
+        record: &TransferRecord,
+        registry_id: &str,
+    ) -> Result<RegistryRecord, DppError> {
         let base_url = &self.config.endpoint.base_url;
         let passport_id = record.passport_id;
 
         let notification = TransferNotification {
             passport_id: passport_id.0,
-            registry_id: String::new(), // filled by the registry on their side
+            // The registry's own record id for this passport, from its
+            // registration response. Previously left empty on the belief that
+            // the registry would fill it in — it cannot, because nothing in the
+            // request would tell it which record the handover refers to.
+            registry_id: registry_id.to_owned(),
             from_operator: operator_identifier_for(&record.from_operator),
             to_operator: operator_identifier_for(&record.to_operator),
             reason: record.reason.wire_str().to_owned(),
@@ -386,7 +419,15 @@ impl RegistrySyncPort for EuRegistrySync {
         // Fail closed, for the same reason `register` does: a transfer
         // notification is a regulatory submission naming two legal persons, and
         // one built from an incomplete operator record is one the registry is
-        // expected to reject.
+        // expected to reject. An unattached notification — no registry record to
+        // amend — is refused on the same grounds.
+        if registry_id.trim().is_empty() {
+            return Err(DppError::Validation(
+                "EU registry transfer notification has no registry record id: the passport's \
+                 registration must be accepted before its transfer can be notified"
+                    .into(),
+            ));
+        }
         if let Err(e) = notification.validate() {
             if !self.config.allow_invalid_payloads {
                 metrics::counter!("registry_payload_rejected_total").increment(1);

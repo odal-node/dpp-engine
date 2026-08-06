@@ -142,6 +142,7 @@ mod tests {
             name: "Acme".into(),
             role: OperatorRole::Distributor,
             eu_operator_id: None,
+            eu_operator_id_scheme: None,
             country: "DE".into(),
         }
     }

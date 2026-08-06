@@ -97,16 +97,19 @@ impl OperatorConfigRepository for PgOperatorConfigRepo {
     async fn primary_operator_identifier(
         &self,
         operator_id: &str,
-    ) -> Result<Option<String>, DppError> {
+    ) -> Result<Option<(String, String)>, DppError> {
+        // Both columns. The scheme is what says whether the value is a VAT
+        // number, an LEI or a DID — selecting the value alone left every caller
+        // to guess, and the registry mapping guessed `did` for all of them.
         let row = sqlx::query(
-            "SELECT value FROM odal.operator_identifier \
+            "SELECT scheme, value FROM odal.operator_identifier \
              WHERE operator_id = $1 AND is_primary = true AND retired_at IS NULL LIMIT 1",
         )
         .bind(operator_id)
         .fetch_optional(self.dal.pool())
         .await
         .map_err(db_err)?;
-        Ok(row.map(|r| r.get::<String, _>("value")))
+        Ok(row.map(|r| (r.get::<String, _>("scheme"), r.get::<String, _>("value"))))
     }
 
     /// Insert or update the operator config (upsert on `operator_id`).

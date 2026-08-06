@@ -364,6 +364,7 @@ async fn publish_transfer_eol_then_generate_verifies_and_persists() {
         name: name.into(),
         role: OperatorRole::Distributor,
         eu_operator_id: None,
+        eu_operator_id_scheme: None,
         country: "DE".into(),
     };
     service

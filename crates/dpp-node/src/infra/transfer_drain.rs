@@ -13,7 +13,7 @@ use std::sync::Arc;
 
 use dpp_domain::domain::transfer::TransferRecord;
 use dpp_domain::ports::registry_sync::{RegistryStatus, RegistrySyncPort};
-use dpp_types::RegistryTransferOutbox;
+use dpp_types::{RegistrySyncOutbox, RegistryTransferOutbox};
 
 /// Outcome tallies for one drain pass — surfaced to metrics and asserted in tests.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
@@ -26,6 +26,9 @@ pub struct TransferDrainStats {
     pub retried: u32,
     /// Rows dropped from draining because their payload was corrupt.
     pub skipped: u32,
+    /// Rows held back because the passport's own registration has not been
+    /// accepted by the registry yet, so there is no record to amend.
+    pub deferred: u32,
 }
 
 /// Drain up to `batch` due rows once.
@@ -34,8 +37,15 @@ pub struct TransferDrainStats {
 /// (`mark_*`) and the pass continues, so one bad row cannot stall the queue. A
 /// row is only ever removed from the due set by reaching a terminal state or a
 /// future `next_attempt_at` — it is never silently dropped.
+///
+/// A transfer can be accepted before its passport's registration has drained,
+/// so `registrations` is consulted for the registry's record id. Until that
+/// registration is accepted there is nothing to amend, and the row is backed
+/// off rather than sent unattached or discarded — the registration is almost
+/// certainly still in flight.
 pub async fn drain_once(
     outbox: &Arc<dyn RegistryTransferOutbox>,
+    registrations: &Arc<dyn RegistrySyncOutbox>,
     registry_sync: &Arc<dyn RegistrySyncPort>,
     batch: i64,
 ) -> TransferDrainStats {
@@ -61,8 +71,30 @@ pub async fn drain_once(
                 continue;
             }
         };
+        // Which registry record does this handover amend? Only the registration
+        // response can say. No id yet means the registration has not been
+        // accepted — hold the row rather than sending a notification the
+        // registry cannot attach to anything.
+        let registry_id = registrations
+            .pending_for(row.passport_id)
+            .await
+            .ok()
+            .flatten()
+            .and_then(|r| r.registry_id)
+            .filter(|id| !id.trim().is_empty());
+        let Some(registry_id) = registry_id else {
+            let _ = outbox
+                .mark_attempt_failed(
+                    tid,
+                    "awaiting the passport's own registry registration".into(),
+                )
+                .await;
+            stats.deferred += 1;
+            continue;
+        };
+
         let started = std::time::Instant::now();
-        let outcome = registry_sync.notify_transfer(&record).await;
+        let outcome = registry_sync.notify_transfer(&record, &registry_id).await;
         metrics::histogram!("registry_transfer_drain_seconds")
             .record(started.elapsed().as_secs_f64());
         match outcome {
@@ -107,7 +139,10 @@ mod tests {
     use dpp_domain::ports::registry_sync::{
         RegistrationRequest, RegistryIdentifiers, RegistryRecord,
     };
-    use dpp_types::{RegistryTransferCounts, RegistryTransferRow, RegistryTransferStatus};
+    use dpp_types::{
+        RegistryStatusIntent, RegistrySyncCounts, RegistrySyncRow, RegistrySyncStatus,
+        RegistryTransferCounts, RegistryTransferRow, RegistryTransferStatus,
+    };
     use uuid::Uuid;
 
     fn operator(did: &str, name: &str) -> ResponsibleOperator {
@@ -116,6 +151,7 @@ mod tests {
             name: name.to_owned(),
             role: OperatorRole::Manufacturer,
             eu_operator_id: None,
+            eu_operator_id_scheme: None,
             country: "DE".to_owned(),
         }
     }
@@ -197,6 +233,75 @@ mod tests {
         }
     }
 
+    /// Stands in for the registration outbox. `registry_id` is `None` when the
+    /// passport's own registration has not been accepted yet.
+    struct FakeRegistrations {
+        registry_id: Option<String>,
+    }
+
+    #[async_trait]
+    impl RegistrySyncOutbox for FakeRegistrations {
+        async fn commit_publish(
+            &self,
+            _passport: &dpp_domain::domain::passport::Passport,
+            _payload: serde_json::Value,
+        ) -> Result<(), DppError> {
+            unreachable!("the transfer drain never registers")
+        }
+        async fn enqueue_status(
+            &self,
+            _passport_id: PassportId,
+            _intent: RegistryStatusIntent,
+        ) -> Result<(), DppError> {
+            unreachable!("the transfer drain never records status intent")
+        }
+        async fn due(&self, _limit: i64) -> Result<Vec<RegistrySyncRow>, DppError> {
+            unreachable!("the transfer drain never drains registrations")
+        }
+        async fn mark_registered(
+            &self,
+            _passport_id: PassportId,
+            _registry_id: String,
+        ) -> Result<(), DppError> {
+            unreachable!()
+        }
+        async fn mark_rejected(
+            &self,
+            _passport_id: PassportId,
+            _message: String,
+        ) -> Result<(), DppError> {
+            unreachable!()
+        }
+        async fn mark_attempt_failed(
+            &self,
+            _passport_id: PassportId,
+            _message: String,
+        ) -> Result<(), DppError> {
+            unreachable!()
+        }
+        async fn pending_for(
+            &self,
+            passport_id: PassportId,
+        ) -> Result<Option<RegistrySyncRow>, DppError> {
+            Ok(Some(RegistrySyncRow {
+                passport_id,
+                status: RegistrySyncStatus::Registered,
+                status_intent: None,
+                registry_id: self.registry_id.clone(),
+                payload: None,
+                message: None,
+                attempts: 0,
+                next_attempt_at: Utc::now(),
+            }))
+        }
+        async fn status_counts(
+            &self,
+            _stall_threshold: i32,
+        ) -> Result<RegistrySyncCounts, DppError> {
+            Ok(RegistrySyncCounts::default())
+        }
+    }
+
     enum Outcome {
         Notified,
         Rejected,
@@ -205,8 +310,9 @@ mod tests {
 
     struct FakePort {
         outcome: Outcome,
-        /// Records the drain actually handed to the port.
-        seen: Mutex<Vec<TransferRecord>>,
+        /// Records the drain actually handed to the port, with the registry
+        /// record id it attached them to.
+        seen: Mutex<Vec<(TransferRecord, String)>>,
     }
 
     #[async_trait]
@@ -223,8 +329,12 @@ mod tests {
         async fn notify_transfer(
             &self,
             record: &TransferRecord,
+            registry_id: &str,
         ) -> Result<RegistryRecord, DppError> {
-            self.seen.lock().unwrap().push(record.clone());
+            self.seen
+                .lock()
+                .unwrap()
+                .push((record.clone(), registry_id.to_owned()));
             let status = match self.outcome {
                 Outcome::Notified => RegistryStatus::Transferred,
                 Outcome::Rejected => RegistryStatus::Rejected,
@@ -259,9 +369,21 @@ mod tests {
         )
     }
 
+    /// Drain with the passport's registration already accepted.
     async fn run(outbox: &Arc<FakeOutbox>, port: &Arc<FakePort>) -> TransferDrainStats {
+        run_with_registry_id(outbox, port, Some("EU-REG-1".to_owned())).await
+    }
+
+    async fn run_with_registry_id(
+        outbox: &Arc<FakeOutbox>,
+        port: &Arc<FakePort>,
+        registry_id: Option<String>,
+    ) -> TransferDrainStats {
+        let registrations: Arc<dyn RegistrySyncOutbox> =
+            Arc::new(FakeRegistrations { registry_id });
         drain_once(
             &(outbox.clone() as Arc<dyn RegistryTransferOutbox>),
+            &registrations,
             &(port.clone() as Arc<dyn RegistrySyncPort>),
             10,
         )
@@ -284,11 +406,52 @@ mod tests {
         );
 
         let seen = port.seen.lock().unwrap();
-        let sent = seen.first().expect("the port must have been called");
+        let (sent, registry_id) = seen.first().expect("the port must have been called");
         assert_eq!(sent.from_operator.name, "Old Operator GmbH");
         assert_eq!(sent.to_operator.name, "New Operator GmbH");
         assert_eq!(sent.from_signature.as_deref(), Some("jws-from"));
         assert_eq!(sent.to_signature.as_deref(), Some("jws-to"));
+        assert_eq!(
+            registry_id, "EU-REG-1",
+            "the notification must name the registry record it amends"
+        );
+    }
+
+    /// A transfer can be accepted before its passport's registration has been
+    /// accepted by the registry. Until then there is no record to amend, so the
+    /// row is held — not sent unattached, and not discarded.
+    #[tokio::test]
+    async fn a_transfer_waits_for_its_passports_registration() {
+        let (outbox, port) = fakes(Outcome::Notified, vec![row_from(&record())]);
+
+        let stats = run_with_registry_id(&outbox, &port, None).await;
+
+        assert_eq!(stats.deferred, 1);
+        assert_eq!(stats.notified, 0);
+        assert!(
+            port.seen.lock().unwrap().is_empty(),
+            "nothing may reach the registry before the passport is registered"
+        );
+        assert_eq!(
+            outbox.failed.lock().unwrap().len(),
+            1,
+            "the row is backed off, so it stays pending and is retried"
+        );
+        assert!(
+            outbox.rejected.lock().unwrap().is_empty(),
+            "waiting on a registration is not a terminal failure"
+        );
+    }
+
+    /// A blank registry id is the same as none — it identifies nothing.
+    #[tokio::test]
+    async fn a_blank_registry_id_defers_too() {
+        let (outbox, port) = fakes(Outcome::Notified, vec![row_from(&record())]);
+
+        let stats = run_with_registry_id(&outbox, &port, Some("   ".to_owned())).await;
+
+        assert_eq!(stats.deferred, 1);
+        assert!(port.seen.lock().unwrap().is_empty());
     }
 
     /// A terminal rejection is recorded, not retried — the row stops draining
@@ -352,5 +515,19 @@ mod tests {
             outbox.notified.lock().unwrap().as_slice(),
             [good.transfer_id]
         );
+    }
+
+    /// The drain resolves the registry id per row; a corrupt payload is caught
+    /// before the registration is even consulted.
+    #[tokio::test]
+    async fn a_corrupt_row_is_caught_before_the_registration_lookup() {
+        let mut row = row_from(&record());
+        row.payload = serde_json::json!("not a record");
+        let (outbox, port) = fakes(Outcome::Notified, vec![row]);
+
+        let stats = run_with_registry_id(&outbox, &port, None).await;
+
+        assert_eq!(stats.skipped, 1);
+        assert_eq!(stats.deferred, 0, "a corrupt row is rejected, not deferred");
     }
 }

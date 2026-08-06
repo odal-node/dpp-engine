@@ -60,6 +60,7 @@ fn test_operator() -> RegisteringOperator<'static> {
     RegisteringOperator {
         legal_name: "Test Operator GmbH",
         country: "DE",
+        identifier_scheme: "did",
     }
 }
 use dpp_types::{RegistryStatusIntent, RegistrySyncOutbox, RegistrySyncStatus};
@@ -216,6 +217,7 @@ impl RegistrySyncPort for MockPort {
     async fn notify_transfer(
         &self,
         _record: &dpp_domain::domain::transfer::TransferRecord,
+        _registry_id: &str,
     ) -> Result<RegistryRecord, DppError> {
         unimplemented!("not exercised")
     }

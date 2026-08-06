@@ -17,7 +17,10 @@ use dpp_domain::ports::registry_sync::{
 
 use super::client::EuRegistrySync;
 use super::config::EuRegistrySyncConfig;
-use super::mapping::{extract_gtin_from_gs1_dl, facility_identifier_for, item_id_for, level_for};
+use super::mapping::{
+    extract_gtin_from_gs1_dl, facility_identifier_for, item_id_for, level_for,
+    operator_identifier_for,
+};
 use super::token::CachedToken;
 use dpp_registry::StatusResponse;
 
@@ -87,6 +90,7 @@ fn request_with_facility(facility: Option<dpp_domain::FacilitySnapshot>) -> Regi
     RegistrationRequest {
         passport_id: PassportId::new(),
         operator_identifier: "did:web:test.example".into(),
+        operator_identifier_scheme: "did".into(),
         operator_name: "Test Operator GmbH".into(),
         facility_identifier: "LEGACY-FAC".into(),
         facility,
@@ -211,6 +215,10 @@ mod mock_server {
     pub(super) struct MockState {
         pub(super) register_queue: Mutex<VecDeque<(StatusCode, Value)>>,
         pub(super) register_hits: AtomicUsize,
+        /// Envelopes the registry actually received on `/registrations`.
+        /// Asserting on the wire body is the only way to catch a field the
+        /// mapping states wrongly — a status-code assertion passes either way.
+        pub(super) register_bodies: Mutex<VecDeque<Value>>,
         pub(super) status_queue: Mutex<VecDeque<(StatusCode, Value)>>,
         pub(super) transfer_queue: Mutex<VecDeque<(StatusCode, Value)>>,
         /// Bodies the registry actually received on `/transfer`. Asserting on
@@ -239,10 +247,14 @@ mod mock_server {
             .into_response()
     }
 
-    async fn register_handler(State(state): State<Arc<MockState>>) -> Response {
+    async fn register_handler(
+        State(state): State<Arc<MockState>>,
+        Json(body): Json<Value>,
+    ) -> Response {
         state
             .register_hits
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        state.register_bodies.lock().await.push_back(body);
         pop_or_500(&state.register_queue).await
     }
 
@@ -491,7 +503,7 @@ async fn notify_transfer_success() {
     let sync = EuRegistrySync::new(mock_config(&base_url)).unwrap();
 
     let record = sync
-        .notify_transfer(&completed_transfer())
+        .notify_transfer(&completed_transfer(), "EU-REG-4")
         .await
         .expect("notify_transfer should succeed");
 
@@ -654,6 +666,7 @@ fn responsible(did: &str, name: &str, country: &str) -> ResponsibleOperator {
         name: name.to_owned(),
         role: OperatorRole::Manufacturer,
         eu_operator_id: None,
+        eu_operator_id_scheme: None,
         country: country.to_owned(),
     }
 }
@@ -693,7 +706,7 @@ async fn transfer_notification_carries_both_operators_and_both_signatures() {
     let sync = EuRegistrySync::new(mock_config(&base_url)).unwrap();
 
     let transfer = completed_transfer();
-    sync.notify_transfer(&transfer)
+    sync.notify_transfer(&transfer, "EU-REG-T")
         .await
         .expect("a complete transfer must notify successfully");
 
@@ -727,7 +740,7 @@ async fn transfer_with_an_unidentified_operator_is_refused() {
     transfer.from_operator.name = String::new();
 
     let err = sync
-        .notify_transfer(&transfer)
+        .notify_transfer(&transfer, "EU-REG-T")
         .await
         .expect_err("an unidentified outgoing operator must be refused");
 
@@ -756,7 +769,7 @@ async fn a_pending_transfer_reports_its_initiation_time() {
     transfer.to_signature = None;
     let initiated = transfer.initiated_at;
 
-    sync.notify_transfer(&transfer)
+    sync.notify_transfer(&transfer, "EU-REG-T")
         .await
         .expect("a pending transfer is still notifiable");
 
@@ -774,4 +787,128 @@ async fn a_pending_transfer_reports_its_initiation_time() {
         sent.get("toSignature").is_none(),
         "an unsigned acceptance must be absent, not an empty string"
     );
+}
+
+// ── Operator identifier mapping ─────────────────────────────────────────────
+
+/// The scheme reaches the registry as the operator stated it. This used to be
+/// hardcoded `"did"`, so a VAT/LEI/EORI/DUNS identifier was submitted as a DID —
+/// a false statement `validate` cannot catch, because `did` is the one scheme
+/// accepted without structural verification.
+#[tokio::test]
+async fn a_vat_operator_is_not_submitted_as_a_did() {
+    let state = Arc::new(MockState::default());
+    state
+        .register_queue
+        .lock()
+        .await
+        .push_back((axum::http::StatusCode::OK, registered_response("EU-REG-V")));
+    let base_url = mock_server::spawn(state.clone()).await;
+    let sync = EuRegistrySync::new(mock_config(&base_url)).unwrap();
+
+    let request = RegistrationRequest {
+        operator_identifier: "DE811234567".into(),
+        operator_identifier_scheme: "vat".into(),
+        ..valid_request()
+    };
+    sync.register(request)
+        .await
+        .expect("a VAT-scheme operator must register");
+
+    let sent = state
+        .register_bodies
+        .lock()
+        .await
+        .pop_front()
+        .expect("the registry must have received a payload");
+    let operator = &sent["payload"]["operatorId"];
+    assert_eq!(operator["scheme"], "vat");
+    assert_eq!(operator["value"], "DE811234567");
+    assert!(
+        operator.get("did").is_none(),
+        "a VAT number is not a DID and must not be sent as one: {operator}"
+    );
+}
+
+/// A genuine DID still travels in the `did` field.
+#[tokio::test]
+async fn a_did_operator_keeps_its_did_field() {
+    let state = Arc::new(MockState::default());
+    state
+        .register_queue
+        .lock()
+        .await
+        .push_back((axum::http::StatusCode::OK, registered_response("EU-REG-D")));
+    let base_url = mock_server::spawn(state.clone()).await;
+    let sync = EuRegistrySync::new(mock_config(&base_url)).unwrap();
+
+    sync.register(valid_request())
+        .await
+        .expect("a did-scheme operator must register");
+
+    let sent = state.register_bodies.lock().await.pop_front().unwrap();
+    let operator = &sent["payload"]["operatorId"];
+    assert_eq!(operator["scheme"], "did");
+    assert_eq!(operator["did"], "did:web:test.example");
+}
+
+/// An identifier whose scheme could not be established is refused rather than
+/// defaulted. This is the fail-closed half of the fix: the publish path leaves
+/// the scheme empty when it cannot prove which scheme the stamped value is in.
+#[tokio::test]
+async fn an_operator_without_a_scheme_is_refused() {
+    let state = Arc::new(MockState::default());
+    let base_url = mock_server::spawn(state.clone()).await;
+    let sync = EuRegistrySync::new(mock_config(&base_url)).unwrap();
+
+    let request = RegistrationRequest {
+        operator_identifier_scheme: String::new(),
+        ..valid_request()
+    };
+    let err = sync
+        .register(request)
+        .await
+        .expect_err("an unscheme'd operator identifier must be refused");
+
+    assert!(matches!(err, DppError::Validation(_)), "got: {err:?}");
+    assert_eq!(state.register_hits.load(Ordering::SeqCst), 0);
+}
+
+/// The counterparty mapping prefers a stated EU identifier over the DID: an
+/// EORI or VAT number is what a registry and a customs authority can act on.
+#[test]
+fn a_counterparty_with_an_eu_identifier_is_named_by_it() {
+    let mut op = responsible("did:web:beta.example", "Beta SARL", "FR");
+    op.eu_operator_id = Some("FR12345678901".into());
+    op.eu_operator_id_scheme = Some("vat".into());
+
+    let mapped = operator_identifier_for(&op);
+    assert_eq!(mapped.scheme, "vat");
+    assert_eq!(mapped.value, "FR12345678901");
+    assert_eq!(
+        mapped.did.as_deref(),
+        Some("did:web:beta.example"),
+        "the DID stays as the in-system handle"
+    );
+}
+
+/// A value with no scheme is unusable — fall back to the DID rather than
+/// guessing what the value is.
+#[test]
+fn a_counterparty_eu_identifier_without_a_scheme_is_not_used() {
+    let mut op = responsible("did:web:beta.example", "Beta SARL", "FR");
+    op.eu_operator_id = Some("FR12345678901".into());
+    op.eu_operator_id_scheme = None;
+
+    let mapped = operator_identifier_for(&op);
+    assert_eq!(mapped.scheme, "did");
+    assert_eq!(mapped.value, "did:web:beta.example");
+}
+
+/// The common case: no EU identifier held at all.
+#[test]
+fn a_counterparty_without_an_eu_identifier_falls_back_to_its_did() {
+    let mapped = operator_identifier_for(&responsible("did:web:beta.example", "Beta", "FR"));
+    assert_eq!(mapped.scheme, "did");
+    assert_eq!(mapped.value, "did:web:beta.example");
 }

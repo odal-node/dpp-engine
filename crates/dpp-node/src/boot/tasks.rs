@@ -128,6 +128,7 @@ fn set_transfer_gauges(c: &RegistryTransferCounts) {
 /// with backoff, so a killed node never loses a handover the registry is owed.
 pub async fn spawn_transfer_drain(
     outbox: Arc<dyn RegistryTransferOutbox>,
+    registrations: Arc<dyn RegistrySyncOutbox>,
     registry_sync: Arc<dyn RegistrySyncPort>,
 ) {
     match outbox.status_counts(STALL_THRESHOLD).await {
@@ -149,7 +150,13 @@ pub async fn spawn_transfer_drain(
     tokio::spawn(async move {
         loop {
             tokio::time::sleep(DRAIN_INTERVAL).await;
-            dpp_node::infra::transfer_drain::drain_once(&outbox, &registry_sync, DRAIN_BATCH).await;
+            dpp_node::infra::transfer_drain::drain_once(
+                &outbox,
+                &registrations,
+                &registry_sync,
+                DRAIN_BATCH,
+            )
+            .await;
             if let Ok(c) = outbox.status_counts(STALL_THRESHOLD).await {
                 set_transfer_gauges(&c);
                 if c.stalled > 0 {

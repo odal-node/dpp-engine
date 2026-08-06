@@ -254,14 +254,20 @@ pub trait OperatorConfigRepository: Send + Sync {
         Ok(None)
     }
 
-    /// Value of the operator's **primary** economic-operator identifier
-    /// (ESPR Art. 13 — e.g. EORI/VAT/LEI), or `None` if none is configured.
+    /// The operator's **primary** economic-operator identifier (ESPR Art. 13)
+    /// as a `(scheme, value)` pair — e.g. `("vat", "DE811234567")` — or `None`
+    /// if none is configured.
+    ///
+    /// The scheme travels with the value because the value alone does not say
+    /// what it is, and the EU registry requires the scheme to be stated. A
+    /// caller holding only the value has to guess, and a wrong guess is a false
+    /// statement the registry cannot detect.
     ///
     /// Default impl returns `None` so non-persistent test doubles need not implement it.
     async fn primary_operator_identifier(
         &self,
         _operator_id: &str,
-    ) -> Result<Option<String>, DppError> {
+    ) -> Result<Option<(String, String)>, DppError> {
         Ok(None)
     }
 }

@@ -124,6 +124,7 @@ fn operator(did: &str, name: &str) -> ResponsibleOperator {
         name: name.to_owned(),
         role: OperatorRole::Manufacturer,
         eu_operator_id: None,
+        eu_operator_id_scheme: None,
         country: "DE".to_owned(),
     }
 }
