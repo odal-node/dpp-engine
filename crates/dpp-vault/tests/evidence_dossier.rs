@@ -306,6 +306,7 @@ fn draft_passport() -> Passport {
         component_refs: Vec::new(),
         retention_until: None,
         product_id: None,
+        commodity_code: None,
         // Set directly rather than via a registry reader (none configured in
         // this harness) — sidesteps the Annex III in-force completeness gate
         // regardless of whether "textile" happens to be in force.

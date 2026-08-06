@@ -320,6 +320,9 @@ async fn main() -> anyhow::Result<()> {
     .with_evidence_store(db.evidence_store.clone())
     .with_webhooks(db.webhook_outbox.clone())
     .with_resolver_base_url(cfg.resolver_base_url.clone());
+    if let Some(base) = cfg.snapshot_public_base_url.clone() {
+        passport_service = passport_service.with_snapshot_public_base_url(base);
+    }
     // Only arm the reconcile outbox when there is somewhere to reconcile *to*.
     // Enqueuing rows no drain will ever consume would grow an unbounded backlog
     // of `pending` and make the gauge lie about the tier's health.

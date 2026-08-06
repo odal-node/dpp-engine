@@ -19,7 +19,8 @@ use testcontainers::{
 
 use dpp_dal::pg::{
     PgApiKeyRepo, PgAuditRepo, PgDal, PgEvidenceDossierRepo, PgOperatorConfigRepo, PgPassportRepo,
-    PgRegistryIdentityRepo, PgScanTelemetryRepo, PgWebhookRepo, sqlx,
+    PgRegistryIdentityRepo, PgRegistrySyncRepo, PgRegistryTransferRepo, PgScanTelemetryRepo,
+    PgWebhookRepo, sqlx,
 };
 use dpp_domain::{
     DppError, GhostArchive, GhostRegistrySync,
@@ -310,6 +311,12 @@ async fn start_vault_with_identity(
             },
         )
         .with_registry_reader(operator_repo.clone())
+        // Mirror production here too: the node wires both registry outboxes, so
+        // a harness without them exercises a publish path that does not exist in
+        // any real deployment — and reports the registry surface as
+        // unconfigured.
+        .with_registry_outbox(Arc::new(PgRegistrySyncRepo::new(dal.clone())))
+        .with_transfer_outbox(Arc::new(PgRegistryTransferRepo::new(dal.clone())))
         .with_evidence_store(Arc::new(PgEvidenceDossierRepo::new(dal.clone()))),
     );
     let operator_service = Arc::new(OperatorService::new(operator_repo));

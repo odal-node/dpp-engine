@@ -264,7 +264,14 @@ impl PassportService {
                     .filter(|(_, value)| Some(value) == passport.operator_identifier.as_ref())
                     .map(|(scheme, _)| scheme.as_str())
                     .unwrap_or_default();
-                let reg_req = RegistrationRequest::from_published_passport(
+                // Declare the back-up only where this deployment actually
+                // publishes one. The snapshot tier writing to object storage is
+                // not enough — the registry has to be able to fetch it.
+                let backup_url = self
+                    .snapshot_public_base_url
+                    .as_ref()
+                    .map(|base| format!("{base}/{}.json", passport.id));
+                let mut reg_req = RegistrationRequest::from_published_passport(
                     &passport,
                     RegisteringOperator {
                         legal_name: &self.operator.legal_name,
@@ -276,6 +283,7 @@ impl PassportService {
                     // Set per product group once further delegated acts land.
                     RegistrationGranularity::Item,
                 );
+                reg_req.backup_url = backup_url;
                 let payload = serde_json::to_value(&reg_req)
                     .map_err(|e| DppError::Serialisation(e.to_string()))?;
                 match outbox.commit_publish(&passport, payload).await {
@@ -468,6 +476,7 @@ mod tests {
             component_refs: Vec::new(),
             retention_until: None,
             product_id: None,
+            commodity_code: None,
             operator_identifier: None,
             facility: None,
             seal: None,

@@ -109,6 +109,8 @@ fn request_with_facility(facility: Option<dpp_domain::FacilitySnapshot>) -> Regi
         country_code: "DE".into(),
         granularity: RegistrationGranularity::Item,
         model_id: None,
+        commodity_code: Some("85076000".into()),
+        backup_url: None,
     }
 }
 

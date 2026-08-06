@@ -121,6 +121,14 @@ pub struct PassportService {
     /// node with no QTSP configured) means published passports carry no seal —
     /// visibly absent rather than faked, which is what the trust report reports.
     pub seal_outbox: Option<Arc<dyn SealOutbox>>,
+    /// Public base URL under which this deployment serves its continuity
+    /// snapshots, if it serves them at all.
+    ///
+    /// Declared to the EU registry as the passport's independently-hosted
+    /// back-up. `None` — the default — means no back-up is declared: writing
+    /// snapshots to object storage is not the same as publishing them, and a
+    /// URL the registry cannot fetch is worse than none.
+    pub snapshot_public_base_url: Option<String>,
     /// Base URL the resolver serves on, used to build each passport's carrier
     /// (QR) URL at publish. Defaults to `https://id.odal-node.io`; set per
     /// deployment (a self-hoster's own domain) via [`Self::with_resolver_base_url`]
@@ -158,6 +166,7 @@ impl PassportService {
             webhooks: None,
             snapshot_outbox: None,
             seal_outbox: None,
+            snapshot_public_base_url: None,
             resolver_base_url: "https://id.odal-node.io".to_owned(),
         }
     }
@@ -184,6 +193,14 @@ impl PassportService {
     #[must_use]
     pub fn with_registry_outbox(mut self, outbox: Arc<dyn RegistrySyncOutbox>) -> Self {
         self.registry_outbox = Some(outbox);
+        self
+    }
+
+    /// Declare the public base URL of this deployment's continuity snapshots,
+    /// so registrations can carry the passport's back-up link.
+    #[must_use]
+    pub fn with_snapshot_public_base_url(mut self, base_url: String) -> Self {
+        self.snapshot_public_base_url = Some(base_url.trim_end_matches('/').to_owned());
         self
     }
 
@@ -392,6 +409,7 @@ mod snapshot_render_tests {
             component_refs: Vec::new(),
             retention_until: None,
             product_id: None,
+            commodity_code: None,
             operator_identifier: None,
             facility: None,
             seal: None,

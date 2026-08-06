@@ -231,6 +231,8 @@ impl RegistrySyncPort for EuRegistrySync {
                 digital_link_url: request.data_carrier_uri.clone(),
                 published_at: request.published_at.unwrap_or_else(Utc::now),
                 jws_signature: request.jws_signature.clone(),
+                commodity_code: request.commodity_code.clone(),
+                backup_url: request.backup_url.clone(),
             },
         };
 

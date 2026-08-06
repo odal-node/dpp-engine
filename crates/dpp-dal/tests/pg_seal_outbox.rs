@@ -115,6 +115,7 @@ fn published_passport(jws: &str) -> Passport {
         component_refs: Vec::new(),
         retention_until: None,
         product_id: None,
+        commodity_code: None,
         operator_identifier: None,
         facility: None,
         seal: None,

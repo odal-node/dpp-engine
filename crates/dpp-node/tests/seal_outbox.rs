@@ -224,6 +224,7 @@ fn draft_passport() -> Passport {
         component_refs: Vec::new(),
         retention_until: None,
         product_id: None,
+        commodity_code: None,
         // Battery is an in-force sector, so publish refuses without the Annex III
         // registry identity. Set here because the simulation has no operator
         // config to backfill from — the gate itself is correct and stays armed.
