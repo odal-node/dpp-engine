@@ -258,6 +258,20 @@ mod tests {
         async fn due(&self, _limit: i64) -> Result<Vec<RegistrySyncRow>, DppError> {
             unreachable!("the transfer drain never drains registrations")
         }
+        async fn mark_submitted(
+            &self,
+            _passport_id: PassportId,
+            _registry_id: String,
+        ) -> Result<(), DppError> {
+            unreachable!("the transfer drain never registers")
+        }
+        async fn mark_deactivated(
+            &self,
+            _passport_id: PassportId,
+            _message: String,
+        ) -> Result<(), DppError> {
+            unreachable!("the transfer drain never registers")
+        }
         async fn mark_registered(
             &self,
             _passport_id: PassportId,

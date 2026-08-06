@@ -28,7 +28,13 @@ use dpp_registry::StatusResponse;
 fn sandbox_config_has_correct_defaults() {
     let config = EuRegistrySyncConfig::sandbox("id".into(), "secret".into());
     assert_eq!(config.max_retries, 3);
-    assert!(config.endpoint.base_url.contains("sandbox"));
+    // The Commission's test environment is the `acc` host; this asserted
+    // `contains("sandbox")` back when the URL was invented.
+    assert!(
+        config.endpoint.base_url.contains(".acc."),
+        "got: {}",
+        config.endpoint.base_url
+    );
 }
 
 #[test]
@@ -88,6 +94,7 @@ fn status_to_record_maps_pending() {
 /// was a `warn!` nobody asserted on.
 fn request_with_facility(facility: Option<dpp_domain::FacilitySnapshot>) -> RegistrationRequest {
     RegistrationRequest {
+        request_id: Uuid::now_v7(),
         passport_id: PassportId::new(),
         operator_identifier: "did:web:test.example".into(),
         operator_identifier_scheme: "did".into(),
@@ -911,4 +918,108 @@ fn a_counterparty_without_an_eu_identifier_falls_back_to_its_did() {
     let mapped = operator_identifier_for(&responsible("did:web:beta.example", "Beta", "FR"));
     assert_eq!(mapped.scheme, "did");
     assert_eq!(mapped.value, "did:web:beta.example");
+}
+
+// ── Status fidelity and idempotency ─────────────────────────────────────────
+
+/// A registration the registry has accepted but not yet ruled on must map to
+/// `Pending`, not success. Registration is validated asynchronously, so this is
+/// the *expected* response to a submission — the drain turning it into
+/// `registered` recorded every submission as complete.
+#[test]
+fn a_pending_response_stays_pending() {
+    let resp = EuRegistryResponse {
+        registry_id: "EU-REG-P".into(),
+        passport_id: Uuid::nil(),
+        status: RegistryStatusCode::Pending,
+        message: None,
+        rejection_reasons: None,
+        updated_at: Utc::now(),
+    };
+    assert_eq!(
+        EuRegistrySync::response_to_record(&resp).status,
+        RegistryStatus::Pending
+    );
+}
+
+/// A deactivated record is not a rejected one. Rejection means the submission
+/// was defective and can be corrected; deactivation means the record is out of
+/// service, which resubmitting does not fix.
+#[test]
+fn a_deactivated_record_is_not_reported_as_rejected() {
+    let resp = EuRegistryResponse {
+        registry_id: "EU-REG-D".into(),
+        passport_id: Uuid::nil(),
+        status: RegistryStatusCode::Deactivated,
+        message: None,
+        rejection_reasons: None,
+        updated_at: Utc::now(),
+    };
+    let mapped = EuRegistrySync::response_to_record(&resp).status;
+    assert_eq!(mapped, RegistryStatus::Deactivated);
+    assert_ne!(mapped, RegistryStatus::Rejected);
+
+    let status = StatusResponse {
+        registry_id: "EU-REG-D".into(),
+        status: RegistryStatusCode::Deactivated,
+        updated_at: Utc::now(),
+        message: None,
+    };
+    assert_eq!(
+        EuRegistrySync::status_to_record(&status).status,
+        RegistryStatus::Deactivated
+    );
+}
+
+/// The idempotency key is the request's own, carried on the queued payload, so
+/// every retry of the same registration presents the same key. Minting one per
+/// attempt made a submission the registry had already committed look like a
+/// fresh one on the next try.
+#[tokio::test]
+async fn retrying_a_registration_reuses_its_request_id() {
+    let state = Arc::new(MockState::default());
+    // Two 5xx then a success: one logical registration, three submissions.
+    {
+        let mut q = state.register_queue.lock().await;
+        for _ in 0..2 {
+            q.push_back((
+                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                serde_json::json!({"error": "upstream"}),
+            ));
+        }
+        q.push_back((axum::http::StatusCode::OK, registered_response("EU-REG-I")));
+    }
+    let base_url = mock_server::spawn(state.clone()).await;
+    let sync = EuRegistrySync::new(mock_config(&base_url)).unwrap();
+
+    let request = valid_request();
+    let expected = request.request_id;
+    sync.register(request)
+        .await
+        .expect("should succeed after retries");
+
+    let bodies = state.register_bodies.lock().await;
+    assert_eq!(
+        bodies.len(),
+        3,
+        "the mock should have seen three submissions"
+    );
+    for body in bodies.iter() {
+        assert_eq!(
+            body["requestId"].as_str().unwrap(),
+            expected.to_string(),
+            "every retry must present the same idempotency key"
+        );
+    }
+}
+
+/// The key is frozen into the queued payload, so it survives a restart: the
+/// drain rebuilds the request from JSON and must get the same key back.
+#[test]
+fn the_request_id_survives_the_outbox_round_trip() {
+    let request = valid_request();
+    let expected = request.request_id;
+    let payload = serde_json::to_value(&request).unwrap();
+    let replayed: RegistrationRequest = serde_json::from_value(payload).unwrap();
+    assert_eq!(replayed.request_id, expected);
 }

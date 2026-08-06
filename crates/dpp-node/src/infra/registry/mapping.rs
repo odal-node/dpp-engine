@@ -2,6 +2,7 @@
 //! between `dpp-domain`'s port types and `dpp-registry`'s EU bridge wire
 //! types, and makes the actual REST calls via `EuRegistrySync`.
 
+use super::client::{EuRegistrySync, RetryableError};
 use async_trait::async_trait;
 use chrono::Utc;
 use dpp_domain::{
@@ -18,9 +19,6 @@ use dpp_registry::{
     ProductIdentifier, ProductItemIdentifier, RegistrationLevel, RegistrationPayload,
     StatusResponse, TransferNotification,
 };
-use uuid::Uuid;
-
-use super::client::{EuRegistrySync, RetryableError};
 
 impl EuRegistrySync {
     /// Map a bridge `EuRegistryResponse` to a domain `RegistryRecord`.
@@ -32,7 +30,7 @@ impl EuRegistrySync {
             RegistryStatusCode::Registered => RegistryStatus::Registered,
             RegistryStatusCode::Rejected => RegistryStatus::Rejected,
             RegistryStatusCode::SuspendedByAuthority => RegistryStatus::SuspendedByAuthority,
-            RegistryStatusCode::Deactivated => RegistryStatus::Rejected, // map deactivated → rejected for now
+            RegistryStatusCode::Deactivated => RegistryStatus::Deactivated,
         };
 
         RegistryRecord {
@@ -57,7 +55,7 @@ impl EuRegistrySync {
             RegistryStatusCode::Registered => RegistryStatus::Registered,
             RegistryStatusCode::Rejected => RegistryStatus::Rejected,
             RegistryStatusCode::SuspendedByAuthority => RegistryStatus::SuspendedByAuthority,
-            RegistryStatusCode::Deactivated => RegistryStatus::Rejected,
+            RegistryStatusCode::Deactivated => RegistryStatus::Deactivated,
         };
 
         RegistryRecord {
@@ -193,7 +191,11 @@ impl RegistrySyncPort for EuRegistrySync {
         // Build the bridge envelope from the port request.
         let envelope = EuRegistryEnvelope {
             api_version: self.config.endpoint.api_version.clone(),
-            request_id: Uuid::now_v7(),
+            // The request's own key, minted once when the registration was built
+            // and frozen into the queued payload. Generating one here instead
+            // gave every retry a fresh identity, so a submission the registry
+            // had already committed looked like a new one on the next attempt.
+            request_id: request.request_id,
             timestamp: Utc::now(),
             payload: RegistrationPayload {
                 passport_id: request.passport_id.0,

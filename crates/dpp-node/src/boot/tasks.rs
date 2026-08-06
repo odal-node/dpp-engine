@@ -66,8 +66,12 @@ const STALL_THRESHOLD: i32 = 8;
 /// can never silently report different gauge names for the same counts.
 fn set_registry_gauges(c: &RegistrySyncCounts) {
     metrics::gauge!("registry_outbox_pending").set(c.pending as f64);
+    // Awaiting the registry's verdict: not an error, but not done either, and a
+    // number that should not keep growing.
+    metrics::gauge!("registry_outbox_submitted").set(c.submitted as f64);
     metrics::gauge!("registry_outbox_stalled").set(c.stalled as f64);
     metrics::gauge!("registry_outbox_rejected").set(c.rejected as f64);
+    metrics::gauge!("registry_outbox_deactivated").set(c.deactivated as f64);
 }
 
 /// Log/gauge the outbox's outstanding state, then spawn the periodic drain
@@ -85,8 +89,10 @@ pub async fn spawn_registry_drain(
         Ok(c) => {
             tracing::info!(
                 pending = c.pending,
+                submitted = c.submitted,
                 registered = c.registered,
                 rejected = c.rejected,
+                deactivated = c.deactivated,
                 status_intents = c.status_intents,
                 stalled = c.stalled,
                 "registry outbox reconciliation at boot"

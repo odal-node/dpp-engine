@@ -58,10 +58,24 @@ use dpp_domain::{DppError, domain::passport::PassportId};
 pub enum RegistrySyncStatus {
     /// A registration attempt is due (drainable).
     Pending,
+    /// Accepted by the registry for asynchronous validation, verdict outstanding
+    /// (drainable — the drain *polls* rather than resubmitting).
+    ///
+    /// Registration is not synchronous: the registry returns a record
+    /// identifier and validates afterwards. Without this state the drain had to
+    /// call that terminal success, which recorded every submission as complete
+    /// and never learned if it was later refused.
+    Submitted,
     /// Registered by the EU registry (terminal success).
     Registered,
     /// Rejected by the EU registry (terminal; needs human attention).
     Rejected,
+    /// Withdrawn from service in the registry (terminal; not our defect).
+    ///
+    /// Kept apart from [`Self::Rejected`], which it used to be folded into: a
+    /// rejection is a defective submission an operator can correct, a
+    /// deactivation is not.
+    Deactivated,
 }
 
 impl RegistrySyncStatus {
@@ -70,8 +84,10 @@ impl RegistrySyncStatus {
     pub fn as_db(&self) -> &'static str {
         match self {
             Self::Pending => "pending",
+            Self::Submitted => "submitted",
             Self::Registered => "registered",
             Self::Rejected => "rejected",
+            Self::Deactivated => "deactivated",
         }
     }
 
@@ -80,10 +96,18 @@ impl RegistrySyncStatus {
     #[must_use]
     pub fn from_db(s: &str) -> Self {
         match s {
+            "submitted" => Self::Submitted,
             "registered" => Self::Registered,
             "rejected" => Self::Rejected,
+            "deactivated" => Self::Deactivated,
             _ => Self::Pending,
         }
+    }
+
+    /// Whether the drain still has work to do on a row in this state.
+    #[must_use]
+    pub fn is_drainable(&self) -> bool {
+        matches!(self, Self::Pending | Self::Submitted)
     }
 }
 
@@ -154,6 +178,10 @@ pub struct RegistrySyncRow {
 pub struct RegistrySyncCounts {
     /// Rows awaiting a drain attempt.
     pub pending: i64,
+    /// Rows accepted by the registry and awaiting its verdict.
+    pub submitted: i64,
+    /// Rows the registry withdrew from service.
+    pub deactivated: i64,
     /// Rows terminally registered.
     pub registered: i64,
     /// Rows terminally rejected (need attention).
@@ -216,6 +244,24 @@ pub trait RegistrySyncOutbox: Send + Sync {
     /// Rows due for a drain attempt (`pending`, `next_attempt_at <= now`),
     /// oldest first, capped at `limit`.
     async fn due(&self, limit: i64) -> Result<Vec<RegistrySyncRow>, DppError>;
+
+    /// The registry accepted the submission for validation but has not ruled on
+    /// it: record the identifier it returned and move the row to `submitted`, so
+    /// the next drain polls for the verdict instead of registering again.
+    async fn mark_submitted(
+        &self,
+        passport_id: PassportId,
+        registry_id: String,
+    ) -> Result<(), DppError>;
+
+    /// Terminal: the registry withdrew the record from service. Distinct from
+    /// [`Self::mark_rejected`] — nothing about the submission was defective, so
+    /// there is nothing to correct and resubmit.
+    async fn mark_deactivated(
+        &self,
+        passport_id: PassportId,
+        message: String,
+    ) -> Result<(), DppError>;
 
     /// Terminal success: mark `registered` and store the registry id.
     async fn mark_registered(

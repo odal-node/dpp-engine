@@ -132,7 +132,7 @@ impl RegistrySyncOutbox for PgRegistrySyncRepo {
             r#"SELECT passport_id, status, status_intent, registry_id, payload, message,
                       attempts, next_attempt_at
                FROM odal.registry_sync
-               WHERE status = 'pending' AND next_attempt_at <= now()
+               WHERE status IN ('pending','submitted') AND next_attempt_at <= now()
                ORDER BY next_attempt_at ASC
                LIMIT $1"#,
         )
@@ -141,6 +141,58 @@ impl RegistrySyncOutbox for PgRegistrySyncRepo {
         .await
         .map_err(db_err)?;
         Ok(rows.iter().map(Self::row_to_sync).collect())
+    }
+
+    async fn mark_submitted(
+        &self,
+        passport_id: PassportId,
+        registry_id: String,
+    ) -> Result<(), DppError> {
+        // Backed off like any other incomplete row, so the poll for a verdict
+        // does not run hot against the registry. `attempts` deliberately keeps
+        // counting: a submission that never resolves is exactly the kind of
+        // stall a human needs to see.
+        let res = sqlx::query(
+            r#"UPDATE odal.registry_sync SET
+                 status = 'submitted',
+                 registry_id = $2,
+                 submitted_at = COALESCE(submitted_at, now()),
+                 attempts = attempts + 1,
+                 last_attempt_at = now(),
+                 next_attempt_at = now()
+                   + (LEAST(power(2, attempts + 1), 3600) * (0.75 + random() * 0.5))
+                     * interval '1 second',
+                 message = NULL,
+                 updated_at = now()
+               WHERE passport_id = $1"#,
+        )
+        .bind(passport_id.0)
+        .bind(&registry_id)
+        .execute(self.dal.pool())
+        .await
+        .map_err(db_err)?;
+        require_updated(&res, "registry_sync row for passport", passport_id.0)
+    }
+
+    async fn mark_deactivated(
+        &self,
+        passport_id: PassportId,
+        message: String,
+    ) -> Result<(), DppError> {
+        let res = sqlx::query(
+            r#"UPDATE odal.registry_sync SET
+                 status = 'deactivated',
+                 message = $2,
+                 last_attempt_at = now(),
+                 updated_at = now()
+               WHERE passport_id = $1"#,
+        )
+        .bind(passport_id.0)
+        .bind(&message)
+        .execute(self.dal.pool())
+        .await
+        .map_err(db_err)?;
+        require_updated(&res, "registry_sync row for passport", passport_id.0)
     }
 
     async fn mark_registered(
@@ -234,10 +286,13 @@ impl RegistrySyncOutbox for PgRegistrySyncRepo {
         let row = sqlx::query(
             r#"SELECT
                  count(*) FILTER (WHERE status = 'pending')                          AS pending,
+                 count(*) FILTER (WHERE status = 'submitted')                         AS submitted,
                  count(*) FILTER (WHERE status = 'registered')                       AS registered,
                  count(*) FILTER (WHERE status = 'rejected')                         AS rejected,
+                 count(*) FILTER (WHERE status = 'deactivated')                       AS deactivated,
                  count(*) FILTER (WHERE status_intent IS NOT NULL)                   AS status_intents,
-                 count(*) FILTER (WHERE status = 'pending' AND attempts >= $1)       AS stalled
+                 count(*) FILTER (WHERE status IN ('pending','submitted')
+                                    AND attempts >= $1)                              AS stalled
                FROM odal.registry_sync"#,
         )
         .bind(stall_threshold)
@@ -246,8 +301,10 @@ impl RegistrySyncOutbox for PgRegistrySyncRepo {
         .map_err(db_err)?;
         Ok(RegistrySyncCounts {
             pending: row.get::<i64, _>("pending"),
+            submitted: row.get::<i64, _>("submitted"),
             registered: row.get::<i64, _>("registered"),
             rejected: row.get::<i64, _>("rejected"),
+            deactivated: row.get::<i64, _>("deactivated"),
             status_intents: row.get::<i64, _>("status_intents"),
             stalled: row.get::<i64, _>("stalled"),
         })
