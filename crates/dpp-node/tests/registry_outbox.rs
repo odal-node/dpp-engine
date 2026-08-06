@@ -215,8 +215,7 @@ impl RegistrySyncPort for MockPort {
 
     async fn notify_transfer(
         &self,
-        _pid: PassportId,
-        _op: String,
+        _record: &dpp_domain::domain::transfer::TransferRecord,
     ) -> Result<RegistryRecord, DppError> {
         unimplemented!("not exercised")
     }

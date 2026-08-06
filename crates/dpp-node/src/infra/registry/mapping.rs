@@ -7,6 +7,7 @@ use chrono::Utc;
 use dpp_domain::{
     domain::error::DppError,
     domain::passport::PassportId,
+    domain::transfer::{ResponsibleOperator, TransferRecord},
     ports::registry_sync::{
         RegistrationGranularity, RegistrationRequest, RegistryIdentifiers, RegistryRecord,
         RegistryStatus, RegistrySyncPort,
@@ -93,6 +94,22 @@ pub(super) fn facility_identifier_for(request: &RegistrationRequest) -> Facility
             country: String::new(),
             address: None,
         },
+    }
+}
+
+/// Map a domain [`ResponsibleOperator`] onto the registry's operator identifier.
+///
+/// Scheme and value mirror the registration path (`did`), so the same operator
+/// is named the same way whether it is being registered or transferred to.
+/// `eu_operator_id`, when present, is the more authoritative identifier but
+/// carries no scheme this crate can assert, so it is not guessed at here.
+pub(super) fn operator_identifier_for(operator: &ResponsibleOperator) -> OperatorIdentifier {
+    OperatorIdentifier {
+        scheme: "did".into(),
+        value: operator.did.clone(),
+        name: operator.name.clone(),
+        country: operator.country.clone(),
+        did: Some(operator.did.clone()),
     }
 }
 
@@ -344,35 +361,51 @@ impl RegistrySyncPort for EuRegistrySync {
         .map_err(|e| e.into_dpp_error())
     }
 
-    async fn notify_transfer(
-        &self,
-        passport_id: PassportId,
-        new_operator_identifier: String,
-    ) -> Result<RegistryRecord, DppError> {
+    async fn notify_transfer(&self, record: &TransferRecord) -> Result<RegistryRecord, DppError> {
         let base_url = &self.config.endpoint.base_url;
+        let passport_id = record.passport_id;
 
         let notification = TransferNotification {
             passport_id: passport_id.0,
             registry_id: String::new(), // filled by the registry on their side
-            from_operator: OperatorIdentifier {
-                scheme: "did".into(),
-                value: String::new(), // current operator — would come from context
-                name: String::new(),
-                country: String::new(),
-                did: None,
-            },
-            to_operator: OperatorIdentifier {
-                scheme: "did".into(),
-                value: new_operator_identifier.clone(),
-                name: String::new(),
-                country: String::new(),
-                did: Some(new_operator_identifier),
-            },
-            reason: "transfer".into(),
-            transferred_at: Utc::now(),
-            from_signature: None,
-            to_signature: None,
+            from_operator: operator_identifier_for(&record.from_operator),
+            to_operator: operator_identifier_for(&record.to_operator),
+            reason: record.reason.wire_str().to_owned(),
+            // The handover instant, not the moment we got round to telling the
+            // registry: `completed_at` when both parties have signed, falling
+            // back to when it was initiated for a transfer still pending
+            // acceptance.
+            transferred_at: record.completed_at.unwrap_or(record.initiated_at),
+            // The dual signatures are the evidence that both operators
+            // authorised the handover. They are collected on the transfer and
+            // were previously dropped here.
+            from_signature: record.from_signature.clone(),
+            to_signature: record.to_signature.clone(),
         };
+
+        // Fail closed, for the same reason `register` does: a transfer
+        // notification is a regulatory submission naming two legal persons, and
+        // one built from an incomplete operator record is one the registry is
+        // expected to reject.
+        if let Err(e) = notification.validate() {
+            if !self.config.allow_invalid_payloads {
+                metrics::counter!("registry_payload_rejected_total").increment(1);
+                tracing::error!(
+                    passport_id = %passport_id,
+                    error = %e,
+                    "EU registry transfer notification failed validation — refusing to submit"
+                );
+                return Err(DppError::Validation(
+                    format!("EU registry transfer notification failed validation: {e}").into(),
+                ));
+            }
+            tracing::warn!(
+                passport_id = %passport_id,
+                error = %e,
+                "EU registry transfer notification failed validation — submitting anyway \
+                 because allow_invalid_payloads is set"
+            );
+        }
 
         self.with_retry(|| {
             let url = format!("{base_url}/registrations/{passport_id}/transfer");

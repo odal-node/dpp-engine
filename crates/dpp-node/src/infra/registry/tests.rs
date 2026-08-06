@@ -8,6 +8,9 @@ use dpp_registry::{EuRegistryResponse, registry::RegistryStatusCode};
 use uuid::Uuid;
 
 use dpp_domain::DppError;
+use dpp_domain::domain::transfer::{
+    OperatorRole, ResponsibleOperator, TransferReason, TransferRecord,
+};
 use dpp_domain::ports::registry_sync::{
     RegistrationGranularity, RegistrationRequest, RegistryStatus, RegistrySyncPort,
 };
@@ -210,6 +213,10 @@ mod mock_server {
         pub(super) register_hits: AtomicUsize,
         pub(super) status_queue: Mutex<VecDeque<(StatusCode, Value)>>,
         pub(super) transfer_queue: Mutex<VecDeque<(StatusCode, Value)>>,
+        /// Bodies the registry actually received on `/transfer`. Asserting on
+        /// the wire body is the only way to catch a field the adapter silently
+        /// drops — a status-code assertion passes either way.
+        pub(super) transfer_bodies: Mutex<VecDeque<Value>>,
     }
 
     async fn pop_or_500(queue: &Mutex<VecDeque<(StatusCode, Value)>>) -> Response {
@@ -249,7 +256,9 @@ mod mock_server {
     async fn transfer_handler(
         State(state): State<Arc<MockState>>,
         Path(_id): Path<String>,
+        Json(body): Json<Value>,
     ) -> Response {
+        state.transfer_bodies.lock().await.push_back(body);
         pop_or_500(&state.transfer_queue).await
     }
 
@@ -482,7 +491,7 @@ async fn notify_transfer_success() {
     let sync = EuRegistrySync::new(mock_config(&base_url)).unwrap();
 
     let record = sync
-        .notify_transfer(PassportId::new(), "did:web:new-operator.example".into())
+        .notify_transfer(&completed_transfer())
         .await
         .expect("notify_transfer should succeed");
 
@@ -635,4 +644,134 @@ fn an_unlinked_model_is_absent_not_blank() {
 
     request.model_id = Some("MODEL-7".into());
     assert_eq!(level_for(&request).model_id.as_deref(), Some("MODEL-7"));
+}
+
+// ── Transfer notification carries the whole handover ────────────────────────
+
+fn responsible(did: &str, name: &str, country: &str) -> ResponsibleOperator {
+    ResponsibleOperator {
+        did: did.to_owned(),
+        name: name.to_owned(),
+        role: OperatorRole::Manufacturer,
+        eu_operator_id: None,
+        country: country.to_owned(),
+    }
+}
+
+/// A transfer both parties have signed and completed.
+fn completed_transfer() -> TransferRecord {
+    let completed = Utc::now();
+    TransferRecord {
+        transfer_id: Uuid::now_v7(),
+        passport_id: PassportId::new(),
+        from_operator: responsible("did:web:old.example", "Old Operator GmbH", "DE"),
+        to_operator: responsible("did:web:new.example", "New Operator SARL", "FR"),
+        reason: TransferReason::Remanufacturing,
+        from_signature: Some("jws-from".to_owned()),
+        to_signature: Some("jws-to".to_owned()),
+        initiated_at: completed - chrono::Duration::hours(2),
+        completed_at: Some(completed),
+        rejected_at: None,
+        cancelled_at: None,
+        notes: None,
+    }
+}
+
+/// The dual signatures are the evidence that both operators authorised the
+/// handover, and both operators must be named. All of it was previously dropped
+/// on the floor: the adapter sent empty strings and `None` signatures because
+/// the port handed it only the incoming operator's identifier.
+#[tokio::test]
+async fn transfer_notification_carries_both_operators_and_both_signatures() {
+    let state = Arc::new(MockState::default());
+    state
+        .transfer_queue
+        .lock()
+        .await
+        .push_back((axum::http::StatusCode::OK, registered_response("EU-REG-T1")));
+    let base_url = mock_server::spawn(state.clone()).await;
+    let sync = EuRegistrySync::new(mock_config(&base_url)).unwrap();
+
+    let transfer = completed_transfer();
+    sync.notify_transfer(&transfer)
+        .await
+        .expect("a complete transfer must notify successfully");
+
+    let sent = state
+        .transfer_bodies
+        .lock()
+        .await
+        .pop_front()
+        .expect("the registry must have received a notification");
+
+    assert_eq!(sent["fromOperator"]["name"], "Old Operator GmbH");
+    assert_eq!(sent["fromOperator"]["country"], "DE");
+    assert_eq!(sent["toOperator"]["name"], "New Operator SARL");
+    assert_eq!(sent["toOperator"]["country"], "FR");
+    assert_eq!(sent["fromSignature"], "jws-from");
+    assert_eq!(sent["toSignature"], "jws-to");
+    assert_eq!(
+        sent["reason"], "remanufacturing",
+        "the reason must travel as its stable wire form, not a hardcoded literal"
+    );
+}
+
+/// A transfer whose operators are not identified must not reach the registry.
+#[tokio::test]
+async fn transfer_with_an_unidentified_operator_is_refused() {
+    let state = Arc::new(MockState::default());
+    let base_url = mock_server::spawn(state.clone()).await;
+    let sync = EuRegistrySync::new(mock_config(&base_url)).unwrap();
+
+    let mut transfer = completed_transfer();
+    transfer.from_operator.name = String::new();
+
+    let err = sync
+        .notify_transfer(&transfer)
+        .await
+        .expect_err("an unidentified outgoing operator must be refused");
+
+    assert!(matches!(err, DppError::Validation(_)), "got: {err:?}");
+    assert!(
+        state.transfer_bodies.lock().await.is_empty(),
+        "the registry was contacted despite the notification failing validation"
+    );
+}
+
+/// The handover instant is what the registry is told about — not the moment the
+/// notification happened to be sent.
+#[tokio::test]
+async fn a_pending_transfer_reports_its_initiation_time() {
+    let state = Arc::new(MockState::default());
+    state
+        .transfer_queue
+        .lock()
+        .await
+        .push_back((axum::http::StatusCode::OK, registered_response("EU-REG-T2")));
+    let base_url = mock_server::spawn(state.clone()).await;
+    let sync = EuRegistrySync::new(mock_config(&base_url)).unwrap();
+
+    let mut transfer = completed_transfer();
+    transfer.completed_at = None;
+    transfer.to_signature = None;
+    let initiated = transfer.initiated_at;
+
+    sync.notify_transfer(&transfer)
+        .await
+        .expect("a pending transfer is still notifiable");
+
+    let sent = state.transfer_bodies.lock().await.pop_front().unwrap();
+    let reported: chrono::DateTime<Utc> = sent["transferredAt"]
+        .as_str()
+        .expect("transferredAt must be sent")
+        .parse()
+        .expect("transferredAt must be a timestamp");
+    assert_eq!(
+        reported, initiated,
+        "a transfer still awaiting acceptance reports when it was initiated"
+    );
+    assert!(
+        sent.get("toSignature").is_none(),
+        "an unsigned acceptance must be absent, not an empty string"
+    );
 }
