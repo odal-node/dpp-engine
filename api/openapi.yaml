@@ -1142,8 +1142,8 @@ paths:
         Paginated list of DPPs for the authenticated operator.
         Supports filtering by status, free-text search across
         `productName`, `batchId`, and `manufacturer.name`, and an exact
-        `facilityId` match (ESPR Annex III; ADR-006 — a grouping filter,
-        never an isolation boundary).
+        `facilityId` match (ESPR Annex III). A grouping filter, never an
+        isolation boundary.
       tags: [DPP Management]
       security:
         - BearerApiKey: []

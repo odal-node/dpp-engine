@@ -201,7 +201,7 @@ fn battery_passport_with(gtin: &str, batch: Option<&str>, status: PassportStatus
 }
 
 /// Build a facility snapshot carrying `value` (other fields are placeholders) for
-/// the ADR-006 grouping-filter test.
+/// the grouping-filter test.
 fn facility_with_value(value: &str) -> FacilitySnapshot {
     FacilitySnapshot {
         scheme: "gln".into(),
@@ -238,7 +238,7 @@ async fn t1_roundtrip_parity() {
     assert_eq!(repo.count(None, None).await.expect("count"), 1);
 }
 
-// ADR-006 — `facilityId` is an exact-match grouping filter on list/count, never
+// `facilityId` is an exact-match grouping filter on list/count, never
 // an isolation boundary (every facility's passports remain reachable with no filter).
 #[tokio::test]
 async fn t1b_list_and_count_filter_by_facility_id() {
