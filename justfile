@@ -50,6 +50,19 @@ lint:
 lint-integration:
     cargo clippy -p dpp-dal -p dpp-vault -p dpp-plugin-host -p dpp-node --all-targets --features integration-tests -- -D warnings
 
+# Validate api/openapi.yaml (needs Node; no install — npx fetches on demand).
+#
+# Redocly is already the tool behind the generated api/openapi.html, so this is
+# the same validator that renders the spec. `.redocly.lint-ignore.yaml` baselines
+# the problems the spec has today so this passes now and fails on NEW ones —
+# shrink that file, never regenerate it, or the gate stops meaning anything.
+openapi-check:
+    npx --yes @redocly/cli@latest lint api/openapi.yaml
+
+# Regenerate the browsable spec (api/openapi.html, git-ignored build artifact).
+openapi-html:
+    npx --yes @redocly/cli@latest build-docs api/openapi.yaml -o api/openapi.html
+
 # Format all code
 fmt:
     cargo fmt --all
