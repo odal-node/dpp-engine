@@ -1,6 +1,6 @@
 //! Compliance Current — signed, versioned ruleset bundles.
 //!
-//! ADR-002's moat made literal: rulesets ship as versioned bundles whose
+//! Rulesets ship as versioned bundles whose
 //! manifest is signed (compact EdDSA JWS) by an **offline publisher key**,
 //! distinct from any operator key. The node pins the publisher public key,
 //! verifies **fail-closed**, and can hot-swap the active bundle without a

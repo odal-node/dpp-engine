@@ -229,7 +229,7 @@ odal operator-id remove <id>                          # remove an identifier
 ```
 
 An operator can register multiple facilities and identifiers — this is
-grouping/attribution, never a tenancy or isolation boundary (see ADR-006).
+grouping/attribution, never a tenancy or isolation boundary.
 
 ---
 
