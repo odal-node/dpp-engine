@@ -485,6 +485,49 @@ components:
           description: Always empty in format v1 — `dpp-calc` invocation is not yet wired end to end.
           items:
             type: object
+        componentGraph:
+          # `anyOf` rather than `allOf` + `nullable`: this is OpenAPI 3.1, where
+          # `nullable` no longer exists and a nullable `$ref` is expressed as a
+          # union with the null type.
+          anyOf:
+            - $ref: "#/components/schemas/TreeReport"
+            - type: "null"
+          description: |
+            The recursive component-tree (bill-of-materials) verification report,
+            present iff the passport declares `componentRefs`. `null` for a unit
+            with no modelled sub-assemblies.
+
+            Generated at dossier-assembly time by walking the tree and pin-checking
+            each node, then bound into `contentHashes` like every other member — so
+            a tampered report fails the dossier's `content_integrity` check rather
+            than passing as an unverifiable attachment.
+
+            Integrity only, the same caveat as the standalone `verify-tree` route:
+            it proves each node's signed public view is unchanged against its
+            pinned hash, not the cryptographic validity of that node's signature.
+        qualifiedSeal:
+          type: [object, "null"]
+          description: |
+            The passport's eIDAS qualified seal, present iff one has been
+            applied. Carries the seal envelope plus `signedOverJws` and
+            `payloadHash`, so a verifier holding only this dossier has both the
+            CAdES and the preimage to check it against.
+
+            Included because a dossier is what an authority is handed and the
+            seal is its one member carrying an Art. 35(2) presumption — and
+            because it is unreachable otherwise: the seal is stripped from
+            `fullView` and `publicView` alike, since it covers the full-payload
+            signature rather than any redaction. Bound into `contentHashes` like
+            every other member. `null` when the seal is still queued.
+          properties:
+            seal:
+              type: object
+              description: The `SealedEnvelope` as persisted on the passport.
+            signedOverJws:
+              type: string
+            payloadHash:
+              type: string
+              pattern: "^[0-9a-f]{64}$"
 
     EvidenceDossierRecord:
       type: object
@@ -1975,6 +2018,92 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/TreeReport"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /vault/api/v1/dpp/{dppId}/seal:
+    get:
+      operationId: getDppSeal
+      summary: Fetch the passport's eIDAS qualified electronic seal
+      description: |
+        Returns the qualified seal a QTSP applied to this passport, together with
+        the compact JWS it was taken over and that JWS's SHA-256 digest.
+
+        The seal has its own route because it is stripped from every audience
+        view, public included: it covers the **full**-payload `jwsSignature`, so
+        attaching it to a redacted body would hand the reader a proof that
+        verifies against nothing they received.
+
+        **This node does not validate the seal.** A detached CAdES must be
+        checked by an independent AdES validator against the EU Trusted List, and
+        that check is also what establishes whether the seal covers
+        `currentPayloadHash` — the validator extracts the signed message digest
+        and compares. A mismatch means the passport was re-published after
+        sealing and a seal over the new signature has not landed yet; the seal
+        remains valid for the signature it does cover.
+
+        `404` when the passport has no seal — it may be unpublished, its seal may
+        still be queued, or the node may have no QTSP configured. An unsealed
+        passport has no seal resource rather than an empty one.
+      tags: [DPP Management]
+      security:
+        - BearerApiKey: []
+        - BasicAuth: []
+      parameters:
+        - name: dppId
+          in: path
+          required: true
+          schema:
+            $ref: "#/components/schemas/DppId"
+      responses:
+        "200":
+          description: The qualified seal and the signature it attests to.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  [
+                    format,
+                    sealValue,
+                    sealedAt,
+                    placeholder,
+                    currentJws,
+                    currentPayloadHash,
+                    verification,
+                  ]
+                properties:
+                  format:
+                    type: string
+                    description: AdES format of `sealValue`.
+                    example: CADES
+                  sealValue:
+                    type: string
+                    description: Base64 detached CAdES (`.p7s`) as returned by the QTSP.
+                  sealedAt:
+                    type: string
+                    format: date-time
+                  placeholder:
+                    type: boolean
+                    description: |
+                      `true` when this is a development placeholder with no legal
+                      validity. A production node refuses to boot in that state.
+                  currentJws:
+                    type: string
+                    description: The passport's current compact JWS.
+                  currentPayloadHash:
+                    type: string
+                    description: |
+                      Hex SHA-256 of `currentJws`. Labelled "current" rather than
+                      "sealed" deliberately: the seal envelope does not record its
+                      own preimage, so this is one half of the comparison and the
+                      external validator supplies the other.
+                    pattern: "^[0-9a-f]{64}$"
+                  verification:
+                    type: string
+                    description: What was and was not checked by this node.
         "401":
           $ref: "#/components/responses/Unauthorized"
         "404":

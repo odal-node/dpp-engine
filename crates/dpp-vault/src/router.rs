@@ -47,6 +47,7 @@ use crate::{
             operator_ids_set_primary_handler,
         },
         scan_ingest::{scan_ingest_handler, scan_ingest_mtls},
+        seal::seal_handler,
         stats::{operator_stats_handler, passport_stats_handler},
         suspend::suspend_handler,
         transfer::{transfer_accept_handler, transfer_initiate_handler},
@@ -87,6 +88,10 @@ pub fn build(state: AppState) -> Router {
         )
         .route("/dpp/{dppId}/history", get(history_handler))
         .route("/dpp/{dppId}/verify-tree", get(verify_tree_handler))
+        // The qualified seal has its own route because it is stripped from
+        // every audience view — it covers the full-payload signature, so it
+        // verifies against no redaction.
+        .route("/dpp/{dppId}/seal", get(seal_handler))
         // ── Scan telemetry (aggregate, privacy-safe) ──────────────────
         .route("/dpp/{dppId}/stats", get(passport_stats_handler))
         .route("/stats", get(operator_stats_handler))

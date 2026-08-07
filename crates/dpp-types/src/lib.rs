@@ -32,6 +32,7 @@ pub mod operator;
 pub mod registry_identity;
 pub mod registry_sync;
 pub mod scan;
+pub mod seal;
 pub mod snapshot;
 pub mod transfer;
 pub mod trust;
@@ -62,6 +63,7 @@ pub use scan::{
     DailyScanCount, OperatorScanStats, PassportScanStats, QrRenderIncrement, ScanIncrement,
     ScanPruneCounts, ScanTelemetryRepository,
 };
+pub use seal::{SealOutbox, SealOutboxCounts, SealRow, digest_for_jws};
 pub use snapshot::{
     SnapshotOutbox, SnapshotOutboxCounts, SnapshotReconcileRow, SnapshotReconcileStatus,
     SnapshotStore,

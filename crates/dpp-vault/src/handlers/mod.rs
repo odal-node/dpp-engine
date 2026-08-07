@@ -22,6 +22,7 @@ pub mod publish;
 pub mod read;
 pub mod registry_identity;
 pub mod scan_ingest;
+pub mod seal;
 pub mod stats;
 pub mod suspend;
 pub mod transfer;

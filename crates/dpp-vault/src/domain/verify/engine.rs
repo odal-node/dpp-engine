@@ -400,6 +400,7 @@ mod tests {
             checkpoint: None,
             calc_receipts: Vec::new(),
             component_graph: None,
+            qualified_seal: None,
         };
 
         dossier.manifest.content_hashes =
@@ -498,6 +499,39 @@ mod tests {
         let report = verify_dossier(&dossier);
         assert!(matches!(
             by_name(&report, "content_integrity"),
+            CheckStatus::Fail(_)
+        ));
+    }
+
+    /// The qualified seal is the one dossier member carrying an eIDAS Art. 35(2)
+    /// presumption, so swapping it for another seal must be as detectable as
+    /// swapping any other member.
+    #[test]
+    fn tampering_the_qualified_seal_flips_content_integrity() {
+        let signing_key = SigningKey::from_bytes(&[9u8; 32]);
+        let mut dossier = valid_dossier(&signing_key);
+        dossier.qualified_seal = Some(serde_json::json!({
+            "seal": { "format": "CADES", "sealValue": "p7s-original" },
+            "signedOverJws": "a.b.c",
+            "payloadHash": "ab".repeat(32),
+        }));
+        dossier.manifest.content_hashes =
+            compute_content_hashes(&dossier).expect("test dossier canonicalises");
+        let manifest_value = serde_json::to_value(&dossier.manifest).unwrap();
+        dossier.manifest_jws = sign(&signing_key, &manifest_value);
+        assert_eq!(
+            *by_name(&verify_dossier(&dossier), "content_integrity"),
+            CheckStatus::Pass
+        );
+
+        // Substitute a different seal without re-signing the manifest.
+        dossier.qualified_seal = Some(serde_json::json!({
+            "seal": { "format": "CADES", "sealValue": "p7s-substituted" },
+            "signedOverJws": "a.b.c",
+            "payloadHash": "ab".repeat(32),
+        }));
+        assert!(matches!(
+            by_name(&verify_dossier(&dossier), "content_integrity"),
             CheckStatus::Fail(_)
         ));
     }

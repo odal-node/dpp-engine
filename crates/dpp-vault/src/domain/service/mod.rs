@@ -25,7 +25,9 @@ mod lifecycle;
 mod lint;
 mod publish;
 mod query;
-mod seal;
+/// Public: the seal route and the evidence dossier both need `seal_digest` to
+/// state which digest a seal covers.
+pub mod seal;
 mod transfer;
 
 use std::sync::Arc;
@@ -38,7 +40,7 @@ use dpp_domain::ports::{
 };
 use dpp_types::{
     STANDALONE_OPERATOR_ID, audit::AuditRepository, evidence::EvidenceDossierRepository,
-    operator::OperatorConfigRepository, registry_sync::RegistrySyncOutbox,
+    operator::OperatorConfigRepository, registry_sync::RegistrySyncOutbox, seal::SealOutbox,
     snapshot::SnapshotOutbox, transfer::TransferStore, webhook::WebhookOutbox,
 };
 
@@ -89,6 +91,12 @@ pub struct PassportService {
     /// `None` disables the tier (test doubles / deployments without object
     /// storage).
     pub snapshot_outbox: Option<Arc<dyn SnapshotOutbox>>,
+    /// Durable queue for eIDAS qualified sealing. When present, publish enqueues
+    /// the digest of the freshly-signed passport after commit and the node's
+    /// drain task applies the QTSP seal with backoff. `None` (test doubles, or a
+    /// node with no QTSP configured) means published passports carry no seal —
+    /// visibly absent rather than faked, which is what the trust report reports.
+    pub seal_outbox: Option<Arc<dyn SealOutbox>>,
     /// Base URL the resolver serves on, used to build each passport's carrier
     /// (QR) URL at publish. Defaults to `https://id.odal-node.io`; set per
     /// deployment (a self-hoster's own domain) via [`Self::with_resolver_base_url`]
@@ -124,6 +132,7 @@ impl PassportService {
             registry_reader: None,
             webhooks: None,
             snapshot_outbox: None,
+            seal_outbox: None,
             resolver_base_url: "https://id.odal-node.io".to_owned(),
         }
     }
@@ -176,6 +185,15 @@ impl PassportService {
     #[must_use]
     pub fn with_snapshot_outbox(mut self, outbox: Arc<dyn SnapshotOutbox>) -> Self {
         self.snapshot_outbox = Some(outbox);
+        self
+    }
+
+    /// Provide the qualified-seal outbox, enabling eIDAS sealing: every publish
+    /// queues the digest of the freshly-signed passport for the node's drain task
+    /// to seal at the QTSP.
+    #[must_use]
+    pub fn with_seal_outbox(mut self, outbox: Arc<dyn SealOutbox>) -> Self {
+        self.seal_outbox = Some(outbox);
         self
     }
 

@@ -68,6 +68,13 @@ pub fn public_view(full: &Value, sector_key: &str) -> Value {
 /// `Conformity`, so an authority received it attached to a body with
 /// individual-item data already removed. Neither is verifiable where it landed.
 ///
+/// `seal` is stripped for the same reason and is the easiest of the four to get
+/// wrong: it has no disclosure-table entry, so it would default to `Public` and
+/// reach every audience — and it covers the *full*-payload `jwsSignature`, so it
+/// verifies against no redaction at all, not even the public one. The qualified
+/// seal is served on its own route and inside the evidence dossier, where it
+/// travels with the signature it actually attests to.
+///
 /// So this function returns the payload alone, and whichever layer serves it
 /// attaches the one proof that covers it — [`signed_public_view`] for the public
 /// view, [`signed_audience_view`] for the rest.
@@ -76,7 +83,12 @@ pub fn audience_view(full: &Value, sector_key: &str, audience: Audience) -> Valu
     let mut view = filter_by_audience(full, &policy, audience).filtered_data;
 
     if let Some(obj) = view.as_object_mut() {
-        for proof in ["publicJwsSignature", "jwsSignature", "disclosureSignatures"] {
+        for proof in [
+            "publicJwsSignature",
+            "jwsSignature",
+            "disclosureSignatures",
+            "seal",
+        ] {
             obj.remove(proof);
         }
     }
@@ -274,7 +286,7 @@ pub async fn sign_disclosure_views(
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use serde_json::json;
 
@@ -350,7 +362,9 @@ mod tests {
         assert!(signed_public_view(&passport).is_err());
     }
 
-    fn stub_passport() -> Passport {
+    /// Minimal published passport. `pub(crate)` because the seal service's
+    /// tests need the same fixture and duplicating it would let the two drift.
+    pub(crate) fn stub_passport() -> Passport {
         use chrono::Utc;
         use dpp_domain::domain::passport::{ManufacturerInfo, PassportId};
         use dpp_domain::domain::sector::Sector;

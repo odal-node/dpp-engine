@@ -325,6 +325,11 @@ impl PassportService {
         // stays reachable if the node goes down (non-blocking, non-fatal).
         self.enqueue_snapshot_reconcile(updated.id).await;
 
+        // Queue the eIDAS qualified seal over the signature just produced. Also
+        // non-blocking: a QTSP that is down must not stop an operator meeting a
+        // publication obligation (see `dpp_types::seal`).
+        self.enqueue_seal(&updated).await;
+
         Ok(updated)
     }
 }
