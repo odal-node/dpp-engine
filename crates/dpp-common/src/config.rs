@@ -97,10 +97,23 @@ mod tests {
         );
     }
 
-    /// A bare `user@host` with no scheme has no `://`, so `scheme_end` is 0 and
-    /// the guard must not treat the whole string as userinfo.
+    /// A value with no `@` at all is returned untouched, whether or not it
+    /// looks like a URL.
     #[test]
-    fn a_schemeless_value_is_left_alone() {
+    fn a_value_with_no_userinfo_is_left_alone() {
         assert_eq!(redact_url_credentials("not-a-url"), "not-a-url");
+    }
+
+    /// With no `://`, `scheme_end` is 0, so everything up to the last `@` is
+    /// treated as userinfo and dropped — `user@host` becomes `host`.
+    ///
+    /// Asserted because it is easy to read the guard as leaving schemeless
+    /// input alone, which it does not. It errs toward removing too much rather
+    /// than too little, so no credential escapes either way; every real caller
+    /// passes a schemed connection URL.
+    #[test]
+    fn a_schemeless_value_is_redacted_up_to_the_last_at() {
+        assert_eq!(redact_url_credentials("user@host"), "host");
+        assert_eq!(redact_url_credentials("user:pw@host"), "host");
     }
 }
