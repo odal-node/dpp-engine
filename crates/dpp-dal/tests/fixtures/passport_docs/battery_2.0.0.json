@@ -1,0 +1,45 @@
+{
+  "id": "019f19af-3e3e-7342-adb1-d6ab1f4121da",
+  "sector": "battery",
+  "status": "draft",
+  "batchId": "VB-2026-009",
+  "version": 1,
+  "createdAt": "2026-06-30T17:59:02.974392433Z",
+  "materials": [],
+  "qrCodeUrl": null,
+  "updatedAt": "2026-06-30T17:59:02.974392633Z",
+  "facilityId": "3212321321312",
+  "sectorData": {
+    "gtin": "04901234567009",
+    "sector": "battery",
+    "co2ePerUnitKg": 47.2,
+    "nominalVoltageV": 80.0,
+    "batteryChemistry": "LFP",
+    "ratedCapacityKwh": null,
+    "stateOfHealthPct": null,
+    "nominalCapacityAh": 312.0,
+    "expectedLifetimeCycles": 4000,
+    "recycledContentCobaltPct": null,
+    "recycledContentNickelPct": null,
+    "recycledContentLithiumPct": null
+  },
+  "co2ePerUnit": { "valueKg": 47.2 },
+  "productName": "Voltex Forklift Module 25kWh",
+  "publishedAt": null,
+  "jwsSignature": null,
+  "manufacturer": {
+    "name": "Voltex Battery GmbH",
+    "address": "DE",
+    "didWebUrl": null
+  },
+  "schemaVersion": "2.0.0",
+  "retentionLocked": false,
+  "complianceResult": {
+    "co2eScore": null,
+    "assessedAt": "2026-06-30T17:59:02.982795224Z",
+    "complianceStatus": "PASSTHROUGH_NO_VALIDATION",
+    "recycledContentPct": null,
+    "repairabilityIndex": null
+  },
+  "repairabilityScore": null
+}
