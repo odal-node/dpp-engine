@@ -300,8 +300,7 @@ components:
         verified:
           type: boolean
         reason:
-          type: string
-          nullable: true
+          type: [string, "null"]
           enum:
             [
               unreachable,
@@ -330,8 +329,7 @@ components:
         id:
           $ref: "#/components/schemas/DppId"
         batchId:
-          type: string
-          nullable: true
+          type: [string, "null"]
         productName:
           type: string
           example: "EcoCell Pro 48V"
@@ -344,23 +342,19 @@ components:
           items:
             $ref: "#/components/schemas/MaterialEntry"
         co2ePerUnit:
-          type: number
-          nullable: true
+          type: [number, "null"]
         repairabilityScore:
-          type: number
-          nullable: true
+          type: [number, "null"]
         sectorData:
           $ref: "#/components/schemas/SectorData"
         status:
           $ref: "#/components/schemas/PassportStatus"
         qrCodeUrl:
-          type: string
+          type: [string, "null"]
           format: uri
-          nullable: true
           description: "GS1 Digital Link the carrier (QR) encodes, set on publish: {resolverBase}/01/{gtin}/21/{serial} for a trade item, else {resolverBase}/dpp/{id}. resolverBase is per-deployment (RESOLVER_BASE_URL, default https://id.odal-node.io)."
         jwsSignature:
-          type: string
-          nullable: true
+          type: [string, "null"]
           description: JWS compact serialisation (Ed25519). Null until published.
         createdAt:
           type: string
@@ -369,9 +363,8 @@ components:
           type: string
           format: date-time
         publishedAt:
-          type: string
+          type: [string, "null"]
           format: date-time
-          nullable: true
         schemaVersion:
           type: string
           example: "1.0.0"
@@ -399,14 +392,11 @@ components:
           type: string
           example: "published"
         previousStatus:
-          type: string
-          nullable: true
+          type: [string, "null"]
         newStatus:
-          type: string
-          nullable: true
+          type: [string, "null"]
         metadata:
-          type: object
-          nullable: true
+          type: [object, "null"]
         timestamp:
           type: string
           format: date-time
@@ -445,8 +435,7 @@ components:
         nodeVersion:
           type: string
         rulesetVersion:
-          type: string
-          nullable: true
+          type: [string, "null"]
         contentHashes:
           type: object
           description: member name -> hex SHA-256 of that member's JCS-canonical bytes.
@@ -483,16 +472,13 @@ components:
           items:
             $ref: "#/components/schemas/AuditEntry"
         transferChain:
-          type: object
-          nullable: true
+          type: [object, "null"]
           description: Present iff the passport has ever changed responsible operator.
         eolEvent:
-          type: object
-          nullable: true
+          type: [object, "null"]
           description: Present iff the passport was declared end-of-life.
         checkpoint:
-          type: object
-          nullable: true
+          type: [object, "null"]
           description: Always `null` in format v1 — the signed-checkpoint layer is not yet built.
         calcReceipts:
           type: array
@@ -580,8 +566,7 @@ components:
           type: string
           example: "Odal Node GmbH"
         tradeName:
-          type: string
-          nullable: true
+          type: [string, "null"]
         address:
           type: string
           example: "Johannes Strauss 12"
@@ -595,29 +580,23 @@ components:
           format: email
           example: "contact@odal-node.io"
         didWebUrl:
-          type: string
+          type: [string, "null"]
           format: uri
-          nullable: true
         productCategories:
-          type: array
+          type: [array, "null"]
           items:
             type: string
-          nullable: true
         brandPrimary:
-          type: string
-          nullable: true
+          type: [string, "null"]
           description: "Primary brand colour (hex)"
           example: "#2E7D32"
         brandSecondary:
-          type: string
-          nullable: true
+          type: [string, "null"]
         brandLogoUrl:
-          type: string
+          type: [string, "null"]
           format: uri
-          nullable: true
         customDomain:
-          type: string
-          nullable: true
+          type: [string, "null"]
         dataResidency:
           type: string
           default: "EU"
@@ -625,16 +604,13 @@ components:
           type: integer
           default: 3650
         featureFlags:
-          type: object
-          nullable: true
+          type: [object, "null"]
         createdAt:
-          type: string
+          type: [string, "null"]
           format: date-time
-          nullable: true
         updatedAt:
-          type: string
+          type: [string, "null"]
           format: date-time
-          nullable: true
 
     UpdateOperatorConfig:
       type: object
@@ -691,13 +667,11 @@ components:
           type: string
           format: date-time
         lastUsedAt:
-          type: string
+          type: [string, "null"]
           format: date-time
-          nullable: true
         expiresAt:
-          type: string
+          type: [string, "null"]
           format: date-time
-          nullable: true
 
     NewApiKey:
       type: object
@@ -721,9 +695,8 @@ components:
           description: Human-readable label for this key.
           example: "CI pipeline"
         expiresAt:
-          type: string
+          type: [string, "null"]
           format: date-time
-          nullable: true
           description: Optional expiration. Null = never expires.
 
     Facility:
@@ -750,8 +723,7 @@ components:
           maxLength: 2
           example: "DE"
         address:
-          type: string
-          nullable: true
+          type: [string, "null"]
         isDefault:
           type: boolean
           description: The default facility is stamped onto new passports.
@@ -778,8 +750,7 @@ components:
           maxLength: 2
           example: "DE"
         address:
-          type: string
-          nullable: true
+          type: [string, "null"]
         isDefault:
           type: boolean
           default: false
@@ -801,8 +772,7 @@ components:
           type: string
           example: "5493001KJTIIGC8Y1R12"
         label:
-          type: string
-          nullable: true
+          type: [string, "null"]
         isPrimary:
           type: boolean
           description: The primary identifier is stamped onto new passports.
@@ -826,8 +796,7 @@ components:
             accepted without structural verification.
           example: "5493001KJTIIGC8Y1R12"
         label:
-          type: string
-          nullable: true
+          type: [string, "null"]
         isPrimary:
           type: boolean
           default: false
@@ -993,12 +962,10 @@ components:
             total:
               type: integer
         result:
-          type: object
-          nullable: true
+          type: [object, "null"]
           description: Populated on completion (created/errors) or failure (reason).
         report:
-          type: object
-          nullable: true
+          type: [object, "null"]
           description: The row-addressed findings report — populated for every job, dry-run or apply, independent of `result`.
 
     ApiError:
@@ -2010,7 +1977,7 @@ paths:
                       type: array
                       items: { type: string }
                     active: { type: boolean }
-                    description: { type: string, nullable: true }
+                    description: { type: [string, "null"] }
                     createdAt: { type: string, format: date-time }
                     updatedAt: { type: string, format: date-time }
         "401":
@@ -2061,7 +2028,7 @@ paths:
                     type: array
                     items: { type: string }
                   active: { type: boolean }
-                  description: { type: string, nullable: true }
+                  description: { type: [string, "null"] }
                   createdAt: { type: string, format: date-time }
                   updatedAt: { type: string, format: date-time }
                   secret:
