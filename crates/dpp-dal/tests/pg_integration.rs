@@ -544,10 +544,15 @@ async fn t8_app_role_can_read_every_table() {
     ];
 
     for table in TABLES {
-        sqlx::query(&format!("SELECT 1 FROM {table} LIMIT 1"))
-            .fetch_optional(pg.dal.pool())
-            .await
-            .unwrap_or_else(|e| panic!("odal_app cannot SELECT from {table}: {e}"));
+        // sqlx 0.9 requires `&'static str` unless the caller asserts safety.
+        // A table name cannot be a bind parameter, and these come from the
+        // `TABLES` const directly above — no caller input reaches this string.
+        sqlx::query(sqlx::AssertSqlSafe(format!(
+            "SELECT 1 FROM {table} LIMIT 1"
+        )))
+        .fetch_optional(pg.dal.pool())
+        .await
+        .unwrap_or_else(|e| panic!("odal_app cannot SELECT from {table}: {e}"));
     }
 }
 
