@@ -6,47 +6,8 @@ api/openapi.yaml:
     - '#/servers/1/url'
     - '#/servers/2/url'
     - '#/paths/~1internal~1sign/servers/0/url'
+    - '#/paths/~1internal~1verify/servers/0/url'
     - '#/paths/~1internal~1keys~1rotate/servers/0/url'
-  struct:
-    - '#/components/schemas/PassportResponse/properties/batchId/nullable'
-    - '#/components/schemas/PassportResponse/properties/co2ePerUnit/nullable'
-    - >-
-      #/components/schemas/PassportResponse/properties/repairabilityScore/nullable
-    - '#/components/schemas/PassportResponse/properties/qrCodeUrl/nullable'
-    - '#/components/schemas/PassportResponse/properties/jwsSignature/nullable'
-    - '#/components/schemas/PassportResponse/properties/publishedAt/nullable'
-    - '#/components/schemas/AuditEntry/properties/previousStatus/nullable'
-    - '#/components/schemas/AuditEntry/properties/newStatus/nullable'
-    - '#/components/schemas/AuditEntry/properties/metadata/nullable'
-    - '#/components/schemas/TreeNodeReport/properties/reason/nullable'
-    - '#/components/schemas/DossierManifest/properties/rulesetVersion/nullable'
-    - '#/components/schemas/EvidenceDossier/properties/transferChain/nullable'
-    - '#/components/schemas/EvidenceDossier/properties/eolEvent/nullable'
-    - '#/components/schemas/EvidenceDossier/properties/checkpoint/nullable'
-    - '#/components/schemas/OperatorConfig/properties/tradeName/nullable'
-    - '#/components/schemas/OperatorConfig/properties/didWebUrl/nullable'
-    - '#/components/schemas/OperatorConfig/properties/productCategories/nullable'
-    - '#/components/schemas/OperatorConfig/properties/brandPrimary/nullable'
-    - '#/components/schemas/OperatorConfig/properties/brandSecondary/nullable'
-    - '#/components/schemas/OperatorConfig/properties/brandLogoUrl/nullable'
-    - '#/components/schemas/OperatorConfig/properties/customDomain/nullable'
-    - '#/components/schemas/OperatorConfig/properties/featureFlags/nullable'
-    - '#/components/schemas/OperatorConfig/properties/createdAt/nullable'
-    - '#/components/schemas/OperatorConfig/properties/updatedAt/nullable'
-    - '#/components/schemas/ApiKey/properties/lastUsedAt/nullable'
-    - '#/components/schemas/ApiKey/properties/expiresAt/nullable'
-    - '#/components/schemas/CreateApiKeyRequest/properties/expiresAt/nullable'
-    - >-
-      #/paths/~1vault~1api~1v1~1webhooks/get/responses/200/content/application~1json/schema/items/properties/description/nullable
-    - >-
-      #/paths/~1vault~1api~1v1~1webhooks/post/responses/201/content/application~1json/schema/properties/description/nullable
-    - '#/components/schemas/Facility/properties/address/nullable'
-    - '#/components/schemas/CreateFacilityRequest/properties/address/nullable'
-    - '#/components/schemas/OperatorIdentifier/properties/label/nullable'
-    - >-
-      #/components/schemas/CreateOperatorIdentifierRequest/properties/label/nullable
-    - '#/components/schemas/JobStatusResponse/properties/result/nullable'
-    - '#/components/schemas/JobStatusResponse/properties/report/nullable'
   operation-4xx-response:
     - '#/paths/~1vault~1health/get/responses'
     - '#/paths/~1vault~1ready/get/responses'
@@ -60,6 +21,7 @@ api/openapi.yaml:
   security-defined:
     - '#/paths/~1vault~1public~1dpp~1{dppId}/get'
     - '#/paths/~1vault~1public~1dpp~1by-gtin~1{gtin}/get'
+    - '#/paths/~1vault~1credential~1dpp~1{dppId}/get'
     - '#/paths/~1vault~1health/get'
     - '#/paths/~1vault~1ready/get'
     - '#/paths/~1vault~1api~1v1~1info/get'
@@ -71,5 +33,8 @@ api/openapi.yaml:
     - '#/paths/~1dpp~1{dppId}/get'
     - '#/paths/~1dpp~1{dppId}~1qr/get'
     - '#/paths/~101~1{gtin}/get'
+    - '#/paths/~101~1{gtin}~121~1{serial}/get'
+    - '#/paths/~101~1{gtin}~110~1{batch}/get'
+    - '#/paths/~101~1{gtin}~110~1{batch}~121~1{serial}/get'
     - '#/paths/~1health/get'
     - '#/paths/~1ready/get'
