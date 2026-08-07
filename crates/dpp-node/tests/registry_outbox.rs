@@ -353,7 +353,8 @@ async fn start_pg_before_0024() -> (String, String, testcontainers::ContainerAsy
             break; // stop at the migration under test
         }
         let sql = std::fs::read_to_string(&path).expect("read migration");
-        sqlx::raw_sql(&sql)
+        // Repo-controlled migration text from ops/pg, not caller input.
+        sqlx::raw_sql(sqlx::AssertSqlSafe(sql))
             .execute(&admin)
             .await
             .unwrap_or_else(|e| panic!("apply {name}: {e}"));
@@ -421,7 +422,8 @@ async fn migration_0024_restores_registrations_lost_before_the_fix() {
         "/../../ops/pg/0024_registry_sync_status_intent.sql"
     ))
     .expect("read 0024");
-    sqlx::raw_sql(&sql)
+    // Repo-controlled migration text from ops/pg, not caller input.
+    sqlx::raw_sql(sqlx::AssertSqlSafe(sql))
         .execute(&admin)
         .await
         .expect("apply 0024");

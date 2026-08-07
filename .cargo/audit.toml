@@ -11,27 +11,9 @@
 # contract.
 
 [advisories]
-# --- RUSTSEC-2023-0071 -------------------------------------------------------
-# crate:      rsa 0.9.10
-# path:       sqlx-mysql -> sqlx / sqlx-macros-core   [ORPHANED]
-# class:      not-in-graph
-# rationale:  `rsa` and `sqlx-mysql` are `[[package]]` entries in Cargo.lock
-#             (sqlx's own optional MySQL support), but neither is part of the
-#             actual resolved dependency graph: no crate enables sqlx's
-#             "mysql" feature (dpp-dal enables only postgres, runtime-tokio,
-#             tls-rustls, uuid, chrono, json, migrate, macros), `cargo
-#             metadata`'s resolve graph has no rsa or sqlx-mysql node, and
-#             neither produces a compiled artifact under target/debug/deps.
-#             The previous rationale (reachable via `bollard`/testcontainers)
-#             named the wrong path — its conclusion (not shipped) held, the
-#             claimed mechanism didn't.
-# anchor:     cargo tree -i rsa --target all
-# owner:      founder
-# recorded:   2026-07-27
-# expires:    2026-10-25
-# release-on: a `cargo update` prunes the orphaned Cargo.lock entries, which
-#             removes this ID from the lockfile (and the need for this
-#             suppression) entirely
-ignore = [
-    "RUSTSEC-2023-0071",
-]
+# Empty by design. RUSTSEC-2023-0071 (`rsa`, reached only through the
+# never-enabled `sqlx-mysql`) was suppressed here until the sqlx 0.8 -> 0.9
+# bump pruned both crates from Cargo.lock — exactly the `release-on` condition
+# that entry recorded. The advisory no longer fires, so the entry is deleted
+# rather than left suppressed.
+ignore = []

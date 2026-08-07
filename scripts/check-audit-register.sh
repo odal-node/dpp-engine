@@ -121,7 +121,12 @@ if ! RAW_OUTPUT="$(cd "$RAW_DIR" && { cargo audit --file Cargo.lock -q 2>&1 || t
   fail "could not enter scratch dir '$RAW_DIR' to run the unsuppressed audit"
   RAW_OUTPUT=""
 fi
-RAW_IDS="$(grep -o 'RUSTSEC-[0-9]\{4\}-[0-9]\{4\}' <<< "$RAW_OUTPUT" | sort -u)"
+# `|| true` because a clean raw audit is a legitimate outcome, not an error:
+# grep exits 1 when it matches nothing, `set -o pipefail` promotes that to the
+# whole pipeline, and `set -e` then killed this script with no message and no
+# exit code anyone could act on. That is the exact moment every suppression has
+# just become stale, so it has to report rather than die.
+RAW_IDS="$(grep -o 'RUSTSEC-[0-9]\{4\}-[0-9]\{4\}' <<< "$RAW_OUTPUT" | sort -u || true)"
 
 for id in "${IGNORED_IDS[@]}"; do
   grep -qx "$id" <<< "$RAW_IDS" || fail "$id: does not appear in a raw (no .cargo/audit.toml) cargo-audit run — the advisory no longer fires; delete this entry, don't just leave it suppressed"
