@@ -135,7 +135,8 @@ dpp-integrator                  — CSV/XLSX bulk import
 dpp-common                      — event bus trait, telemetry, config helpers, RFC 7807 errors
 dpp-plugin-host                 — wasmtime sandbox for sector Wasm plugins
 dpp-node                        — MVP single binary fusing vault + identity + integrator
-dpp-seal                        — eIDAS qualified seal adapter (QtspSealAdapter + GhostSeal fallback)
+dpp-seal                        — eIDAS qualified seal adapter: QtspSealAdapter, delegating to a
+                                  GhostSeal placeholder (no dpp-node dependency yet)
 dpp-factor-data                 — licensed LCI factor data store: GhostFactorProvider + FactorStore trait (no dependent yet)
 cli/                            — management CLI (clap); package `dpp-cli`, binary `odal`
 ```
