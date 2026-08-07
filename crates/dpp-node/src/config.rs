@@ -82,6 +82,14 @@ pub struct NodeConfig {
     /// self-hoster sets `RESOLVER_BASE_URL` to their own domain so printed
     /// labels carry it. Must match the resolver deployment's own base.
     pub resolver_base_url: String,
+    /// Public base URL under which this deployment serves its continuity
+    /// snapshots, declared to the EU registry as each passport's back-up link.
+    ///
+    /// `None` unless `SNAPSHOT_PUBLIC_BASE_URL` is set. Writing snapshots to
+    /// object storage does not make them reachable, so this is deliberately a
+    /// separate, explicit statement that they *are* served — and no back-up is
+    /// declared until an operator makes it.
+    pub snapshot_public_base_url: Option<String>,
 }
 
 impl std::fmt::Debug for NodeConfig {
@@ -185,6 +193,10 @@ impl NodeConfig {
                 .ok()
                 .filter(|s| !s.is_empty())
                 .unwrap_or_else(|| "https://id.odal-node.io".into()),
+            snapshot_public_base_url: std::env::var("SNAPSHOT_PUBLIC_BASE_URL")
+                .ok()
+                .map(|s| s.trim().to_owned())
+                .filter(|s| !s.is_empty()),
         })
     }
 }

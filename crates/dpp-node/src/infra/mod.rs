@@ -13,4 +13,5 @@ pub mod s3_snapshot;
 pub mod seal_drain;
 pub mod snapshot_drain;
 pub mod snapshot_store;
+pub mod transfer_drain;
 pub mod webhook_drain;

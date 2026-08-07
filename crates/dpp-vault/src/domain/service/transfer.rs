@@ -143,7 +143,22 @@ impl PassportService {
             .complete()
             .map_err(|e| DppError::Validation(e.to_string().into()))?;
         let record = chain.transfers[idx].clone();
-        store.save_chain(&chain).await?;
+
+        // Persist the completed handover and enqueue the registry notification.
+        // With the outbox present these commit atomically, so an accepted
+        // transfer can never exist without a queued notification — the same
+        // guarantee publish gets for registration. Without one (in-memory test
+        // doubles), fall back to a plain chain write.
+        match &self.transfer_outbox {
+            Some(outbox) => {
+                let payload = serde_json::to_value(&record)
+                    .map_err(|e| DppError::Serialisation(e.to_string()))?;
+                outbox
+                    .commit_accept(&chain, record.transfer_id, payload)
+                    .await?;
+            }
+            None => store.save_chain(&chain).await?,
+        }
 
         let entry = AuditEntry::new(&id.to_string(), "transferred", &auth.user_id, None, None)
             .with_metadata(serde_json::json!({
@@ -163,9 +178,6 @@ impl PassportService {
             }),
         )
         .await;
-
-        // Registry transfer notification is deferred (the registry's transfer API
-        // is unpublished); the local chain is authoritative in the meantime.
 
         Ok(record)
     }

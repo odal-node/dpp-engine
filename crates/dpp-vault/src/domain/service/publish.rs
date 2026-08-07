@@ -12,7 +12,7 @@ use dpp_domain::{
         sector::SectorData,
         status::PassportStatus,
     },
-    ports::registry_sync::RegistrationRequest,
+    ports::registry_sync::{RegisteringOperator, RegistrationGranularity, RegistrationRequest},
 };
 use dpp_types::{STANDALONE_OPERATOR_ID, audit::AuditEntry, auth::AuthContext};
 
@@ -50,7 +50,16 @@ impl PassportService {
         // registry defaults first — so a draft created before the default facility /
         // primary identifier was configured still publishes cleanly — then require
         // their presence. Never sign a passport that is missing them.
+        // Read the primary identifier as a (scheme, value) pair. The scheme is
+        // needed for the registration even when the passport was already
+        // stamped at create, so this is read unconditionally rather than only
+        // when backfilling.
+        let mut primary_identifier = None;
         if let Some(reader) = &self.registry_reader {
+            primary_identifier = reader
+                .primary_operator_identifier(STANDALONE_OPERATOR_ID)
+                .await
+                .unwrap_or(None);
             if passport.facility.is_none() {
                 passport.facility = reader
                     .default_facility(STANDALONE_OPERATOR_ID)
@@ -58,10 +67,8 @@ impl PassportService {
                     .unwrap_or(None);
             }
             if passport.operator_identifier.is_none() {
-                passport.operator_identifier = reader
-                    .primary_operator_identifier(STANDALONE_OPERATOR_ID)
-                    .await
-                    .unwrap_or(None);
+                passport.operator_identifier =
+                    primary_identifier.as_ref().map(|(_, value)| value.clone());
             }
         }
         if catalog().is_in_force(passport.sector.catalog_key()) {
@@ -246,8 +253,37 @@ impl PassportService {
         // doubles), fall back to a plain update.
         let updated = match &self.registry_outbox {
             Some(outbox) => {
-                let reg_req =
-                    RegistrationRequest::from_published_passport(&passport, &self.operator_country);
+                // The scheme is only assertable for the value the passport
+                // actually carries. If that value did not come from the current
+                // primary identifier — the primary was changed after the draft
+                // was stamped — we cannot say what scheme it is in, so the
+                // scheme is left empty and the registration fails validation
+                // rather than claiming a scheme that may be wrong.
+                let identifier_scheme = primary_identifier
+                    .as_ref()
+                    .filter(|(_, value)| Some(value) == passport.operator_identifier.as_ref())
+                    .map(|(scheme, _)| scheme.as_str())
+                    .unwrap_or_default();
+                // Declare the back-up only where this deployment actually
+                // publishes one. The snapshot tier writing to object storage is
+                // not enough — the registry has to be able to fetch it.
+                let backup_url = self
+                    .snapshot_public_base_url
+                    .as_ref()
+                    .map(|base| format!("{base}/{}.json", passport.id));
+                let mut reg_req = RegistrationRequest::from_published_passport(
+                    &passport,
+                    RegisteringOperator {
+                        legal_name: &self.operator.legal_name,
+                        country: &self.operator.country,
+                        identifier_scheme,
+                    },
+                    // Item level: the granularity the battery product group is
+                    // defined at, and the only one the registry accepts today.
+                    // Set per product group once further delegated acts land.
+                    RegistrationGranularity::Item,
+                );
+                reg_req.backup_url = backup_url;
                 let payload = serde_json::to_value(&reg_req)
                     .map_err(|e| DppError::Serialisation(e.to_string()))?;
                 match outbox.commit_publish(&passport, payload).await {
@@ -440,6 +476,7 @@ mod tests {
             component_refs: Vec::new(),
             retention_until: None,
             product_id: None,
+            commodity_code: None,
             operator_identifier: None,
             facility: None,
             seal: None,

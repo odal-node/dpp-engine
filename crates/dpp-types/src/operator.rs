@@ -55,10 +55,49 @@ pub struct OperatorConfig {
     pub retention_policy_days: i64,
     /// Feature flags as an opaque JSON object; resolved at boot by the node.
     pub feature_flags: Option<serde_json::Value>,
+    /// When this operator completed EU registry identity verification.
+    ///
+    /// `None` means never verified — the right state for a deployment that has
+    /// not onboarded, and distinct from "verified, date unknown". See
+    /// [`OperatorConfig::registry_verification_expires_at`] for what it implies.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub registry_verified_at: Option<DateTime<Utc>>,
     /// Row creation timestamp.
     pub created_at: Option<DateTime<Utc>>,
     /// Last-update timestamp.
     pub updated_at: Option<DateTime<Utc>>,
+}
+
+/// The regulation's hard cap on how long verified-operator status lasts,
+/// regardless of the electronic identification means used.
+pub const REGISTRY_VERIFICATION_MAX_YEARS: i64 = 3;
+
+impl OperatorConfig {
+    /// When this operator's verified-registry status lapses, or `None` if it
+    /// was never verified.
+    ///
+    /// This is the **three-year cap** measured from the verification date. The
+    /// eID means used may expire sooner, in which case status ends then — that
+    /// earlier date is not modelled here because nothing in this system knows
+    /// it. So this is an upper bound: verification never lasts longer than this,
+    /// and may end before it.
+    #[must_use]
+    pub fn registry_verification_expires_at(&self) -> Option<DateTime<Utc>> {
+        self.registry_verified_at
+            .map(|at| at + chrono::Duration::days(365 * REGISTRY_VERIFICATION_MAX_YEARS))
+    }
+
+    /// Whether this operator may currently register passports with the EU
+    /// registry.
+    ///
+    /// `false` both when never verified and when verification has lapsed — the
+    /// registry refuses either way, so they are one answer here even though
+    /// they are different situations to an operator reading a status page.
+    #[must_use]
+    pub fn registry_verification_is_current(&self, now: DateTime<Utc>) -> bool {
+        self.registry_verification_expires_at()
+            .is_some_and(|expiry| now < expiry)
+    }
 }
 
 fn default_data_residency() -> String {
@@ -112,6 +151,7 @@ impl OperatorConfig {
             data_residency: default_data_residency(),
             retention_policy_days: default_retention_days(),
             feature_flags: None,
+            registry_verified_at: None,
             created_at: None,
             updated_at: None,
         }
@@ -164,6 +204,16 @@ pub struct UpdateOperatorConfig {
     pub data_residency: Option<String>,
     pub retention_policy_days: Option<i64>,
     pub feature_flags: Option<serde_json::Value>,
+    /// When this operator completed EU registry identity verification.
+    ///
+    /// Recorded by the operator after enrolling with the registry — nothing in
+    /// this node can observe it, and until it is set the node holds every
+    /// registration rather than submitting as an unverified operator.
+    ///
+    /// Set-only: passing `None` leaves any existing date untouched, in keeping
+    /// with the rest of this patch type. Correcting a wrong date means passing
+    /// the right one.
+    pub registry_verified_at: Option<DateTime<Utc>>,
 }
 
 impl UpdateOperatorConfig {
@@ -180,6 +230,16 @@ impl UpdateOperatorConfig {
             return Err(format!(
                 "retentionPolicyDays must be at least {MIN_RETENTION_DAYS} \
                  (ESPR minimum retention); got {days}"
+            ));
+        }
+        // Verification is an event that has already happened. A future date
+        // would silently extend the three-year window derived from it, which is
+        // the one thing an operator must not be able to grant themselves.
+        if let Some(at) = self.registry_verified_at
+            && at > Utc::now()
+        {
+            return Err(format!(
+                "registryVerifiedAt cannot be in the future; got {at}"
             ));
         }
         Ok(())
@@ -229,6 +289,9 @@ impl UpdateOperatorConfig {
         if let Some(ref v) = self.feature_flags {
             cfg.feature_flags = Some(v.clone());
         }
+        if let Some(v) = self.registry_verified_at {
+            cfg.registry_verified_at = Some(v);
+        }
     }
 }
 
@@ -253,14 +316,20 @@ pub trait OperatorConfigRepository: Send + Sync {
         Ok(None)
     }
 
-    /// Value of the operator's **primary** economic-operator identifier
-    /// (ESPR Art. 13 — e.g. EORI/VAT/LEI), or `None` if none is configured.
+    /// The operator's **primary** economic-operator identifier (ESPR Art. 13)
+    /// as a `(scheme, value)` pair — e.g. `("vat", "DE811234567")` — or `None`
+    /// if none is configured.
+    ///
+    /// The scheme travels with the value because the value alone does not say
+    /// what it is, and the EU registry requires the scheme to be stated. A
+    /// caller holding only the value has to guess, and a wrong guess is a false
+    /// statement the registry cannot detect.
     ///
     /// Default impl returns `None` so non-persistent test doubles need not implement it.
     async fn primary_operator_identifier(
         &self,
         _operator_id: &str,
-    ) -> Result<Option<String>, DppError> {
+    ) -> Result<Option<(String, String)>, DppError> {
         Ok(None)
     }
 }
@@ -317,6 +386,7 @@ mod tests {
             data_residency: None,
             retention_policy_days: days,
             feature_flags: None,
+            registry_verified_at: None,
         }
     }
 
@@ -340,5 +410,135 @@ mod tests {
         );
         assert!(patch_with_retention(Some(5475)).validate().is_ok()); // ~15y
         assert!(patch_with_retention(None).validate().is_ok());
+    }
+}
+
+#[cfg(test)]
+mod verification_tests {
+    use super::*;
+
+    fn config_verified(at: Option<DateTime<Utc>>) -> OperatorConfig {
+        OperatorConfig {
+            registry_verified_at: at,
+            ..OperatorConfig::empty("op")
+        }
+    }
+
+    /// Never verified is not "verified long ago" — there is no expiry to report,
+    /// and the operator cannot register.
+    #[test]
+    fn a_never_verified_operator_has_no_expiry_and_cannot_register() {
+        let cfg = config_verified(None);
+        assert!(cfg.registry_verification_expires_at().is_none());
+        assert!(!cfg.registry_verification_is_current(Utc::now()));
+    }
+
+    /// The regulation caps verified status at three years from verification.
+    #[test]
+    fn verification_expires_three_years_after_it_was_granted() {
+        let verified_at = Utc::now() - chrono::Duration::days(365);
+        let cfg = config_verified(Some(verified_at));
+        let expiry = cfg.registry_verification_expires_at().expect("has expiry");
+        assert_eq!(expiry, verified_at + chrono::Duration::days(365 * 3));
+        assert!(cfg.registry_verification_is_current(Utc::now()));
+    }
+
+    /// A day past the cap and registration is closed until re-verification.
+    #[test]
+    fn verification_lapses_once_the_cap_passes() {
+        let cfg = config_verified(Some(Utc::now() - chrono::Duration::days(365 * 3 + 1)));
+        assert!(!cfg.registry_verification_is_current(Utc::now()));
+    }
+
+    /// The boundary belongs to the expired side: at the instant of expiry the
+    /// status is no longer current.
+    #[test]
+    fn the_expiry_instant_is_not_current() {
+        let verified_at = Utc::now() - chrono::Duration::days(365 * 3);
+        let cfg = config_verified(Some(verified_at));
+        let expiry = cfg.registry_verification_expires_at().unwrap();
+        assert!(!cfg.registry_verification_is_current(expiry));
+        assert!(cfg.registry_verification_is_current(expiry - chrono::Duration::seconds(1)));
+    }
+}
+
+#[cfg(test)]
+mod registry_verification_patch_tests {
+    use super::*;
+
+    fn patch_verified_at(at: Option<DateTime<Utc>>) -> UpdateOperatorConfig {
+        UpdateOperatorConfig {
+            registry_verified_at: at,
+            ..patch_none()
+        }
+    }
+
+    fn patch_none() -> UpdateOperatorConfig {
+        UpdateOperatorConfig {
+            legal_name: None,
+            trade_name: None,
+            address: None,
+            country: None,
+            contact_email: None,
+            did_web_url: None,
+            product_categories: None,
+            brand_primary: None,
+            brand_secondary: None,
+            brand_logo_url: None,
+            custom_domain: None,
+            data_residency: None,
+            retention_policy_days: None,
+            feature_flags: None,
+            registry_verified_at: None,
+        }
+    }
+
+    /// Recording the verification date is what lets a node start registering:
+    /// without it the drain holds every submission.
+    #[test]
+    fn setting_the_verification_date_makes_the_operator_current() {
+        let mut cfg = OperatorConfig::empty("op");
+        assert!(
+            !cfg.registry_verification_is_current(Utc::now()),
+            "a fresh node is not verified"
+        );
+
+        patch_verified_at(Some(Utc::now() - chrono::Duration::days(1))).apply(&mut cfg);
+
+        assert!(
+            cfg.registry_verification_is_current(Utc::now()),
+            "recording the date must unblock registration"
+        );
+    }
+
+    /// Verification is an event that already happened. A future date would
+    /// silently extend the three-year window derived from it — the one thing an
+    /// operator must not be able to grant themselves.
+    #[test]
+    fn a_future_verification_date_is_refused() {
+        let err = patch_verified_at(Some(Utc::now() + chrono::Duration::days(1)))
+            .validate()
+            .expect_err("a future date must be refused");
+        assert!(err.contains("registryVerifiedAt"), "got: {err}");
+    }
+
+    /// Set-only, like every other field on this patch: omitting it must not
+    /// erase a recorded date and silently stop registration.
+    #[test]
+    fn omitting_the_date_leaves_an_existing_one_untouched() {
+        let verified = Utc::now() - chrono::Duration::days(10);
+        let mut cfg = OperatorConfig {
+            registry_verified_at: Some(verified),
+            ..OperatorConfig::empty("op")
+        };
+
+        // A patch that changes something else entirely.
+        UpdateOperatorConfig {
+            brand_primary: Some("#000000".into()),
+            ..patch_none()
+        }
+        .apply(&mut cfg);
+
+        assert_eq!(cfg.registry_verified_at, Some(verified));
     }
 }

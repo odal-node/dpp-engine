@@ -64,6 +64,7 @@ async fn seed(dal: &PgDal, seal: Option<SealedEnvelope>, jws: Option<&str>) -> P
         component_refs: Vec::new(),
         retention_until: None,
         product_id: None,
+        commodity_code: None,
         operator_identifier: None,
         facility: None,
         seal,

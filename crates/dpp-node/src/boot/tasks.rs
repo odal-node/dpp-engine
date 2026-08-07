@@ -8,6 +8,7 @@ use dpp_domain::ports::registry_sync::RegistrySyncPort;
 use dpp_domain::ports::seal::SealPort;
 use dpp_integrator::infra::job_store::JobStore;
 use dpp_types::registry_sync::{RegistrySyncCounts, RegistrySyncOutbox};
+use dpp_types::registry_transfer::{RegistryTransferCounts, RegistryTransferOutbox};
 use dpp_types::scan::ScanTelemetryRepository;
 use dpp_types::seal::{SealOutbox, SealOutboxCounts};
 use dpp_types::snapshot::{SnapshotOutbox, SnapshotOutboxCounts, SnapshotStore};
@@ -65,8 +66,12 @@ const STALL_THRESHOLD: i32 = 8;
 /// can never silently report different gauge names for the same counts.
 fn set_registry_gauges(c: &RegistrySyncCounts) {
     metrics::gauge!("registry_outbox_pending").set(c.pending as f64);
+    // Awaiting the registry's verdict: not an error, but not done either, and a
+    // number that should not keep growing.
+    metrics::gauge!("registry_outbox_submitted").set(c.submitted as f64);
     metrics::gauge!("registry_outbox_stalled").set(c.stalled as f64);
     metrics::gauge!("registry_outbox_rejected").set(c.rejected as f64);
+    metrics::gauge!("registry_outbox_deactivated").set(c.deactivated as f64);
 }
 
 /// Log/gauge the outbox's outstanding state, then spawn the periodic drain
@@ -77,6 +82,7 @@ fn set_registry_gauges(c: &RegistrySyncCounts) {
 pub async fn spawn_registry_drain(
     outbox: Arc<dyn RegistrySyncOutbox>,
     registry_sync: Arc<dyn RegistrySyncPort>,
+    operator: Option<Arc<dyn dpp_types::operator::OperatorConfigRepository>>,
 ) {
     // Boot reconciliation: log outstanding registry-sync state so a restart
     // surfaces (never hides) queued/rejected/stalled registrations.
@@ -84,8 +90,10 @@ pub async fn spawn_registry_drain(
         Ok(c) => {
             tracing::info!(
                 pending = c.pending,
+                submitted = c.submitted,
                 registered = c.registered,
                 rejected = c.rejected,
+                deactivated = c.deactivated,
                 status_intents = c.status_intents,
                 stalled = c.stalled,
                 "registry outbox reconciliation at boot"
@@ -98,13 +106,76 @@ pub async fn spawn_registry_drain(
     tokio::spawn(async move {
         loop {
             tokio::time::sleep(DRAIN_INTERVAL).await;
-            dpp_node::infra::registry_drain::drain_once(&outbox, &registry_sync, DRAIN_BATCH).await;
+            dpp_node::infra::registry_drain::drain_once(
+                &outbox,
+                &registry_sync,
+                operator.as_ref(),
+                DRAIN_BATCH,
+            )
+            .await;
             if let Ok(c) = outbox.status_counts(STALL_THRESHOLD).await {
                 set_registry_gauges(&c);
                 if c.stalled > 0 {
                     tracing::warn!(
                         stalled = c.stalled,
                         "registry outbox has stalled rows — manual investigation required"
+                    );
+                }
+            }
+        }
+    });
+}
+
+/// Reflect the transfer outbox's counts onto its gauges. Separate names from
+/// the registration gauges: a stalled transfer notification and a stalled
+/// registration are different problems with different fixes.
+fn set_transfer_gauges(c: &RegistryTransferCounts) {
+    metrics::gauge!("registry_transfer_outbox_pending").set(c.pending as f64);
+    metrics::gauge!("registry_transfer_outbox_stalled").set(c.stalled as f64);
+    metrics::gauge!("registry_transfer_outbox_rejected").set(c.rejected as f64);
+}
+
+/// Log/gauge the transfer outbox's outstanding state, then spawn its periodic
+/// drain loop. Accepting a transfer enqueues the notification transactionally
+/// with the chain write; this task drains due rows against the registry port
+/// with backoff, so a killed node never loses a handover the registry is owed.
+pub async fn spawn_transfer_drain(
+    outbox: Arc<dyn RegistryTransferOutbox>,
+    registrations: Arc<dyn RegistrySyncOutbox>,
+    registry_sync: Arc<dyn RegistrySyncPort>,
+) {
+    match outbox.status_counts(STALL_THRESHOLD).await {
+        Ok(c) => {
+            tracing::info!(
+                pending = c.pending,
+                notified = c.notified,
+                rejected = c.rejected,
+                stalled = c.stalled,
+                "registry transfer outbox reconciliation at boot"
+            );
+            set_transfer_gauges(&c);
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, "registry transfer outbox boot reconciliation failed")
+        }
+    }
+
+    tokio::spawn(async move {
+        loop {
+            tokio::time::sleep(DRAIN_INTERVAL).await;
+            dpp_node::infra::transfer_drain::drain_once(
+                &outbox,
+                &registrations,
+                &registry_sync,
+                DRAIN_BATCH,
+            )
+            .await;
+            if let Ok(c) = outbox.status_counts(STALL_THRESHOLD).await {
+                set_transfer_gauges(&c);
+                if c.stalled > 0 {
+                    tracing::warn!(
+                        stalled = c.stalled,
+                        "registry transfer outbox has stalled rows — manual investigation required"
                     );
                 }
             }
