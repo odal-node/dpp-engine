@@ -57,10 +57,14 @@ impl PassportService {
                     .unwrap_or(None);
             }
             if passport.operator_identifier.is_none() {
+                // The passport stamps the identifier's value; its scheme is an
+                // operator fact resolved at publish, where the registration is
+                // built.
                 passport.operator_identifier = reader
                     .primary_operator_identifier(STANDALONE_OPERATOR_ID)
                     .await
-                    .unwrap_or(None);
+                    .unwrap_or(None)
+                    .map(|(_scheme, value)| value);
             }
         }
 
@@ -368,6 +372,7 @@ mod tests {
             component_refs: Vec::new(),
             retention_until: None,
             product_id: None,
+            commodity_code: None,
             operator_identifier: None,
             facility: None,
             seal: None,

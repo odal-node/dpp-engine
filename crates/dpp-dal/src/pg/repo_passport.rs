@@ -331,8 +331,8 @@ impl PassportRepository for PgPassportRepo {
     }
 
     /// List passports with optional status filter, full-text ILIKE search, and
-    /// exact `facilityId` match (ADR-006: facility is a grouping/filter
-    /// dimension, never an isolation boundary).
+    /// exact `facilityId` match (facility is a grouping/filter dimension,
+    /// never an isolation boundary).
     async fn list(
         &self,
         status: Option<PassportStatus>,
@@ -369,7 +369,7 @@ impl PassportRepository for PgPassportRepo {
     }
 
     /// Count passports with optional status and `facilityId` filters (the
-    /// latter giving ADR-006's "per-facility counts" without a new endpoint).
+    /// latter giving per-facility counts without a new endpoint).
     async fn count(
         &self,
         status: Option<PassportStatus>,

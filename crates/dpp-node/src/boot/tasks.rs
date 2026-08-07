@@ -5,9 +5,12 @@ use std::sync::Arc;
 
 use dpp_domain::ports::passport_repo::PassportRepository;
 use dpp_domain::ports::registry_sync::RegistrySyncPort;
+use dpp_domain::ports::seal::SealPort;
 use dpp_integrator::infra::job_store::JobStore;
 use dpp_types::registry_sync::{RegistrySyncCounts, RegistrySyncOutbox};
+use dpp_types::registry_transfer::{RegistryTransferCounts, RegistryTransferOutbox};
 use dpp_types::scan::ScanTelemetryRepository;
+use dpp_types::seal::{SealOutbox, SealOutboxCounts};
 use dpp_types::snapshot::{SnapshotOutbox, SnapshotOutboxCounts, SnapshotStore};
 use dpp_types::webhook::{WebhookCounts, WebhookOutbox};
 
@@ -63,8 +66,12 @@ const STALL_THRESHOLD: i32 = 8;
 /// can never silently report different gauge names for the same counts.
 fn set_registry_gauges(c: &RegistrySyncCounts) {
     metrics::gauge!("registry_outbox_pending").set(c.pending as f64);
+    // Awaiting the registry's verdict: not an error, but not done either, and a
+    // number that should not keep growing.
+    metrics::gauge!("registry_outbox_submitted").set(c.submitted as f64);
     metrics::gauge!("registry_outbox_stalled").set(c.stalled as f64);
     metrics::gauge!("registry_outbox_rejected").set(c.rejected as f64);
+    metrics::gauge!("registry_outbox_deactivated").set(c.deactivated as f64);
 }
 
 /// Log/gauge the outbox's outstanding state, then spawn the periodic drain
@@ -75,6 +82,7 @@ fn set_registry_gauges(c: &RegistrySyncCounts) {
 pub async fn spawn_registry_drain(
     outbox: Arc<dyn RegistrySyncOutbox>,
     registry_sync: Arc<dyn RegistrySyncPort>,
+    operator: Option<Arc<dyn dpp_types::operator::OperatorConfigRepository>>,
 ) {
     // Boot reconciliation: log outstanding registry-sync state so a restart
     // surfaces (never hides) queued/rejected/stalled registrations.
@@ -82,8 +90,10 @@ pub async fn spawn_registry_drain(
         Ok(c) => {
             tracing::info!(
                 pending = c.pending,
+                submitted = c.submitted,
                 registered = c.registered,
                 rejected = c.rejected,
+                deactivated = c.deactivated,
                 status_intents = c.status_intents,
                 stalled = c.stalled,
                 "registry outbox reconciliation at boot"
@@ -96,13 +106,76 @@ pub async fn spawn_registry_drain(
     tokio::spawn(async move {
         loop {
             tokio::time::sleep(DRAIN_INTERVAL).await;
-            dpp_node::infra::registry_drain::drain_once(&outbox, &registry_sync, DRAIN_BATCH).await;
+            dpp_node::infra::registry_drain::drain_once(
+                &outbox,
+                &registry_sync,
+                operator.as_ref(),
+                DRAIN_BATCH,
+            )
+            .await;
             if let Ok(c) = outbox.status_counts(STALL_THRESHOLD).await {
                 set_registry_gauges(&c);
                 if c.stalled > 0 {
                     tracing::warn!(
                         stalled = c.stalled,
                         "registry outbox has stalled rows — manual investigation required"
+                    );
+                }
+            }
+        }
+    });
+}
+
+/// Reflect the transfer outbox's counts onto its gauges. Separate names from
+/// the registration gauges: a stalled transfer notification and a stalled
+/// registration are different problems with different fixes.
+fn set_transfer_gauges(c: &RegistryTransferCounts) {
+    metrics::gauge!("registry_transfer_outbox_pending").set(c.pending as f64);
+    metrics::gauge!("registry_transfer_outbox_stalled").set(c.stalled as f64);
+    metrics::gauge!("registry_transfer_outbox_rejected").set(c.rejected as f64);
+}
+
+/// Log/gauge the transfer outbox's outstanding state, then spawn its periodic
+/// drain loop. Accepting a transfer enqueues the notification transactionally
+/// with the chain write; this task drains due rows against the registry port
+/// with backoff, so a killed node never loses a handover the registry is owed.
+pub async fn spawn_transfer_drain(
+    outbox: Arc<dyn RegistryTransferOutbox>,
+    registrations: Arc<dyn RegistrySyncOutbox>,
+    registry_sync: Arc<dyn RegistrySyncPort>,
+) {
+    match outbox.status_counts(STALL_THRESHOLD).await {
+        Ok(c) => {
+            tracing::info!(
+                pending = c.pending,
+                notified = c.notified,
+                rejected = c.rejected,
+                stalled = c.stalled,
+                "registry transfer outbox reconciliation at boot"
+            );
+            set_transfer_gauges(&c);
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, "registry transfer outbox boot reconciliation failed")
+        }
+    }
+
+    tokio::spawn(async move {
+        loop {
+            tokio::time::sleep(DRAIN_INTERVAL).await;
+            dpp_node::infra::transfer_drain::drain_once(
+                &outbox,
+                &registrations,
+                &registry_sync,
+                DRAIN_BATCH,
+            )
+            .await;
+            if let Ok(c) = outbox.status_counts(STALL_THRESHOLD).await {
+                set_transfer_gauges(&c);
+                if c.stalled > 0 {
+                    tracing::warn!(
+                        stalled = c.stalled,
+                        "registry transfer outbox has stalled rows — manual investigation required"
                     );
                 }
             }
@@ -220,6 +293,95 @@ pub async fn spawn_snapshot_drain(
                         "snapshot outbox has exhausted reconciles — the static tier may be stale"
                     );
                 }
+            }
+        }
+    });
+}
+
+fn set_seal_gauges(c: &SealOutboxCounts) {
+    metrics::gauge!("seal_outbox_pending").set(c.pending as f64);
+    metrics::gauge!("seal_outbox_exhausted").set(c.exhausted as f64);
+}
+
+/// Log/gauge the qualified-seal outbox's outstanding state, then spawn the
+/// periodic sealing loop. Publish enqueues a digest (after-commit, in the vault
+/// service); this task asks the QTSP to seal it and writes the envelope onto the
+/// passport. A killed node loses nothing: `pending` rows seal on boot.
+///
+/// Only spawned when a real QTSP is configured — see the `sealing_live` guard in
+/// `main`, which is also what stops the vault enqueueing rows nothing would
+/// drain.
+pub async fn spawn_seal_drain(
+    outbox: Arc<dyn SealOutbox>,
+    seal: Arc<dyn SealPort>,
+    client_id: String,
+) {
+    match outbox.status_counts().await {
+        Ok(c) => {
+            tracing::info!(
+                pending = c.pending,
+                sealed = c.sealed,
+                exhausted = c.exhausted,
+                "qualified-seal outbox reconciliation at boot"
+            );
+            set_seal_gauges(&c);
+        }
+        Err(e) => tracing::warn!(error = %e, "seal outbox boot reconciliation failed"),
+    }
+
+    tokio::spawn(async move {
+        loop {
+            tokio::time::sleep(DRAIN_INTERVAL).await;
+            dpp_node::infra::seal_drain::drain_once(&outbox, &seal, &client_id, DRAIN_BATCH).await;
+            if let Ok(c) = outbox.status_counts().await {
+                set_seal_gauges(&c);
+                if c.exhausted > 0 {
+                    // A published passport that gave up on sealing carries no
+                    // qualified seal at all — a compliance signal, not noise.
+                    tracing::warn!(
+                        exhausted = c.exhausted,
+                        "seal outbox has exhausted rows — those passports are published unsealed"
+                    );
+                }
+            }
+        }
+    });
+}
+
+/// How long an exhausted seal row is left alone before the sweep re-arms it.
+///
+/// A row reaches `exhausted` only after eight attempts with exponential backoff,
+/// so it almost always means the provider is down rather than the digest being
+/// unsealable. Six hours lets an outage clear before we spend another eight
+/// attempts on it, and bounds a genuinely unsealable passport to four retry
+/// cycles a day rather than one every sweep.
+const SEAL_EXHAUSTED_COOLDOWN_SECS: i64 = 6 * 3600;
+
+/// Spawn the qualified-seal repair sweep.
+///
+/// The drain only ever sees rows that were successfully queued. This covers the
+/// ones that were not: a crash between commit and enqueue leaves a published
+/// passport with no row at all, and an `exhausted` row is one that gave up
+/// during a provider outage. Both leave a passport published and unsealed, and
+/// neither is self-healing — a re-publish would work, but it changes the very
+/// signature the seal is supposed to attest to, so it is not a recovery an
+/// operator should have to perform.
+///
+/// Cannot double-bill: it only queues passports carrying no seal at all.
+pub fn spawn_seal_sweep(outbox: Arc<dyn SealOutbox>) {
+    tokio::spawn(async move {
+        loop {
+            tokio::time::sleep(SWEEP_INTERVAL).await;
+            match outbox
+                .enqueue_unsealed(SWEEP_BATCH, SEAL_EXHAUSTED_COOLDOWN_SECS)
+                .await
+            {
+                Ok(0) => tracing::debug!("seal sweep: every published passport is sealed"),
+                Ok(n) => tracing::warn!(
+                    queued = n,
+                    "seal sweep queued published passports that carry no qualified seal"
+                ),
+                Err(e) => tracing::warn!(error = %e, "seal sweep failed"),
             }
         }
     });

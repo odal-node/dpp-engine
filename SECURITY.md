@@ -104,7 +104,7 @@ scanning all keys.
   loaded from `DATABASE_URL` at startup and never written to disk
 - The app role cannot run DDL and cannot `DELETE` (one sanctioned exception).
   The node is single-tenant; there is no Row-Level Security, because
-  isolation is an infrastructure boundary — one node per operator (ADR-005)
+  isolation is an infrastructure boundary — one node per operator
   — not an in-process one
 - Migration credentials (`DATABASE_MIGRATE_URL`) are used only at startup and are
   not kept in the pool

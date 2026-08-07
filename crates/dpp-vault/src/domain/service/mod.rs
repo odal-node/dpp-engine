@@ -25,7 +25,9 @@ mod lifecycle;
 mod lint;
 mod publish;
 mod query;
-mod seal;
+/// Public: the seal route and the evidence dossier both need `seal_digest` to
+/// state which digest a seal covers.
+pub mod seal;
 mod transfer;
 
 use std::sync::Arc;
@@ -39,8 +41,25 @@ use dpp_domain::ports::{
 use dpp_types::{
     STANDALONE_OPERATOR_ID, audit::AuditRepository, evidence::EvidenceDossierRepository,
     operator::OperatorConfigRepository, registry_sync::RegistrySyncOutbox,
-    snapshot::SnapshotOutbox, transfer::TransferStore, webhook::WebhookOutbox,
+    registry_transfer::RegistryTransferOutbox, seal::SealOutbox, snapshot::SnapshotOutbox,
+    transfer::TransferStore, webhook::WebhookOutbox,
 };
+
+/// This node's operator, as the EU registry needs to see it.
+///
+/// The two fields travel together because they are read from the same
+/// `OperatorConfig` row and both land on the registration payload's operator
+/// identifier. Grouping them also keeps two same-typed strings from being
+/// passed positionally, where a swap would file registrations under a legal
+/// name of `"DE"` without the compiler objecting.
+#[derive(Debug, Clone, Default)]
+pub struct OperatorIdentity {
+    /// Legal name of the economic operator (`OperatorConfig.legal_name`).
+    /// The registry rejects a registration whose operator carries no name.
+    pub legal_name: String,
+    /// ISO 3166-1 alpha-2 country of registration (`OperatorConfig.country`).
+    pub country: String,
+}
 
 /// Core domain service for the passport lifecycle.
 ///
@@ -65,12 +84,19 @@ pub struct PassportService {
     /// Persistence for transfer-of-responsibility chains. `None` disables
     /// the transfer endpoints (test doubles without a transfer store).
     pub transfer_store: Option<Arc<dyn TransferStore>>,
+    /// Transactional outbox for EU registry transfer notifications. When present
+    /// (the Postgres node), accepting a transfer persists the chain and enqueues
+    /// the notification atomically, and the node's drain task notifies the
+    /// registry with backoff — so a killed node never loses a handover the
+    /// registry is owed. `None` (test doubles / in-memory stores) falls back to
+    /// a plain chain write.
+    pub transfer_outbox: Option<Arc<dyn RegistryTransferOutbox>>,
     /// Persistence for generated evidence dossiers. `None` disables the
     /// evidence-generation endpoint (test doubles without an evidence store).
     pub evidence_store: Option<Arc<dyn EvidenceDossierRepository>>,
-    /// ISO 3166-1 alpha-2 country code of this operator, sourced from
-    /// `OperatorConfig.country` at startup. Used in EU registry registration payloads.
-    pub operator_country: String,
+    /// This operator's own legal identity, sourced from `OperatorConfig` at
+    /// startup and stamped onto every EU registry registration payload.
+    pub operator: OperatorIdentity,
     /// Reader for the operator's registry identity (default facility per ESPR
     /// Annex III, primary operator identifier per Art. 13). Read **live** on
     /// create so changes made via the API/CLI take effect without a node restart.
@@ -89,6 +115,20 @@ pub struct PassportService {
     /// `None` disables the tier (test doubles / deployments without object
     /// storage).
     pub snapshot_outbox: Option<Arc<dyn SnapshotOutbox>>,
+    /// Durable queue for eIDAS qualified sealing. When present, publish enqueues
+    /// the digest of the freshly-signed passport after commit and the node's
+    /// drain task applies the QTSP seal with backoff. `None` (test doubles, or a
+    /// node with no QTSP configured) means published passports carry no seal —
+    /// visibly absent rather than faked, which is what the trust report reports.
+    pub seal_outbox: Option<Arc<dyn SealOutbox>>,
+    /// Public base URL under which this deployment serves its continuity
+    /// snapshots, if it serves them at all.
+    ///
+    /// Declared to the EU registry as the passport's independently-hosted
+    /// back-up. `None` — the default — means no back-up is declared: writing
+    /// snapshots to object storage is not the same as publishing them, and a
+    /// URL the registry cannot fetch is worse than none.
+    pub snapshot_public_base_url: Option<String>,
     /// Base URL the resolver serves on, used to build each passport's carrier
     /// (QR) URL at publish. Defaults to `https://id.odal-node.io`; set per
     /// deployment (a self-hoster's own domain) via [`Self::with_resolver_base_url`]
@@ -107,7 +147,7 @@ impl PassportService {
         events: Arc<dyn EventBus>,
         registry_sync: Arc<dyn RegistrySyncPort>,
         archive: Arc<dyn ArchivePort>,
-        operator_country: String,
+        operator: OperatorIdentity,
     ) -> Self {
         Self {
             repo,
@@ -119,11 +159,14 @@ impl PassportService {
             archive,
             registry_outbox: None,
             transfer_store: None,
+            transfer_outbox: None,
             evidence_store: None,
-            operator_country,
+            operator,
             registry_reader: None,
             webhooks: None,
             snapshot_outbox: None,
+            seal_outbox: None,
+            snapshot_public_base_url: None,
             resolver_base_url: "https://id.odal-node.io".to_owned(),
         }
     }
@@ -153,6 +196,23 @@ impl PassportService {
         self
     }
 
+    /// Declare the public base URL of this deployment's continuity snapshots,
+    /// so registrations can carry the passport's back-up link.
+    #[must_use]
+    pub fn with_snapshot_public_base_url(mut self, base_url: String) -> Self {
+        self.snapshot_public_base_url = Some(base_url.trim_end_matches('/').to_owned());
+        self
+    }
+
+    /// Provide the transactional outbox for EU registry transfer notifications.
+    /// With it, accepting a transfer commits the chain and enqueues the
+    /// notification in one transaction.
+    #[must_use]
+    pub fn with_transfer_outbox(mut self, outbox: Arc<dyn RegistryTransferOutbox>) -> Self {
+        self.transfer_outbox = Some(outbox);
+        self
+    }
+
     /// Provide the reader used to stamp the default facility (ESPR Annex III) and
     /// primary operator identifier (ESPR Art. 13) onto new passports. Read live on
     /// each create, so `odal facility`/`operator-id` changes apply immediately.
@@ -176,6 +236,15 @@ impl PassportService {
     #[must_use]
     pub fn with_snapshot_outbox(mut self, outbox: Arc<dyn SnapshotOutbox>) -> Self {
         self.snapshot_outbox = Some(outbox);
+        self
+    }
+
+    /// Provide the qualified-seal outbox, enabling eIDAS sealing: every publish
+    /// queues the digest of the freshly-signed passport for the node's drain task
+    /// to seal at the QTSP.
+    #[must_use]
+    pub fn with_seal_outbox(mut self, outbox: Arc<dyn SealOutbox>) -> Self {
+        self.seal_outbox = Some(outbox);
         self
     }
 
@@ -340,6 +409,7 @@ mod snapshot_render_tests {
             component_refs: Vec::new(),
             retention_until: None,
             product_id: None,
+            commodity_code: None,
             operator_identifier: None,
             facility: None,
             seal: None,

@@ -1,6 +1,6 @@
 [package]
 name        = "dpp-dal"
-description = "PostgreSQL data access layer for Odal Node (single-tenant; no RLS — operator isolation is an infrastructure concern, see ADR-005)"
+description = "PostgreSQL data access layer for Odal Node (single-tenant; no RLS — operator isolation is an infrastructure concern)"
 version.workspace     = true
 edition.workspace     = true
 authors.workspace     = true
@@ -28,7 +28,7 @@ chrono       = { workspace = true }
 tracing      = { workspace = true }
 metrics      = { workspace = true }
 
-sqlx = { version = "0.8", default-features = false, features = [
+sqlx = { version = "0.9", default-features = false, features = [
   "postgres", "runtime-tokio", "tls-rustls", "uuid", "chrono", "json", "migrate", "macros",
 ] }
 
@@ -41,3 +41,6 @@ tokio          = { workspace = true }
 uuid           = { workspace = true }
 chrono         = { workspace = true }
 testcontainers-modules = { workspace = true, features = ["postgres"] }
+# Recomputing the seal digest in tests, the same way the vault composes it.
+sha2           = { workspace = true }
+hex            = { workspace = true }

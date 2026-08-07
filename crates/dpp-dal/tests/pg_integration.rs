@@ -144,6 +144,7 @@ fn make_passport() -> Passport {
         component_refs: Vec::new(),
         retention_until: None,
         product_id: None,
+        commodity_code: None,
         operator_identifier: None,
         facility: None,
         seal: None,
@@ -201,7 +202,7 @@ fn battery_passport_with(gtin: &str, batch: Option<&str>, status: PassportStatus
 }
 
 /// Build a facility snapshot carrying `value` (other fields are placeholders) for
-/// the ADR-006 grouping-filter test.
+/// the grouping-filter test.
 fn facility_with_value(value: &str) -> FacilitySnapshot {
     FacilitySnapshot {
         scheme: "gln".into(),
@@ -238,7 +239,7 @@ async fn t1_roundtrip_parity() {
     assert_eq!(repo.count(None, None).await.expect("count"), 1);
 }
 
-// ADR-006 — `facilityId` is an exact-match grouping filter on list/count, never
+// `facilityId` is an exact-match grouping filter on list/count, never
 // an isolation boundary (every facility's passports remain reachable with no filter).
 #[tokio::test]
 async fn t1b_list_and_count_filter_by_facility_id() {
@@ -544,10 +545,15 @@ async fn t8_app_role_can_read_every_table() {
     ];
 
     for table in TABLES {
-        sqlx::query(&format!("SELECT 1 FROM {table} LIMIT 1"))
-            .fetch_optional(pg.dal.pool())
-            .await
-            .unwrap_or_else(|e| panic!("odal_app cannot SELECT from {table}: {e}"));
+        // sqlx 0.9 requires `&'static str` unless the caller asserts safety.
+        // A table name cannot be a bind parameter, and these come from the
+        // `TABLES` const directly above — no caller input reaches this string.
+        sqlx::query(sqlx::AssertSqlSafe(format!(
+            "SELECT 1 FROM {table} LIMIT 1"
+        )))
+        .fetch_optional(pg.dal.pool())
+        .await
+        .unwrap_or_else(|e| panic!("odal_app cannot SELECT from {table}: {e}"));
     }
 }
 
@@ -682,6 +688,7 @@ fn minimal_dossier(passport_id: &str) -> DossierV1 {
         checkpoint: None,
         calc_receipts: vec![],
         component_graph: None,
+        qualified_seal: None,
     }
 }
 

@@ -194,6 +194,23 @@ impl PassportService {
             Some(serde_json::to_value(report).map_err(|e| DppError::Serialisation(e.to_string()))?)
         };
 
+        // The qualified seal, with the preimage it was taken over. Included
+        // because a dossier is what an authority is handed and the seal is the
+        // one member carrying an eIDAS Art. 35(2) presumption — and because it
+        // is unreachable from the dossier otherwise: the seal is stripped from
+        // both views above, since it covers the full-payload signature rather
+        // than any redaction of it. `None` when the seal is still queued.
+        let qualified_seal = passport.seal.as_ref().and_then(|seal| {
+            let jws = passport.jws_signature.as_ref()?;
+            Some(serde_json::json!({
+                "seal": seal,
+                // Served so a verifier holding only this file has both the CAdES
+                // and what it should be checked against, with no reconstruction.
+                "signedOverJws": jws,
+                "payloadHash": crate::domain::service::seal::seal_digest(&passport)?,
+            }))
+        });
+
         let mut dossier = DossierV1 {
             manifest: DossierManifest {
                 format_version: "1".to_string(),
@@ -221,6 +238,7 @@ impl PassportService {
             checkpoint: None,
             calc_receipts: Vec::new(),
             component_graph,
+            qualified_seal,
         };
 
         dossier.manifest.content_hashes =

@@ -43,6 +43,7 @@ impl PgOperatorConfigRepo {
             data_residency: r.get("data_residency"),
             retention_policy_days: r.get::<i32, _>("retention_policy_days").into(),
             feature_flags: r.get("feature_flags"),
+            registry_verified_at: r.get("registry_verified_at"),
             created_at: r.get("created_at"),
             updated_at: r.get("updated_at"),
         }
@@ -97,16 +98,19 @@ impl OperatorConfigRepository for PgOperatorConfigRepo {
     async fn primary_operator_identifier(
         &self,
         operator_id: &str,
-    ) -> Result<Option<String>, DppError> {
+    ) -> Result<Option<(String, String)>, DppError> {
+        // Both columns. The scheme is what says whether the value is a VAT
+        // number, an LEI or a DID — selecting the value alone left every caller
+        // to guess, and the registry mapping guessed `did` for all of them.
         let row = sqlx::query(
-            "SELECT value FROM odal.operator_identifier \
+            "SELECT scheme, value FROM odal.operator_identifier \
              WHERE operator_id = $1 AND is_primary = true AND retired_at IS NULL LIMIT 1",
         )
         .bind(operator_id)
         .fetch_optional(self.dal.pool())
         .await
         .map_err(db_err)?;
-        Ok(row.map(|r| r.get::<String, _>("value")))
+        Ok(row.map(|r| (r.get::<String, _>("scheme"), r.get::<String, _>("value"))))
     }
 
     /// Insert or update the operator config (upsert on `operator_id`).
@@ -123,8 +127,8 @@ impl OperatorConfigRepository for PgOperatorConfigRepo {
                  (operator_id, legal_name, trade_name, address, country, contact_email,
                   did_web_url, product_categories, brand_primary, brand_secondary,
                   brand_logo_url, custom_domain, data_residency, retention_policy_days,
-                  feature_flags, created_at, updated_at)
-               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,now(),now())
+                  feature_flags, registry_verified_at, created_at, updated_at)
+               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,now(),now())
                ON CONFLICT (operator_id) DO UPDATE SET
                  legal_name = EXCLUDED.legal_name,
                  trade_name = EXCLUDED.trade_name,
@@ -140,6 +144,11 @@ impl OperatorConfigRepository for PgOperatorConfigRepo {
                  data_residency = EXCLUDED.data_residency,
                  retention_policy_days = EXCLUDED.retention_policy_days,
                  feature_flags = EXCLUDED.feature_flags,
+                 -- COALESCE, not overwrite: a config update that does not carry
+                 -- a verification date must not silently erase one. Clearing it
+                 -- is a deliberate act, not a side effect of editing branding.
+                 registry_verified_at =
+                   COALESCE(EXCLUDED.registry_verified_at, odal.operator_config.registry_verified_at),
                  updated_at = now()
                RETURNING *"#,
         )
@@ -158,6 +167,7 @@ impl OperatorConfigRepository for PgOperatorConfigRepo {
         .bind(&config.data_residency)
         .bind(config.retention_policy_days as i32)
         .bind(&config.feature_flags)
+        .bind(config.registry_verified_at)
         .fetch_one(self.dal.pool())
         .await
         .map_err(db_err)?;

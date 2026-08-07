@@ -354,33 +354,82 @@ mod tests {
     // ── DAL D2: MUTABLE_FIELDS parity guard ─────────────────────────────────
 
     /// `MUTABLE_FIELDS` must equal the DB retention trigger's `mutable_keys`
-    /// array (`0004_passport.sql`, amended by `0011_public_jws_mutable.sql`,
-    /// `0018_lint_result_mutable.sql` and
-    /// `0027_disclosure_signatures_mutable.sql`): the fields a retention-locked
-    /// passport may still change. Machine-checks the DAL D2 invariant so the
-    /// two cannot silently diverge.
+    /// array — the fields a retention-locked passport may still change.
+    ///
+    /// The expectation is **parsed out of the migration set**, not restated here.
+    /// A hardcoded copy made this a change-detector rather than the parity guard
+    /// its name promises: it passed whenever the Rust constant and the copy
+    /// agreed, whether or not the SQL that actually governs the trigger had been
+    /// updated at all. Reading the last definition in filename order is what the
+    /// running database has, since `CREATE OR REPLACE FUNCTION` means the highest
+    /// numbered migration wins.
     #[test]
     fn mutable_fields_matches_db_trigger_mutable_keys() {
-        let expected: &[&str] = &[
-            "status",
-            "jwsSignature",
-            "publicJwsSignature",
-            // Re-signed on every publish, exactly like its two siblings above —
-            // a Suspended → Published transition runs the signing path again.
-            "disclosureSignatures",
-            "qrCodeUrl",
-            "publishedAt",
-            "retentionLocked",
-            "updatedAt",
-            "lintResult",
-        ];
+        let expected = mutable_keys_from_migrations();
         let mut actual = MUTABLE_FIELDS.to_vec();
-        let mut want = expected.to_vec();
+        let mut want: Vec<&str> = expected.iter().map(String::as_str).collect();
         actual.sort_unstable();
         want.sort_unstable();
         assert_eq!(
             actual, want,
             "MUTABLE_FIELDS in dpp-common must match the DB trigger's mutable_keys"
         );
+    }
+
+    /// The `mutable_keys` array from the highest-numbered migration that defines
+    /// the retention guard.
+    fn mutable_keys_from_migrations() -> Vec<String> {
+        let ops = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../ops/pg")
+            .canonicalize()
+            .expect("ops/pg is reachable from the crate root");
+
+        let mut sql_files: Vec<_> = std::fs::read_dir(&ops)
+            .expect("ops/pg is readable")
+            .filter_map(Result::ok)
+            .map(|e| e.path())
+            .filter(|p| p.extension().is_some_and(|x| x == "sql"))
+            .collect();
+        sql_files.sort();
+
+        sql_files
+            .iter()
+            .rev()
+            .find_map(|p| {
+                let sql = std::fs::read_to_string(p).ok()?;
+                parse_mutable_keys(&sql)
+            })
+            .expect("no migration defines mutable_keys")
+    }
+
+    /// Pull the quoted entries out of `mutable_keys TEXT[] := ARRAY[...]`.
+    fn parse_mutable_keys(sql: &str) -> Option<Vec<String>> {
+        const MARKER: &str = "mutable_keys TEXT[] := ARRAY[";
+        // Offset past the marker, not `find('[')` — that would match `TEXT[]`.
+        let open = sql.find(MARKER)? + MARKER.len();
+        let rest = &sql[open..];
+        let close = rest.find(']')?;
+        Some(
+            rest[..close]
+                .split('\'')
+                .skip(1)
+                .step_by(2)
+                .map(ToOwned::to_owned)
+                .collect::<Vec<String>>(),
+        )
+        .filter(|keys: &Vec<String>| !keys.is_empty())
+    }
+
+    /// The parser itself needs a check — a silently-empty parse would make the
+    /// guard above vacuously pass against an empty expectation.
+    #[test]
+    fn mutable_keys_parser_reads_a_known_array() {
+        let sql = "DECLARE\n  mutable_keys TEXT[] := ARRAY['status','jwsSignature',\n \
+                   'seal'];\nBEGIN";
+        assert_eq!(
+            parse_mutable_keys(sql).unwrap(),
+            vec!["status", "jwsSignature", "seal"]
+        );
+        assert!(parse_mutable_keys("no array here").is_none());
     }
 }

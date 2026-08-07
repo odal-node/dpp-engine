@@ -8,8 +8,8 @@ use async_trait::async_trait;
 
 use dpp_dal::pg::{
     PgApiKeyRepo, PgAuditRepo, PgDal, PgEvidenceDossierRepo, PgOperatorConfigRepo, PgPassportRepo,
-    PgRegistryIdentityRepo, PgRegistrySyncRepo, PgScanTelemetryRepo, PgSnapshotOutboxRepo,
-    PgTransferRepo, PgWebhookRepo,
+    PgRegistryIdentityRepo, PgRegistrySyncRepo, PgRegistryTransferRepo, PgScanTelemetryRepo,
+    PgSealOutboxRepo, PgSnapshotOutboxRepo, PgTransferRepo, PgWebhookRepo,
 };
 use dpp_domain::{DppError, ports::passport_repo::PassportRepository};
 use dpp_integrator::infra::job_store::JobStore;
@@ -17,7 +17,8 @@ use dpp_node::{config::NodeConfig, infra::pg_job_store::PgJobStore};
 use dpp_types::{
     api_key::ApiKeyRepository, audit::AuditRepository, evidence::EvidenceDossierRepository,
     operator::OperatorConfigRepository, registry_identity::RegistryIdentityRepository,
-    registry_sync::RegistrySyncOutbox, scan::ScanTelemetryRepository, snapshot::SnapshotOutbox,
+    registry_sync::RegistrySyncOutbox, registry_transfer::RegistryTransferOutbox,
+    scan::ScanTelemetryRepository, seal::SealOutbox, snapshot::SnapshotOutbox,
     transfer::TransferStore, webhook::WebhookOutbox, webhook::WebhookSubscriptionStore,
 };
 use dpp_vault::state::DbPing;
@@ -30,10 +31,12 @@ pub struct DbComponents {
     pub registry_repo: Arc<dyn RegistryIdentityRepository>,
     pub registry_outbox: Arc<dyn RegistrySyncOutbox>,
     pub transfer_store: Arc<dyn TransferStore>,
+    pub transfer_outbox: Arc<dyn RegistryTransferOutbox>,
     pub evidence_store: Arc<dyn EvidenceDossierRepository>,
     pub webhook_outbox: Arc<dyn WebhookOutbox>,
     pub webhook_store: Arc<dyn WebhookSubscriptionStore>,
     pub snapshot_outbox: Arc<dyn SnapshotOutbox>,
+    pub seal_outbox: Arc<dyn SealOutbox>,
     pub scan_repo: Arc<dyn ScanTelemetryRepository>,
     pub job_store: Arc<dyn JobStore>,
     pub db_ping: Arc<dyn DbPing>,
@@ -96,10 +99,12 @@ pub async fn init_db(cfg: &NodeConfig) -> anyhow::Result<DbComponents> {
         registry_repo: Arc::new(PgRegistryIdentityRepo::new(dal.clone())),
         registry_outbox: Arc::new(PgRegistrySyncRepo::new(dal.clone())),
         transfer_store: Arc::new(PgTransferRepo::new(dal.clone())),
+        transfer_outbox: Arc::new(PgRegistryTransferRepo::new(dal.clone())),
         evidence_store: Arc::new(PgEvidenceDossierRepo::new(dal.clone())),
         webhook_outbox: Arc::new(PgWebhookRepo::new(dal.clone())),
         webhook_store: Arc::new(PgWebhookRepo::new(dal.clone())),
         snapshot_outbox: Arc::new(PgSnapshotOutboxRepo::new(dal.clone())),
+        seal_outbox: Arc::new(PgSealOutboxRepo::new(dal.clone())),
         scan_repo: Arc::new(PgScanTelemetryRepo::new(dal.clone())),
         job_store: Arc::new(PgJobStore::new(dal.clone())),
         db_ping: Arc::new(PgPing(dal)),

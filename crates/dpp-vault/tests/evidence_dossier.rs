@@ -37,7 +37,7 @@ use dpp_types::{
     },
     transfer::TransferStore,
 };
-use dpp_vault::domain::service::PassportService;
+use dpp_vault::domain::service::{OperatorIdentity, PassportService};
 
 // ---------------------------------------------------------------------------
 // In-memory ports (no Docker/Postgres — see module doc comment)
@@ -261,7 +261,10 @@ async fn build_service() -> (PassportService, Arc<InMemoryEvidenceRepo>, String)
         Arc::new(dpp_common::event::NoOpEventBus),
         Arc::new(GhostRegistrySync),
         Arc::new(GhostArchive),
-        "DE".to_owned(),
+        OperatorIdentity {
+            legal_name: "Test Operator GmbH".to_owned(),
+            country: "DE".to_owned(),
+        },
     )
     .with_transfer_store(Arc::new(InMemoryTransferStore::default()))
     .with_evidence_store(evidence_store.clone());
@@ -303,6 +306,7 @@ fn draft_passport() -> Passport {
         component_refs: Vec::new(),
         retention_until: None,
         product_id: None,
+        commodity_code: None,
         // Set directly rather than via a registry reader (none configured in
         // this harness) — sidesteps the Annex III in-force completeness gate
         // regardless of whether "textile" happens to be in force.
@@ -361,6 +365,7 @@ async fn publish_transfer_eol_then_generate_verifies_and_persists() {
         name: name.into(),
         role: OperatorRole::Distributor,
         eu_operator_id: None,
+        eu_operator_id_scheme: None,
         country: "DE".into(),
     };
     service

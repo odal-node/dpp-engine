@@ -19,14 +19,17 @@ use dpp_common::{
 use dpp_crypto::keystore::KeyStore;
 use dpp_domain::ports::{
     archive::ArchivePort, compliance::ComplianceRegistry, registry_sync::RegistrySyncPort,
+    seal::SealPort,
 };
 use dpp_identity_service::state::AppState as IdentityState;
 use dpp_integrator::{infra::vault_client::VaultHttpClient, state::AppState as IntegratorState};
 use dpp_types::trust::TrustMode;
 use dpp_vault::{
     domain::{
-        api_key_service::ApiKeyService, operator_service::OperatorService,
-        registry_identity_service::RegistryIdentityService, service::PassportService,
+        api_key_service::ApiKeyService,
+        operator_service::OperatorService,
+        registry_identity_service::RegistryIdentityService,
+        service::{OperatorIdentity, PassportService},
         webhook_service::WebhookService,
     },
     infra::auth::{
@@ -108,8 +111,10 @@ async fn main() -> anyhow::Result<()> {
 
     // ── EU Registry sync (ESPR Art. 13) ──────────────────────────────────────
     // If EU_REGISTRY_CLIENT_ID + SECRET are set, use the live (sandbox) adapter.
-    // Otherwise fall back to GhostRegistrySync so publish is never blocked before
-    // the EU registry launches (~19 Jul 2026).
+    // Otherwise fall back to GhostRegistrySync so publish is never blocked for a
+    // deployment that has not yet onboarded to the registry. (The registry became
+    // operational on 20 Jul 2026; registration obligations still follow each
+    // product's own delegated act.)
     let (registry_sync, registry_trust): (Arc<dyn RegistrySyncPort>, TrustMode) = match (
         std::env::var("EU_REGISTRY_CLIENT_ID")
             .ok()
@@ -120,7 +125,20 @@ async fn main() -> anyhow::Result<()> {
     ) {
         (Some(id), Some(secret)) => {
             use dpp_node::infra::registry::{EuRegistrySync, EuRegistrySyncConfig};
-            let reg_cfg = EuRegistrySyncConfig::sandbox(id, secret);
+            let mut reg_cfg = EuRegistrySyncConfig::sandbox(id, secret);
+            // Opt-in override: submit payloads that fail our local validation.
+            // Off unless explicitly set, so the safe behaviour is the one you get
+            // by doing nothing.
+            reg_cfg.allow_invalid_payloads = std::env::var("EU_REGISTRY_ALLOW_INVALID_PAYLOADS")
+                .is_ok_and(|v| v == "1" || v.eq_ignore_ascii_case("true"));
+            if reg_cfg.allow_invalid_payloads {
+                tracing::warn!(
+                    "EU registry sync: EU_REGISTRY_ALLOW_INVALID_PAYLOADS is set — payloads \
+                     that fail local validation will be submitted anyway. Intended for \
+                     working around a false positive in our own rules; do not leave this \
+                     set against the production registry."
+                );
+            }
             let adapter = EuRegistrySync::new(reg_cfg)
                 .context("Failed to build EU registry sync HTTP client")?;
             tracing::info!("EU registry sync: sandbox adapter active");
@@ -128,7 +146,7 @@ async fn main() -> anyhow::Result<()> {
         }
         _ => {
             tracing::info!(
-                "EU registry sync: ghost (pre-go-live) — set EU_REGISTRY_CLIENT_ID + EU_REGISTRY_CLIENT_SECRET to enable"
+                "EU registry sync: ghost (not onboarded) — set EU_REGISTRY_CLIENT_ID + EU_REGISTRY_CLIENT_SECRET to enable"
             );
             (Arc::new(dpp_domain::GhostRegistrySync), TrustMode::Ghost)
         }
@@ -155,7 +173,50 @@ async fn main() -> anyhow::Result<()> {
         dpp_node::infra::credential_issuers::from_env(operator_did.as_deref());
     let credentials_live = credential_trust != TrustMode::Ghost;
 
-    let trust = boot::trust::build_and_enforce(registry_trust, archive_trust, credential_trust)?;
+    // ── eIDAS qualified seal (eID Easy Cloud Direct e-Sealing) ───────────────
+    // A partial configuration is an error rather than a silent ghost: dropping
+    // to no sealing because one of three variables was misspelled is exactly the
+    // downgrade the trust report exists to prevent, so it fails the boot.
+    let (seal, seal_client_id, seal_trust): (Arc<dyn SealPort>, String, TrustMode) =
+        match dpp_seal::EideasyConfig::from_env().context("eID Easy configuration")? {
+            Some(cfg) => {
+                // Sandbox is a real seal from a real API, but over eID Easy's test
+                // certificate — a distinct claim from both Ghost and Live.
+                let mode = match cfg.environment {
+                    dpp_seal::EideasyEnvironment::Sandbox => TrustMode::Sandbox,
+                    dpp_seal::EideasyEnvironment::Production => TrustMode::Live,
+                };
+                let client_id = cfg.client_id.clone();
+                tracing::info!(
+                    base_url = %cfg.base_url,
+                    mode = mode.as_str(),
+                    "eIDAS seal: eID Easy adapter active"
+                );
+                let adapter = dpp_seal::QtspSealAdapter::eideasy(cfg)
+                    .context("Failed to build eID Easy seal adapter")?;
+                (Arc::new(adapter), client_id, mode)
+            }
+            None => {
+                tracing::info!(
+                    "eIDAS seal: ghost (no QTSP) — set SEAL_PROVIDER=eideasy plus \
+                     SEAL_EIDEASY_BASE_URL + SEAL_EIDEASY_CLIENT_ID + SEAL_EIDEASY_HMAC_KEY \
+                     to enable"
+                );
+                (
+                    Arc::new(dpp_seal::QtspSealAdapter::ghost()),
+                    String::new(),
+                    TrustMode::Ghost,
+                )
+            }
+        };
+    let sealing_live = seal_trust != TrustMode::Ghost;
+
+    let trust = boot::trust::build_and_enforce(
+        seal_trust,
+        registry_trust,
+        archive_trust,
+        credential_trust,
+    )?;
 
     // ── Compliance Current: signed ruleset channel ────────────────────────────
     // Load the pinned, signed bundle if a channel is configured; otherwise stay
@@ -196,23 +257,37 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!(version = %active_ruleset.version(), "active ruleset");
 
     // ── Vault service state ────────────────────────────────────────────────────
-    let operator_country = match db
+    let operator = match db
         .operator_repo
         .get(dpp_types::STANDALONE_OPERATOR_ID)
         .await
     {
-        Ok(cfg) => cfg.map(|c| c.country).unwrap_or_default(),
+        Ok(cfg) => cfg
+            .map(|c| OperatorIdentity {
+                legal_name: c.legal_name,
+                country: c.country,
+            })
+            .unwrap_or_default(),
         Err(e) => {
-            // Don't silently bake an empty country into every registry payload
-            // for the life of the process — a transient DB hiccup at boot must
-            // be visible, like every other fallible boot step in this file.
+            // Don't silently bake an empty operator identity into every registry
+            // payload for the life of the process — a transient DB hiccup at boot
+            // must be visible, like every other fallible boot step in this file.
             tracing::warn!(
                 error = %e,
-                "could not read operator config at boot — operator country left empty this run"
+                "could not read operator config at boot — operator identity left empty this run"
             );
-            String::new()
+            OperatorIdentity::default()
         }
     };
+    // The registry requires a legal-entity name on the operator identifier, so
+    // an empty one makes every registration this node builds invalid. Say so at
+    // boot rather than letting each publish fail with the same message.
+    if operator.legal_name.is_empty() {
+        tracing::warn!(
+            "operator legal name is not set — EU registry registrations will fail validation \
+             until it is configured"
+        );
+    }
 
     let compliance: Arc<dyn ComplianceRegistry> = plugin_host.clone();
     // Clone the registry-sync port for the outbox drain task before it is moved
@@ -236,19 +311,30 @@ async fn main() -> anyhow::Result<()> {
         event_bus,
         registry_sync,
         archive,
-        operator_country,
+        operator,
     )
     .with_registry_reader(db.operator_repo.clone())
     .with_registry_outbox(db.registry_outbox.clone())
     .with_transfer_store(db.transfer_store.clone())
+    .with_transfer_outbox(db.transfer_outbox.clone())
     .with_evidence_store(db.evidence_store.clone())
     .with_webhooks(db.webhook_outbox.clone())
     .with_resolver_base_url(cfg.resolver_base_url.clone());
+    if let Some(base) = cfg.snapshot_public_base_url.clone() {
+        passport_service = passport_service.with_snapshot_public_base_url(base);
+    }
     // Only arm the reconcile outbox when there is somewhere to reconcile *to*.
     // Enqueuing rows no drain will ever consume would grow an unbounded backlog
     // of `pending` and make the gauge lie about the tier's health.
     if snapshot_store.is_some() {
         passport_service = passport_service.with_snapshot_outbox(db.snapshot_outbox.clone());
+    }
+    // Only arm the seal outbox against a real QTSP. A ghost-backed adapter would
+    // happily "seal" every row with a synthetic placeholder, filling the outbox
+    // with rows that report success and passports carrying `placeholder: true`
+    // seals — the ghost-as-real dishonesty the trust report exists to prevent.
+    if sealing_live {
+        passport_service = passport_service.with_seal_outbox(db.seal_outbox.clone());
     }
     let service = Arc::new(passport_service);
     let operator_service = Arc::new(OperatorService::new(db.operator_repo.clone()));
@@ -319,9 +405,30 @@ async fn main() -> anyhow::Result<()> {
     // ── Background tasks: expired-import-job cleanup + registry outbox drain ──
     boot::tasks::spawn_job_cleanup(db.job_store.clone());
     boot::tasks::spawn_scan_prune(db.scan_repo.clone());
-    boot::tasks::spawn_registry_drain(db.registry_outbox.clone(), registry_sync_for_drain).await;
+    boot::tasks::spawn_registry_drain(
+        db.registry_outbox.clone(),
+        registry_sync_for_drain.clone(),
+        Some(db.operator_repo.clone()),
+    )
+    .await;
+    boot::tasks::spawn_transfer_drain(
+        db.transfer_outbox.clone(),
+        db.registry_outbox.clone(),
+        registry_sync_for_drain,
+    )
+    .await;
     boot::tasks::spawn_webhook_drain(db.webhook_outbox.clone(), cfg.webhook_allow_private_targets)
         .await;
+    // Qualified sealing: only spawn against a real QTSP. A ghost-backed drain
+    // would stamp synthetic placeholder seals onto published passports and
+    // report them sealed.
+    if sealing_live {
+        boot::tasks::spawn_seal_drain(db.seal_outbox.clone(), seal.clone(), seal_client_id).await;
+        // The backstop for seals the event-driven path never queued, or that gave
+        // up during an outage. Without it a published passport can stay unsealed
+        // forever with nothing to notice.
+        boot::tasks::spawn_seal_sweep(db.seal_outbox.clone());
+    }
     // Continuity tier: only spawn when object storage is configured — without a
     // store there is nothing to reconcile against (and the vault never enqueues).
     if let Some(store) = snapshot_store {

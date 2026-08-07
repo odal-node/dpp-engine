@@ -33,7 +33,7 @@ use dpp_types::{
     auth::AuthContext,
     snapshot::{SnapshotOutbox, SnapshotOutboxCounts, SnapshotReconcileRow},
 };
-use dpp_vault::domain::service::PassportService;
+use dpp_vault::domain::service::{OperatorIdentity, PassportService};
 
 // ---------------------------------------------------------------------------
 // In-memory ports (no Docker/Postgres) — the two the lifecycle actually needs.
@@ -240,7 +240,10 @@ async fn build_service() -> (PassportService, InMemorySnapshotOutbox) {
         Arc::new(dpp_common::event::NoOpEventBus),
         Arc::new(GhostRegistrySync),
         Arc::new(GhostArchive),
-        "DE".to_owned(),
+        OperatorIdentity {
+            legal_name: "Test Operator GmbH".to_owned(),
+            country: "DE".to_owned(),
+        },
     )
     .with_snapshot_outbox(Arc::new(snapshots.clone()));
     (service, snapshots)
@@ -280,6 +283,7 @@ fn draft_passport() -> Passport {
         component_refs: Vec::new(),
         retention_until: None,
         product_id: None,
+        commodity_code: None,
         // Set directly (no registry reader in this harness) so the Annex III /
         // Art. 13 completeness gate at publish is satisfied.
         operator_identifier: Some("did:web:snapshot-test.example.com".into()),

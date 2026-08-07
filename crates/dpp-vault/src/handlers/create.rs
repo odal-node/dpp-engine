@@ -39,6 +39,10 @@ pub struct CreateRequest {
     pub sector_data: Option<SectorData>,
     pub batch_id: Option<String>,
     pub schema_version: Option<String>,
+    /// Customs tariff classification — HS-6, CN-8 or TARIC-10 digits.
+    /// Registration data the EU registry stores and range-checks per product
+    /// group. Optional: the regulation qualifies it "where relevant".
+    pub commodity_code: Option<String>,
     /// Cross-operator predecessor this passport derives from (second-life
     /// successor linkage). Shape-validated here; the hash is checked against the
     /// fetched parent at verify time.
@@ -183,6 +187,23 @@ pub async fn create_handler(
         })
         .map(CarbonFootprint::from_kg);
 
+    // Refuse a malformed tariff code at the edge rather than at registration:
+    // a draft that cannot be registered should say so when it is created, not
+    // months later when it is published.
+    let commodity_code = match body.commodity_code.as_deref().map(str::trim) {
+        Some(raw) if !raw.is_empty() => match dpp_domain::CommodityCode::parse(raw) {
+            Ok(code) => Some(code),
+            Err(e) => {
+                return api_error(
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    "VALIDATION_ERROR",
+                    &e.to_string(),
+                );
+            }
+        },
+        _ => None,
+    };
+
     let passport = Passport {
         id: PassportId(Uuid::now_v7()),
         product_name: body.product_name,
@@ -215,6 +236,7 @@ pub async fn create_handler(
         component_refs: body.component_refs,
         retention_until: None,
         product_id: None,
+        commodity_code,
         operator_identifier: None,
         facility: None,
         seal: None,

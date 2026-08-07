@@ -119,7 +119,7 @@ async fn main() -> anyhow::Result<()> {
             event_bus,
             registry_sync,
             Arc::new(GhostArchive),
-            String::new(),
+            domain::service::OperatorIdentity::default(),
         )
         .with_registry_reader(operator_repo.clone())
         .with_evidence_store(evidence_repo)

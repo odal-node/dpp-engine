@@ -105,7 +105,7 @@ pub struct ExportResult {
 pub struct ListParams {
     pub status: Option<String>,
     pub q: Option<String>,
-    /// Exact match on the facility identifier (ESPR Annex III; ADR-006).
+    /// Exact match on the facility identifier (ESPR Annex III).
     pub facility_id: Option<String>,
     pub limit: u32,
     pub skip: u32,
