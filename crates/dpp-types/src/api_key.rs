@@ -113,13 +113,27 @@ pub struct ApiKeyRecord {
 }
 
 /// Response returned when a new key is created — includes the one-time plaintext secret.
-#[derive(Debug, Serialize)]
+///
+/// `Serialize` is intentional and must stay: this is the one response that
+/// carries the plaintext key, and the caller cannot get it again. `Debug` is
+/// implemented by hand, because printing the same value into a log is not the
+/// same thing at all — it turns a shown-once secret into a stored-forever one.
+#[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct NewApiKey {
     /// Key metadata (same shape as what future GET requests return).
     pub key: ApiKey,
     /// The full plaintext key secret. Shown once; store it securely.
     pub secret: String,
+}
+
+impl std::fmt::Debug for NewApiKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("NewApiKey")
+            .field("key", &self.key)
+            .field("secret", &"[redacted]")
+            .finish()
+    }
 }
 
 /// Request body for `POST /api/v1/api-keys`.
@@ -203,5 +217,37 @@ mod tests {
             ApiKeyScope::from_scopes(&scopes(&["read", "write"])),
             ApiKeyScope::Write
         );
+    }
+
+    /// The plaintext key is shown once, in the create response. `Debug` must not
+    /// turn that into a permanent copy in the logs — while `Serialize`, which is
+    /// how the caller legitimately receives it, must keep working.
+    #[test]
+    fn new_api_key_debug_redacts_but_serialize_does_not() {
+        let new_key = NewApiKey {
+            key: ApiKey {
+                id: Uuid::now_v7(),
+                name: "CI pipeline".into(),
+                key_prefix: "odal_sk_abcd".into(),
+                is_active: true,
+                scope: ApiKeyScope::Read,
+                created_at: Utc::now(),
+                last_used_at: None,
+                expires_at: None,
+            },
+            secret: "odal_sk_plaintext_must_not_leak".into(),
+        };
+
+        let rendered = format!("{new_key:?}");
+        assert!(
+            !rendered.contains("odal_sk_plaintext_must_not_leak"),
+            "Debug leaked the plaintext key: {rendered}"
+        );
+        assert!(rendered.contains("CI pipeline"), "{rendered}");
+
+        // The wire response is unchanged — this is the one place the secret is
+        // meant to travel, and redacting it there would break key creation.
+        let json = serde_json::to_value(&new_key).expect("serialises");
+        assert_eq!(json["secret"], "odal_sk_plaintext_must_not_leak");
     }
 }
