@@ -2053,9 +2053,9 @@ checksum = "75b325c5dbd37f80359721ad39aca5a29fb04c89279657cffdda8736d0c0b9d2"
 
 [[package]]
 name = "dpp-aas"
-version = "0.15.0"
+version = "0.16.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "34989453d86842de5dc5eef49da95dfb606e3f37615a7046576262f68d4f06fb"
+checksum = "fb808069486b9d6cdc8244053451b232a654215bf0d6acdf36445f4822a8324c"
 dependencies = [
  "dpp-domain",
  "serde",
@@ -2064,9 +2064,9 @@ dependencies = [
 
 [[package]]
 name = "dpp-calc"
-version = "0.15.0"
+version = "0.16.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6b6d0a0bbbf1414b26e1ebb3bbe42d6c06f5ef309960c0f5317ad949ab94fed4"
+checksum = "f61d69178918c3e171c570e10aaae4152ffe7555f9e09646f9801cbcf66e0451"
 dependencies = [
  "chrono",
  "hex",
@@ -2128,9 +2128,9 @@ dependencies = [
 
 [[package]]
 name = "dpp-crypto"
-version = "0.15.0"
+version = "0.16.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "786838c84fdcbaa8f0cd793c3a2830d391a24d69c85fe6d78cfa7c0bbb067b2d"
+checksum = "882e26e78ae425b1e87c61669986b84dfc505dc44c65fb187aec29d44ebb4392"
 dependencies = [
  "aes-gcm",
  "anyhow",
@@ -2177,9 +2177,9 @@ dependencies = [
 
 [[package]]
 name = "dpp-digital-link"
-version = "0.15.0"
+version = "0.16.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d5ca4c19d59419ceafef2f6802791c1aa9a62d189e9b6b5c1b272e17adfec10e"
+checksum = "3917b2560a9d98325aa63cd3b9751579634b79ed188a891f0bb9341d9bd846bf"
 dependencies = [
  "dpp-domain",
  "serde",
@@ -2189,9 +2189,9 @@ dependencies = [
 
 [[package]]
 name = "dpp-domain"
-version = "0.15.0"
+version = "0.16.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d1100b43c982ea3a07ce6a5dca645ca8f4366b64aa87693457d422d4beba0814"
+checksum = "70d15eb9875382001e8ab2f824c86debfe21182714253a715a2995fca12cf0ee"
 dependencies = [
  "async-trait",
  "chrono",
@@ -2356,9 +2356,9 @@ dependencies = [
 
 [[package]]
 name = "dpp-plugin-traits"
-version = "0.15.0"
+version = "0.16.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "36371e820f2ede0c8d95c91e3debfb9b01046f073a22390da0981b6da6f78ec8"
+checksum = "e96b5bf986bf6f7ba71113ad5a963ca9d64529a0dad1d5a76ee0e4f050b55253"
 dependencies = [
  "semver",
  "serde",
@@ -2368,9 +2368,9 @@ dependencies = [
 
 [[package]]
 name = "dpp-registry"
-version = "0.15.0"
+version = "0.16.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7668419eaa74e92ca4738a11eac69dfae2cdd091e64f0c99a8da16debb5b48d4"
+checksum = "6cd58e1c01cc319f613f45fd25a3aeafc2841885e35541a4b55a8a8bcfae4ea9"
 dependencies = [
  "chrono",
  "dpp-domain",
@@ -2432,9 +2432,9 @@ dependencies = [
 
 [[package]]
 name = "dpp-rules"
-version = "0.15.0"
+version = "0.16.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "688338672758d7fe5e8f0491473640eb770e3c22fc00115645b536fcd97a44f9"
+checksum = "880d63f38df7def5db8af05fc94fb4e8c2a0306f4588dc808ac477272392268d"
 dependencies = [
  "base64 0.23.1",
  "chrono",
@@ -2528,9 +2528,9 @@ dependencies = [
 
 [[package]]
 name = "dpp-vc"
-version = "0.15.0"
+version = "0.16.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "04b5bb40619f6fe210b30fa35b9b53fbd00ba024760ac0c3e6c029294d03b39e"
+checksum = "75a82c1859f1426b6451228eef06cad5a3854d97ccf87e279af2f89d8bd79a61"
 dependencies = [
  "anyhow",
  "async-trait",
