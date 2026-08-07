@@ -21,7 +21,7 @@ async fn lifecycle_actions_are_recorded_in_audit_history() {
     // Single-tenant node: production auth always yields STANDALONE_OPERATOR_ID,
     // so audit writes and reads share the node's one operator identity. There is
     // no multi-operator scoping — isolation is an infrastructure boundary, one
-    // node per operator (ADR-005) — so a different operator can't occur here.
+    // node per operator — so a different operator can't occur here.
     let token = make_jwt(STANDALONE_OPERATOR_ID);
     let client = TestClient::new(&vault_url, &token);
 
@@ -96,7 +96,7 @@ async fn history_for_unknown_passport_is_not_found() {
     // Single-tenant node: production auth always yields STANDALONE_OPERATOR_ID,
     // so audit writes and reads share the node's one operator identity. There is
     // no multi-operator scoping — isolation is an infrastructure boundary, one
-    // node per operator (ADR-005) — so a different operator can't occur here.
+    // node per operator — so a different operator can't occur here.
     let token = make_jwt(STANDALONE_OPERATOR_ID);
     let client = TestClient::new(&vault_url, &token);
 

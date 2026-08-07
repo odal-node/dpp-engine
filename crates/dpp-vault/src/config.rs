@@ -5,7 +5,10 @@ use anyhow::{Context, Result};
 /// Runtime configuration loaded from environment variables.
 ///
 /// All values are required unless marked `Option`. No defaults except PORT and LOG_LEVEL.
-#[derive(Debug, Clone)]
+///
+/// `Debug` is implemented by hand: the derived one printed `admin_password` in
+/// full and the database URL with its password inline.
+#[derive(Clone)]
 pub struct Config {
     /// PostgreSQL app connection URL.
     /// Example: `postgres://odal_app:<pass>@host:5432/odal`
@@ -27,6 +30,24 @@ pub struct Config {
     /// mint the first API key via the CLI before any key exists).
     pub admin_username: Option<String>,
     pub admin_password: Option<String>,
+}
+
+impl std::fmt::Debug for Config {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        use dpp_common::config::{REDACTED, redact_url_credentials};
+        f.debug_struct("Config")
+            .field("database_url", &redact_url_credentials(&self.database_url))
+            .field("identity_service_url", &self.identity_service_url)
+            .field("port", &self.port)
+            .field("log_level", &self.log_level)
+            .field("cors_allowed_origins", &self.cors_allowed_origins)
+            .field("admin_username", &self.admin_username)
+            .field(
+                "admin_password",
+                &self.admin_password.as_ref().map(|_| REDACTED),
+            )
+            .finish()
+    }
 }
 
 impl Config {
@@ -162,5 +183,28 @@ mod tests {
         let _g = ENV_LOCK.lock().unwrap();
         clear_all();
         assert!(Config::from_env().is_err());
+    }
+
+    #[test]
+    fn debug_prints_no_secret_values() {
+        let cfg = Config {
+            database_url: "postgres://odal_app:pg-pass-must-not-leak@db:5432/odal".into(),
+            identity_service_url: "http://identity:8002".into(),
+            port: 8001,
+            log_level: "info".into(),
+            cors_allowed_origins: Vec::new(),
+            admin_username: Some("odal-admin".into()),
+            admin_password: Some("admin-pass-must-not-leak".into()),
+        };
+        let rendered = format!("{cfg:?}");
+        assert!(
+            !rendered.contains("admin-pass-must-not-leak"),
+            "Debug leaked the admin password: {rendered}"
+        );
+        assert!(
+            !rendered.contains("pg-pass-must-not-leak"),
+            "Debug leaked the database password: {rendered}"
+        );
+        assert!(rendered.contains("db:5432"), "{rendered}");
     }
 }

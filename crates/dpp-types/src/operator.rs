@@ -84,7 +84,6 @@ fn default_data_residency() -> String {
 /// stay accessible for **25 years**, which binds a passport service provider
 /// rather than a node; and the ESPR sectors' figure is tied to expected product
 /// lifetime, so their catalog value is an assumption rather than a citation.
-/// See `dpp-docs/reference/regulatory/ESPR-2024-1781-CITATION-MAP-2026-07.md`.
 pub const MIN_RETENTION_DAYS: i64 = 3650;
 
 fn default_retention_days() -> i64 {

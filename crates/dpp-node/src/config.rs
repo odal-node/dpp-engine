@@ -7,7 +7,14 @@ use anyhow::{Context, Result};
 /// All service configs are merged here so a single `.env` file (or environment)
 /// drives the full node. Each service library still has its own `Config::from_env()`
 /// for standalone deployments.
-#[derive(Debug, Clone)]
+///
+/// `Debug` is implemented by hand below. The derived one printed
+/// `key_store_passphrase` and `admin_password` in full, and the two database
+/// URLs carry their passwords inline — so a single `{:?}` in a tracing field,
+/// an `anyhow` context or a panic message put the node's signing-key passphrase
+/// into the logs. The "Never logged" note on `key_store_passphrase` was an
+/// aspiration the type did not enforce.
+#[derive(Clone)]
 pub struct NodeConfig {
     // ── Database ────────────────────────────────────────────────────────────
     /// PostgreSQL app connection URL.
@@ -75,6 +82,45 @@ pub struct NodeConfig {
     /// self-hoster sets `RESOLVER_BASE_URL` to their own domain so printed
     /// labels carry it. Must match the resolver deployment's own base.
     pub resolver_base_url: String,
+}
+
+impl std::fmt::Debug for NodeConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        use dpp_common::config::{REDACTED, redact_url_credentials};
+        // Optional secrets render as presence, not value: whether an admin
+        // password is configured is a real diagnostic, its value never is.
+        let opt_secret = |v: &Option<String>| v.as_ref().map(|_| REDACTED);
+        f.debug_struct("NodeConfig")
+            .field("database_url", &redact_url_credentials(&self.database_url))
+            .field(
+                "database_migrate_url",
+                &self
+                    .database_migrate_url
+                    .as_deref()
+                    .map(redact_url_credentials),
+            )
+            .field("key_store_path", &self.key_store_path)
+            .field("key_store_passphrase", &REDACTED)
+            .field("did_web_base_url", &self.did_web_base_url)
+            .field("cors_allowed_origins", &self.cors_allowed_origins)
+            .field("admin_username", &self.admin_username)
+            .field("admin_password", &opt_secret(&self.admin_password))
+            .field("batch_concurrency", &self.batch_concurrency)
+            .field(
+                "nats_url",
+                &self.nats_url.as_deref().map(redact_url_credentials),
+            )
+            .field("port", &self.port)
+            .field("log_level", &self.log_level)
+            .field("plugins_dir", &self.plugins_dir)
+            .field("metrics_addr", &self.metrics_addr)
+            .field(
+                "webhook_allow_private_targets",
+                &self.webhook_allow_private_targets,
+            )
+            .field("resolver_base_url", &self.resolver_base_url)
+            .finish()
+    }
 }
 
 impl NodeConfig {
@@ -274,5 +320,65 @@ mod tests {
         let result = NodeConfig::from_env();
         assert!(result.is_err());
         clear_env();
+    }
+
+    /// Asserts on the **secret values**, not on the marker. A test that only
+    /// checked for `[redacted]` would pass on output that printed the marker for
+    /// one field and the passphrase for another.
+    #[test]
+    #[serial]
+    fn debug_prints_no_secret_values() {
+        clear_env();
+        unsafe {
+            std::env::set_var(
+                "DATABASE_URL",
+                "postgres://odal_app:pg-pass-must-not-leak@db.internal:5432/odal",
+            );
+            std::env::set_var(
+                "DATABASE_MIGRATE_URL",
+                "postgres://postgres:migrate-pass-must-not-leak@db.internal:5432/odal",
+            );
+            std::env::set_var("KEY_STORE_PATH", "/tmp/ks.json");
+            std::env::set_var("KEY_STORE_PASSPHRASE", "passphrase-must-not-leak");
+            std::env::set_var("DID_WEB_BASE_URL", "https://node.example.com");
+            std::env::set_var("ADMIN_USERNAME", "odal-admin");
+            std::env::set_var("ADMIN_PASSWORD", "admin-pass-must-not-leak");
+        }
+        let cfg = NodeConfig::from_env().expect("config loads");
+        let rendered = format!("{cfg:?}");
+        clear_env();
+
+        for secret in [
+            "passphrase-must-not-leak",
+            "admin-pass-must-not-leak",
+            "pg-pass-must-not-leak",
+            "migrate-pass-must-not-leak",
+        ] {
+            assert!(
+                !rendered.contains(secret),
+                "Debug leaked {secret}: {rendered}"
+            );
+        }
+
+        // Non-secret context must survive, or the redaction has cost the
+        // diagnostic value that makes Debug worth having at all.
+        assert!(rendered.contains("db.internal:5432"), "{rendered}");
+        assert!(rendered.contains("odal-admin"), "{rendered}");
+        assert!(rendered.contains("/tmp/ks.json"), "{rendered}");
+    }
+
+    /// An unset optional secret must be distinguishable from a set one — the
+    /// presence of an admin password is a real diagnostic, its value is not.
+    #[test]
+    #[serial]
+    fn debug_distinguishes_an_absent_optional_secret() {
+        set_required_env();
+        let cfg = NodeConfig::from_env().expect("config loads");
+        let rendered = format!("{cfg:?}");
+        clear_env();
+        assert!(
+            rendered.contains("admin_password: None"),
+            "an unset admin password should read as None: {rendered}"
+        );
     }
 }

@@ -36,14 +36,54 @@ expect_fail() {
   fi
 }
 
-# 1. The real, corrected register passes as-is.
+# Asserts the checker fails *for the stated reason*, not merely that it exits
+# non-zero. `fail()` accumulates rather than exiting, so a fixture can trip
+# several checks at once — and every entry now trips the staleness check, since
+# the dependency graph currently raises no advisories at all. Matching the
+# message is what keeps each case a test of its own check.
+expect_fail_with() {
+  local name="$1" fixture="$2" needle="$3" out
+  out="$(bash scripts/check-audit-register.sh "$fixture" 2>&1 || true)"
+  if grep -q "$needle" <<< "$out"; then
+    echo "ok   - $name"
+    PASS=$((PASS + 1))
+  else
+    echo "FAIL - $name (no message matching '$needle')"
+    FAIL=$((FAIL + 1))
+  fi
+}
+
+# The register itself is empty whenever nothing in the graph raises an advisory,
+# so the negative fixtures below are built from a self-contained base rather
+# than by editing `.cargo/audit.toml`. Deriving them from the live file made
+# them silently unrunnable the moment the last real entry was released: their
+# `sed`/`awk` sanity greps found nothing and `set -e` killed the run.
+BASE="$SCRATCH/base.toml"
+cat > "$BASE" <<'EOF'
+[advisories]
+# --- RUSTSEC-2023-0071 -------------------------------------------------------
+# crate:      rsa 0.9.10
+# path:       sqlx-mysql -> sqlx   [ORPHANED]
+# class:      not-in-graph
+# rationale:  Test fixture. `rsa` is not in the resolved dependency graph.
+# anchor:     cargo tree -i rsa --target all
+# owner:      founder
+# recorded:   2026-07-27
+# expires:    2026-10-25
+# release-on: test fixture — never merged into the real register
+ignore = [
+    "RUSTSEC-2023-0071",
+]
+EOF
+
+# 1. The real register passes as-is.
 expect_pass "corrected register passes" ".cargo/audit.toml"
 
 # 2. Back-dating one real entry's `expires` field goes red.
 BACKDATED="$SCRATCH/backdated.toml"
-sed 's/^# expires:    2026-10-25$/# expires:    2020-01-01/' .cargo/audit.toml > "$BACKDATED"
+sed 's/^# expires:    2026-10-25$/# expires:    2020-01-01/' "$BASE" > "$BACKDATED"
 grep -q "2020-01-01" "$BACKDATED" # sanity: the substitution actually landed
-expect_fail "back-dated expires is rejected" "$BACKDATED"
+expect_fail_with "back-dated expires is rejected" "$BACKDATED" "suppression expired on"
 
 # 3. Re-adding a complete, well-formed block for an advisory that no longer
 #    fires (RUSTSEC-2026-0188, fixed at wasmtime-wasi 45.0.3 — see F2) is
@@ -69,9 +109,10 @@ awk -v block="$BLOCK" '
     next
   }
   { print }
-' .cargo/audit.toml > "$STALE"
+' "$BASE" > "$STALE"
 grep -q "RUSTSEC-2026-0188" "$STALE" # sanity: the insertion actually landed
-expect_fail "stale (already-fixed) advisory is rejected" "$STALE"
+expect_fail_with "stale (already-fixed) advisory is rejected" "$STALE" \
+  "RUSTSEC-2026-0188: does not appear in a raw"
 
 # 4. A `class: not-in-graph` claim for a crate that IS in the graph is caught.
 #    Takes the real rsa entry (correctly `not-in-graph`, so every other field
@@ -81,9 +122,10 @@ WRONGCLASS="$SCRATCH/wrongclass.toml"
 awk '
   /^# crate:      rsa/ { print "# crate:      serde_json"; next }
   { print }
-' .cargo/audit.toml > "$WRONGCLASS"
+' "$BASE" > "$WRONGCLASS"
 grep -q "^# crate:      serde_json" "$WRONGCLASS" # sanity: the swap actually landed
-expect_fail "not-in-graph claim for an in-graph crate is rejected" "$WRONGCLASS"
+expect_fail_with "not-in-graph claim for an in-graph crate is rejected" "$WRONGCLASS" \
+  "resolves in the default dependency graph"
 
 # 5. The regression the shipped-graph check exists for: a crate absent under
 #    default features but present in the artefact the Dockerfile actually
@@ -97,18 +139,10 @@ SHIPPEDONLY="$SCRATCH/shipped-only.toml"
 awk '
   /^# crate:      rsa/ { print "# crate:      aws-sdk-s3"; next }
   { print }
-' .cargo/audit.toml > "$SHIPPEDONLY"
+' "$BASE" > "$SHIPPEDONLY"
 grep -q "^# crate:      aws-sdk-s3" "$SHIPPEDONLY" # sanity: the swap landed
-# Capture before grepping: under `set -o pipefail` the checker's non-zero exit
-# would win the pipeline and mask a successful match.
-SHIPPED_OUT="$(bash scripts/check-audit-register.sh "$SHIPPEDONLY" 2>&1 || true)"
-if grep -q "resolves in the shipped" <<< "$SHIPPED_OUT"; then
-  echo "ok   - not-in-graph claim true only outside the shipped build is rejected"
-  PASS=$((PASS + 1))
-else
-  echo "FAIL - not-in-graph claim true only outside the shipped build is rejected"
-  FAIL=$((FAIL + 1))
-fi
+expect_fail_with "not-in-graph claim true only outside the shipped build is rejected" \
+  "$SHIPPEDONLY" "resolves in the shipped"
 
 echo ""
 echo "check-audit-register.test: $PASS passed, $FAIL failed"

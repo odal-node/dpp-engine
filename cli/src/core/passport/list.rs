@@ -131,7 +131,7 @@ mod tests {
     fn summary_from_doc_maps_fields() {
         let doc = json!({
             "id": "019ee576-ca26-7532-8d21-730f17e65ce8",
-            "productName": "Amor Linen Blouse",
+            "productName": "Example Linen Blouse",
             "sector": "textile",
             "status": "active",
             "batchId": "BATCH-SS26-004",
@@ -139,7 +139,7 @@ mod tests {
         });
         let s = summary_from_doc(&doc);
         assert_eq!(s.id, "019ee576-ca26-7532-8d21-730f17e65ce8");
-        assert_eq!(s.product_name, "Amor Linen Blouse");
+        assert_eq!(s.product_name, "Example Linen Blouse");
         assert_eq!(s.sector, "textile");
         assert_eq!(s.status, "active");
         assert_eq!(s.batch.as_deref(), Some("BATCH-SS26-004"));
