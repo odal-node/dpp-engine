@@ -70,8 +70,8 @@ dpp-rules         = { version = "0.15.0", features = ["bundle"] }
 # Web framework
 axum         = { version = "0.8", features = ["macros", "multipart"] }
 tokio        = { version = "1", features = ["full"] }
-tower        = "0.4"
-tower-http   = { version = "0.5", features = ["trace", "cors", "compression-br", "request-id", "catch-panic"] }
+tower        = "0.5"
+tower-http   = { version = "0.6", features = ["trace", "cors", "compression-br", "request-id", "catch-panic"] }
 hyper        = { version = "1", features = ["full"] }
 futures      = "0.3"
 
@@ -133,7 +133,7 @@ metrics                     = "0.23"
 metrics-exporter-prometheus = "0.15"
 
 # Benchmarking
-criterion    = { version = "0.5", features = ["html_reports"] }
+criterion    = { version = "0.8", features = ["html_reports"] }
 
 # Utilities
 uuid         = { version = "1", features = ["v7", "serde"] }
@@ -191,8 +191,8 @@ testcontainers-modules = { version = "0.15", default-features = false }
 proptest              = "1"
 
 # Wasm plugin runtime
-wasmtime       = { version = "46", default-features = false, features = ["cranelift", "async", "component-model"] }
-wasmtime-wasi  = "46"
+wasmtime       = { version = "47", default-features = false, features = ["cranelift", "async", "component-model"] }
+wasmtime-wasi  = "47"
 
 # GS1 / JSON-LD
 json-ld        = "0.21"

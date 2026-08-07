@@ -28,7 +28,7 @@ chrono       = { workspace = true }
 tracing      = { workspace = true }
 metrics      = { workspace = true }
 
-sqlx = { version = "0.8", default-features = false, features = [
+sqlx = { version = "0.9", default-features = false, features = [
   "postgres", "runtime-tokio", "tls-rustls", "uuid", "chrono", "json", "migrate", "macros",
 ] }
 
