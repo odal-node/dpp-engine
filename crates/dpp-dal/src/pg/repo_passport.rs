@@ -12,6 +12,7 @@ use sqlx::{Postgres, Row, Transaction};
 use uuid::Uuid;
 
 use dpp_domain::{
+    catalog::SectorCatalog,
     domain::{
         error::DppError,
         passport::{Passport, PassportId},
@@ -19,6 +20,7 @@ use dpp_domain::{
         status::PassportStatus,
     },
     ports::passport_repo::PassportRepository,
+    schemas::lens::LensRegistry,
 };
 
 use super::{PgDal, db_err};
@@ -85,20 +87,32 @@ pub(crate) async fn update_passport_in_tx(
 /// and stored redundantly as real columns to support indexed queries.
 pub struct PgPassportRepo {
     dal: PgDal,
+    lenses: LensRegistry,
+    catalog: SectorCatalog,
 }
 
 impl PgPassportRepo {
     /// Construct a repo sharing the given pool handle.
     pub fn new(dal: PgDal) -> Self {
-        Self { dal }
+        Self {
+            dal,
+            lenses: LensRegistry::new(),
+            catalog: SectorCatalog::new(),
+        }
     }
 
     fn to_doc(passport: &Passport) -> Result<serde_json::Value, DppError> {
         serde_json::to_value(passport).map_err(|e| DppError::Internal(format!("serialize: {e}")))
     }
 
-    fn from_doc(doc: serde_json::Value) -> Result<Passport, DppError> {
-        serde_json::from_value(doc).map_err(|e| DppError::Internal(format!("deserialize: {e}")))
+    /// Deserialize a stored document, upcasting `sectorData` through the
+    /// registered lens chain first if it predates the sector's current
+    /// schema version — see `Passport::from_stored` in dpp-domain. Every
+    /// passport read goes through this, not raw `serde_json::from_value`, so
+    /// a non-additive dpp-domain change to a persisted sector-data shape
+    /// fails a specific document instead of every one at once.
+    fn read_doc(&self, doc: serde_json::Value) -> Result<Passport, DppError> {
+        Passport::from_stored(doc, &self.lenses, &self.catalog)
     }
 
     fn uuid_of(id: PassportId) -> Uuid {
@@ -143,7 +157,7 @@ impl PassportRepository for PgPassportRepo {
             .await
             .map_err(db_err)?;
         tx.commit().await.map_err(db_err)?;
-        row.map(|r| Self::from_doc(r.get::<serde_json::Value, _>("doc")))
+        row.map(|r| self.read_doc(r.get::<serde_json::Value, _>("doc")))
             .transpose()
     }
 
@@ -155,7 +169,7 @@ impl PassportRepository for PgPassportRepo {
             .fetch_optional(self.dal.pool())
             .await
             .map_err(db_err)?;
-        row.map(|r| Self::from_doc(r.get::<serde_json::Value, _>("doc")))
+        row.map(|r| self.read_doc(r.get::<serde_json::Value, _>("doc")))
             .transpose()
     }
 
@@ -181,7 +195,7 @@ impl PassportRepository for PgPassportRepo {
         .fetch_optional(self.dal.pool())
         .await
         .map_err(db_err)?;
-        row.map(|r| Self::from_doc(r.get::<serde_json::Value, _>("doc")))
+        row.map(|r| self.read_doc(r.get::<serde_json::Value, _>("doc")))
             .transpose()
     }
 
@@ -213,7 +227,7 @@ impl PassportRepository for PgPassportRepo {
         .fetch_optional(self.dal.pool())
         .await
         .map_err(db_err)?;
-        row.map(|r| Self::from_doc(r.get::<serde_json::Value, _>("doc")))
+        row.map(|r| self.read_doc(r.get::<serde_json::Value, _>("doc")))
             .transpose()
     }
 
@@ -226,7 +240,7 @@ impl PassportRepository for PgPassportRepo {
             .await
             .map_err(db_err)?;
         tx.commit().await.map_err(db_err)?;
-        row.map(|r| Self::from_doc(r.get::<serde_json::Value, _>("doc")))
+        row.map(|r| self.read_doc(r.get::<serde_json::Value, _>("doc")))
             .transpose()
     }
 
@@ -289,7 +303,7 @@ impl PassportRepository for PgPassportRepo {
                 }
             }
         }
-        let passport = Self::from_doc(doc.clone())?;
+        let passport = self.read_doc(doc.clone())?;
         // Doc-only write: the scalar columns are all protected fields (rejected
         // above), so they can never drift from the doc via this path.
         sqlx::query("UPDATE odal.passport SET doc = $2 WHERE id = $1")
@@ -350,7 +364,7 @@ impl PassportRepository for PgPassportRepo {
         .map_err(db_err)?;
         tx.commit().await.map_err(db_err)?;
         rows.into_iter()
-            .map(|r| Self::from_doc(r.get::<serde_json::Value, _>("doc")))
+            .map(|r| self.read_doc(r.get::<serde_json::Value, _>("doc")))
             .collect()
     }
 
