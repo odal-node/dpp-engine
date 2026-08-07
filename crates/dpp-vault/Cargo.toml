@@ -54,7 +54,7 @@ subtle        = { workspace = true }
 integration-tests = []
 
 [dev-dependencies]
-tower                 = { version = "0.4", features = ["util"] }
+tower                 = { version = "0.5", features = ["util"] }
 axum                  = { workspace = true }
 testcontainers        = { workspace = true }
 testcontainers-modules = { workspace = true }

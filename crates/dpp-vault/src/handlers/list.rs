@@ -25,7 +25,7 @@ pub struct ListQuery {
     /// `manufacturer.name`. Trimmed + lowercased server-side.
     pub q: Option<String>,
     /// Filter to passports stamped with this exact facility identifier
-    /// (ESPR Annex III; ADR-006 grouping filter, not an isolation boundary).
+    /// (ESPR Annex III). A grouping filter, not an isolation boundary.
     pub facility_id: Option<String>,
     /// Maximum results to return (capped at 100, default 20).
     pub limit: Option<u32>,

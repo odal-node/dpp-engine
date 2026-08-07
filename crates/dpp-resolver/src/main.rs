@@ -134,7 +134,10 @@ async fn main() -> anyhow::Result<()> {
     );
     spawn_metrics_server(cfg.metrics_addr.clone(), prometheus_handle);
 
-    tracing::info!(redis_url = %redact_url_credentials(&cfg.redis_url), "connecting to Redis");
+    tracing::info!(
+        redis_url = %dpp_common::config::redact_url_credentials(&cfg.redis_url),
+        "connecting to Redis"
+    );
 
     let cache =
         Cache::new(&cfg.redis_url, cfg.cache_ttl_secs).context("Failed to create Redis pool")?;
@@ -268,16 +271,6 @@ fn build_scan_flush_client() -> anyhow::Result<reqwest::Client> {
         builder = builder.identity(identity);
     }
     builder.build().context("building scan-flush client")
-}
-
-/// Strip embedded credentials from a connection URL before logging.
-/// `redis://:s3cr3t@host:6379` → `redis://host:6379`
-fn redact_url_credentials(url: &str) -> String {
-    if let Some(at_pos) = url.rfind('@') {
-        let scheme_end = url.find("://").map(|i| i + 3).unwrap_or(0);
-        return format!("{}{}", &url[..scheme_end], &url[at_pos + 1..]);
-    }
-    url.to_owned()
 }
 
 /// Spawn the Prometheus `/metrics` server on a dedicated private listener.

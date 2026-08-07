@@ -102,7 +102,11 @@ pub struct NewWebhookSubscription {
 
 /// One drainable delivery, denormalised with its subscription's `url` + `secret`
 /// so the drain worker needs no second query to POST and sign.
-#[derive(Debug, Clone)]
+///
+/// `Debug` is implemented by hand: the derived one printed the HMAC signing
+/// secret, and this row is handled in the drain loop's error paths — exactly
+/// where a `{:?}` is most likely to be reached for.
+#[derive(Clone)]
 pub struct WebhookDeliveryRow {
     /// Delivery-row id (also the `X-Odal-Delivery` header, for receiver dedupe).
     pub delivery_id: Uuid,
@@ -118,6 +122,24 @@ pub struct WebhookDeliveryRow {
     pub body: String,
     /// Attempts made so far (pre-increment).
     pub attempts: i32,
+}
+
+impl std::fmt::Debug for WebhookDeliveryRow {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("WebhookDeliveryRow")
+            .field("delivery_id", &self.delivery_id)
+            .field("subscription_id", &self.subscription_id)
+            .field("url", &self.url)
+            // Literal rather than `dpp_common::config::REDACTED`: this crate is
+            // deliberately pure data, and a five-character marker does not
+            // justify a dependency on an infrastructure crate. The invariant the
+            // tests hold is "the secret does not appear", not "the markers match".
+            .field("secret", &"[redacted]")
+            .field("event_type", &self.event_type)
+            .field("body", &self.body)
+            .field("attempts", &self.attempts)
+            .finish()
+    }
 }
 
 /// Aggregate counts for boot reconciliation and gauges.
@@ -230,5 +252,29 @@ mod tests {
         assert!(json.get("created_at").is_none());
         // The secret is never part of the serialised view.
         assert!(json.get("secret").is_none());
+    }
+
+    /// The serialised view already hides the secret (above). `Debug` is the
+    /// other way it escapes, and the drain's error paths are where a delivery
+    /// row is most likely to be `{:?}`-formatted.
+    #[test]
+    fn delivery_row_debug_does_not_print_the_signing_secret() {
+        let row = WebhookDeliveryRow {
+            delivery_id: Uuid::now_v7(),
+            subscription_id: Uuid::now_v7(),
+            url: "https://receiver.example.com/hook".into(),
+            secret: "hmac-secret-must-not-leak".into(),
+            event_type: "dpp.passport.published".into(),
+            body: r#"{"passportId":"x"}"#.into(),
+            attempts: 2,
+        };
+        let rendered = format!("{row:?}");
+        assert!(
+            !rendered.contains("hmac-secret-must-not-leak"),
+            "Debug leaked the signing secret: {rendered}"
+        );
+        // Everything needed to diagnose a delivery failure survives.
+        assert!(rendered.contains("receiver.example.com"), "{rendered}");
+        assert!(rendered.contains("dpp.passport.published"), "{rendered}");
     }
 }
