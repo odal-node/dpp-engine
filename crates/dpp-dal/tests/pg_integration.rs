@@ -1180,3 +1180,69 @@ async fn t16_connect_refuses_a_superuser_role() {
         Err(e) => assert!(matches!(e, dpp_domain::DppError::Internal(_))),
     }
 }
+
+// T17 — a lifecycle write preserves stored keys the `Passport` struct does not
+// model.
+//
+// This is the write-side half of the guard in `passport_doc_compat.rs`. That one
+// says which keys the *type* no longer represents; this one says whether the
+// *database* still holds them after a write, which is the part that is
+// irreversible.
+//
+// The failure it exists for: `update_status` is a read-modify-write, publish
+// takes the same path, and writing the serialised struct over the whole `doc`
+// erases every key the struct does not know. It bites hardest at publish,
+// because the retention guard tests `OLD.retention_locked` — still false while
+// the row is a draft — so the guard does not fire, the lossy write lands, and
+// `retention_locked` becomes true in the same statement. Every later write is
+// guarded, so the loss can never be repaired in place.
+//
+// `facilityId` is the real instance: it is present in the committed
+// `battery_2.0.0.json` fixture and superseded in the type by `facility`.
+#[tokio::test]
+async fn t17_lifecycle_write_preserves_unmodelled_keys() {
+    let pg = start_pg().await;
+    let repo = PgPassportRepo::new(pg.dal.clone());
+
+    let p = make_passport();
+    let id = p.id;
+    repo.create(p).await.expect("create draft");
+
+    // Put a key on the stored document that `Passport` does not model, exactly
+    // as a document written by an older dpp-domain would carry it.
+    let admin = sqlx::postgres::PgPoolOptions::new()
+        .max_connections(1)
+        .connect(&pg.admin_url)
+        .await
+        .expect("admin connect");
+    sqlx::query("UPDATE odal.passport SET doc = doc || '{\"facilityId\":\"LEGACY-1\"}'::jsonb WHERE id = $1")
+        .bind(id.0)
+        .execute(&admin)
+        .await
+        .expect("seed an unmodelled key");
+
+    // The publish transition: the one write that is unguarded and then freezes.
+    repo.update_status(id, PassportStatus::Published)
+        .await
+        .expect("publish");
+
+    let row = sqlx::query("SELECT doc, retention_locked FROM odal.passport WHERE id = $1")
+        .bind(id.0)
+        .fetch_one(&admin)
+        .await
+        .expect("read back");
+    let doc: serde_json::Value = row.get("doc");
+
+    assert_eq!(
+        doc.get("facilityId").and_then(|v| v.as_str()),
+        Some("LEGACY-1"),
+        "publish erased a stored key the struct does not model — this is \
+         unrecoverable, because the row is retention-locked by the same statement"
+    );
+    assert_eq!(
+        doc.get("status").and_then(|v| v.as_str()),
+        Some("active"),
+        "the struct must still win on every key it does model"
+    );
+    admin.close().await;
+}

@@ -1,0 +1,37 @@
+{
+  "id": "019f19b0-3333-7342-adb1-d6ab1f410022",
+  "sector": "battery",
+  "status": "active",
+  "batchId": "VB-2026-022",
+  "version": 1,
+  "createdAt": "2026-06-02T14:41:19.900000000Z",
+  "materials": [],
+  "qrCodeUrl": null,
+  "updatedAt": "2026-06-02T14:41:19.900000000Z",
+  "sectorData": {
+    "gtin": "04901234567009",
+    "sector": "battery",
+    "co2ePerUnitKg": 44.9,
+    "nominalVoltageV": 400.0,
+    "batteryChemistry": "NMC",
+    "nominalCapacityAh": 180.0,
+    "expectedLifetimeCycles": 1500,
+    "placedOnMarketDate": "2026-06-01",
+    "stateOfHealth": {
+      "parameterSet": "electricVehicle",
+      "socePct": 97.5
+    }
+  },
+  "co2ePerUnit": { "valueKg": 44.9 },
+  "productName": "Voltex EV Pack 72kWh",
+  "publishedAt": "2026-06-02T15:10:00.000000000Z",
+  "jwsSignature": null,
+  "manufacturer": {
+    "name": "Voltex Battery GmbH",
+    "address": "DE",
+    "didWebUrl": null
+  },
+  "schemaVersion": "2.2.0",
+  "retentionLocked": true,
+  "repairabilityScore": null
+}
