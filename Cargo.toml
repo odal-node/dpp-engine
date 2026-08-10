@@ -79,7 +79,7 @@ futures      = "0.3"
 serde        = { version = "1", features = ["derive"] }
 serde_json   = "1"
 serde_with   = "3"
-serde_jcs    = "0.1"  # RFC 8785 JSON Canonicalisation — audit-chain hashing
+serde_jcs    = "0.2"  # RFC 8785 JSON Canonicalisation — audit-chain hashing
 
 # Database (sqlx lives in dpp-dal — not declared at workspace level)
 
