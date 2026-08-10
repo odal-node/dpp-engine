@@ -22,21 +22,59 @@
 //!
 //! Not covered here: a renamed *optional* envelope field (old key silently
 //! unrecognised, new field silently `None`) does not fail this check, because
-//! it does not fail deserialization at all — see `battery_2.0.0.json`'s
+//! it does not fail deserialization at all — see `battery/v2.0.0.json`'s
 //! `facilityId`, a real historical case predating the additive-only envelope
 //! rule. That is a distinct defect class (silent data loss vs. a loud
 //! refusal) tracked separately, not something this guard claims to catch.
 //!
 //! Pure filesystem + in-memory check — no Docker/Postgres required, runs in
 //! the fast `cargo nextest run --workspace` gate.
+//!
+//! # Layout
+//!
+//! One directory per sector, one file per frozen schema version —
+//! `{catalog_key}/v{version}.json`, mirroring
+//! `dpp-core/crates/dpp-domain/schemas/{sector}/v{version}.json` exactly, so
+//! a reader who knows one convention already knows the other. A flat
+//! `{sector}_{version}.json` naming was tried first and abandoned: it does not
+//! scale past a handful of sectors before every sector's versions interleave
+//! in one listing.
 
 use std::collections::BTreeSet;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use dpp_domain::Passport;
 use dpp_domain::catalog::SectorCatalog;
 use dpp_domain::schemas::lens::LensRegistry;
+
+/// Every frozen fixture, paired with the catalog key its parent directory
+/// claims — `(catalog_key, path)`, sorted for a stable failure order.
+fn collect_fixtures() -> Vec<(String, PathBuf)> {
+    let fixtures_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/passport_docs");
+    let mut fixtures: Vec<(String, PathBuf)> = fs::read_dir(&fixtures_dir)
+        .expect("read tests/fixtures/passport_docs")
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .filter(|p| p.is_dir())
+        .flat_map(|sector_dir| {
+            let sector = sector_dir
+                .file_name()
+                .and_then(|n| n.to_str())
+                .expect("sector directory name is valid UTF-8")
+                .to_owned();
+            fs::read_dir(&sector_dir)
+                .unwrap_or_else(|e| panic!("read {sector_dir:?}: {e}"))
+                .filter_map(|e| e.ok())
+                .map(|e| e.path())
+                .filter(|p| p.extension().is_some_and(|ext| ext == "json"))
+                .map(move |path| (sector.clone(), path))
+                .collect::<Vec<_>>()
+        })
+        .collect();
+    fixtures.sort();
+    fixtures
+}
 
 /// Envelope keys that appear in a frozen document and are deliberately no longer
 /// modelled by `Passport`.
@@ -63,24 +101,16 @@ const RETIRED_ENVELOPE_KEYS: &[(&str, &str)] = &[(
 
 #[test]
 fn every_frozen_passport_doc_still_reads() {
-    let fixtures_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/passport_docs");
     let lenses = LensRegistry::new();
     let catalog = SectorCatalog::new();
-
-    let mut fixtures: Vec<_> = fs::read_dir(&fixtures_dir)
-        .expect("read tests/fixtures/passport_docs")
-        .filter_map(|e| e.ok())
-        .map(|e| e.path())
-        .filter(|p| p.extension().is_some_and(|ext| ext == "json"))
-        .collect();
-    fixtures.sort();
+    let fixtures = collect_fixtures();
     assert!(
         !fixtures.is_empty(),
         "expected at least one frozen doc under tests/fixtures/passport_docs"
     );
 
     let mut failures = Vec::new();
-    for path in &fixtures {
+    for (sector, path) in &fixtures {
         let raw = fs::read_to_string(path).unwrap_or_else(|e| panic!("read {path:?}: {e}"));
         let value: serde_json::Value =
             serde_json::from_str(&raw).unwrap_or_else(|e| panic!("{path:?} is not JSON: {e}"));
@@ -89,16 +119,13 @@ fn every_frozen_passport_doc_still_reads() {
             Ok(passport) => {
                 // A fixture that parses into the wrong document (e.g. an
                 // empty object matching every field's default) would pass
-                // silently — pin it to the id/sector this file claims to be.
-                let file_name = path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
-                if let Some(sector) = file_name.split('_').next() {
-                    let actual = passport.sector.wire_str();
-                    if actual != sector {
-                        failures.push(format!(
-                            "{}: expected sector `{sector}` from filename, deserialised as `{actual}`",
-                            path.display()
-                        ));
-                    }
+                // silently — pin it to the sector its directory claims.
+                let actual = passport.sector.catalog_key();
+                if actual != sector {
+                    failures.push(format!(
+                        "{}: expected sector `{sector}` from its directory, deserialised as `{actual}`",
+                        path.display()
+                    ));
                 }
             }
             Err(e) => failures.push(format!("{}: {e}", path.display())),
@@ -134,21 +161,13 @@ fn every_frozen_passport_doc_still_reads() {
 /// every fixture and get the check switched off.
 #[test]
 fn no_frozen_doc_loses_an_envelope_key_unrecorded() {
-    let fixtures_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/passport_docs");
     let lenses = LensRegistry::new();
     let catalog = SectorCatalog::new();
     let retired: BTreeSet<&str> = RETIRED_ENVELOPE_KEYS.iter().map(|(k, _)| *k).collect();
-
-    let mut fixtures: Vec<_> = fs::read_dir(&fixtures_dir)
-        .expect("read tests/fixtures/passport_docs")
-        .filter_map(|e| e.ok())
-        .map(|e| e.path())
-        .filter(|p| p.extension().is_some_and(|ext| ext == "json"))
-        .collect();
-    fixtures.sort();
+    let fixtures = collect_fixtures();
 
     let mut failures = Vec::new();
-    for path in &fixtures {
+    for (_sector, path) in &fixtures {
         let raw = fs::read_to_string(path).unwrap_or_else(|e| panic!("read {path:?}: {e}"));
         let stored: serde_json::Value =
             serde_json::from_str(&raw).unwrap_or_else(|e| panic!("{path:?} is not JSON: {e}"));
