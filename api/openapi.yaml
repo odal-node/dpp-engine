@@ -98,6 +98,12 @@ components:
         Fine-grained product category (a data attribute — the dispatch key is
         `sector`). Known categories serialise as snake_case strings; any other
         category serialises as `{ "other": "<value>" }`.
+
+        Mirrors `dpp-domain::Passport.product_category`, which the core
+        library has already removed upstream (zero production readers found)
+        — this field is dead here too (every write path sets it to `null`).
+        Slated for removal from this spec once the pinned core version picks
+        up that change.
       oneOf:
         - type: string
           enum:
@@ -108,8 +114,13 @@ components:
             - footwear
             - home_textile
             - smartphone
+            - tablet
             - laptop
+            - monitor
+            - tv
+            - server
             - charger
+            - earphone
         - type: object
           required: [other]
           properties:
