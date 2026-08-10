@@ -53,6 +53,31 @@ const PROTECTED_PATCH_FIELDS: [&str; 13] = [
 /// transaction. Shared by [`PgPassportRepo::update`] and the transactional
 /// outbox's `commit_publish`, so the publish-write and the outbox insert commit
 /// atomically without duplicating this SQL. Errors `NotFound` if no row matched.
+///
+/// # Why `doc || $2` rather than `doc = $2`
+///
+/// Writing the serialised struct over the whole column erases every stored key
+/// the struct does not model. That is not a stale value in memory — it is gone
+/// from the database. `update_status` is a read-modify-write (`find_by_id`,
+/// mutate, `update`), and publish takes the same path, so the erasure happens on
+/// the one write that matters most: the retention guard tests
+/// `OLD.retention_locked`, which is still false while the row is a draft, so the
+/// guard does not fire, the lossy write lands, and `retention_locked` becomes
+/// true in that same statement. Every later write is guarded, so it can never be
+/// repaired in place.
+///
+/// `||` is a shallow merge at the top level: the struct wins on every key it
+/// models, and keys it does not model survive. That is exactly the
+/// envelope/`sectorData` split — `sectorData` is fully modelled and versioned
+/// through the lens chain, so replacing it wholesale is correct; the envelope is
+/// the axis with no such mechanism.
+///
+/// **Constraint this carries:** the `Passport` fields are
+/// `skip_serializing_if = "Option::is_none"`, so a field going `Some` -> `None`
+/// is absent from `$2` and will no longer clear the stored key. No production
+/// path does that today (checked: every envelope-field assignment to `None` is
+/// inside a test). A field that genuinely needs clearing must write an explicit
+/// JSON `null` rather than rely on omission.
 pub(crate) async fn update_passport_in_tx(
     tx: &mut Transaction<'_, Postgres>,
     passport: &Passport,
@@ -66,7 +91,7 @@ pub(crate) async fn update_passport_in_tx(
              retention_locked = COALESCE(($2->>'retentionLocked')::boolean, retention_locked),
              schema_version   = COALESCE($2->>'schemaVersion', schema_version),
              published_at     = COALESCE(NULLIF($2->>'publishedAt','')::timestamptz, published_at),
-             doc              = $2
+             doc              = doc || $2
            WHERE id = $1"#,
     )
     .bind(passport.id.0)

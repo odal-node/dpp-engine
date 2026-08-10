@@ -1,0 +1,32 @@
+{
+  "id": "019f3aa5-579d-73c1-a3e6-a8002df5e071",
+  "sector": "aluminium",
+  "status": "draft",
+  "batchId": "AL-2026-BATCH-01",
+  "version": 1,
+  "createdAt": "2026-08-01T09:00:00.000000000Z",
+  "materials": [],
+  "qrCodeUrl": null,
+  "updatedAt": "2026-08-01T09:00:00.000000000Z",
+  "sectorData": {
+    "sector": "aluminium",
+    "gtin": "09506000134352",
+    "alloyGrade": "6xxx",
+    "productionRoute": "primary",
+    "co2ePerTonneKg": 4200.0,
+    "recycledContentPct": 15.0,
+    "countryOfOrigin": "NO"
+  },
+  "co2ePerUnit": null,
+  "productName": "Example Aluminium Extrusion Profile",
+  "publishedAt": null,
+  "jwsSignature": null,
+  "manufacturer": {
+    "name": "Example Aluminium Works AS",
+    "address": "NO",
+    "didWebUrl": null
+  },
+  "schemaVersion": "1.1.0",
+  "retentionLocked": false,
+  "repairabilityScore": null
+}

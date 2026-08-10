@@ -1,0 +1,34 @@
+{
+  "id": "019f3aa5-579d-73c1-a3e6-a8002df5e079",
+  "sector": "unsoldGoods",
+  "status": "draft",
+  "batchId": "UG-2026-Q3-BATCH-01",
+  "version": 1,
+  "createdAt": "2026-08-01T09:00:00.000000000Z",
+  "materials": [],
+  "qrCodeUrl": null,
+  "updatedAt": "2026-08-01T09:00:00.000000000Z",
+  "sectorData": {
+    "sector": "unsoldGoods",
+    "reportingPeriod": "2026-Q3",
+    "volumeKg": 480.5,
+    "productCategory": "apparel",
+    "reason": "end_of_season",
+    "destination": "donation",
+    "destructionJustification": null,
+    "countryOfDisposal": "FR",
+    "operatorName": "Example Charity Partner"
+  },
+  "co2ePerUnit": null,
+  "productName": "Example Unsold Goods Report Q3 2026",
+  "publishedAt": null,
+  "jwsSignature": null,
+  "manufacturer": {
+    "name": "Example Fashion Retail SA",
+    "address": "FR",
+    "didWebUrl": null
+  },
+  "schemaVersion": "1.0.0",
+  "retentionLocked": false,
+  "repairabilityScore": null
+}

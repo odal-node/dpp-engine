@@ -1,0 +1,52 @@
+{
+  "id": "019f19b0-5555-7342-adb1-d6ab1f410024",
+  "sector": "battery",
+  "status": "active",
+  "batchId": "VB-2026-024",
+  "version": 1,
+  "createdAt": "2026-07-30T16:27:51.700000000Z",
+  "materials": [],
+  "qrCodeUrl": null,
+  "updatedAt": "2026-07-30T16:27:51.700000000Z",
+  "sectorData": {
+    "gtin": "04901234567009",
+    "sector": "battery",
+    "co2ePerUnitKg": 39.1,
+    "nominalVoltageV": 48.0,
+    "batteryChemistry": "LFP",
+    "nominalCapacityAh": 100.0,
+    "expectedLifetimeCycles": 3500,
+    "placedOnMarketDate": "2026-07-15",
+    "stateOfHealth": {
+      "parameterSet": "stationaryOrLmt",
+      "remainingCapacityPct": 98.2,
+      "remainingPowerCapabilityPct": null,
+      "remainingRoundTripEfficiencyPct": null,
+      "selfDischargeRatePctPerMonth": 1.4,
+      "ohmicResistanceMohm": null
+    },
+    "expectedLifetime": {
+      "putIntoServiceDate": "2026-07-20",
+      "energyThroughputKwh": 1240.0,
+      "capacityThroughputAh": 25800.0,
+      "harmfulEvents": {
+        "deepDischargeEvents": 2,
+        "hoursInExtremeTemperature": 11.5,
+        "hoursChargingInExtremeTemperature": null
+      },
+      "fullEquivalentCycles": 258.0
+    }
+  },
+  "co2ePerUnit": { "valueKg": 39.1 },
+  "productName": "Voltex Stationary Cell 4.8kWh",
+  "publishedAt": "2026-07-30T17:00:00.000000000Z",
+  "jwsSignature": null,
+  "manufacturer": {
+    "name": "Voltex Battery GmbH",
+    "address": "DE",
+    "didWebUrl": null
+  },
+  "schemaVersion": "2.4.0",
+  "retentionLocked": true,
+  "repairabilityScore": null
+}

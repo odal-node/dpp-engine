@@ -1,0 +1,30 @@
+{
+  "id": "019f3aa5-579d-73c1-a3e6-a8002df5e075",
+  "sector": "furniture",
+  "status": "draft",
+  "batchId": "FN-2026-BATCH-01",
+  "version": 1,
+  "createdAt": "2026-08-01T09:00:00.000000000Z",
+  "materials": [],
+  "qrCodeUrl": null,
+  "updatedAt": "2026-08-01T09:00:00.000000000Z",
+  "sectorData": {
+    "sector": "furniture",
+    "gtin": "09506000134352",
+    "productType": "chair",
+    "primaryMaterial": "solid-wood",
+    "countryOfOrigin": "PL"
+  },
+  "co2ePerUnit": null,
+  "productName": "Example Oak Dining Chair",
+  "publishedAt": null,
+  "jwsSignature": null,
+  "manufacturer": {
+    "name": "Example Furniture Sp. z o.o.",
+    "address": "PL",
+    "didWebUrl": null
+  },
+  "schemaVersion": "1.1.0",
+  "retentionLocked": false,
+  "repairabilityScore": null
+}

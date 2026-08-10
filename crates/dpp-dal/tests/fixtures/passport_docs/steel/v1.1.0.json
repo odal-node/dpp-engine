@@ -1,0 +1,32 @@
+{
+  "id": "019f3aa5-579d-73c1-a3e6-a8002df5e076",
+  "sector": "steel",
+  "status": "draft",
+  "batchId": "ST-2026-BATCH-01",
+  "version": 1,
+  "createdAt": "2026-08-01T09:00:00.000000000Z",
+  "materials": [],
+  "qrCodeUrl": null,
+  "updatedAt": "2026-08-01T09:00:00.000000000Z",
+  "sectorData": {
+    "sector": "steel",
+    "gtin": "09506000134352",
+    "co2ePerTonneSteel": 1.9,
+    "recycledScrapContentPct": 32.0,
+    "productCategory": "flat",
+    "countryOfOrigin": "DE",
+    "productionRoute": "blast-furnace"
+  },
+  "co2ePerUnit": null,
+  "productName": "Example Hot-Rolled Steel Coil",
+  "publishedAt": null,
+  "jwsSignature": null,
+  "manufacturer": {
+    "name": "Example Stahlwerke GmbH",
+    "address": "DE",
+    "didWebUrl": null
+  },
+  "schemaVersion": "1.1.0",
+  "retentionLocked": false,
+  "repairabilityScore": null
+}

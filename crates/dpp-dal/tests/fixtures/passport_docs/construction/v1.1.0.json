@@ -1,0 +1,31 @@
+{
+  "id": "019f3aa5-579d-73c1-a3e6-a8002df5e072",
+  "sector": "construction",
+  "status": "draft",
+  "batchId": "CN-2026-BATCH-01",
+  "version": 1,
+  "createdAt": "2026-08-01T09:00:00.000000000Z",
+  "materials": [],
+  "qrCodeUrl": null,
+  "updatedAt": "2026-08-01T09:00:00.000000000Z",
+  "sectorData": {
+    "sector": "construction",
+    "gtin": "09506000134352",
+    "productFamily": "cement",
+    "countryOfOrigin": "DE",
+    "co2ePerFunctionalUnitKg": 850.0,
+    "functionalUnit": "per tonne"
+  },
+  "co2ePerUnit": null,
+  "productName": "Example Portland Cement CEM I",
+  "publishedAt": null,
+  "jwsSignature": null,
+  "manufacturer": {
+    "name": "Example Baustoffe GmbH",
+    "address": "DE",
+    "didWebUrl": null
+  },
+  "schemaVersion": "1.1.0",
+  "retentionLocked": false,
+  "repairabilityScore": null
+}

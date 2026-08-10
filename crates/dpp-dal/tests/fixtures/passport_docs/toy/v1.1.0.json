@@ -1,0 +1,31 @@
+{
+  "id": "019f3aa5-579d-73c1-a3e6-a8002df5e077",
+  "sector": "toy",
+  "status": "draft",
+  "batchId": "TY-2026-BATCH-01",
+  "version": 1,
+  "createdAt": "2026-08-01T09:00:00.000000000Z",
+  "materials": [],
+  "qrCodeUrl": null,
+  "updatedAt": "2026-08-01T09:00:00.000000000Z",
+  "sectorData": {
+    "sector": "toy",
+    "gtin": "09506000134352",
+    "ageGroup": "3-6",
+    "primaryMaterial": "plastic",
+    "ceMarking": true,
+    "countryOfOrigin": "CZ"
+  },
+  "co2ePerUnit": null,
+  "productName": "Example Building Blocks Set",
+  "publishedAt": null,
+  "jwsSignature": null,
+  "manufacturer": {
+    "name": "Example Toys s.r.o.",
+    "address": "CZ",
+    "didWebUrl": null
+  },
+  "schemaVersion": "1.1.0",
+  "retentionLocked": false,
+  "repairabilityScore": null
+}

@@ -1,0 +1,37 @@
+{
+  "id": "019f3aa5-579d-73c1-a3e6-a8002df5e073",
+  "sector": "detergent",
+  "status": "draft",
+  "batchId": "DT-2026-BATCH-01",
+  "version": 1,
+  "createdAt": "2026-08-01T09:00:00.000000000Z",
+  "materials": [],
+  "qrCodeUrl": null,
+  "updatedAt": "2026-08-01T09:00:00.000000000Z",
+  "sectorData": {
+    "sector": "detergent",
+    "gtin": "09506000134352",
+    "productType": "laundry",
+    "format": "liquid",
+    "surfactants": [
+      {
+        "name": "Sodium Laureth Sulfate",
+        "biodegradable": true,
+        "concentrationBand": "5-15%"
+      }
+    ],
+    "countryOfOrigin": "NL"
+  },
+  "co2ePerUnit": null,
+  "productName": "Example Laundry Liquid 1.5L",
+  "publishedAt": null,
+  "jwsSignature": null,
+  "manufacturer": {
+    "name": "Example Cleaning Products BV",
+    "address": "NL",
+    "didWebUrl": null
+  },
+  "schemaVersion": "1.1.0",
+  "retentionLocked": false,
+  "repairabilityScore": null
+}
