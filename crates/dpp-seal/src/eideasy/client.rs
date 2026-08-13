@@ -21,7 +21,7 @@ use base64::engine::general_purpose::STANDARD as BASE64;
 use hmac::{Hmac, Mac};
 use sha2::Sha256;
 
-use crate::config::EideasyConfig;
+use super::config::EideasyConfig;
 use crate::error::SealError;
 
 use super::types::{EsealFile, EsealRequest, EsealResponse};

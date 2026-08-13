@@ -16,7 +16,7 @@ use dpp_domain::{
 };
 use tracing::warn;
 
-use crate::config::EideasyConfig;
+use crate::eideasy::EideasyConfig;
 use crate::eideasy::client::EideasyClient;
 use crate::error::SealError;
 
@@ -122,7 +122,7 @@ impl SealPort for QtspSealAdapter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::{SANDBOX_BASE_URL, test_config};
+    use crate::eideasy::config::{SANDBOX_BASE_URL, test_config};
 
     #[test]
     fn unconfigured_reports_ghost_capabilities() {

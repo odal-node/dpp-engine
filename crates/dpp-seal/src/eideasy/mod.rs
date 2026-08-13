@@ -8,7 +8,9 @@
 //! - [`client`] — the HMAC-signed POST, and the sign-the-exact-bytes invariant.
 
 pub mod client;
+pub mod config;
 pub mod types;
 
 pub use client::EideasyClient;
+pub use config::{EideasyConfig, EideasyEnvironment};
 pub use types::{EsealFile, EsealRequest, EsealResponse, EsealSignatureOut, MIME_JSON, MIME_PDF};

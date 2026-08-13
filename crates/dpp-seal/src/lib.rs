@@ -32,18 +32,24 @@
 //!
 //! # Structure
 //!
-//! - [`adapter`] — `QtspSealAdapter`, the `SealPort` impl (eID Easy or ghost)
-//! - [`config`] — `EideasyConfig`, resolved from the environment
-//! - [`eideasy`] — Cloud Direct e-Sealing wire types and HTTP client
+//! - [`adapter`] — `QtspSealAdapter`, the `SealPort` impl
+//! - [`config`] — which backend this node runs, and nothing about any of them
+//! - [`eideasy`] — the hosted QTSP backend: config, wire types, HTTP client
+//! - [`local`] — in-process signing for development
 //! - [`error`] — `SealError`, classified once at the HTTP boundary
+//!
+//! Each backend owns its own module: its configuration, its variables, its
+//! failure messages and its wire types. Nothing outside a backend's module
+//! names it, so one can be added or dropped without touching the others.
 
 pub mod adapter;
 pub mod config;
 pub mod eideasy;
 pub mod error;
+pub mod local;
 
 pub use adapter::QtspSealAdapter;
-pub use config::{EideasyConfig, EideasyEnvironment};
+pub use config::{SEAL_PROVIDER, SealProvider};
 pub use error::SealError;
 
 #[cfg(test)]
