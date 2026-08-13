@@ -11,5 +11,7 @@
 //! legal weight, which is none.
 
 pub mod config;
+pub mod sealer;
 
 pub use config::LocalConfig;
+pub use sealer::LocalIdentity;

@@ -28,6 +28,18 @@ hex          = { workspace = true }
 url          = { workspace = true }
 zeroize      = { workspace = true }
 
+# Local development backend: a real detached CMS SignedData over the digest,
+# signed by a self-signed key. Not qualified — the certificate is on no Trusted
+# List — but structurally the shape a provider returns, so the whole pipeline is
+# exercised without a provider account.
+cms          = { version = "0.2", features = ["builder"] }
+x509-cert    = "0.2"
+der          = "0.7"
+const-oid    = "0.9"
+p256         = { version = "0.13", features = ["ecdsa", "pkcs8"] }
+rcgen        = "0.14"
+
 [dev-dependencies]
+tempfile     = "3"
 tokio = { workspace = true }
 axum  = { workspace = true }
