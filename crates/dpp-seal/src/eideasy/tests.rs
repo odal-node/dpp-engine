@@ -19,6 +19,7 @@ use sha2::{Digest, Sha256};
 
 use crate::adapter::QtspSealAdapter;
 use crate::eideasy::client::{ESEAL_PATH, hmac_message};
+use crate::eideasy::config::{SANDBOX_BASE_URL, test_config};
 
 /// Base64 standing in for a real detached CAdES `.p7s`.
 const MOCK_P7S: &str = "TU9DSy1DQWRFUy1QN1M=";
@@ -129,17 +130,27 @@ use mock_server::MockState;
 fn adapter_for(base_url: &str, hmac_key: &str) -> QtspSealAdapter {
     let mut cfg = crate::eideasy::config::test_config(base_url);
     cfg.hmac_key = zeroize::Zeroizing::new(hmac_key.to_owned());
-    QtspSealAdapter::eideasy(cfg).unwrap()
+    QtspSealAdapter::new(crate::eideasy::EideasyClient::new(cfg).unwrap())
 }
 
 #[tokio::test]
 async fn unconfigured_adapter_delegates_to_ghost() {
-    let env = QtspSealAdapter::ghost()
+    let env = QtspSealAdapter::new(crate::ghost::GhostSeal)
         .seal(seal_request(fixture_digest()))
         .await
         .unwrap();
     assert!(env.placeholder);
     assert!(env.seal_value.starts_with("GHOST-SEAL-"));
+}
+
+#[test]
+fn this_backend_advertises_cades_only() {
+    let caps = QtspSealAdapter::new(
+        crate::eideasy::EideasyClient::new(test_config(SANDBOX_BASE_URL)).unwrap(),
+    )
+    .capabilities();
+    assert_eq!(caps.supported_formats, vec![SealFormat::Cades]);
+    assert_eq!(caps.supported_modes, vec![SealMode::ProviderSeal]);
 }
 
 #[tokio::test]

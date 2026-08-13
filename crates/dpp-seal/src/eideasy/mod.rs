@@ -15,10 +15,13 @@
 //! certificates. The entity gates *production* only.
 //!
 //! - [`types`] — request/response wire types.
-//! - [`client`] — the HMAC-signed POST, and the sign-the-exact-bytes invariant.
+//! - [`client`] — the HMAC-signed POST, the sign-the-exact-bytes invariant, and
+//!   this backend's `SealBackend` implementation.
+//! - [`error`] — the failures that only mean something against this contract.
 
 pub mod client;
 pub mod config;
+pub mod error;
 pub mod types;
 
 #[cfg(test)]
@@ -26,4 +29,5 @@ mod tests;
 
 pub use client::EideasyClient;
 pub use config::{EideasyConfig, EideasyEnvironment};
+pub use error::{AuthHint, EideasyError};
 pub use types::{EsealFile, EsealRequest, EsealResponse, EsealSignatureOut, MIME_JSON, MIME_PDF};

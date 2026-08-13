@@ -205,14 +205,19 @@ async fn main() -> anyhow::Result<()> {
                 mode = mode.as_str(),
                 "eIDAS seal: QTSP adapter active"
             );
-            let adapter = dpp_seal::QtspSealAdapter::eideasy(cfg)
+            let backend = dpp_seal::eideasy::EideasyClient::new(cfg)
                 .context("Failed to build the QTSP seal adapter")?;
-            (Arc::new(adapter), client_id, mode, true)
+            (
+                Arc::new(dpp_seal::QtspSealAdapter::new(backend)),
+                client_id,
+                mode,
+                true,
+            )
         }
         dpp_seal::SealProvider::Local => {
             let cfg =
                 dpp_seal::local::LocalConfig::from_env().context("local seal configuration")?;
-            let adapter = dpp_seal::QtspSealAdapter::local(&cfg)
+            let backend = dpp_seal::local::LocalIdentity::load_or_create(&cfg.key_path)
                 .context("Failed to build the local seal adapter")?;
             tracing::warn!(
                 key_path = %cfg.key_path.display(),
@@ -221,12 +226,17 @@ async fn main() -> anyhow::Result<()> {
             // Ghost as a trust tier, because no authority stands behind a
             // self-signed certificate — so a sandbox or production profile
             // refuses to boot on it. But the envelope is real, so it drains.
-            (Arc::new(adapter), String::new(), TrustMode::Ghost, true)
+            (
+                Arc::new(dpp_seal::QtspSealAdapter::new(backend)),
+                String::new(),
+                TrustMode::Ghost,
+                true,
+            )
         }
         dpp_seal::SealProvider::None => {
             tracing::info!("eIDAS seal: ghost (no provider) — set SEAL_PROVIDER to enable sealing");
             (
-                Arc::new(dpp_seal::QtspSealAdapter::ghost()),
+                Arc::new(dpp_seal::QtspSealAdapter::new(dpp_seal::ghost::GhostSeal)),
                 String::new(),
                 TrustMode::Ghost,
                 false,

@@ -16,12 +16,19 @@
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use async_trait::async_trait;
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as BASE64;
+use chrono::Utc;
+use dpp_domain::ports::seal::{
+    SealCapabilities, SealFormat, SealMode, SealRequest, SealedEnvelope,
+};
 use hmac::{Hmac, Mac};
 use sha2::Sha256;
 
 use super::config::EideasyConfig;
+use super::error::EideasyError;
+use crate::backend::SealBackend;
 use crate::error::SealError;
 
 use super::types::{EsealFile, EsealRequest, EsealResponse};
@@ -51,10 +58,10 @@ struct SignedBody {
 }
 
 impl SignedBody {
-    fn new(req: &EsealRequest, hmac_key: &str, timestamp: u64) -> Result<Self, SealError> {
+    fn new(req: &EsealRequest, hmac_key: &str, timestamp: u64) -> Result<Self, EideasyError> {
         // The one and only serialization.
         let body = serde_json::to_string(req)
-            .map_err(|e| SealError::Protocol(format!("request body serialization: {e}")))?;
+            .map_err(|e| EideasyError::Protocol(format!("request body serialization: {e}")))?;
 
         let message = hmac_message(METHOD, ESEAL_PATH, timestamp, &body);
         let mut mac =
@@ -85,10 +92,6 @@ impl EideasyClient {
         Ok(Self { http, config })
     }
 
-    pub fn config(&self) -> &EideasyConfig {
-        &self.config
-    }
-
     /// Seal one hex SHA-256 digest, returning the base64 detached CAdES `.p7s`.
     ///
     /// `file_name` is the correlation label eID Easy echoes back as
@@ -115,7 +118,10 @@ impl EideasyClient {
             // `.body()`, never `.json()` — these are the bytes the HMAC covers.
             .body(signed.body)
             .send()
-            .await?;
+            .await
+            // Nothing reached the far side, so there is no status and no body to
+            // classify against — this is transport, not a provider answer.
+            .map_err(|e| SealError::Transport(e.to_string()))?;
 
         let status = response.status();
         if !status.is_success() {
@@ -138,17 +144,59 @@ impl EideasyClient {
                 "eID Easy e-seal request failed"
             );
             return Err(match status.as_u16() {
-                429 => SealError::RateLimited { retry_after_secs },
-                s @ (401 | 403) => SealError::Auth {
+                429 => EideasyError::RateLimited { retry_after_secs },
+                s @ (401 | 403) => EideasyError::Auth {
                     status: s,
                     hint: clock_hint(signed.timestamp, their_time),
                 },
-                s => SealError::Provider { status: s },
-            });
+                s => EideasyError::Provider { status: s },
+            }
+            .into());
         }
 
-        let parsed: EsealResponse = response.json().await?;
+        // A body that fails to decode is a protocol fault, not a transport one:
+        // the exchange completed, the bytes are just not what was promised.
+        let parsed: EsealResponse = response
+            .json()
+            .await
+            .map_err(|e| EideasyError::Protocol(e.to_string()))?;
         Ok(parsed.single_signature()?.file_content.clone())
+    }
+}
+
+#[async_trait]
+impl SealBackend for EideasyClient {
+    async fn seal(&self, req: SealRequest) -> Result<SealedEnvelope, SealError> {
+        // The digest doubles as the correlation label: eID Easy echoes `fileName`
+        // back, so deriving it from the digest makes a mismatched response visible
+        // without holding request state. No extension — see `EsealFile::file_name`.
+        let file_name = format!(
+            "dpp-{}",
+            &req.payload_hash[..req.payload_hash.len().min(16)]
+        );
+        let seal_value = self.seal_digest(&file_name, &req.payload_hash).await?;
+
+        Ok(SealedEnvelope {
+            format: SealFormat::Cades,
+            seal_value,
+            // The signing certificate travels *inside* the detached CAdES, and
+            // reading it out needs the CMS parser this adapter deliberately does
+            // not have. Left `None` rather than filled with a guess.
+            signing_cert_ref: None,
+            sealed_at: Utc::now(),
+            placeholder: false,
+        })
+    }
+
+    fn capabilities(&self) -> SealCapabilities {
+        // eID Easy Direct e-Sealing offers the CAdES profile only, and this node
+        // holds the seal on operators' behalf, so `ProviderSeal` is the one mode.
+        // `verify()` takes the trait's refusing default and no capability claims
+        // otherwise.
+        SealCapabilities {
+            supported_formats: vec![SealFormat::Cades],
+            supported_modes: vec![SealMode::ProviderSeal],
+        }
     }
 }
 
@@ -157,7 +205,9 @@ fn unix_now() -> Result<u64, SealError> {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs())
-        .map_err(|e| SealError::Protocol(format!("system clock is before the UNIX epoch: {e}")))
+        // The node's clock, not the provider's answer — nothing about eID Easy
+        // classifies this one.
+        .map_err(|e| SealError::Config(format!("system clock is before the UNIX epoch: {e}")))
 }
 
 /// The provider's clock, from the RFC 9110 `Date` header every response carries.
@@ -185,12 +235,12 @@ const MAX_SKEW_SECS: u64 = 300;
 /// timestamp was acceptable and the rejection means something else, so pointing
 /// at the clock would send the operator down the wrong path just as surely as
 /// staying silent sends them to rotate a good key.
-fn clock_hint(ours: u64, theirs: Option<u64>) -> crate::error::AuthHint {
+fn clock_hint(ours: u64, theirs: Option<u64>) -> super::error::AuthHint {
     match theirs {
         Some(theirs) if ours.abs_diff(theirs) > MAX_SKEW_SECS => {
-            crate::error::AuthHint::ClockSkew { ours, theirs }
+            super::error::AuthHint::ClockSkew { ours, theirs }
         }
-        _ => crate::error::AuthHint::None,
+        _ => super::error::AuthHint::None,
     }
 }
 
@@ -241,7 +291,7 @@ mod tests {
 
     #[test]
     fn a_clock_inside_the_window_is_not_blamed() {
-        use crate::error::AuthHint;
+        use super::super::error::AuthHint;
         // Inside the tolerance, the timestamp was fine — the 401 means something
         // else, and blaming the clock would misdirect exactly as badly.
         assert_eq!(clock_hint(1710000000, Some(1710000000)), AuthHint::None);
@@ -252,7 +302,7 @@ mod tests {
 
     #[test]
     fn a_drifted_clock_is_named_in_the_error() {
-        use crate::error::AuthHint;
+        use super::super::error::AuthHint;
         let hint = clock_hint(1710000000, Some(1710000901));
         assert!(matches!(hint, AuthHint::ClockSkew { .. }));
         // Drift in either direction counts.
@@ -261,7 +311,7 @@ mod tests {
             AuthHint::ClockSkew { .. }
         ));
 
-        let rendered = SealError::Auth { status: 401, hint }.to_string();
+        let rendered = EideasyError::Auth { status: 401, hint }.to_string();
         assert!(rendered.contains("clock"), "{rendered}");
         assert!(
             rendered.contains("before rotating"),

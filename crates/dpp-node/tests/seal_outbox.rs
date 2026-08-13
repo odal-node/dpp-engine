@@ -250,6 +250,13 @@ fn eideasy_config(base_url: &str) -> dpp_seal::eideasy::EideasyConfig {
     }
 }
 
+/// The real `SealPort` over the real provider backend, pointed at the mock.
+fn eideasy_adapter(cfg: dpp_seal::eideasy::EideasyConfig) -> Arc<dyn SealPort> {
+    Arc::new(QtspSealAdapter::new(
+        dpp_seal::eideasy::EideasyClient::new(cfg).expect("build adapter"),
+    ))
+}
+
 // ─── The loop ─────────────────────────────────────────────────────────────────
 
 /// Publish a real passport, let the real drain seal it against the mock, and
@@ -324,8 +331,7 @@ async fn publish_then_drain_seals_the_passport_end_to_end() {
     );
 
     // ── 3. Drain: the real adapter against the mock ──────────────────────────
-    let adapter: Arc<dyn SealPort> =
-        Arc::new(QtspSealAdapter::eideasy(eideasy_config(&base_url)).expect("build adapter"));
+    let adapter = eideasy_adapter(eideasy_config(&base_url));
     let outbox_dyn: Arc<dyn SealOutbox> = seal_outbox.clone();
     let stats = drain_once(&outbox_dyn, &adapter, MOCK_CLIENT_ID, 10).await;
     assert_eq!(stats.sealed, 1, "the drain must seal the queued row");
@@ -449,8 +455,7 @@ async fn a_republish_needs_and_gets_its_own_seal() {
     let first = service.publish(id, &auth()).await.expect("publish");
     let first_jws = first.jws_signature.clone().unwrap();
 
-    let adapter: Arc<dyn SealPort> =
-        Arc::new(QtspSealAdapter::eideasy(eideasy_config(&base_url)).expect("build adapter"));
+    let adapter = eideasy_adapter(eideasy_config(&base_url));
     let outbox_dyn: Arc<dyn SealOutbox> = seal_outbox.clone();
     drain_once(&outbox_dyn, &adapter, MOCK_CLIENT_ID, 10).await;
 
@@ -527,8 +532,7 @@ async fn a_wrong_key_is_rejected_and_the_row_stays_pending() {
 
     let mut bad = eideasy_config(&base_url);
     bad.hmac_key = zeroize::Zeroizing::new("the-wrong-key".to_owned());
-    let adapter: Arc<dyn SealPort> =
-        Arc::new(QtspSealAdapter::eideasy(bad).expect("build adapter"));
+    let adapter = eideasy_adapter(bad);
     let outbox_dyn: Arc<dyn SealOutbox> = seal_outbox.clone();
 
     let stats = drain_once(&outbox_dyn, &adapter, MOCK_CLIENT_ID, 10).await;

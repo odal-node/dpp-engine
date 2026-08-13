@@ -21,6 +21,8 @@
 
 use std::path::Path;
 
+use async_trait::async_trait;
+use base64::Engine as _;
 use chrono::Utc;
 use cms::cert::{CertificateChoices, IssuerAndSerialNumber};
 use cms::content_info::ContentInfo;
@@ -30,9 +32,13 @@ use cms::signed_data::{
 };
 use const_oid::db::rfc5911::ID_DATA;
 use der::{Any, Decode as _, Encode};
+use dpp_domain::ports::seal::{
+    SealCapabilities, SealFormat, SealMode, SealRequest, SealedEnvelope,
+};
 use p256::ecdsa::{DerSignature, SigningKey};
 use x509_cert::Certificate;
 
+use crate::backend::SealBackend;
 use crate::error::SealError;
 
 /// A locally generated signing identity: one key, one self-signed certificate.
@@ -177,6 +183,35 @@ impl LocalIdentity {
     }
 }
 
+#[async_trait]
+impl SealBackend for LocalIdentity {
+    async fn seal(&self, req: SealRequest) -> Result<SealedEnvelope, SealError> {
+        let digest = hex::decode(&req.payload_hash)
+            .map_err(|e| SealError::Config(format!("payload hash is not hex: {e}")))?;
+        let der = self.sign_detached(&digest)?;
+
+        Ok(SealedEnvelope {
+            format: SealFormat::Cades,
+            seal_value: base64::engine::general_purpose::STANDARD.encode(&der),
+            signing_cert_ref: Some(self.cert_thumbprint()),
+            sealed_at: Utc::now(),
+            // Not a placeholder: these bytes verify. Legal standing is the trust
+            // tier's business, not the envelope's.
+            placeholder: false,
+        })
+    }
+
+    fn capabilities(&self) -> SealCapabilities {
+        // Real detached CAdES bytes. `OperatorSeal` because the certificate is
+        // generated per node rather than held centrally on operators' behalf —
+        // this backend rehearses the shape the hosted arrangement takes.
+        SealCapabilities {
+            supported_formats: vec![SealFormat::Cades],
+            supported_modes: vec![SealMode::OperatorSeal],
+        }
+    }
+}
+
 /// Generate a P-256 key and a self-signed certificate for it.
 fn generate() -> Result<(Vec<u8>, Vec<u8>), SealError> {
     let mut params = rcgen::CertificateParams::new(vec!["odal-local-seal".to_owned()])
@@ -284,6 +319,59 @@ mod tests {
         let a = id.sign_detached(&[0x01; 32]).expect("sign a");
         let b = id.sign_detached(&[0x02; 32]).expect("sign b");
         assert_ne!(a, b, "the seal must depend on what it covers");
+    }
+
+    fn seal_request(payload_hash: &str) -> SealRequest {
+        SealRequest {
+            payload_hash: payload_hash.to_owned(),
+            mode: SealMode::OperatorSeal,
+            key_ref: dpp_domain::ports::seal::SealCredentialRef {
+                qtsp_id: "local".into(),
+                credential_id: "dev".into(),
+            },
+            sig_format: SealFormat::Cades,
+        }
+    }
+
+    /// The envelope this backend hands the port carries the real signature and
+    /// says so.
+    ///
+    /// `placeholder: false` is the load-bearing field: the drain, the trust
+    /// report and the passport all read it, and marking these bytes as a
+    /// placeholder would hide a seal that genuinely verifies — while marking a
+    /// ghost's bytes as real would do far worse.
+    #[tokio::test]
+    async fn the_envelope_carries_the_signature_and_the_certificate() {
+        use base64::engine::general_purpose::STANDARD as BASE64;
+
+        let (id, _dir) = identity();
+        let digest = [0x33u8; 32];
+        let env = SealBackend::seal(&id, seal_request(&hex::encode(digest)))
+            .await
+            .expect("the local backend seals");
+
+        assert_eq!(env.format, SealFormat::Cades);
+        assert!(!env.placeholder, "these bytes verify — they are not a stub");
+        assert_eq!(
+            env.signing_cert_ref.as_deref(),
+            Some(id.cert_thumbprint().as_str()),
+            "the envelope must name the certificate that signed it"
+        );
+
+        // The seal value is the base64 of the same CMS the direct path produces.
+        let der = BASE64.decode(&env.seal_value).expect("base64 seal value");
+        ContentInfo::from_der(&der).expect("a CMS ContentInfo");
+        assert_eq!(der, id.sign_detached(&digest).expect("sign"));
+    }
+
+    /// A digest that is not hex fails before any signing happens.
+    #[tokio::test]
+    async fn a_payload_hash_that_is_not_hex_is_refused() {
+        let (id, _dir) = identity();
+        let err = SealBackend::seal(&id, seal_request("not-a-digest"))
+            .await
+            .expect_err("a malformed digest must not be signed over");
+        assert!(err.to_string().contains("not hex"), "{err}");
     }
 
     /// The identity survives a restart.
