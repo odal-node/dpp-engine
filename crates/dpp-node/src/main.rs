@@ -173,34 +173,43 @@ async fn main() -> anyhow::Result<()> {
         dpp_node::infra::credential_issuers::from_env(operator_did.as_deref());
     let credentials_live = credential_trust != TrustMode::Ghost;
 
-    // ── eIDAS qualified seal (eID Easy Cloud Direct e-Sealing) ───────────────
-    // A partial configuration is an error rather than a silent ghost: dropping
-    // to no sealing because one of three variables was misspelled is exactly the
+    // ── eIDAS qualified seal ─────────────────────────────────────────────────
+    // The backend is selected explicitly by SEAL_PROVIDER. A partial or
+    // unrecognised configuration is an error rather than a silent ghost:
+    // dropping to no sealing because one variable was misspelled is exactly the
     // downgrade the trust report exists to prevent, so it fails the boot.
     let (seal, seal_client_id, seal_trust): (Arc<dyn SealPort>, String, TrustMode) =
-        match dpp_seal::EideasyConfig::from_env().context("eID Easy configuration")? {
-            Some(cfg) => {
-                // Sandbox is a real seal from a real API, but over eID Easy's test
-                // certificate — a distinct claim from both Ghost and Live.
+        match dpp_seal::SealProvider::from_env().context("seal provider")? {
+            dpp_seal::SealProvider::Qtsp => {
+                let cfg = dpp_seal::eideasy::EideasyConfig::from_env()
+                    .context("QTSP seal configuration")?;
+                // Sandbox is a real seal from a real API, but over the provider's
+                // test certificate — a distinct claim from both Ghost and Live.
                 let mode = match cfg.environment {
-                    dpp_seal::EideasyEnvironment::Sandbox => TrustMode::Sandbox,
-                    dpp_seal::EideasyEnvironment::Production => TrustMode::Live,
+                    dpp_seal::eideasy::EideasyEnvironment::Sandbox => TrustMode::Sandbox,
+                    dpp_seal::eideasy::EideasyEnvironment::Production => TrustMode::Live,
                 };
                 let client_id = cfg.client_id.clone();
                 tracing::info!(
                     base_url = %cfg.base_url,
                     mode = mode.as_str(),
-                    "eIDAS seal: eID Easy adapter active"
+                    "eIDAS seal: QTSP adapter active"
                 );
                 let adapter = dpp_seal::QtspSealAdapter::eideasy(cfg)
-                    .context("Failed to build eID Easy seal adapter")?;
+                    .context("Failed to build the QTSP seal adapter")?;
                 (Arc::new(adapter), client_id, mode)
             }
-            None => {
+            dpp_seal::SealProvider::Local => {
+                // Selected but not yet wired. Refusing to boot is the point: the
+                // alternative is a node that was asked for a seal, silently gave
+                // none, and published passports saying so.
+                anyhow::bail!(
+                    "SEAL_PROVIDER=local selects the in-process development backend, which is                      not implemented yet — the signing format is undecided. Unset it to run                      with GhostSeal."
+                );
+            }
+            dpp_seal::SealProvider::None => {
                 tracing::info!(
-                    "eIDAS seal: ghost (no QTSP) — set SEAL_PROVIDER=eideasy plus \
-                     SEAL_EIDEASY_BASE_URL + SEAL_EIDEASY_CLIENT_ID + SEAL_EIDEASY_HMAC_KEY \
-                     to enable"
+                    "eIDAS seal: ghost (no provider) — set SEAL_PROVIDER to enable sealing"
                 );
                 (
                     Arc::new(dpp_seal::QtspSealAdapter::ghost()),

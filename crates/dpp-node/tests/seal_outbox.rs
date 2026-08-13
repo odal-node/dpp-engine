@@ -239,10 +239,10 @@ fn draft_passport() -> Passport {
     }
 }
 
-fn eideasy_config(base_url: &str) -> dpp_seal::EideasyConfig {
-    dpp_seal::EideasyConfig {
+fn eideasy_config(base_url: &str) -> dpp_seal::eideasy::EideasyConfig {
+    dpp_seal::eideasy::EideasyConfig {
         base_url: base_url.to_owned(),
-        environment: dpp_seal::EideasyEnvironment::Sandbox,
+        environment: dpp_seal::eideasy::EideasyEnvironment::Sandbox,
         client_id: MOCK_CLIENT_ID.to_owned(),
         hmac_key: zeroize::Zeroizing::new(MOCK_KEY.to_owned()),
         signature_profile: "CAdES_BASELINE_T".to_owned(),

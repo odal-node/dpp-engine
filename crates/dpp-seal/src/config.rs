@@ -17,8 +17,12 @@ pub const SEAL_PROVIDER: &str = "SEAL_PROVIDER";
 const PROVIDER_NONE: &str = "none";
 
 /// The backend a node is configured to seal with.
+///
+/// Deliberately **not** `#[non_exhaustive]`: adding a backend should break every
+/// wiring site until it is handled. A `_` arm here is a node that silently seals
+/// with something other than what it was asked for, which is the downgrade the
+/// trust report exists to prevent.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[non_exhaustive]
 pub enum SealProvider {
     /// The hosted QTSP backend.
     Qtsp,
