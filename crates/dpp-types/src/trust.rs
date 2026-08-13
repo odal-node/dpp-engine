@@ -18,7 +18,10 @@ use serde::Serialize;
 
 /// Trust tier a resolved adapter operates at. Gauge encoding: Ghost=0, Sandbox=1,
 /// Live=2 (`trust_mode{port="…"}`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+/// Ordered deliberately: `Ghost < Sandbox < Live`. The ordering is what lets a
+/// profile state a floor rather than enumerate the tiers it rejects, so adding a
+/// tier later does not silently pass an existing guard.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum TrustMode {
     /// Placeholder — no real trust authority behind it (test double).
@@ -57,25 +60,49 @@ impl TrustMode {
     }
 }
 
-/// Deployment profile. Defaults to `Development`; `NODE_PROFILE=production`
-/// opts into the strict boot guard.
+/// Deployment profile — which trust tiers this environment will boot on.
+///
+/// Three environments, not two, because "sandbox" is a property of the
+/// **deployment** rather than a tier a production node may quietly carry. A
+/// sandbox node is a full node in every respect except that the authorities
+/// behind it are test ones; running it separately is the closest rehearsal of
+/// production there is, and keeping the profiles apart is what stops a test
+/// certificate ever sealing a passport that claims to be real.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum NodeProfile {
     /// Ghosts allowed; the default and the licensed dev-environment profile.
     Development,
-    /// Ghosts on required ports are a hard boot failure.
+    /// A real deployment against **test** authorities. Ghosts on required ports
+    /// are a hard boot failure, exactly as in production — what differs is that
+    /// `Sandbox` tiers are accepted, so the environment can be exercised
+    /// end-to-end without a production credential.
+    Sandbox,
+    /// Ghosts **and** sandboxes on required ports are a hard boot failure.
+    /// Only `Live` will do: a production node states that its passports are
+    /// backed by real authorities, and a sandbox tier makes that untrue.
     Production,
 }
 
 impl NodeProfile {
     /// Read `NODE_PROFILE` from the environment. Anything other than
-    /// `production` (including unset) is `Development`.
+    /// `production` or `sandbox` (including unset) is `Development`.
     #[must_use]
     pub fn from_env() -> Self {
         match std::env::var("NODE_PROFILE").ok().as_deref() {
             Some("production") => Self::Production,
+            Some("sandbox") => Self::Sandbox,
             _ => Self::Development,
+        }
+    }
+
+    /// The lowest trust tier this profile will boot a required port on.
+    #[must_use]
+    pub fn minimum_tier(self) -> Option<TrustMode> {
+        match self {
+            Self::Development => None,
+            Self::Sandbox => Some(TrustMode::Sandbox),
+            Self::Production => Some(TrustMode::Live),
         }
     }
 }
@@ -127,17 +154,33 @@ impl NodeTrustReport {
     /// # Errors
     /// The offending-port message when a production node would boot on ghosts.
     pub fn enforce_profile(&self) -> Result<(), String> {
-        if self.profile != NodeProfile::Production {
+        let Some(minimum) = self.profile.minimum_tier() else {
+            return Ok(());
+        };
+
+        // Below the floor, not merely ghosted. `Production` demands `Live`, so a
+        // sandbox tier fails it too — a production node asserts that real
+        // authorities stand behind its passports, and a provider's test
+        // certificate makes that assertion false while looking identical.
+        let below: Vec<&str> = self
+            .ports
+            .iter()
+            .filter(|p| p.required && p.mode < minimum)
+            .map(|p| p.port)
+            .collect();
+        if below.is_empty() {
             return Ok(());
         }
-        let ghosts = self.ghosted_required();
-        if ghosts.is_empty() {
-            return Ok(());
-        }
+
+        let profile = match self.profile {
+            NodeProfile::Production => "production",
+            NodeProfile::Sandbox => "sandbox",
+            NodeProfile::Development => "development",
+        };
         Err(format!(
-            "NODE_PROFILE=production refuses to boot: required trust port(s) [{}] resolved to a \
-             placeholder (ghost). Configure a real adapter or run with NODE_PROFILE=development.",
-            ghosts.join(", ")
+            "NODE_PROFILE={profile} refuses to boot: required trust port(s) [{}] resolved below              `{}`. Configure a real adapter, or run a profile that admits the tier you have.",
+            below.join(", "),
+            minimum.as_str()
         ))
     }
 
@@ -235,5 +278,64 @@ mod tests {
         assert_eq!(j["trust_mode"]["seal"], "ghost");
         assert_eq!(j["trust_mode"]["registry_sync"], "sandbox");
         assert_eq!(j["trust_mode"]["archive"], "live");
+    }
+
+    /// A production node refuses a **sandbox** tier, not only a ghost.
+    ///
+    /// This is the separation stated as a test. Before it, `Production`
+    /// admitted `Sandbox`, so a production deployment could seal passports with
+    /// a provider's test certificate and assert nothing was wrong — the two
+    /// look identical from outside, and only the tier distinguishes them.
+    #[test]
+    fn production_refuses_a_sandbox_seal() {
+        let report = NodeTrustReport::new(
+            NodeProfile::Production,
+            ports(TrustMode::Sandbox, TrustMode::Live, TrustMode::Live),
+        );
+        let err = report
+            .enforce_profile()
+            .expect_err("production must not boot on a test certificate");
+        assert!(err.contains("seal"), "{err}");
+        assert!(err.contains("live"), "the message names the floor: {err}");
+    }
+
+    /// A sandbox node boots on sandbox tiers, and still refuses ghosts.
+    ///
+    /// The point of the profile: a full rehearsal of production against test
+    /// authorities. Admitting ghosts too would make it a development node with
+    /// a different name.
+    #[test]
+    fn sandbox_admits_sandbox_but_not_ghost() {
+        let ok = NodeTrustReport::new(
+            NodeProfile::Sandbox,
+            ports(TrustMode::Sandbox, TrustMode::Sandbox, TrustMode::Ghost),
+        );
+        assert!(ok.enforce_profile().is_ok(), "sandbox tiers are the point");
+
+        let bad = NodeTrustReport::new(
+            NodeProfile::Sandbox,
+            ports(TrustMode::Ghost, TrustMode::Sandbox, TrustMode::Live),
+        );
+        assert!(
+            bad.enforce_profile().is_err(),
+            "a ghost on a required port is a boot failure in sandbox too"
+        );
+    }
+
+    /// Development boots on anything, including all ghosts.
+    #[test]
+    fn development_admits_every_tier() {
+        let report = NodeTrustReport::new(
+            NodeProfile::Development,
+            ports(TrustMode::Ghost, TrustMode::Ghost, TrustMode::Ghost),
+        );
+        assert!(report.enforce_profile().is_ok());
+    }
+
+    /// The ordering the floor comparison relies on.
+    #[test]
+    fn trust_tiers_are_ordered_ghost_sandbox_live() {
+        assert!(TrustMode::Ghost < TrustMode::Sandbox);
+        assert!(TrustMode::Sandbox < TrustMode::Live);
     }
 }

@@ -178,47 +178,62 @@ async fn main() -> anyhow::Result<()> {
     // unrecognised configuration is an error rather than a silent ghost:
     // dropping to no sealing because one variable was misspelled is exactly the
     // downgrade the trust report exists to prevent, so it fails the boot.
-    let (seal, seal_client_id, seal_trust): (Arc<dyn SealPort>, String, TrustMode) =
-        match dpp_seal::SealProvider::from_env().context("seal provider")? {
-            dpp_seal::SealProvider::Qtsp => {
-                let cfg = dpp_seal::eideasy::EideasyConfig::from_env()
-                    .context("QTSP seal configuration")?;
-                // Sandbox is a real seal from a real API, but over the provider's
-                // test certificate — a distinct claim from both Ghost and Live.
-                let mode = match cfg.environment {
-                    dpp_seal::eideasy::EideasyEnvironment::Sandbox => TrustMode::Sandbox,
-                    dpp_seal::eideasy::EideasyEnvironment::Production => TrustMode::Live,
-                };
-                let client_id = cfg.client_id.clone();
-                tracing::info!(
-                    base_url = %cfg.base_url,
-                    mode = mode.as_str(),
-                    "eIDAS seal: QTSP adapter active"
-                );
-                let adapter = dpp_seal::QtspSealAdapter::eideasy(cfg)
-                    .context("Failed to build the QTSP seal adapter")?;
-                (Arc::new(adapter), client_id, mode)
-            }
-            dpp_seal::SealProvider::Local => {
-                // Selected but not yet wired. Refusing to boot is the point: the
-                // alternative is a node that was asked for a seal, silently gave
-                // none, and published passports saying so.
-                anyhow::bail!(
-                    "SEAL_PROVIDER=local selects the in-process development backend, which is                      not implemented yet — the signing format is undecided. Unset it to run                      with GhostSeal."
-                );
-            }
-            dpp_seal::SealProvider::None => {
-                tracing::info!(
-                    "eIDAS seal: ghost (no provider) — set SEAL_PROVIDER to enable sealing"
-                );
-                (
-                    Arc::new(dpp_seal::QtspSealAdapter::ghost()),
-                    String::new(),
-                    TrustMode::Ghost,
-                )
-            }
-        };
-    let sealing_live = seal_trust != TrustMode::Ghost;
+    // Two questions, deliberately not one flag. `seal_trust` is *legal* standing
+    // and decides whether a profile will boot. `seal_drains` is *mechanical* —
+    // whether the backend emits an envelope worth draining — and a locally
+    // signed seal answers yes to the second while answering `Ghost` to the
+    // first. Collapsing them either strands the local backend unexercised or
+    // lets a self-signed certificate satisfy a production boot.
+    let (seal, seal_client_id, seal_trust, seal_drains): (
+        Arc<dyn SealPort>,
+        String,
+        TrustMode,
+        bool,
+    ) = match dpp_seal::SealProvider::from_env().context("seal provider")? {
+        dpp_seal::SealProvider::Qtsp => {
+            let cfg =
+                dpp_seal::eideasy::EideasyConfig::from_env().context("QTSP seal configuration")?;
+            // Sandbox is a real seal from a real API, but over the provider's
+            // test certificate — a distinct claim from both Ghost and Live.
+            let mode = match cfg.environment {
+                dpp_seal::eideasy::EideasyEnvironment::Sandbox => TrustMode::Sandbox,
+                dpp_seal::eideasy::EideasyEnvironment::Production => TrustMode::Live,
+            };
+            let client_id = cfg.client_id.clone();
+            tracing::info!(
+                base_url = %cfg.base_url,
+                mode = mode.as_str(),
+                "eIDAS seal: QTSP adapter active"
+            );
+            let adapter = dpp_seal::QtspSealAdapter::eideasy(cfg)
+                .context("Failed to build the QTSP seal adapter")?;
+            (Arc::new(adapter), client_id, mode, true)
+        }
+        dpp_seal::SealProvider::Local => {
+            let cfg =
+                dpp_seal::local::LocalConfig::from_env().context("local seal configuration")?;
+            let adapter = dpp_seal::QtspSealAdapter::local(&cfg)
+                .context("Failed to build the local seal adapter")?;
+            tracing::warn!(
+                key_path = %cfg.key_path.display(),
+                "eIDAS seal: LOCAL development backend — a real CMS signature under a                      self-signed certificate, on no EU Trusted List and of no legal weight"
+            );
+            // Ghost as a trust tier, because no authority stands behind a
+            // self-signed certificate — so a sandbox or production profile
+            // refuses to boot on it. But the envelope is real, so it drains.
+            (Arc::new(adapter), String::new(), TrustMode::Ghost, true)
+        }
+        dpp_seal::SealProvider::None => {
+            tracing::info!("eIDAS seal: ghost (no provider) — set SEAL_PROVIDER to enable sealing");
+            (
+                Arc::new(dpp_seal::QtspSealAdapter::ghost()),
+                String::new(),
+                TrustMode::Ghost,
+                false,
+            )
+        }
+    };
+    let sealing_live = seal_drains;
 
     let trust = boot::trust::build_and_enforce(
         seal_trust,
