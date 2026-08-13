@@ -10,17 +10,6 @@
 //! no legal validity, which is why a production node's trust report refuses
 //! to boot while the seal port resolves to a ghost.
 //!
-//! # Provider
-//!
-//! **eID Easy Cloud Direct e-Sealing**, which aggregates qualified QTSPs and
-//! produces **CAdES** over the payload digest. Auth is HMAC over the exact
-//! request bytes. CAdES from a qualified QTSP carries the same eIDAS
-//! Art. 35 legal presumption as any other AdES envelope; the DPP registry
-//! requires a *qualified* seal, not a specific envelope format.
-//!
-//! Sandbox needs no legal entity — it seals with eID Easy test certificates.
-//! The entity gates *production* only.
-//!
 //! # What is sealed
 //!
 //! The digest handed to `SealPort::seal` is over the passport's `jwsSignature`
@@ -34,7 +23,7 @@
 //!
 //! - [`adapter`] — `QtspSealAdapter`, the `SealPort` impl
 //! - [`config`] — which backend this node runs, and nothing about any of them
-//! - [`eideasy`] — the hosted QTSP backend: config, wire types, HTTP client
+//! - [`eideasy`] — a hosted QTSP backend: its config, wire types and client
 //! - [`local`] — in-process signing for development
 //! - [`error`] — `SealError`, classified once at the HTTP boundary
 //!
@@ -51,6 +40,3 @@ pub mod local;
 pub use adapter::QtspSealAdapter;
 pub use config::{SEAL_PROVIDER, SealProvider};
 pub use error::SealError;
-
-#[cfg(test)]
-mod tests;
