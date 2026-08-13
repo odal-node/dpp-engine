@@ -7,10 +7,11 @@
 //! signature it actually attests to, and with the digest a verifier needs to
 //! check it against.
 //!
-//! What this route does **not** do is validate the CAdES. No Rust AdES validator
-//! exists, and a seal is worth exactly as much as the independence of whoever
-//! checked it — so the response carries everything an external validator needs
-//! and states plainly what has and has not been verified.
+//! What this route does **not** do is validate the CAdES. A seal is worth
+//! exactly as much as the independence of whoever checked it, so a verdict from
+//! the node that bought the seal would attest nothing — the response instead
+//! carries everything an external validator needs and states plainly what has
+//! and has not been verified.
 
 use axum::{
     Json,
