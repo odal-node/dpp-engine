@@ -22,9 +22,12 @@
 use std::path::Path;
 
 use chrono::Utc;
-use cms::builder::{SignedDataBuilder, SignerInfoBuilder};
-use cms::cert::CertificateChoices;
-use cms::signed_data::{EncapsulatedContentInfo, SignerIdentifier};
+use cms::cert::{CertificateChoices, IssuerAndSerialNumber};
+use cms::content_info::ContentInfo;
+use cms::signed_data::{
+    CertificateSet, DigestAlgorithmIdentifiers, EncapsulatedContentInfo, SignedData,
+    SignerIdentifier, SignerInfo, SignerInfos,
+};
 use const_oid::db::rfc5911::ID_DATA;
 use der::{Any, Decode as _, Encode};
 use p256::ecdsa::{DerSignature, SigningKey};
@@ -91,47 +94,80 @@ impl LocalIdentity {
     /// separately from what it covers — the same arrangement a provider returns
     /// and the same one the passport's `jwsSignature` expects.
     pub fn sign_detached(&self, digest: &[u8]) -> Result<Vec<u8>, SealError> {
-        // The detached form: `eContentType` is id-data and `eContent` is absent,
-        // so the structure commits to a digest it does not carry. `digest` is
-        // the message digest the signed attributes bind to.
+        use der::asn1::{OctetString, SetOfVec};
+        use p256::ecdsa::signature::Signer as _;
+
+        // Assembled from `cms`'s own types rather than its `builder` feature.
+        // That feature depends unconditionally on `rsa`, which carries
+        // RUSTSEC-2023-0071 with no fixed upgrade; we sign with P-256 and have
+        // no use for RSA, so the dependency would be pure advisory surface on
+        // the one crate that produces seals.
+        //
+        // Detached: `eContent` is absent, so the structure commits to a digest
+        // it does not carry — the arrangement a provider returns.
         let econtent = EncapsulatedContentInfo {
             econtent_type: ID_DATA,
-            econtent: Some(
-                Any::new(der::Tag::OctetString, digest)
-                    .map_err(|e| SealError::Config(format!("digest is not encodable: {e}")))?,
-            ),
+            econtent: None,
         };
-
-        let signer_id = SignerIdentifier::IssuerAndSerialNumber(cms::cert::IssuerAndSerialNumber {
-            issuer: self.cert.tbs_certificate.issuer.clone(),
-            serial_number: self.cert.tbs_certificate.serial_number.clone(),
-        });
 
         let digest_algorithm = x509_cert::spki::AlgorithmIdentifierOwned {
             oid: const_oid::db::rfc5912::ID_SHA_256,
             parameters: None,
         };
 
-        let signer_info = SignerInfoBuilder::new(
-            &self.key,
-            signer_id,
-            digest_algorithm.clone(),
-            &econtent,
-            None,
-        )
-        .map_err(|e| SealError::Config(format!("cannot build the CMS SignerInfo: {e:?}")))?;
+        // No signed attributes: with `signedAttrs` absent, the signature is over
+        // the content itself, which for a detached signature is the digest the
+        // caller hands us. One fewer place for the bound value to disagree with
+        // the value actually signed.
+        let signature: DerSignature = self.key.sign(digest);
 
-        let signed_data = SignedDataBuilder::new(&econtent)
-            .add_digest_algorithm(digest_algorithm)
-            .and_then(|b| b.add_certificate(CertificateChoices::Certificate(self.cert.clone())))
-            .and_then(|b| b.add_signer_info::<SigningKey, DerSignature>(signer_info))
-            .and_then(|b| b.build())
-            .map_err(|e| SealError::Config(format!("cannot build the CMS SignedData: {e:?}")))?;
+        let signer_info = SignerInfo {
+            version: cms::content_info::CmsVersion::V1,
+            sid: SignerIdentifier::IssuerAndSerialNumber(IssuerAndSerialNumber {
+                issuer: self.cert.tbs_certificate.issuer.clone(),
+                serial_number: self.cert.tbs_certificate.serial_number.clone(),
+            }),
+            digest_alg: digest_algorithm.clone(),
+            signed_attrs: None,
+            signature_algorithm: x509_cert::spki::AlgorithmIdentifierOwned {
+                oid: const_oid::db::rfc5912::ECDSA_WITH_SHA_256,
+                parameters: None,
+            },
+            signature: OctetString::new(signature.to_bytes().as_ref())
+                .map_err(|e| SealError::Config(format!("cannot encode the signature: {e}")))?,
+            unsigned_attrs: None,
+        };
 
-        // `build()` already returns the `ContentInfo` wrapper — re-wrapping it
-        // would nest one inside another and decode as garbage.
-        signed_data
-            .to_der()
+        let mut digest_algorithms = SetOfVec::new();
+        digest_algorithms
+            .insert(digest_algorithm)
+            .map_err(|e| SealError::Config(format!("cannot record the digest algorithm: {e}")))?;
+
+        let mut certs = SetOfVec::new();
+        certs
+            .insert(CertificateChoices::Certificate(self.cert.clone()))
+            .map_err(|e| SealError::Config(format!("cannot attach the certificate: {e}")))?;
+
+        let mut signer_infos = SetOfVec::new();
+        signer_infos
+            .insert(signer_info)
+            .map_err(|e| SealError::Config(format!("cannot attach the signer info: {e}")))?;
+
+        let signed_data = SignedData {
+            version: cms::content_info::CmsVersion::V1,
+            digest_algorithms: DigestAlgorithmIdentifiers::from(digest_algorithms),
+            encap_content_info: econtent,
+            certificates: Some(CertificateSet::from(certs)),
+            crls: None,
+            signer_infos: SignerInfos::from(signer_infos),
+        };
+
+        let info = ContentInfo {
+            content_type: const_oid::db::rfc5911::ID_SIGNED_DATA,
+            content: Any::encode_from(&signed_data)
+                .map_err(|e| SealError::Config(format!("cannot encode the SignedData: {e}")))?,
+        };
+        info.to_der()
             .map_err(|e| SealError::Config(format!("cannot DER-encode the seal: {e}")))
     }
 
@@ -195,6 +231,45 @@ mod tests {
         assert!(
             sd.certificates.is_some(),
             "the signing certificate travels with the seal, as a provider's does"
+        );
+    }
+
+    /// The signature in the seal verifies against the certificate it carries.
+    ///
+    /// This is the test the whole backend exists for. Everything else here
+    /// checks structure; without this one, a seal could be well-formed CMS
+    /// carrying bytes that verify against nothing — which is precisely what
+    /// `GhostSeal` already produces, and what this backend is meant to stop
+    /// being.
+    #[test]
+    fn the_signature_verifies_against_the_embedded_certificate() {
+        use p256::ecdsa::signature::Verifier as _;
+        use p256::ecdsa::{DerSignature, VerifyingKey};
+
+        let (id, _dir) = identity();
+        let digest = [0x7u8; 32];
+        let der = id.sign_detached(&digest).expect("sign");
+
+        let info = ContentInfo::from_der(&der).expect("ContentInfo");
+        let sd: cms::signed_data::SignedData = info.content.decode_as().expect("SignedData");
+        let si = sd.signer_infos.0.as_slice().first().expect("one signer");
+
+        // The verifying key comes out of the certificate inside the seal, not
+        // from the identity in memory — a verifier only ever has the bytes.
+        let spki = &id.cert.tbs_certificate.subject_public_key_info;
+        let vk = VerifyingKey::from_sec1_bytes(
+            spki.subject_public_key.as_bytes().expect("public key bits"),
+        )
+        .expect("P-256 key from the certificate");
+
+        let sig = DerSignature::from_bytes(si.signature.as_bytes()).expect("DER signature");
+        vk.verify(&digest, &sig)
+            .expect("the seal must verify against the certificate it ships");
+
+        // And must not verify against something it did not cover.
+        assert!(
+            vk.verify(&[0x8u8; 32], &sig).is_err(),
+            "a seal that verifies over any digest attests nothing"
         );
     }
 
