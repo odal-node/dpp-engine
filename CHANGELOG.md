@@ -12,7 +12,11 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ### Breaking
 
-- **Pinned to `dpp-core` 0.17.0**, and three of its changes are visible here.
+- **Pinned to `dpp-core` 0.17.0.** Three of its changes are visible here, and
+  **two of its new refusals are not reached by this engine at all** — see the
+  note at the end of this entry. The count is stated because "we adopted what
+  the release changed" and "we adopted the parts that touched our types" must
+  not look the same from the changelog.
 
   **Battery passports stored under schema versions below v2.5.0 can no longer be
   read.** `batteryType` became required and closed at v2.5.0 (EU 2023/1542
@@ -44,6 +48,28 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   it, and a row without a recognised value is rejected naming the accepted set.
   Previously an absent or misspelled value parsed to `None` and produced a
   passport missing a mandatory field instead of a failed row.
+
+  **Two of 0.17.0's new refusals are unreached by this release, and stay
+  unreached after it.** Both are compliance gates core added, and both live on
+  methods this engine does not call.
+
+  `Passport::transition_to(Published)` refuses a first publish when a battery
+  omits content the Battery Regulation makes mandatory for its category. Publish
+  here checks `PassportStatus::can_transition_to` — the state machine on the
+  status enum — and then sets `status`, `published_at` and `retention_locked`
+  itself, so the gate never runs. For `ev`, `lmt` and `industrial` that is
+  roughly twenty mandatory fields against the six a passport can publish with
+  today. `Passport::validate()` is likewise never called, so the same release's
+  requirement that an unsold-goods passport carry an in-scope `commodity_code`
+  agreeing with its `productCategory` is also unreachable.
+
+  Neither is a regression — both refusals are new in 0.17.0 and were never
+  enforced here. But a repin that adopts a release's types while leaving its
+  rules inert is a partial adoption, and saying so is the difference between a
+  known gap and a silent one. Tracked in #110; not fixed here, because routing
+  publish through `transition_to` changes what an operator can publish and fails
+  every battery test until its fixture carries the full set — which is the point,
+  and is its own change.
 
 ### Changed
 
