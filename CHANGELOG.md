@@ -115,6 +115,42 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ### Added
 
+- **Frozen stored-doc fixtures for battery v2.6.0, textile v1.2.0 and
+  electronics v1.2.0**, and `just capture-fixture <sector>` to produce them.
+
+  The compatibility guard had no readable battery document at all: all six
+  battery fixtures are in `UNREADABLE_FIXTURES`, so `every_frozen_passport_doc_still_reads`
+  skipped every one and the sector with the most schema movement had no
+  protection against the next non-additive change. It has one again.
+
+  **Captured, not written.** The recipe creates and publishes a passport through
+  the real vault against real Postgres, then writes the row's `doc` column. A
+  fixture authored from the current structs would deserialise back into them by
+  construction — it would look like coverage and be none. What makes these
+  evidence is that the create and publish paths produced everything the guard
+  inspects: the schema version resolved from the catalog, `publishedAt`,
+  `retentionLocked`, `version`, the stamped Annex III facility and Art. 13
+  operator identifier, and the exact serde shape of `sectorData`.
+
+  **What is not real in them:** the signer is the test harness's mock, so
+  `jwsSignature` and the `disclosureSignatures` carry placeholder header and
+  signature segments over a real payload, and `complianceResult` reports
+  `PASSTHROUGH_NO_VALIDATION` because no sector plugin is loaded. Neither
+  weakens the guard — it checks that a stored document still *deserialises*, and
+  those fields are strings and a struct either way — but a frozen document
+  should not be read as more than it is.
+
+  The recipe reads the version out of the stored document rather than taking it
+  as an argument, and refuses to overwrite an existing fixture — a frozen
+  document that gets re-captured has stopped being evidence about the release
+  that produced it.
+
+  The battery body carries the full set its category makes mandatory rather than
+  the minimum that validates, which surfaced a real cross-field rule: core
+  refuses recycled content for a metal the chemistry does not contain, so an LFP
+  passport cannot carry the mandatory cobalt and nickel figures at all. The
+  fixture is NMC for that reason.
+
 - **eIDAS qualified sealing, end to end** (migration `0028_seal_outbox.sql`).
   `dpp-seal` becomes a real adapter against eID Easy Cloud Direct e-Sealing,
   which aggregates qualified QTSPs and returns
