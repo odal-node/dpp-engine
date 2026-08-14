@@ -61,6 +61,14 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   Unrecognised values pass through untouched — a token this mapping does not know
   is one it cannot honestly relabel.
 
+- **`productCategory` is gone from the documented passport response.** Core
+  removed `Passport.product_category` in 0.17.0, so the API spec described a
+  field the response no longer carries. No wire change: the field was
+  `skip_serializing_if = "Option::is_none"` and every write path set it to
+  `None`, so the key was never emitted — only the spec claimed otherwise. The
+  sector-level `productCategory` inside `sectorData` (steel, electronics) is a
+  different field and is untouched.
+
 ### Added
 
 - **eIDAS qualified sealing, end to end** (migration `0028_seal_outbox.sql`).
