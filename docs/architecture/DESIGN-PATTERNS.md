@@ -125,7 +125,7 @@ Infrastructure dependencies that are optional use a NoOp implementation:
 | Event bus | `NatsEventBus` | `NoOpEventBus` (discards events) |
 | Compliance | Wasm sector plugin | `PassthroughRegistry` (accepts all) |
 | EU Registry | `EuRegistrySync` (HTTP, when the Commission publishes) | `GhostRegistrySync` — but registration intent is **never lost**: it lives in the durable outbox regardless of adapter tier |
-| Qualified seal | CSC/QTSP adapter (`dpp-seal`) | `GhostSeal` — clearly marked placeholder |
+| Qualified seal | A `SealBackend` selected by `SEAL_PROVIDER` (`dpp-seal`): a hosted QTSP, or a local dev sealer that is real CMS and no legal weight | `GhostSeal` — clearly marked placeholder |
 
 **Why:** Self-hosted single-node deployments should work without NATS. The NoOp pattern means the code paths are identical — no `if nats_enabled { ... }` branches. The trait dispatch handles it.
 

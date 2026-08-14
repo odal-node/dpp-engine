@@ -127,8 +127,10 @@ dpp-types <-- dpp-dal <-- dpp-vault <-- dpp-node
 dpp-common (event bus trait, telemetry) <-- dpp-vault, dpp-node
 dpp-plugin-host <-- dpp-node
 
-dpp-seal        (CSC/QTSP adapter scaffold — resolves to Ghost until a QTSP is
-                 configured; a NODE_PROFILE=production node refuses to boot on it)
+dpp-seal        (eIDAS seal adapter over one SealBackend, chosen by SEAL_PROVIDER:
+                 a hosted QTSP, a local development sealer, or Ghost when unset.
+                 Only the first carries legal weight — a NODE_PROFILE=production
+                 node refuses to boot on either of the others)
 dpp-factor-data (licensed-LCI store — ghost provider until a dataset licence is
                  signed; ghost-derived results are marked dataset_id="ghost")
 ```
