@@ -2077,8 +2077,7 @@ paths:
                     type: string
                     format: date-time
                   signingCertRef:
-                    type: string
-                    nullable: true
+                    type: [string, "null"]
                     description: |
                       Hex SHA-256 of the certificate the seal names as its
                       signer, **as reported by the seal** — read out of the CAdES
@@ -2105,8 +2104,7 @@ paths:
                       passport's present signature would be taken over.
                     pattern: "^[0-9a-f]{64}$"
                   sealedPayloadHash:
-                    type: string
-                    nullable: true
+                    type: [string, "null"]
                     description: |
                       Hex SHA-256 this node asked the backend to seal, from the
                       outbox row that bought `sealValue`. `null` when the node
