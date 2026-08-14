@@ -22,7 +22,7 @@ async fn test_passthrough_battery_stores_result() {
             "sector": "battery",
             "gtin": "09506000134352",
             "batteryChemistry": "NMC",
-            "batteryType": "industrial",
+            "batteryType": "portable",
             "nominalVoltageV": 24.0,
             "nominalCapacityAh": 80.0,
             "expectedLifetimeCycles": 2000,

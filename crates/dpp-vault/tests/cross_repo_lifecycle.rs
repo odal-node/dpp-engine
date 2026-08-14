@@ -52,7 +52,7 @@ async fn full_lifecycle_draft_to_archived() {
             "sector": "battery",
             "gtin": "09506000134352",
             "batteryChemistry": "NMC",
-            "batteryType": "industrial",
+            "batteryType": "portable",
             "nominalVoltageV": 3.7,
             "nominalCapacityAh": 50.0,
             "expectedLifetimeCycles": 2000,
