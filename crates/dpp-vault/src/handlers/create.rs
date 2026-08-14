@@ -168,11 +168,43 @@ pub async fn create_handler(
         .or_else(|| body.sector_data.as_ref().map(|d| d.sector()))
         .unwrap_or_else(|| Sector::Other("other".to_owned()));
 
-    // Resolve the sector's current schema version (the service re-normalises this
-    // on persist); never silently down-version to a hardcoded "1.0.0".
+    // A new passport is written at the sector's current schema version, and only
+    // that one. Never silently down-version to a hardcoded "1.0.0".
+    //
+    // `PassportService::create` already overwrites this from the catalog on
+    // persist, so a caller-supplied value never reached the database — it was
+    // computed here and discarded. Two reasons that is not good enough to leave
+    // alone. It is dishonest: the request was accepted, so the caller has no way
+    // to learn its declaration was ignored. And the service's one assignment is
+    // now the only thing standing between a caller and the disclosure table its
+    // passport is served under — the stored version selects that table, and an
+    // older one classifies fewer fields while defaulting the rest to `Public`
+    // (battery v1.0.0 annotates 11 against v2.6.0's 68). Refusing a mismatch
+    // here means two independent things must go wrong, not one.
+    //
+    // The body is validated against the *current* schema regardless — see
+    // `validate_against_schema` — so a differing declaration is not a variant the
+    // server could honour anyway; it is a claim about the body that is already
+    // false.
     let schema_version = catalog()
-        .resolve_schema_version(sector.catalog_key(), body.schema_version.as_deref())
+        .resolve_schema_version(sector.catalog_key(), None)
         .unwrap_or_else(|| "1.0.0".into());
+    if let Some(requested) = body.schema_version.as_deref()
+        && requested != schema_version
+    {
+        return api_error(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "VALIDATION_ERROR",
+            &format!(
+                "schemaVersion must be `{schema_version}` for sector `{}` (or omitted); \
+                 `{requested}` was requested. A new passport is always written at the \
+                 sector's current schema version — the stored version selects the \
+                 disclosure table its public view is signed under, so it is not the \
+                 caller's to choose.",
+                sector.catalog_key()
+            ),
+        );
+    }
 
     // If co2e_per_unit not supplied at the top level, derive it from the
     // typed sector data so callers don't have to duplicate the value.
@@ -208,7 +240,6 @@ pub async fn create_handler(
         id: PassportId(Uuid::now_v7()),
         product_name: body.product_name,
         sector,
-        product_category: None,
         manufacturer: body.manufacturer,
         materials: body.materials.unwrap_or_default(),
         co2e_per_unit,
@@ -370,15 +401,15 @@ mod schema_validation {
     //! on the write path, catching schema-only constraints the Rust types miss.
     use super::*;
     use dpp_domain::Gtin;
-    use dpp_domain::domain::sector::{BatteryChemistry, BatteryData};
+    use dpp_domain::domain::sector::{BatteryChemistry, BatteryData, BatteryType};
 
     fn valid_battery() -> SectorData {
-        SectorData::Battery(BatteryData {
+        SectorData::Battery(Box::new(BatteryData {
             gtin: Gtin::parse("09506000134352").unwrap(),
             battery_chemistry: BatteryChemistry::Lfp,
             nominal_voltage_v: 3.2,
             nominal_capacity_ah: 100.0,
-            expected_lifetime_cycles: 3000,
+            expected_lifetime_cycles: Some(3000),
             co2e_per_unit_kg: 85.4,
             recycled_content_cobalt_pct: None,
             recycled_content_lithium_pct: Some(12.5),
@@ -398,7 +429,7 @@ mod schema_validation {
             rated_energy_wh: None,
             recycled_content_lead_pct: None,
             battery_weight_kg: None,
-            battery_type: None,
+            battery_type: BatteryType::Industrial,
             round_trip_efficiency_pct: None,
             internal_resistance_mohm: None,
             manufacturing_date: None,
@@ -411,7 +442,41 @@ mod schema_validation {
             recycled_content_reporting_year: None,
             state_of_health: None,
             expected_lifetime: None,
-        })
+            // Annex VI Part A / Annex XIII points 1-3, added in dpp-core 0.17.0.
+            // All optional and none of them load-bearing for what these tests
+            // assert, so all `None`.
+            battery_status: None,
+            capacity_threshold_for_exhaustion_pct: None,
+            commercial_warranty_period_months: None,
+            component_part_numbers: None,
+            cycle_life_test_c_rate: None,
+            dynamic_performance: None,
+            eu_declaration_of_conformity: None,
+            expected_lifetime_reference_test: None,
+            hazard_symbol: None,
+            hazardous_substances: None,
+            initial_round_trip_efficiency_pct: None,
+            internal_cell_resistance_mohm: None,
+            internal_pack_resistance_mohm: None,
+            marking_information: None,
+            maximum_voltage_v: None,
+            minimal_voltage_v: None,
+            not_in_use_temperature_range: None,
+            not_in_use_temperature_reference_test: None,
+            original_power_capability_w: None,
+            power_limit_max_w: None,
+            power_limit_min_w: None,
+            power_temperature_range: None,
+            renewable_content_pct: None,
+            round_trip_efficiency_at_half_cycle_life_pct: None,
+            safety_measures: None,
+            spare_parts_contacts: None,
+            test_report_results: None,
+            usable_extinguishing_agent: None,
+            usage_history: None,
+            voltage_temperature_range: None,
+            waste_battery_information: None,
+        }))
     }
 
     #[test]

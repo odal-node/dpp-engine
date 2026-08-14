@@ -10,6 +10,109 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ## [Unreleased]
 
+### Breaking
+
+- **Pinned to `dpp-core` 0.17.0.** Three of its changes are visible here, and
+  **two of its new refusals are not reached by this engine at all** — see the
+  note at the end of this entry. The count is stated because "we adopted what
+  the release changed" and "we adopted the parts that touched our types" must
+  not look the same from the changelog.
+
+  **Battery passports stored under schema versions below v2.5.0 can no longer be
+  read.** `batteryType` became required and closed at v2.5.0 (EU 2023/1542
+  Annex VI Part A point 2, via Annex XIII point 1(a)). A record written before
+  the mandate carries no such value and `dpp-domain` refuses to upgrade it rather
+  than inventing a regulatory classification the operator never stated — the
+  right call, and it means no lens can rescue those documents. The frozen-document
+  guard records each affected shape in `UNREADABLE_FIXTURES` with its reason; the
+  fixtures themselves are untouched, because a frozen document edited to make a
+  test pass is no longer evidence of anything. **This is only defensible while no
+  such document exists in any deployment.**
+
+  **Disclosure is now resolved from the passport's own schema version.** A
+  published passport is filtered by the classes in force when its signature was
+  frozen, not by whatever the catalog says today — otherwise a later
+  reclassification silently changes what an already-signed passport serves, and
+  body and proof disagree for reasons no reader can distinguish from tampering.
+  `public_policy` takes the version and returns `Option`; an unknown sector *or
+  version* now fails closed.
+
+  The fail-closed backstop moved with it, and this is the part worth reading
+  twice: it used to key on "is the sector unknown to the catalog". That was the
+  same condition while the policy was unversioned. It is not any more — a
+  **known** sector at an **unknown** version resolves to no policy, and a
+  sector-only check would have served every `sectorData` field publicly. It now
+  keys on whether the policy resolved.
+
+  **`batteryType` is a required CSV column.** The battery import template gains
+  it, and a row without a recognised value is rejected naming the accepted set.
+  Previously an absent or misspelled value parsed to `None` and produced a
+  passport missing a mandatory field instead of a failed row.
+
+  **Two of 0.17.0's new refusals are unreached by this release, and stay
+  unreached after it.** Both are compliance gates core added, and both live on
+  methods this engine does not call.
+
+  `Passport::transition_to(Published)` refuses a first publish when a battery
+  omits content the Battery Regulation makes mandatory for its category. Publish
+  here checks `PassportStatus::can_transition_to` — the state machine on the
+  status enum — and then sets `status`, `published_at` and `retention_locked`
+  itself, so the gate never runs. For `ev`, `lmt` and `industrial` that is
+  roughly twenty mandatory fields against the six a passport can publish with
+  today. `Passport::validate()` is likewise never called, so the same release's
+  requirement that an unsold-goods passport carry an in-scope `commodity_code`
+  agreeing with its `productCategory` is also unreachable.
+
+  Neither is a regression — both refusals are new in 0.17.0 and were never
+  enforced here. But a repin that adopts a release's types while leaving its
+  rules inert is a partial adoption, and saying so is the difference between a
+  known gap and a silent one. Tracked in #110; not fixed here, because routing
+  publish through `transition_to` changes what an operator can publish and fails
+  every battery test until its fixture carries the full set — which is the point,
+  and is its own change.
+
+### Changed
+
+- **`POST /vault/api/v1/dpp` refuses a `schemaVersion` that is not the sector's
+  current one**, with `422`. Omitting it is unchanged, and remains the normal
+  case.
+
+  Previously the field was accepted and silently discarded: the handler resolved
+  it, and `PassportService::create` then overwrote it from the catalog on
+  persist. So no caller-supplied version ever reached the database — but nothing
+  said so, and a client sending `"1.0.0"` had no way to learn it got `2.6.0`.
+
+  That overwrite is also, as of this release, the only thing standing between a
+  caller and the disclosure table its passport is served under, which the same
+  release makes version-dependent (above). An older table classifies fewer
+  fields and `SectorAccessPolicy` defaults the rest to public — battery v1.0.0
+  annotates 11 against v2.6.0's 68, so a passport filtered at v1.0.0 would serve
+  `stateOfHealth` and thirteen others publicly. That hazard is pinned by
+  `an_older_schema_version_widens_the_public_view`. Refusing the mismatch at the
+  edge means the guarantee no longer rests on a single line in the service.
+
+- **Two battery fields became public** at core's battery schema v2.6.0, on its
+  cited reading of Annex XIII: `criticalRawMaterials` (point 1(b), listed
+  alongside chemistry and hazardous substances as publicly accessible material
+  composition) and `dueDiligenceUrl` (point 1(d)). Both are widenings of what the
+  public and AAS doors emit. The cross-door masking tests name their fields
+  explicitly rather than re-reading the catalog, so each had to be re-checked
+  against the schema's stated basis rather than silently dropped.
+
+- **The electronics page renders a device-type label, not the wire value.**
+  `productCategory` became a closed `DeviceType` with kebab-case values, so
+  rendering it raw would have put `other-mobile-phone` in front of a consumer.
+  Unrecognised values pass through untouched — a token this mapping does not know
+  is one it cannot honestly relabel.
+
+- **`productCategory` is gone from the documented passport response.** Core
+  removed `Passport.product_category` in 0.17.0, so the API spec described a
+  field the response no longer carries. No wire change: the field was
+  `skip_serializing_if = "Option::is_none"` and every write path set it to
+  `None`, so the key was never emitted — only the spec claimed otherwise. The
+  sector-level `productCategory` inside `sectorData` (steel, electronics) is a
+  different field and is untouched.
+
 ### Added
 
 - **eIDAS qualified sealing, end to end** (migration `0028_seal_outbox.sql`).

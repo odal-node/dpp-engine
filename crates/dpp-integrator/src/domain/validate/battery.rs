@@ -92,8 +92,28 @@ pub fn validate_battery_row(
     let carbon_footprint_class = optional_str(row, "carbonFootprintClass").and_then(|s| {
         serde_json::from_value::<CarbonFootprintClass>(serde_json::Value::String(s)).ok()
     });
-    let battery_type = optional_str(row, "batteryType")
-        .and_then(|s| serde_json::from_value::<BatteryType>(serde_json::Value::String(s)).ok());
+    // Required and closed since Annex VI Part A: a battery without a type is not
+    // a battery this regulation recognises, and there is no honest default to
+    // pick. An unrecognised value is reported with the accepted set rather than
+    // silently dropped to `None`, which is what the old optional parse did — a
+    // typo used to produce a passport missing a mandatory field instead of a
+    // failed row.
+    let battery_type = require_str(row, "batteryType", row_num, &mut errors).and_then(|s| {
+        match serde_json::from_value::<BatteryType>(serde_json::Value::String(s.clone())) {
+            Ok(t) => Some(t),
+            Err(_) => {
+                errors.push(RowError {
+                    row: row_num,
+                    field: "batteryType".into(),
+                    message: format!(
+                        "{s:?} is not a battery type recognised by Annex VI Part A — expected one \
+                         of: portable, industrial, ev, lmt, starting-lighting-ignition"
+                    ),
+                });
+                None
+            }
+        }
+    });
 
     let repairability_score = optional_f64(row, "repairabilityScore", row_num, &mut errors);
     let materials = parse_materials(row);
@@ -108,15 +128,14 @@ pub fn validate_battery_row(
         serde_json::from_value(serde_json::Value::String(chemistry_raw))
             .unwrap_or(BatteryChemistry::Other);
 
-    let battery_data = SectorData::Battery(BatteryData {
+    let battery_data = SectorData::Battery(Box::new(BatteryData {
         gtin: gtin.expect("field verified present by errors.is_empty() guard above"),
         battery_chemistry: battery_chemistry_parsed,
         nominal_voltage_v: nominal_voltage_v
             .expect("field verified present by errors.is_empty() guard above"),
         nominal_capacity_ah: nominal_capacity_ah
             .expect("field verified present by errors.is_empty() guard above"),
-        expected_lifetime_cycles: expected_lifetime_cycles
-            .expect("field verified present by errors.is_empty() guard above"),
+        expected_lifetime_cycles,
         co2e_per_unit_kg: co2e_per_unit_kg
             .expect("field verified present by errors.is_empty() guard above"),
         recycled_content_cobalt_pct: recycled_cobalt,
@@ -127,7 +146,8 @@ pub fn validate_battery_row(
         rated_capacity_kwh,
         carbon_footprint_class,
         due_diligence_url,
-        battery_type,
+        battery_type: battery_type
+            .expect("field verified present by errors.is_empty() guard above"),
         battery_weight_kg,
         operating_temp_min_c,
         operating_temp_max_c,
@@ -155,7 +175,48 @@ pub fn validate_battery_row(
         manufacturing_place: None,
         battery_model_id: None,
         battery_passport_number: None,
-    });
+        // Added in dpp-core 0.17.0: the remainder of Annex VI Part A and the
+        // Annex XIII point 1–3 tiers. All optional, and none of them carried by
+        // the CSV contract, so every one is `None` until the template gains a
+        // column for it.
+        //
+        // Listed individually rather than defaulted because `BatteryData` derives
+        // no `Default` — deliberately, since the same release made `battery_type`
+        // required and closed. That means a future Annex field cannot slip into
+        // an import as an unnoticed `None`: it breaks this literal, and someone
+        // has to decide whether the template should carry it.
+        battery_status: None,
+        capacity_threshold_for_exhaustion_pct: None,
+        commercial_warranty_period_months: None,
+        component_part_numbers: None,
+        cycle_life_test_c_rate: None,
+        dynamic_performance: None,
+        eu_declaration_of_conformity: None,
+        expected_lifetime_reference_test: None,
+        hazard_symbol: None,
+        hazardous_substances: None,
+        initial_round_trip_efficiency_pct: None,
+        internal_cell_resistance_mohm: None,
+        internal_pack_resistance_mohm: None,
+        marking_information: None,
+        maximum_voltage_v: None,
+        minimal_voltage_v: None,
+        not_in_use_temperature_range: None,
+        not_in_use_temperature_reference_test: None,
+        original_power_capability_w: None,
+        power_limit_max_w: None,
+        power_limit_min_w: None,
+        power_temperature_range: None,
+        renewable_content_pct: None,
+        round_trip_efficiency_at_half_cycle_life_pct: None,
+        safety_measures: None,
+        spare_parts_contacts: None,
+        test_report_results: None,
+        usable_extinguishing_agent: None,
+        usage_history: None,
+        voltage_temperature_range: None,
+        waste_battery_information: None,
+    }));
 
     Ok(CreatePassportRequest {
         product_name: product_name
@@ -195,6 +256,7 @@ mod tests {
             ("manufacturerName".into(), "Acme Energy".into()),
             ("manufacturerCountry".into(), "DE".into()),
             ("batteryChemistry".into(), "LFP".into()),
+            ("batteryType".into(), "industrial".into()),
             ("nominalVoltageV".into(), "48.0".into()),
             ("nominalCapacityAh".into(), "100.0".into()),
             ("expectedLifetimeCycles".into(), "3000".into()),
@@ -262,6 +324,7 @@ mod tests {
                 "https://greencell.example/.well-known/did.json".into(),
             ),
             ("batteryChemistry".into(), "LFP".into()),
+            ("batteryType".into(), "industrial".into()),
             ("nominalVoltageV".into(), "48.0".into()),
             ("nominalCapacityAh".into(), "100.0".into()),
             ("expectedLifetimeCycles".into(), "3000".into()),

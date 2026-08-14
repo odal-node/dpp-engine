@@ -558,10 +558,10 @@ mod tests {
     /// row here since row-level validation runs a real mod-10 checksum, not just a
     /// length check.
     const VALID_GTIN: &str = "09506000134352";
-    const BATTERY_CSV_HEADER: &str = "productName,gtin,batchId,manufacturerName,manufacturerCountry,batteryChemistry,nominalVoltageV,nominalCapacityAh,expectedLifetimeCycles,co2ePerUnitKg";
+    const BATTERY_CSV_HEADER: &str = "productName,gtin,batchId,manufacturerName,manufacturerCountry,batteryChemistry,nominalVoltageV,nominalCapacityAh,expectedLifetimeCycles,co2ePerUnitKg,batteryType";
 
     fn battery_csv_row(gtin: &str) -> String {
-        format!("EV Battery 48V,{gtin},BATCH-1,Acme Energy,DE,LFP,48.0,100.0,3000,85.4")
+        format!("EV Battery 48V,{gtin},BATCH-1,Acme Energy,DE,LFP,48.0,100.0,3000,85.4,industrial")
     }
 
     fn battery_csv(num_rows: usize) -> String {
@@ -922,7 +922,9 @@ mod tests {
         let new_gtin = nth_valid_gtin(4);
 
         fn row(product_name: &str, gtin: &str, batch: &str) -> String {
-            format!("{product_name},{gtin},{batch},Acme Energy,DE,LFP,48.0,100.0,3000,85.4")
+            format!(
+                "{product_name},{gtin},{batch},Acme Energy,DE,LFP,48.0,100.0,3000,85.4,industrial"
+            )
         }
 
         // ── "v1 sheet": apply-mode import creates three draft passports ──────
@@ -1026,7 +1028,9 @@ mod tests {
         let new_gtin = nth_valid_gtin(14);
 
         fn row(product_name: &str, gtin: &str, batch: &str) -> String {
-            format!("{product_name},{gtin},{batch},Acme Energy,DE,LFP,48.0,100.0,3000,85.4")
+            format!(
+                "{product_name},{gtin},{batch},Acme Energy,DE,LFP,48.0,100.0,3000,85.4,industrial"
+            )
         }
 
         let mut v1 = String::from(BATTERY_CSV_HEADER);
@@ -1182,7 +1186,9 @@ mod tests {
         let new_gtin = nth_valid_gtin(24);
 
         fn row(product_name: &str, gtin: &str, batch: &str) -> String {
-            format!("{product_name},{gtin},{batch},Acme Energy,DE,LFP,48.0,100.0,3000,85.4")
+            format!(
+                "{product_name},{gtin},{batch},Acme Energy,DE,LFP,48.0,100.0,3000,85.4,industrial"
+            )
         }
 
         let mut v1 = String::from(BATTERY_CSV_HEADER);
@@ -1290,7 +1296,12 @@ mod tests {
         csv.push_str(&battery_csv_row(VALID_GTIN));
         csv.push('\n');
         // GTIN too short — fails the row-level checksum/length check.
-        csv.push_str("EV Battery Bad,1234,BATCH-2,Acme Energy,DE,LFP,48.0,100.0,3000,85.4\n");
+        // Carries a valid `batteryType` so the bad GTIN stays the only defect —
+        // the assertions below count errors, and a second one would pass the test
+        // for the wrong reason.
+        csv.push_str(
+            "EV Battery Bad,1234,BATCH-2,Acme Energy,DE,LFP,48.0,100.0,3000,85.4,industrial\n",
+        );
 
         let body = multipart_body("X", "battery.csv", &csv, None);
         let resp = app.oneshot(import_request("battery", body)).await.unwrap();
@@ -1419,7 +1430,12 @@ mod tests {
         csv.push_str(&battery_csv_row(VALID_GTIN));
         csv.push('\n');
         // GTIN too short — fails the row-level checksum/length check.
-        csv.push_str("EV Battery Bad,1234,BATCH-2,Acme Energy,DE,LFP,48.0,100.0,3000,85.4\n");
+        // Carries a valid `batteryType` so the bad GTIN stays the only defect —
+        // the assertions below count errors, and a second one would pass the test
+        // for the wrong reason.
+        csv.push_str(
+            "EV Battery Bad,1234,BATCH-2,Acme Energy,DE,LFP,48.0,100.0,3000,85.4,industrial\n",
+        );
 
         let body = multipart_body("X", "battery.csv", &csv, None);
         let resp = app.oneshot(import_request("battery", body)).await.unwrap();

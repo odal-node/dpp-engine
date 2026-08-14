@@ -25,7 +25,6 @@ async fn test_textile_create_publish_resolve() {
         "materials": [
             {"name": "Organic Cotton", "weightKg": 0.2}
         ],
-        "schemaVersion": "1.0.0",
         "sectorData": {
             "sector": "textile",
             "gtin": "09506000134352",

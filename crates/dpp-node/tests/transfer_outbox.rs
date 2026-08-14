@@ -84,7 +84,6 @@ fn published_passport() -> Passport {
         batch_id: None,
         product_name: "Transferred Battery".into(),
         sector: Sector::Battery,
-        product_category: None,
         manufacturer: ManufacturerInfo {
             name: "TestCorp GmbH".into(),
             address: "Berlin, DE".into(),

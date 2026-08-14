@@ -93,30 +93,6 @@ components:
       description: UUID v7 identifier assigned on creation. Embedded in QR codes and public URLs.
       example: "019723f4-1a2b-7c3d-8e4f-5a6b7c8d9e0f"
 
-    ProductCategory:
-      description: |
-        Fine-grained product category (a data attribute — the dispatch key is
-        `sector`). Known categories serialise as snake_case strings; any other
-        category serialises as `{ "other": "<value>" }`.
-      oneOf:
-        - type: string
-          enum:
-            - ev_battery
-            - industrial_battery
-            - lmt_battery
-            - apparel
-            - footwear
-            - home_textile
-            - smartphone
-            - laptop
-            - charger
-        - type: object
-          required: [other]
-          properties:
-            other:
-              type: string
-      example: "ev_battery"
-
     PassportStatus:
       type: string
       enum: [draft, active, suspended, archived]
@@ -242,10 +218,18 @@ components:
           example: "BATCH-2026-04-001"
         schemaVersion:
           type: string
-          description: >-
-            Sector schema version. When omitted, the sector's current version is
-            used (e.g. battery 2.0.0); a supplied value is honoured.
-          example: "1.0.0"
+          description: |
+            Sector schema version. Optional, and the only accepted value is the
+            sector's **current** version — omitting it is equivalent. Any other
+            value is rejected with `422`.
+
+            It is not the caller's to choose: the stored version selects the
+            disclosure table the passport's public view is filtered through and
+            signed under, and an older table classifies fewer fields, defaulting
+            the rest to public. The body is validated against the current schema
+            in either case, so a differing declaration is already false about the
+            body it accompanies.
+          example: "2.6.0"
         parentPassportRef:
           $ref: "#/components/schemas/PassportRef"
         componentRefs:
@@ -333,8 +317,6 @@ components:
         productName:
           type: string
           example: "EcoCell Pro 48V"
-        productCategory:
-          $ref: "#/components/schemas/ProductCategory"
         manufacturer:
           $ref: "#/components/schemas/ManufacturerInfo"
         materials:

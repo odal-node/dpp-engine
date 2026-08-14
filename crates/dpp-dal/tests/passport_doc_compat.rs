@@ -99,6 +99,70 @@ const RETIRED_ENVELOPE_KEYS: &[(&str, &str)] = &[(
      identifier alone.",
 )];
 
+/// Frozen documents that deliberately no longer read, and why.
+///
+/// The counterpart to [`RETIRED_ENVELOPE_KEYS`], and it exists for the same
+/// reason: the alternative is editing a frozen document until the test passes,
+/// and a fixture that has been edited has stopped being evidence about anything.
+/// These stay on disk exactly as they were captured; the break is recorded here
+/// instead.
+///
+/// Each row is an **accepted, permanent** compatibility break. A node holding a
+/// document of that shape cannot read it after upgrading past the version named
+/// in the reason, and no lens can rescue it — where the gap is a field the
+/// regulation later made mandatory, there is no honest value to invent, and
+/// `dpp-domain` refuses rather than fabricating one.
+///
+/// This is only defensible while no such document exists in any deployment. It
+/// stops being defensible the moment one does.
+const UNREADABLE_FIXTURES: &[(&str, &str)] = &[
+    (
+        "battery/v1.0.0.json",
+        "No `batteryType`. Required from battery schema v2.5.0 — EU 2023/1542 Annex VI \
+         Part A point 2, via Annex XIII point 1(a) — and closed to a fixed set, so it \
+         cannot be defaulted or derived from anything else the document carries.",
+    ),
+    (
+        "battery/v2.0.0.json",
+        "No lens path to the current schema. The 2.0.0 shape predates several \
+         non-additive changes and the chain was never built; a document of this \
+         shape has been unreachable since the first gap in that chain.",
+    ),
+    (
+        "battery/v2.1.0.json",
+        "No lens path to the current schema — same chain gap as v2.0.0.",
+    ),
+    (
+        "battery/v2.2.0.json",
+        "No lens path to the current schema — same chain gap as v2.0.0.",
+    ),
+    (
+        "battery/v2.3.0.json",
+        "No lens path to the current schema — same chain gap as v2.0.0.",
+    ),
+    (
+        "battery/v2.4.0.json",
+        "A lens path exists and refuses: `batteryType` is required from v2.5.0 and this \
+         record predates the mandate. The refusal is `dpp-domain`'s, and it is correct — \
+         upgrading would mean inventing a regulatory classification the operator never \
+         stated.",
+    ),
+];
+
+/// The documented-unreadable list, as `sector/file.json` keys.
+fn unreadable_key(path: &Path) -> String {
+    let file = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or_default();
+    let sector = path
+        .parent()
+        .and_then(|p| p.file_name())
+        .and_then(|n| n.to_str())
+        .unwrap_or_default();
+    format!("{sector}/{file}")
+}
+
 #[test]
 fn every_frozen_passport_doc_still_reads() {
     let lenses = LensRegistry::new();
@@ -110,10 +174,25 @@ fn every_frozen_passport_doc_still_reads() {
     );
 
     let mut failures = Vec::new();
+    // A row that has stopped being true must be removed, not left to rot. If a
+    // lens later bridges one of these, this is what says so.
+    let mut unexpectedly_readable = Vec::new();
+
     for (sector, path) in &fixtures {
         let raw = fs::read_to_string(path).unwrap_or_else(|e| panic!("read {path:?}: {e}"));
         let value: serde_json::Value =
             serde_json::from_str(&raw).unwrap_or_else(|e| panic!("{path:?} is not JSON: {e}"));
+
+        let key = unreadable_key(path);
+        if let Some((_, reason)) = UNREADABLE_FIXTURES.iter().find(|(k, _)| *k == key) {
+            if Passport::from_stored(value, &lenses, &catalog).is_ok() {
+                unexpectedly_readable.push(format!(
+                    "{key}: recorded as permanently unreadable, but it reads. Remove the row \
+                     from UNREADABLE_FIXTURES — the recorded reason is no longer true:\n    {reason}"
+                ));
+            }
+            continue;
+        }
 
         match Passport::from_stored(value, &lenses, &catalog) {
             Ok(passport) => {
@@ -133,11 +212,19 @@ fn every_frozen_passport_doc_still_reads() {
     }
 
     assert!(
+        unexpectedly_readable.is_empty(),
+        "UNREADABLE_FIXTURES is stale:\n{}",
+        unexpectedly_readable.join("\n")
+    );
+
+    assert!(
         failures.is_empty(),
         "one or more frozen passport docs no longer read under the current dpp-domain \
-         version — a persisted document shape broke compatibility. Either this is an \
-         intentional, accepted break (update the fixture and document why old documents \
-         of this shape are no longer supported) or dpp-domain needs a lens for the gap:\n{}",
+         version — a persisted document shape broke compatibility. Either dpp-domain needs \
+         a lens for the gap, or the break is accepted and permanent, in which case record \
+         it in UNREADABLE_FIXTURES with the reason. Do not edit the fixture: a frozen \
+         document that has been edited to pass a test is no longer evidence of \
+         anything:\n{}",
         failures.join("\n")
     );
 }

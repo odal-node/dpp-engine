@@ -47,6 +47,7 @@ async fn retiring_a_facility_preserves_passport_provenance_and_audits() {
                     "sector": "battery",
                     "gtin": "09506000134352",
                     "batteryChemistry": "LFP",
+                    "batteryType": "industrial",
                     "nominalVoltageV": 48.0,
                     "nominalCapacityAh": 100.0,
                     "expectedLifetimeCycles": 3000,

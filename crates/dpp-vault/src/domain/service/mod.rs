@@ -381,7 +381,6 @@ mod snapshot_render_tests {
             batch_id: None,
             product_name: "Snapshot Test".into(),
             sector: Sector::Battery,
-            product_category: None,
             manufacturer: ManufacturerInfo {
                 name: "ACME".into(),
                 address: "1 Street".into(),

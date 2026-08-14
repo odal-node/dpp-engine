@@ -61,7 +61,7 @@ pub fn validate_textile_row(
         return Err(errors);
     }
 
-    let textile_data = SectorData::Textile(TextileData {
+    let textile_data = SectorData::Textile(Box::new(TextileData {
         gtin: gtin.expect("field verified present by errors.is_empty() guard above"),
         fibre_composition: fibres.expect("field verified present by errors.is_empty() guard above"),
         country_of_origin: country_of_origin
@@ -91,7 +91,7 @@ pub fn validate_textile_row(
         repair_history_url: None,
         repair_count: None,
         pef_score: None,
-    });
+    }));
 
     Ok(CreatePassportRequest {
         product_name: product_name

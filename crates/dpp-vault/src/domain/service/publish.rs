@@ -203,7 +203,11 @@ impl PassportService {
         // here is immaterial. `public_jws_signature` is `None` here, so it is
         // never signed over itself; the full-payload `jws_signature` above
         // stays Confidential for authenticated full-passport verification.
-        let public_view = crate::public_view::public_view(&payload, passport.sector.catalog_key());
+        let public_view = crate::public_view::public_view(
+            &payload,
+            passport.sector.catalog_key(),
+            &passport.schema_version,
+        );
         let public_jws = self
             .identity
             .sign_passport(passport.id, &public_view)
@@ -233,6 +237,7 @@ impl PassportService {
             passport.id,
             &payload,
             passport.sector.catalog_key(),
+            &passport.schema_version,
         )
         .await
         .map_err(|e| {
@@ -448,7 +453,6 @@ mod tests {
             batch_id: None,
             product_name: "Test".into(),
             sector: Sector::Battery,
-            product_category: None,
             manufacturer: ManufacturerInfo {
                 name: "ACME".into(),
                 address: "1 Street".into(),

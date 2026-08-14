@@ -30,12 +30,12 @@ fn sample_passport() -> serde_json::Value {
         "materials": [
             {"name": "Lithium", "weightKg": 0.8}
         ],
-        "schemaVersion": "1.0.0",
         // Publish-time validation (1.3) requires valid sector data.
         "sectorData": {
             "sector": "battery",
             "gtin": "09506000134352",
             "batteryChemistry": "NiMH",
+            "batteryType": "industrial",
             "nominalVoltageV": 12.0,
             "nominalCapacityAh": 40.0,
             "expectedLifetimeCycles": 1000,

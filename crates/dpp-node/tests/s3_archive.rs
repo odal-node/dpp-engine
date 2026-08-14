@@ -58,7 +58,6 @@ fn make_passport() -> Passport {
         batch_id: None,
         product_name: "Test Battery".into(),
         sector: Sector::Battery,
-        product_category: None,
         manufacturer: ManufacturerInfo {
             name: "Test Co".into(),
             address: "Berlin, DE".into(),

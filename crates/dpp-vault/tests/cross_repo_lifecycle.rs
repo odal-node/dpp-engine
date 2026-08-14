@@ -48,11 +48,11 @@ async fn full_lifecycle_draft_to_archived() {
             {"name": "Lithium", "weightKg": 0.8, "recycledPct": 30.0, "countryOfOrigin": "CL"},
             {"name": "Aluminium", "weightKg": 0.3, "recycledPct": 90.0, "countryOfOrigin": "DE"}
         ],
-        "schemaVersion": "2.0.0",
         "sectorData": {
             "sector": "battery",
             "gtin": "09506000134352",
             "batteryChemistry": "NMC",
+            "batteryType": "industrial",
             "nominalVoltageV": 3.7,
             "nominalCapacityAh": 50.0,
             "expectedLifetimeCycles": 2000,
@@ -188,7 +188,6 @@ async fn domain_validation_rejects_empty_product_name() {
         "productCategory": "BATTERY",
         "manufacturer": {"name": "Test", "address": "Test"},
         "materials": [],
-        "schemaVersion": "1.0.0"
     });
 
     let resp = client.post_json("/api/v1/dpp", body).await;
@@ -217,7 +216,6 @@ async fn materials_round_trip_with_optional_fields() {
             {"name": "Silicon", "weightKg": 0.05},
             {"name": "Tin", "weightKg": 0.01, "countryOfOrigin": "ID"}
         ],
-        "schemaVersion": "1.0.0"
     });
 
     let resp = client.post_json("/api/v1/dpp", body).await;
@@ -257,7 +255,6 @@ async fn draft_to_suspended_rejected() {
                 "productCategory": "OTHER",
                 "manufacturer": {"name": "Test", "address": "Test"},
                 "materials": [],
-                "schemaVersion": "1.0.0"
             }),
         )
         .await;

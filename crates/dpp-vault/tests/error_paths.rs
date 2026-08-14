@@ -15,7 +15,6 @@ fn sample() -> serde_json::Value {
         "productName": "Test Widget",
         "manufacturer": {"name": "ACME Corp", "address": "Berlin, DE"},
         "materials": [],
-        "schemaVersion": "1.0.0"
     })
 }
 

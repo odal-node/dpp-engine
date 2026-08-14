@@ -362,6 +362,7 @@ fn battery_passport_json() -> serde_json::Value {
             "sector": "battery",
             "gtin": "09506000134352",
             "batteryChemistry": "LFP",
+            "batteryType": "ev",
             "nominalVoltageV": 3.7,
             "nominalCapacityAh": 50.0,
             "expectedLifetimeCycles": 1000,
@@ -388,7 +389,7 @@ fn battery_passport_json() -> serde_json::Value {
         "createdAt": "2026-01-01T00:00:00Z",
         "updatedAt": "2026-01-01T00:00:00Z",
         "publishedAt": "2026-01-01T00:00:00Z",
-        "schemaVersion": "1.0.0"
+        "schemaVersion": "2.6.0"
     })
 }
 
@@ -482,15 +483,24 @@ async fn aas_door_emits_no_non_public_battery_field() {
     let body = String::from_utf8(bytes.to_vec()).expect("utf-8");
 
     // Asserted by name rather than by re-reading the catalog, so that a change
-    // to the disclosure map cannot silently change what this test demands.
+    // to the disclosure map cannot silently change what this test demands. That
+    // is working as intended: two fields left this list when `dpp-domain` moved
+    // to battery schema v2.6.0, and each had to be checked against the schema's
+    // stated basis rather than deleted to make the test pass.
+    //
+    // - `criticalRawMaterials` is now **public**: Annex XIII point 1(b) lists
+    //   critical raw materials alongside chemistry and hazardous substances as
+    //   part of the publicly accessible material composition.
+    // - `dueDiligenceUrl` is now **public**: Annex XIII point 1(d).
+    //
+    // Both are widenings, so both deserved the scrutiny. The six below stay
+    // non-public — `stateOfHealthPct` is `individual` and the rest `restricted`.
     for field in [
         "anodeMaterial",
         "cathodeMaterial",
         "electrolyteMaterial",
-        "criticalRawMaterials",
         "disassemblyInstructionsUrl",
         "sohMethodology",
-        "dueDiligenceUrl",
         "stateOfHealthPct",
     ] {
         assert!(
@@ -753,9 +763,11 @@ async fn the_aas_door_withholds_everything_the_json_door_withholds() {
     // withheld here, or the comparison below is being run against a passport
     // that carried nothing worth withholding. Named explicitly so that
     // reclassifying a field shows up as a diff in this list.
+    // `dueDiligenceUrl` and `criticalRawMaterials` left this list at battery
+    // schema v2.6.0, which reclassified both as public (Annex XIII points 1(d)
+    // and 1(b)). The list is named explicitly precisely so that shows up as a
+    // diff here rather than as a quietly weaker check.
     for field in [
-        "dueDiligenceUrl",
-        "criticalRawMaterials",
         "disassemblyInstructionsUrl",
         "cathodeMaterial",
         "anodeMaterial",

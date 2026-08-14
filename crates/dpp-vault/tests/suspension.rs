@@ -20,11 +20,11 @@ async fn test_suspension_flow() {
         "productCategory": "BATTERY",
         "manufacturer": {"name": "Suspend Inc", "address": "Test"},
         "materials": [{"name": "Nickel", "weightKg": 0.5}],
-        "schemaVersion": "1.0.0",
         "sectorData": {
             "sector": "battery",
             "gtin": "09506000134352",
             "batteryChemistry": "NiMH",
+            "batteryType": "industrial",
             "nominalVoltageV": 12.0,
             "nominalCapacityAh": 40.0,
             "expectedLifetimeCycles": 1000,

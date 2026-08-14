@@ -12,7 +12,6 @@ fn sample() -> serde_json::Value {
         "productName": "Widget Pro",
         "manufacturer": {"name": "ACME Corp", "address": "Berlin, DE"},
         "materials": [],
-        "schemaVersion": "1.0.0"
     })
 }
 
@@ -90,7 +89,6 @@ async fn list_with_search_query_hits_endpoint() {
                 "productName": "Xenon Laser Module",
                 "manufacturer": {"name": "RayTech", "address": "Hamburg, DE"},
                 "materials": [],
-                "schemaVersion": "1.0.0"
             }),
         )
         .await;

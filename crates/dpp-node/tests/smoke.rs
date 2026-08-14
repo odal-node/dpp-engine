@@ -412,11 +412,11 @@ async fn route_inventory_matches_assembled_router() {
             "productName": "Route Inventory Battery",
             "manufacturer": {"name": "SmokeTestCorp", "address": "Berlin, DE"},
             "materials": [],
-            "schemaVersion": "1.0.0",
             "sectorData": {
                 "sector": "battery",
                 "gtin": "09506000134352",
                 "batteryChemistry": "LFP",
+                "batteryType": "industrial",
                 "nominalVoltageV": 48.0,
                 "nominalCapacityAh": 100.0,
                 "expectedLifetimeCycles": 3000,
@@ -591,11 +591,11 @@ async fn publish_battery(
         "productName": product_name,
         "manufacturer": {"name": "SmokeTestCorp", "address": "Berlin, DE"},
         "materials": [],
-        "schemaVersion": "1.0.0",
         "sectorData": {
             "sector": "battery",
             "gtin": gtin,
             "batteryChemistry": "LFP",
+            "batteryType": "industrial",
             "nominalVoltageV": 48.0,
             "nominalCapacityAh": 100.0,
             "expectedLifetimeCycles": 3000,
@@ -868,7 +868,6 @@ async fn full_dpp_lifecycle_through_assembled_node() {
             "productCategory": "BATTERY",
             "manufacturer": {"name": "SmokeTestCorp", "address": "Berlin, DE"},
             "materials": [],
-            "schemaVersion": "1.0.0"
         }))
         .send()
         .await
@@ -935,7 +934,6 @@ async fn eol_declaration_deactivates_and_records_reason() {
             "productCategory": "BATTERY",
             "manufacturer": {"name": "SmokeTestCorp", "address": "Berlin, DE"},
             "materials": [],
-            "schemaVersion": "1.0.0"
         }))
         .send()
         .await
@@ -1019,7 +1017,6 @@ async fn transfer_of_responsibility_dual_signed_then_eol() {
             "productCategory": "BATTERY",
             "manufacturer": {"name": "SmokeTestCorp", "address": "Berlin, DE"},
             "materials": [],
-            "schemaVersion": "1.0.0"
         }))
         .send()
         .await
@@ -1123,7 +1120,6 @@ async fn publish_increments_passport_publish_total() {
             "productCategory": "BATTERY",
             "manufacturer": {"name": "MetricsCorp", "address": "Berlin, DE"},
             "materials": [],
-            "schemaVersion": "1.0.0"
         }))
         .send()
         .await
