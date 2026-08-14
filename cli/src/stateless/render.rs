@@ -405,3 +405,81 @@ pub fn render_schema_check(result: &SchemaCheckResult) {
         if result.update_available { "yes" } else { "no" }
     );
 }
+
+/// Render a passport's qualified-seal status.
+///
+/// Two things this deliberately does not do. It does not say "valid": the node
+/// did not validate the CAdES and the route says so, so printing a verdict here
+/// would invent one the API refused to give. And it does not collapse
+/// `coverage` into a pass/fail — `superseded` is not a failure, it means the
+/// passport was re-published after sealing and the seal still covers the
+/// signature it was bought for.
+pub fn render_seal_status(seal: &serde_json::Value, id: &str) {
+    let s = |key: &str| {
+        seal.get(key)
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("-")
+            .to_owned()
+    };
+    let placeholder = seal
+        .get("placeholder")
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false);
+
+    println!("Seal for {id}");
+
+    if placeholder {
+        println!(
+            "  {}  no QTSP is configured, so this is a ghost placeholder with no legal weight",
+            style("PLACEHOLDER").yellow().bold()
+        );
+    }
+
+    println!("  Format        : {}", s("format"));
+    println!("  Sealed at     : {}", s("sealedAt"));
+
+    // The certificate the seal names as its signer — which certificate to ask
+    // about, not whether it was qualified. Absent for seals made before the
+    // extraction landed, or when the CAdES could not be parsed.
+    match seal
+        .get("signingCertRef")
+        .and_then(serde_json::Value::as_str)
+    {
+        Some(cert) => println!("  Signing cert  : {cert}"),
+        None => println!("  Signing cert  : not recorded (predates extraction, or unparseable)"),
+    }
+
+    let coverage = s("coverage");
+    let note = match coverage.as_str() {
+        "current" => "covers the passport's current signature".to_owned(),
+        "superseded" => "the passport was re-published after sealing — the seal still covers the \
+             signature it was bought for, and a seal over the new one has not landed yet"
+            .to_owned(),
+        "unknown" => "this node has no record of what was sealed — restored from a backup, \
+                      or produced elsewhere"
+            .to_owned(),
+        other => format!("unrecognised coverage value `{other}`"),
+    };
+    println!("  Coverage      : {coverage} — {note}");
+
+    println!("  Current hash  : {}", s("currentPayloadHash"));
+    println!(
+        "  Sealed hash   : {}",
+        seal.get("sealedPayloadHash")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("(no record)")
+    );
+
+    println!("\n  Verification  : {}", s("verification"));
+}
+
+/// Render the "this passport has no seal" case.
+///
+/// Its own function rather than a branch inside [`render_seal_status`], because
+/// there is no seal document to render and the useful content is entirely
+/// different: why there might not be one yet.
+pub fn render_seal_absent(id: &str) {
+    println!("Seal for {id}");
+    println!("  None. The passport may be unpublished, or its seal may still be queued.");
+    println!("  Sealing runs off a drain after publish — it is not part of the publish call.");
+}

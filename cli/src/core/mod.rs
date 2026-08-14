@@ -6,6 +6,7 @@ pub mod passport;
 pub mod plugin;
 pub mod registry_identity;
 pub mod schema;
+pub mod seal;
 pub mod types;
 pub mod verify;
 pub mod webhook;
