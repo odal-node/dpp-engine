@@ -25,11 +25,11 @@ async fn test_battery_create_publish_resolve() {
         "materials": [
             {"name": "Lithium Iron Phosphate", "weightKg": 1.2}
         ],
-        "schemaVersion": "1.0.0",
         "sectorData": {
             "sector": "battery",
             "gtin": "09506000134352",
             "batteryChemistry": "LFP",
+            "batteryType": "industrial",
             "nominalVoltageV": 48.0,
             "nominalCapacityAh": 100.0,
             "expectedLifetimeCycles": 3000,

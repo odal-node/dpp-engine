@@ -150,12 +150,12 @@ async fn publish_battery(client: &TestClient) -> String {
                 "productCategory": "BATTERY",
                 "manufacturer": { "name": "GreenCell GmbH", "address": "Berlin, DE" },
                 "materials": [{ "name": "Lithium", "weightKg": 1.2 }],
-                "schemaVersion": "2.4.0",
                 "batchId": "LOT-2026-07",
                 "sectorData": {
                     "sector": "battery",
                     "gtin": "09506000134352",
                     "batteryChemistry": "LFP",
+                    "batteryType": "industrial",
                     "nominalVoltageV": 48.0,
                     "nominalCapacityAh": 100.0,
                     "expectedLifetimeCycles": 3000,

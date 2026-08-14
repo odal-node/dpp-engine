@@ -27,11 +27,11 @@ fn battery_passport(gtin: &str) -> serde_json::Value {
         "materials": [
             {"name": "Lithium Iron Phosphate", "weightKg": 1.2}
         ],
-        "schemaVersion": "1.0.0",
         "sectorData": {
             "sector": "battery",
             "gtin": gtin,
             "batteryChemistry": "LFP",
+            "batteryType": "industrial",
             "nominalVoltageV": 48.0,
             "nominalCapacityAh": 100.0,
             "expectedLifetimeCycles": 3000,
