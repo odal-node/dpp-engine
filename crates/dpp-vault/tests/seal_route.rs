@@ -175,3 +175,65 @@ async fn the_route_requires_authentication() {
         .expect("request");
     assert_eq!(resp.status(), 401);
 }
+
+/// The summary counts **passports**, not outbox rows, and this is the case that
+/// makes the distinction load-bearing.
+///
+/// `enqueue` runs after the publish commits, so a crash in that window leaves a
+/// published passport with no row anywhere. An empty outbox is therefore fully
+/// consistent with unsealed passports — and a summary built on row counts alone
+/// would report all clear while the obligation went unmet. Seeding a published,
+/// unsealed passport and no rows at all reproduces exactly that state.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_summary_counts_unsealed_passports_not_outbox_rows() {
+    let pg = start_postgres().await;
+    let base = start_vault(pg.dal.clone()).await;
+    seed(&pg.dal, None, Some(JWS)).await;
+    let client = TestClient::new(&base, make_jwt(&op()));
+
+    let resp = client.get("/api/v1/seal").await;
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = resp.json().await.unwrap();
+
+    assert_eq!(
+        body["unsealedPublished"], 1,
+        "a published passport with no seal must be counted, with or without a row"
+    );
+    assert_eq!(
+        body["pending"], 0,
+        "no row was ever enqueued — this is the lost-enqueue state"
+    );
+    assert_eq!(body["exhausted"], 0);
+    assert_eq!(
+        body["sealingConfigured"], true,
+        "the harness wires an outbox, as any node with a provider does"
+    );
+}
+
+/// A sealed passport is not counted, and the count is what a reader acts on.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_sealed_passport_is_not_reported_as_unsealed() {
+    let pg = start_postgres().await;
+    let base = start_vault(pg.dal.clone()).await;
+    seed(&pg.dal, Some(envelope()), Some(JWS)).await;
+    let client = TestClient::new(&base, make_jwt(&op()));
+
+    let resp = client.get("/api/v1/seal").await;
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["unsealedPublished"], 0);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_summary_route_requires_authentication() {
+    let pg = start_postgres().await;
+    let base = start_vault(pg.dal.clone()).await;
+    let client = reqwest::Client::new();
+
+    let resp = client
+        .get(format!("{base}/api/v1/seal"))
+        .send()
+        .await
+        .expect("request");
+    assert_eq!(resp.status(), 401);
+}

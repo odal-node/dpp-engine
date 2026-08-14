@@ -115,6 +115,30 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ### Added
 
+- **Sealing is answerable from the control plane** — `GET /vault/api/v1/seal`
+  and `odal seal status [id]`. With an id: that passport's seal, its signing
+  certificate, and whether it still covers the current signature. Without one:
+  how many published passports carry no seal, operator-wide.
+
+  Both facts were previously reachable only through Prometheus (`seal_outbox_*`
+  gauges) or by curling the per-passport route with an id you had to already
+  know. Neither answers "is anything unsealed", which is the question an
+  operator actually has.
+
+  **The summary counts passports, not outbox rows**, and the distinction is the
+  reason for the new `SealOutbox::unsealed_published_count`. The row counts
+  cannot answer it: `enqueue` runs after the publish commits, so a crash in that
+  window publishes a passport that no row will ever cover, and an outbox
+  reporting `pending: 0, exhausted: 0` is consistent with any number of unsealed
+  passports. A summary built on rows alone would have shown all clear while the
+  obligation went unmet. It shares the repair sweep's predicate so the two
+  cannot drift on what "unsealed" means.
+
+  The CLI prints no verdict on the seal itself. The node does not validate the
+  CAdES and says so; inventing "valid" in the client would manufacture a claim
+  the API declined to make. `superseded` renders as a fact with its explanation,
+  not a failure — the seal remains valid for the signature it does cover.
+
 - **eIDAS qualified sealing, end to end** (migration `0028_seal_outbox.sql`).
   `dpp-seal` becomes a real adapter against eID Easy Cloud Direct e-Sealing,
   which aggregates qualified QTSPs and returns

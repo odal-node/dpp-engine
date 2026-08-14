@@ -268,7 +268,7 @@ pub async fn dispatch(cmd: Commands) -> anyhow::Result<()> {
         Commands::Verify { target } => run_verify(&target).await,
         Commands::Seal {
             command: SealCommands::Status { id, json },
-        } => run_seal_status(&id, json).await,
+        } => run_seal_status(id.as_deref(), json).await,
         Commands::Stats { days, json } => run_operator_stats(days, json).await,
     }
 }

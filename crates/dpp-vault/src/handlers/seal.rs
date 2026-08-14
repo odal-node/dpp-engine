@@ -187,6 +187,77 @@ pub async fn seal_handler(
         .into_response()
 }
 
+/// Operator-wide sealing state.
+///
+/// `unsealedPublished` is the headline and the other three are context, not the
+/// other way round. The counts describe outbox *rows*; the obligation is about
+/// *passports*, and the two come apart exactly where it matters most — a crash
+/// between commit and enqueue publishes a passport that no row will ever cover,
+/// so `pending: 0, exhausted: 0` is consistent with any number of unsealed
+/// passports.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SealSummaryResponse {
+    /// Published passports carrying no seal at all. `0` is the healthy state.
+    pub unsealed_published: i64,
+    /// Rows awaiting a sealing attempt.
+    pub pending: i64,
+    /// Rows whose seal is on the passport.
+    pub sealed: i64,
+    /// Rows that gave up after exhausting their retries.
+    pub exhausted: i64,
+    /// False when no seal provider is configured, in which case every number
+    /// above is `0` because this node has no outbox — not because it has
+    /// nothing outstanding. Stated so a reader cannot mistake "not sealing" for
+    /// "all sealed".
+    pub sealing_configured: bool,
+}
+
+/// `GET /api/v1/seal` — operator-wide sealing state.
+///
+/// Exists because the per-passport route cannot answer "is anything unsealed"
+/// without the caller already knowing which passport to ask about, and the
+/// gauges that do answer it are only reachable through Prometheus.
+pub async fn seal_summary_handler(
+    State(state): State<AppState>,
+    Extension(_auth): Extension<AuthContext>,
+) -> impl IntoResponse {
+    let Some(outbox) = state.service.seal_outbox.as_ref() else {
+        return (
+            StatusCode::OK,
+            Json(SealSummaryResponse {
+                unsealed_published: 0,
+                pending: 0,
+                sealed: 0,
+                exhausted: 0,
+                sealing_configured: false,
+            }),
+        )
+            .into_response();
+    };
+
+    let counts = match outbox.status_counts().await {
+        Ok(c) => c,
+        Err(e) => return internal_error(e),
+    };
+    let unsealed_published = match outbox.unsealed_published_count().await {
+        Ok(n) => n,
+        Err(e) => return internal_error(e),
+    };
+
+    (
+        StatusCode::OK,
+        Json(SealSummaryResponse {
+            unsealed_published,
+            pending: counts.pending,
+            sealed: counts.sealed,
+            exhausted: counts.exhausted,
+            sealing_configured: true,
+        }),
+    )
+        .into_response()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

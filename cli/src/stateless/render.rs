@@ -483,3 +483,57 @@ pub fn render_seal_absent(id: &str) {
     println!("  None. The passport may be unpublished, or its seal may still be queued.");
     println!("  Sealing runs off a drain after publish — it is not part of the publish call.");
 }
+
+/// Render the operator-wide sealing summary.
+///
+/// Leads with the passport count, not the row counts. An operator asking about
+/// sealing is asking whether a published passport is missing its seal; the
+/// outbox totals are how that came about, which is the second question.
+pub fn render_seal_summary(summary: &serde_json::Value) {
+    let n = |key: &str| {
+        summary
+            .get(key)
+            .and_then(serde_json::Value::as_i64)
+            .unwrap_or(0)
+    };
+
+    if !summary
+        .get("sealingConfigured")
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false)
+    {
+        println!("Sealing is not configured on this node.");
+        println!("  No seal provider is selected, so nothing is queued and nothing is sealed.");
+        println!("  Set SEAL_PROVIDER to enable it.");
+        return;
+    }
+
+    let unsealed = n("unsealedPublished");
+    println!("Sealing");
+    if unsealed == 0 {
+        println!(
+            "  {}  every published passport carries a seal",
+            style("OK").green().bold()
+        );
+    } else {
+        println!(
+            "  {}  {unsealed} published passport(s) carry no seal",
+            style("UNSEALED").red().bold()
+        );
+    }
+    println!(
+        "  Outbox: {} pending, {} sealed, {} exhausted",
+        n("pending"),
+        n("sealed"),
+        n("exhausted")
+    );
+
+    // Worth saying out loud: these two can disagree, and the direction of the
+    // disagreement is the diagnosis.
+    if unsealed > 0 && n("pending") == 0 && n("exhausted") == 0 {
+        println!(
+            "\n  Unsealed with an empty outbox — those passports have no row at all, so no\n  \
+             drain will pick them up. The repair sweep queues them on its next pass."
+        );
+    }
+}

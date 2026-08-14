@@ -1,18 +1,28 @@
-//! `odal seal status <id>` — what the node knows about a passport's qualified
-//! seal.
+//! `odal seal status [id]` — what the node knows about qualified sealing,
+//! operator-wide or for one passport.
 
 use anyhow::Result;
 
 use crate::{
     config::Config,
-    core::seal::{SealStatus, action_seal_status},
+    core::seal::{SealStatus, action_seal_status, action_seal_summary},
     http::OdalClient,
-    stateless::render::{render_seal_absent, render_seal_status},
+    stateless::render::{render_seal_absent, render_seal_status, render_seal_summary},
 };
 
-pub async fn run_seal_status(id: &str, json: bool) -> Result<()> {
+pub async fn run_seal_status(id: Option<&str>, json: bool) -> Result<()> {
     let cfg = Config::load()?;
     let client = OdalClient::new(&cfg.api_key);
+
+    let Some(id) = id else {
+        let summary = action_seal_summary(&client, &cfg).await?;
+        if json {
+            println!("{}", serde_json::to_string_pretty(&summary)?);
+        } else {
+            render_seal_summary(&summary);
+        }
+        return Ok(());
+    };
 
     match action_seal_status(id, &client, &cfg).await? {
         SealStatus::Present(seal) => {

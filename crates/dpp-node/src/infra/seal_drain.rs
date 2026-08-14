@@ -196,6 +196,12 @@ mod tests {
         async fn status_counts(&self) -> Result<SealOutboxCounts, DppError> {
             Ok(SealOutboxCounts::default())
         }
+
+        async fn unsealed_published_count(&self) -> Result<i64, DppError> {
+            // These tests drive the drain, which never asks. A passport-level
+            // count has no meaning against a fake holding only rows.
+            Ok(0)
+        }
     }
 
     struct FakeSeal {

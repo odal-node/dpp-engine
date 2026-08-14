@@ -20,7 +20,7 @@ use testcontainers::{
 use dpp_dal::pg::{
     PgApiKeyRepo, PgAuditRepo, PgDal, PgEvidenceDossierRepo, PgOperatorConfigRepo, PgPassportRepo,
     PgRegistryIdentityRepo, PgRegistrySyncRepo, PgRegistryTransferRepo, PgScanTelemetryRepo,
-    PgWebhookRepo, sqlx,
+    PgSealOutboxRepo, PgWebhookRepo, sqlx,
 };
 use dpp_domain::{
     DppError, GhostArchive, GhostRegistrySync,
@@ -317,6 +317,10 @@ async fn start_vault_with_identity(
         // unconfigured.
         .with_registry_outbox(Arc::new(PgRegistrySyncRepo::new(dal.clone())))
         .with_transfer_outbox(Arc::new(PgRegistryTransferRepo::new(dal.clone())))
+        // Same reasoning as the two above: any node with a seal provider
+        // selected wires this, so a harness without it reports the sealing
+        // surface as unconfigured and cannot exercise it at all.
+        .with_seal_outbox(Arc::new(PgSealOutboxRepo::new(dal.clone())))
         .with_evidence_store(Arc::new(PgEvidenceDossierRepo::new(dal.clone()))),
     );
     let operator_service = Arc::new(OperatorService::new(operator_repo));

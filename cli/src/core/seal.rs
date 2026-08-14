@@ -91,6 +91,20 @@ pub async fn action_seal_status(id: &str, client: &OdalClient, cfg: &Config) -> 
     }
 }
 
+/// `GET /api/v1/seal` — operator-wide sealing state.
+pub async fn action_seal_summary(client: &OdalClient, cfg: &Config) -> Result<Value> {
+    let (status, body) = client
+        .get(&format!("{}/api/v1/seal", cfg.vault_url))
+        .await?;
+    if !status.is_success() {
+        bail!(
+            "Failed to fetch the sealing summary: {}",
+            describe_error(status, &body)
+        );
+    }
+    serde_json::from_str(&body).context("sealing summary was not JSON")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

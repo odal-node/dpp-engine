@@ -279,4 +279,27 @@ impl SealOutbox for PgSealOutboxRepo {
             exhausted: row.get::<i64, _>("exhausted"),
         })
     }
+
+    async fn unsealed_published_count(&self) -> Result<i64, DppError> {
+        // The same three conditions `enqueue_unsealed` selects on, and only
+        // those. Its two `NOT EXISTS` guards hold back rows the drain already
+        // owns or that failed recently — they shape *when to retry*, not whether
+        // a passport is unsealed, and applying them here would report a queued
+        // passport as sealed.
+        //
+        // No digest comparison, matching the sweep: a seal over a superseded
+        // signature is still a valid attestation of the signature it covers, and
+        // `/dpp/{id}/seal` reports that per passport as `coverage`.
+        let row = sqlx::query(
+            r#"SELECT count(*) AS unsealed
+               FROM odal.passport p
+               WHERE p.published_at IS NOT NULL
+                 AND p.doc->'seal' IS NULL
+                 AND p.doc->>'jwsSignature' IS NOT NULL"#,
+        )
+        .fetch_one(self.dal.pool())
+        .await
+        .map_err(db_err)?;
+        Ok(row.get::<i64, _>("unsealed"))
+    }
 }

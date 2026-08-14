@@ -164,4 +164,22 @@ pub trait SealOutbox: Send + Sync {
 
     /// Counts by status, for boot logs and gauges.
     async fn status_counts(&self) -> Result<SealOutboxCounts, DppError>;
+
+    /// How many **published passports carry no seal at all**, right now.
+    ///
+    /// Not derivable from [`Self::status_counts`], and this is the whole reason
+    /// it exists. Those counts describe *rows*, and the failure that matters
+    /// most leaves no row: [`Self::enqueue`] runs after commit, so a crash in
+    /// that window publishes a passport that nothing will ever seal. An outbox
+    /// reporting `pending: 0, exhausted: 0` is consistent with any number of
+    /// unsealed passports, so a status view built on rows alone would show all
+    /// clear while the obligation went unmet.
+    ///
+    /// Counts passports, not rows, and takes no `limit`: it answers "is anything
+    /// unsealed", which a capped query cannot.
+    ///
+    /// Read-only. [`Self::enqueue_unsealed`] is the repair for the same
+    /// condition and shares this predicate, but adds its own guards for rows the
+    /// drain already owns — those belong to the repair, not to the question.
+    async fn unsealed_published_count(&self) -> Result<i64, DppError>;
 }
