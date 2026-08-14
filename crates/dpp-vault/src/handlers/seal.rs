@@ -44,6 +44,17 @@ pub struct SealResponse {
     pub seal_value: String,
     /// When the QTSP produced it.
     pub sealed_at: chrono::DateTime<chrono::Utc>,
+
+    /// Hex SHA-256 of the certificate the seal names as its signer, **as
+    /// reported by the seal** — read out of the CAdES, never verified.
+    ///
+    /// It answers *which* certificate to ask about, not whether that certificate
+    /// was qualified or on the EU Trusted List when the seal was made. Both of
+    /// those are the independent validator's question. Without this an auditor
+    /// has to be handed the `.p7s` and parse it by hand to learn even the first.
+    ///
+    /// `null` when the seal predates extraction or could not be parsed.
+    pub signing_cert_ref: Option<String>,
     /// True when this is a `GhostSeal` placeholder with no legal validity.
     pub placeholder: bool,
     /// The passport's **current** compact JWS.
@@ -164,6 +175,7 @@ pub async fn seal_handler(
                 .unwrap_or_default(),
             seal_value: seal.seal_value.clone(),
             sealed_at: seal.sealed_at,
+            signing_cert_ref: seal.signing_cert_ref.clone(),
             placeholder: seal.placeholder,
             current_jws: jws,
             current_payload_hash: payload_hash,

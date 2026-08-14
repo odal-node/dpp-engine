@@ -2057,6 +2057,7 @@ paths:
                     format,
                     sealValue,
                     sealedAt,
+                    signingCertRef,
                     placeholder,
                     currentJws,
                     currentPayloadHash,
@@ -2075,6 +2076,20 @@ paths:
                   sealedAt:
                     type: string
                     format: date-time
+                  signingCertRef:
+                    type: string
+                    nullable: true
+                    description: |
+                      Hex SHA-256 of the certificate the seal names as its
+                      signer, **as reported by the seal** — read out of the CAdES
+                      structure, never verified.
+
+                      It answers *which* certificate to ask about, not whether
+                      that certificate was qualified or on the EU Trusted List
+                      when the seal was made; both are the independent
+                      validator's question. `null` when the seal predates
+                      extraction or could not be parsed.
+                    pattern: "^[0-9a-f]{64}$"
                   placeholder:
                     type: boolean
                     description: |

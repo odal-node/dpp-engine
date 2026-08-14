@@ -210,6 +210,65 @@ async fn a_wrong_hmac_key_is_a_clean_error_not_a_panic() {
     );
 }
 
+/// The certificate the provider sealed with is read back off the wire.
+///
+/// The mock returns a genuine CMS structure rather than the placeholder string
+/// the other tests use, because that is the only way to exercise the extraction
+/// at all — and the value asserted is the signing identity's own thumbprint, so
+/// this fails if the adapter ever reports a certificate other than the one the
+/// seal actually names.
+#[tokio::test]
+async fn the_signing_certificate_is_read_out_of_the_returned_seal() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let id = crate::local::LocalIdentity::load_or_create(dir.path()).expect("identity");
+    let real_p7s = BASE64.encode(id.sign_detached(&[0x33; 32]).expect("sign"));
+
+    let state = Arc::new(MockState::default());
+    *state.force_response.lock().unwrap() = Some((
+        axum::http::StatusCode::OK,
+        serde_json::json!({
+            "status": "OK",
+            "signatures": [{
+                "fileName": "dpp-abc.p7s",
+                "mimeType": "application/pkcs7-signature",
+                "fileContent": real_p7s,
+            }],
+        })
+        .to_string(),
+    ));
+    let base_url = mock_server::spawn(state.clone()).await;
+
+    let env = adapter_for(&base_url, MOCK_KEY)
+        .seal(seal_request(fixture_digest()))
+        .await
+        .expect("seal");
+
+    assert_eq!(
+        env.signing_cert_ref.as_deref(),
+        Some(id.cert_thumbprint().as_str()),
+        "the envelope must name the certificate inside the seal it received"
+    );
+}
+
+/// A seal the parser cannot read still produces an envelope.
+///
+/// The seal was bought and is the thing that matters; an unfillable convenience
+/// field must not cost it. Every other test in this file returns a placeholder
+/// `.p7s` that is not CMS at all, so this is also what keeps them meaningful.
+#[tokio::test]
+async fn an_unparseable_seal_still_stores_without_a_certificate_reference() {
+    let state = Arc::new(MockState::default());
+    let base_url = mock_server::spawn(state.clone()).await;
+
+    let env = adapter_for(&base_url, MOCK_KEY)
+        .seal(seal_request(fixture_digest()))
+        .await
+        .expect("an unreadable seal is still a seal");
+
+    assert_eq!(env.seal_value, MOCK_P7S);
+    assert_eq!(env.signing_cert_ref, None);
+}
+
 #[tokio::test]
 async fn a_non_ok_status_body_does_not_become_a_seal() {
     let state = Arc::new(MockState::default());

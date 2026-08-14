@@ -253,7 +253,7 @@ impl SealBackend for LocalIdentity {
             .map_err(|e| SealError::Backend(format!("seal value is not base64: {e}")))?;
 
         Ok(SealVerification {
-            valid: verify_detached(&der)?,
+            valid: crate::cades::verify_against_embedded_certificate(&der)?,
             placeholder: env.placeholder,
         })
     }
@@ -298,78 +298,6 @@ fn signed_attributes(digest: &[u8]) -> Result<SignedAttributes, SealError> {
             .map_err(|e| SealError::Config(format!("cannot collect signed attributes: {e}")))?;
     }
     Ok(attrs)
-}
-
-/// Check a detached CMS `SignedData` against the certificate it carries.
-///
-/// A free function, and deliberately so: it takes bytes and nothing else,
-/// because a verifier only ever has bytes. It cannot reach the signing identity
-/// and does not need to.
-///
-/// What a `true` here means, exactly: the signature over the signed attributes
-/// verifies under the public key in the certificate travelling inside the seal,
-/// and that certificate is therefore self-consistent with the signature. It says
-/// **nothing** about trust — the certificate is self-signed and on no EU Trusted
-/// List, so there is no chain to build and no authority behind it. For this
-/// backend that is the whole truth available, which is why reporting it is
-/// honest here and would not be for a qualified seal.
-fn verify_detached(seal_der: &[u8]) -> Result<bool, SealError> {
-    use p256::ecdsa::VerifyingKey;
-    use p256::ecdsa::signature::Verifier as _;
-
-    let backend = |m: String| SealError::Backend(m);
-
-    let info = ContentInfo::from_der(seal_der)
-        .map_err(|e| backend(format!("not a CMS ContentInfo: {e}")))?;
-    let sd: SignedData = info
-        .content
-        .decode_as()
-        .map_err(|e| backend(format!("not CMS SignedData: {e}")))?;
-
-    let signers = sd.signer_infos.0.as_slice();
-    let [signer] = signers else {
-        return Err(backend(format!(
-            "expected exactly one signer, found {}",
-            signers.len()
-        )));
-    };
-
-    // Absent signed attributes means the digest is not inside the seal, so
-    // nothing can be checked without the original payload — which this function
-    // is not given. That is a different answer from "invalid", and conflating
-    // the two would brand an older seal as broken.
-    let Some(signed_attrs) = signer.signed_attrs.as_ref() else {
-        return Err(backend(
-            "this seal carries no signed attributes, so the digest it covers is not inside it \
-             and cannot be checked from the envelope alone"
-                .to_owned(),
-        ));
-    };
-
-    let certs = sd
-        .certificates
-        .as_ref()
-        .ok_or_else(|| backend("the seal carries no certificate to verify against".to_owned()))?;
-    let Some(CertificateChoices::Certificate(cert)) = certs.0.as_slice().first() else {
-        return Err(backend("the seal carries no X.509 certificate".to_owned()));
-    };
-
-    let spki = &cert.tbs_certificate.subject_public_key_info;
-    let key_bits = spki
-        .subject_public_key
-        .as_bytes()
-        .ok_or_else(|| backend("the certificate's public key is not whole bytes".to_owned()))?;
-    let vk = VerifyingKey::from_sec1_bytes(key_bits)
-        .map_err(|e| backend(format!("the certificate holds no P-256 key: {e}")))?;
-
-    // Re-encode as SET OF, matching what was signed (RFC 5652 §5.4).
-    let signed = signed_attrs
-        .to_der()
-        .map_err(|e| backend(format!("cannot re-encode the signed attributes: {e}")))?;
-    let sig = DerSignature::from_bytes(signer.signature.as_bytes())
-        .map_err(|e| backend(format!("not a DER ECDSA signature: {e}")))?;
-
-    Ok(vk.verify(&signed, &sig).is_ok())
 }
 
 /// Generate a P-256 key and a self-signed certificate for it.
@@ -444,14 +372,15 @@ mod tests {
         // Checked through the same function production uses, which is handed
         // bytes and nothing else — the identity in memory is not consulted.
         assert!(
-            verify_detached(&der).expect("the seal is well-formed"),
+            crate::cades::verify_against_embedded_certificate(&der)
+                .expect("the seal is well-formed"),
             "the seal must verify against the certificate it ships"
         );
     }
 
     /// The seal commits to the digest it was asked to seal, not to some other.
     ///
-    /// `verify_detached` proves the signature covers the signed attributes; this
+    /// `cades::verify_against_embedded_certificate` proves the signature covers the signed attributes; this
     /// proves the signed attributes carry the right value. Without it the
     /// backend could sign a constant attribute set perfectly and attest nothing
     /// about the passport — internally valid, externally meaningless.
@@ -491,7 +420,7 @@ mod tests {
     /// A tampered seal does not verify.
     ///
     /// The check that makes the others mean something: if flipping a byte of the
-    /// signature still verified, `verify_detached` would be reporting a constant
+    /// signature still verified, `cades::verify_against_embedded_certificate` would be reporting a constant
     /// rather than performing a check.
     #[test]
     fn a_tampered_signature_does_not_verify() {
@@ -506,7 +435,10 @@ mod tests {
         tampered[last] ^= 0xff;
 
         assert!(
-            !matches!(verify_detached(&tampered), Ok(true)),
+            !matches!(
+                crate::cades::verify_against_embedded_certificate(&tampered),
+                Ok(true)
+            ),
             "a tampered seal must never verify"
         );
     }
@@ -537,7 +469,8 @@ mod tests {
         .to_der()
         .expect("DER");
 
-        let err = verify_detached(&stripped).expect_err("must refuse rather than answer");
+        let err = crate::cades::verify_against_embedded_certificate(&stripped)
+            .expect_err("must refuse rather than answer");
         assert!(err.to_string().contains("signed attributes"), "{err}");
     }
 

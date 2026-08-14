@@ -23,6 +23,8 @@
 //! # Structure
 //!
 //! - [`backend`] — `SealBackend`, the seam every backend implements
+//! - [`cades`] — reading what a detached CAdES reports about itself, shared by
+//!   the backends and never claiming a check it did not perform
 //! - [`adapter`] — `QtspSealAdapter`, the `SealPort` impl over one of them
 //! - [`config`] — which backend this node runs, and nothing about any of them
 //! - [`eideasy`] — a hosted QTSP backend: its config, wire types, client and errors
@@ -38,6 +40,7 @@
 
 pub mod adapter;
 pub mod backend;
+pub mod cades;
 pub mod config;
 pub mod eideasy;
 pub mod error;

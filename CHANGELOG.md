@@ -196,6 +196,24 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   confirms the signature against the certificate travelling inside. `valid: true`
   from it means exactly that and nothing about trust.
 
+- **`signingCertRef` names the certificate a seal was made with.** Read out of
+  the returned CAdES and surfaced on the seal route, so the question "which
+  certificate signed this, and was it on the EU Trusted List at the time?" no
+  longer requires being handed the `.p7s` and parsing it by hand.
+
+  **Reported by the seal, never verified.** It answers *which* certificate to ask
+  about and nothing else — no chain is built, no Trusted List consulted, no
+  revocation checked. A convenience field that read as verification while
+  verifying nothing would be worse than an absent one, because an absent field
+  prompts the question and a populated one settles it wrongly.
+
+  A hex SHA-256 thumbprint rather than issuer+serial or a subject key identifier:
+  one fixed-length value naming exactly one certificate, comparable without
+  parsing, and the same thing the local backend already reports — a test asserts
+  the two agree, since a field that means different things per backend is not a
+  key anyone can match on. A seal the parser cannot read still stores, with the
+  reference left `null`.
+
 - **`sealedPayloadHash` and `coverage` on the seal route.** The seal envelope
   records no preimage, so a node could not previously tell a current seal from
   one superseded by a later re-publish — it could only hand both digests to an

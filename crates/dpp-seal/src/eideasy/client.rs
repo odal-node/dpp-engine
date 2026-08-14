@@ -176,13 +176,26 @@ impl SealBackend for EideasyClient {
         );
         let seal_value = self.seal_digest(&file_name, &req.payload_hash).await?;
 
+        // Which certificate the provider actually sealed with, read out of the
+        // `.p7s` it returned — **as reported by the seal**, never as verified.
+        // Whether that certificate was qualified, and on the EU Trusted List at
+        // this moment, is the independent validator's question; recording which
+        // one to ask about is what stops an auditor having to be handed the
+        // bytes and parse them by hand.
+        //
+        // A seal that cannot be parsed still stores: the envelope is what was
+        // bought, and losing it over an unfillable convenience field would
+        // trade something that matters for something that does not.
+        let signing_cert_ref = BASE64
+            .decode(&seal_value)
+            .ok()
+            .and_then(|der| crate::cades::signer_certificate_thumbprint(&der).ok())
+            .flatten();
+
         Ok(SealedEnvelope {
             format: SealFormat::Cades,
             seal_value,
-            // The signing certificate travels *inside* the detached CAdES, and
-            // reading it out needs the CMS parser this adapter deliberately does
-            // not have. Left `None` rather than filled with a guess.
-            signing_cert_ref: None,
+            signing_cert_ref,
             sealed_at: Utc::now(),
             placeholder: false,
         })
