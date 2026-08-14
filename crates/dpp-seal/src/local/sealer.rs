@@ -4,7 +4,10 @@
 //!
 //! It **is** a genuine CMS signature: the bytes verify against the certificate,
 //! the structure is what a provider returns, and every stage of the pipeline
-//! that handles a seal handles this one identically.
+//! that handles a seal handles this one identically. The digest travels in
+//! `signedAttrs`, as CAdES requires, so the envelope is self-checking — a holder
+//! of the bytes alone can confirm the signature, which is what lets this backend
+//! answer `verify()` when the hosted one cannot.
 //!
 //! It is **not** qualified, and cannot become so. The certificate is
 //! self-signed and on no EU Trusted List, which is a property of the
@@ -27,16 +30,17 @@ use chrono::Utc;
 use cms::cert::{CertificateChoices, IssuerAndSerialNumber};
 use cms::content_info::ContentInfo;
 use cms::signed_data::{
-    CertificateSet, DigestAlgorithmIdentifiers, EncapsulatedContentInfo, SignedData,
-    SignerIdentifier, SignerInfo, SignerInfos,
+    CertificateSet, DigestAlgorithmIdentifiers, EncapsulatedContentInfo, SignedAttributes,
+    SignedData, SignerIdentifier, SignerInfo, SignerInfos,
 };
 use const_oid::db::rfc5911::ID_DATA;
 use der::{Any, Decode as _, Encode};
 use dpp_domain::ports::seal::{
-    SealCapabilities, SealFormat, SealMode, SealRequest, SealedEnvelope,
+    SealCapabilities, SealFormat, SealMode, SealRequest, SealVerification, SealedEnvelope,
 };
 use p256::ecdsa::{DerSignature, SigningKey};
 use x509_cert::Certificate;
+use x509_cert::attr::Attribute;
 
 use crate::backend::SealBackend;
 use crate::error::SealError;
@@ -109,8 +113,11 @@ impl LocalIdentity {
         // no use for RSA, so the dependency would be pure advisory surface on
         // the one crate that produces seals.
         //
-        // Detached: `eContent` is absent, so the structure commits to a digest
-        // it does not carry — the arrangement a provider returns.
+        // Detached: `eContent` is absent, so what was signed travels separately
+        // from the signature — the arrangement a provider returns. The *digest*
+        // does travel, in `signedAttrs` below; that is what detached CAdES does,
+        // and it is the difference between a seal that can be checked and one
+        // that cannot.
         let econtent = EncapsulatedContentInfo {
             econtent_type: ID_DATA,
             econtent: None,
@@ -121,11 +128,23 @@ impl LocalIdentity {
             parameters: None,
         };
 
-        // No signed attributes: with `signedAttrs` absent, the signature is over
-        // the content itself, which for a detached signature is the digest the
-        // caller hands us. One fewer place for the bound value to disagree with
-        // the value actually signed.
-        let signature: DerSignature = self.key.sign(digest);
+        // Signed attributes carry the digest *inside* the signature, which is
+        // what makes the seal checkable at all. With `signedAttrs` absent the
+        // signature covers the digest directly, and a verifier holding only the
+        // envelope — which is all `SealPort::verify` is given — has no way to
+        // reconstruct what was signed. Attaching `messageDigest` is also what
+        // CAdES requires, so this is the faithful shape rather than a
+        // concession.
+        let signed_attrs = signed_attributes(digest)?;
+
+        // RFC 5652 §5.4: the signature is computed over the DER **SET OF**
+        // encoding of the signed attributes, not over the `[0] IMPLICIT` form
+        // they take inside `SignerInfo`. Encoding the wrong one produces a
+        // signature that verifies nowhere, including here.
+        let to_sign = signed_attrs
+            .to_der()
+            .map_err(|e| SealError::Config(format!("cannot encode the signed attributes: {e}")))?;
+        let signature: DerSignature = self.key.sign(&to_sign);
 
         let signer_info = SignerInfo {
             version: cms::content_info::CmsVersion::V1,
@@ -134,7 +153,7 @@ impl LocalIdentity {
                 serial_number: self.cert.tbs_certificate.serial_number.clone(),
             }),
             digest_alg: digest_algorithm.clone(),
-            signed_attrs: None,
+            signed_attrs: Some(signed_attrs),
             signature_algorithm: x509_cert::spki::AlgorithmIdentifierOwned {
                 oid: const_oid::db::rfc5912::ECDSA_WITH_SHA_256,
                 parameters: None,
@@ -210,6 +229,147 @@ impl SealBackend for LocalIdentity {
             supported_modes: vec![SealMode::OperatorSeal],
         }
     }
+
+    /// Overrides the refusing default, because this backend can answer honestly.
+    ///
+    /// The default exists so that no backend claims a verdict it did not
+    /// compute, and the reason a hosted QTSP's seal cannot be answered here is
+    /// independence: a verdict from the node that bought the seal attests
+    /// nothing. Neither objection applies to this backend. Its seals make no
+    /// trust claim at all beyond "this key signed this digest", so a
+    /// cryptographic check *is* the whole truth about them, and there is no
+    /// authority whose independence could be borrowed or faked.
+    ///
+    /// So `valid: true` here means exactly what [`SealVerification::valid`]
+    /// documents — the seal cryptographically verifies — and nothing more. It
+    /// carries no legal weight, because the certificate is self-signed. The node
+    /// says that separately and structurally, by resolving this backend to the
+    /// `Ghost` trust tier so a production profile refuses to boot on it.
+    async fn verify(&self, env: &SealedEnvelope) -> Result<SealVerification, SealError> {
+        use base64::engine::general_purpose::STANDARD as BASE64;
+
+        let der = BASE64
+            .decode(&env.seal_value)
+            .map_err(|e| SealError::Backend(format!("seal value is not base64: {e}")))?;
+
+        Ok(SealVerification {
+            valid: verify_detached(&der)?,
+            placeholder: env.placeholder,
+        })
+    }
+}
+
+/// The attributes the signature covers: what was signed, and its digest.
+///
+/// Two, both mandatory under RFC 5652 §11 for a signature carrying signed
+/// attributes: `contentType`, and `messageDigest` holding the digest the caller
+/// asked to seal. The second is the one that matters here — it is what puts the
+/// sealed value inside the signature, so a holder of the bytes alone can check
+/// them.
+fn signed_attributes(digest: &[u8]) -> Result<SignedAttributes, SealError> {
+    use der::asn1::{OctetString, SetOfVec};
+
+    let attr = |oid, value: Any| -> Result<Attribute, SealError> {
+        let mut values = SetOfVec::new();
+        values
+            .insert(value)
+            .map_err(|e| SealError::Config(format!("cannot build a signed attribute: {e}")))?;
+        Ok(Attribute { oid, values })
+    };
+
+    let content_type = attr(
+        const_oid::db::rfc5911::ID_CONTENT_TYPE,
+        Any::encode_from(&ID_DATA)
+            .map_err(|e| SealError::Config(format!("cannot encode the content type: {e}")))?,
+    )?;
+    let message_digest = attr(
+        const_oid::db::rfc5911::ID_MESSAGE_DIGEST,
+        Any::encode_from(
+            &OctetString::new(digest)
+                .map_err(|e| SealError::Config(format!("cannot encode the digest: {e}")))?,
+        )
+        .map_err(|e| SealError::Config(format!("cannot encode the digest attribute: {e}")))?,
+    )?;
+
+    let mut attrs = SetOfVec::new();
+    for a in [content_type, message_digest] {
+        attrs
+            .insert(a)
+            .map_err(|e| SealError::Config(format!("cannot collect signed attributes: {e}")))?;
+    }
+    Ok(attrs)
+}
+
+/// Check a detached CMS `SignedData` against the certificate it carries.
+///
+/// A free function, and deliberately so: it takes bytes and nothing else,
+/// because a verifier only ever has bytes. It cannot reach the signing identity
+/// and does not need to.
+///
+/// What a `true` here means, exactly: the signature over the signed attributes
+/// verifies under the public key in the certificate travelling inside the seal,
+/// and that certificate is therefore self-consistent with the signature. It says
+/// **nothing** about trust — the certificate is self-signed and on no EU Trusted
+/// List, so there is no chain to build and no authority behind it. For this
+/// backend that is the whole truth available, which is why reporting it is
+/// honest here and would not be for a qualified seal.
+fn verify_detached(seal_der: &[u8]) -> Result<bool, SealError> {
+    use p256::ecdsa::VerifyingKey;
+    use p256::ecdsa::signature::Verifier as _;
+
+    let backend = |m: String| SealError::Backend(m);
+
+    let info = ContentInfo::from_der(seal_der)
+        .map_err(|e| backend(format!("not a CMS ContentInfo: {e}")))?;
+    let sd: SignedData = info
+        .content
+        .decode_as()
+        .map_err(|e| backend(format!("not CMS SignedData: {e}")))?;
+
+    let signers = sd.signer_infos.0.as_slice();
+    let [signer] = signers else {
+        return Err(backend(format!(
+            "expected exactly one signer, found {}",
+            signers.len()
+        )));
+    };
+
+    // Absent signed attributes means the digest is not inside the seal, so
+    // nothing can be checked without the original payload — which this function
+    // is not given. That is a different answer from "invalid", and conflating
+    // the two would brand an older seal as broken.
+    let Some(signed_attrs) = signer.signed_attrs.as_ref() else {
+        return Err(backend(
+            "this seal carries no signed attributes, so the digest it covers is not inside it \
+             and cannot be checked from the envelope alone"
+                .to_owned(),
+        ));
+    };
+
+    let certs = sd
+        .certificates
+        .as_ref()
+        .ok_or_else(|| backend("the seal carries no certificate to verify against".to_owned()))?;
+    let Some(CertificateChoices::Certificate(cert)) = certs.0.as_slice().first() else {
+        return Err(backend("the seal carries no X.509 certificate".to_owned()));
+    };
+
+    let spki = &cert.tbs_certificate.subject_public_key_info;
+    let key_bits = spki
+        .subject_public_key
+        .as_bytes()
+        .ok_or_else(|| backend("the certificate's public key is not whole bytes".to_owned()))?;
+    let vk = VerifyingKey::from_sec1_bytes(key_bits)
+        .map_err(|e| backend(format!("the certificate holds no P-256 key: {e}")))?;
+
+    // Re-encode as SET OF, matching what was signed (RFC 5652 §5.4).
+    let signed = signed_attrs
+        .to_der()
+        .map_err(|e| backend(format!("cannot re-encode the signed attributes: {e}")))?;
+    let sig = DerSignature::from_bytes(signer.signature.as_bytes())
+        .map_err(|e| backend(format!("not a DER ECDSA signature: {e}")))?;
+
+    Ok(vk.verify(&signed, &sig).is_ok())
 }
 
 /// Generate a P-256 key and a self-signed certificate for it.
@@ -278,34 +438,107 @@ mod tests {
     /// being.
     #[test]
     fn the_signature_verifies_against_the_embedded_certificate() {
-        use p256::ecdsa::signature::Verifier as _;
-        use p256::ecdsa::{DerSignature, VerifyingKey};
+        let (id, _dir) = identity();
+        let der = id.sign_detached(&[0x7u8; 32]).expect("sign");
+
+        // Checked through the same function production uses, which is handed
+        // bytes and nothing else — the identity in memory is not consulted.
+        assert!(
+            verify_detached(&der).expect("the seal is well-formed"),
+            "the seal must verify against the certificate it ships"
+        );
+    }
+
+    /// The seal commits to the digest it was asked to seal, not to some other.
+    ///
+    /// `verify_detached` proves the signature covers the signed attributes; this
+    /// proves the signed attributes carry the right value. Without it the
+    /// backend could sign a constant attribute set perfectly and attest nothing
+    /// about the passport — internally valid, externally meaningless.
+    #[test]
+    fn the_signed_attributes_carry_the_requested_digest() {
+        use der::asn1::OctetString;
 
         let (id, _dir) = identity();
-        let digest = [0x7u8; 32];
+        let digest = [0x5u8; 32];
         let der = id.sign_detached(&digest).expect("sign");
 
         let info = ContentInfo::from_der(&der).expect("ContentInfo");
         let sd: cms::signed_data::SignedData = info.content.decode_as().expect("SignedData");
         let si = sd.signer_infos.0.as_slice().first().expect("one signer");
+        let attrs = si.signed_attrs.as_ref().expect("signed attributes present");
 
-        // The verifying key comes out of the certificate inside the seal, not
-        // from the identity in memory — a verifier only ever has the bytes.
-        let spki = &id.cert.tbs_certificate.subject_public_key_info;
-        let vk = VerifyingKey::from_sec1_bytes(
-            spki.subject_public_key.as_bytes().expect("public key bits"),
-        )
-        .expect("P-256 key from the certificate");
+        let found = attrs
+            .as_slice()
+            .iter()
+            .find(|a| a.oid == const_oid::db::rfc5911::ID_MESSAGE_DIGEST)
+            .expect("a messageDigest attribute");
+        let carried: OctetString = found
+            .values
+            .as_slice()
+            .first()
+            .expect("one value")
+            .decode_as()
+            .expect("an OCTET STRING");
 
-        let sig = DerSignature::from_bytes(si.signature.as_bytes()).expect("DER signature");
-        vk.verify(&digest, &sig)
-            .expect("the seal must verify against the certificate it ships");
-
-        // And must not verify against something it did not cover.
-        assert!(
-            vk.verify(&[0x8u8; 32], &sig).is_err(),
-            "a seal that verifies over any digest attests nothing"
+        assert_eq!(
+            carried.as_bytes(),
+            digest,
+            "the seal must commit to the digest it was handed"
         );
+    }
+
+    /// A tampered seal does not verify.
+    ///
+    /// The check that makes the others mean something: if flipping a byte of the
+    /// signature still verified, `verify_detached` would be reporting a constant
+    /// rather than performing a check.
+    #[test]
+    fn a_tampered_signature_does_not_verify() {
+        let (id, _dir) = identity();
+        let der = id.sign_detached(&[0x9u8; 32]).expect("sign");
+
+        // Flip a byte deep inside the structure. Some positions corrupt the DER
+        // and produce a parse error rather than `false`; both are refusals, and
+        // neither may be a pass.
+        let mut tampered = der.clone();
+        let last = tampered.len() - 1;
+        tampered[last] ^= 0xff;
+
+        assert!(
+            !matches!(verify_detached(&tampered), Ok(true)),
+            "a tampered seal must never verify"
+        );
+    }
+
+    /// A seal with no signed attributes is refused, not called invalid.
+    ///
+    /// The digest is not inside such a seal, so nothing can be checked from the
+    /// envelope alone. Reporting `valid: false` would brand it broken on the
+    /// strength of a check that never ran — the distinction this crate exists to
+    /// keep.
+    #[test]
+    fn a_seal_without_signed_attributes_is_refused() {
+        let (id, _dir) = identity();
+        let der = id.sign_detached(&[0x1u8; 32]).expect("sign");
+
+        let info = ContentInfo::from_der(&der).expect("ContentInfo");
+        let mut sd: cms::signed_data::SignedData = info.content.decode_as().expect("SignedData");
+        let mut signers = sd.signer_infos.0.as_slice().to_vec();
+        signers[0].signed_attrs = None;
+        let mut rebuilt = der::asn1::SetOfVec::new();
+        rebuilt.insert(signers.remove(0)).expect("one signer");
+        sd.signer_infos = SignerInfos::from(rebuilt);
+
+        let stripped = ContentInfo {
+            content_type: const_oid::db::rfc5911::ID_SIGNED_DATA,
+            content: Any::encode_from(&sd).expect("re-encode"),
+        }
+        .to_der()
+        .expect("DER");
+
+        let err = verify_detached(&stripped).expect_err("must refuse rather than answer");
+        assert!(err.to_string().contains("signed attributes"), "{err}");
     }
 
     /// Two different digests produce two different seals.
@@ -362,6 +595,59 @@ mod tests {
         let der = BASE64.decode(&env.seal_value).expect("base64 seal value");
         ContentInfo::from_der(&der).expect("a CMS ContentInfo");
         assert_eq!(der, id.sign_detached(&digest).expect("sign"));
+    }
+
+    /// Seal, then verify, through the port — the round trip an operator gets.
+    ///
+    /// Every other test here reaches into the structure. This one only uses what
+    /// a caller has: a request in, an envelope out, and that envelope back in.
+    /// It is the whole point of a development backend — the pipeline is
+    /// exercised end to end without a provider account.
+    #[tokio::test]
+    async fn a_sealed_envelope_verifies_through_the_port() {
+        let (id, _dir) = identity();
+        let digest = hex::encode([0x2Au8; 32]);
+
+        let env = SealBackend::seal(&id, seal_request(&digest))
+            .await
+            .expect("seal");
+        let verdict = SealBackend::verify(&id, &env).await.expect("verify");
+
+        assert!(
+            verdict.valid,
+            "a seal this backend just produced must verify"
+        );
+        assert!(
+            !verdict.placeholder,
+            "these bytes are real; only the trust behind them is absent"
+        );
+    }
+
+    /// A seal whose value was altered in storage fails the round trip.
+    ///
+    /// Without this, `a_sealed_envelope_verifies_through_the_port` would pass
+    /// against a `verify` that returned `true` unconditionally.
+    #[tokio::test]
+    async fn a_corrupted_envelope_does_not_verify_through_the_port() {
+        use base64::engine::general_purpose::STANDARD as BASE64;
+
+        let (id, _dir) = identity();
+        let mut env = SealBackend::seal(&id, seal_request(&hex::encode([0x2Au8; 32])))
+            .await
+            .expect("seal");
+
+        let mut raw = BASE64.decode(&env.seal_value).expect("base64");
+        let last = raw.len() - 1;
+        raw[last] ^= 0xff;
+        env.seal_value = BASE64.encode(&raw);
+
+        assert!(
+            !matches!(
+                SealBackend::verify(&id, &env).await.map(|v| v.valid),
+                Ok(true)
+            ),
+            "a corrupted seal must never verify"
+        );
     }
 
     /// A digest that is not hex fails before any signing happens.

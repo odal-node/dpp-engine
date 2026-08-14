@@ -38,6 +38,17 @@ a seal this node bought attests nothing a relying party should accept — valida
 those elsewhere. Rust AdES libraries exist and are improving; none of that
 changes the answer.
 
+**The local backend does verify**, and overrides the default to say so, because
+neither objection applies to it: its seals make no trust claim beyond "this key
+signed this digest", so a cryptographic check is the whole truth about them and
+there is no authority whose independence could be borrowed. It carries the sealed
+digest in CMS `signedAttrs` — as CAdES requires — which is what makes the
+envelope self-checking; a verifier holding only the bytes can confirm the
+signature over those attributes against the certificate travelling inside. That
+establishes internal consistency and nothing about trust: the certificate is
+self-signed and on no EU Trusted List, which the node states structurally by
+resolving this backend to the `Ghost` trust tier.
+
 ## The one rule
 
 The HMAC covers `METHOD + PATH + X-Timestamp + RAW_REQUEST_BODY`, and eID Easy
