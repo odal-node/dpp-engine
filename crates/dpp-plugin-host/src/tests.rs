@@ -105,7 +105,7 @@ fn empty_host_reports_no_sector_plugin() {
 #[test]
 fn empty_host_compliance_returns_passthrough() {
     let host = WasmPluginHost::new();
-    let data = SectorData::Textile(TextileData {
+    let data = SectorData::Textile(Box::new(TextileData {
         gtin: dpp_domain::Gtin::parse("09506000134352").unwrap(),
         fibre_composition: vec![FibreEntry {
             fibre: "Cotton".into(),
@@ -136,7 +136,7 @@ fn empty_host_compliance_returns_passthrough() {
         repair_history_url: None,
         repair_count: None,
         pef_score: None,
-    });
+    }));
     let result = ComplianceRegistry::compute(&host, Sector::Textile.catalog_key(), &data).unwrap();
     assert_eq!(
         result.compliance_status,
@@ -225,7 +225,7 @@ fn enrich_input_non_object_passes_through() {
 #[test]
 fn generate_passport_payload_no_plugin_returns_unknown_sector() {
     let host = WasmPluginHost::new();
-    let data = SectorData::Textile(TextileData {
+    let data = SectorData::Textile(Box::new(TextileData {
         gtin: dpp_domain::Gtin::parse("09506000134352").unwrap(),
         fibre_composition: vec![FibreEntry {
             fibre: "Cotton".into(),
@@ -256,7 +256,7 @@ fn generate_passport_payload_no_plugin_returns_unknown_sector() {
         repair_history_url: None,
         repair_count: None,
         pef_score: None,
-    });
+    }));
     let result = host.generate_passport_payload(&Sector::Textile, &data);
     assert!(result.is_err());
     let err = result.unwrap_err();

@@ -196,7 +196,6 @@ fn draft_passport() -> Passport {
         batch_id: Some("LOT-SEAL-SIM-1".into()),
         product_name: "Seal Simulation Battery".into(),
         sector: Sector::Battery,
-        product_category: None,
         manufacturer: ManufacturerInfo {
             name: "Odal Simulation GmbH".into(),
             address: "Skopje, MK".into(),

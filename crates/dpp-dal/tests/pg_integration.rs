@@ -38,7 +38,7 @@ use dpp_domain::{
         gtin::Gtin,
         passport::{FacilitySnapshot, ManufacturerInfo, Passport, PassportId},
         product_identity::ProductIdentity,
-        sector::{BatteryChemistry, BatteryData, Sector, SectorData},
+        sector::{BatteryChemistry, BatteryData, BatteryType, Sector, SectorData},
         status::PassportStatus,
     },
     ports::passport_repo::PassportRepository,
@@ -116,7 +116,6 @@ fn make_passport() -> Passport {
         batch_id: Some("LOT-PG-1".into()),
         product_name: "PG Parity Battery".into(),
         sector: Sector::Battery,
-        product_category: None,
         manufacturer: ManufacturerInfo {
             name: "TestCorp GmbH".into(),
             address: "Berlin, DE".into(),
@@ -159,12 +158,12 @@ fn battery_passport_with(gtin: &str, batch: Option<&str>, status: PassportStatus
     p.id = PassportId::new();
     p.batch_id = batch.map(str::to_owned);
     p.status = status;
-    p.sector_data = Some(SectorData::Battery(BatteryData {
+    p.sector_data = Some(SectorData::Battery(Box::new(BatteryData {
         gtin: Gtin::parse(gtin).expect("valid test gtin"),
         battery_chemistry: BatteryChemistry::Lfp,
         nominal_voltage_v: 3.2,
         nominal_capacity_ah: 100.0,
-        expected_lifetime_cycles: 3000,
+        expected_lifetime_cycles: Some(3000),
         co2e_per_unit_kg: 85.4,
         recycled_content_cobalt_pct: None,
         recycled_content_lithium_pct: None,
@@ -184,7 +183,7 @@ fn battery_passport_with(gtin: &str, batch: Option<&str>, status: PassportStatus
         rated_energy_wh: None,
         recycled_content_lead_pct: None,
         battery_weight_kg: None,
-        battery_type: None,
+        battery_type: BatteryType::Industrial,
         round_trip_efficiency_pct: None,
         internal_resistance_mohm: None,
         manufacturing_date: None,
@@ -197,7 +196,40 @@ fn battery_passport_with(gtin: &str, batch: Option<&str>, status: PassportStatus
         recycled_content_reporting_year: None,
         state_of_health: None,
         expected_lifetime: None,
-    }));
+        // Annex VI Part A / Annex XIII points 1-3, added in dpp-core 0.17.0.
+        // None of them load-bearing for what this harness stores and reads back.
+        battery_status: None,
+        capacity_threshold_for_exhaustion_pct: None,
+        commercial_warranty_period_months: None,
+        component_part_numbers: None,
+        cycle_life_test_c_rate: None,
+        dynamic_performance: None,
+        eu_declaration_of_conformity: None,
+        expected_lifetime_reference_test: None,
+        hazard_symbol: None,
+        hazardous_substances: None,
+        initial_round_trip_efficiency_pct: None,
+        internal_cell_resistance_mohm: None,
+        internal_pack_resistance_mohm: None,
+        marking_information: None,
+        maximum_voltage_v: None,
+        minimal_voltage_v: None,
+        not_in_use_temperature_range: None,
+        not_in_use_temperature_reference_test: None,
+        original_power_capability_w: None,
+        power_limit_max_w: None,
+        power_limit_min_w: None,
+        power_temperature_range: None,
+        renewable_content_pct: None,
+        round_trip_efficiency_at_half_cycle_life_pct: None,
+        safety_measures: None,
+        spare_parts_contacts: None,
+        test_report_results: None,
+        usable_extinguishing_agent: None,
+        usage_history: None,
+        voltage_temperature_range: None,
+        waste_battery_information: None,
+    })));
     p
 }
 

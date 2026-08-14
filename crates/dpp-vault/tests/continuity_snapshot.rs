@@ -255,7 +255,6 @@ fn draft_passport() -> Passport {
         batch_id: None,
         product_name: "Continuity Snapshot Widget".into(),
         sector: Sector::Textile,
-        product_category: None,
         manufacturer: ManufacturerInfo {
             name: "Snapshot Test GmbH".into(),
             address: "Berlin, DE".into(),

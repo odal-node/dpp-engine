@@ -9,7 +9,6 @@ use dpp_common::http_problem;
 use serde_json::Value;
 
 use dpp_domain::Audience;
-use dpp_domain::SectorCatalog;
 use dpp_domain::access::{SectorAccessPolicy, filter_by_audience};
 
 use crate::{infra::did, state::AppState};
@@ -123,6 +122,16 @@ fn parse_access_tier(_headers: &HeaderMap) -> Audience {
 /// 1. Top-level passport fields (jws, batchId, retentionLocked).
 /// 2. Sector-specific fields within `sectorData` (e.g. battery supply chain data).
 fn apply_access_tier_filter(passport: Value, tier: Audience) -> Value {
+    // Read before filtering: the version that governs this passport's disclosure
+    // is the one it was validated against, and it must be taken from the document
+    // rather than assumed current. Absent, it stays empty and resolves to no
+    // policy — which fails closed for any tagged record.
+    let schema_version = passport
+        .get("schemaVersion")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_owned();
+
     let passport_policy = SectorAccessPolicy::passport_default();
     let decision = filter_by_audience(&passport, &passport_policy, tier);
     let mut doc = decision.filtered_data;
@@ -131,7 +140,7 @@ fn apply_access_tier_filter(passport: Value, tier: Audience) -> Value {
     if let Some(obj) = doc.as_object_mut()
         && let Some(sd) = obj.remove("sectorData")
     {
-        let sector_policy = detect_sector_policy(&sd);
+        let sector_policy = detect_sector_policy(&sd, &schema_version);
         if let Some(policy) = sector_policy {
             let inner = filter_by_audience(&sd, &policy, tier);
             obj.insert("sectorData".into(), inner.filtered_data);
@@ -178,19 +187,13 @@ fn redacted_unknown_sector(sector_data: &Value) -> Value {
     Value::Object(out)
 }
 
-/// Process-wide sector catalog (manifests parsed once).
-fn catalog() -> &'static SectorCatalog {
-    static CATALOG: std::sync::OnceLock<SectorCatalog> = std::sync::OnceLock::new();
-    CATALOG.get_or_init(SectorCatalog::new)
-}
-
 /// Select the sector-specific access policy from the catalog.
 ///
 /// The stored `sectorData` carries a `"sector"` discriminant; the policy and its
 /// field tiers come from the catalog, so this covers every sector — not just
 /// battery/textile. Falls back to field-shape detection for legacy records that
 /// predate the tagged `sectorData` format.
-fn detect_sector_policy(sector_data: &Value) -> Option<SectorAccessPolicy> {
+fn detect_sector_policy(sector_data: &Value, schema_version: &str) -> Option<SectorAccessPolicy> {
     let obj = sector_data.as_object()?;
     let key = match obj.get("sector").and_then(Value::as_str) {
         Some("unsoldGoods") => "unsold-goods",
@@ -203,7 +206,12 @@ fn detect_sector_policy(sector_data: &Value) -> Option<SectorAccessPolicy> {
         }
         None => return None,
     };
-    SectorAccessPolicy::from_catalog(catalog(), key)
+    // Versioned deliberately: a published passport must be filtered by the
+    // disclosure classes in force when its signature was frozen, not by whatever
+    // the catalog says today. `None` here — unknown sector *or* unknown version —
+    // lands on the fail-closed branch above, which only needs a `sector` tag to
+    // redact, so a known sector at an unrecognised version is covered too.
+    SectorAccessPolicy::for_schema_version(key, schema_version)
 }
 
 pub(crate) async fn fetch_passport(state: &AppState, dpp_id: &str) -> Result<Value, StatusCode> {

@@ -108,7 +108,6 @@ fn draft_passport() -> Passport {
         batch_id: Some("LOT-OUTBOX-1".into()),
         product_name: "Outbox Battery".into(),
         sector: Sector::Battery,
-        product_category: None,
         manufacturer: ManufacturerInfo {
             name: "TestCorp GmbH".into(),
             address: "Berlin, DE".into(),

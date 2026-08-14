@@ -2,12 +2,32 @@
 
 use crate::fields::{f64_field, str_field, u64_field};
 
+/// Human label for a `DeviceType` wire value.
+///
+/// The field became a closed enum with kebab-case wire values, so what used to
+/// be operator-written prose is now a machine token. Rendering it raw would put
+/// `other-mobile-phone` in front of a consumer on the public page.
+///
+/// The four values are the ones Regulation (EU) 2023/1670 Art. 1(1) enumerates.
+/// Anything else is passed through untouched rather than mangled: a value this
+/// function does not recognise is one it cannot honestly relabel, and an
+/// unexpected token is more useful to a reader than a wrong word.
+fn device_type_label(raw: &str) -> String {
+    match raw {
+        "smartphone" => "Smartphone".to_owned(),
+        "other-mobile-phone" => "Mobile phone (other than a smartphone)".to_owned(),
+        "cordless-phone" => "Cordless phone".to_owned(),
+        "tablet" => "Slate tablet".to_owned(),
+        other => other.to_owned(),
+    }
+}
+
 pub(super) fn build_electronics_section(p: &serde_json::Value) -> String {
     let sd = match p.get("sectorData") {
         Some(v) => v,
         None => return String::new(),
     };
-    let category = str_field(sd, "productCategory", "-");
+    let category = device_type_label(str_field(sd, "productCategory", "-").as_str());
     let efficiency = str_field(sd, "energyEfficiencyClass", "-");
     let co2e = f64_field(sd, "co2ePerUnitKg", "Not disclosed", |v| {
         format!("{v:.2} kg CO\u{2082}e")
@@ -45,7 +65,7 @@ mod tests {
         let p = crate::sections::typed_fixture(serde_json::json!({
             "sector": "electronics",
             "gtin": "09506000134352",
-            "productCategory": "Smartphone",
+            "productCategory": "smartphone",
             "energyEfficiencyClass": "A",
             "co2ePerUnitKg": 42.1,
             "repairabilityScore": { "overall": 7.5 },

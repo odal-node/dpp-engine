@@ -255,7 +255,6 @@ fn passport(status: PassportStatus) -> Passport {
         batch_id: None,
         product_name: product_name.into(),
         sector: Sector::Textile,
-        product_category: None,
         manufacturer: ManufacturerInfo {
             name: "Drain Test GmbH".into(),
             address: "Berlin, DE".into(),

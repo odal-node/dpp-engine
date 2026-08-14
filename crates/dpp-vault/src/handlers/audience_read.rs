@@ -213,14 +213,22 @@ async fn record_access(
 /// Strip the fields a given audience may not see. Exposed for tests and for the
 /// snapshot path; the route above is the only production caller.
 #[must_use]
-pub fn view_for(full: &Value, sector_key: &str, audience: Audience) -> Value {
-    audience_view(full, sector_key, audience)
+pub fn view_for(full: &Value, sector_key: &str, schema_version: &str, audience: Audience) -> Value {
+    audience_view(full, sector_key, schema_version, audience)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::json;
+
+    /// The battery schema version these fixtures are written against.
+    ///
+    /// A real version, not a placeholder: disclosure classes are now resolved
+    /// from the passport's own schema version, so an invented one resolves to no
+    /// policy and the fail-closed path strips `sectorData` entirely — every
+    /// assertion below would then pass or fail for the wrong reason.
+    const BATTERY_SCHEMA: &str = "2.6.0";
 
     /// A battery passport carrying one field of each disclosure class that
     /// matters: `stateOfHealthPct` is `individual` (Annex XIII point 4),
@@ -256,7 +264,12 @@ mod tests {
     /// Art. 77(2)(c): individual-item data goes to legitimate-interest holders.
     #[test]
     fn legitimate_interest_sees_individual_item_data() {
-        let v = view_for(&battery(), "battery", Audience::LegitimateInterest);
+        let v = view_for(
+            &battery(),
+            "battery",
+            BATTERY_SCHEMA,
+            Audience::LegitimateInterest,
+        );
         assert!(sector_data(&v).contains_key("stateOfHealthPct"));
         assert!(sector_data(&v).contains_key("cathodeMaterial"));
     }
@@ -266,7 +279,7 @@ mod tests {
     /// the case an ordered tier model gets wrong.
     #[test]
     fn an_authority_does_not_see_individual_item_data() {
-        let v = view_for(&battery(), "battery", Audience::Authority);
+        let v = view_for(&battery(), "battery", BATTERY_SCHEMA, Audience::Authority);
         assert!(
             !sector_data(&v).contains_key("stateOfHealthPct"),
             "Art. 77(2)(b) withholds point 4 from authorities"
@@ -281,8 +294,13 @@ mod tests {
     /// Art. 77(2)(b), and explicitly withheld from legitimate interest.
     #[test]
     fn conformity_evidence_is_authority_only() {
-        let authority = view_for(&battery(), "battery", Audience::Authority);
-        let interest = view_for(&battery(), "battery", Audience::LegitimateInterest);
+        let authority = view_for(&battery(), "battery", BATTERY_SCHEMA, Audience::Authority);
+        let interest = view_for(
+            &battery(),
+            "battery",
+            BATTERY_SCHEMA,
+            Audience::LegitimateInterest,
+        );
         assert_eq!(authority.get("retentionLocked"), Some(&json!(true)));
         assert!(interest.get("retentionLocked").is_none());
     }
@@ -303,7 +321,7 @@ mod tests {
             Audience::LegitimateInterest,
             Audience::Authority,
         ] {
-            let v = view_for(&battery(), "battery", audience);
+            let v = view_for(&battery(), "battery", BATTERY_SCHEMA, audience);
             for proof in ["publicJwsSignature", "jwsSignature", "disclosureSignatures"] {
                 assert!(
                     v.get(proof).is_none(),
@@ -316,7 +334,7 @@ mod tests {
     /// The public view is the floor: neither restricted nor individual data.
     #[test]
     fn the_public_view_carries_neither() {
-        let v = view_for(&battery(), "battery", Audience::Public);
+        let v = view_for(&battery(), "battery", BATTERY_SCHEMA, Audience::Public);
         assert!(!sector_data(&v).contains_key("stateOfHealthPct"));
         assert!(!sector_data(&v).contains_key("cathodeMaterial"));
         assert!(v.get("jwsSignature").is_none());
@@ -335,7 +353,7 @@ mod tests {
             Audience::LegitimateInterest,
             Audience::Authority,
         ] {
-            let v = view_for(&unknown, "not-a-sector", audience);
+            let v = view_for(&unknown, "not-a-sector", BATTERY_SCHEMA, audience);
             assert!(
                 !sector_data(&v).contains_key("secret"),
                 "{audience:?} must not receive unmodelled sector data"

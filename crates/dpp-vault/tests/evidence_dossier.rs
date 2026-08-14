@@ -278,7 +278,6 @@ fn draft_passport() -> Passport {
         batch_id: None,
         product_name: "Evidence Dossier Test Widget".into(),
         sector: Sector::Textile,
-        product_category: None,
         manufacturer: ManufacturerInfo {
             name: "Evidence Test GmbH".into(),
             address: "Berlin, DE".into(),

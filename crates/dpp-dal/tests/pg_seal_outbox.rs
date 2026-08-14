@@ -87,7 +87,6 @@ fn published_passport(jws: &str) -> Passport {
         batch_id: None,
         product_name: "Seal Test Battery".into(),
         sector: Sector::Battery,
-        product_category: None,
         manufacturer: ManufacturerInfo {
             name: "TestCorp GmbH".into(),
             address: "Berlin, DE".into(),
