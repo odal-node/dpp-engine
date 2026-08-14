@@ -10,6 +10,57 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ## [Unreleased]
 
+### Breaking
+
+- **Pinned to `dpp-core` 0.17.0**, and three of its changes are visible here.
+
+  **Battery passports stored under schema versions below v2.5.0 can no longer be
+  read.** `batteryType` became required and closed at v2.5.0 (EU 2023/1542
+  Annex VI Part A point 2, via Annex XIII point 1(a)). A record written before
+  the mandate carries no such value and `dpp-domain` refuses to upgrade it rather
+  than inventing a regulatory classification the operator never stated — the
+  right call, and it means no lens can rescue those documents. The frozen-document
+  guard records each affected shape in `UNREADABLE_FIXTURES` with its reason; the
+  fixtures themselves are untouched, because a frozen document edited to make a
+  test pass is no longer evidence of anything. **This is only defensible while no
+  such document exists in any deployment.**
+
+  **Disclosure is now resolved from the passport's own schema version.** A
+  published passport is filtered by the classes in force when its signature was
+  frozen, not by whatever the catalog says today — otherwise a later
+  reclassification silently changes what an already-signed passport serves, and
+  body and proof disagree for reasons no reader can distinguish from tampering.
+  `public_policy` takes the version and returns `Option`; an unknown sector *or
+  version* now fails closed.
+
+  The fail-closed backstop moved with it, and this is the part worth reading
+  twice: it used to key on "is the sector unknown to the catalog". That was the
+  same condition while the policy was unversioned. It is not any more — a
+  **known** sector at an **unknown** version resolves to no policy, and a
+  sector-only check would have served every `sectorData` field publicly. It now
+  keys on whether the policy resolved.
+
+  **`batteryType` is a required CSV column.** The battery import template gains
+  it, and a row without a recognised value is rejected naming the accepted set.
+  Previously an absent or misspelled value parsed to `None` and produced a
+  passport missing a mandatory field instead of a failed row.
+
+### Changed
+
+- **Two battery fields became public** at core's battery schema v2.6.0, on its
+  cited reading of Annex XIII: `criticalRawMaterials` (point 1(b), listed
+  alongside chemistry and hazardous substances as publicly accessible material
+  composition) and `dueDiligenceUrl` (point 1(d)). Both are widenings of what the
+  public and AAS doors emit. The cross-door masking tests name their fields
+  explicitly rather than re-reading the catalog, so each had to be re-checked
+  against the schema's stated basis rather than silently dropped.
+
+- **The electronics page renders a device-type label, not the wire value.**
+  `productCategory` became a closed `DeviceType` with kebab-case values, so
+  rendering it raw would have put `other-mobile-phone` in front of a consumer.
+  Unrecognised values pass through untouched — a token this mapping does not know
+  is one it cannot honestly relabel.
+
 ### Added
 
 - **eIDAS qualified sealing, end to end** (migration `0028_seal_outbox.sql`).
