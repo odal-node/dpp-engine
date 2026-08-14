@@ -18,7 +18,6 @@ async fn test_jwt_valid() {
         "productCategory": "BATTERY",
         "manufacturer": {"name": "Auth Inc", "address": "Auth City"},
         "materials": [{"name": "Steel", "weightKg": 1.0}],
-        "schemaVersion": "1.0.0"
     });
 
     let resp = client.post_json("/api/v1/dpp", body).await;
@@ -41,7 +40,6 @@ async fn test_jwt_expired() {
         "productCategory": "BATTERY",
         "manufacturer": {"name": "Exp Inc", "address": "Exp City"},
         "materials": [{"name": "Copper", "weightKg": 0.5}],
-        "schemaVersion": "1.0.0"
     });
 
     let resp = client.post_json("/api/v1/dpp", body).await;
@@ -59,7 +57,6 @@ async fn test_no_auth() {
         "productCategory": "BATTERY",
         "manufacturer": {"name": "NoAuth Inc", "address": "NoAuth City"},
         "materials": [{"name": "Aluminum", "weightKg": 2.0}],
-        "schemaVersion": "1.0.0"
     });
 
     let resp = client.post_no_auth("/api/v1/dpp", body).await;

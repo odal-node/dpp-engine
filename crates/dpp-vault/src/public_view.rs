@@ -385,6 +385,47 @@ pub(crate) mod tests {
         assert!(signed_public_view(&passport).is_err());
     }
 
+    /// An older schema version discloses *more*, not less — which is why the
+    /// stored `schemaVersion` must never be a value the caller chose.
+    ///
+    /// A version's disclosure table only classifies the fields that version
+    /// annotates, and `SectorAccessPolicy` defaults everything else to `Public`.
+    /// Battery v1.0.0 annotates 11 fields; v2.6.0 annotates 68. So a passport
+    /// filtered at v1.0.0 serves publicly every field the newer table holds
+    /// back — `stateOfHealth` among them, the field of a past disclosure defect.
+    ///
+    /// This is correct for *reading an old row*: that document really was signed
+    /// under the old table, and re-filtering it under today's would break its
+    /// proof. It is a hazard only where a **new** passport's version could be
+    /// picked by its author — which `PassportService::create` prevents by
+    /// overwriting it from the catalog, and `create_handler` now refuses outright
+    /// rather than leaving that the only thing that has to hold.
+    #[test]
+    fn an_older_schema_version_widens_the_public_view() {
+        let full = json!({
+            "id": dpp_domain::domain::passport::PassportId::new().to_string(),
+            "productName": "Cell",
+            "sectorData": {
+                "sector": "battery",
+                "stateOfHealth": { "remainingCapacityPct": 98.2 },
+            },
+        });
+
+        let current = public_view(&full, "battery", "2.6.0");
+        assert!(
+            current["sectorData"].get("stateOfHealth").is_none(),
+            "stateOfHealth is Individual at v2.6.0 and must not be public"
+        );
+
+        let downgraded = public_view(&full, "battery", "1.0.0");
+        assert!(
+            downgraded["sectorData"].get("stateOfHealth").is_some(),
+            "expected the older table to expose it — if this now fails, core has \
+             backfilled v1.0.0's annotations and the create-side check that \
+             depends on this hazard should be re-read, not deleted"
+        );
+    }
+
     /// Minimal published passport. `pub(crate)` because the seal service's
     /// tests need the same fixture and duplicating it would let the two drift.
     pub(crate) fn stub_passport() -> Passport {

@@ -168,11 +168,43 @@ pub async fn create_handler(
         .or_else(|| body.sector_data.as_ref().map(|d| d.sector()))
         .unwrap_or_else(|| Sector::Other("other".to_owned()));
 
-    // Resolve the sector's current schema version (the service re-normalises this
-    // on persist); never silently down-version to a hardcoded "1.0.0".
+    // A new passport is written at the sector's current schema version, and only
+    // that one. Never silently down-version to a hardcoded "1.0.0".
+    //
+    // `PassportService::create` already overwrites this from the catalog on
+    // persist, so a caller-supplied value never reached the database — it was
+    // computed here and discarded. Two reasons that is not good enough to leave
+    // alone. It is dishonest: the request was accepted, so the caller has no way
+    // to learn its declaration was ignored. And the service's one assignment is
+    // now the only thing standing between a caller and the disclosure table its
+    // passport is served under — the stored version selects that table, and an
+    // older one classifies fewer fields while defaulting the rest to `Public`
+    // (battery v1.0.0 annotates 11 against v2.6.0's 68). Refusing a mismatch
+    // here means two independent things must go wrong, not one.
+    //
+    // The body is validated against the *current* schema regardless — see
+    // `validate_against_schema` — so a differing declaration is not a variant the
+    // server could honour anyway; it is a claim about the body that is already
+    // false.
     let schema_version = catalog()
-        .resolve_schema_version(sector.catalog_key(), body.schema_version.as_deref())
+        .resolve_schema_version(sector.catalog_key(), None)
         .unwrap_or_else(|| "1.0.0".into());
+    if let Some(requested) = body.schema_version.as_deref()
+        && requested != schema_version
+    {
+        return api_error(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "VALIDATION_ERROR",
+            &format!(
+                "schemaVersion must be `{schema_version}` for sector `{}` (or omitted); \
+                 `{requested}` was requested. A new passport is always written at the \
+                 sector's current schema version — the stored version selects the \
+                 disclosure table its public view is signed under, so it is not the \
+                 caller's to choose.",
+                sector.catalog_key()
+            ),
+        );
+    }
 
     // If co2e_per_unit not supplied at the top level, derive it from the
     // typed sector data so callers don't have to duplicate the value.

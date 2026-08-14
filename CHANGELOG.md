@@ -47,6 +47,24 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ### Changed
 
+- **`POST /vault/api/v1/dpp` refuses a `schemaVersion` that is not the sector's
+  current one**, with `422`. Omitting it is unchanged, and remains the normal
+  case.
+
+  Previously the field was accepted and silently discarded: the handler resolved
+  it, and `PassportService::create` then overwrote it from the catalog on
+  persist. So no caller-supplied version ever reached the database — but nothing
+  said so, and a client sending `"1.0.0"` had no way to learn it got `2.6.0`.
+
+  That overwrite is also, as of this release, the only thing standing between a
+  caller and the disclosure table its passport is served under, which the same
+  release makes version-dependent (above). An older table classifies fewer
+  fields and `SectorAccessPolicy` defaults the rest to public — battery v1.0.0
+  annotates 11 against v2.6.0's 68, so a passport filtered at v1.0.0 would serve
+  `stateOfHealth` and thirteen others publicly. That hazard is pinned by
+  `an_older_schema_version_widens_the_public_view`. Refusing the mismatch at the
+  edge means the guarantee no longer rests on a single line in the service.
+
 - **Two battery fields became public** at core's battery schema v2.6.0, on its
   cited reading of Annex XIII: `criticalRawMaterials` (point 1(b), listed
   alongside chemistry and hazardous substances as publicly accessible material

@@ -25,11 +25,11 @@ async fn test_battery_invalid_gtin() {
         "productCategory": "BATTERY",
         "manufacturer": {"name": "Test Inc", "address": "Test City"},
         "materials": [{"name": "Lithium", "weightKg": 1.0}],
-        "schemaVersion": "1.0.0",
         "sectorData": {
             "sector": "battery",
             "gtin": "123",
             "batteryChemistry": "Li-ion",
+            "batteryType": "industrial",
             "nominalVoltageV": 12.0,
             "nominalCapacityAh": 40.0,
             "expectedLifetimeCycles": 1000,
@@ -59,7 +59,6 @@ async fn test_textile_fibre_sum_invalid() {
         "productCategory": "TEXTILE",
         "manufacturer": {"name": "BadTextile Inc", "address": "Test"},
         "materials": [{"name": "Cotton", "weightKg": 0.1}],
-        "schemaVersion": "1.0.0",
         "sectorData": {
             "sector": "textile",
             "gtin": "09506000134352",
@@ -97,7 +96,6 @@ async fn test_negative_co2e_rejected() {
                 "productName": "Battery",
                 "manufacturer": {"name": "Test", "address": "Test City"},
                 "materials": [],
-                "schemaVersion": "1.0.0",
                 "co2ePerUnit": -1.5
             }),
         )
@@ -120,7 +118,6 @@ async fn test_repairability_score_above_100_rejected() {
                 "productName": "Product",
                 "manufacturer": {"name": "Test", "address": "Test City"},
                 "materials": [],
-                "schemaVersion": "1.0.0",
                 "repairabilityScore": 150.0
             }),
         )
@@ -146,7 +143,6 @@ async fn test_textile_empty_care_instructions() {
         "productCategory": "TEXTILE",
         "manufacturer": {"name": "Textile Co", "address": "Test"},
         "materials": [{"name": "Cotton", "weightKg": 0.2}],
-        "schemaVersion": "1.0.0",
         "sectorData": {
             "sector": "textile",
             "gtin": "09506000134352",
@@ -169,5 +165,101 @@ async fn test_textile_empty_care_instructions() {
     assert!(
         message.contains("care") || message.contains("length") || message.contains("short"),
         "Error should mention care instructions: {message}"
+    );
+}
+
+/// A caller may not name the schema version its passport is written at.
+///
+/// `PassportService::create` already overwrites it from the catalog, so this is
+/// not closing a reachable hole — it is refusing to accept a request whose
+/// declaration the server has no intention of honouring, and keeping the
+/// guarantee off a single assignment in the service. The stored version selects
+/// the disclosure table the public view is filtered through and signed under,
+/// and an older table classifies fewer fields while defaulting the rest to
+/// `Public`. The body is validated against the current schema either way, so a
+/// differing declaration is already false about the body it accompanies.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_battery_rejects_a_caller_chosen_schema_version() {
+    let pg = start_postgres().await;
+    let vault_url = start_vault(pg.dal.clone()).await;
+    let token = make_jwt("00000000-0000-0000-0000-000000000009");
+    let client = TestClient::new(&vault_url, &token);
+
+    // A body that is valid against the *current* battery schema, declaring an
+    // older version whose disclosure table is wider.
+    let body = serde_json::json!({
+        "productName": "Down-declared Battery",
+        "manufacturer": {"name": "Test Inc", "address": "Test City"},
+        "materials": [{"name": "Lithium", "weightKg": 1.0}],
+        "schemaVersion": "1.0.0",
+        "sectorData": {
+            "sector": "battery",
+            "gtin": "09506000134352",
+            "batteryChemistry": "LFP",
+            "batteryType": "industrial",
+            "nominalVoltageV": 12.0,
+            "nominalCapacityAh": 40.0,
+            "co2ePerUnitKg": 30.0,
+            "stateOfHealth": {
+                "parameterSet": "stationaryOrLmt",
+                "remainingCapacityPct": 98.2,
+                "selfDischargeRatePctPerMonth": 1.4
+            }
+        }
+    });
+
+    let resp = client.post_json("/api/v1/dpp", body).await;
+    assert_eq!(
+        resp.status(),
+        422,
+        "a caller-chosen schemaVersion must be refused, not recorded"
+    );
+    let message = resp.text().await.unwrap_or_default().to_lowercase();
+    assert!(
+        message.contains("schemaversion"),
+        "the refusal must name the offending field: {message}"
+    );
+}
+
+/// The current version may be stated explicitly — it agrees with what the server
+/// would write anyway, so there is nothing to refuse. Pins that the check
+/// rejects *disagreement*, not the presence of the field.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_battery_accepts_the_current_schema_version() {
+    let pg = start_postgres().await;
+    let vault_url = start_vault(pg.dal.clone()).await;
+    let token = make_jwt("00000000-0000-0000-0000-00000000000c");
+    let client = TestClient::new(&vault_url, &token);
+
+    // Read the version from the catalog rather than pinning a literal: this test
+    // is about the check's *rule*, and hardcoding would turn every future battery
+    // schema bump into a failure here that says nothing about the rule.
+    let current = dpp_domain::catalog::SectorCatalog::new()
+        .current_schema_version("battery")
+        .expect("battery is a catalog sector")
+        .to_owned();
+
+    let body = serde_json::json!({
+        "productName": "Current-version Battery",
+        "manufacturer": {"name": "Test Inc", "address": "Test City"},
+        "materials": [{"name": "Lithium", "weightKg": 1.0}],
+        "schemaVersion": current,
+        "sectorData": {
+            "sector": "battery",
+            "gtin": "09506000134352",
+            "batteryChemistry": "LFP",
+            "batteryType": "industrial",
+            "nominalVoltageV": 12.0,
+            "nominalCapacityAh": 40.0,
+            "co2ePerUnitKg": 30.0
+        }
+    });
+
+    let resp = client.post_json("/api/v1/dpp", body).await;
+    assert_eq!(
+        resp.status(),
+        201,
+        "the sector's current version is not a disagreement: {}",
+        resp.text().await.unwrap_or_default()
     );
 }
