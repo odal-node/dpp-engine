@@ -77,6 +77,21 @@ openapi-check:
 openapi-html:
     npx --yes @redocly/cli@latest build-docs api/openapi.yaml -o api/openapi.html
 
+# Capture a frozen stored-doc fixture for the compatibility guard (needs Docker).
+#
+# Creates and publishes a passport through the real vault, then writes the row's
+# `doc` to crates/dpp-dal/tests/fixtures/passport_docs/{sector}/v{version}.json.
+# The version comes from the stored document, not from an argument — the point is
+# to record what the system wrote, not what we expected it to write.
+#
+# Run this when a sector's schema_version moves, BEFORE bumping dpp-domain: a
+# fixture captured after the bump can only catch the bump after next. It refuses
+# to overwrite an existing fixture, because a frozen document that gets rewritten
+# has stopped being evidence about the release that produced it.
+capture-fixture SECTOR:
+    cargo test -p dpp-vault --features integration-tests \
+        --test capture_doc_fixture capture_{{SECTOR}} -- --ignored --exact --nocapture
+
 # Format all code
 fmt:
     cargo fmt --all
