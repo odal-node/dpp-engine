@@ -19,7 +19,6 @@ use dpp_common::{
 use dpp_crypto::keystore::KeyStore;
 use dpp_domain::ports::{
     archive::ArchivePort, compliance::ComplianceRegistry, registry_sync::RegistrySyncPort,
-    seal::SealPort,
 };
 use dpp_identity_service::state::AppState as IdentityState;
 use dpp_integrator::{infra::vault_client::VaultHttpClient, state::AppState as IntegratorState};
@@ -174,95 +173,11 @@ async fn main() -> anyhow::Result<()> {
     let credentials_live = credential_trust != TrustMode::Ghost;
 
     // ── eIDAS qualified seal ─────────────────────────────────────────────────
-    // The backend is selected explicitly by SEAL_PROVIDER. A partial or
-    // unrecognised configuration is an error rather than a silent ghost:
-    // dropping to no sealing because one variable was misspelled is exactly the
-    // downgrade the trust report exists to prevent, so it fails the boot.
-    // Two questions, deliberately not one flag. `seal_trust` is *legal* standing
-    // and decides whether a profile will boot. `seal_drains` is *mechanical* —
-    // whether the backend emits an envelope worth draining — and a locally
-    // signed seal answers yes to the second while answering `Ghost` to the
-    // first. Collapsing them either strands the local backend unexercised or
-    // lets a self-signed certificate satisfy a production boot.
-    // The credential reference travels from here rather than being named in the
-    // drain: this is the only place that knows which backend was selected, and
-    // each backend supplies its own name through the constant the selector
-    // already matches on — so the two can never disagree.
-    let (seal, seal_key_ref, seal_trust, seal_drains): (
-        Arc<dyn SealPort>,
-        dpp_domain::ports::seal::SealCredentialRef,
-        TrustMode,
-        bool,
-    ) = match dpp_seal::SealProvider::from_env().context("seal provider")? {
-        dpp_seal::SealProvider::Qtsp => {
-            let cfg =
-                dpp_seal::eideasy::EideasyConfig::from_env().context("QTSP seal configuration")?;
-            // Sandbox is a real seal from a real API, but over the provider's
-            // test certificate — a distinct claim from both Ghost and Live.
-            let mode = match cfg.environment {
-                dpp_seal::eideasy::EideasyEnvironment::Sandbox => TrustMode::Sandbox,
-                dpp_seal::eideasy::EideasyEnvironment::Production => TrustMode::Live,
-            };
-            let key_ref = dpp_domain::ports::seal::SealCredentialRef {
-                qtsp_id: dpp_seal::eideasy::config::PROVIDER.to_owned(),
-                credential_id: cfg.client_id.clone(),
-            };
-            tracing::info!(
-                base_url = %cfg.base_url,
-                mode = mode.as_str(),
-                "eIDAS seal: QTSP adapter active"
-            );
-            let backend = dpp_seal::eideasy::EideasyClient::new(cfg)
-                .context("Failed to build the QTSP seal adapter")?;
-            (
-                Arc::new(dpp_seal::QtspSealAdapter::new(backend)),
-                key_ref,
-                mode,
-                true,
-            )
-        }
-        dpp_seal::SealProvider::Local => {
-            let cfg =
-                dpp_seal::local::LocalConfig::from_env().context("local seal configuration")?;
-            let backend = dpp_seal::local::LocalIdentity::load_or_create(&cfg.key_path)
-                .context("Failed to build the local seal adapter")?;
-            tracing::warn!(
-                key_path = %cfg.key_path.display(),
-                "eIDAS seal: LOCAL development backend — a real CMS signature under a                      self-signed certificate, on no EU Trusted List and of no legal weight"
-            );
-            // Ghost as a trust tier, because no authority stands behind a
-            // self-signed certificate — so a sandbox or production profile
-            // refuses to boot on it. But the envelope is real, so it drains.
-            (
-                Arc::new(dpp_seal::QtspSealAdapter::new(backend)),
-                dpp_domain::ports::seal::SealCredentialRef {
-                    qtsp_id: dpp_seal::local::config::PROVIDER.to_owned(),
-                    // No credential to reference: the key is this node's own.
-                    credential_id: String::new(),
-                },
-                TrustMode::Ghost,
-                true,
-            )
-        }
-        dpp_seal::SealProvider::None => {
-            tracing::info!("eIDAS seal: ghost (no provider) — set SEAL_PROVIDER to enable sealing");
-            (
-                Arc::new(dpp_seal::QtspSealAdapter::new(dpp_seal::ghost::GhostSeal)),
-                // Never used: `seal_drains` is false, so no drain is spawned and
-                // nothing builds a request from this.
-                dpp_domain::ports::seal::SealCredentialRef {
-                    qtsp_id: String::new(),
-                    credential_id: String::new(),
-                },
-                TrustMode::Ghost,
-                false,
-            )
-        }
-    };
-    let sealing_live = seal_drains;
+    let seal_wiring = dpp_node::infra::seal::from_env()?;
+    let sealing_live = seal_wiring.drains;
 
     let trust = boot::trust::build_and_enforce(
-        seal_trust,
+        seal_wiring.trust,
         registry_trust,
         archive_trust,
         credential_trust,
@@ -473,7 +388,12 @@ async fn main() -> anyhow::Result<()> {
     // would stamp synthetic placeholder seals onto published passports and
     // report them sealed.
     if sealing_live {
-        boot::tasks::spawn_seal_drain(db.seal_outbox.clone(), seal.clone(), seal_key_ref).await;
+        boot::tasks::spawn_seal_drain(
+            db.seal_outbox.clone(),
+            seal_wiring.port.clone(),
+            seal_wiring.credential,
+        )
+        .await;
         // The backstop for seals the event-driven path never queued, or that gave
         // up during an outage. Without it a published passport can stay unsealed
         // forever with nothing to notice.
