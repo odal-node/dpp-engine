@@ -179,6 +179,10 @@ mod tests {
             self.sealed.lock().unwrap().push(id);
             Ok(())
         }
+        async fn sealed_digest(&self, _p: PassportId) -> Result<Option<String>, DppError> {
+            // Read back by the seal route, never by the drain.
+            Ok(None)
+        }
         async fn mark_attempt_failed(
             &self,
             _id: uuid::Uuid,

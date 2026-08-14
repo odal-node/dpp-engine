@@ -2019,12 +2019,18 @@ paths:
         verifies against nothing they received.
 
         **This node does not validate the seal.** A detached CAdES must be
-        checked by an independent AdES validator against the EU Trusted List, and
-        that check is also what establishes whether the seal covers
-        `currentPayloadHash` — the validator extracts the signed message digest
-        and compares. A mismatch means the passport was re-published after
-        sealing and a seal over the new signature has not landed yet; the seal
-        remains valid for the signature it does cover.
+        checked by an independent AdES validator against the EU Trusted List. A
+        verdict from the node that bought the seal would attest nothing, so none
+        is offered.
+
+        `coverage` answers a narrower question that the node *can* answer, from
+        its own records: `sealedPayloadHash` is the digest it asked the backend
+        to seal, so a passport re-published after sealing shows as `superseded`
+        without any AdES tooling. That is a record of what was requested, not
+        proof of what the CAdES covers — the validator's extracted message
+        digest is the cross-check. A `superseded` seal remains valid for the
+        signature it does cover; a seal over the new signature has not landed
+        yet.
 
         `404` when the passport has no seal — it may be unpublished, its seal may
         still be queued, or the node may have no QTSP configured. An unsealed
@@ -2054,6 +2060,8 @@ paths:
                     placeholder,
                     currentJws,
                     currentPayloadHash,
+                    sealedPayloadHash,
+                    coverage,
                     verification,
                   ]
                 properties:
@@ -2078,11 +2086,29 @@ paths:
                   currentPayloadHash:
                     type: string
                     description: |
-                      Hex SHA-256 of `currentJws`. Labelled "current" rather than
-                      "sealed" deliberately: the seal envelope does not record its
-                      own preimage, so this is one half of the comparison and the
-                      external validator supplies the other.
+                      Hex SHA-256 of `currentJws` — the digest a seal over this
+                      passport's present signature would be taken over.
                     pattern: "^[0-9a-f]{64}$"
+                  sealedPayloadHash:
+                    type: string
+                    nullable: true
+                    description: |
+                      Hex SHA-256 this node asked the backend to seal, from the
+                      outbox row that bought `sealValue`. `null` when the node
+                      holds no such row — a seal restored from a backup or
+                      produced elsewhere.
+                    pattern: "^[0-9a-f]{64}$"
+                  coverage:
+                    type: string
+                    enum: [current, superseded, unknown]
+                    description: |
+                      Whether the stored seal covers the passport's current
+                      signature, per this node's own records.
+
+                      `current` — the requested digest is the passport's current
+                      one. `superseded` — the passport was re-published after
+                      this seal was bought. `unknown` — no record; only the
+                      external validator can answer.
                   verification:
                     type: string
                     description: What was and was not checked by this node.

@@ -15,6 +15,11 @@
 //!    drained row is a paid QTSP call, so this key is a billing control.
 //! 4. **`mark_sealed` is atomic** and lands the envelope on the right passport.
 //! 5. **The `payload_hash` CHECK** refuses anything that is not a SHA-256 digest.
+//! 6. **The sealed digest survives the row being closed**, and follows the newest
+//!    seal across a re-publish. `SealedEnvelope` records no preimage, so this row
+//!    is the only thing that lets the node tell a current seal from a stale one
+//!    without an external validator — and it is only worth anything if it keeps
+//!    pointing at the seal actually on the passport.
 
 #![cfg(feature = "integration-tests")]
 
@@ -187,6 +192,117 @@ async fn a_seal_lands_on_a_retention_locked_published_passport() {
     let counts = outbox.status_counts().await.expect("counts");
     assert_eq!(counts.sealed, 1);
     assert_eq!(counts.pending, 0);
+}
+
+/// The preimage survives the drain, so a stale seal is detectable without a
+/// validator.
+///
+/// This is the whole point of reading it back out of the outbox: `SealedEnvelope`
+/// records no preimage, but the row that bought the seal does and is never
+/// deleted. Without this the node cannot distinguish a current seal from one
+/// taken over a signature the passport no longer carries.
+#[tokio::test]
+async fn the_sealed_digest_is_recoverable_after_the_row_is_closed() {
+    let pg = start_pg().await;
+    let repo = PgPassportRepo::new(pg.dal.clone());
+    let outbox = PgSealOutboxRepo::new(pg.dal.clone());
+
+    let jws = "header.payload.signature";
+    let passport = published_passport(jws);
+    let id = passport.id;
+    repo.create(passport).await.expect("insert passport");
+
+    assert_eq!(
+        outbox.sealed_digest(id).await.expect("lookup"),
+        None,
+        "nothing is sealed yet, so there is nothing to report"
+    );
+
+    let hash = digest_of(jws);
+    outbox.enqueue(id, &hash).await.expect("enqueue");
+    let due = outbox.due(10).await.expect("due");
+    outbox
+        .mark_sealed(due[0].id, &envelope("BASE64-CADES-P7S"))
+        .await
+        .expect("seal");
+
+    assert_eq!(
+        outbox.sealed_digest(id).await.expect("lookup"),
+        Some(hash),
+        "the digest that was sealed must outlive the row being closed"
+    );
+}
+
+/// After a re-publish, the answer is the seal that is actually on the passport.
+///
+/// A re-published passport accumulates one `sealed` row per signature it has
+/// carried. Returning the older one would report a current seal as stale and a
+/// stale one as current — worse than returning nothing.
+#[tokio::test]
+async fn the_sealed_digest_follows_the_newest_seal() {
+    let pg = start_pg().await;
+    let repo = PgPassportRepo::new(pg.dal.clone());
+    let outbox = PgSealOutboxRepo::new(pg.dal.clone());
+
+    let passport = published_passport("a.b.first");
+    let id = passport.id;
+    repo.create(passport).await.expect("insert passport");
+
+    let first = digest_of("a.b.first");
+    outbox.enqueue(id, &first).await.expect("first publish");
+    let due = outbox.due(10).await.expect("due");
+    outbox
+        .mark_sealed(due[0].id, &envelope("SEAL-OVER-FIRST"))
+        .await
+        .expect("seal the first signature");
+
+    let second = digest_of("a.b.second");
+    outbox.enqueue(id, &second).await.expect("re-publish");
+    let due = outbox.due(10).await.expect("due");
+    assert_eq!(due.len(), 1, "only the new digest is due");
+    outbox
+        .mark_sealed(due[0].id, &envelope("SEAL-OVER-SECOND"))
+        .await
+        .expect("seal the new signature");
+
+    assert_eq!(
+        outbox.sealed_digest(id).await.expect("lookup"),
+        Some(second),
+        "the reported digest must match the envelope now on the passport"
+    );
+}
+
+/// One passport's seal is never reported for another.
+#[tokio::test]
+async fn the_sealed_digest_does_not_leak_across_passports() {
+    let pg = start_pg().await;
+    let repo = PgPassportRepo::new(pg.dal.clone());
+    let outbox = PgSealOutboxRepo::new(pg.dal.clone());
+
+    let sealed = published_passport("a.b.sealed");
+    let sealed_id = sealed.id;
+    repo.create(sealed).await.expect("insert sealed");
+    let unsealed = published_passport("a.b.unsealed");
+    let unsealed_id = unsealed.id;
+    repo.create(unsealed).await.expect("insert unsealed");
+
+    let hash = digest_of("a.b.sealed");
+    outbox.enqueue(sealed_id, &hash).await.expect("enqueue");
+    let due = outbox.due(10).await.expect("due");
+    outbox
+        .mark_sealed(due[0].id, &envelope("SEAL"))
+        .await
+        .expect("seal");
+
+    assert_eq!(
+        outbox.sealed_digest(sealed_id).await.expect("lookup"),
+        Some(hash)
+    );
+    assert_eq!(
+        outbox.sealed_digest(unsealed_id).await.expect("lookup"),
+        None,
+        "an unsealed passport must not inherit a neighbour's digest"
+    );
 }
 
 /// Widening `mutable_keys` must not have widened it for anything else.
