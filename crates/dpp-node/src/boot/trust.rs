@@ -16,10 +16,23 @@ pub fn build_and_enforce(
     registry_trust: TrustMode,
     archive_trust: TrustMode,
     credential_trust: TrustMode,
+    compliance_trust: TrustMode,
 ) -> anyhow::Result<Arc<NodeTrustReport>> {
     let trust = Arc::new(NodeTrustReport::new(
         NodeProfile::from_env(),
         vec![
+            // Required, and the one whose absence is hardest to notice from
+            // outside: a node with no sector plugins evaluates nothing, returns
+            // a passthrough determination that carries no violations, and so
+            // sails through the publish gate that exists to stop a
+            // non-compliant in-force passport being signed. The passport records
+            // `passthroughNoValidation` honestly; nothing else did, and nobody
+            // is prompted to read it.
+            TrustPort {
+                port: "compliance",
+                mode: compliance_trust,
+                required: true,
+            },
             TrustPort {
                 port: "seal",
                 mode: seal_trust,
