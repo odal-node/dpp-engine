@@ -11,7 +11,9 @@ use uuid::Uuid;
 
 use crate::{domain::verify::verify_dossier_json, middleware::auth::AuthContext, state::AppState};
 
-use super::error::{api_error, conflict_error, internal_error, not_found_error, parse_passport_id};
+use super::error::{
+    api_error, conflict_error, internal_error, not_found_error, parse_passport_id, require_write,
+};
 
 #[allow(clippy::result_large_err)]
 fn parse_dossier_id(s: &str) -> Result<Uuid, axum::response::Response> {
@@ -21,11 +23,23 @@ fn parse_dossier_id(s: &str) -> Result<Uuid, axum::response::Response> {
 
 /// `POST /api/v1/dpp/{dppId}/evidence` — generate and store a new evidence
 /// dossier for a passport.
+///
+/// **Write-scoped.** Despite reading like an export, this inserts a row into the
+/// append-only `evidence_dossier` table — which the app role has no `DELETE`
+/// grant on, so the growth is unreclaimable — and it drives the transfer-chain
+/// DID fetches, which reach out to hosts named on the passport's transfer
+/// records. Neither is something a read-only credential should be able to start.
+///
+/// The three read endpoints below stay unscoped: they serve or check what is
+/// already stored.
 pub async fn generate_evidence_handler(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthContext>,
     Path(dpp_id): Path<String>,
 ) -> impl IntoResponse {
+    if let Some(resp) = require_write(&auth, "Generating an evidence dossier") {
+        return resp;
+    }
     let passport_id = match parse_passport_id(&dpp_id) {
         Ok(id) => id,
         Err(e) => return e,
