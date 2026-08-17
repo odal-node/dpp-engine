@@ -19,6 +19,52 @@ use dpp_types::{STANDALONE_OPERATOR_ID, audit::AuditEntry, auth::AuthContext};
 use super::{PassportService, retention_years_for};
 use super::{catalog, schema_registry};
 
+/// Why a publish was refused. One value per `return Err` in [`PassportService::publish`].
+///
+/// Static strings rather than a formatted message: this is a metric label, so
+/// its cardinality has to be bounded by the code rather than by the data.
+mod reason {
+    pub const INVALID_TRANSITION: &str = "invalid_transition";
+    pub const MISSING_REGISTRY_IDENTITY: &str = "missing_registry_identity";
+    pub const SECTOR_DATA_INVALID: &str = "sector_data_invalid";
+    pub const SCHEMA_INVALID: &str = "schema_invalid";
+    pub const COMPLIANCE_VIOLATIONS: &str = "compliance_violations";
+    pub const SIGNING_FAILED: &str = "signing_failed";
+}
+
+use reason::{
+    COMPLIANCE_VIOLATIONS as REASON_COMPLIANCE_VIOLATIONS,
+    INVALID_TRANSITION as REASON_INVALID_TRANSITION,
+    MISSING_REGISTRY_IDENTITY as REASON_MISSING_REGISTRY_IDENTITY,
+    SCHEMA_INVALID as REASON_SCHEMA_INVALID, SECTOR_DATA_INVALID as REASON_SECTOR_DATA_INVALID,
+    SIGNING_FAILED as REASON_SIGNING_FAILED,
+};
+
+/// Count a publish rejection, then return its error unchanged.
+///
+/// # Why this exists
+///
+/// `passport_publish_total` was incremented in exactly two places, both in the
+/// persistence half of `publish` — below every validation gate. So the six
+/// business-logic rejections above them moved **no metric at all**: a node whose
+/// publishes had all started failing because the default facility was retired
+/// showed a flat counter, identical to a node publishing nothing. The operator's
+/// signal was a 422 in a client they may not own and one `warn!` line per
+/// attempt.
+///
+/// A separate counter rather than a `rejected` outcome on the existing one, for
+/// two reasons: `passport_publish_total` keeps its current meaning for anything
+/// already reading it, and a `reason` label on some series of a counter but not
+/// others is the kind of label-set mismatch that confuses scrapers.
+///
+/// The alert this makes possible:
+/// `rate(passport_publish_rejected_total[5m]) > 0`, broken down by `reason`.
+fn reject(reason: &'static str, e: DppError) -> DppError {
+    metrics::counter!("passport_publish_rejected_total", "reason" => reason).increment(1);
+    tracing::warn!(reason, error = %e, "publish rejected");
+    e
+}
+
 impl PassportService {
     /// Sign and publish a draft passport with Ed25519 / JWS.
     ///
@@ -38,10 +84,13 @@ impl PassportService {
             .status
             .can_transition_to(&PassportStatus::Published)
         {
-            return Err(DppError::InvalidTransition {
-                current: passport.status.to_string(),
-                required: PassportStatus::Published.to_string(),
-            });
+            return Err(reject(
+                REASON_INVALID_TRANSITION,
+                DppError::InvalidTransition {
+                    current: passport.status.to_string(),
+                    required: PassportStatus::Published.to_string(),
+                },
+            ));
         }
 
         // Annex III completeness (ESPR): a published DPP for an in-force sector must
@@ -85,14 +134,17 @@ impl PassportService {
                     missing = %missing.join("; "),
                     "publish blocked — passport is missing required Annex III registry identity"
                 );
-                return Err(DppError::Validation(
-                    format!(
-                        "cannot publish: missing required registry identity — {}. \
-                         Configure a default facility (`odal facility`) and a primary \
-                         operator identifier (`odal operator-id`) before publishing.",
-                        missing.join("; ")
-                    )
-                    .into(),
+                return Err(reject(
+                    REASON_MISSING_REGISTRY_IDENTITY,
+                    DppError::Validation(
+                        format!(
+                            "cannot publish: missing required registry identity — {}. \
+                             Configure a default facility (`odal facility`) and a primary \
+                             operator identifier (`odal operator-id`) before publishing.",
+                            missing.join("; ")
+                        )
+                        .into(),
+                    ),
                 ));
             }
         }
@@ -106,12 +158,14 @@ impl PassportService {
         // integration fixtures that publish minimal passports are updated and a
         // Docker run confirms them (roadmap 1.3).
         if let Some(sector_data) = passport.sector_data.as_ref() {
-            dpp_domain::validate_sector_data(sector_data).map_err(DppError::Validation)?;
+            dpp_domain::validate_sector_data(sector_data)
+                .map_err(|e| reject(REASON_SECTOR_DATA_INVALID, DppError::Validation(e)))?;
 
             // JSON Schema gate (fail-closed): enum sets, string patterns, and
             // numeric ranges that the Rust types don't enforce. Runs after typed
             // validation so field-level messages are the primary signal.
-            validate_schema_for_publish(sector_data)?;
+            validate_schema_for_publish(sector_data)
+                .map_err(|e| reject(REASON_SCHEMA_INVALID, e))?;
 
             // Compliance gate: a sector whose DPP obligation is in force must not
             // be signed/published while it carries *binding* violations. Advisory
@@ -140,8 +194,11 @@ impl PassportService {
                     violations = %summary,
                     "publish blocked by binding compliance violations"
                 );
-                return Err(DppError::Validation(
-                    format!("cannot publish: binding compliance violations — {summary}").into(),
+                return Err(reject(
+                    REASON_COMPLIANCE_VIOLATIONS,
+                    DppError::Validation(
+                        format!("cannot publish: binding compliance violations — {summary}").into(),
+                    ),
                 ));
             }
         }
@@ -185,6 +242,7 @@ impl PassportService {
             .map(|c| c.jws)
             .map_err(|e| {
                 metrics::counter!("signing_failures_total").increment(1);
+                metrics::counter!("passport_publish_rejected_total", "reason" => REASON_SIGNING_FAILED).increment(1);
                 tracing::error!(
                     code = event_codes::JWS_UNSIGNED_PUBLISH_BLOCKED,
                     error = %e,
@@ -215,6 +273,7 @@ impl PassportService {
             .map(|c| c.jws)
             .map_err(|e| {
                 metrics::counter!("signing_failures_total").increment(1);
+                metrics::counter!("passport_publish_rejected_total", "reason" => REASON_SIGNING_FAILED).increment(1);
                 tracing::error!(
                     code = event_codes::JWS_UNSIGNED_PUBLISH_BLOCKED,
                     error = %e,
@@ -242,6 +301,8 @@ impl PassportService {
         .await
         .map_err(|e| {
             metrics::counter!("signing_failures_total").increment(1);
+            metrics::counter!("passport_publish_rejected_total", "reason" => REASON_SIGNING_FAILED)
+                .increment(1);
             tracing::error!(
                 code = event_codes::JWS_UNSIGNED_PUBLISH_BLOCKED,
                 error = %e,
@@ -433,6 +494,55 @@ fn build_carrier_url(passport: &Passport, resolver_base: &str) -> String {
             passport.batch_id.as_deref(),
         ),
         None => format!("{base}/dpp/{}", passport.id),
+    }
+}
+
+#[cfg(test)]
+mod rejection_reasons {
+    //! The reason label is the whole value of the counter — an alert that fires
+    //! without saying *why* publishing stopped is barely better than the flat
+    //! line it replaced. These pin the properties a label set has to have.
+
+    use super::reason;
+
+    /// Every `return Err` in `publish` has its own reason. Duplicates would
+    /// merge two distinct operator problems into one alert, which is the failure
+    /// this counter exists to avoid.
+    #[test]
+    fn every_reason_is_distinct() {
+        let all = [
+            reason::INVALID_TRANSITION,
+            reason::MISSING_REGISTRY_IDENTITY,
+            reason::SECTOR_DATA_INVALID,
+            reason::SCHEMA_INVALID,
+            reason::COMPLIANCE_VIOLATIONS,
+            reason::SIGNING_FAILED,
+        ];
+        let mut sorted = all.to_vec();
+        sorted.sort_unstable();
+        sorted.dedup();
+        assert_eq!(sorted.len(), all.len(), "reason labels must be distinct");
+    }
+
+    /// Metric label values are `snake_case` and drawn from a fixed set, so
+    /// cardinality is bounded by the code rather than by passport data. A label
+    /// built from an error message would make every distinct failure a new
+    /// series.
+    #[test]
+    fn reasons_are_bounded_snake_case_labels() {
+        for r in [
+            reason::INVALID_TRANSITION,
+            reason::MISSING_REGISTRY_IDENTITY,
+            reason::SECTOR_DATA_INVALID,
+            reason::SCHEMA_INVALID,
+            reason::COMPLIANCE_VIOLATIONS,
+            reason::SIGNING_FAILED,
+        ] {
+            assert!(
+                !r.is_empty() && r.bytes().all(|b| b.is_ascii_lowercase() || b == b'_'),
+                "{r} is not a bounded snake_case label"
+            );
+        }
     }
 }
 
