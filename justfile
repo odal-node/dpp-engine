@@ -142,6 +142,44 @@ subjects-check:
         exit 1
     fi
 
+# Forbid un-guarded outbound HTTP construction in service crate src.
+#
+# `dpp_common::outbound` is the one path that applies the resolving SSRF guard,
+# refuses redirects, caps the body and times out. `reqwest::get` and
+# `Client::new()` build a client with none of those — and that is exactly how two
+# call sites ended up fetching attacker-named hosts with no guard at all while an
+# identical, correctly-hardened fetch sat in the next module.
+#
+# Operator-CHOSEN targets are a different trust class and legitimately build
+# their own clients (webhook drain, QTSP, EU registry, the integrator's loopback
+# vault client, the resolver's own hardened client), so they are listed here by
+# file rather than being caught by a blanket rule.
+# Test code is exempt (a test double needs no SSRF guard), detected by the
+# repo convention that `#[cfg(test)]` modules sit at the bottom of a file: a
+# match below the first `#[cfg(test)]` line is test code. Whole-file test
+# modules (`tests.rs`, `*_tests.rs`) are skipped outright.
+outbound-check:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    allow='crates/dpp-common/src/outbound.rs|crates/dpp-node/src/boot/tasks.rs|crates/dpp-node/src/infra/registry/client.rs|crates/dpp-integrator/src/infra/vault_client.rs|crates/dpp-resolver/src/main.rs|crates/dpp-seal/src/eideasy/client.rs|cli/src/http.rs'
+    violations=""
+    for f in $(find crates/*/src cli/src -name '*.rs' ! -name 'tests.rs' ! -name '*_tests.rs'); do
+        echo "$f" | grep -qE "$allow" && continue
+        # First `#[cfg(test)]` line, or a sentinel past EOF when there is none.
+        cut=$(grep -n '#\[cfg(test)\]' "$f" | head -n1 | cut -d: -f1)
+        [ -z "$cut" ] && cut=999999
+        hits=$(grep -nE -e 'reqwest::get\(' -e 'Client::new\(\)' "$f" \
+                 | awk -F: -v c="$cut" '$1 < c') || true
+        [ -n "$hits" ] && violations="$violations\n$f: $hits"
+    done
+    if [ -n "$violations" ]; then
+        echo "ERROR: unguarded outbound HTTP client in service src — use dpp_common::outbound"
+        echo "       (operator-chosen targets that legitimately build their own client"
+        echo "        belong in the allow-list in this recipe, with a reason)"
+        printf "%b\n" "$violations"
+        exit 1
+    fi
+
 # Forbid public type/fn/const definitions in mod.rs (index files should be
 # `mod`/`pub use` only — the re-layout's whole point). Two allocation-plan
 # exceptions are named and excluded: service/mod.rs (PassportService + its
@@ -181,7 +219,7 @@ doc:
     cargo doc --workspace --no-deps
 
 # Fast gate (no Docker) — mirrors CI jobs: fmt, clippy, debug-prints, test-unit, audit
-check: fmt-check lint debug-check subjects-check mod-rs-check test check-integration audit
+check: fmt-check lint debug-check subjects-check mod-rs-check outbound-check test check-integration audit
 
 # Full local CI mirror — adds integration-feature clippy + the Docker tiers (needs Docker running)
 ci: check lint-integration test-integration test-pg
