@@ -137,7 +137,7 @@ NATS:       4222 (Docker, event bus — optional)
 Dashboard:  3000 (Next.js dev server — separate repo)
 ```
 
-## Crate Layout (12 crates + CLI)
+## Crate Layout (11 crates + CLI)
 
 The authoritative list is `[workspace] members` in the root `Cargo.toml` — check
 there rather than trusting this table if the two disagree.
@@ -158,7 +158,6 @@ dpp-node                        — MVP single binary fusing vault + identity + 
 dpp-seal                        — eIDAS qualified seal adapter: eID Easy Cloud Direct e-Sealing
                                   (CAdES) with a GhostSeal fallback. Wired into dpp-node, but the
                                   drain only arms against a real QTSP — see the sealing_live guard
-dpp-factor-data                 — licensed LCI factor data store: GhostFactorProvider + FactorStore trait (no dependent yet)
 cli/                            — management CLI (clap); package `dpp-cli`, binary `odal`
 ```
 

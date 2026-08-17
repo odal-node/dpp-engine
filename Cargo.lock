@@ -2064,22 +2064,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "dpp-calc"
-version = "0.17.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "70fcc751ec0a550b8d5ebcdab956137ff321b80abc0740f232f1d7a10eb110cd"
-dependencies = [
- "chrono",
- "hex",
- "serde",
- "serde_jcs 0.2.0",
- "serde_json",
- "sha2 0.11.0",
- "thiserror 2.0.19",
- "uuid",
-]
-
-[[package]]
 name = "dpp-cli"
 version = "0.11.0"
 dependencies = [
@@ -2204,19 +2188,6 @@ dependencies = [
  "serde_with",
  "thiserror 2.0.19",
  "uuid",
-]
-
-[[package]]
-name = "dpp-factor-data"
-version = "0.11.0"
-dependencies = [
- "chrono",
- "dpp-calc",
- "hex",
- "serde",
- "serde_json",
- "sha2 0.10.9",
- "thiserror 2.0.19",
 ]
 
 [[package]]
