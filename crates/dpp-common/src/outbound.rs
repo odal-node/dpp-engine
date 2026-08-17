@@ -43,15 +43,23 @@
 //! self-hoster can deliver to their own internal receiver, and that opt-out
 //! would be wrong here: these targets are named by a stranger.
 //!
-//! # Known residual: DNS rebinding
+//! # DNS rebinding is closed by pinning, not by checking twice
 //!
-//! [`url_guard::assert_public_target`] resolves the host, and then the client
-//! resolves it again to open the connection. A zero-TTL record alternating a
-//! public and an internal answer passes the first and connects to the second.
-//! Closing it means resolving once and connecting to *that* address (a
-//! `dns_resolver` override on the client that applies
-//! [`url_guard::ip_is_disallowed`] to every answer). Not done here, and called
-//! out so the gap is a known one rather than an assumed-absent one.
+//! A guard that resolves, approves and then discards the answer constrains
+//! nothing: the client resolves the name again to connect, and a zero-TTL record
+//! alternating a public and an internal answer passes the first resolution and
+//! connects on the second. Re-resolving at fetch time closes the window between
+//! *create-time* validation and use — which is real and worth having — and not
+//! the window between the check and the connection.
+//!
+//! So [`url_guard::resolve_public_target`] returns the addresses it approved,
+//! and the request is issued on a client pinned to them via `resolve_to_addrs`.
+//! The check now constrains the connection that actually happens.
+//!
+//! What remains, and is inherent: the guard approves an address, not an
+//! identity. A host that is public at check time and whose *address* is later
+//! reassigned to an internal network is still reachable. TLS certificate
+//! validation is the control for that, and it is on.
 
 use std::time::Duration;
 
@@ -141,10 +149,25 @@ pub fn guarded_client() -> Client {
 /// must never treat any of them as a pass.
 pub async fn fetch_json(client: &Client, url: &str, max_bytes: usize) -> Result<Value, FetchError> {
     // Guard before the request, not after — and before any DNS the client would
-    // do, so the refusal costs nothing.
-    url_guard::assert_public_target(url)
+    // do, so a refusal costs nothing.
+    //
+    // The guard hands back the addresses it approved, and the request is pinned
+    // to them (see `pinned_client`). Discarding them and passing only the URL —
+    // which is what `assert_public_target` does — leaves the client to resolve
+    // the name a second time, and a zero-TTL record alternating a public and an
+    // internal answer passes the first resolution and connects on the second.
+    let target = url_guard::resolve_public_target(url)
         .await
         .map_err(FetchError::Refused)?;
+
+    let pinned;
+    let client = if target.is_literal() {
+        // No name, nothing to rebind — reuse the shared client and its pool.
+        client
+    } else {
+        pinned = pinned_client(&target)?;
+        &pinned
+    };
 
     let resp = client
         .get(url)
@@ -155,6 +178,31 @@ pub async fn fetch_json(client: &Client, url: &str, max_bytes: usize) -> Result<
         return Err(FetchError::Unreachable(format!("HTTP {}", resp.status())));
     }
     read_capped_json(resp, max_bytes).await
+}
+
+/// A client that can only connect to the addresses the guard already approved.
+///
+/// `resolve_to_addrs` overrides resolution for this one host, so the connection
+/// goes to a checked address rather than to whatever the name answers with a
+/// moment later. That is the whole of the rebinding fix: the check stops being
+/// advice about a resolution nobody makes and becomes a constraint on the one
+/// that happens.
+///
+/// The cost is a client per request for named hosts, which means no connection
+/// reuse for them. Accepted deliberately: every caller of this module fetches a
+/// DID document or a public passport view — low-frequency, one-shot lookups
+/// where a fresh connection is not the expensive part. IP-literal targets skip
+/// this entirely and keep the shared pool, since there is no name to rebind.
+fn pinned_client(target: &url_guard::CheckedTarget) -> Result<Client, FetchError> {
+    let mut builder = Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .timeout(DEFAULT_TIMEOUT);
+    for addr in &target.addrs {
+        builder = builder.resolve(&target.host, *addr);
+    }
+    builder
+        .build()
+        .map_err(|e| FetchError::Unreachable(format!("could not build a pinned client: {e}")))
 }
 
 /// Read at most `max_bytes`, then parse.
@@ -294,6 +342,52 @@ mod tests {
             .await
             .expect("a small JSON body parses");
         assert_eq!(doc["id"], "did:web:x");
+    }
+
+    /// The guard hands back what it approved. Discarding it is what made the
+    /// check advisory — the caller then passed only a URL and the client
+    /// resolved the name again.
+    #[tokio::test]
+    async fn the_guard_returns_the_addresses_it_checked() {
+        let t = url_guard::resolve_public_target("https://1.1.1.1/x")
+            .await
+            .expect("a public literal is allowed");
+        assert_eq!(t.port, 443);
+        assert_eq!(t.addrs.len(), 1);
+        assert_eq!(t.addrs[0].ip().to_string(), "1.1.1.1");
+        assert!(t.is_literal(), "an IP literal has no name to rebind");
+    }
+
+    /// A refused target returns no addresses to pin, so there is no path from a
+    /// rejection to a connection.
+    #[tokio::test]
+    async fn a_refused_target_yields_no_addresses() {
+        for url in [
+            "https://127.0.0.1/x",
+            "https://169.254.169.254/latest",
+            "http://example.com/x",
+        ] {
+            assert!(
+                url_guard::resolve_public_target(url).await.is_err(),
+                "{url} must be refused"
+            );
+        }
+    }
+
+    /// Pinning is only skipped where there is nothing to pin. A named host must
+    /// take the pinned path, or the rebinding window reopens for exactly the
+    /// inputs it exists to cover.
+    #[tokio::test]
+    async fn a_named_host_is_not_treated_as_a_literal() {
+        // Resolution of a real name is environment-dependent, so this asserts
+        // the classification rather than performing a lookup.
+        let named = url_guard::CheckedTarget {
+            host: "issuer.example".into(),
+            port: 443,
+            addrs: vec!["93.184.216.34:443".parse().expect("addr")],
+        };
+        assert!(!named.is_literal());
+        assert!(pinned_client(&named).is_ok(), "a named host must pin");
     }
 
     #[test]
