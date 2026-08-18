@@ -101,13 +101,26 @@ fn unauthorized(detail: &str) -> Response {
         .into_response()
 }
 
+/// Split an `Authorization` header into its scheme and credential.
+///
+/// The scheme match is **case-insensitive**: RFC 7235 §2.1 defines `auth-scheme`
+/// as a case-insensitive token, and several HTTP clients and proxies normalise
+/// it to lowercase. Matching `"Bearer "` exactly meant a conforming client
+/// sending `authorization: bearer odal_sk_…` got a `401` with
+/// `WWW-Authenticate: Bearer, Basic` — an interoperability failure that reads to
+/// the caller as an invalid key.
+///
+/// The credential itself stays byte-exact. Only the scheme token is
+/// case-folded, and the split is still on the **first** space, so a credential
+/// beginning with whitespace or containing one is unchanged.
 fn extract_credential(request: &Request) -> Option<Credential> {
     let header = request.headers().get("Authorization")?.to_str().ok()?;
-    if let Some(t) = header.strip_prefix("Bearer ") {
-        return Some(Credential::Bearer(t.to_owned()));
+    let (scheme, credential) = header.split_once(' ')?;
+    if scheme.eq_ignore_ascii_case("bearer") {
+        return Some(Credential::Bearer(credential.to_owned()));
     }
-    if let Some(t) = header.strip_prefix("Basic ") {
-        return Some(Credential::Basic(t.to_owned()));
+    if scheme.eq_ignore_ascii_case("basic") {
+        return Some(Credential::Basic(credential.to_owned()));
     }
     None
 }
@@ -158,6 +171,66 @@ mod tests {
             .body(axum::body::Body::empty())
             .unwrap();
         assert!(extract_credential(&other_scheme).is_none());
+    }
+
+    /// RFC 7235 §2.1: `auth-scheme` is a case-insensitive token, and clients and
+    /// proxies do normalise it. Matching `"Bearer "` exactly turned a conforming
+    /// request into a 401 that reads as an invalid key.
+    #[test]
+    fn the_scheme_matches_case_insensitively() {
+        for header in ["bearer abc", "BEARER abc", "BeArEr abc"] {
+            let req = Request::builder()
+                .header("Authorization", header)
+                .body(axum::body::Body::empty())
+                .unwrap();
+            assert!(
+                matches!(extract_credential(&req), Some(Credential::Bearer(t)) if t == "abc"),
+                "{header:?} must be recognised as Bearer"
+            );
+        }
+        for header in ["basic ZGVm", "BASIC ZGVm"] {
+            let req = Request::builder()
+                .header("Authorization", header)
+                .body(axum::body::Body::empty())
+                .unwrap();
+            assert!(
+                matches!(extract_credential(&req), Some(Credential::Basic(t)) if t == "ZGVm"),
+                "{header:?} must be recognised as Basic"
+            );
+        }
+    }
+
+    /// Only the scheme is case-folded. The credential is byte-exact — an API key
+    /// and a base64 payload are both case-sensitive, and folding either would
+    /// turn a wrong key into a working one.
+    #[test]
+    fn the_credential_is_not_case_folded_or_trimmed() {
+        let req = Request::builder()
+            .header("Authorization", "Bearer  AbC ")
+            .body(axum::body::Body::empty())
+            .unwrap();
+        // Split on the FIRST space, so the leading space of the credential and
+        // its trailing space both survive.
+        assert!(
+            matches!(extract_credential(&req), Some(Credential::Bearer(t)) if t == " AbC "),
+            "the credential must be passed through byte-exact"
+        );
+    }
+
+    /// A scheme with no credential is not a credential. `split_once` yields
+    /// `None` for a header with no space at all.
+    #[test]
+    fn a_bare_scheme_is_not_a_credential() {
+        for header in ["Bearer", "Basic", ""] {
+            let req = Request::builder()
+                .header("Authorization", header)
+                .body(axum::body::Body::empty())
+                .unwrap();
+            assert!(
+                extract_credential(&req).is_none(),
+                "{header:?} must not parse as a credential"
+            );
+        }
     }
 
     struct AlwaysFail;

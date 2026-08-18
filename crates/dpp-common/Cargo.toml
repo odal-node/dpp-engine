@@ -29,6 +29,8 @@ uuid                = { workspace = true }
 chrono              = { workspace = true }
 url                 = { workspace = true }
 tokio               = { workspace = true }
+reqwest             = { workspace = true }
+futures             = { workspace = true }
 
 [dev-dependencies]
 tokio               = { workspace = true }

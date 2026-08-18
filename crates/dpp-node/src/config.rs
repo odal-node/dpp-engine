@@ -148,20 +148,36 @@ impl NodeConfig {
     /// Returns error if any required variable is absent or if `NODE_PORT` /
     /// `BATCH_CONCURRENCY` cannot be parsed.
     pub fn from_env() -> Result<Self> {
+        // Read the required vars in declaration order so an empty environment
+        // still reports `DATABASE_URL` first — `missing_required_var_errors`
+        // pins that, and "which variable is missing" is the whole value of the
+        // message. The credential guard runs after, on values already read.
+        let database_url = var("DATABASE_URL")?;
+        let key_store_path = var("KEY_STORE_PATH")?;
+        let key_store_passphrase = var("KEY_STORE_PASSPHRASE")?;
+        let did_web_base_url = var("DID_WEB_BASE_URL")?;
+        let admin_username = std::env::var("ADMIN_USERNAME")
+            .ok()
+            .filter(|s| !s.is_empty());
+        let admin_password = std::env::var("ADMIN_PASSWORD")
+            .ok()
+            .filter(|s| !s.is_empty());
+        ensure_bootstrap_credentials(
+            admin_username.as_deref(),
+            admin_password.as_deref(),
+            &key_store_passphrase,
+        )?;
+
         Ok(Self {
-            database_url: var("DATABASE_URL")?,
+            database_url,
             database_migrate_url: std::env::var("DATABASE_MIGRATE_URL")
                 .ok()
                 .filter(|s| !s.is_empty()),
-            key_store_path: var("KEY_STORE_PATH")?,
-            key_store_passphrase: var("KEY_STORE_PASSPHRASE")?,
-            did_web_base_url: var("DID_WEB_BASE_URL")?,
-            admin_username: std::env::var("ADMIN_USERNAME")
-                .ok()
-                .filter(|s| !s.is_empty()),
-            admin_password: std::env::var("ADMIN_PASSWORD")
-                .ok()
-                .filter(|s| !s.is_empty()),
+            key_store_path,
+            key_store_passphrase,
+            did_web_base_url,
+            admin_username,
+            admin_password,
             cors_allowed_origins: std::env::var("CORS_ALLOWED_ORIGINS")
                 .unwrap_or_default()
                 .split(',')
@@ -203,6 +219,188 @@ impl NodeConfig {
 
 fn var(name: &str) -> Result<String> {
     std::env::var(name).with_context(|| format!("missing required env var: {name}"))
+}
+
+/// Credential values that shipped as live assignments in `.env.example`, so a
+/// node bootstrapped with `cp .env.example .env` inherited them verbatim.
+///
+/// Matched case-insensitively and after trimming, because the failure being
+/// prevented is "the operator never changed this", not "the operator chose a
+/// weak-but-deliberate value" — judging general password strength is not this
+/// function's job and would be the wrong control to put at boot.
+const SHIPPED_ADMIN_USERNAME: &str = "admin";
+const SHIPPED_ADMIN_PASSWORD: &str = "admin";
+const SHIPPED_KEY_STORE_PASSPHRASE: &str = "dev-passphrase-change-in-prod";
+
+/// Escape hatch for the one legitimate case: a throwaway local node where the
+/// placeholder values are exactly what you want.
+const ALLOW_DEV_CREDENTIALS: &str = "ALLOW_DEV_CREDENTIALS";
+
+/// Refuse to boot on the credential placeholders this repo used to ship.
+///
+/// `ADMIN_USERNAME`/`ADMIN_PASSWORD` back a `Basic`-scheme credential that
+/// authenticates as full admin with no API-key row behind it — so it also
+/// bypasses the self-revocation guard — and `KEY_STORE_PASSPHRASE` protects the
+/// Ed25519 key every passport is signed with. Both were live assignments in
+/// `.env.example`, whose own header says `cp .env.example .env`, so the default
+/// path produced a node whose most powerful credential was public knowledge.
+///
+/// This is a pure function so it is testable without mutating process-global
+/// environment state, matching `ensure_signing_policy` in `plugins.rs`. It
+/// deliberately checks only for the *shipped literals*: a boot-time password
+/// strength policy is a different control with a different failure mode, and
+/// bundling the two would make this one arguable.
+///
+/// An empty passphrase is refused unconditionally. `.env.example` now ships
+/// `KEY_STORE_PASSPHRASE=` (present but blank) so the template stays copyable,
+/// and `var()` only proves the variable *exists* — blank would otherwise sail
+/// through and derive a key from nothing.
+///
+/// # Errors
+/// A message naming the offending variable and how to fix it, unless
+/// `ALLOW_DEV_CREDENTIALS=true` is set.
+fn ensure_bootstrap_credentials(
+    admin_username: Option<&str>,
+    admin_password: Option<&str>,
+    key_store_passphrase: &str,
+) -> Result<()> {
+    if key_store_passphrase.trim().is_empty() {
+        anyhow::bail!(
+            "KEY_STORE_PASSPHRASE is empty — refusing to boot. It protects the signing key \
+             every passport is verified against. Generate one with `openssl rand -base64 32`."
+        );
+    }
+
+    let allow_dev = std::env::var(ALLOW_DEV_CREDENTIALS)
+        .map(|v| v.trim().eq_ignore_ascii_case("true"))
+        .unwrap_or(false);
+    if allow_dev {
+        tracing::warn!(
+            "{ALLOW_DEV_CREDENTIALS}=true — placeholder credentials accepted. \
+             Never set this on a node reachable by anyone else."
+        );
+        return Ok(());
+    }
+
+    let matches_shipped = |value: &str, shipped: &str| value.trim().eq_ignore_ascii_case(shipped);
+
+    if matches_shipped(key_store_passphrase, SHIPPED_KEY_STORE_PASSPHRASE) {
+        anyhow::bail!(
+            "KEY_STORE_PASSPHRASE is still the placeholder this repo used to ship — refusing \
+             to boot. Anyone with the repository can decrypt this key store and forge \
+             passports that verify against your DID. Generate one with \
+             `openssl rand -base64 32`, or set {ALLOW_DEV_CREDENTIALS}=true for a throwaway \
+             local node."
+        );
+    }
+
+    // Only a *pair* constructs the local-admin provider, so only a pair is a
+    // reachable credential. A stray `ADMIN_USERNAME=admin` with no password
+    // authenticates nothing and must not block a boot.
+    if let (Some(user), Some(pass)) = (admin_username, admin_password)
+        && matches_shipped(user, SHIPPED_ADMIN_USERNAME)
+        && matches_shipped(pass, SHIPPED_ADMIN_PASSWORD)
+    {
+        anyhow::bail!(
+            "ADMIN_USERNAME/ADMIN_PASSWORD are still `admin`/`admin`, the placeholder this \
+             repo used to ship — refusing to boot. That credential authenticates as full \
+             admin over HTTP Basic and can revoke every API key. Set both to values you \
+             generate, unset them once the first API key is minted, or set \
+             {ALLOW_DEV_CREDENTIALS}=true for a throwaway local node."
+        );
+    }
+
+    Ok(())
+}
+
+#[cfg(test)]
+mod bootstrap_credentials {
+    //! The guard is a pure function precisely so these need no env mutation and
+    //! no `#[serial]` — the one exception being the escape hatch, which reads a
+    //! process-global var by design.
+    use super::{ALLOW_DEV_CREDENTIALS, ensure_bootstrap_credentials};
+
+    const GOOD_PASS: &str = "PmDq0aUu0kXwQ0nS+9kQ0Q==";
+
+    #[test]
+    fn the_shipped_admin_pair_is_refused() {
+        let err = ensure_bootstrap_credentials(Some("admin"), Some("admin"), GOOD_PASS)
+            .expect_err("`admin`/`admin` must not boot");
+        assert!(err.to_string().contains("ADMIN_USERNAME/ADMIN_PASSWORD"));
+    }
+
+    /// Trimming and case-folding, because the failure being prevented is "never
+    /// changed it", and `ADMIN_PASSWORD=Admin ` is the same non-change.
+    #[test]
+    fn the_shipped_pair_is_matched_loosely() {
+        assert!(ensure_bootstrap_credentials(Some(" Admin"), Some("ADMIN "), GOOD_PASS).is_err());
+    }
+
+    #[test]
+    fn the_shipped_key_store_passphrase_is_refused() {
+        let err = ensure_bootstrap_credentials(None, None, "dev-passphrase-change-in-prod")
+            .expect_err("the shipped passphrase must not boot");
+        assert!(err.to_string().contains("KEY_STORE_PASSPHRASE"));
+    }
+
+    /// `.env.example` ships `KEY_STORE_PASSPHRASE=` so the template stays
+    /// copyable. `var()` only proves the variable exists, so blank has to be
+    /// refused here or it derives a key from nothing.
+    #[test]
+    fn an_empty_key_store_passphrase_is_refused() {
+        for blank in ["", "   ", "\t"] {
+            assert!(
+                ensure_bootstrap_credentials(None, None, blank).is_err(),
+                "{blank:?} must be refused"
+            );
+        }
+    }
+
+    /// Only a *pair* constructs the local-admin provider, so a lone
+    /// `ADMIN_USERNAME=admin` authenticates nothing and must not block a boot.
+    #[test]
+    fn a_lone_shipped_username_is_not_a_credential() {
+        assert!(ensure_bootstrap_credentials(Some("admin"), None, GOOD_PASS).is_ok());
+        assert!(ensure_bootstrap_credentials(None, Some("admin"), GOOD_PASS).is_ok());
+    }
+
+    /// The guard checks for the shipped literals, not for password strength.
+    /// A weak-but-deliberate choice is the operator's to make; conflating the
+    /// two would make this guard arguable and therefore disabled.
+    #[test]
+    fn a_deliberate_choice_is_not_second_guessed() {
+        assert!(ensure_bootstrap_credentials(Some("root"), Some("hunter2"), "hunter2").is_ok());
+    }
+
+    #[test]
+    fn no_admin_credentials_at_all_is_the_recommended_state() {
+        assert!(ensure_bootstrap_credentials(None, None, GOOD_PASS).is_ok());
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn the_escape_hatch_allows_the_placeholders() {
+        // Safety: `#[serial]`, so no concurrent env mutation in this process.
+        unsafe { std::env::set_var(ALLOW_DEV_CREDENTIALS, "true") };
+        let allowed = ensure_bootstrap_credentials(
+            Some("admin"),
+            Some("admin"),
+            "dev-passphrase-change-in-prod",
+        );
+        unsafe { std::env::remove_var(ALLOW_DEV_CREDENTIALS) };
+        assert!(allowed.is_ok(), "the dev escape hatch must permit them");
+    }
+
+    /// The escape hatch is for placeholders, not for an absent passphrase —
+    /// there is no key to derive from an empty string in any environment.
+    #[test]
+    #[serial_test::serial]
+    fn the_escape_hatch_does_not_permit_an_empty_passphrase() {
+        unsafe { std::env::set_var(ALLOW_DEV_CREDENTIALS, "true") };
+        let refused = ensure_bootstrap_credentials(None, None, "");
+        unsafe { std::env::remove_var(ALLOW_DEV_CREDENTIALS) };
+        assert!(refused.is_err());
+    }
 }
 
 #[cfg(test)]

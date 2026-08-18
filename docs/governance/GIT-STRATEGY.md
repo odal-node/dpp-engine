@@ -109,12 +109,18 @@ git push origin v0.1.0
 
 ---
 
-## Visibility Strategy
+## Visibility
 
-dpp-engine is **BSL-1.1 licensed**. It is private by default; source-available publication follows once the initial release is validated.
+**This repository is PUBLIC.** It is BSL-1.1 licensed: source-available, so
+anyone may read it; production use requires a licence, and the BSL conversion
+clause makes it Apache-2.0 after the four-year change date.
 
-| Phase | Visibility | Reason |
-|---|---|---|
-| **Now** | Private | Active development, schema stabilisation |
-| **After initial validation** | Source-available | BSL-1.1 allows reading; production use requires license |
-| **After 4-year change date** | Apache-2.0 | BSL conversion clause |
+The table that stood here described a plan — private now, source-available after
+initial validation — and kept saying "Now | Private" after the repository was
+made public. Anyone reading it would have concluded that what they write here is
+not published, which is the one thing this document must not get wrong.
+
+See `CLAUDE.md` §6 for what that means in practice: no ADR numbers, no sibling
+repository names or paths, no commercial state, no named third parties in a
+non-public arrangement — in code, comments, commit messages, PR bodies or issue
+bodies. A leak cannot be un-pushed.

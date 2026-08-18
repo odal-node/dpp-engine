@@ -7,6 +7,7 @@ pub mod event_codes;
 pub mod http_problem;
 pub mod metrics;
 pub mod mtls;
+pub mod outbound;
 pub mod plugin_admin;
 pub mod request_id;
 pub mod scan;
