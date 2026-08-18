@@ -206,7 +206,28 @@ fn draft_passport() -> Passport {
         repairability_score: None,
         compliance_result: None,
         lint_result: None,
-        sector_data: None,
+        // A battery passport cannot publish with no sector data at all — the
+        // mandatory-content gate refuses it before asking which fields are
+        // missing. Portable is outside the Commission guidance's scope, so this
+        // carries the schema minimum: the subject here is the seal outbox and
+        // its drain, not battery content.
+        //
+        // Built by deserialising rather than as a struct literal. `BatteryData`
+        // derives no `Default` on purpose — a new Annex field should break every
+        // literal and force a decision — and this test has no opinion about any
+        // of the sixty fields it would then have to name.
+        sector_data: Some(
+            serde_json::from_value(serde_json::json!({
+                "sector": "battery",
+                "gtin": "09506000134352",
+                "batteryType": "portable",
+                "batteryChemistry": "LFP",
+                "nominalVoltageV": 3.7,
+                "nominalCapacityAh": 2.5,
+                "co2ePerUnitKg": 1.8
+            }))
+            .expect("valid battery sector data"),
+        ),
         status: PassportStatus::Draft,
         qr_code_url: None,
         jws_signature: None,
