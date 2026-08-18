@@ -142,6 +142,13 @@ subjects-check:
         exit 1
     fi
 
+# Forbid un-guarded outbound HTTP client construction in service crate src.
+#
+# The rule, the allow-list and the reasoning live in scripts/outbound-check.sh —
+# one home, and a script that can be run and tested on its own.
+outbound-check:
+    bash scripts/outbound-check.sh
+
 # Forbid public type/fn/const definitions in mod.rs (index files should be
 # `mod`/`pub use` only — the re-layout's whole point). Two allocation-plan
 # exceptions are named and excluded: service/mod.rs (PassportService + its
@@ -181,7 +188,7 @@ doc:
     cargo doc --workspace --no-deps
 
 # Fast gate (no Docker) — mirrors CI jobs: fmt, clippy, debug-prints, test-unit, audit
-check: fmt-check lint debug-check subjects-check mod-rs-check test check-integration audit
+check: fmt-check lint debug-check subjects-check mod-rs-check outbound-check test check-integration audit
 
 # Full local CI mirror — adds integration-feature clippy + the Docker tiers (needs Docker running)
 ci: check lint-integration test-integration test-pg

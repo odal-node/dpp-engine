@@ -11,7 +11,6 @@
 //! belongs with the recursive verify-tree that builds on this primitive, not in
 //! this single-hop check.
 
-use dpp_common::url_guard::validate_public_https_url;
 use dpp_domain::domain::passport::PassportRef;
 use serde::Serialize;
 use sha2::{Digest, Sha256};
@@ -83,16 +82,35 @@ where
     }
 }
 
-/// Production fetch for [`verify_ref`]: an SSRF-guarded HTTPS GET returning JSON.
+/// Production fetch for [`verify_ref`]: a guarded HTTPS GET returning JSON.
+///
+/// Goes through [`dpp_common::outbound`], which applies the **resolving**
+/// fetch-time guard rather than the IP-literal-only shape check. That
+/// distinction is the whole point: `validate_public_https_url` passes every
+/// `Host::Domain` unchecked, so `https://internal.corp.local/dpp/x` and a public
+/// name with an internal A record both sailed through it. The shared path also
+/// refuses to follow redirects — without which the guard is a first-hop check
+/// and a public host can bounce the node into its own network — caps the body,
+/// and times out.
+///
 /// Any guard, transport, non-2xx, or decode failure collapses to `Err(())` — the
-/// caller treats every failure as unverifiable, never a pass.
+/// caller treats every failure as unverifiable, never a pass. The reason is
+/// logged rather than returned, because [`RefVerification`] deliberately does
+/// not tell a caller *why* a reference was unreachable.
 pub async fn fetch_public_json(url: String) -> Result<serde_json::Value, ()> {
-    let url = validate_public_https_url(&url).map_err(|_| ())?;
-    let resp = reqwest::get(&url).await.map_err(|_| ())?;
-    if !resp.status().is_success() {
-        return Err(());
+    match dpp_common::outbound::fetch_json(
+        &dpp_common::outbound::guarded_client(),
+        &url,
+        dpp_common::outbound::DEFAULT_MAX_BODY,
+    )
+    .await
+    {
+        Ok(v) => Ok(v),
+        Err(e) => {
+            tracing::debug!(url = %url, error = %e, "component reference could not be fetched");
+            Err(())
+        }
     }
-    resp.json().await.map_err(|_| ())
 }
 
 #[cfg(test)]
