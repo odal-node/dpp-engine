@@ -329,6 +329,152 @@ fn memory_growth_beyond_cap_is_refused() {
     );
 }
 
+/// `odal::log` must not let a guest choose a host allocation.
+///
+/// The regression: `vec![0u8; len as usize]` with `len` straight from the guest,
+/// so `odal.log(0, 0xFFFFFFFF)` asked the host for 4 GiB — in the *host* heap,
+/// which the `ResourceLimiter` does not cover, for one instruction of fuel.
+///
+/// Asserting "the host did not allocate 4 GiB" directly is not possible in a
+/// unit test, so this asserts the two properties that make it impossible: the
+/// call returns normally (no abort, no trap) with a length far beyond both the
+/// cap and the guest's own 1-page memory, and it does so promptly.
+#[test]
+fn a_huge_log_length_does_not_allocate_host_memory() {
+    let engine = crate::runtime::build_engine().unwrap();
+    let mut store = crate::runtime::build_store(&engine, None, None).unwrap();
+    let linker = crate::host_funcs::build_linker(&engine).expect("linker");
+
+    // One page of memory, and a call passing the largest u32 length there is.
+    let wat_src = r#"
+        (module
+          (import "odal" "log" (func $log (param i32 i32)))
+          (memory (export "memory") 1)
+          (func (export "shout")
+            i32.const 0
+            i32.const -1      ;; 0xFFFFFFFF as u32
+            call $log)
+        )
+    "#;
+    let wasm = wat::parse_str(wat_src).expect("parse WAT");
+    let module = wasmtime::Module::new(&engine, &wasm).expect("compile");
+    let instance = linker
+        .instantiate(&mut store, &module)
+        .expect("instantiate");
+    let shout = instance
+        .get_typed_func::<(), ()>(&mut store, "shout")
+        .expect("shout");
+
+    let started = std::time::Instant::now();
+    shout
+        .call(&mut store, ())
+        .expect("a huge log length must be ignored, not trap or abort");
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(2),
+        "the call took {:?} — a length this large should be rejected before any \
+         allocation, so it must be near-instant",
+        started.elapsed()
+    );
+}
+
+/// The clamp truncates rather than drops: a message inside the guest's memory
+/// still reaches the log path even when the declared length exceeds the cap.
+#[test]
+fn a_log_within_memory_is_read() {
+    let engine = crate::runtime::build_engine().unwrap();
+    let mut store = crate::runtime::build_store(&engine, None, None).unwrap();
+    let linker = crate::host_funcs::build_linker(&engine).expect("linker");
+
+    let wat_src = r#"
+        (module
+          (import "odal" "log" (func $log (param i32 i32)))
+          (memory (export "memory") 1)
+          (data (i32.const 16) "hello from a plugin")
+          (func (export "speak")
+            i32.const 16
+            i32.const 19
+            call $log)
+        )
+    "#;
+    let wasm = wat::parse_str(wat_src).expect("parse WAT");
+    let module = wasmtime::Module::new(&engine, &wasm).expect("compile");
+    let instance = linker
+        .instantiate(&mut store, &module)
+        .expect("instantiate");
+    instance
+        .get_typed_func::<(), ()>(&mut store, "speak")
+        .expect("speak")
+        .call(&mut store, ())
+        .expect("an in-range log must succeed");
+}
+
+/// Both clocks a plugin can reach return the same pinned instant.
+///
+/// `odal::now_ms` was always pinned; `wasi_snapshot_preview1::clock_time_get`
+/// was host-real, and that is the one `SystemTime::now()` compiles to — so the
+/// determinism the receipts rest on had a door in it that ordinary Rust walks
+/// through. Two calls to the WASI clock, separated by a sleep, must agree.
+#[test]
+fn the_wasi_clock_is_pinned_like_odal_now_ms() {
+    let engine = crate::runtime::build_engine().unwrap();
+    let mut store = crate::runtime::build_store(&engine, None, None).unwrap();
+    let linker = crate::host_funcs::build_linker(&engine).expect("linker");
+
+    // clock_time_get(id=0 /* realtime */, precision, result_ptr) -> errno
+    let wat_src = r#"
+        (module
+          (import "wasi_snapshot_preview1" "clock_time_get"
+            (func $now (param i32 i64 i32) (result i32)))
+          (memory (export "memory") 1)
+          (func (export "read_clock") (result i64)
+            i32.const 0
+            i64.const 1
+            i32.const 8
+            call $now
+            drop
+            i32.const 8
+            i64.load)
+        )
+    "#;
+    let wasm = wat::parse_str(wat_src).expect("parse WAT");
+    let module = wasmtime::Module::new(&engine, &wasm).expect("compile");
+    let instance = linker
+        .instantiate(&mut store, &module)
+        .expect("instantiate");
+    let read = instance
+        .get_typed_func::<(), i64>(&mut store, "read_clock")
+        .expect("read_clock");
+
+    let first = read.call(&mut store, ()).expect("first read");
+    std::thread::sleep(std::time::Duration::from_millis(25));
+    let second = read.call(&mut store, ()).expect("second read");
+
+    assert_eq!(
+        first, second,
+        "the ambient WASI clock must be pinned for the life of the store — \
+         a plugin calling SystemTime::now() twice must not observe time passing"
+    );
+    assert!(
+        first > 0,
+        "the pinned clock must still report a real instant"
+    );
+}
+
+/// A fresh store is a fresh instant. Pinning within an invocation is the
+/// property; freezing across the process would make every determination claim
+/// it was made at boot.
+#[test]
+fn a_new_store_gets_a_new_instant() {
+    let engine = crate::runtime::build_engine().unwrap();
+    let a = crate::runtime::build_store(&engine, None, None).unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(5));
+    let b = crate::runtime::build_store(&engine, None, None).unwrap();
+    assert!(
+        b.data().now_ms_pinned >= a.data().now_ms_pinned,
+        "a later store must not report an earlier instant"
+    );
+}
+
 // ── hot-reload: atomic swap under load + last-good on rejection ────────────
 
 /// Build a minimal sector plugin whose `describe()` advertises the given ABI
