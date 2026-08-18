@@ -30,11 +30,18 @@ mod reason {
     pub const SCHEMA_INVALID: &str = "schema_invalid";
     pub const COMPLIANCE_VIOLATIONS: &str = "compliance_violations";
     pub const SIGNING_FAILED: &str = "signing_failed";
+    /// The battery's category requires content the passport does not carry.
+    ///
+    /// Distinct from `sector_data_invalid`, which is data that is present and
+    /// wrong. This is data that is absent, and it is the one rejection a caller
+    /// cannot diagnose from their own request: the requirement lives in
+    /// `dpp-domain`'s category table, not in anything they sent.
+    pub const MANDATORY_CONTENT: &str = "mandatory_content";
 }
 
 use reason::{
     COMPLIANCE_VIOLATIONS as REASON_COMPLIANCE_VIOLATIONS,
-    INVALID_TRANSITION as REASON_INVALID_TRANSITION,
+    INVALID_TRANSITION as REASON_INVALID_TRANSITION, MANDATORY_CONTENT as REASON_MANDATORY_CONTENT,
     MISSING_REGISTRY_IDENTITY as REASON_MISSING_REGISTRY_IDENTITY,
     SCHEMA_INVALID as REASON_SCHEMA_INVALID, SECTOR_DATA_INVALID as REASON_SECTOR_DATA_INVALID,
     SIGNING_FAILED as REASON_SIGNING_FAILED,
@@ -219,7 +226,9 @@ impl PassportService {
         // check a consumer can decline to call is a check the next consumer will
         // not call. Setting these three fields by hand, as this did, declined it.
         let first_publish = passport.published_at.is_none();
-        passport.transition_to(PassportStatus::Published)?;
+        passport
+            .transition_to(PassportStatus::Published)
+            .map_err(|e| reject(REASON_MANDATORY_CONTENT, e))?;
 
         // Engine-side obligations, which core has no view of: the retention
         // horizon comes from this deployment's sector catalog, and the carrier
@@ -525,6 +534,7 @@ mod rejection_reasons {
             reason::SCHEMA_INVALID,
             reason::COMPLIANCE_VIOLATIONS,
             reason::SIGNING_FAILED,
+            reason::MANDATORY_CONTENT,
         ];
         let mut sorted = all.to_vec();
         sorted.sort_unstable();
@@ -545,6 +555,7 @@ mod rejection_reasons {
             reason::SCHEMA_INVALID,
             reason::COMPLIANCE_VIOLATIONS,
             reason::SIGNING_FAILED,
+            reason::MANDATORY_CONTENT,
         ] {
             assert!(
                 !r.is_empty() && r.bytes().all(|b| b.is_ascii_lowercase() || b == b'_'),
