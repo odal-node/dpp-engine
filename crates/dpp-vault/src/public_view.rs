@@ -350,6 +350,50 @@ pub(crate) mod tests {
         assert_eq!(served["publicJwsSignature"], json!(jws));
     }
 
+    /// No audience is ever served a seal without a legible declaring party.
+    ///
+    /// A seal proves that a document came from whoever holds the certificate. It
+    /// says nothing about *scope* — "we vouch for this content" and "we
+    /// transmitted this intact" look identical. So a view carrying a seal and no
+    /// legible declarer invites the reader to conclude the sealer authored the
+    /// content, whatever anyone intended.
+    ///
+    /// Today the invariant holds the easy way, by stripping `seal` from every
+    /// audience. This test is written against the property rather than the
+    /// mechanism, so it keeps meaning if that ever changes: whoever serves a seal
+    /// to an audience must serve a declarer with it.
+    #[test]
+    fn no_audience_gets_a_seal_without_a_declarer() {
+        let passport = stub_passport();
+        let mut full = serde_json::to_value(&passport).expect("serialise");
+        full["seal"] = json!({
+            "format": "CADES",
+            "sealValue": "p7s",
+            "sealedAt": "2026-08-14T00:00:00Z",
+            "placeholder": false,
+        });
+
+        for audience in [
+            Audience::Public,
+            Audience::LegitimateInterest,
+            Audience::Authority,
+        ] {
+            // The passport's own version, as every production caller passes it.
+            let view = audience_view(&full, "battery", &passport.schema_version, audience);
+            let declarer = view
+                .get("manufacturer")
+                .and_then(|m| m.get("name"))
+                .and_then(Value::as_str)
+                .filter(|n| !n.is_empty());
+
+            assert!(
+                view.get("seal").is_none() || declarer.is_some(),
+                "{audience:?} received a seal with no legible declaring party — a reader \
+                 has no way to tell who vouched for this content from who sealed it"
+            );
+        }
+    }
+
     /// A published passport with no public proof is a corrupt row: fail closed
     /// rather than fall back to the live view and silently restore the drift.
     #[test]

@@ -139,6 +139,29 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ### Added
 
+- **Sealing is answerable from the control plane** — `GET /vault/api/v1/seal`
+  and `odal seal status [id]`. With an id: that passport's seal, its signing
+  certificate, and whether it still covers the current signature. Without one:
+  how many published passports carry no seal, operator-wide.
+
+  Both facts were previously reachable only through Prometheus (`seal_outbox_*`
+  gauges) or by curling the per-passport route with an id you had to already
+  know. Neither answers "is anything unsealed", which is the question an
+  operator actually has.
+
+  **The summary counts passports, not outbox rows**, and the distinction is the
+  reason for the new `SealOutbox::unsealed_published_count`. The row counts
+  cannot answer it: `enqueue` runs after the publish commits, so a crash in that
+  window publishes a passport that no row will ever cover, and an outbox
+  reporting `pending: 0, exhausted: 0` is consistent with any number of unsealed
+  passports. A summary built on rows alone would have shown all clear while the
+  obligation went unmet. It shares the repair sweep's predicate so the two
+  cannot drift on what "unsealed" means.
+
+  The CLI prints no verdict on the seal itself. The node does not validate the
+  CAdES and says so; inventing "valid" in the client would manufacture a claim
+  the API declined to make. `superseded` renders as a fact with its explanation,
+  not a failure — the seal remains valid for the signature it does cover.
 - **Frozen stored-doc fixtures for battery v2.6.0, textile v1.2.0 and
   electronics v1.2.0**, and `just capture-fixture <sector>` to produce them.
 
@@ -200,12 +223,13 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   `(passportId, payloadHash)` rather than by passport alone, because a re-publish
   re-signs and the new signature needs its own attestation.
 
-  **`verify()` is not implemented and says so**, returning a typed error. A
-  detached CAdES must be validated by an independent AdES validator against the
-  EU Trusted List — no Rust implementation exists — and this adapter will not
-  report a seal valid on a check it did not perform. The new route and the
-  dossier both state the same thing rather than letting their output read as a
-  verdict.
+  **`verify()` is not implemented for the hosted backend and says so**,
+  returning a typed error. The reason is independence, not tooling: a qualified
+  seal is worth exactly as much as the independence of whoever checked it, so a
+  verdict issued by the node that bought the seal attests nothing a relying party
+  should accept. Those seals are checked by an independent AdES validator against
+  the EU Trusted List. The route and the dossier both state this plainly rather
+  than letting their output read as a verdict.
 
 - **`GET /vault/api/v1/dpp/{dppId}/seal`** returns the qualified seal together
   with the JWS it covers and that JWS's digest. The seal needs its own route
@@ -231,6 +255,62 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   seal at all, so it cannot double-bill. Exhausted rows are held back for six
   hours so sweep and drain do not hammer an outage together.
 
+- **A local development sealing backend** (`SEAL_PROVIDER=local`). Signs
+  in-process with a generated P-256 key under a self-signed certificate,
+  producing a real detached CMS `SignedData` — the same shape a provider returns,
+  so the whole pipeline is exercised without a provider account, a contract, or a
+  sandbox credential. The key is persisted between runs, because a restart that
+  silently invalidated every seal it had produced would teach the wrong thing
+  about how seals behave.
+
+  **It is not qualified and cannot become so.** The certificate is on no EU
+  Trusted List, which is a property of the certificate rather than of this code —
+  nothing in the signing or verification path differs between a self-signed key
+  and a QTSP-held one. What differs is the legal weight, which is none. The node
+  states that structurally by resolving this backend to the `Ghost` trust tier,
+  so a production profile refuses to boot on it while the envelope still drains.
+
+  **This backend does verify its own seals**, and is the only one that does. Its
+  seals make no trust claim beyond "this key signed this digest", so a
+  cryptographic check is the whole truth about them and there is no authority
+  whose independence could be borrowed. It carries the digest in CMS
+  `signedAttrs` and signs over their DER `SET OF` encoding, as CAdES requires,
+  which is what makes the envelope self-checking: a holder of the bytes alone
+  confirms the signature against the certificate travelling inside. `valid: true`
+  from it means exactly that and nothing about trust.
+
+- **`signingCertRef` names the certificate a seal was made with.** Read out of
+  the returned CAdES and surfaced on the seal route, so the question "which
+  certificate signed this, and was it on the EU Trusted List at the time?" no
+  longer requires being handed the `.p7s` and parsing it by hand.
+
+  **Reported by the seal, never verified.** It answers *which* certificate to ask
+  about and nothing else — no chain is built, no Trusted List consulted, no
+  revocation checked. A convenience field that read as verification while
+  verifying nothing would be worse than an absent one, because an absent field
+  prompts the question and a populated one settles it wrongly.
+
+  A hex SHA-256 thumbprint rather than issuer+serial or a subject key identifier:
+  one fixed-length value naming exactly one certificate, comparable without
+  parsing, and the same thing the local backend already reports — a test asserts
+  the two agree, since a field that means different things per backend is not a
+  key anyone can match on. A seal the parser cannot read still stores, with the
+  reference left `null`.
+
+- **`sealedPayloadHash` and `coverage` on the seal route.** The seal envelope
+  records no preimage, so a node could not previously tell a current seal from
+  one superseded by a later re-publish — it could only hand both digests to an
+  external validator. But the outbox row that bought the seal does carry the
+  preimage and is never deleted, so the answer was already held and only ever a
+  query away. `coverage` reports `current`, `superseded`, or `unknown`.
+
+  This is the node's own record of what it *asked* to seal, not proof of what the
+  CAdES covers; only an independent validator establishes the latter, and the two
+  agreeing is the cross-check. `unknown` is deliberately distinct from
+  `superseded`: a seal restored from a backup is very likely current, and
+  branding it stale on the strength of a missing row would be the same error in
+  the opposite direction.
+
 - **A clock-skew hint on authentication failures.** `X-Timestamp` is inside the
   signed message and eID Easy allows five minutes of drift, so a wrong node clock
   produces a 401 byte-for-byte identical to a bad key. The adapter now compares
@@ -239,15 +319,43 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   good credential and the failure persists. `429` is likewise typed separately
   from a generic provider error, with `Retry-After` surfaced when present.
 
+### Breaking
+
+- **`NODE_PROFILE=production` now refuses a `Sandbox` trust tier, not only a
+  ghost.** A production node asserts that its passports are backed by real
+  authorities; admitting a sandbox tier made that untrue, and a provider's test
+  certificate could seal a passport claiming to be real. The tiers are ordered
+  `Ghost < Sandbox < Live` so a profile states a floor rather than enumerating
+  what it rejects — adding a tier later cannot silently pass an existing guard.
+
+  **Migration.** A node running `NODE_PROFILE=production` against a provider's
+  test environment now fails to boot, naming the ports that resolved too low.
+  Either set the new **`NODE_PROFILE=sandbox`** — a full node in every respect
+  except that the authorities behind it are test ones, and still a hard boot
+  failure on ghosts — or point the backend at its production endpoint with
+  production credentials. Sandbox is deliberately a property of the *deployment*
+  rather than a tier a production node may quietly carry: running it as its own
+  environment is the closest rehearsal of production there is, and keeping the
+  two apart is what stops a test certificate ever sealing a real passport.
+
 ### Changed
 
-- **Seal configuration is provider-neutral**: `SEAL_PROVIDER=eideasy|none` plus
-  `SEAL_EIDEASY_*`, replacing the bare `EIDEASY_*` names. Env var names are a
-  published interface, so a second QTSP should be a new value rather than a
-  config migration for every self-hoster. An unrecognised provider fails the
-  boot, as does setting the credentials without selecting the provider — both
-  would otherwise downgrade a node configured for qualified sealing into one
-  with none.
+- **Seal configuration is provider-neutral**: `SEAL_PROVIDER=eideasy|local|none`
+  plus `SEAL_EIDEASY_*` / `SEAL_LOCAL_*`, replacing the bare `EIDEASY_*` names.
+  Env var names are a published interface, so a second QTSP should be a new value
+  rather than a config migration for every self-hoster. An unrecognised provider
+  fails the boot, as does setting one backend's credentials without selecting it
+  — both would otherwise downgrade a node configured for qualified sealing into
+  one with none.
+
+  Backends sit behind a `SealBackend` trait, each owning its own module,
+  variables, validation, wire types and failure classification. Nothing outside a
+  backend's module names it: the adapter holds one `dyn SealBackend` and the
+  selector maps one environment value to one module, so adding a provider is
+  additive and removing one leaves nothing behind. `SealProvider` is deliberately
+  not `#[non_exhaustive]` — adding a backend should break every wiring site
+  rather than fall into a `_` arm, which is how a node silently seals with
+  something other than what it was asked for.
 
 - **`seal` joins the retention guard's mutable keys** (`0028_seal_outbox.sql`)
   and `MUTABLE_FIELDS`. Without it the drain's write to an already-published,

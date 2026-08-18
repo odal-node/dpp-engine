@@ -130,6 +130,29 @@ pub trait SealOutbox: Send + Sync {
     /// next drain pass would buy it again.
     async fn mark_sealed(&self, id: uuid::Uuid, envelope: &SealedEnvelope) -> Result<(), DppError>;
 
+    /// The digest the passport's stored seal was requested over.
+    ///
+    /// [`SealedEnvelope`] carries no preimage, so without this a node cannot tell
+    /// a current seal from one superseded by a later re-publish — it can only
+    /// hand both values to an external validator and let that validator extract
+    /// the signed message digest. But the row that bought the seal *does* carry
+    /// the preimage, and rows are never deleted, so the answer is already held
+    /// here and was only ever a query away.
+    ///
+    /// The latest `sealed` row is the one whose envelope is on the passport:
+    /// [`Self::mark_sealed`] writes the envelope and closes the row in the same
+    /// transaction, so the two cannot disagree about which seal is current.
+    ///
+    /// This is the node's own record, not proof — it says what was *asked* for,
+    /// not what the CAdES actually covers. Only an independent validator
+    /// establishes the latter, and it is the cross-check for this value rather
+    /// than a substitute for it.
+    ///
+    /// `None` when this node holds no sealed row: a seal restored from a backup
+    /// or produced elsewhere is one whose preimage this node cannot vouch for,
+    /// and saying so beats guessing.
+    async fn sealed_digest(&self, passport_id: PassportId) -> Result<Option<String>, DppError>;
+
     /// Transient failure: increment `attempts`, back `next_attempt_at` off
     /// exponentially, keep the row `pending`.
     async fn mark_attempt_failed(&self, id: uuid::Uuid, message: String) -> Result<(), DppError>;
@@ -141,4 +164,22 @@ pub trait SealOutbox: Send + Sync {
 
     /// Counts by status, for boot logs and gauges.
     async fn status_counts(&self) -> Result<SealOutboxCounts, DppError>;
+
+    /// How many **published passports carry no seal at all**, right now.
+    ///
+    /// Not derivable from [`Self::status_counts`], and this is the whole reason
+    /// it exists. Those counts describe *rows*, and the failure that matters
+    /// most leaves no row: [`Self::enqueue`] runs after commit, so a crash in
+    /// that window publishes a passport that nothing will ever seal. An outbox
+    /// reporting `pending: 0, exhausted: 0` is consistent with any number of
+    /// unsealed passports, so a status view built on rows alone would show all
+    /// clear while the obligation went unmet.
+    ///
+    /// Counts passports, not rows, and takes no `limit`: it answers "is anything
+    /// unsealed", which a capped query cannot.
+    ///
+    /// Read-only. [`Self::enqueue_unsealed`] is the repair for the same
+    /// condition and shares this predicate, but adds its own guards for rows the
+    /// drain already owns — those belong to the repair, not to the question.
+    async fn unsealed_published_count(&self) -> Result<i64, DppError>;
 }

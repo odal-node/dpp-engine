@@ -1,6 +1,6 @@
 [package]
 name        = "dpp-seal"
-description = "eIDAS qualified seal adapter — eID Easy Cloud Direct e-Sealing backend for Odal Node"
+description = "eIDAS qualified seal adapter for Odal Node — a hosted QTSP, a local dev sealer, or a ghost"
 version.workspace     = true
 edition.workspace     = true
 authors.workspace     = true
@@ -28,6 +28,21 @@ hex          = { workspace = true }
 url          = { workspace = true }
 zeroize      = { workspace = true }
 
+# Local development backend: a real detached CMS SignedData over the digest,
+# signed by a self-signed key. Not qualified — the certificate is on no Trusted
+# List — but structurally the shape a provider returns, so the whole pipeline is
+# exercised without a provider account.
+# `default-features = false` keeps `rsa` out of the tree: the `builder` feature
+# pulls it in, we sign with P-256, and `rsa` 0.9 carries RUSTSEC-2023-0071 (Marvin
+# timing sidechannel) with no fixed upgrade available.
+cms          = { version = "0.2", default-features = false }
+x509-cert    = "0.2"
+der          = "0.7"
+const-oid    = "0.9"
+p256         = { version = "0.13", features = ["ecdsa", "pkcs8"] }
+rcgen        = "0.14"
+
 [dev-dependencies]
+tempfile     = "3"
 tokio = { workspace = true }
 axum  = { workspace = true }

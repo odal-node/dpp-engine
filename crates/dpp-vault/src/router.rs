@@ -48,7 +48,7 @@ use crate::{
         },
         registry_status::{passport_registry_handler, registry_rollup_handler},
         scan_ingest::{scan_ingest_handler, scan_ingest_mtls},
-        seal::seal_handler,
+        seal::{seal_handler, seal_summary_handler},
         stats::{operator_stats_handler, passport_stats_handler},
         suspend::suspend_handler,
         transfer::{transfer_accept_handler, transfer_initiate_handler},
@@ -93,6 +93,9 @@ pub fn build(state: AppState) -> Router {
         // every audience view — it covers the full-payload signature, so it
         // verifies against no redaction.
         .route("/dpp/{dppId}/seal", get(seal_handler))
+        // The operator-wide counterpart: the per-passport route cannot answer
+        // "is anything unsealed" without already knowing which passport to ask.
+        .route("/seal", get(seal_summary_handler))
         // ── Scan telemetry (aggregate, privacy-safe) ──────────────────
         .route("/dpp/{dppId}/stats", get(passport_stats_handler))
         .route("/stats", get(operator_stats_handler))

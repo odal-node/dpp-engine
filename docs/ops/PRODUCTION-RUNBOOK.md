@@ -10,10 +10,12 @@
 | Tier | Profile | What it honestly claims | Available |
 |---|---|---|---|
 | **T1 Pilot-grade** | default (`NODE_PROFILE` unset) | Full lifecycle, signed + verified passports, hash-chained audit, outbox-durable registry intent; **trust ports run Ghost and say so** in `/health.trust_mode` | **Now** |
-| **T2 Sealed-grade** | `NODE_PROFILE=production` | Everything above + real qualified seals (QTSP via CSC) | After the seal adapter is wired |
+| **T2 Sealed-grade** | `NODE_PROFILE=production` | Everything above + real qualified seals from a hosted QTSP | After a QTSP credential exists — the adapter is wired, the account is not |
 | **T3 Registry-grade** | `NODE_PROFILE=production` | + real EU registry registration | After the Commission publishes its registry spec |
 
 **Blocker A — deliberate:** `NODE_PROFILE=production` **refuses to boot** while seal/registry resolve to Ghost (the honesty invariant working as designed). So every deployment today is **T1 by definition**: run the default profile, point monitoring at `/health`, and make no sealed/registered claims. Do not weaken the guard to "get to production" — the guard *is* the product's credibility.
+
+**`NODE_PROFILE=sandbox`** is the third profile, and it is a property of the *deployment*, not a tier a production node may quietly carry. It is a full node in every respect except that the authorities behind it are test ones: ghosts on required ports are a hard boot failure exactly as in production, but `Sandbox` tiers are accepted, so the environment can be exercised end to end without a production credential. Run it as its own environment — it is the closest rehearsal of production available, and keeping the two profiles apart is what stops a test certificate ever sealing a passport that claims to be real. A `production` node refuses a sandbox tier for that reason.
 
 **Blocker B — operational:** engine `main` now pins **core 0.4.0, which is unpublished** (0.3.0 is the latest on crates.io). The compose `pull` and plain `--build` modes resolve crates.io and **will fail**. Until 0.4.0 is published: build with the local-core overlay (`--build` + `-f docker/docker-compose.local.yml`, i.e. `just up-local`) and record the image digest you deployed. **Before the first external operator deploy: publish core 0.4.0** — your own release rule (CI/release = crates.io) exists precisely so a deploy is reproducible from public sources.
 

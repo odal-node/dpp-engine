@@ -2,7 +2,8 @@
 
 use crate::cli_args::{
     Commands, FacilityCommands, KeyCommands, OperatorCommands, OperatorIdCommands,
-    PassportCommands, PluginCommands, ProfileCommands, SchemaCommands, WebhookCommands,
+    PassportCommands, PluginCommands, ProfileCommands, SchemaCommands, SealCommands,
+    WebhookCommands,
 };
 use crate::commands::{
     bootstrap::run_bootstrap,
@@ -29,6 +30,7 @@ use crate::commands::{
     },
     publish::run_publish,
     schema::run_schema,
+    seal::run_seal_status,
     stats::{run_operator_stats, run_passport_stats},
     status::run_status,
     up::run_up,
@@ -264,6 +266,9 @@ pub async fn dispatch(cmd: Commands) -> anyhow::Result<()> {
             command: SchemaCommands::Check,
         } => run_schema().await,
         Commands::Verify { target } => run_verify(&target).await,
+        Commands::Seal {
+            command: SealCommands::Status { id, json },
+        } => run_seal_status(id.as_deref(), json).await,
         Commands::Stats { days, json } => run_operator_stats(days, json).await,
     }
 }

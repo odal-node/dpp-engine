@@ -15,7 +15,7 @@ use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as BASE64;
 use serde::{Deserialize, Serialize};
 
-use crate::error::SealError;
+use super::error::EideasyError;
 
 /// The `mimeType` we declare. eID Easy built Direct e-Sealing for PDF, and both
 /// their docs and their support answer use this value; it is what we send.
@@ -65,11 +65,11 @@ impl EsealFile {
     pub fn from_hex_digest(
         file_name: impl Into<String>,
         hex_digest: &str,
-    ) -> Result<Self, SealError> {
+    ) -> Result<Self, EideasyError> {
         let raw = hex::decode(hex_digest)
-            .map_err(|e| SealError::Protocol(format!("payload hash is not hex: {e}")))?;
+            .map_err(|e| EideasyError::Protocol(format!("payload hash is not hex: {e}")))?;
         if raw.len() != 32 {
-            return Err(SealError::Protocol(format!(
+            return Err(EideasyError::Protocol(format!(
                 "payload hash must be a 32-byte SHA-256 digest, got {} bytes",
                 raw.len()
             )));
@@ -155,16 +155,16 @@ impl EsealResponse {
     /// A non-`OK` status, or a count other than one, means the response does not
     /// answer the request we made — a protocol fault, rather than something to
     /// reach into `signatures[0]` and hope about.
-    pub fn single_signature(&self) -> Result<&EsealSignatureOut, SealError> {
+    pub fn single_signature(&self) -> Result<&EsealSignatureOut, EideasyError> {
         if !self.is_ok() {
-            return Err(SealError::Protocol(format!(
+            return Err(EideasyError::Protocol(format!(
                 "status was {:?}, expected \"OK\"",
                 self.status
             )));
         }
         match self.signatures.as_slice() {
             [one] => Ok(one),
-            other => Err(SealError::Protocol(format!(
+            other => Err(EideasyError::Protocol(format!(
                 "expected exactly 1 signature for 1 digest, got {}",
                 other.len()
             ))),

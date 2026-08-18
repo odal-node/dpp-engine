@@ -61,7 +61,7 @@ The engine ships as a **single binary** (`dpp-node`) that fuses all services und
 | `dpp-plugin-host` | lib | wasmtime sandbox — fuel metering, memory cap, deny-all WASI, signed-plugin policy |
 | `dpp-node` | bin | **The single binary — fuses all services**, boot trust-report, registry outbox drain, signed-ruleset loader |
 | `dpp-cli` (`cli/`) | bin | `odal` — the operator control plane, from bootstrap to evidence dossier generation and verification |
-| `dpp-seal` | lib | eIDAS qualified-seal adapter (CSC/QTSP client scaffold) — resolves to a clearly-marked Ghost until a QTSP is configured; a production-profile node **refuses to boot** on ghost trust adapters |
+| `dpp-seal` | lib | eIDAS qualified-seal adapter over one `SealBackend`, chosen by `SEAL_PROVIDER`: a hosted QTSP, a local development sealer (real CMS, no legal weight), or a clearly-marked Ghost when unset. Only the first carries legal weight — a production-profile node **refuses to boot** on the others |
 | `dpp-factor-data` | lib | Licensed LCI factor store — ghost provider until a dataset licence is signed; any ghost-derived result is marked `dataset_id="ghost"` |
 
 ### Dependencies on dpp-core

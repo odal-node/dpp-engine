@@ -201,6 +201,26 @@ impl SealOutbox for PgSealOutboxRepo {
         Ok(())
     }
 
+    async fn sealed_digest(&self, passport_id: PassportId) -> Result<Option<String>, DppError> {
+        // A re-published passport accumulates one `sealed` row per signature it
+        // has carried, so "which seal is on the passport" is the newest of them.
+        // `id` breaks a `sealed_at` tie: it is UUID v7, so ties order by
+        // insertion, and `sealed_at` is `now()` — transaction start — which two
+        // rows closed in the same transaction would share.
+        let row = sqlx::query(
+            r#"SELECT payload_hash FROM odal.seal_outbox
+               WHERE passport_id = $1 AND status = 'sealed'
+               ORDER BY sealed_at DESC, id DESC
+               LIMIT 1"#,
+        )
+        .bind(passport_id.0)
+        .fetch_optional(self.dal.pool())
+        .await
+        .map_err(db_err)?;
+
+        Ok(row.map(|r| r.get::<String, _>("payload_hash")))
+    }
+
     async fn mark_attempt_failed(&self, id: Uuid, message: String) -> Result<(), DppError> {
         // Exponential backoff on the *new* attempt count, capped at 1h, with
         // 0.75–1.25× jitter — identical to the registry-sync, webhook and
@@ -258,5 +278,28 @@ impl SealOutbox for PgSealOutboxRepo {
             sealed: row.get::<i64, _>("sealed"),
             exhausted: row.get::<i64, _>("exhausted"),
         })
+    }
+
+    async fn unsealed_published_count(&self) -> Result<i64, DppError> {
+        // The same three conditions `enqueue_unsealed` selects on, and only
+        // those. Its two `NOT EXISTS` guards hold back rows the drain already
+        // owns or that failed recently — they shape *when to retry*, not whether
+        // a passport is unsealed, and applying them here would report a queued
+        // passport as sealed.
+        //
+        // No digest comparison, matching the sweep: a seal over a superseded
+        // signature is still a valid attestation of the signature it covers, and
+        // `/dpp/{id}/seal` reports that per passport as `coverage`.
+        let row = sqlx::query(
+            r#"SELECT count(*) AS unsealed
+               FROM odal.passport p
+               WHERE p.published_at IS NOT NULL
+                 AND p.doc->'seal' IS NULL
+                 AND p.doc->>'jwsSignature' IS NOT NULL"#,
+        )
+        .fetch_one(self.dal.pool())
+        .await
+        .map_err(db_err)?;
+        Ok(row.get::<i64, _>("unsealed"))
     }
 }

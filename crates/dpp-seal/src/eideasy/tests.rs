@@ -19,6 +19,7 @@ use sha2::{Digest, Sha256};
 
 use crate::adapter::QtspSealAdapter;
 use crate::eideasy::client::{ESEAL_PATH, hmac_message};
+use crate::eideasy::config::{SANDBOX_BASE_URL, test_config};
 
 /// Base64 standing in for a real detached CAdES `.p7s`.
 const MOCK_P7S: &str = "TU9DSy1DQWRFUy1QN1M=";
@@ -127,19 +128,29 @@ mod mock_server {
 use mock_server::MockState;
 
 fn adapter_for(base_url: &str, hmac_key: &str) -> QtspSealAdapter {
-    let mut cfg = crate::config::test_config(base_url);
+    let mut cfg = crate::eideasy::config::test_config(base_url);
     cfg.hmac_key = zeroize::Zeroizing::new(hmac_key.to_owned());
-    QtspSealAdapter::eideasy(cfg).unwrap()
+    QtspSealAdapter::new(crate::eideasy::EideasyClient::new(cfg).unwrap())
 }
 
 #[tokio::test]
 async fn unconfigured_adapter_delegates_to_ghost() {
-    let env = QtspSealAdapter::ghost()
+    let env = QtspSealAdapter::new(crate::ghost::GhostSeal)
         .seal(seal_request(fixture_digest()))
         .await
         .unwrap();
     assert!(env.placeholder);
     assert!(env.seal_value.starts_with("GHOST-SEAL-"));
+}
+
+#[test]
+fn this_backend_advertises_cades_only() {
+    let caps = QtspSealAdapter::new(
+        crate::eideasy::EideasyClient::new(test_config(SANDBOX_BASE_URL)).unwrap(),
+    )
+    .capabilities();
+    assert_eq!(caps.supported_formats, vec![SealFormat::Cades]);
+    assert_eq!(caps.supported_modes, vec![SealMode::ProviderSeal]);
 }
 
 #[tokio::test]
@@ -197,6 +208,65 @@ async fn a_wrong_hmac_key_is_a_clean_error_not_a_panic() {
         err.to_string().contains("credentials"),
         "the error should name the credential failure, got: {err}"
     );
+}
+
+/// The certificate the provider sealed with is read back off the wire.
+///
+/// The mock returns a genuine CMS structure rather than the placeholder string
+/// the other tests use, because that is the only way to exercise the extraction
+/// at all — and the value asserted is the signing identity's own thumbprint, so
+/// this fails if the adapter ever reports a certificate other than the one the
+/// seal actually names.
+#[tokio::test]
+async fn the_signing_certificate_is_read_out_of_the_returned_seal() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let id = crate::local::LocalIdentity::load_or_create(dir.path()).expect("identity");
+    let real_p7s = BASE64.encode(id.sign_detached(&[0x33; 32]).expect("sign"));
+
+    let state = Arc::new(MockState::default());
+    *state.force_response.lock().unwrap() = Some((
+        axum::http::StatusCode::OK,
+        serde_json::json!({
+            "status": "OK",
+            "signatures": [{
+                "fileName": "dpp-abc.p7s",
+                "mimeType": "application/pkcs7-signature",
+                "fileContent": real_p7s,
+            }],
+        })
+        .to_string(),
+    ));
+    let base_url = mock_server::spawn(state.clone()).await;
+
+    let env = adapter_for(&base_url, MOCK_KEY)
+        .seal(seal_request(fixture_digest()))
+        .await
+        .expect("seal");
+
+    assert_eq!(
+        env.signing_cert_ref.as_deref(),
+        Some(id.cert_thumbprint().as_str()),
+        "the envelope must name the certificate inside the seal it received"
+    );
+}
+
+/// A seal the parser cannot read still produces an envelope.
+///
+/// The seal was bought and is the thing that matters; an unfillable convenience
+/// field must not cost it. Every other test in this file returns a placeholder
+/// `.p7s` that is not CMS at all, so this is also what keeps them meaningful.
+#[tokio::test]
+async fn an_unparseable_seal_still_stores_without_a_certificate_reference() {
+    let state = Arc::new(MockState::default());
+    let base_url = mock_server::spawn(state.clone()).await;
+
+    let env = adapter_for(&base_url, MOCK_KEY)
+        .seal(seal_request(fixture_digest()))
+        .await
+        .expect("an unreadable seal is still a seal");
+
+    assert_eq!(env.seal_value, MOCK_P7S);
+    assert_eq!(env.signing_cert_ref, None);
 }
 
 #[tokio::test]

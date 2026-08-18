@@ -1,62 +1,29 @@
 //! `QtspSealAdapter` — the `SealPort` implementation.
 //!
-//! Two states, and no third: an eID Easy backend, or `GhostSeal`. The previous
-//! "configured but unimplemented" tier is gone — it was a state that had to
-//! report empty capabilities so it would not contradict a `seal()` that always
-//! errored.
+//! It holds one [`SealBackend`] and does nothing else: forward the port's three
+//! calls, and collapse [`SealError`] into `DppError` at the boundary. Which
+//! backend it holds is decided by [`crate::config`] and constructed by that
+//! backend's own module, so nothing in this file names one — adding or removing
+//! a backend leaves it untouched.
 
 use async_trait::async_trait;
-use chrono::Utc;
 use dpp_domain::{
     domain::error::DppError,
-    ports::seal::{
-        GhostSeal, SealCapabilities, SealFormat, SealMode, SealPort, SealRequest, SealVerification,
-        SealedEnvelope,
-    },
+    ports::seal::{SealCapabilities, SealPort, SealRequest, SealVerification, SealedEnvelope},
 };
-use tracing::warn;
 
-use crate::config::EideasyConfig;
-use crate::eideasy::client::EideasyClient;
-use crate::error::SealError;
+use crate::backend::SealBackend;
 
-/// What `verify()` says instead of guessing.
-const VERIFY_UNSUPPORTED: &str = "seal verification is not implemented: a detached CAdES must be validated by an independent \
-     AdES validator (no Rust implementation exists), and this adapter will not report a seal \
-     valid on a check it did not perform";
-
-/// eIDAS seal adapter.
+/// eIDAS seal adapter over whichever backend the node was configured with.
 pub struct QtspSealAdapter {
-    backend: Backend,
-}
-
-enum Backend {
-    /// Live eID Easy Cloud Direct e-Sealing.
-    Eideasy(Box<EideasyClient>),
-    /// Placeholder with no legal validity; a production node refuses to boot on it.
-    Ghost,
+    backend: Box<dyn SealBackend>,
 }
 
 impl QtspSealAdapter {
-    /// Adapter backed by eID Easy.
-    pub fn eideasy(config: EideasyConfig) -> Result<Self, SealError> {
-        Ok(Self {
-            backend: Backend::Eideasy(Box::new(EideasyClient::new(config)?)),
-        })
-    }
-
-    /// Placeholder adapter — synthetic envelopes, no legal validity.
-    pub fn ghost() -> Self {
+    /// Wrap a backend as the node's `SealPort`.
+    pub fn new(backend: impl SealBackend + 'static) -> Self {
         Self {
-            backend: Backend::Ghost,
-        }
-    }
-
-    /// The configured backend, when there is one. `None` means ghost-backed.
-    pub fn config(&self) -> Option<&EideasyConfig> {
-        match &self.backend {
-            Backend::Eideasy(c) => Some(c.config()),
-            Backend::Ghost => None,
+            backend: Box::new(backend),
         }
     }
 }
@@ -64,78 +31,63 @@ impl QtspSealAdapter {
 #[async_trait]
 impl SealPort for QtspSealAdapter {
     async fn seal(&self, req: SealRequest) -> Result<SealedEnvelope, DppError> {
-        let client = match &self.backend {
-            Backend::Ghost => {
-                warn!("eID Easy not configured — using GhostSeal (placeholder, no legal validity)");
-                return GhostSeal.seal(req).await;
-            }
-            Backend::Eideasy(c) => c,
-        };
-
-        // The digest doubles as the correlation label: eID Easy echoes `fileName`
-        // back, so deriving it from the digest makes a mismatched response visible
-        // without holding request state. No extension — see `EsealFile::file_name`.
-        let file_name = format!(
-            "dpp-{}",
-            &req.payload_hash[..req.payload_hash.len().min(16)]
-        );
-        let seal_value = client
-            .seal_digest(&file_name, &req.payload_hash)
-            .await
-            .map_err(DppError::from)?;
-
-        Ok(SealedEnvelope {
-            format: SealFormat::Cades,
-            seal_value,
-            // The signing certificate travels *inside* the detached CAdES, and
-            // reading it out needs the CMS parser this adapter deliberately does
-            // not have. Left `None` rather than filled with a guess.
-            signing_cert_ref: None,
-            sealed_at: Utc::now(),
-            placeholder: false,
-        })
+        self.backend.seal(req).await.map_err(DppError::from)
     }
 
     async fn verify(&self, env: &SealedEnvelope) -> Result<SealVerification, DppError> {
-        match &self.backend {
-            Backend::Ghost => GhostSeal.verify(env).await,
-            Backend::Eideasy(_) => Err(SealError::Unsupported(VERIFY_UNSUPPORTED).into()),
-        }
+        self.backend.verify(env).await.map_err(DppError::from)
     }
 
     fn capabilities(&self) -> SealCapabilities {
-        match &self.backend {
-            // The placeholder path genuinely produces (synthetic) seals — report
-            // what `GhostSeal` actually does.
-            Backend::Ghost => GhostSeal.capabilities(),
-            // eID Easy Direct e-Sealing offers the CAdES profile only, and this
-            // node holds the seal on operators' behalf, so `ProviderSeal` is the
-            // one mode. `verify()` is unsupported and no capability claims it.
-            Backend::Eideasy(_) => SealCapabilities {
-                supported_formats: vec![SealFormat::Cades],
-                supported_modes: vec![SealMode::ProviderSeal],
-            },
-        }
+        self.backend.capabilities()
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::{SANDBOX_BASE_URL, test_config};
+    use crate::ghost::GhostSeal;
 
     #[test]
     fn unconfigured_reports_ghost_capabilities() {
-        let caps = QtspSealAdapter::ghost().capabilities();
+        let caps = QtspSealAdapter::new(GhostSeal).capabilities();
         assert!(!caps.supported_formats.is_empty());
     }
 
-    #[test]
-    fn the_eideasy_backend_advertises_cades_only() {
-        let caps = QtspSealAdapter::eideasy(test_config(SANDBOX_BASE_URL))
-            .unwrap()
-            .capabilities();
-        assert_eq!(caps.supported_formats, vec![SealFormat::Cades]);
-        assert_eq!(caps.supported_modes, vec![SealMode::ProviderSeal]);
+    /// A backend that implements only what the trait requires must not verify.
+    ///
+    /// The default is what stops a new backend from silently inheriting a
+    /// "valid" answer it never computed — so it is checked through the adapter,
+    /// where the refusal has to survive the conversion to `DppError` to reach a
+    /// caller at all.
+    #[tokio::test]
+    async fn a_backend_that_says_nothing_about_verify_refuses() {
+        struct Minimal;
+
+        #[async_trait]
+        impl SealBackend for Minimal {
+            async fn seal(&self, _req: SealRequest) -> Result<SealedEnvelope, crate::SealError> {
+                unreachable!("this test never seals")
+            }
+            fn capabilities(&self) -> SealCapabilities {
+                SealCapabilities {
+                    supported_formats: Vec::new(),
+                    supported_modes: Vec::new(),
+                }
+            }
+        }
+
+        let env = SealedEnvelope {
+            format: dpp_domain::ports::seal::SealFormat::Cades,
+            seal_value: "p7s".into(),
+            signing_cert_ref: None,
+            sealed_at: chrono::Utc::now(),
+            placeholder: false,
+        };
+        let err = QtspSealAdapter::new(Minimal)
+            .verify(&env)
+            .await
+            .expect_err("the default must refuse rather than answer");
+        assert!(err.to_string().contains("not implemented"), "{err}");
     }
 }

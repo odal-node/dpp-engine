@@ -155,9 +155,10 @@ dpp-integrator                  — CSV/XLSX bulk import
 dpp-common                      — event bus trait, telemetry, config helpers, RFC 7807 errors
 dpp-plugin-host                 — wasmtime sandbox for sector Wasm plugins
 dpp-node                        — MVP single binary fusing vault + identity + integrator
-dpp-seal                        — eIDAS qualified seal adapter: eID Easy Cloud Direct e-Sealing
-                                  (CAdES) with a GhostSeal fallback. Wired into dpp-node, but the
-                                  drain only arms against a real QTSP — see the sealing_live guard
+dpp-seal                        — eIDAS qualified seal adapter: one `SealBackend` behind the
+                                  `SealPort`, selected by SEAL_PROVIDER (hosted QTSP / local dev
+                                  sealer / ghost). Only the hosted one has legal weight; the drain
+                                  arms for any backend that emits a real envelope (sealing_live)
 dpp-factor-data                 — licensed LCI factor data store: GhostFactorProvider + FactorStore trait (no dependent yet)
 cli/                            — management CLI (clap); package `dpp-cli`, binary `odal`
 ```
@@ -336,6 +337,7 @@ Background cleanup task runs every 6 hours, deleting completed/failed jobs older
 | GET | `/vault/api/v1/registry` | Bearer | EU-registry sync rollup |
 | GET | `/vault/api/v1/dpp/{dppId}/history` | Bearer | Audit trail |
 | GET | `/vault/api/v1/dpp/{dppId}/seal` | Bearer | eIDAS qualified seal + the JWS/digest it covers (`404` when unsealed) |
+| GET | `/vault/api/v1/seal` | Bearer | Operator-wide sealing state — published passports carrying no seal, plus outbox totals |
 | GET | `/vault/api/v1/dpp/{dppId}/stats` | Bearer | Per-passport scan telemetry (aggregate; scans + qrRenders, never summed) |
 | GET | `/vault/api/v1/stats` | Bearer | Operator-wide scan telemetry rollup |
 | POST | `/vault/internal/scan-batch` | mTLS (`CN=odal-resolver`) | Resolver scan-telemetry flush sink (off public + `/api/v1`) |

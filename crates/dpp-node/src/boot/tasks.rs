@@ -314,7 +314,7 @@ fn set_seal_gauges(c: &SealOutboxCounts) {
 pub async fn spawn_seal_drain(
     outbox: Arc<dyn SealOutbox>,
     seal: Arc<dyn SealPort>,
-    client_id: String,
+    key_ref: dpp_domain::ports::seal::SealCredentialRef,
 ) {
     match outbox.status_counts().await {
         Ok(c) => {
@@ -332,7 +332,7 @@ pub async fn spawn_seal_drain(
     tokio::spawn(async move {
         loop {
             tokio::time::sleep(DRAIN_INTERVAL).await;
-            dpp_node::infra::seal_drain::drain_once(&outbox, &seal, &client_id, DRAIN_BATCH).await;
+            dpp_node::infra::seal_drain::drain_once(&outbox, &seal, &key_ref, DRAIN_BATCH).await;
             if let Ok(c) = outbox.status_counts().await {
                 set_seal_gauges(&c);
                 if c.exhausted > 0 {

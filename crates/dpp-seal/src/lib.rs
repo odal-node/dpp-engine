@@ -3,48 +3,13 @@
 //! # The sealing model
 //!
 //! A qualified electronic seal is produced by a Qualified Trust Service
-//! Provider (QTSP) — this node never holds the seal's private key and never
-//! assembles an AdES signature in-process (no Rust AdES library exists; the
-//! provider's response *is* the seal). Until a provider is configured,
+//! Provider (QTSP) — for that seal this node never holds the private key and
+//! never assembles the signature in-process; the provider's response *is* the
+//! seal. The local backend does assemble a CMS structure in-process, which is
+//! precisely why it is not qualified. Until a provider is configured,
 //! [`adapter::QtspSealAdapter`] delegates to `GhostSeal` — a placeholder with
 //! no legal validity, which is why a production node's trust report refuses
 //! to boot while the seal port resolves to a ghost.
-//!
-//! # Provider
-//!
-//! **eID Easy Cloud Direct e-Sealing**, which aggregates qualified QTSPs and
-//! produces **CAdES** over the payload digest. Auth is HMAC over the exact
-//! request bytes. CAdES from a qualified QTSP carries the same eIDAS
-//! Art. 35 legal presumption as any other AdES envelope; the DPP registry
-//! requires a *qualified* seal, not a specific envelope format.
-//!
-//! Sandbox needs no legal entity — it seals with eID Easy test certificates.
-//! The entity gates *production* only.
-//!
-//! ## Two properties of this API that constrain any second backend
-//!
-//! Both are properties of *this provider*, not of sealing, and neither is
-//! visible from the `SealPort` contract — which is the reason to write them
-//! down here rather than discover them from a second adapter.
-//!
-//! **It returns a container, never a raw signature.** A digest goes in and a
-//! detached CMS comes back. There is no operation that signs caller-supplied
-//! bytes and returns the signature value alone. So this backend cannot support
-//! a format assembled locally — anything of that shape needs a provider
-//! offering a raw-signature primitive, which is what the Cloud Signature
-//! Consortium API calls `signatures/signHash`. That is a procurement
-//! constraint, not something an adapter can work around.
-//!
-//! **It has no capability discovery.** There is no endpoint that reports which
-//! formats or conformance levels are available. The provider's own API
-//! documentation states that the signature form and profile to send are the
-//! values enabled for a given client — so they are configured out of band, and
-//! [`SealCapabilities`] for this backend is *declared* rather than discovered.
-//! A CSC-speaking provider would answer the same question with
-//! `credentials/info`, and an adapter for one should — the port models
-//! capability precisely so the two can differ.
-//!
-//! [`SealCapabilities`]: dpp_domain::domain::seal::SealCapabilities
 //!
 //! # What is sealed
 //!
@@ -57,19 +22,32 @@
 //!
 //! # Structure
 //!
-//! - [`adapter`] — `QtspSealAdapter`, the `SealPort` impl (eID Easy or ghost)
-//! - [`config`] — `EideasyConfig`, resolved from the environment
-//! - [`eideasy`] — Cloud Direct e-Sealing wire types and HTTP client
-//! - [`error`] — `SealError`, classified once at the HTTP boundary
+//! - [`backend`] — `SealBackend`, the seam every backend implements
+//! - [`cades`] — reading what a detached CAdES reports about itself, shared by
+//!   the backends and never claiming a check it did not perform
+//! - [`adapter`] — `QtspSealAdapter`, the `SealPort` impl over one of them
+//! - [`config`] — which backend this node runs, and nothing about any of them
+//! - [`eideasy`] — a hosted QTSP backend: its config, wire types, client and errors
+//! - [`local`] — in-process signing for development
+//! - [`ghost`] — the placeholder, as a backend like any other
+//! - [`error`] — `SealError`, what is true of sealing regardless of backend
+//!
+//! Each backend owns its own module: its configuration, its variables, its
+//! failure messages and its wire types, and it constructs itself. Nothing
+//! outside a backend's module names it — the adapter holds a `dyn SealBackend`
+//! and the selector maps one environment value to one module — so a backend can
+//! be added or dropped without touching the others.
 
 pub mod adapter;
+pub mod backend;
+pub mod cades;
 pub mod config;
 pub mod eideasy;
 pub mod error;
+pub mod ghost;
+pub mod local;
 
 pub use adapter::QtspSealAdapter;
-pub use config::{EideasyConfig, EideasyEnvironment};
+pub use backend::SealBackend;
+pub use config::{SEAL_PROVIDER, SealProvider};
 pub use error::SealError;
-
-#[cfg(test)]
-mod tests;

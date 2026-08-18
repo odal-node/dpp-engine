@@ -19,7 +19,6 @@ use dpp_common::{
 use dpp_crypto::keystore::KeyStore;
 use dpp_domain::ports::{
     archive::ArchivePort, compliance::ComplianceRegistry, registry_sync::RegistrySyncPort,
-    seal::SealPort,
 };
 use dpp_identity_service::state::AppState as IdentityState;
 use dpp_integrator::{infra::vault_client::VaultHttpClient, state::AppState as IntegratorState};
@@ -173,46 +172,12 @@ async fn main() -> anyhow::Result<()> {
         dpp_node::infra::credential_issuers::from_env(operator_did.as_deref());
     let credentials_live = credential_trust != TrustMode::Ghost;
 
-    // ── eIDAS qualified seal (eID Easy Cloud Direct e-Sealing) ───────────────
-    // A partial configuration is an error rather than a silent ghost: dropping
-    // to no sealing because one of three variables was misspelled is exactly the
-    // downgrade the trust report exists to prevent, so it fails the boot.
-    let (seal, seal_client_id, seal_trust): (Arc<dyn SealPort>, String, TrustMode) =
-        match dpp_seal::EideasyConfig::from_env().context("eID Easy configuration")? {
-            Some(cfg) => {
-                // Sandbox is a real seal from a real API, but over eID Easy's test
-                // certificate — a distinct claim from both Ghost and Live.
-                let mode = match cfg.environment {
-                    dpp_seal::EideasyEnvironment::Sandbox => TrustMode::Sandbox,
-                    dpp_seal::EideasyEnvironment::Production => TrustMode::Live,
-                };
-                let client_id = cfg.client_id.clone();
-                tracing::info!(
-                    base_url = %cfg.base_url,
-                    mode = mode.as_str(),
-                    "eIDAS seal: eID Easy adapter active"
-                );
-                let adapter = dpp_seal::QtspSealAdapter::eideasy(cfg)
-                    .context("Failed to build eID Easy seal adapter")?;
-                (Arc::new(adapter), client_id, mode)
-            }
-            None => {
-                tracing::info!(
-                    "eIDAS seal: ghost (no QTSP) — set SEAL_PROVIDER=eideasy plus \
-                     SEAL_EIDEASY_BASE_URL + SEAL_EIDEASY_CLIENT_ID + SEAL_EIDEASY_HMAC_KEY \
-                     to enable"
-                );
-                (
-                    Arc::new(dpp_seal::QtspSealAdapter::ghost()),
-                    String::new(),
-                    TrustMode::Ghost,
-                )
-            }
-        };
-    let sealing_live = seal_trust != TrustMode::Ghost;
+    // ── eIDAS qualified seal ─────────────────────────────────────────────────
+    let seal_wiring = dpp_node::infra::seal::from_env()?;
+    let sealing_live = seal_wiring.drains;
 
     let trust = boot::trust::build_and_enforce(
-        seal_trust,
+        seal_wiring.trust,
         registry_trust,
         archive_trust,
         credential_trust,
@@ -424,7 +389,12 @@ async fn main() -> anyhow::Result<()> {
     // would stamp synthetic placeholder seals onto published passports and
     // report them sealed.
     if sealing_live {
-        boot::tasks::spawn_seal_drain(db.seal_outbox.clone(), seal.clone(), seal_client_id).await;
+        boot::tasks::spawn_seal_drain(
+            db.seal_outbox.clone(),
+            seal_wiring.port.clone(),
+            seal_wiring.credential,
+        )
+        .await;
         // The backstop for seals the event-driven path never queued, or that gave
         // up during an outage. Without it a published passport can stay unsealed
         // forever with nothing to notice.

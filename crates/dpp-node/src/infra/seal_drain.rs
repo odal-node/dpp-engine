@@ -71,7 +71,7 @@ async fn back_off_or_exhaust(
 pub async fn drain_once(
     outbox: &Arc<dyn SealOutbox>,
     seal: &Arc<dyn SealPort>,
-    client_id: &str,
+    key_ref: &SealCredentialRef,
     batch: i64,
 ) -> DrainStats {
     let mut stats = DrainStats::default();
@@ -87,14 +87,12 @@ pub async fn drain_once(
         let req = SealRequest {
             payload_hash: row.payload_hash.clone(),
             mode: SealMode::ProviderSeal,
-            // CSC-shaped and unused by the eID Easy backend, whose credential is
-            // adapter config rather than a per-request reference. Filled with
-            // what actually identifies the sealing client so the field carries
-            // provenance instead of a placeholder.
-            key_ref: SealCredentialRef {
-                qtsp_id: "eideasy".to_owned(),
-                credential_id: client_id.to_owned(),
-            },
+            // CSC-shaped, and no backend here reads it — each one's credential
+            // is adapter config rather than a per-request reference. Passed in
+            // from the composition root rather than named here: the drain is
+            // provider-agnostic, and a literal in this file would put a false
+            // provider name on every request of whichever backend it was not.
+            key_ref: key_ref.clone(),
             sig_format: SealFormat::Cades,
         };
 
@@ -179,6 +177,10 @@ mod tests {
             self.sealed.lock().unwrap().push(id);
             Ok(())
         }
+        async fn sealed_digest(&self, _p: PassportId) -> Result<Option<String>, DppError> {
+            // Read back by the seal route, never by the drain.
+            Ok(None)
+        }
         async fn mark_attempt_failed(
             &self,
             _id: uuid::Uuid,
@@ -193,6 +195,12 @@ mod tests {
         }
         async fn status_counts(&self) -> Result<SealOutboxCounts, DppError> {
             Ok(SealOutboxCounts::default())
+        }
+
+        async fn unsealed_published_count(&self) -> Result<i64, DppError> {
+            // These tests drive the drain, which never asks. A passport-level
+            // count has no meaning against a fake holding only rows.
+            Ok(0)
         }
     }
 
@@ -228,6 +236,16 @@ mod tests {
         }
     }
 
+    /// Stands in for whatever the composition root resolved the backend to.
+    /// Nothing in the drain reads it, which is exactly why it must not be named
+    /// here in production code either.
+    fn test_key_ref() -> SealCredentialRef {
+        SealCredentialRef {
+            qtsp_id: "test-provider".to_owned(),
+            credential_id: "test-client".to_owned(),
+        }
+    }
+
     fn row(attempts: i32) -> SealRow {
         SealRow {
             id: uuid::Uuid::now_v7(),
@@ -256,7 +274,7 @@ mod tests {
         let stats = drain_once(
             &(outbox.clone() as Arc<dyn SealOutbox>),
             &(seal.clone() as Arc<dyn SealPort>),
-            "test-client",
+            &test_key_ref(),
             10,
         )
         .await;
@@ -275,7 +293,7 @@ mod tests {
         drain_once(
             &(outbox as Arc<dyn SealOutbox>),
             &(seal.clone() as Arc<dyn SealPort>),
-            "test-client",
+            &test_key_ref(),
             10,
         )
         .await;
@@ -289,7 +307,7 @@ mod tests {
         let stats = drain_once(
             &(outbox.clone() as Arc<dyn SealOutbox>),
             &(seal as Arc<dyn SealPort>),
-            "test-client",
+            &test_key_ref(),
             10,
         )
         .await;
@@ -305,7 +323,7 @@ mod tests {
         let stats = drain_once(
             &(outbox.clone() as Arc<dyn SealOutbox>),
             &(seal as Arc<dyn SealPort>),
-            "test-client",
+            &test_key_ref(),
             10,
         )
         .await;
@@ -323,7 +341,7 @@ mod tests {
         let stats = drain_once(
             &(outbox.clone() as Arc<dyn SealOutbox>),
             &(seal as Arc<dyn SealPort>),
-            "test-client",
+            &test_key_ref(),
             10,
         )
         .await;

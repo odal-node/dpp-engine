@@ -122,6 +122,12 @@ pub enum Commands {
         /// Stored dossier id, or path to a dossier JSON file
         target: String,
     },
+    // ── Qualified seals ──────────────────────────────────────────────────────
+    /// eIDAS qualified seal inspection
+    Seal {
+        #[command(subcommand)]
+        command: SealCommands,
+    },
     // ── Insight ──────────────────────────────────────────────────────────────
     /// Operator-wide scan telemetry — how often your passports were resolved
     /// (per-passport detail: `odal passport stats <id>`)
@@ -424,5 +430,19 @@ pub enum WebhookCommands {
     Remove {
         /// Webhook subscription id
         id: String,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum SealCommands {
+    /// Show sealing state. With no ID: how many published passports are
+    /// unsealed, operator-wide. With an ID: that passport's seal, its signing
+    /// certificate, and whether it still covers the current signature
+    Status {
+        /// Passport ID. Omit for the operator-wide summary.
+        id: Option<String>,
+        /// Output the raw route response instead of a summary
+        #[arg(long)]
+        json: bool,
     },
 }

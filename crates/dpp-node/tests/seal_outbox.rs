@@ -260,15 +260,33 @@ fn draft_passport() -> Passport {
     }
 }
 
-fn eideasy_config(base_url: &str) -> dpp_seal::EideasyConfig {
-    dpp_seal::EideasyConfig {
+fn eideasy_config(base_url: &str) -> dpp_seal::eideasy::EideasyConfig {
+    dpp_seal::eideasy::EideasyConfig {
         base_url: base_url.to_owned(),
-        environment: dpp_seal::EideasyEnvironment::Sandbox,
+        environment: dpp_seal::eideasy::EideasyEnvironment::Sandbox,
         client_id: MOCK_CLIENT_ID.to_owned(),
         hmac_key: zeroize::Zeroizing::new(MOCK_KEY.to_owned()),
         signature_profile: "CAdES_BASELINE_T".to_owned(),
         request_timeout: std::time::Duration::from_secs(10),
     }
+}
+
+/// What the composition root resolves for this backend: the provider's own
+/// selector value, plus the client the seal is billed to. No backend reads it —
+/// it is carried as provenance — but it is built here rather than in the drain
+/// so the drain stays provider-agnostic.
+fn mock_key_ref() -> dpp_domain::ports::seal::SealCredentialRef {
+    dpp_domain::ports::seal::SealCredentialRef {
+        qtsp_id: dpp_seal::eideasy::config::PROVIDER.to_owned(),
+        credential_id: MOCK_CLIENT_ID.to_owned(),
+    }
+}
+
+/// The real `SealPort` over the real provider backend, pointed at the mock.
+fn eideasy_adapter(cfg: dpp_seal::eideasy::EideasyConfig) -> Arc<dyn SealPort> {
+    Arc::new(QtspSealAdapter::new(
+        dpp_seal::eideasy::EideasyClient::new(cfg).expect("build adapter"),
+    ))
 }
 
 // ─── The loop ─────────────────────────────────────────────────────────────────
@@ -345,10 +363,9 @@ async fn publish_then_drain_seals_the_passport_end_to_end() {
     );
 
     // ── 3. Drain: the real adapter against the mock ──────────────────────────
-    let adapter: Arc<dyn SealPort> =
-        Arc::new(QtspSealAdapter::eideasy(eideasy_config(&base_url)).expect("build adapter"));
+    let adapter = eideasy_adapter(eideasy_config(&base_url));
     let outbox_dyn: Arc<dyn SealOutbox> = seal_outbox.clone();
-    let stats = drain_once(&outbox_dyn, &adapter, MOCK_CLIENT_ID, 10).await;
+    let stats = drain_once(&outbox_dyn, &adapter, &mock_key_ref(), 10).await;
     assert_eq!(stats.sealed, 1, "the drain must seal the queued row");
     assert_eq!(stats.retried, 0);
 
@@ -418,7 +435,7 @@ async fn publish_then_drain_seals_the_passport_end_to_end() {
     assert_eq!(counts.sealed, 1);
     assert_eq!(counts.pending, 0);
 
-    let stats2 = drain_once(&outbox_dyn, &adapter, MOCK_CLIENT_ID, 10).await;
+    let stats2 = drain_once(&outbox_dyn, &adapter, &mock_key_ref(), 10).await;
     assert_eq!(stats2.sealed, 0, "a closed row must not be re-sealed");
     assert_eq!(
         mock.requests.lock().unwrap().len(),
@@ -470,10 +487,9 @@ async fn a_republish_needs_and_gets_its_own_seal() {
     let first = service.publish(id, &auth()).await.expect("publish");
     let first_jws = first.jws_signature.clone().unwrap();
 
-    let adapter: Arc<dyn SealPort> =
-        Arc::new(QtspSealAdapter::eideasy(eideasy_config(&base_url)).expect("build adapter"));
+    let adapter = eideasy_adapter(eideasy_config(&base_url));
     let outbox_dyn: Arc<dyn SealOutbox> = seal_outbox.clone();
-    drain_once(&outbox_dyn, &adapter, MOCK_CLIENT_ID, 10).await;
+    drain_once(&outbox_dyn, &adapter, &mock_key_ref(), 10).await;
 
     // Suspend → publish again: the signing path runs afresh.
     service
@@ -499,7 +515,7 @@ async fn a_republish_needs_and_gets_its_own_seal() {
         hex::encode(Sha256::digest(second_jws.as_bytes()))
     );
 
-    drain_once(&outbox_dyn, &adapter, MOCK_CLIENT_ID, 10).await;
+    drain_once(&outbox_dyn, &adapter, &mock_key_ref(), 10).await;
     let counts = seal_outbox.status_counts().await.expect("counts");
     assert_eq!(counts.sealed, 2, "one seal per distinct signature");
     assert_eq!(
@@ -548,11 +564,10 @@ async fn a_wrong_key_is_rejected_and_the_row_stays_pending() {
 
     let mut bad = eideasy_config(&base_url);
     bad.hmac_key = zeroize::Zeroizing::new("the-wrong-key".to_owned());
-    let adapter: Arc<dyn SealPort> =
-        Arc::new(QtspSealAdapter::eideasy(bad).expect("build adapter"));
+    let adapter = eideasy_adapter(bad);
     let outbox_dyn: Arc<dyn SealOutbox> = seal_outbox.clone();
 
-    let stats = drain_once(&outbox_dyn, &adapter, MOCK_CLIENT_ID, 10).await;
+    let stats = drain_once(&outbox_dyn, &adapter, &mock_key_ref(), 10).await;
     assert_eq!(stats.sealed, 0);
     assert_eq!(stats.retried, 1, "a rejected call must back off, not drop");
     assert_eq!(*mock.rejected.lock().unwrap(), 1);
