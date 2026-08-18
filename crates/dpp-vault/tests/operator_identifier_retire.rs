@@ -46,7 +46,7 @@ async fn retiring_an_operator_identifier_preserves_passport_provenance_and_audit
                     "sector": "battery",
                     "gtin": "09506000134352",
                     "batteryChemistry": "LFP",
-                    "batteryType": "industrial",
+                    "batteryType": "portable",
                     "nominalVoltageV": 48.0,
                     "nominalCapacityAh": 100.0,
                     "expectedLifetimeCycles": 3000,

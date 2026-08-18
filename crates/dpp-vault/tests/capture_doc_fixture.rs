@@ -46,6 +46,9 @@
 //! convention asks for.
 
 #![cfg(feature = "integration-tests")]
+// A complete industrial battery is 38 mandatory fields; `serde_json::json!`
+// recurses once per token and the default limit of 128 cannot expand it.
+#![recursion_limit = "256"]
 
 mod helpers;
 
@@ -186,6 +189,22 @@ async fn capture_battery() {
                     {"name": "Cobalt", "casNumber": "7440-48-4", "weightGrams": 300.0},
                     {"name": "Lithium", "casNumber": "7439-93-2", "weightGrams": 800.0}
                 ],
+                "batteryStatus": "original",
+                "internalCellResistanceMohm": 1.4,
+                "internalPackResistanceMohm": 12.0,
+                "notInUseTemperatureRange": {"minC": -20.0, "maxC": 60.0},
+                "notInUseTemperatureReferenceTest": "IEC 62660-1:2018 storage",
+                "cathodeMaterial": [{"name": "LiNiMnCoO2", "weightPct": 32.0}],
+                "anodeMaterial": [{"name": "Graphite", "weightPct": 18.0}],
+                "electrolyteMaterial": [{"name": "LiPF6 in EC/DMC", "weightPct": 11.0}],
+                "componentPartNumbers": ["CELL-21700-A", "BMS-4820"],
+                "sparePartsContacts": "parts@greencell.example.com",
+                "disassemblyInstructionsUrl": "https://greencell.example.com/disassembly/ind-48",
+                "safetyMeasures": "Isolate before servicing; do not puncture",
+                "testReportResults": "IEC 62619:2022 — pass",
+                "markingInformation": "CE, separate-collection symbol, capacity label",
+                "euDeclarationOfConformity": "https://greencell.example.com/doc/ind-48.pdf",
+                "wasteBatteryInformation": "Return to an authorised collection point",
                 "placedOnMarketDate": "2026-07-15"
             }
         }),
