@@ -12,11 +12,45 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ### Breaking
 
+- **A battery passport can no longer be published without the content its
+  category makes mandatory.** Publishing an electric-vehicle, LMT or industrial
+  battery now requires all 38 fields the Commission's guidance marks mandatory
+  for it, and a passport missing any of them is refused with every missing field
+  named at once. A draft that published before this release may be refused until
+  those fields are supplied.
+
+  The gate is `dpp-core`'s, added in 0.17.0, and this engine was not reaching it.
+  `publish` set `status`, `published_at` and `retention_locked` by hand and never
+  called `Passport::transition_to`, which is the only path to the check —
+  `check_mandatory_content` is private to `dpp-domain` precisely so a consumer
+  cannot decline it while still transitioning. Setting the three fields directly
+  declined it. Publish now transitions, and keeps only what core has no view of:
+  `retention_until` from this deployment's sector catalog, and `qr_code_url` from
+  its resolver.
+
+  **Also refused: a battery passport carrying no `sectorData` at all.** The gate
+  returns before asking which fields are missing, so a battery with no sector
+  data stops publishing rather than publishing empty.
+
+  **Portable and SLI batteries are unaffected**, deliberately. The guidance
+  covers three categories and core declines to invent requirements for the
+  others; the engine inherits that scope rather than over-applying the gate. That
+  is a real hole, held open until a source covering those categories exists — and
+  it is now pinned by a test, so it cannot close by accident.
+
+  Suites whose subject is not battery content — credentials, audit trails,
+  suspension, registry status — now use `portable` fixtures. That is choosing a
+  valid product category, not evading the gate: the gate itself is covered by
+  tests that assert the refusal, name the missing fields, and check that a
+  refused first publish leaves no `publishedAt` and no retention lock. Core is
+  explicit that a half-applied first publish would be unrepairable, since
+  retention lock is permanent.
+
 - **Pinned to `dpp-core` 0.17.0.** Three of its changes are visible here, and
-  **two of its new refusals are not reached by this engine at all** — see the
-  note at the end of this entry. The count is stated because "we adopted what
-  the release changed" and "we adopted the parts that touched our types" must
-  not look the same from the changelog.
+  **one of its new refusals is still not reached by this engine** — see the note
+  at the end of this entry. The count is stated because "we adopted what the
+  release changed" and "we adopted the parts that touched our types" must not
+  look the same from the changelog.
 
   **Battery passports stored under schema versions below v2.5.0 can no longer be
   read.** `batteryType` became required and closed at v2.5.0 (EU 2023/1542
@@ -49,27 +83,17 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   Previously an absent or misspelled value parsed to `None` and produced a
   passport missing a mandatory field instead of a failed row.
 
-  **Two of 0.17.0's new refusals are unreached by this release, and stay
-  unreached after it.** Both are compliance gates core added, and both live on
-  methods this engine does not call.
+  **Two of 0.17.0's new refusals were unreached when the repin landed.** Both
+  are compliance gates core added, and both live on methods this engine did not
+  call. One is now wired — see the mandatory-content entry above, which adopts
+  `Passport::transition_to`.
 
-  `Passport::transition_to(Published)` refuses a first publish when a battery
-  omits content the Battery Regulation makes mandatory for its category. Publish
-  here checks `PassportStatus::can_transition_to` — the state machine on the
-  status enum — and then sets `status`, `published_at` and `retention_locked`
-  itself, so the gate never runs. For `ev`, `lmt` and `industrial` that is
-  roughly twenty mandatory fields against the six a passport can publish with
-  today. `Passport::validate()` is likewise never called, so the same release's
-  requirement that an unsold-goods passport carry an in-scope `commodity_code`
-  agreeing with its `productCategory` is also unreachable.
-
-  Neither is a regression — both refusals are new in 0.17.0 and were never
-  enforced here. But a repin that adopts a release's types while leaving its
-  rules inert is a partial adoption, and saying so is the difference between a
-  known gap and a silent one. Tracked in #110; not fixed here, because routing
-  publish through `transition_to` changes what an operator can publish and fails
-  every battery test until its fixture carries the full set — which is the point,
-  and is its own change.
+  The other still is not. `Passport::validate()` is called nowhere in this
+  repo, so the same release's requirement that an unsold-goods passport carry an
+  in-scope `commodity_code` agreeing with its `productCategory` remains
+  unreachable. Not a regression — the refusal is new in 0.17.0 and was never
+  enforced here — but a rule core added and this engine does not run is worth
+  naming rather than leaving to be discovered. Tracked in #110.
 
 ### Changed
 
