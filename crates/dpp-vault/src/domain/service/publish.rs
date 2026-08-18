@@ -152,25 +152,33 @@ impl PassportService {
         // 4-6 fields that changed after an earlier serialize. `jws_signature`
         // is set only after signing (a payload can't sign over its own
         // signature); `public_jws_signature` stays `None` throughout.
-        passport.status = PassportStatus::Published;
-        // publishedAt is set once, on first publish, and preserved across
-        // suspend → re-publish cycles (dpp-core invariant).
-        if passport.published_at.is_none() {
-            let now = Utc::now();
-            passport.published_at = Some(now);
+        // The transition is core's to perform, not ours to imitate.
+        //
+        // `transition_to` sets `status`, `published_at` (first publish only) and
+        // `retention_locked`, and — the reason it must be called rather than
+        // reproduced — runs the mandatory-content gate that refuses a first
+        // publish omitting content the product's category requires. That gate is
+        // private to `dpp-domain` and reachable no other way, deliberately: a
+        // check a consumer can decline to call is a check the next consumer will
+        // not call. Setting these three fields by hand, as this did, declined it.
+        let first_publish = passport.published_at.is_none();
+        passport.transition_to(PassportStatus::Published)?;
+
+        // Engine-side obligations, which core has no view of: the retention
+        // horizon comes from this deployment's sector catalog, and the carrier
+        // URL from its resolver. Both are derived from the timestamp core just
+        // set, so all three agree on when the publish happened.
+        if first_publish && passport.retention_until.is_none() {
             // Compute and seal retention_until once at first publish, from the
             // catalog — the single source of the obligation, held beside the
             // act that imposes it. A stricter delegated-act period can be set
             // by the operator before publishing.
-            if passport.retention_until.is_none() {
-                let years = retention_years_for(&passport.sector);
-                passport.retention_until =
-                    Some(now + chrono::Duration::days(365 * i64::from(years)));
-            }
+            let published_at = passport.published_at.unwrap_or_else(Utc::now);
+            let years = retention_years_for(&passport.sector);
+            passport.retention_until =
+                Some(published_at + chrono::Duration::days(365 * i64::from(years)));
         }
-        passport.updated_at = Utc::now();
         passport.qr_code_url = Some(build_carrier_url(&passport, &self.resolver_base_url));
-        passport.retention_locked = true;
 
         // `status` serialises to the API wire string ("active") via
         // `PassportStatus`'s own `Serialize` impl — already reflects the

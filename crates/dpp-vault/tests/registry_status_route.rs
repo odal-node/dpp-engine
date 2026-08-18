@@ -59,7 +59,21 @@ async fn a_published_passport_reports_its_registration() {
                 "productName": "Registry Surface Battery",
                 "sector": "battery",
                 "manufacturer": { "name": "TestCorp GmbH", "address": "Berlin, DE" },
-                "commodityCode": "85076000"
+                "commodityCode": "85076000",
+                // A battery passport can no longer publish with no sector data
+                // at all — the mandatory-content gate refuses it before asking
+                // which fields are missing. Portable is outside the guidance's
+                // scope, so this carries the schema minimum and nothing more:
+                // the subject here is the registry surface, not battery content.
+                "sectorData": {
+                    "sector": "battery",
+                    "gtin": "09506000134352",
+                    "batteryType": "portable",
+                    "batteryChemistry": "LFP",
+                    "nominalVoltageV": 3.7,
+                    "nominalCapacityAh": 2.5,
+                    "co2ePerUnitKg": 1.8
+                }
             }),
         )
         .await;
