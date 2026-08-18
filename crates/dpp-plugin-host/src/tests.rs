@@ -151,6 +151,57 @@ fn default_trait_creates_empty_host() {
     assert!(!host.has_any_plugin());
 }
 
+/// A sector with no loaded plugin is served by the fallback registry, not by a
+/// passthrough result the host invents.
+///
+/// The host used to return `ComplianceResult::passthrough()` inline for this
+/// case, so `PassthroughRegistry` — and the whole per-sector `ComplianceStrategy`
+/// seam it dispatches through — never ran in the node, whatever `dpp-domain`
+/// documented.
+///
+/// Covers the no-plugin path only. The converse — that a loaded plugin takes
+/// precedence over the fallback — needs a real module and is
+/// `register_plugin_and_compute_via_host` in the integration tier.
+#[test]
+fn a_sector_without_a_plugin_is_served_by_the_fallback_registry() {
+    use dpp_domain::ports::compliance::{ComplianceError, ComplianceResult};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    struct CountingRegistry(Arc<AtomicUsize>);
+    impl ComplianceRegistry for CountingRegistry {
+        fn compute(
+            &self,
+            _sector_key: &str,
+            _data: &SectorData,
+        ) -> Result<ComplianceResult, ComplianceError> {
+            self.0.fetch_add(1, Ordering::SeqCst);
+            Ok(ComplianceResult {
+                co2e_score: Some(12.5),
+                ..ComplianceResult::passthrough()
+            })
+        }
+    }
+
+    let calls = Arc::new(AtomicUsize::new(0));
+    let host = WasmPluginHost::new().with_fallback(Arc::new(CountingRegistry(Arc::clone(&calls))));
+
+    let data = SectorData::other(serde_json::json!({ "sector": "quantum-widget" }))
+        .expect("an unmodelled sector tag builds SectorData::Other");
+    let result = ComplianceRegistry::compute(&host, "quantum-widget", &data)
+        .expect("fallback must serve the sector");
+
+    assert_eq!(
+        calls.load(Ordering::SeqCst),
+        1,
+        "fallback was not consulted"
+    );
+    assert_eq!(
+        result.co2e_score,
+        Some(12.5),
+        "the fallback's result must be returned verbatim, not replaced by a bare passthrough"
+    );
+}
+
 // ── discover_plugins() ──────────────────────────────────────────────────
 
 #[test]
