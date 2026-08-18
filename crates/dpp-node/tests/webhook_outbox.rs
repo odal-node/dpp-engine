@@ -21,7 +21,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use axum::{Router, extract::State, http::HeaderMap, http::StatusCode, routing::post};
-use hmac::{Hmac, Mac};
+use hmac::{Hmac, KeyInit, Mac};
 use sha2::Sha256;
 use testcontainers::{
     GenericImage, ImageExt,
@@ -152,7 +152,7 @@ fn signature_valid(secret: &str, header: &str, body: &str) -> bool {
     let (Some(t), Some(v1)) = (t, v1) else {
         return false;
     };
-    let mut mac = HmacSha256::new_from_slice(secret.as_bytes()).unwrap();
+    let mut mac = <HmacSha256 as KeyInit>::new_from_slice(secret.as_bytes()).unwrap();
     mac.update(format!("{t}.{body}").as_bytes());
     hex::encode(mac.finalize().into_bytes()) == v1
 }

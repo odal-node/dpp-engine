@@ -38,7 +38,7 @@ use axum::{
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as BASE64;
 use chrono::Utc;
-use hmac::{Hmac, Mac};
+use hmac::{Hmac, KeyInit, Mac};
 use sha2::{Digest, Sha256};
 use testcontainers::{
     GenericImage, ImageExt,
@@ -103,7 +103,7 @@ async fn eseal(State(state): State<Arc<MockState>>, headers: HeaderMap, body: By
         .unwrap()
         .push((raw.clone(), ts.clone(), presented.clone()));
 
-    let mut mac = HmacSha256::new_from_slice(MOCK_KEY.as_bytes()).unwrap();
+    let mut mac = <HmacSha256 as KeyInit>::new_from_slice(MOCK_KEY.as_bytes()).unwrap();
     mac.update(hmac_message("POST", ESEAL_PATH, ts.parse().unwrap_or(0), &raw).as_bytes());
     let expected = BASE64.encode(mac.finalize().into_bytes());
 

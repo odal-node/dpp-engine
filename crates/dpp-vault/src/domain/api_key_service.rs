@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use base64::Engine as _;
 use chrono::{DateTime, Utc};
-use rand::RngCore;
+use rand::Rng;
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
@@ -110,7 +110,7 @@ impl ApiKeyService {
 
 fn generate_secret() -> String {
     let mut buf = [0u8; KEY_ENTROPY_BYTES];
-    rand::rngs::OsRng.fill_bytes(&mut buf);
+    rand::rand_core::UnwrapErr(rand::rngs::SysRng).fill_bytes(&mut buf);
     let random = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(buf);
     format!("{KEY_PREFIX}{random}")
 }

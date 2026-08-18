@@ -8,7 +8,7 @@
 use std::sync::Arc;
 
 use base64::Engine as _;
-use rand::RngCore;
+use rand::Rng;
 use uuid::Uuid;
 
 use dpp_common::event::DppEvent;
@@ -133,7 +133,7 @@ impl WebhookService {
 
 fn generate_secret() -> String {
     let mut buf = [0u8; SECRET_ENTROPY_BYTES];
-    rand::rngs::OsRng.fill_bytes(&mut buf);
+    rand::rand_core::UnwrapErr(rand::rngs::SysRng).fill_bytes(&mut buf);
     let random = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(buf);
     format!("{SECRET_PREFIX}{random}")
 }
