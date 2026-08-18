@@ -1,4 +1,4 @@
-﻿[package]
+[package]
 name        = "dpp-render"
 version     = { workspace = true }
 edition     = { workspace = true }
@@ -22,4 +22,3 @@ chrono     = { workspace = true }
 # drives the completeness check off the embedded schemas' x-disclosure
 # annotations rather than a restated field list.
 dpp-domain = { workspace = true }
-
