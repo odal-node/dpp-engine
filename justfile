@@ -8,6 +8,33 @@
 set dotenv-load
 
 # ---------------------------------------------------------------------------
+# Why the gate's checks live in scripts/ rather than as shebang recipes
+#
+# `just` runs a recipe whose body starts with `#!` as a script, and on Windows it
+# translates the interpreter path with `cygpath`. Where `cygpath` is not on PATH
+# the recipe dies with "Could not find `cygpath` executable" and takes `just
+# check` down with it — which makes CLAUDE.md's "never commit before `just check`
+# is green" unsatisfiable. That is a real failure and it is why this started, but
+# state it accurately: it depends on the Git Bash install, not on Windows as
+# such. A checkout with `cygpath` present (it ships at `/usr/bin/cygpath` in a
+# full Git for Windows) runs the shebang recipes fine, so this is a portability
+# hazard rather than a platform-wide break.
+#
+# The reasons that hold everywhere, and are why the change is worth making
+# regardless of which shell you have:
+#
+# - A script can be run and tested on its own (`bash scripts/x.sh`), which a
+#   recipe body cannot. `scripts/check-audit-register.sh` already had a
+#   `.test.sh` beside it for exactly that reason.
+# - The rule and its allow-list get one home, next to the code that enforces
+#   them, instead of being embedded in a task runner.
+# - No interpreter translation happens at all, so the hazard above cannot recur.
+#
+# `set shell` is not the fix: it applies to recipes *without* a shebang, and
+# those run each line in its own shell, which breaks any script using a variable.
+# ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
 # Quality gates
 # ---------------------------------------------------------------------------
 
@@ -23,11 +50,7 @@ test:
 # `dpp-vc`. Running them needs Docker; *compiling* them does not, so the local
 # gate can at least prove they still build.
 check-integration:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    for c in dpp-dal dpp-vault dpp-plugin-host dpp-node; do
-        cargo test --no-run --quiet -p "$c" --features integration-tests
-    done
+    bash scripts/check-integration.sh
 
 # Run the Docker-backed integration tiers (dal, vault, plugin-host, node)
 test-integration:
@@ -102,15 +125,7 @@ fmt-check:
 
 # Forbid println!/eprintln!/dbg! in service-crate src (use tracing:: instead)
 debug-check:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    if grep -rn --include="*.rs" \
-         -e '\bprintln!' -e '\beprintln!' -e '\bdbg!' \
-         --exclude-dir=tests --exclude-dir=benches \
-         crates/*/src; then
-        echo "ERROR: println!/eprintln!/dbg! in service crate src — use tracing:: instead"
-        exit 1
-    fi
+    bash scripts/debug-check.sh
 
 # Forbid raw "dpp.passport."/"dpp.import." subject literals outside dpp-common::event
 # (event_type/NATS-subject strings must come from the `subjects` constants, or a
@@ -124,23 +139,30 @@ debug-check:
 # is worse than not checking those crates — a local gate that cries wolf is one
 # people stop running.
 subjects-check:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    if grep -rn --include="*.rs" \
-         -e '"dpp\.passport\.' -e '"dpp\.import\.' \
-         --exclude-dir=tests --exclude-dir=benches \
-         --exclude=event.rs \
-         crates/dpp-common/src \
-         crates/dpp-dal/src \
-         crates/dpp-vault/src \
-         crates/dpp-identity/src \
-         crates/dpp-resolver/src \
-         crates/dpp-integrator/src \
-         crates/dpp-plugin-host/src \
-         crates/dpp-node/src; then
-        echo "ERROR: raw dpp.passport./dpp.import. subject literal outside dpp-common::event — use the subjects:: constants"
-        exit 1
-    fi
+    bash scripts/subjects-check.sh
+
+# Every table with a live DELETE grant must be named in ops/pg/README.md.
+#
+# "The app role cannot DELETE" is the sentence a reader uses to reason about
+# whether an application-level compromise can destroy evidence, and it drifted:
+# CLAUDE.md and .env.example both said "one sanctioned exception" while three
+# tables carried the grant. Both now point at the README; this keeps it true.
+#
+# The list lives in the README rather than in 0010 because a migration cannot be
+# edited once applied (see migrations-check) and this list must be.
+grants-check:
+    bash scripts/grants-check.sh
+
+# Refuse a modification to a migration that already exists on the default branch.
+#
+# `sqlx::migrate!` checksums every file, so editing an applied one makes a node
+# that has already run it refuse to boot — a hard failure with no in-product
+# remedy. `reset-db` below exists because this has already happened once (0015,
+# a comment-only change during a repo-wide sweep). "Append-only" was written
+# down as "never renumbered", which a comment sweep respects while breaking the
+# checksum, so this checks the property that actually matters.
+migrations-check:
+    bash scripts/migrations-check.sh
 
 # Forbid un-guarded outbound HTTP client construction in service crate src.
 #
@@ -154,24 +176,7 @@ outbound-check:
 # exceptions are named and excluded: service/mod.rs (PassportService + its
 # builders) and validate/mod.rs (dispatch fn + its error type).
 mod-rs-check:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    exceptions="crates/dpp-vault/src/domain/service/mod.rs crates/dpp-integrator/src/domain/validate/mod.rs"
-    violations=""
-    for f in $(find crates/*/src cli/src -name mod.rs); do
-        skip=false
-        for e in $exceptions; do
-            [ "$f" = "$e" ] && skip=true
-        done
-        [ "$skip" = true ] && continue
-        if grep -nE '^[[:space:]]*pub[[:space:]]+(struct|enum|trait|fn|const|static|type)\b' "$f" > /dev/null; then
-            violations="$violations $f"
-        fi
-    done
-    if [ -n "$violations" ]; then
-        echo "ERROR: mod.rs defines public items (should be a pure index) in:$violations"
-        exit 1
-    fi
+    bash scripts/mod-rs-check.sh
 
 # Run security audit against the RustSec advisory database. --deny yanked/
 # unmaintained so those stop passing silently (a yanked crate is a
@@ -188,7 +193,7 @@ doc:
     cargo doc --workspace --no-deps
 
 # Fast gate (no Docker) — mirrors CI jobs: fmt, clippy, debug-prints, test-unit, audit
-check: fmt-check lint debug-check subjects-check mod-rs-check outbound-check test check-integration audit
+check: fmt-check lint debug-check subjects-check mod-rs-check outbound-check grants-check migrations-check test check-integration audit
 
 # Full local CI mirror — adds integration-feature clippy + the Docker tiers (needs Docker running)
 ci: check lint-integration test-integration test-pg

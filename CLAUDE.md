@@ -192,7 +192,8 @@ reaches CI; `just core-published` removes it to build against the registry again
 - `dpp-crypto` — Ed25519, JWS compact serialisation, encrypted key store
 - `dpp-vc` — W3C Verifiable Credentials, `did:web` document builder, status lists, `LocalIdentityService`, JSON-LD context
 - `dpp-digital-link` — GS1 Digital Link parser and link-type negotiation
-- `dpp-aas` — Asset Administration Shell projection (no engine consumer yet)
+- `dpp-aas` — Asset Administration Shell projection, served by the resolver's
+  content-negotiated `/dpp/{dppId}` (`dpp-resolver/src/handlers/resolve_aas.rs`)
 - `dpp-calc` — EU-methodology calculators (CO2e, repairability)
 - `dpp-plugin-traits` — Wasm plugin ABI (wit-bindgen)
 - `dpp-registry` — EU EUDPP Central Registry connector (stub: `GhostRegistrySync`)
@@ -238,7 +239,7 @@ Router nesting:
 
 ### Database
 
-**PostgreSQL** accessed via `sqlx` through `PgDal` (connection pool). The app role (`odal_app`) cannot run DDL or (with one sanctioned exception) DELETE. Single-tenant: no Row-Level Security — one operator per node, so there is no in-process isolation boundary to enforce.
+**PostgreSQL** accessed via `sqlx` through `PgDal` (connection pool). The app role (`odal_app`) cannot run DDL, and can DELETE only from the tables listed under "The DELETE set" in `ops/pg/README.md` — read the set there rather than a count restated here, which is how this line came to claim "one sanctioned exception" while three tables carried the grant. The README is the one home because `just grants-check` gates it against the actual grants; a migration cannot be, since the set spans several (`0010` and `0025` today) and an applied migration cannot be edited when a grant changes. Single-tenant: no Row-Level Security — one operator per node, so there is no in-process isolation boundary to enforce.
 
 **Schema:** `ops/pg/*.sql` — a clean, FK-ordered, append-only migration set (see the directory for the current range; new migrations are only ever added, never renumbered), applied via `PgDal::migrate(url)` at boot using a privileged role, or pre-applied by ops tooling. No RLS (single-tenant).
 
@@ -297,6 +298,16 @@ Background cleanup task runs every 6 hours, deleting completed/failed jobs older
 
 ## All HTTP Routes
 
+> **This table drifted 19 routes behind the router**, including an
+> unauthenticated one that reaches the network, and listed four routes as plain
+> `Bearer` that in fact require `admin`. It is hand-maintained against a static
+> structure, which is a losing arrangement — the durable fix is to generate it,
+> or to delete it in favour of `api/openapi.yaml` (already linted by
+> `just openapi-check`) so the fact has one home. Until then: **`(admin)` and
+> `(write)` in the Auth column are enforced by `require_admin`/`require_write`
+> in the handler, not by the middleware**, so they are the column most likely to
+> go stale — verify against the handler's first lines before relying on a row.
+
 ### MVP Node (port 8001)
 
 | Method | Path | Auth | Handler |
@@ -307,6 +318,7 @@ Background cleanup task runs every 6 hours, deleting completed/failed jobs older
 | GET | `/vault/api/v1/info` | None | Build info |
 | GET | `/vault/public/dpp/{dppId}` | None | Public passport read |
 | GET | `/vault/public/dpp/by-gtin/{gtin}` | None | Public passport read by GTIN |
+| GET | `/vault/credential/dpp/{dppId}` | **None** — `X-DPP-Credential` only | Audience-scoped read. Deliberately outside both `/public` (a public URL whose body varies by caller breaks caching and the meaning of `publicJwsSignature`) and `/api/v1` (a repairer or authority holds a credential and no API key). **Unauthenticated and network-touching**: it resolves the credential issuer's `did:web` over the guarded outbound path before anything is verified, and a verified read appends to the passport's audit trail. No credential ⇒ the public view, byte-identical to `/public/dpp/{dppId}` |
 | POST | `/vault/api/v1/dpp` | Bearer | Create passport |
 | GET | `/vault/api/v1/dpps` | Bearer | List passports |
 | GET | `/vault/api/v1/dpp/{dppId}` | Bearer | Read passport |
@@ -314,6 +326,14 @@ Background cleanup task runs every 6 hours, deleting completed/failed jobs older
 | POST | `/vault/api/v1/dpp/{dppId}/publish` | Bearer | Publish (signs with Ed25519) |
 | POST | `/vault/api/v1/dpp/{dppId}/suspend` | Bearer | Suspend |
 | POST | `/vault/api/v1/dpp/{dppId}/archive` | Bearer | Archive |
+| POST | `/vault/api/v1/dpp/{dppId}/lint` | Bearer (write) | Re-run the plausibility lint pack — **persists** `lintResult` |
+| POST | `/vault/api/v1/dpp/{dppId}/eol` | Bearer (write) | Declare end of life |
+| POST | `/vault/api/v1/dpp/{dppId}/transfer/initiate` | Bearer (write) | Sign a pending transfer of responsibility |
+| POST | `/vault/api/v1/dpp/{dppId}/transfer/accept` | Bearer (write) | Countersign and complete it |
+| GET | `/vault/api/v1/dpp/by-identity` | Bearer | Find by (sector, GTIN, batch) — backs the import delta-matcher |
+| GET | `/vault/api/v1/dpp/{dppId}/verify-tree` | Bearer | Walk and verify the component (BOM) graph |
+| GET | `/vault/api/v1/dpp/{dppId}/registry` | Bearer | EU-registry sync status for one passport |
+| GET | `/vault/api/v1/registry` | Bearer | EU-registry sync rollup |
 | GET | `/vault/api/v1/dpp/{dppId}/history` | Bearer | Audit trail |
 | GET | `/vault/api/v1/dpp/{dppId}/seal` | Bearer | eIDAS qualified seal + the JWS/digest it covers (`404` when unsealed) |
 | GET | `/vault/api/v1/dpp/{dppId}/stats` | Bearer | Per-passport scan telemetry (aggregate; scans + qrRenders, never summed) |
@@ -326,17 +346,24 @@ Background cleanup task runs every 6 hours, deleting completed/failed jobs older
 | POST | `/vault/api/v1/evidence/verify` | Bearer | Verify an uploaded dossier document |
 | GET | `/vault/api/v1/node/state` | Bearer | Node setup state (claimed / configured) |
 | GET | `/vault/api/v1/operator` | Bearer | Get operator config |
-| PATCH | `/vault/api/v1/operator` | Bearer | Update operator branding |
-| GET | `/vault/api/v1/api-keys` | Bearer | List API keys |
-| POST | `/vault/api/v1/api-keys` | Bearer | Create API key |
-| DELETE | `/vault/api/v1/api-keys/{id}` | Bearer | Revoke API key |
+| PATCH | `/vault/api/v1/operator` | Bearer (admin) | Update operator branding |
+| GET | `/vault/api/v1/api-keys` | Bearer (admin) | List API keys |
+| POST | `/vault/api/v1/api-keys` | Bearer (admin) | Create API key |
+| DELETE | `/vault/api/v1/api-keys/{id}` | Bearer (admin) | Revoke API key |
+| POST | `/vault/api/v1/plugins` | Bearer (admin) | Install a **signed** sector plugin and hot-swap it |
+| GET | `/vault/api/v1/webhooks` | Bearer (admin) | List webhook subscriptions |
+| POST | `/vault/api/v1/webhooks` | Bearer (admin) | Create one (SSRF-guarded URL) |
+| DELETE | `/vault/api/v1/webhooks/{id}` | Bearer (admin) | Remove one |
+| POST | `/vault/api/v1/webhooks/{id}/test` | Bearer (admin) | Send a signed test delivery |
 | GET | `/vault/api/v1/facilities` | Bearer (admin) | List facilities (Annex III) |
 | POST | `/vault/api/v1/facilities` | Bearer (admin) | Add a facility (validated GLN/country) |
-| DELETE | `/vault/api/v1/facilities/{id}` | Bearer (admin) | Remove a facility |
+| DELETE | `/vault/api/v1/facilities/{id}` | Bearer (admin) | Retire a facility (never a hard delete) |
+| GET | `/vault/api/v1/facilities/{id}/audit` | Bearer (admin) | Append-only provenance trail for one facility |
 | POST | `/vault/api/v1/facilities/{id}/default` | Bearer (admin) | Set the default facility |
 | GET | `/vault/api/v1/operator-identifiers` | Bearer (admin) | List operator identifiers (Art. 13) |
 | POST | `/vault/api/v1/operator-identifiers` | Bearer (admin) | Add an identifier (validated LEI/VAT/EORI/DUNS) |
-| DELETE | `/vault/api/v1/operator-identifiers/{id}` | Bearer (admin) | Remove an operator identifier |
+| DELETE | `/vault/api/v1/operator-identifiers/{id}` | Bearer (admin) | Retire an identifier (never a hard delete) |
+| GET | `/vault/api/v1/operator-identifiers/{id}/audit` | Bearer (admin) | Append-only provenance trail for one identifier |
 | POST | `/vault/api/v1/operator-identifiers/{id}/primary` | Bearer (admin) | Set the primary operator identifier |
 | GET | `/identity/health` | None | Identity health |
 | GET | `/identity/ready` | None | Identity ready |
@@ -374,6 +401,9 @@ The internal endpoints are mTLS-gated (`CN=odal-vault`).
 | GET | `/dpp/{dppId}` | None | Content-negotiated (HTML, JSON-LD, or AAS Environment); `406` for anything else |
 | GET | `/dpp/{dppId}/qr` | None | QR code PNG |
 | GET | `/01/{gtin}` | None | GS1 Digital Link resolver (redirect / linkset) |
+| GET | `/01/{gtin}/21/{serial}` | None | Same, with AI 21 — **the shape `publish` actually mints** |
+| GET | `/01/{gtin}/10/{batch}` | None | Same, with AI 10 |
+| GET | `/01/{gtin}/10/{batch}/21/{serial}` | None | Same, with both |
 
 > **Scan telemetry (privacy-safe aggregates).** When `SCAN_INGEST_URL` is set,
 > the resolver counts *terminal-view* resolutions (`/dpp/{dppId}` html + json)
