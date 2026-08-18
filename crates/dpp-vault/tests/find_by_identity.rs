@@ -31,7 +31,7 @@ fn battery_passport(gtin: &str) -> serde_json::Value {
             "sector": "battery",
             "gtin": gtin,
             "batteryChemistry": "LFP",
-            "batteryType": "industrial",
+            "batteryType": "portable",
             "nominalVoltageV": 48.0,
             "nominalCapacityAh": 100.0,
             "expectedLifetimeCycles": 3000,
