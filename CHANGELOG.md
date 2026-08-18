@@ -137,6 +137,43 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   sector-level `productCategory` inside `sectorData` (steel, electronics) is a
   different field and is untouched.
 
+### Fixed
+
+- **`WasmPluginHost` now serves an unplugged sector from a real registry.** It
+  returned a hard-coded `ComplianceResult::passthrough()` inline, so
+  `PassthroughRegistry` — and therefore the per-sector `ComplianceStrategy` seam
+  it dispatches through — **never ran in the node**, whatever `dpp-domain`
+  documented about it being the extension point a compliance tier wires into.
+  The host now holds an `Arc<dyn ComplianceRegistry>` fallback, defaulted to
+  `PassthroughRegistry`, and `with_fallback` replaces it.
+
+  Both halves are asserted by a test that fails on the previous behaviour: the
+  fallback is consulted when no plugin is loaded, and its result is returned
+  verbatim rather than replaced by a bare passthrough.
+
+  **No behaviour changes until this engine repins.** `PassthroughRegistry` in
+  the pinned `dpp-core` 0.17.0 is a unit struct registering no strategies, so
+  every sector still takes the same bare passthrough it did before. The strategy
+  dispatch it delegates to arrives with the next core version; this removes the
+  bypass that would have kept it unreachable when it does.
+
+- **`just build-plugins` no longer copies a months-old binary and reports
+  success.** It read the built artifact from `sector-<name>/target`, which the
+  sector plugins have not been built into since they moved to a shared cargo
+  workspace — cargo writes to `plugins/target`. Stale per-member target
+  directories from the older layout are still on disk, `ls | head -n1` found one,
+  and `cp` succeeded. The battery plugin shipped here ran two months behind its
+  source as a result.
+
+  The recipe now names the artifact rather than globbing, errors when it is
+  absent, and refuses to copy one older than its own source.
+
+- **`just check-plugins`**, wired into `just check`: fails when an installed
+  `plugins/*.wasm` is older than the source it was built from. Nothing noticed a
+  stale plugin binary before, because nothing looked. Skips cleanly when the
+  sibling `dpp-core` checkout is absent, so CI — which has neither that checkout
+  nor these unsigned dev artifacts — is unaffected.
+
 ### Added
 
 - **Sealing is answerable from the control plane** — `GET /vault/api/v1/seal`

@@ -193,7 +193,7 @@ doc:
     cargo doc --workspace --no-deps
 
 # Fast gate (no Docker) — mirrors CI jobs: fmt, clippy, debug-prints, test-unit, audit
-check: fmt-check lint debug-check subjects-check mod-rs-check outbound-check grants-check migrations-check test check-integration audit
+check: fmt-check lint debug-check subjects-check mod-rs-check outbound-check grants-check migrations-check check-plugins test check-integration audit
 
 # Full local CI mirror — adds integration-feature clippy + the Docker tiers (needs Docker running)
 ci: check lint-integration test-integration test-pg
@@ -337,11 +337,56 @@ build-plugins *PLUGINS:
         if [ ! -d "$dir" ]; then echo "skip: no such plugin '$dir'"; continue; fi
         echo "Building sector-${name}..."
         ( cd "$dir" && cargo build --target wasm32-wasip1 --release )
-        art="$(ls "$dir/target/wasm32-wasip1/release/"*.wasm | head -n1)"
+        # The sector plugins share ONE cargo workspace, so cargo writes to
+        # plugins/target — not plugins/sector-<name>/target. This read the
+        # per-crate path, which stale target dirs from an older layout still
+        # populate, so `ls | head -n1` found a months-old binary, `cp` succeeded,
+        # and the recipe reported success while shipping it. Name the artifact
+        # instead of globbing, so a miss is an error rather than a wrong file.
+        art="$CORE_DIR/plugins/target/wasm32-wasip1/release/sector_${name}.wasm"
+        if [ ! -f "$art" ]; then
+            echo "ERROR: cargo reported success but $art does not exist."
+            exit 1
+        fi
+        # A build that produced nothing is the failure this recipe exists to
+        # make impossible. One find pass, not a per-file loop.
+        if [ -n "$(find "$dir/src" "$dir/Cargo.toml" -newer "$art" | head -n1)" ]; then
+            echo "ERROR: $art is older than its own source — the build did not run."
+            exit 1
+        fi
         cp "$art" "$DEST/sector-${name}.wasm"
         echo "  -> plugins/sector-${name}.wasm"
     done
     echo "Done. Unsigned; set ALLOW_UNSIGNED_PLUGINS=true for local 'just node'."
+
+# Fail when an installed plugin binary is older than the source it was built
+# from. `build-plugins` copies unsigned dev artifacts in, and nothing else
+# notices when one goes stale — the battery plugin ran two months behind its
+# source because the copy step read a directory cargo had stopped writing to.
+#
+# Skips cleanly when the sibling checkout is absent, so CI (which has no
+# ../dpp-core and loads signed artifacts anyway) stays green.
+check-plugins:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    CORE_DIR="../dpp-core"
+    if [ ! -d "$CORE_DIR/plugins" ]; then
+        echo "check-plugins: no sibling dpp-core checkout — skipped."
+        exit 0
+    fi
+    shopt -s nullglob
+    stale=0
+    for art in plugins/*.wasm; do
+        name="$(basename "$art" .wasm)"; name="${name#sector-}"
+        dir="$CORE_DIR/plugins/sector-${name}"
+        [ -d "$dir" ] || continue
+        if [ -n "$(find "$dir/src" "$dir/Cargo.toml" -newer "$art" | head -n1)" ]; then
+            echo "STALE: $art is older than $dir/src — run 'just build-plugins ${name}'"
+            stale=1
+        fi
+    done
+    if [ "$stale" -ne 0 ]; then exit 1; fi
+    echo "check-plugins: all installed plugin binaries are newer than their sources."
 
 # ---------------------------------------------------------------------------
 # Cleanup
