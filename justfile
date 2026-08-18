@@ -10,18 +10,28 @@ set dotenv-load
 # ---------------------------------------------------------------------------
 # Why the gate's checks live in scripts/ rather than as shebang recipes
 #
-# `just` runs a recipe whose body starts with `#!` as a script, and on Windows
-# it translates the interpreter path with `cygpath` — which is not on PATH in a
-# default Git Bash install. `just check` therefore died at step 3 of 8 with
-# "Could not find `cygpath` executable", on the platform this repo is developed
-# on, which made CLAUDE.md's "never commit before `just check` is green"
-# unsatisfiable as written.
+# `just` runs a recipe whose body starts with `#!` as a script, and on Windows it
+# translates the interpreter path with `cygpath`. Where `cygpath` is not on PATH
+# the recipe dies with "Could not find `cygpath` executable" and takes `just
+# check` down with it — which makes CLAUDE.md's "never commit before `just check`
+# is green" unsatisfiable. That is a real failure and it is why this started, but
+# state it accurately: it depends on the Git Bash install, not on Windows as
+# such. A checkout with `cygpath` present (it ships at `/usr/bin/cygpath` in a
+# full Git for Windows) runs the shebang recipes fine, so this is a portability
+# hazard rather than a platform-wide break.
 #
-# `set shell` does not help: it applies to recipes without a shebang, and a
-# recipe without one has each *line* run in its own shell, which breaks any
-# script using a variable. So the scripts became scripts. `bash scripts/x.sh` is
-# one line, runs identically everywhere, is testable on its own, and matches
-# what `scripts/check-audit-register.sh` already did.
+# The reasons that hold everywhere, and are why the change is worth making
+# regardless of which shell you have:
+#
+# - A script can be run and tested on its own (`bash scripts/x.sh`), which a
+#   recipe body cannot. `scripts/check-audit-register.sh` already had a
+#   `.test.sh` beside it for exactly that reason.
+# - The rule and its allow-list get one home, next to the code that enforces
+#   them, instead of being embedded in a task runner.
+# - No interpreter translation happens at all, so the hazard above cannot recur.
+#
+# `set shell` is not the fix: it applies to recipes *without* a shebang, and
+# those run each line in its own shell, which breaks any script using a variable.
 # ---------------------------------------------------------------------------
 
 # ---------------------------------------------------------------------------
@@ -154,6 +164,13 @@ grants-check:
 migrations-check:
     bash scripts/migrations-check.sh
 
+# Forbid un-guarded outbound HTTP client construction in service crate src.
+#
+# The rule, the allow-list and the reasoning live in scripts/outbound-check.sh —
+# one home, and a script that can be run and tested on its own.
+outbound-check:
+    bash scripts/outbound-check.sh
+
 # Forbid public type/fn/const definitions in mod.rs (index files should be
 # `mod`/`pub use` only — the re-layout's whole point). Two allocation-plan
 # exceptions are named and excluded: service/mod.rs (PassportService + its
@@ -176,7 +193,7 @@ doc:
     cargo doc --workspace --no-deps
 
 # Fast gate (no Docker) — mirrors CI jobs: fmt, clippy, debug-prints, test-unit, audit
-check: fmt-check lint debug-check subjects-check mod-rs-check grants-check migrations-check test check-integration audit
+check: fmt-check lint debug-check subjects-check mod-rs-check outbound-check grants-check migrations-check test check-integration audit
 
 # Full local CI mirror — adds integration-feature clippy + the Docker tiers (needs Docker running)
 ci: check lint-integration test-integration test-pg

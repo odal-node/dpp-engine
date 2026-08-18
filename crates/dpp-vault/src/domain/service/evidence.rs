@@ -252,15 +252,23 @@ impl PassportService {
     }
 }
 
+/// Fetch a transfer counterparty's `did:web` document.
+///
+/// The DID comes from a `TransferRecord`, which a caller supplied verbatim on
+/// `POST /dpp/{id}/transfer/initiate` — so the fetch target is chosen by an API
+/// client, not by this operator, and the response is embedded in the dossier
+/// this call returns. That combination is a read primitive, not a blind fetch,
+/// which is why it goes through the shared guarded path
+/// ([`dpp_common::outbound`]) rather than a bare client: the guard refuses
+/// internal targets, redirects are not followed so a public host cannot bounce
+/// into the internal network, the body is capped, and the request times out.
 async fn fetch_remote_did_document(did: &str) -> Result<serde_json::Value, DppError> {
     let url = crate::domain::verify::did_web_url(did).map_err(DppError::Internal)?;
-    let resp = reqwest::get(&url)
-        .await
-        .map_err(|e| DppError::Internal(format!("{url}: {e}")))?;
-    if !resp.status().is_success() {
-        return Err(DppError::Internal(format!("{url}: HTTP {}", resp.status())));
-    }
-    resp.json()
-        .await
-        .map_err(|e| DppError::Serialisation(format!("{url}: {e}")))
+    dpp_common::outbound::fetch_json(
+        &dpp_common::outbound::guarded_client(),
+        &url,
+        dpp_common::outbound::DEFAULT_MAX_BODY,
+    )
+    .await
+    .map_err(|e| DppError::Internal(format!("{url}: {e}")))
 }

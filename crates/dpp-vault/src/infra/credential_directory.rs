@@ -61,7 +61,6 @@ use std::time::{Duration, Instant};
 
 use dpp_domain::ports::identity_port::IdentityPort;
 use dpp_vc::{DppAccessCredential, StatusList};
-use futures::StreamExt;
 use reqwest::Client;
 
 use crate::middleware::credential::CredentialDirectory;
@@ -69,11 +68,12 @@ use crate::middleware::credential::CredentialDirectory;
 /// How long a fetched issuer DID document is trusted before refetching.
 pub const DID_TTL: Duration = Duration::from_secs(300);
 
-/// Per-request timeout for both lookups.
-const TIMEOUT: Duration = Duration::from_secs(5);
-
 /// Largest DID document this node will buffer from an untrusted issuer.
-const MAX_BODY: usize = 256 * 1024;
+///
+/// The client, its redirect policy and its timeout now come from
+/// [`dpp_common::outbound`] — this stays local because the *size* an issuer
+/// document may reach is a property of this lookup, not of every guarded fetch.
+const MAX_BODY: usize = dpp_common::outbound::DEFAULT_MAX_BODY;
 
 /// Cap on cached issuer documents; the oldest entry is evicted at the cap.
 const MAX_CACHED_DIDS: usize = 512;
@@ -98,7 +98,7 @@ impl HttpCredentialDirectory {
     #[must_use]
     pub fn new() -> Self {
         Self {
-            http: Self::hardened_client(),
+            http: dpp_common::outbound::guarded_client(),
             local_issuer: None,
             did_cache: Mutex::new(HashMap::new()),
         }
@@ -110,33 +110,6 @@ impl HttpCredentialDirectory {
     pub fn with_local_issuer(mut self, did: String, identity: Arc<dyn IdentityPort>) -> Self {
         self.local_issuer = Some((did, identity));
         self
-    }
-
-    /// A client that never follows redirects: the guard checks the host it is
-    /// given, so a followed redirect would escape it.
-    fn hardened_client() -> Client {
-        Client::builder()
-            .redirect(reqwest::redirect::Policy::none())
-            .timeout(TIMEOUT)
-            .build()
-            .unwrap_or_else(|_| Client::new())
-    }
-
-    /// Read at most [`MAX_BODY`] bytes, then parse. Refuses rather than
-    /// truncates: a truncated DID document would fail to parse anyway, and an
-    /// explicit refusal is the honest log line.
-    async fn read_capped_json(resp: reqwest::Response) -> Option<serde_json::Value> {
-        let mut buf: Vec<u8> = Vec::new();
-        let mut stream = resp.bytes_stream();
-        while let Some(chunk) = stream.next().await {
-            let chunk = chunk.ok()?;
-            if buf.len() + chunk.len() > MAX_BODY {
-                tracing::debug!(limit = MAX_BODY, "issuer document exceeded the size cap");
-                return None;
-            }
-            buf.extend_from_slice(&chunk);
-        }
-        serde_json::from_slice(&buf).ok()
     }
 
     /// `did:web:example.com` → `https://example.com/.well-known/did.json`,
@@ -203,28 +176,24 @@ impl CredentialDirectory for HttpCredentialDirectory {
         let url = Self::did_web_url(issuer_did)?;
 
         // The target came from an unverified payload on an unauthenticated
-        // route. Guard it before the request, not after.
-        if let Err(reason) = dpp_common::url_guard::assert_public_target(&url).await {
-            tracing::debug!(
-                issuer_did,
-                reason,
-                "refusing issuer DID fetch: target is not a public https host"
-            );
-            return None;
+        // route. `outbound::fetch_json` applies the guard before the request,
+        // refuses to follow redirects, caps the body and times out — the four
+        // controls this fetch has always needed, now in one shared place so a
+        // second call site cannot end up with three of them.
+        match dpp_common::outbound::fetch_json(&self.http, &url, MAX_BODY).await {
+            Ok(doc) => {
+                self.store(issuer_did, &doc);
+                Some(doc)
+            }
+            Err(e) => {
+                tracing::debug!(
+                    issuer_did,
+                    error = %e,
+                    "issuer DID could not be fetched; credential cannot be verified"
+                );
+                None
+            }
         }
-
-        let resp = self.http.get(&url).send().await.ok()?;
-        if !resp.status().is_success() {
-            tracing::debug!(
-                status = %resp.status(),
-                issuer_did,
-                "issuer DID fetch returned non-2xx; credential cannot be verified"
-            );
-            return None;
-        }
-        let doc = Self::read_capped_json(resp).await?;
-        self.store(issuer_did, &doc);
-        Some(doc)
     }
 
     async fn status_list(&self, credential: &DppAccessCredential) -> Option<StatusList> {

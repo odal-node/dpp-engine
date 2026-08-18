@@ -93,9 +93,47 @@ async fn read_scoped_credential_cannot_mutate_passports() {
         format!("/api/v1/dpp/{id}/suspend"),
         format!("/api/v1/dpp/{id}/archive"),
         format!("/api/v1/dpp/{id}/transfer/accept"),
+        // `lint` persists a recomputed `lintResult` via `patch_fields` — a
+        // database write on any passport the caller can name, and one that
+        // appends no audit entry, so a read key mutating through it left no
+        // trace at all. `evidence` inserts into an append-only table the app
+        // role cannot DELETE from, and drives the transfer-chain DID fetches.
+        // Both read like queries and are not.
+        format!("/api/v1/dpp/{id}/lint"),
+        format!("/api/v1/dpp/{id}/evidence"),
     ] {
         let r = reader.post_json(&path, json!({})).await;
         assert_eq!(r.status(), 403, "{path} must require write scope");
+    }
+}
+
+/// The read endpoints must stay reachable on a read credential — a scope guard
+/// added to the wrong handler is as much a defect as one missing from the right
+/// handler, and "tighten everything" is the easy overcorrection here.
+///
+/// `404` (or `400` for the deliberately malformed dossier id) proves the request
+/// reached the handler rather than being refused at the scope gate; the ids do
+/// not exist, which is the point — this asserts *not 403*.
+#[tokio::test(flavor = "multi_thread")]
+async fn read_scoped_credential_can_still_read() {
+    let pg = start_postgres().await;
+    let vault_url = start_vault(pg.dal.clone()).await;
+
+    let reader = TestClient::new(&vault_url, make_jwt_scoped("op", "read"));
+    let id = "00000000-0000-4000-8000-000000000000";
+
+    for path in [
+        format!("/api/v1/dpp/{id}"),
+        format!("/api/v1/dpp/{id}/evidence"),
+        format!("/api/v1/dpp/{id}/history"),
+        "/api/v1/dpps".to_owned(),
+    ] {
+        let r = reader.get(&path).await;
+        assert_ne!(
+            r.status(),
+            403,
+            "{path} is a read and must not require write scope"
+        );
     }
 }
 

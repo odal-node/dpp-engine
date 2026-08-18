@@ -9,7 +9,7 @@ use axum::{
 
 use crate::{middleware::auth::AuthContext, state::AppState};
 
-use super::error::{internal_error, not_found_error, parse_passport_id};
+use super::error::{internal_error, not_found_error, parse_passport_id, require_write};
 
 /// `POST /api/v1/dpp/{dppId}/lint` — recompute and persist the plausibility
 /// lint pack's findings against the passport's current sector data.
@@ -17,11 +17,22 @@ use super::error::{internal_error, not_found_error, parse_passport_id};
 /// Non-binding: findings never block publish and this endpoint never fails
 /// on their account. Works regardless of passport status (Draft or
 /// Published) — see [`crate::domain::service::PassportService::relint`].
+///
+/// **Write-scoped**, despite the findings being advisory. `relint` persists
+/// (`patch_fields`), so this is a database write on every published passport
+/// the caller can name — and it deliberately appends no audit entry, so the
+/// write is also absent from the hash-chained trail. A `read` credential
+/// performing an unlogged write is a scope-model violation whatever the field
+/// is worth; the guard costs one line, and arguing about the field's importance
+/// is the wrong axis.
 pub async fn lint_handler(
     State(state): State<AppState>,
-    Extension(_auth): Extension<AuthContext>,
+    Extension(auth): Extension<AuthContext>,
     Path(dpp_id): Path<String>,
 ) -> impl IntoResponse {
+    if let Some(resp) = require_write(&auth, "Re-linting a passport") {
+        return resp;
+    }
     let passport_id = match parse_passport_id(&dpp_id) {
         Ok(id) => id,
         Err(e) => return e,

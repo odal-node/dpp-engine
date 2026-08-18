@@ -3,11 +3,13 @@ use std::sync::Arc;
 
 use anyhow::Result;
 
+use dpp_domain::{SectorCatalog, ports::plugin_host_port::PluginHost};
 use dpp_plugin_host::{
     WasmPluginHost,
     loader::{LoadedPlugin, discover_plugins},
     runtime::build_engine,
 };
+use dpp_types::trust::TrustMode;
 
 /// Boot the Wasm plugin host and load all `*.wasm` files from `plugins_dir`.
 ///
@@ -62,13 +64,75 @@ pub fn boot(plugins_dir: &str) -> Result<Arc<WasmPluginHost>> {
                 tracing::info!(sector = %sector_key, path = %path.display(), "plugin loaded");
                 host.register(sector_key, plugin);
             }
+            // Fail the boot rather than skip. This used to be a `warn!`, which
+            // meant a plugin whose signature did not verify — tampered, corrupt,
+            // or signed by the wrong key — silently turned into "no rules for
+            // this sector", and `compute` then returned a passthrough
+            // determination that the publish gate waves through because it
+            // carries no violations. The line above about refusing unsigned
+            // plugins was doing half a job: it closed "no key configured" and
+            // left "key configured, signature does not verify" as a log line.
+            //
+            // A file is in `PLUGINS_DIR` because an operator put it there. That
+            // it will not load is a misconfiguration, never a reason to serve a
+            // sector with no rules — so it stops the boot, where an operator
+            // sees it, instead of degrading a determination they will not.
             Err(e) => {
-                tracing::warn!(sector = %sector_key, error = %e, "failed to load plugin — skipping");
+                anyhow::bail!(
+                    "plugin for sector '{sector_key}' at {} failed to load: {e}\n\
+                     Refusing to boot: a plugin that cannot be verified or instantiated \
+                     would leave this sector with no compliance rules, and a passport \
+                     published under it would carry a passthrough determination. Remove \
+                     the file to run without this sector's rules deliberately.",
+                    path.display()
+                );
             }
         }
     }
 
     Ok(host)
+}
+
+/// The trust tier this node's compliance evaluation is actually running at.
+///
+/// # Why compliance is a trust port
+///
+/// The ghost-honesty invariant lists the ports whose placeholder state a node
+/// must not hide, and `boot::trust`'s own module doc names the one way it can
+/// fail: "a port that's never added to the list is invisible to the guard."
+/// Compliance was never added. So a node with an empty `PLUGINS_DIR` booted
+/// under `NODE_PROFILE=production`, reported `status: ok`, published in-force
+/// battery passports, and every determination on them was
+/// `passthroughNoValidation` — the placeholder-presented-as-real case the
+/// invariant exists to prevent, on the one port that decides whether a passport
+/// was checked against EU rules at all.
+///
+/// - `Ghost` — no plugin for any in-force sector. Nothing is evaluated.
+/// - `Sandbox` — some in-force sectors have rules and some do not. A real
+///   determination is possible, but not for every product this node may publish.
+/// - `Live` — every in-force sector in the catalog has a plugin loaded.
+///
+/// Sectors that are **not** in force are deliberately not counted: their
+/// determinations are gated to non-binding by `gate_determination` regardless of
+/// what a plugin returns, so a missing plugin there changes nothing a consumer
+/// could rely on.
+pub fn compliance_trust(host: &WasmPluginHost) -> TrustMode {
+    let catalog = SectorCatalog::new();
+    let in_force: Vec<&str> = catalog.in_force().iter().map(|d| d.key.as_str()).collect();
+
+    // No in-force sector is an empty conjunction, which would make `all()` true
+    // and report Live on a node evaluating nothing. Treat it as Ghost: whatever
+    // this node is doing, it is not applying an in-force rule.
+    if in_force.is_empty() {
+        return TrustMode::Ghost;
+    }
+
+    let covered = in_force.iter().filter(|k| host.has_plugin(k)).count();
+    match covered {
+        0 => TrustMode::Ghost,
+        n if n == in_force.len() => TrustMode::Live,
+        _ => TrustMode::Sandbox,
+    }
 }
 
 /// Enforce the plugin-signing policy: unsigned plugins may only be loaded when
@@ -216,5 +280,117 @@ mod tests {
             host.has_any_plugin(),
             "the unsigned plugin must actually be loaded and registered, not silently skipped"
         );
+    }
+
+    /// A discovered plugin that will not load stops the boot rather than
+    /// downgrading its sector to no rules. Uses the dev opt-in so the *signing*
+    /// gate passes and the failure comes from the load itself — which is the
+    /// case that used to be a `warn!`: a file present, permitted, and not
+    /// runnable.
+    #[test]
+    #[serial_test::serial]
+    fn a_plugin_that_fails_to_load_stops_the_boot() {
+        if std::env::var("PLUGIN_SIGNING_KEY").is_ok() {
+            return;
+        }
+        unsafe { std::env::set_var("ALLOW_UNSIGNED_PLUGINS", "true") };
+
+        let tmp = std::env::temp_dir().join(format!("odal-load-{}", uuid::Uuid::now_v7()));
+        std::fs::create_dir_all(&tmp).unwrap();
+        // Well-formed enough to be discovered, not a valid module.
+        std::fs::write(
+            tmp.join("sector-battery.wasm"),
+            b"\0asm\x01\x00\x00\x00garbage",
+        )
+        .unwrap();
+
+        let result = boot(tmp.to_str().unwrap());
+
+        std::fs::remove_dir_all(&tmp).ok();
+        unsafe { std::env::remove_var("ALLOW_UNSIGNED_PLUGINS") };
+
+        let err = match result {
+            Ok(_) => panic!("an unloadable plugin must not boot into a passthrough sector"),
+            Err(e) => e.to_string(),
+        };
+        assert!(
+            err.contains("failed to load") && err.contains("battery"),
+            "the error must name the sector and the cause, got: {err}"
+        );
+    }
+
+    // ── compliance trust tier ────────────────────────────────────────────────
+
+    /// An empty plugin directory is `Ghost`, not `Live`. This is the state a
+    /// default deployment is in — `PLUGINS_DIR` defaults to `./plugins`, which
+    /// is gitignored — so it is the tier `NODE_PROFILE=production` must refuse.
+    #[test]
+    fn no_plugins_is_ghost() {
+        let tmp = std::env::temp_dir().join(format!("odal-ct-{}", uuid::Uuid::now_v7()));
+        std::fs::create_dir_all(&tmp).unwrap();
+        let host = boot(tmp.to_str().unwrap()).unwrap();
+        std::fs::remove_dir_all(&tmp).ok();
+        assert_eq!(compliance_trust(&host), TrustMode::Ghost);
+    }
+
+    /// Partial coverage is `Sandbox`: a real determination is possible, but not
+    /// for every product this node may publish. Collapsing it into `Live` would
+    /// let a node claim rules it has for one sector as rules it has for all.
+    #[test]
+    #[serial_test::serial]
+    fn partial_in_force_coverage_is_sandbox_not_live() {
+        if std::env::var("PLUGIN_SIGNING_KEY").is_ok() {
+            return;
+        }
+        let catalog = SectorCatalog::new();
+        let in_force = catalog.in_force();
+        // Meaningless unless the catalog has more than one in-force sector —
+        // with exactly one, "partial" and "complete" are the same state.
+        if in_force.len() < 2 {
+            return;
+        }
+        unsafe { std::env::set_var("ALLOW_UNSIGNED_PLUGINS", "true") };
+
+        let tmp = std::env::temp_dir().join(format!("odal-ct2-{}", uuid::Uuid::now_v7()));
+        std::fs::create_dir_all(&tmp).unwrap();
+        let one = in_force[0].key.clone();
+        std::fs::write(
+            tmp.join(format!("sector-{one}.wasm")),
+            minimal_plugin_wasm(),
+        )
+        .unwrap();
+
+        let result = boot(tmp.to_str().unwrap());
+        std::fs::remove_dir_all(&tmp).ok();
+        unsafe { std::env::remove_var("ALLOW_UNSIGNED_PLUGINS") };
+
+        let host = result.expect("one valid plugin boots");
+        assert_eq!(
+            compliance_trust(&host),
+            TrustMode::Sandbox,
+            "{one} is covered but the other {} in-force sector(s) are not",
+            in_force.len() - 1
+        );
+    }
+
+    /// The tier is computed over **in-force** sectors only. A provisional
+    /// sector's determination is gated to non-binding regardless of what a
+    /// plugin returns, so a missing plugin there changes nothing a consumer
+    /// could rely on — and counting it would make `Live` unreachable for no
+    /// safety gain.
+    #[test]
+    fn provisional_sectors_do_not_affect_the_tier() {
+        let catalog = SectorCatalog::new();
+        assert!(
+            !catalog.provisional().is_empty(),
+            "fixture assumption: the catalog carries provisional sectors"
+        );
+        let tmp = std::env::temp_dir().join(format!("odal-ct3-{}", uuid::Uuid::now_v7()));
+        std::fs::create_dir_all(&tmp).unwrap();
+        let host = boot(tmp.to_str().unwrap()).unwrap();
+        std::fs::remove_dir_all(&tmp).ok();
+        // Ghost because no *in-force* sector is covered — not because of the
+        // provisional ones, which are simply not counted either way.
+        assert_eq!(compliance_trust(&host), TrustMode::Ghost);
     }
 }

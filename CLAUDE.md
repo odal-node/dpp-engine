@@ -239,7 +239,7 @@ Router nesting:
 
 ### Database
 
-**PostgreSQL** accessed via `sqlx` through `PgDal` (connection pool). The app role (`odal_app`) cannot run DDL, and can DELETE only from the tables listed at the top of `ops/pg/0010_grants.sql` — read the grant set there rather than a count restated here, which is how this line came to claim "one sanctioned exception" while three tables carried the grant. Single-tenant: no Row-Level Security — one operator per node, so there is no in-process isolation boundary to enforce.
+**PostgreSQL** accessed via `sqlx` through `PgDal` (connection pool). The app role (`odal_app`) cannot run DDL, and can DELETE only from the tables listed under "The DELETE set" in `ops/pg/README.md` — read the set there rather than a count restated here, which is how this line came to claim "one sanctioned exception" while three tables carried the grant. The README is the one home because `just grants-check` gates it against the actual grants; a migration cannot be, since the set spans several (`0010` and `0025` today) and an applied migration cannot be edited when a grant changes. Single-tenant: no Row-Level Security — one operator per node, so there is no in-process isolation boundary to enforce.
 
 **Schema:** `ops/pg/*.sql` — a clean, FK-ordered, append-only migration set (see the directory for the current range; new migrations are only ever added, never renumbered), applied via `PgDal::migrate(url)` at boot using a privileged role, or pre-applied by ops tooling. No RLS (single-tenant).
 
