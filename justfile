@@ -145,15 +145,24 @@ subjects-check:
 # Forbid un-guarded outbound HTTP construction in service crate src.
 #
 # `dpp_common::outbound` is the one path that applies the resolving SSRF guard,
-# refuses redirects, caps the body and times out. `reqwest::get` and
-# `Client::new()` build a client with none of those — and that is exactly how two
-# call sites ended up fetching attacker-named hosts with no guard at all while an
-# identical, correctly-hardened fetch sat in the next module.
+# refuses redirects, caps the body and times out. `reqwest::get`, `Client::new()`
+# and `Client::builder()` build a client with none of those unless every control
+# is restated by hand — and that is exactly how two call sites ended up fetching
+# attacker-named hosts with no guard at all while an identical, correctly-hardened
+# fetch sat in the next module.
+#
+# `Client::builder()` is banned alongside the other two rather than trusted
+# because it is the constructor a correct-looking client is written with: it
+# carries reqwest's default redirect policy (ten hops) and no timeout until a
+# caller adds them, so a builder that sets only a timeout reads as hardened and
+# is not. Banning the constructor makes every client either allow-listed here
+# with a reason, or guarded.
 #
 # Operator-CHOSEN targets are a different trust class and legitimately build
 # their own clients (webhook drain, QTSP, EU registry, the integrator's loopback
-# vault client, the resolver's own hardened client), so they are listed here by
-# file rather than being caught by a blanket rule.
+# vault client, the resolver's own hardened client, the vault's client for the
+# co-located identity service), so they are listed here by file rather than
+# being caught by a blanket rule.
 # Test code is exempt (a test double needs no SSRF guard), detected by the
 # repo convention that `#[cfg(test)]` modules sit at the bottom of a file: a
 # match below the first `#[cfg(test)]` line is test code. Whole-file test
@@ -161,14 +170,14 @@ subjects-check:
 outbound-check:
     #!/usr/bin/env bash
     set -euo pipefail
-    allow='crates/dpp-common/src/outbound.rs|crates/dpp-node/src/boot/tasks.rs|crates/dpp-node/src/infra/registry/client.rs|crates/dpp-integrator/src/infra/vault_client.rs|crates/dpp-resolver/src/main.rs|crates/dpp-seal/src/eideasy/client.rs|cli/src/http.rs'
+    allow='crates/dpp-common/src/outbound.rs|crates/dpp-node/src/boot/tasks.rs|crates/dpp-node/src/infra/registry/client.rs|crates/dpp-integrator/src/infra/vault_client.rs|crates/dpp-resolver/src/main.rs|crates/dpp-seal/src/eideasy/client.rs|crates/dpp-vault/src/infra/identity_client.rs|cli/src/http.rs'
     violations=""
     for f in $(find crates/*/src cli/src -name '*.rs' ! -name 'tests.rs' ! -name '*_tests.rs'); do
         echo "$f" | grep -qE "$allow" && continue
         # First `#[cfg(test)]` line, or a sentinel past EOF when there is none.
         cut=$(grep -n '#\[cfg(test)\]' "$f" | head -n1 | cut -d: -f1)
         [ -z "$cut" ] && cut=999999
-        hits=$(grep -nE -e 'reqwest::get\(' -e 'Client::new\(\)' "$f" \
+        hits=$(grep -nE -e 'reqwest::get\(' -e 'Client::new\(\)' -e 'Client::builder\(\)' "$f" \
                  | awk -F: -v c="$cut" '$1 < c') || true
         [ -n "$hits" ] && violations="$violations\n$f: $hits"
     done
