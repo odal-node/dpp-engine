@@ -545,7 +545,7 @@ async fn gtin_resolution_verifies_a_valid_signature() {
     use base64::Engine;
     use ed25519_dalek::{Signer, SigningKey};
 
-    let signing_key = SigningKey::generate(&mut rand::rngs::OsRng);
+    let signing_key = SigningKey::generate(&mut rand::rand_core::UnwrapErr(rand::rngs::SysRng));
     let b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD;
     let pub_key_b64 = b64.encode(signing_key.verifying_key().as_bytes());
 

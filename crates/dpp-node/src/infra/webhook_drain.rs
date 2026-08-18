@@ -13,7 +13,7 @@
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use hmac::{Hmac, Mac};
+use hmac::{Hmac, KeyInit, Mac};
 use sha2::Sha256;
 
 use dpp_types::WebhookOutbox;
@@ -40,8 +40,8 @@ pub struct DrainStats {
 /// protection (reject stale `t`); the raw `body` is signed verbatim so the
 /// receiver signs exactly the bytes it received.
 fn signature_header(secret: &str, timestamp: i64, body: &str) -> String {
-    let mut mac =
-        HmacSha256::new_from_slice(secret.as_bytes()).expect("HMAC accepts any key length");
+    let mut mac = <HmacSha256 as KeyInit>::new_from_slice(secret.as_bytes())
+        .expect("HMAC accepts any key length");
     mac.update(format!("{timestamp}.{body}").as_bytes());
     let digest = hex::encode(mac.finalize().into_bytes());
     format!("t={timestamp},v1={digest}")

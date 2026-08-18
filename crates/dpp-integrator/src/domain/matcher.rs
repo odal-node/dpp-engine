@@ -77,7 +77,7 @@ pub fn comparable_fingerprint(value: &serde_json::Value) -> String {
         }
     }
     let bytes = serde_json::to_vec(&serde_json::Value::Object(canonical)).unwrap_or_default();
-    format!("{:x}", Sha256::digest(&bytes))
+    hex::encode(Sha256::digest(&bytes))
 }
 
 /// Derive the compound identity from a not-yet-created request, or `None` if
