@@ -129,7 +129,7 @@ deadpool-redis = "0.23"
 # Telemetry
 tracing             = "0.1"
 tracing-subscriber  = { version = "0.3", features = ["env-filter", "json"] }
-metrics                     = "0.23"
+metrics                     = "0.24"
 metrics-exporter-prometheus = "0.15"
 
 # Benchmarking
