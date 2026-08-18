@@ -12,6 +12,7 @@ members = [
     "crates/dpp-plugin-host",
     "crates/dpp-node",
     "crates/dpp-seal",
+    "crates/dpp-factor-data",
     "cli",
 ]
 
@@ -63,6 +64,7 @@ dpp-digital-link  = "0.17.0"
 dpp-aas           = "0.17.0"
 dpp-plugin-traits = "0.17.0"
 dpp-registry      = "0.17.0"
+dpp-calc          = "0.17.0"
 dpp-rules         = { version = "0.17.0", features = ["bundle"] }
 
 # Web framework
