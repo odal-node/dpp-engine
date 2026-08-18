@@ -19,7 +19,7 @@ fn battery_body() -> serde_json::Value {
             "sector": "battery",
             "gtin": "09506000134352",
             "batteryChemistry": "LFP",
-            "batteryType": "industrial",
+            "batteryType": "portable",
             "nominalVoltageV": 48.0,
             "nominalCapacityAh": 100.0,
             "expectedLifetimeCycles": 3000,
