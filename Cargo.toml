@@ -71,7 +71,7 @@ dpp-rules         = { version = "0.17.0", features = ["bundle"] }
 axum         = { version = "0.8", features = ["macros", "multipart"] }
 tokio        = { version = "1", features = ["full"] }
 tower        = "0.5"
-tower-http   = { version = "0.6", features = ["trace", "cors", "compression-br", "request-id", "catch-panic"] }
+tower-http   = { version = "0.7", features = ["trace", "cors", "compression-br", "request-id", "catch-panic"] }
 hyper        = { version = "1", features = ["full"] }
 futures      = "0.3"
 
@@ -79,7 +79,7 @@ futures      = "0.3"
 serde        = { version = "1", features = ["derive"] }
 serde_json   = "1"
 serde_with   = "3"
-serde_jcs    = "0.1"  # RFC 8785 JSON Canonicalisation — audit-chain hashing
+serde_jcs    = "0.2"  # RFC 8785 JSON Canonicalisation — audit-chain hashing
 
 # Database (sqlx lives in dpp-dal — not declared at workspace level)
 
@@ -129,8 +129,8 @@ deadpool-redis = "0.23"
 # Telemetry
 tracing             = "0.1"
 tracing-subscriber  = { version = "0.3", features = ["env-filter", "json"] }
-metrics                     = "0.23"
-metrics-exporter-prometheus = "0.15"
+metrics                     = "0.24"
+metrics-exporter-prometheus = "0.18"
 
 # Benchmarking
 criterion    = { version = "0.8", features = ["html_reports"] }
