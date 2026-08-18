@@ -88,15 +88,15 @@ flate2       = "1"
 
 # Identity & cryptography
 ring         = "0.17"
-base64       = "0.22"
+base64       = "0.23"
 hex          = "0.4"
-sha2         = { version = "0.10", features = ["oid"] }
-hmac         = "0.12"
+sha2         = { version = "0.11", features = ["oid"] }
+hmac         = "0.13"
 subtle       = "2"
-ed25519-dalek = { version = "2", features = ["rand_core"] }
+ed25519-dalek = { version = "3", features = ["rand_core"] }
 zeroize      = { version = "1", features = ["derive"] }
 aes-gcm      = "0.10"
-rand         = "0.8"
+rand         = "0.10"
 
 # JWT / OAuth
 jsonwebtoken = "9"

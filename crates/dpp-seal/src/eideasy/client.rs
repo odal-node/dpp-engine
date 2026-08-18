@@ -23,7 +23,7 @@ use chrono::Utc;
 use dpp_domain::ports::seal::{
     SealCapabilities, SealFormat, SealMode, SealRequest, SealedEnvelope,
 };
-use hmac::{Hmac, Mac};
+use hmac::{Hmac, KeyInit, Mac};
 use sha2::Sha256;
 
 use super::config::EideasyConfig;
@@ -64,8 +64,8 @@ impl SignedBody {
             .map_err(|e| EideasyError::Protocol(format!("request body serialization: {e}")))?;
 
         let message = hmac_message(METHOD, ESEAL_PATH, timestamp, &body);
-        let mut mac =
-            HmacSha256::new_from_slice(hmac_key.as_bytes()).expect("HMAC accepts any key length");
+        let mut mac = <HmacSha256 as KeyInit>::new_from_slice(hmac_key.as_bytes())
+            .expect("HMAC accepts any key length");
         mac.update(message.as_bytes());
         let signature = BASE64.encode(mac.finalize().into_bytes());
 
@@ -287,7 +287,7 @@ mod tests {
         let signed = SignedBody::new(&example_request(), "test-key", 1710000000).unwrap();
 
         let message = hmac_message(METHOD, ESEAL_PATH, signed.timestamp, &signed.body);
-        let mut mac = HmacSha256::new_from_slice(b"test-key").unwrap();
+        let mut mac = <HmacSha256 as KeyInit>::new_from_slice(b"test-key").unwrap();
         mac.update(message.as_bytes());
         let expected = BASE64.encode(mac.finalize().into_bytes());
 

@@ -35,7 +35,7 @@ fn test_state_did(vault_base_url: String, operator_did_url: String) -> AppState 
 fn sign_jws(payload: &serde_json::Value) -> (String, serde_json::Value) {
     use base64::Engine;
     use ed25519_dalek::{Signer, SigningKey};
-    let signing_key = SigningKey::generate(&mut rand::rngs::OsRng);
+    let signing_key = SigningKey::generate(&mut rand::rand_core::UnwrapErr(rand::rngs::SysRng));
     let b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD;
     let pub_key_b64 = b64.encode(signing_key.verifying_key().as_bytes());
     let header_b64 = b64.encode(r#"{"alg":"EdDSA","crv":"Ed25519"}"#);

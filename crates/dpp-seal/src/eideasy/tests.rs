@@ -14,7 +14,7 @@ use dpp_domain::domain::error::DppError;
 use dpp_domain::ports::seal::{
     SealCredentialRef, SealFormat, SealMode, SealPort, SealRequest, SealedEnvelope,
 };
-use hmac::{Hmac, Mac};
+use hmac::{Hmac, KeyInit, Mac};
 use sha2::{Digest, Sha256};
 
 use crate::adapter::QtspSealAdapter;
@@ -88,7 +88,7 @@ mod mock_server {
             .and_then(|v| v.to_str().ok())
             .unwrap_or_default();
 
-        let mut mac = Hmac::<Sha256>::new_from_slice(MOCK_KEY.as_bytes()).unwrap();
+        let mut mac = <Hmac<Sha256> as KeyInit>::new_from_slice(MOCK_KEY.as_bytes()).unwrap();
         mac.update(hmac_message("POST", ESEAL_PATH, ts, &raw).as_bytes());
         let expected = BASE64.encode(mac.finalize().into_bytes());
 
