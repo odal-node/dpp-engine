@@ -216,6 +216,7 @@ async fn main() -> anyhow::Result<()> {
         registry_trust,
         archive_trust,
         credential_trust,
+        plugins::compliance_trust(&plugin_host),
     )?;
 
     // ── Compliance Current: signed ruleset channel ────────────────────────────
