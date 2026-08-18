@@ -72,46 +72,109 @@ pub fn validate_public_https_url(raw: &str) -> Result<String, String> {
     Ok(url.to_string())
 }
 
-/// Fetch-time SSRF check: require `https`, then **re-resolve the host now** and
+/// Fetch-time SSRF check: require `https`, then **resolve the host now** and
 /// refuse if any answer is a non-public address.
 ///
 /// This is the authoritative guard, and the only one that holds for a host name:
 /// [`validate_webhook_url`] and [`validate_public_https_url`] can only range-check
-/// IP literals, so a name that resolves internally passes them. Re-resolving at
-/// the moment of the request also closes DNS rebinding between validation and
-/// use.
+/// IP literals, so a name that resolves internally passes them.
 ///
-/// Every answer is checked, not just the first — a name that resolves to one
-/// public and one internal address must be refused.
+/// # This alone does not close DNS rebinding
+///
+/// It resolves, approves, and discards the answer — and the caller then hands
+/// the *URL* to a client, which resolves the name again to connect. Two
+/// resolutions, nothing binding them, so a zero-TTL record alternating a public
+/// and an internal answer passes here and connects there.
+///
+/// Use [`resolve_public_target`] instead when about to open a connection: it
+/// returns the addresses it approved so the client can be pinned to them. This
+/// function remains for callers that only need the verdict.
+pub async fn assert_public_target(url_str: &str) -> Result<(), String> {
+    resolve_public_target(url_str).await.map(|_| ())
+}
+
+/// What [`resolve_public_target`] proved about a target.
+///
+/// Carries the **addresses it checked**, which is the part that makes the check
+/// binding rather than advisory — see the type's own docs and
+/// [`crate::outbound`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CheckedTarget {
+    /// The host as it appeared in the URL: a domain name, or an IP literal
+    /// rendered back to a string.
+    pub host: String,
+    /// The port the connection will use.
+    pub port: u16,
+    /// Every address the host resolved to, all of them checked and allowed.
+    ///
+    /// Handing these to the client — rather than letting it resolve the name a
+    /// second time — is what closes the window between the check and the
+    /// connection. Without it, a zero-TTL record alternating a public and an
+    /// internal answer passes the check and connects to the internal one.
+    pub addrs: Vec<std::net::SocketAddr>,
+}
+
+impl CheckedTarget {
+    /// True when the host was an IP literal, so there was no name to rebind and
+    /// pinning buys nothing.
+    #[must_use]
+    pub fn is_literal(&self) -> bool {
+        self.host.parse::<IpAddr>().is_ok()
+    }
+}
+
+/// Fetch-time SSRF check that **returns the addresses it approved**.
+///
+/// [`assert_public_target`] is this with the answer discarded, kept because most
+/// callers only need the yes/no. A caller that is about to open a connection
+/// should use this one and pin the result, because a check whose answer is
+/// thrown away only constrains a resolution nobody makes.
 ///
 /// # Errors
 /// A human-readable reason when the scheme is not `https`, the URL has no host,
 /// resolution fails, the name resolves to nothing, or any resolved address is
-/// non-public.
-pub async fn assert_public_target(url_str: &str) -> Result<(), String> {
+/// non-public. Every address is checked, not just the first — a name resolving
+/// to one public and one internal address is refused.
+pub async fn resolve_public_target(url_str: &str) -> Result<CheckedTarget, String> {
     let url = Url::parse(url_str).map_err(|e| format!("invalid URL: {e}"))?;
     if url.scheme() != "https" {
         return Err("scheme is not https".into());
     }
+    let port = url.port_or_known_default().unwrap_or(443);
     // `Host` parses IP literals correctly, including bracketed IPv6.
     match url.host().ok_or("no host")? {
-        Host::Ipv4(ip) => reject_if_disallowed(IpAddr::V4(ip)),
-        Host::Ipv6(ip) => reject_if_disallowed(IpAddr::V6(ip)),
+        Host::Ipv4(ip) => {
+            reject_if_disallowed(IpAddr::V4(ip))?;
+            Ok(CheckedTarget {
+                host: ip.to_string(),
+                port,
+                addrs: vec![std::net::SocketAddr::from((ip, port))],
+            })
+        }
+        Host::Ipv6(ip) => {
+            reject_if_disallowed(IpAddr::V6(ip))?;
+            Ok(CheckedTarget {
+                host: ip.to_string(),
+                port,
+                addrs: vec![std::net::SocketAddr::from((ip, port))],
+            })
+        }
         Host::Domain(host) => {
-            let port = url.port_or_known_default().unwrap_or(443);
-            let addrs = tokio::net::lookup_host((host, port))
+            let addrs: Vec<std::net::SocketAddr> = tokio::net::lookup_host((host, port))
                 .await
-                .map_err(|e| format!("DNS resolution failed: {e}"))?;
-            let mut resolved = false;
-            for addr in addrs {
-                resolved = true;
+                .map_err(|e| format!("DNS resolution failed: {e}"))?
+                .collect();
+            if addrs.is_empty() {
+                return Err("host did not resolve".into());
+            }
+            for addr in &addrs {
                 reject_if_disallowed(addr.ip())?;
             }
-            if resolved {
-                Ok(())
-            } else {
-                Err("host did not resolve".into())
-            }
+            Ok(CheckedTarget {
+                host: host.to_owned(),
+                port,
+                addrs,
+            })
         }
     }
 }
