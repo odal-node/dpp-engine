@@ -18,5 +18,7 @@ chrono     = { workspace = true }
 
 [dev-dependencies]
 # Test-only: binds the section fixtures to dpp-domain's serde contract so a
-# field renamed in core fails a test instead of silently rendering a dash.
+# field renamed in core fails a test instead of silently rendering a dash, and
+# drives the completeness check off the embedded schemas' x-disclosure
+# annotations rather than a restated field list.
 dpp-domain = { workspace = true }

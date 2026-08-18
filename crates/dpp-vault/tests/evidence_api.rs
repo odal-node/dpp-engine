@@ -23,7 +23,7 @@ fn create_body() -> serde_json::Value {
             "sector": "battery",
             "gtin": "09506000134352",
             "batteryChemistry": "NiMH",
-            "batteryType": "industrial",
+            "batteryType": "portable",
             "nominalVoltageV": 12.0,
             "nominalCapacityAh": 40.0,
             "expectedLifetimeCycles": 1000,

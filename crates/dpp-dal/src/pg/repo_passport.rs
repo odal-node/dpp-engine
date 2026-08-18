@@ -26,14 +26,42 @@ use dpp_domain::{
 use super::{PgDal, db_err};
 
 /// Fields `patch_fields` refuses to modify: passport identity, lifecycle state,
-/// retention lock, signatures, and seal. Each is governed by the publish
-/// pipeline / `update_status` and backs a scalar column that this JSONB-merge
-/// path does not rewrite — allowing them here would both bypass the state
-/// machine and desync the doc from its enforcing column (e.g. flipping
-/// `retentionLocked` in the doc while the `retention_locked` column stays
-/// `false`). Mirrors the `PassportRepository` default-impl guard in dpp-core.
-/// Serialized (camelCase) names.
-const PROTECTED_PATCH_FIELDS: [&str; 13] = [
+/// retention lock, signatures, seal, registry identity, and upward lineage. Each
+/// is governed by the publish pipeline / `update_status` / a dedicated transition
+/// method, and several back a scalar column that this JSONB-merge path does not
+/// rewrite — allowing them here would both bypass the state machine and desync
+/// the doc from its enforcing column (e.g. flipping `retentionLocked` in the doc
+/// while the `retention_locked` column stays `false`). Serialized (camelCase)
+/// names.
+///
+/// # Relationship to the `PassportRepository` default-impl guard in dpp-core
+///
+/// This overrides that default, so it does not inherit it — a comment here used
+/// to claim it "mirrors" core's list while being **three entries short of it**.
+/// `operatorIdentifier`, `facility` and `parentPassportRef` are protected by
+/// core and were not protected here, which on PostgreSQL — the only backend that
+/// ships — meant they were writable through `PUT /dpp/{id}`. They are restored
+/// below.
+///
+/// Two entries are **deliberately** different, and the divergence is the reason
+/// this list exists rather than being deleted in favour of core's:
+///
+/// - `sector` is protected here and not in core, because it backs a real column
+///   this merge does not rewrite.
+/// - `componentRefs` is protected in core and **not** here. Core protects the
+///   lineage edges because patching them on a *published* passport would leave
+///   the served body no longer verifying against its own signature. This path
+///   accepts drafts only (`update` refuses any non-`Draft` status), and a draft
+///   has no signature to break — so a bill of materials is editable while it is
+///   still being assembled, which is the whole point of a draft. Its *downward*
+///   sibling `parentPassportRef` is not editable, because nothing applies it:
+///   it is stamped at create and read at verify.
+///
+/// `disclosureSignatures` is added for symmetry with the three proof fields
+/// beside it. It was the only one of the four `audience_view` strips as proofs
+/// that was missing — not exploitable today, because publish assigns the whole
+/// map, but a missing rung on a ladder is worth putting back.
+const PROTECTED_PATCH_FIELDS: [&str; 17] = [
     "id",
     "sector",
     "status",
@@ -41,12 +69,16 @@ const PROTECTED_PATCH_FIELDS: [&str; 13] = [
     "retentionUntil",
     "jwsSignature",
     "publicJwsSignature",
+    "disclosureSignatures",
     "seal",
     "version",
     "publishedAt",
     "createdAt",
     "supersedesId",
     "schemaVersion",
+    "operatorIdentifier",
+    "facility",
+    "parentPassportRef",
 ];
 
 /// Apply a passport update (scalar columns + `doc`) inside a caller-supplied

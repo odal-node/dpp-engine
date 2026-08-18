@@ -48,6 +48,21 @@ pub async fn transfer_initiate_handler(
         Ok(i) => i,
         Err(e) => return e,
     };
+    // Both DIDs are stored verbatim on the transfer chain and are later resolved
+    // over the network to fetch each counterparty's document for the evidence
+    // dossier. Refuse a shape that has no legitimate meaning in a handover
+    // between two operators here, at the edge, rather than relying only on the
+    // fetch-time guard: a DID naming a loopback or internal host is not a
+    // counterparty, and a stored one is a request a later reader has to keep
+    // refusing forever.
+    for (label, operator) in [
+        ("fromOperator", &body.from_operator),
+        ("toOperator", &body.to_operator),
+    ] {
+        if let Err(e) = validate_counterparty_did(&operator.did) {
+            return validation_error(&format!("{label}.did: {e}"));
+        }
+    }
     match state
         .service
         .initiate_transfer(
@@ -91,5 +106,59 @@ pub async fn transfer_accept_handler(
         }
         Err(e @ dpp_domain::DppError::Validation(_)) => validation_error(&e.to_string()),
         Err(e) => internal_error(e),
+    }
+}
+
+/// A transfer counterparty's DID must be a `did:web` this node could actually
+/// resolve to a public document.
+///
+/// Shape only — the resolving guard still runs at fetch time, and this does not
+/// replace it. What this adds is refusing to *store* a target that will never be
+/// fetchable, so the refusal happens once, at the request that introduced it,
+/// with a message naming the field.
+fn validate_counterparty_did(did: &str) -> Result<(), String> {
+    let url = crate::domain::verify::did_web_url(did)?;
+    dpp_common::url_guard::validate_public_https_url(&url)
+        .map(|_| ())
+        .map_err(|e| format!("{did} does not resolve to a public https document ({e})"))
+}
+
+#[cfg(test)]
+mod counterparty_did {
+    use super::validate_counterparty_did;
+
+    #[test]
+    fn a_public_did_web_is_accepted() {
+        assert!(validate_counterparty_did("did:web:acme.example").is_ok());
+        assert!(validate_counterparty_did("did:web:acme.example:operators:eu").is_ok());
+    }
+
+    /// The input half of the evidence-export fetch: a DID naming an internal
+    /// host is not a counterparty, and storing one means a target that has to
+    /// be refused on every later export instead of once, here.
+    #[test]
+    fn an_internal_or_loopback_did_is_refused() {
+        for did in [
+            "did:web:127.0.0.1",
+            "did:web:169.254.169.254",
+            "did:web:10.0.0.5",
+        ] {
+            assert!(
+                validate_counterparty_did(did).is_err(),
+                "{did} must not be storable as a counterparty"
+            );
+        }
+    }
+
+    /// Only `did:web` is resolvable by the exporter, so anything else would be
+    /// stored as a permanently unfetchable counterparty.
+    #[test]
+    fn a_non_did_web_is_refused() {
+        for did in ["did:key:z6Mk", "did:example:123", "not-a-did", ""] {
+            assert!(
+                validate_counterparty_did(did).is_err(),
+                "{did} must be refused"
+            );
+        }
     }
 }

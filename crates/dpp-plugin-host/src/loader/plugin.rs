@@ -108,6 +108,31 @@ impl LoadedPlugin {
         // rather than compile. Everything else — signature policy above, the
         // describe()/ABI gate below — is identical for both kinds.
         let is_precompiled = path.extension().and_then(|e| e.to_str()) == Some("cwasm");
+
+        // A precompiled artifact is **native code**, so the wasm sandbox does not
+        // apply to loading it: no fuel, no memory cap, no WASI boundary — those
+        // are properties of executing a validated module in a `Store`, and
+        // `Module::deserialize` is what turns bytes into something already past
+        // that point. Its safety precondition is that the bytes are authentic,
+        // and the only thing that establishes authenticity here is the signature
+        // check above.
+        //
+        // `ALLOW_UNSIGNED_PLUGINS=true` waives that check — which is defensible
+        // for a `.wasm` (wasmtime still validates it, and dev mode is already
+        // running whatever module it is handed) and not defensible here, where
+        // waiving it means deserialising unverified bytes into native code. The
+        // dev flow that needs the escape hatch (`just build-plugins`) emits
+        // `.wasm`, never `.cwasm`, so nothing legitimate is blocked.
+        if is_precompiled && trusted_key.is_none() {
+            return Err(anyhow::anyhow!(
+                "refusing to load precompiled plugin {}: a `.cwasm` artifact is native code, \
+                 so it is loaded outside the Wasm sandbox and must be signature-verified. \
+                 ALLOW_UNSIGNED_PLUGINS does not apply to precompiled artifacts — set \
+                 PLUGIN_SIGNING_KEY, or ship a portable `.wasm`.",
+                path.display()
+            ));
+        }
+
         let module = if is_precompiled {
             tracing::info!(path = %path.display(), sector = sector_key, "loading precompiled plugin (.cwasm)");
             // Read the bytes and deserialize from memory rather than
@@ -116,11 +141,14 @@ impl LoadedPlugin {
             let bytes = std::fs::read(path)
                 .map_err(|e| anyhow::anyhow!("failed to read {}: {e}", path.display()))?;
             // SAFETY: the artifact's signature was verified against the pinned
-            // publisher key above (or the operator explicitly opted into unsigned
-            // dev mode), so the bytes are authentic rather than attacker-forged —
-            // the precondition `Module::deserialize` requires. wasmtime
-            // additionally validates its embedded engine/target/config header and
-            // returns an error (not UB) when this node's engine cannot load it.
+            // publisher key above — unconditionally, because the guard directly
+            // above refuses a precompiled artifact when no key is configured, so
+            // `trusted_key` is necessarily `Some` on this branch. That is the
+            // precondition `Module::deserialize` requires, and it now holds with
+            // no exception (the previous wording named `ALLOW_UNSIGNED_PLUGINS`
+            // as a case where it did not). wasmtime additionally validates its
+            // embedded engine/target/config header and returns an error, not UB,
+            // when this node's engine cannot load it.
             unsafe {
                 Module::deserialize(engine, &bytes).map_err(|e| {
                     anyhow::anyhow!("incompatible precompiled artifact {}: {e}", path.display())

@@ -1,8 +1,9 @@
 //! Wasmtime engine configuration and sandboxed `Store` builder.
 
-use wasmtime::{Config, Engine, ResourceLimiter, Store};
-use wasmtime_wasi::WasiCtxBuilder;
 use wasmtime_wasi::p1::WasiP1Ctx;
+use wasmtime_wasi::{HostMonotonicClock, HostWallClock, WasiCtxBuilder};
+
+use wasmtime::{Config, Engine, ResourceLimiter, Store};
 
 /// Default fuel limit per plugin invocation (~10M Wasm instructions).
 pub const DEFAULT_FUEL: u64 = 10_000_000;
@@ -80,6 +81,53 @@ impl ResourceLimiter for HostState {
 /// element is a few host bytes, so this caps table growth well under a MiB.
 const MAX_TABLE_ELEMENTS: usize = 100_000;
 
+/// A WASI clock frozen at store-creation time.
+///
+/// # Why the ambient clock is pinned too
+///
+/// `odal::now_ms` has always returned a value pinned per store, with the stated
+/// reason that it makes determinations deterministic and audit receipts
+/// reproducible. That was true of `odal::now_ms` and false of the store, because
+/// [`build_linker`](crate::host_funcs::build_linker) also wires the preview1
+/// context — which exposed a **host-real** clock through
+/// `wasi_snapshot_preview1::clock_time_get`.
+///
+/// That is not a theoretical second door. It is the one a Rust plugin uses by
+/// default: `std::time::SystemTime::now()` and `Instant::now()` compile straight
+/// to it, and no plugin author would think to avoid them in favour of a custom
+/// host import. So the property the receipts rest on was a plugin-authoring
+/// convention with nothing enforcing it.
+///
+/// Pinning both clocks to the same instant makes the claim true: within one
+/// invocation every clock a plugin can reach returns one value, whichever import
+/// it goes through. Across invocations the value moves, because a new store is
+/// built per call — which is what "reproducible on re-run with the same input"
+/// requires (the input includes the timestamp the determination was made at, and
+/// that timestamp is recorded).
+#[derive(Clone, Copy)]
+struct PinnedClock {
+    nanos: u64,
+}
+
+impl HostWallClock for PinnedClock {
+    fn resolution(&self) -> std::time::Duration {
+        // One second: the honest resolution of a clock that does not advance.
+        std::time::Duration::from_secs(1)
+    }
+    fn now(&self) -> std::time::Duration {
+        std::time::Duration::from_nanos(self.nanos)
+    }
+}
+
+impl HostMonotonicClock for PinnedClock {
+    fn resolution(&self) -> u64 {
+        1_000_000_000
+    }
+    fn now(&self) -> u64 {
+        self.nanos
+    }
+}
+
 /// Create a sandboxed `Store` with WASI disabled for filesystem and network.
 ///
 /// `fuel` and `memory_cap` override the defaults; the host always clamps them
@@ -99,15 +147,32 @@ pub fn build_store(
     fuel: Option<u64>,
     memory_cap: Option<usize>,
 ) -> wasmtime::Result<Store<HostState>> {
+    // One instant, read once, serving every clock this store exposes.
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default();
+    let now_ms_pinned = now.as_millis() as u64;
+    let pinned = PinnedClock {
+        nanos: now.as_nanos() as u64,
+    };
+
     // Preview1 context for wasm32-wasip1 plugins. No preopened directories and
     // no socket capability are granted, so filesystem and network access stay
     // denied; this only satisfies the ambient WASI imports the wasip1 std emits
     // (random/clock/environ/proc_exit) so a real plugin can instantiate.
-    let wasi = WasiCtxBuilder::new().build_p1();
-    let now_ms_pinned = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_millis() as u64)
-        .unwrap_or(0);
+    //
+    // Both clocks are pinned to `now` — see `PinnedClock` for why the ambient
+    // one mattered. Entropy is deliberately left as the host's: `random_get` is
+    // what `std` seeds `HashMap` from, and a fixed seed there would make
+    // iteration order predictable to a plugin without making a determination any
+    // more reproducible (a determination that depends on map order is a plugin
+    // bug the host cannot paper over). The remaining non-determinism is
+    // therefore a plugin's own choice to consume entropy, not an ambient
+    // capability it reaches by writing ordinary Rust.
+    let wasi = WasiCtxBuilder::new()
+        .wall_clock(pinned)
+        .monotonic_clock(pinned)
+        .build_p1();
     let state = HostState {
         wasi,
         memory_cap_bytes: memory_cap

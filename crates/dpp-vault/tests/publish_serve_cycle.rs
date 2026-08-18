@@ -79,7 +79,7 @@ async fn published_passport_is_served_as_the_payload_its_proof_signed() {
                     "sector": "battery",
                     "gtin": "09506000134352",
                     "batteryChemistry": "LFP",
-                    "batteryType": "industrial",
+                    "batteryType": "portable",
                     "nominalVoltageV": 48.0,
                     "nominalCapacityAh": 100.0,
                     "expectedLifetimeCycles": 3000,

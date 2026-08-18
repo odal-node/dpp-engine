@@ -59,7 +59,7 @@ async fn api_created_facility_and_operator_id_are_stamped_on_create() {
             "sector": "battery",
             "gtin": "09506000134352",
             "batteryChemistry": "LFP",
-            "batteryType": "industrial",
+            "batteryType": "portable",
             "nominalVoltageV": 48.0,
             "nominalCapacityAh": 100.0,
             "expectedLifetimeCycles": 3000,

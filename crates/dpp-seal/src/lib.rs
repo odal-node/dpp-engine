@@ -21,6 +21,31 @@
 //! Sandbox needs no legal entity — it seals with eID Easy test certificates.
 //! The entity gates *production* only.
 //!
+//! ## Two properties of this API that constrain any second backend
+//!
+//! Both are properties of *this provider*, not of sealing, and neither is
+//! visible from the `SealPort` contract — which is the reason to write them
+//! down here rather than discover them from a second adapter.
+//!
+//! **It returns a container, never a raw signature.** A digest goes in and a
+//! detached CMS comes back. There is no operation that signs caller-supplied
+//! bytes and returns the signature value alone. So this backend cannot support
+//! a format assembled locally — anything of that shape needs a provider
+//! offering a raw-signature primitive, which is what the Cloud Signature
+//! Consortium API calls `signatures/signHash`. That is a procurement
+//! constraint, not something an adapter can work around.
+//!
+//! **It has no capability discovery.** There is no endpoint that reports which
+//! formats or conformance levels are available. The provider's own API
+//! documentation states that the signature form and profile to send are the
+//! values enabled for a given client — so they are configured out of band, and
+//! [`SealCapabilities`] for this backend is *declared* rather than discovered.
+//! A CSC-speaking provider would answer the same question with
+//! `credentials/info`, and an adapter for one should — the port models
+//! capability precisely so the two can differ.
+//!
+//! [`SealCapabilities`]: dpp_domain::domain::seal::SealCapabilities
+//!
 //! # What is sealed
 //!
 //! The digest handed to `SealPort::seal` is over the passport's `jwsSignature`
