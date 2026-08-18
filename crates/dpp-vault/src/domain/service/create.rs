@@ -18,6 +18,7 @@ use dpp_domain::{
     ports::compliance::ComplianceRegistry,
 };
 use dpp_types::{STANDALONE_OPERATOR_ID, audit::AuditEntry, auth::AuthContext};
+use serde_json::Value;
 use uuid::Uuid;
 
 use super::PassportService;
@@ -119,9 +120,10 @@ impl PassportService {
             });
         }
 
-        // Validate patch fields using a temporary copy, then build a
-        // minimal delta — only the changed fields are written (B-03).
-        apply_patch(&mut passport, &patch)?;
+        // Validate the patch against a temporary copy, recording which fields
+        // it actually applied, then build the delta from *those* — never from
+        // the request body.
+        let applied = apply_patch(&mut passport, &patch)?;
         self.guard_component_graph(id, &passport.component_refs)
             .await?;
         let pre_compliance_co2e = passport.co2e_per_unit.clone();
@@ -129,29 +131,29 @@ impl PassportService {
         apply_compliance(&mut passport, &*self.compliance);
         apply_lint(&mut passport);
 
-        // Start delta from the patch body (already camelCase DB field names).
-        let mut delta = patch;
-        if let serde_json::Value::Object(ref mut m) = delta {
-            // Add compliance-enriched values if they were filled in.
-            if passport.co2e_per_unit != pre_compliance_co2e
-                && let Some(ref v) = passport.co2e_per_unit
-            {
-                m.insert("co2ePerUnit".into(), serde_json::json!(v));
-            }
-            if passport.repairability_score != pre_compliance_repair
-                && let Some(ref v) = passport.repairability_score
-            {
-                m.insert("repairabilityScore".into(), serde_json::json!(v));
-            }
-            // Lint findings are cheap to recompute and always refreshed (unlike
-            // co2e/repairability above, which only backfill when the caller left
-            // them unset) — see PassportService::relint for the standalone re-check.
-            if let Some(ref lint) = passport.lint_result {
-                m.insert("lintResult".into(), serde_json::json!(lint));
-            }
+        let mut delta = delta_for(&passport, &applied);
+        // Compliance-enriched values, added only when enrichment changed them.
+        if passport.co2e_per_unit != pre_compliance_co2e
+            && let Some(ref v) = passport.co2e_per_unit
+        {
+            delta.insert("co2ePerUnit".into(), serde_json::json!(v));
+        }
+        if passport.repairability_score != pre_compliance_repair
+            && let Some(ref v) = passport.repairability_score
+        {
+            delta.insert("repairabilityScore".into(), serde_json::json!(v));
+        }
+        // Lint findings are cheap to recompute and always refreshed (unlike
+        // co2e/repairability above, which only backfill when the caller left
+        // them unset) — see PassportService::relint for the standalone re-check.
+        if let Some(ref lint) = passport.lint_result {
+            delta.insert("lintResult".into(), serde_json::json!(lint));
         }
 
-        let updated = self.repo.patch_fields(id, delta).await?;
+        let updated = self
+            .repo
+            .patch_fields(id, serde_json::Value::Object(delta))
+            .await?;
 
         let entry = AuditEntry::new(
             &updated.id.to_string(),
@@ -288,7 +290,77 @@ fn apply_lint(passport: &mut Passport) {
     }
 }
 
-fn apply_patch(passport: &mut Passport, patch: &serde_json::Value) -> Result<(), DppError> {
+/// The only fields `PUT /dpp/{id}` may change, in the order they are applied.
+///
+/// This is an **allow-list**, and that is the point. The delta sent to
+/// `patch_fields` used to be the caller's request body, with only the
+/// repository's protected-field list standing between an arbitrary JSON key and
+/// the stored document — so `facility`, `operatorIdentifier`, `commodityCode`
+/// and `parentPassportRef` (modelled `Passport` fields, absent from that list)
+/// were writable by any `write`-scope caller and rode into the signed publish
+/// payload without ever meeting the validators that own them.
+///
+/// Naming what may change, rather than what may not, means a new `Passport`
+/// field is immutable here by default. The old shape had the opposite default,
+/// which is why four fields were writable without anyone deciding they should
+/// be.
+const PATCHABLE_FIELDS: [&str; 5] = [
+    "productName",
+    "co2ePerUnit",
+    "repairabilityScore",
+    "sectorData",
+    "componentRefs",
+];
+
+/// Serialise exactly the `applied` fields out of the validated passport.
+///
+/// Reading from the passport rather than echoing the request body is what makes
+/// the allow-list real: a value only reaches the database after `apply_patch`
+/// has parsed it into its typed form and validated it, so an unparsed or
+/// unvalidated value has no path here.
+/// Iterating [`PATCHABLE_FIELDS`] and filtering by `applied` — rather than
+/// iterating `applied` directly — makes the allow-list the thing that decides.
+/// A name `apply_patch` returned but the list does not contain cannot produce a
+/// delta entry, so the two would have to be wrong in the same way for a field to
+/// slip through.
+fn delta_for(passport: &Passport, applied: &[&'static str]) -> serde_json::Map<String, Value> {
+    let mut delta = serde_json::Map::new();
+    for field in PATCHABLE_FIELDS.iter().filter(|f| applied.contains(f)) {
+        let value = match *field {
+            "productName" => serde_json::json!(passport.product_name),
+            "co2ePerUnit" => serde_json::json!(passport.co2e_per_unit),
+            "repairabilityScore" => serde_json::json!(passport.repairability_score),
+            "sectorData" => serde_json::json!(passport.sector_data),
+            "componentRefs" => serde_json::json!(passport.component_refs),
+            // Unreachable: `applied` only ever contains `PATCHABLE_FIELDS`
+            // entries, and adding one there without a case here fails the
+            // `every_patchable_field_serialises` test rather than silently
+            // dropping the field.
+            _ => continue,
+        };
+        delta.insert((*field).to_owned(), value);
+    }
+    delta
+}
+
+/// Apply the patch to `passport`, returning the fields it changed.
+///
+/// The returned list drives [`delta_for`]; a field the caller sent but this
+/// function does not recognise is not applied and not returned, so it cannot
+/// reach the database.
+///
+/// # Why unrecognised keys are ignored rather than refused
+///
+/// The integrator PUTs a full create-shaped body on its `update_draft` path
+/// (`CreatePassportRequest`), which legitimately carries `sector`,
+/// `manufacturer`, `batchId` and `schemaVersion` — fields that are fixed at
+/// create by design. Refusing the request would break a real caller for sending
+/// a shape it has always sent. What must not happen is those fields *taking
+/// effect*, and building the delta from the allow-list is what prevents that.
+fn apply_patch(
+    passport: &mut Passport,
+    patch: &serde_json::Value,
+) -> Result<Vec<&'static str>, DppError> {
     let obj = match patch.as_object() {
         Some(o) => o,
         None => {
@@ -298,27 +370,58 @@ fn apply_patch(passport: &mut Passport, patch: &serde_json::Value) -> Result<(),
         }
     };
 
+    let mut applied = Vec::new();
     if let Some(v) = obj.get("productName").and_then(|v| v.as_str()) {
         passport.product_name = v.to_owned();
+        applied.push("productName");
     }
     if let Some(v) = obj.get("co2ePerUnit").and_then(|v| v.as_f64()) {
         passport.co2e_per_unit = Some(CarbonFootprint::from_kg(v));
+        applied.push("co2ePerUnit");
     }
     if let Some(v) = obj.get("repairabilityScore").and_then(|v| v.as_f64()) {
         passport.repairability_score = Some(RepairabilityScore::from_scalar(v));
+        applied.push("repairabilityScore");
     }
     if let Some(v) = obj.get("sectorData") {
         let sector_data: SectorData = serde_json::from_value(v.clone())
             .map_err(|e| DppError::Validation(format!("invalid sectorData: {e}").into()))?;
         dpp_domain::validate_sector_data(&sector_data).map_err(DppError::Validation)?;
         passport.sector_data = Some(sector_data);
+        applied.push("sectorData");
     }
     if let Some(v) = obj.get("componentRefs") {
         let refs: Vec<PassportRef> = serde_json::from_value(v.clone())
             .map_err(|e| DppError::Validation(format!("invalid componentRefs: {e}").into()))?;
+        // Same shape check the create path applies: every ref is fetched
+        // cross-operator at verify time, so an `http` or internal URI is a
+        // target this node will refuse forever, and a malformed pin can never
+        // match. Create validated these and update did not.
+        for (i, r) in refs.iter().enumerate() {
+            validate_component_ref(r, i).map_err(|e| DppError::Validation(e.into()))?;
+        }
         passport.component_refs = refs;
+        applied.push("componentRefs");
     }
 
+    Ok(applied)
+}
+
+/// `https` + the SSRF shape guard on the URI, and a lowercase-hex SHA-256 pin —
+/// the create path's `validate_passport_ref`, applied on update too.
+fn validate_component_ref(r: &PassportRef, index: usize) -> Result<(), String> {
+    dpp_common::url_guard::validate_public_https_url(&r.uri)
+        .map_err(|e| format!("componentRefs[{index}].uri: {e}"))?;
+    let pin = &r.public_jws_hash;
+    if pin.len() != 64
+        || !pin
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+    {
+        return Err(format!(
+            "componentRefs[{index}].publicJwsHash must be a lowercase hex SHA-256 digest"
+        ));
+    }
     Ok(())
 }
 
@@ -396,6 +499,132 @@ mod tests {
         let mut p = stub();
         let err = apply_patch(&mut p, &serde_json::json!("not-an-object")).unwrap_err();
         assert!(matches!(err, DppError::Validation(_)));
+    }
+
+    // ── the allow-list ───────────────────────────────────────────────────────
+
+    /// The finding this change exists for. `facility`, `operatorIdentifier`,
+    /// `commodityCode` and `parentPassportRef` are modelled `Passport` fields
+    /// that the repository's protected list did not cover, so a `write`-scope
+    /// caller could set them through `PUT` — bypassing the **admin**-only routes
+    /// and the GLN / LEI / tariff validators that own them — and they rode into
+    /// the signed publish payload from there. `facility` in particular is a
+    /// `Public`-tier field, so it reached the anonymous public view.
+    #[test]
+    fn registry_identity_fields_never_reach_the_delta() {
+        let mut p = stub();
+        let patch = serde_json::json!({
+            "productName": "Legit",
+            "facility": { "scheme": "gln", "value": "NOT-A-GLN", "name": "Anywhere" },
+            "operatorIdentifier": "not-an-eori",
+            "commodityCode": "not-a-tariff-code",
+            "parentPassportRef": { "uri": "http://10.0.0.1/x", "publicJwsHash": "z" },
+        });
+        let applied = apply_patch(&mut p, &patch).expect("the recognised field applies");
+        let delta = super::delta_for(&p, &applied);
+
+        assert_eq!(delta.get("productName"), Some(&serde_json::json!("Legit")));
+        for smuggled in [
+            "facility",
+            "operatorIdentifier",
+            "commodityCode",
+            "parentPassportRef",
+        ] {
+            assert!(
+                !delta.contains_key(smuggled),
+                "{smuggled} reached the database delta"
+            );
+        }
+    }
+
+    /// The delta is built from the *validated passport*, not echoed from the
+    /// request — so a value only lands after `apply_patch` has parsed it into
+    /// its typed form. Asserted via a float that round-trips through
+    /// `CarbonFootprint` rather than being copied verbatim.
+    #[test]
+    fn the_delta_is_read_back_from_the_passport_not_the_request() {
+        let mut p = stub();
+        let applied = apply_patch(&mut p, &serde_json::json!({ "co2ePerUnit": 42.5 })).unwrap();
+        let delta = super::delta_for(&p, &applied);
+        assert_eq!(
+            delta.get("co2ePerUnit"),
+            Some(&serde_json::json!(p.co2e_per_unit)),
+            "the delta must carry the typed value, not the raw request number"
+        );
+    }
+
+    /// Every `PATCHABLE_FIELDS` entry must have a `delta_for` arm. Without this,
+    /// adding a field to the allow-list and forgetting the match arm would drop
+    /// it silently — an update that returns 200 and changes nothing.
+    #[test]
+    fn every_patchable_field_serialises() {
+        let p = stub();
+        for field in super::PATCHABLE_FIELDS {
+            let delta = super::delta_for(&p, &[field]);
+            assert!(
+                delta.contains_key(field),
+                "{field} is in PATCHABLE_FIELDS but delta_for has no arm for it"
+            );
+        }
+    }
+
+    /// A create-shaped body is what the integrator actually PUTs on its
+    /// `update_draft` path, and `CreatePassportRequest` serialises `sector` and
+    /// `schemaVersion` as explicit `null` (neither carries
+    /// `skip_serializing_if`). Both are in the repository's protected list, and
+    /// `contains_key` is true for a null value — so the old
+    /// echo-the-request-body delta made that request fail with
+    /// "cannot modify protected field(s): schemaVersion, sector" on **every**
+    /// call. Building from the allow-list drops them before the repository sees
+    /// them.
+    #[test]
+    fn a_create_shaped_body_no_longer_smuggles_null_protected_keys() {
+        let mut p = stub();
+        let patch = serde_json::json!({
+            "productName": "Imported",
+            "sector": serde_json::Value::Null,
+            "schemaVersion": serde_json::Value::Null,
+            "manufacturer": { "name": "ACME", "address": "1 Street" },
+            "batchId": serde_json::Value::Null,
+        });
+        let applied = apply_patch(&mut p, &patch).unwrap();
+        let delta = super::delta_for(&p, &applied);
+        for protected in ["sector", "schemaVersion", "manufacturer", "batchId"] {
+            assert!(!delta.contains_key(protected), "{protected} leaked");
+        }
+        assert_eq!(delta.len(), 1, "only productName should be written");
+    }
+
+    /// Create shape-checks every `componentRefs` URI against the SSRF guard and
+    /// the pin format; update did not, so a ref pointing at an internal host or
+    /// carrying a malformed pin could be stored and then signed at publish.
+    #[test]
+    fn component_refs_are_shape_checked_on_update_as_they_are_on_create() {
+        let good = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+        let mut p = stub();
+        assert!(
+            apply_patch(
+                &mut p,
+                &serde_json::json!({ "componentRefs": [
+                    { "uri": "https://id.example/dpp/a", "publicJwsHash": good }
+                ]}),
+            )
+            .is_ok(),
+            "a public https ref with a valid pin is accepted"
+        );
+
+        for bad in [
+            serde_json::json!([{ "uri": "http://id.example/dpp/a", "publicJwsHash": good }]),
+            serde_json::json!([{ "uri": "https://127.0.0.1/dpp/a", "publicJwsHash": good }]),
+            serde_json::json!([{ "uri": "https://id.example/dpp/a", "publicJwsHash": "short" }]),
+            serde_json::json!([{ "uri": "https://id.example/dpp/a", "publicJwsHash": good.to_uppercase() }]),
+        ] {
+            let mut p = stub();
+            assert!(
+                apply_patch(&mut p, &serde_json::json!({ "componentRefs": bad })).is_err(),
+                "{bad} must be refused"
+            );
+        }
     }
 
     #[test]
