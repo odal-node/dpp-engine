@@ -12,7 +12,8 @@ use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as BASE64;
 use dpp_domain::domain::error::DppError;
 use dpp_domain::ports::seal::{
-    SealCredentialRef, SealFormat, SealMode, SealPort, SealRequest, SealedEnvelope,
+    SealConformanceLevel, SealCredentialRef, SealEnvelope, SealFormat, SealMode, SealPort,
+    SealRequest, SealedEnvelope,
 };
 use hmac::{Hmac, KeyInit, Mac};
 use sha2::{Digest, Sha256};
@@ -43,6 +44,10 @@ fn seal_request(payload_hash: String) -> SealRequest {
             credential_id: "test-client".into(),
         },
         sig_format: SealFormat::Cades,
+        // Matches this adapter's default `signature_profile`
+        // (`CAdES_BASELINE_T`), so the request is one its capabilities admit.
+        conformance_level: SealConformanceLevel::BaselineT,
+        envelope: SealEnvelope::Detached,
     }
 }
 

@@ -23,7 +23,7 @@ use dpp_registry::{
 impl EuRegistrySync {
     /// Map a bridge `EuRegistryResponse` to a domain `RegistryRecord`.
     pub(super) fn response_to_record(resp: &EuRegistryResponse) -> RegistryRecord {
-        use dpp_registry::registry::RegistryStatusCode;
+        use dpp_registry::RegistryStatusCode;
 
         let status = match resp.status {
             RegistryStatusCode::Pending => RegistryStatus::Pending,
@@ -48,7 +48,7 @@ impl EuRegistrySync {
 
     /// Map a bridge `StatusResponse` to a domain `RegistryRecord`.
     pub(super) fn status_to_record(resp: &StatusResponse) -> RegistryRecord {
-        use dpp_registry::registry::RegistryStatusCode;
+        use dpp_registry::RegistryStatusCode;
 
         let status = match resp.status {
             RegistryStatusCode::Pending => RegistryStatus::Pending,

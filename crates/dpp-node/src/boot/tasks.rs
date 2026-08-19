@@ -315,6 +315,7 @@ pub async fn spawn_seal_drain(
     outbox: Arc<dyn SealOutbox>,
     seal: Arc<dyn SealPort>,
     key_ref: dpp_domain::ports::seal::SealCredentialRef,
+    conformance_level: dpp_domain::ports::seal::SealConformanceLevel,
 ) {
     match outbox.status_counts().await {
         Ok(c) => {
@@ -332,7 +333,14 @@ pub async fn spawn_seal_drain(
     tokio::spawn(async move {
         loop {
             tokio::time::sleep(DRAIN_INTERVAL).await;
-            dpp_node::infra::seal_drain::drain_once(&outbox, &seal, &key_ref, DRAIN_BATCH).await;
+            dpp_node::infra::seal_drain::drain_once(
+                &outbox,
+                &seal,
+                &key_ref,
+                conformance_level,
+                DRAIN_BATCH,
+            )
+            .await;
             if let Ok(c) = outbox.status_counts().await {
                 set_seal_gauges(&c);
                 if c.exhausted > 0 {

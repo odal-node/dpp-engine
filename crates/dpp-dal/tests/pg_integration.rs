@@ -135,6 +135,7 @@ fn make_passport() -> Passport {
         created_at: chrono::Utc::now(),
         updated_at: chrono::Utc::now(),
         published_at: None,
+        placed_on_market_date: None,
         schema_version: "2.0.0".into(),
         retention_locked: false,
         version: 1,
