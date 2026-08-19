@@ -35,6 +35,8 @@ serde         = { workspace = true }
 serde_json    = { workspace = true }
 uuid          = { workspace = true }
 chrono        = { workspace = true }
+dpp-calc      = { workspace = true }
+dpp-rules     = { workspace = true }
 thiserror     = { workspace = true }
 anyhow        = { workspace = true }
 async-trait   = { workspace = true }
