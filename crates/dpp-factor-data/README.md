@@ -43,7 +43,7 @@ The `FactorStore` trait decrypts into memory, never writes plaintext to disk.
 | Crate | Role |
 |---|---|
 | `dpp-calc` (core, Apache-2.0) | Defines `FactorProvider` trait + open calculators; never touches licensed data |
-| `dpp-node` | Boots with `GhostFactorProvider`; swaps in real provider when store is configured |
+| `dpp-node` | **Nothing yet.** This crate has no dependent in the workspace; `dpp-node` does not construct a `FactorProvider` of any kind. This row previously read "boots with `GhostFactorProvider`", which would tell a reader the factor tier was wired when it is not. It becomes true when a calculator that needs LCI data is on a publish path — see `dpp-calc`'s `co2e::cfb`, still gated on the Art. 7(1) delegated act |
 
 ## Licence warning
 

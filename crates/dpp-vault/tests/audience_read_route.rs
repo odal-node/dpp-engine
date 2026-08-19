@@ -147,7 +147,6 @@ async fn publish_battery(client: &TestClient) -> String {
             "/api/v1/dpp",
             json!({
                 "productName": "Audience Route Cell",
-                "productCategory": "BATTERY",
                 "manufacturer": { "name": "GreenCell GmbH", "address": "Berlin, DE" },
                 "materials": [{ "name": "Lithium", "weightKg": 1.2 }],
                 "batchId": "LOT-2026-07",

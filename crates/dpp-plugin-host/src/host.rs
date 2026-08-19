@@ -7,7 +7,7 @@ use std::sync::{Arc, RwLock};
 
 use dpp_common::plugin_admin::{InstalledPlugin, PluginAdmin, PluginInstallError};
 use dpp_domain::{
-    SectorCatalog,
+    PassthroughRegistry, SectorCatalog,
     domain::sector::{Sector, SectorData},
     ports::{
         compliance::{
@@ -45,6 +45,15 @@ pub struct WasmPluginHost {
     plugins: Arc<RwLock<HashMap<String, Arc<LoadedPlugin>>>>,
     /// Runtime install capability; `None` on a passthrough/test host.
     install: Option<InstallConfig>,
+    /// Serves any sector with no loaded plugin.
+    ///
+    /// This used to be a hard-coded `ComplianceResult::passthrough()`, which
+    /// meant `PassthroughRegistry` — and therefore the whole `ComplianceStrategy`
+    /// seam it dispatches through — never ran in the node at all, whatever
+    /// `dpp-domain` documented about it. Holding the registry instead of
+    /// imitating one of its answers makes the documented extension point real
+    /// in the default build.
+    fallback: Arc<dyn ComplianceRegistry>,
 }
 
 impl WasmPluginHost {
@@ -52,6 +61,7 @@ impl WasmPluginHost {
         Self {
             plugins: Arc::new(RwLock::new(HashMap::new())),
             install: None,
+            fallback: Arc::new(PassthroughRegistry::new()),
         }
     }
 
@@ -71,7 +81,20 @@ impl WasmPluginHost {
                 trusted_key,
                 plugins_dir,
             }),
+            fallback: Arc::new(PassthroughRegistry::new()),
         }
+    }
+
+    /// Replace the registry that serves sectors with no loaded plugin.
+    ///
+    /// The per-sector `ComplianceStrategy` seam is reached through here: a build
+    /// that computes a real determination for one sector registers its strategy
+    /// on a `PassthroughRegistry` and hands the result to this, leaving every
+    /// other sector on the passthrough it already had.
+    #[must_use]
+    pub fn with_fallback(mut self, fallback: Arc<dyn ComplianceRegistry>) -> Self {
+        self.fallback = fallback;
+        self
     }
 
     /// Register a plugin that was loaded by `loader::load_plugin`.
@@ -402,8 +425,13 @@ impl PluginHost for WasmPluginHost {
 
 /// `ComplianceRegistry` impl allows wiring `WasmPluginHost` directly into `PassportService`.
 ///
-/// When a plugin is loaded for the sector, it is invoked. Otherwise the behaviour mirrors
-/// `PassthroughRegistry`: manufacturer-supplied values are stored verbatim.
+/// When a plugin is loaded for the sector, it is invoked. Otherwise the sector is
+/// served by the fallback registry — `PassthroughRegistry` by default, which
+/// routes through that sector's `ComplianceStrategy` if one is registered and
+/// otherwise returns a bare passthrough. Either way the *status* is
+/// `PassthroughNoValidation`; the difference is that a strategy lifts the
+/// sector's declared metrics into the result's sector-agnostic fields, which a
+/// hard-coded passthrough cannot do because it never sees the payload.
 impl ComplianceRegistry for WasmPluginHost {
     fn compute(
         &self,
@@ -413,7 +441,7 @@ impl ComplianceRegistry for WasmPluginHost {
         if self.has_plugin(sector_key) {
             PluginHost::compute(self, sector_key, data)
         } else {
-            Ok(ComplianceResult::passthrough())
+            self.fallback.compute(sector_key, data)
         }
     }
 }

@@ -22,7 +22,6 @@ async fn lint_findings_surface_and_never_block_publish() {
     // battery.energy_capacity_mismatch.
     let body = serde_json::json!({
         "productName": "Lint Test Battery",
-        "productCategory": "BATTERY",
         "manufacturer": {"name": "Lint Inc", "address": "Test City"},
         "materials": [{"name": "Lithium", "weightKg": 1.2}],
         "sectorData": {
@@ -114,7 +113,6 @@ async fn clean_sector_data_produces_no_findings() {
 
     let body = serde_json::json!({
         "productName": "Clean Battery",
-        "productCategory": "BATTERY",
         "manufacturer": {"name": "Clean Inc", "address": "Test City"},
         "materials": [{"name": "Lithium", "weightKg": 1.2}],
         "sectorData": {

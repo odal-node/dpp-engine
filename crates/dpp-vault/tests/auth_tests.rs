@@ -15,7 +15,6 @@ async fn test_jwt_valid() {
 
     let body = serde_json::json!({
         "productName": "Auth Test Product",
-        "productCategory": "BATTERY",
         "manufacturer": {"name": "Auth Inc", "address": "Auth City"},
         "materials": [{"name": "Steel", "weightKg": 1.0}],
     });
@@ -37,7 +36,6 @@ async fn test_jwt_expired() {
 
     let body = serde_json::json!({
         "productName": "Expired Token Product",
-        "productCategory": "BATTERY",
         "manufacturer": {"name": "Exp Inc", "address": "Exp City"},
         "materials": [{"name": "Copper", "weightKg": 0.5}],
     });
@@ -54,7 +52,6 @@ async fn test_no_auth() {
 
     let body = serde_json::json!({
         "productName": "No Auth Product",
-        "productCategory": "BATTERY",
         "manufacturer": {"name": "NoAuth Inc", "address": "NoAuth City"},
         "materials": [{"name": "Aluminum", "weightKg": 2.0}],
     });

@@ -38,7 +38,6 @@ async fn full_lifecycle_draft_to_archived() {
     // ── 1. Create (Draft) ───────────────────────────────────────────
     let body = serde_json::json!({
         "productName": "Cross-Repo Lifecycle Cell",
-        "productCategory": "BATTERY",
         "manufacturer": {
             "name": "LifecycleTest GmbH",
             "address": "Munich, DE",
@@ -185,7 +184,6 @@ async fn domain_validation_rejects_empty_product_name() {
 
     let body = serde_json::json!({
         "productName": "",
-        "productCategory": "BATTERY",
         "manufacturer": {"name": "Test", "address": "Test"},
         "materials": [],
     });
@@ -209,7 +207,6 @@ async fn materials_round_trip_with_optional_fields() {
 
     let body = serde_json::json!({
         "productName": "Materials Test Widget",
-        "productCategory": "ELECTRONICS",
         "manufacturer": {"name": "MatTest Inc", "address": "Seoul, KR"},
         "materials": [
             {"name": "Copper", "weightKg": 0.2, "recycledPct": 45.0, "countryOfOrigin": "JP"},
@@ -252,7 +249,6 @@ async fn draft_to_suspended_rejected() {
             "/api/v1/dpp",
             serde_json::json!({
                 "productName": "Invalid Transition Test",
-                "productCategory": "OTHER",
                 "manufacturer": {"name": "Test", "address": "Test"},
                 "materials": [],
             }),

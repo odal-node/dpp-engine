@@ -15,7 +15,6 @@ async fn test_passthrough_battery_stores_result() {
 
     let body = serde_json::json!({
         "productName": "Compliance Battery",
-        "productCategory": "BATTERY",
         "manufacturer": {"name": "Compliance Inc", "address": "Test City"},
         "materials": [{"name": "Lithium", "weightKg": 1.2}],
         "sectorData": {
@@ -59,7 +58,6 @@ async fn test_passthrough_textile_stores_result() {
 
     let body = serde_json::json!({
         "productName": "Compliance Textile",
-        "productCategory": "TEXTILE",
         "manufacturer": {"name": "Textile Compliance Ltd", "address": "UK"},
         "materials": [{"name": "Cotton", "weightKg": 0.15}],
         "sectorData": {

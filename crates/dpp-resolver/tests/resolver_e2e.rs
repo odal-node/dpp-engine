@@ -60,7 +60,6 @@ fn sample_passport() -> serde_json::Value {
     json!({
         "id": "00000000-0000-4000-9000-000000000001",
         "productName": "E2E Test Widget",
-        "productCategory": "ELECTRONICS",
         "status": "active",
         "manufacturer": {"name": "E2E Corp", "address": "Berlin, DE"},
         "materials": [{"name": "Copper", "weightKg": 0.3}],
@@ -80,7 +79,6 @@ fn sample_battery_passport() -> serde_json::Value {
     json!({
         "id": "00000000-0000-4000-9000-000000000002",
         "productName": "EcoCell 48V",
-        "productCategory": "BATTERY",
         "status": "active",
         "manufacturer": {"name": "GreenCell GmbH", "address": "Munich, DE"},
         "sectorData": {
@@ -100,7 +98,6 @@ fn sample_textile_passport() -> serde_json::Value {
     json!({
         "id": "00000000-0000-4000-9000-000000000003",
         "productName": "Eco Jacket",
-        "productCategory": "TEXTILE",
         "status": "active",
         "manufacturer": {"name": "FabriqGreen", "address": "Milan, IT"},
         "sectorData": {

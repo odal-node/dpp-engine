@@ -17,7 +17,6 @@ async fn test_textile_create_publish_resolve() {
     // 1. POST /api/v1/dpp — textile sector with all required fields
     let create_body = serde_json::json!({
         "productName": "Organic Cotton T-Shirt",
-        "productCategory": "TEXTILE",
         "manufacturer": {
             "name": "EcoTextile Ltd",
             "address": "Manchester, UK"

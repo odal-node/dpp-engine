@@ -17,7 +17,6 @@ async fn test_suspension_flow() {
     // 1. Create and publish a DPP
     let body = serde_json::json!({
         "productName": "Suspension Test Product",
-        "productCategory": "BATTERY",
         "manufacturer": {"name": "Suspend Inc", "address": "Test"},
         "materials": [{"name": "Nickel", "weightKg": 0.5}],
         "sectorData": {
