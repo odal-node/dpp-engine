@@ -21,7 +21,8 @@ use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as BASE64;
 use chrono::Utc;
 use dpp_domain::ports::seal::{
-    SealCapabilities, SealFormat, SealMode, SealRequest, SealedEnvelope,
+    SealCapabilities, SealConformanceLevel, SealEnvelope, SealFormat, SealMode, SealRequest,
+    SealedEnvelope,
 };
 use hmac::{Hmac, KeyInit, Mac};
 use sha2::Sha256;
@@ -209,7 +210,37 @@ impl SealBackend for EideasyClient {
         SealCapabilities {
             supported_formats: vec![SealFormat::Cades],
             supported_modes: vec![SealMode::ProviderSeal],
+            // Declared from configuration, not discovered — see this module's
+            // doc. The endpoint reports no capabilities, and the profile a
+            // client may send is whatever was enabled for it out of band, so
+            // the one honest answer is the profile this adapter is configured
+            // to ask for. An operator who moves to `CAdES_BASELINE_LT` gets
+            // capabilities that say so, without an edit here.
+            supported_levels: level_for_profile(&self.config.signature_profile)
+                .into_iter()
+                .collect(),
+            // Detached: the request carries a file hash and the response the
+            // signature value alone, never a document wrapping it.
+            supported_envelopes: vec![SealEnvelope::Detached],
         }
+    }
+}
+
+/// The baseline level an eID Easy `signature_profile` string names.
+///
+/// `None` for anything unrecognised, which empties `supported_levels` and — since
+/// `QtspSealAdapter` checks `SealCapabilities::can_produce` before dispatching —
+/// refuses every request. Fail closed: a profile this build cannot classify is
+/// one whose conformance level would otherwise be asserted without knowing it,
+/// and a seal misdescribed in the evidence dossier is worse than one never
+/// produced.
+fn level_for_profile(profile: &str) -> Option<SealConformanceLevel> {
+    match profile {
+        "CAdES_BASELINE_B" => Some(SealConformanceLevel::BaselineB),
+        "CAdES_BASELINE_T" => Some(SealConformanceLevel::BaselineT),
+        "CAdES_BASELINE_LT" => Some(SealConformanceLevel::BaselineLt),
+        "CAdES_BASELINE_LTA" => Some(SealConformanceLevel::BaselineLta),
+        _ => None,
     }
 }
 

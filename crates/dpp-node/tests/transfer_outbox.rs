@@ -103,6 +103,7 @@ fn published_passport() -> Passport {
         created_at: Utc::now(),
         updated_at: Utc::now(),
         published_at: Some(Utc::now()),
+        placed_on_market_date: None,
         schema_version: "2.0.0".into(),
         retention_locked: false,
         version: 1,

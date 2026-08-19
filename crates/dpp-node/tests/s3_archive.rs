@@ -77,6 +77,7 @@ fn make_passport() -> Passport {
         created_at: Utc::now(),
         updated_at: Utc::now(),
         published_at: Some(Utc::now()),
+        placed_on_market_date: None,
         schema_version: "1.0.0".into(),
         retention_locked: true,
         version: 1,

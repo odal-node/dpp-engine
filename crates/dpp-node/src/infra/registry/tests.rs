@@ -4,7 +4,7 @@ use std::time::{Duration, Instant};
 
 use chrono::Utc;
 use dpp_domain::domain::passport::PassportId;
-use dpp_registry::{EuRegistryResponse, registry::RegistryStatusCode};
+use dpp_registry::{EuRegistryResponse, RegistryStatusCode};
 use uuid::Uuid;
 
 use dpp_domain::DppError;

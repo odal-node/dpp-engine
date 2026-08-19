@@ -221,8 +221,12 @@ fn battery_sector_data() -> SectorData {
 #[test]
 fn passthrough_when_no_plugin_registered_for_sector() {
     let host = WasmPluginHost::new();
-    let result =
-        ComplianceRegistry::compute(&host, Sector::Battery.catalog_key(), &battery_sector_data());
+    let result = ComplianceRegistry::compute(
+        &host,
+        Sector::Battery.catalog_key(),
+        &battery_sector_data(),
+        None,
+    );
     let r = result.expect("passthrough must not error");
     assert!(
         matches!(
@@ -274,9 +278,13 @@ fn register_plugin_and_compute_via_host() {
         "host should report a registered plugin"
     );
 
-    let result =
-        ComplianceRegistry::compute(&host, Sector::Battery.catalog_key(), &battery_sector_data())
-            .expect("compute failed");
+    let result = ComplianceRegistry::compute(
+        &host,
+        Sector::Battery.catalog_key(),
+        &battery_sector_data(),
+        None,
+    )
+    .expect("compute failed");
     assert!(
         matches!(
             result.compliance_status,
