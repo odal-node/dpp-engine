@@ -21,7 +21,6 @@ async fn test_battery_create_publish_resolve() {
     // 1. POST /api/v1/dpp — battery sector with all 12 mandatory fields
     let create_body = serde_json::json!({
         "productName": "EcoBattery LFP 3000",
-        "productCategory": "BATTERY",
         "manufacturer": {
             "name": "GreenCell GmbH",
             "address": "Prenzlauer Berg, Berlin, DE"

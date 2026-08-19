@@ -865,7 +865,6 @@ async fn full_dpp_lifecycle_through_assembled_node() {
         .bearer_auth(&token)
         .json(&serde_json::json!({
             "productName": "Node Smoke Test Battery",
-            "productCategory": "BATTERY",
             "manufacturer": {"name": "SmokeTestCorp", "address": "Berlin, DE"},
             "materials": [],
         }))
@@ -931,7 +930,6 @@ async fn eol_declaration_deactivates_and_records_reason() {
         .bearer_auth(&token)
         .json(&serde_json::json!({
             "productName": "EOL Test Battery",
-            "productCategory": "BATTERY",
             "manufacturer": {"name": "SmokeTestCorp", "address": "Berlin, DE"},
             "materials": [],
         }))
@@ -1014,7 +1012,6 @@ async fn transfer_of_responsibility_dual_signed_then_eol() {
         .bearer_auth(&token)
         .json(&serde_json::json!({
             "productName": "Transfer Test Battery",
-            "productCategory": "BATTERY",
             "manufacturer": {"name": "SmokeTestCorp", "address": "Berlin, DE"},
             "materials": [],
         }))
@@ -1117,7 +1114,6 @@ async fn publish_increments_passport_publish_total() {
         .bearer_auth(&token)
         .json(&serde_json::json!({
             "productName": "Metrics Acceptance Test",
-            "productCategory": "BATTERY",
             "manufacturer": {"name": "MetricsCorp", "address": "Berlin, DE"},
             "materials": [],
         }))

@@ -28,7 +28,6 @@ async fn lifecycle_actions_are_recorded_in_audit_history() {
     // 1. Create (draft)
     let body = serde_json::json!({
         "productName": "Audit Trail Widget",
-        "productCategory": "BATTERY",
         "manufacturer": {"name": "Audit Inc", "address": "Berlin, DE"},
         "materials": [{"name": "Nickel", "weightKg": 0.5}],
         "sectorData": {

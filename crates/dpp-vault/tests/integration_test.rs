@@ -22,7 +22,6 @@ fn operator_a() -> String {
 fn sample_passport() -> serde_json::Value {
     serde_json::json!({
         "productName": "Eco Battery Pack",
-        "productCategory": "BATTERY",
         "manufacturer": {
             "name": "GreenCell GmbH",
             "address": "Berlin, DE"

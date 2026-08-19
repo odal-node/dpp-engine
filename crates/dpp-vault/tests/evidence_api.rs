@@ -16,7 +16,6 @@ use helpers::{TestClient, make_jwt, seed_complete_operator, start_postgres, star
 fn create_body() -> serde_json::Value {
     serde_json::json!({
         "productName": "Evidence API Widget",
-        "productCategory": "BATTERY",
         "manufacturer": {"name": "Evidence API Inc", "address": "Berlin, DE"},
         "materials": [{"name": "Nickel", "weightKg": 0.5}],
         "sectorData": {

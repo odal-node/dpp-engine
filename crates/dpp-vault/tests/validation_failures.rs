@@ -22,7 +22,6 @@ async fn test_battery_invalid_gtin() {
     // Battery with a malformed GTIN ("123") → 422.
     let body = serde_json::json!({
         "productName": "Battery with bad GTIN",
-        "productCategory": "BATTERY",
         "manufacturer": {"name": "Test Inc", "address": "Test City"},
         "materials": [{"name": "Lithium", "weightKg": 1.0}],
         "sectorData": {
@@ -56,7 +55,6 @@ async fn test_textile_fibre_sum_invalid() {
     // Fibre percentages sum to 90, not 100 → cross-field validation 422.
     let body = serde_json::json!({
         "productName": "Invalid Fibre Textile",
-        "productCategory": "TEXTILE",
         "manufacturer": {"name": "BadTextile Inc", "address": "Test"},
         "materials": [{"name": "Cotton", "weightKg": 0.1}],
         "sectorData": {
@@ -140,7 +138,6 @@ async fn test_textile_empty_care_instructions() {
     // careInstructions present but empty → schema minLength violation → 422.
     let body = serde_json::json!({
         "productName": "Textile No Care",
-        "productCategory": "TEXTILE",
         "manufacturer": {"name": "Textile Co", "address": "Test"},
         "materials": [{"name": "Cotton", "weightKg": 0.2}],
         "sectorData": {
