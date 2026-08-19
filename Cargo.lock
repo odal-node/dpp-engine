@@ -2140,6 +2140,8 @@ checksum = "75b325c5dbd37f80359721ad39aca5a29fb04c89279657cffdda8736d0c0b9d2"
 [[package]]
 name = "dpp-aas"
 version = "0.18.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9ac847a91130fde81caa0cb7d0a86c1048f6e81dec7044135dd4e0297c44df2c"
 dependencies = [
  "dpp-domain",
  "dpp-vocab",
@@ -2150,6 +2152,8 @@ dependencies = [
 [[package]]
 name = "dpp-calc"
 version = "0.18.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1468d9923dd7635936568b0ec3b96f1170ac8b84f332db609ac7942a2e8156ad"
 dependencies = [
  "chrono",
  "dpp-rules",
@@ -2215,6 +2219,8 @@ dependencies = [
 [[package]]
 name = "dpp-crypto"
 version = "0.18.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e58cc7c2e37250bf40c01beab1da7ac6f1544df062df2416ec1e7db65a31dad0"
 dependencies = [
  "aes-gcm",
  "anyhow",
@@ -2262,6 +2268,8 @@ dependencies = [
 [[package]]
 name = "dpp-digital-link"
 version = "0.18.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0b3658cbdf53ac901ca90fd258486a840b1c19ba5e54e9677fb7d99a196c6773"
 dependencies = [
  "dpp-domain",
  "serde",
@@ -2272,6 +2280,8 @@ dependencies = [
 [[package]]
 name = "dpp-domain"
 version = "0.18.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e3f2996d3e47f21a20e81d3697a6af2ebf4f7d2d892ce94b9d4d28a0394c7ccc"
 dependencies = [
  "async-trait",
  "chrono",
@@ -2439,6 +2449,8 @@ dependencies = [
 [[package]]
 name = "dpp-plugin-traits"
 version = "0.18.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8cc790d7173a9242f7910f4cf4cecc9ff7b7ad41d72ee81a3efb4ca2fe2dcf35"
 dependencies = [
  "semver",
  "serde",
@@ -2449,6 +2461,8 @@ dependencies = [
 [[package]]
 name = "dpp-registry"
 version = "0.18.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3baf4f4295c8b2db71ec63dcde647dde90b41421713984fddaeca960d826b19b"
 dependencies = [
  "chrono",
  "dpp-domain",
@@ -2511,6 +2525,8 @@ dependencies = [
 [[package]]
 name = "dpp-rules"
 version = "0.18.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "65e11672f8f98d72fcecd7cec25009dd28354ac2df55fbf358a16299f5932813"
 dependencies = [
  "base64 0.23.1",
  "chrono",
@@ -2613,6 +2629,8 @@ dependencies = [
 [[package]]
 name = "dpp-vc"
 version = "0.18.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bded71bc2746b7372848daf3b7577e61d5d89b5198c739e5af8a250438855701"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2633,6 +2651,8 @@ dependencies = [
 [[package]]
 name = "dpp-vocab"
 version = "0.18.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0a592a5007423d4eef371f12b8073ecf7d1b3029ec57d0746bf91e2018bcaf9e"
 dependencies = [
  "serde",
  "serde_json",
