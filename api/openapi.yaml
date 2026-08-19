@@ -216,6 +216,20 @@ components:
           type: string
           description: Optional batch or lot identifier
           example: "BATCH-2026-04-001"
+        placedOnMarketDate:
+          type: string
+          format: date
+          description: |
+            The date this product was placed on the EU market — the regulated
+            triggering event that fixes which law governs it.
+
+            Optional, and omitting it is not neutral. A compliance determination
+            whose rule is phased by date has no answer without it: the node
+            reports the missing fact rather than substituting today's date, which
+            would produce a determination that silently changes its own answer
+            when a phase begins. For batteries this decides which EU 2023/1542
+            Art. 8 minimum recycled shares apply.
+          example: "2026-03-14"
         schemaVersion:
           type: string
           description: |
