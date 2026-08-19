@@ -36,7 +36,8 @@ use cms::signed_data::{
 use const_oid::db::rfc5911::ID_DATA;
 use der::{Any, Decode as _, Encode};
 use dpp_domain::ports::seal::{
-    SealCapabilities, SealFormat, SealMode, SealRequest, SealVerification, SealedEnvelope,
+    SealCapabilities, SealChecks, SealConformanceLevel, SealEnvelope, SealFormat, SealMode,
+    SealRequest, SealVerification, SealedEnvelope,
 };
 use p256::ecdsa::{DerSignature, SigningKey};
 use x509_cert::Certificate;
@@ -227,6 +228,18 @@ impl SealBackend for LocalIdentity {
         SealCapabilities {
             supported_formats: vec![SealFormat::Cades],
             supported_modes: vec![SealMode::OperatorSeal],
+            // `BaselineB` and no further, read off what `sign_detached`
+            // actually emits: the signature alone. No signature timestamp
+            // (`BaselineT`), no certificates or revocation data
+            // (`BaselineLt`), no archival timestamp (`BaselineLta`). Claiming a
+            // higher level would claim evidence these bytes do not carry — and
+            // `BaselineB` is documented as not suiting a retention-locked
+            // document, which is the honest position for a self-signed
+            // development sealer.
+            supported_levels: vec![SealConformanceLevel::BaselineB],
+            // Detached: the signature travels beside the digest it covers and
+            // never wraps it.
+            supported_envelopes: vec![SealEnvelope::Detached],
         }
     }
 
@@ -240,22 +253,40 @@ impl SealBackend for LocalIdentity {
     /// cryptographic check *is* the whole truth about them, and there is no
     /// authority whose independence could be borrowed or faked.
     ///
-    /// So `valid: true` here means exactly what [`SealVerification::valid`]
-    /// documents — the seal cryptographically verifies — and nothing more. It
-    /// carries no legal weight, because the certificate is self-signed. The node
-    /// says that separately and structurally, by resolving this backend to the
-    /// `Ghost` trust tier so a production profile refuses to boot on it.
+    /// So a pass here is founded on [`SealChecks::SignatureOnly`] and says
+    /// exactly what that documents — the signature was checked against the
+    /// certificate carried inside the seal, and nothing else. No certificate
+    /// path, no revocation, no timestamp, no Trusted List. It carries no legal
+    /// weight, because the certificate is self-signed, and
+    /// [`SealVerification::is_qualified_pass`] is false on it for that reason.
+    /// The node says the same thing separately and structurally, by resolving
+    /// this backend to the `Ghost` trust tier so a production profile refuses to
+    /// boot on it.
     async fn verify(&self, env: &SealedEnvelope) -> Result<SealVerification, SealError> {
         use base64::engine::general_purpose::STANDARD as BASE64;
+
+        // A placeholder envelope was never validated by anyone, so there is no
+        // verdict to reach — reporting one either way would invent it.
+        if env.placeholder {
+            return Ok(SealVerification::placeholder(
+                "placeholder envelope: no seal to validate",
+            ));
+        }
 
         let der = BASE64
             .decode(&env.seal_value)
             .map_err(|e| SealError::Backend(format!("seal value is not base64: {e}")))?;
 
-        Ok(SealVerification {
-            valid: crate::cades::verify_against_embedded_certificate(&der)?,
-            placeholder: env.placeholder,
-        })
+        Ok(
+            if crate::cades::verify_against_embedded_certificate(&der)? {
+                SealVerification::passed(SealChecks::SignatureOnly)
+            } else {
+                SealVerification::failed(
+                    SealChecks::SignatureOnly,
+                    "signature does not verify against the certificate embedded in the seal",
+                )
+            },
+        )
     }
 }
 
@@ -329,6 +360,7 @@ fn io_err(what: &'static str) -> impl Fn(std::io::Error) -> SealError {
 mod tests {
     use super::*;
     use cms::content_info::ContentInfo;
+    use dpp_domain::ports::seal::SealIndication;
 
     fn identity() -> (LocalIdentity, tempfile::TempDir) {
         let dir = tempfile::tempdir().expect("tempdir");
@@ -496,6 +528,9 @@ mod tests {
                 credential_id: "dev".into(),
             },
             sig_format: SealFormat::Cades,
+            // The only level this backend claims: a bare signature, detached.
+            conformance_level: SealConformanceLevel::BaselineB,
+            envelope: SealEnvelope::Detached,
         }
     }
 
@@ -546,13 +581,23 @@ mod tests {
             .expect("seal");
         let verdict = SealBackend::verify(&id, &env).await.expect("verify");
 
-        assert!(
-            verdict.valid,
+        assert_eq!(
+            verdict.indication,
+            SealIndication::TotalPassed,
             "a seal this backend just produced must verify"
+        );
+        assert_eq!(
+            verdict.checks,
+            SealChecks::SignatureOnly,
+            "and must say that a signature check is all it rests on"
         );
         assert!(
             !verdict.placeholder,
             "these bytes are real; only the trust behind them is absent"
+        );
+        assert!(
+            !verdict.is_qualified_pass(),
+            "a self-signed development seal is never a qualified pass"
         );
     }
 
@@ -574,10 +619,11 @@ mod tests {
         raw[last] ^= 0xff;
         env.seal_value = BASE64.encode(&raw);
 
+        let verdict = SealBackend::verify(&id, &env).await;
         assert!(
             !matches!(
-                SealBackend::verify(&id, &env).await.map(|v| v.valid),
-                Ok(true)
+                verdict.map(|v| v.indication),
+                Ok(SealIndication::TotalPassed)
             ),
             "a corrupted seal must never verify"
         );

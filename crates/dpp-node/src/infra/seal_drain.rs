@@ -28,7 +28,10 @@
 
 use std::sync::Arc;
 
-use dpp_domain::ports::seal::{SealCredentialRef, SealFormat, SealMode, SealPort, SealRequest};
+use dpp_domain::ports::seal::{
+    SealConformanceLevel, SealCredentialRef, SealEnvelope, SealFormat, SealMode, SealPort,
+    SealRequest,
+};
 use dpp_types::SealOutbox;
 
 /// Max sealing attempts before a row is terminally `exhausted`.
@@ -72,6 +75,7 @@ pub async fn drain_once(
     outbox: &Arc<dyn SealOutbox>,
     seal: &Arc<dyn SealPort>,
     key_ref: &SealCredentialRef,
+    conformance_level: SealConformanceLevel,
     batch: i64,
 ) -> DrainStats {
     let mut stats = DrainStats::default();
@@ -94,6 +98,16 @@ pub async fn drain_once(
             // provider name on every request of whichever backend it was not.
             key_ref: key_ref.clone(),
             sig_format: SealFormat::Cades,
+            // From the composition root, for the same reason `key_ref` is: what
+            // a deployment can obtain is a property of its provider arrangement,
+            // not of this loop. A backend not enabled for the level refuses in
+            // the adapter, before any billable call — the row then backs off and
+            // eventually exhausts, which the boot log and the `seal_outbox`
+            // gauges already surface as published-but-unsealed.
+            conformance_level,
+            // The seal covers a digest and travels beside the passport it
+            // covers; there is no document for it to wrap.
+            envelope: SealEnvelope::Detached,
         };
 
         let started = std::time::Instant::now();
@@ -232,6 +246,8 @@ mod tests {
             SealCapabilities {
                 supported_formats: vec![SealFormat::Cades],
                 supported_modes: vec![SealMode::ProviderSeal],
+                supported_levels: SealConformanceLevel::ALL.to_vec(),
+                supported_envelopes: vec![SealEnvelope::Detached],
             }
         }
     }
@@ -275,6 +291,7 @@ mod tests {
             &(outbox.clone() as Arc<dyn SealOutbox>),
             &(seal.clone() as Arc<dyn SealPort>),
             &test_key_ref(),
+            SealConformanceLevel::BaselineLt,
             10,
         )
         .await;
@@ -294,6 +311,7 @@ mod tests {
             &(outbox as Arc<dyn SealOutbox>),
             &(seal.clone() as Arc<dyn SealPort>),
             &test_key_ref(),
+            SealConformanceLevel::BaselineLt,
             10,
         )
         .await;
@@ -308,6 +326,7 @@ mod tests {
             &(outbox.clone() as Arc<dyn SealOutbox>),
             &(seal as Arc<dyn SealPort>),
             &test_key_ref(),
+            SealConformanceLevel::BaselineLt,
             10,
         )
         .await;
@@ -324,6 +343,7 @@ mod tests {
             &(outbox.clone() as Arc<dyn SealOutbox>),
             &(seal as Arc<dyn SealPort>),
             &test_key_ref(),
+            SealConformanceLevel::BaselineLt,
             10,
         )
         .await;
@@ -342,6 +362,7 @@ mod tests {
             &(outbox.clone() as Arc<dyn SealOutbox>),
             &(seal as Arc<dyn SealPort>),
             &test_key_ref(),
+            SealConformanceLevel::BaselineLt,
             10,
         )
         .await;

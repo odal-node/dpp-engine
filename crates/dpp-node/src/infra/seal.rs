@@ -7,9 +7,10 @@
 //!
 //! # Configuration
 //!
-//! | Variable        | Values                     | Meaning                                    |
-//! |-----------------|----------------------------|--------------------------------------------|
-//! | `SEAL_PROVIDER` | unset / `qtsp` / `local`   | Which backend to build                     |
+//! | Variable                  | Values                   | Meaning                          |
+//! |---------------------------|--------------------------|----------------------------------|
+//! | `SEAL_PROVIDER`           | unset / `qtsp` / `local` | Which backend to build           |
+//! | `SEAL_CONFORMANCE_LEVEL`  | `B` / `T` / `LT` / `LTA` | Baseline level to request (`LT`) |
 //!
 //! Each backend then reads its own variables — see `dpp_seal::eideasy::config`
 //! and `dpp_seal::local::config`. A partial or unrecognised configuration is an
@@ -20,7 +21,7 @@
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
-use dpp_domain::ports::seal::{SealCredentialRef, SealPort};
+use dpp_domain::ports::seal::{SealConformanceLevel, SealCredentialRef, SealPort};
 use dpp_types::trust::TrustMode;
 
 /// A selected seal backend, and the three facts about it the node needs.
@@ -47,6 +48,47 @@ pub struct SealWiring {
     /// there. Collapsing the two either strands the local backend unexercised or
     /// lets a self-signed certificate satisfy a production boot.
     pub drains: bool,
+    /// The baseline level every seal request asks for.
+    ///
+    /// Travels from here for the same reason as [`Self::credential`]: the drain
+    /// is provider-agnostic, and the level a deployment can actually obtain is a
+    /// property of its provider arrangement, not of the drain loop.
+    ///
+    /// Defaults to `B-LT` — the first level that stays verifiable after the
+    /// signing certificate expires, and therefore the first that suits a
+    /// passport, whose retention lock is permanent.
+    ///
+    /// **Enforced, not just declared.** `QtspSealAdapter` checks the request
+    /// against the backend's advertised `SealCapabilities` before dispatching, so
+    /// a backend not enabled for this level refuses rather than returning
+    /// whatever it happened to produce. That refusal is deliberate and it bites:
+    /// the local development sealer advertises `BaselineB` only, so a node
+    /// running `SEAL_PROVIDER=local` at this default will not seal until
+    /// `SEAL_CONFORMANCE_LEVEL=B` is set. A self-signed dev seal that cannot
+    /// outlive its own certificate is exactly what should not silently satisfy a
+    /// request for one that can.
+    pub conformance_level: SealConformanceLevel,
+}
+
+/// Read `SEAL_CONFORMANCE_LEVEL`, defaulting to `B-LT`.
+///
+/// An unrecognised value fails the boot rather than falling back to the default,
+/// which would let a deployment that asked for `B-LTA` and misspelled it seal at
+/// a lower level than it believes it is sealing at.
+fn conformance_level_from_env() -> Result<SealConformanceLevel> {
+    let Ok(raw) = std::env::var("SEAL_CONFORMANCE_LEVEL") else {
+        return Ok(SealConformanceLevel::BaselineLt);
+    };
+    match raw.trim().to_ascii_uppercase().as_str() {
+        "B" | "B-B" | "BASELINE_B" => Ok(SealConformanceLevel::BaselineB),
+        "T" | "B-T" | "BASELINE_T" => Ok(SealConformanceLevel::BaselineT),
+        "LT" | "B-LT" | "BASELINE_LT" => Ok(SealConformanceLevel::BaselineLt),
+        "LTA" | "B-LTA" | "BASELINE_LTA" => Ok(SealConformanceLevel::BaselineLta),
+        other => anyhow::bail!(
+            "SEAL_CONFORMANCE_LEVEL '{other}' is not a baseline level \
+             (expected one of B, T, LT, LTA)"
+        ),
+    }
 }
 
 /// Build the seal backend named by `SEAL_PROVIDER`.
@@ -55,6 +97,7 @@ pub struct SealWiring {
 /// Propagates a backend's own configuration error, and an unrecognised
 /// `SEAL_PROVIDER` value. Both fail the boot rather than degrading to a ghost.
 pub fn from_env() -> Result<SealWiring> {
+    let conformance_level = conformance_level_from_env()?;
     match dpp_seal::SealProvider::from_env().context("seal provider")? {
         dpp_seal::SealProvider::Qtsp => {
             let cfg =
@@ -81,6 +124,7 @@ pub fn from_env() -> Result<SealWiring> {
                 credential,
                 trust,
                 drains: true,
+                conformance_level,
             })
         }
         dpp_seal::SealProvider::Local => {
@@ -105,6 +149,7 @@ pub fn from_env() -> Result<SealWiring> {
                 // refuses to boot on it. But the envelope is real, so it drains.
                 trust: TrustMode::Ghost,
                 drains: true,
+                conformance_level,
             })
         }
         dpp_seal::SealProvider::None => {
@@ -119,6 +164,7 @@ pub fn from_env() -> Result<SealWiring> {
                 },
                 trust: TrustMode::Ghost,
                 drains: false,
+                conformance_level,
             })
         }
     }

@@ -95,6 +95,45 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   enforced here — but a rule core added and this engine does not run is worth
   naming rather than leaving to be discovered. Tracked in #110.
 
+- **A seal request now names the conformance level it wants, and a backend that
+  cannot produce it is refused.** `SEAL_CONFORMANCE_LEVEL` selects it —
+  `B`, `T`, `LT` or `LTA` — and defaults to **`B-LT`**, the first baseline
+  level that stays verifiable after the signing certificate expires, and
+  therefore the first that suits a passport, whose retention lock is
+  permanent. An unrecognised value fails the boot rather than falling back,
+  so a deployment that asked for `B-LTA` and misspelled it cannot seal lower
+  than it believes it is sealing.
+
+  **`SEAL_PROVIDER=local` stops sealing at the default.** The development
+  sealer signs with a self-signed certificate and adds no timestamp and no
+  revocation material, so it advertises `BaselineB` and nothing above it. At
+  `B-LT` its requests are now refused, and a local node seals again only with
+  `SEAL_CONFORMANCE_LEVEL=B`. That is the intended consequence: a seal that
+  cannot outlive its own certificate should not silently satisfy a request for
+  one that can.
+
+  **The check is new, not just the level.** `SealCapabilities` was advertised by
+  every backend and consulted by none — `QtspSealAdapter` forwarded whatever it
+  was handed, so a node asking for `B-LT` from a backend enabled only for `B-T`
+  received whatever the provider chose to return and recorded it as what was
+  asked for. Nothing would have surfaced the difference until the seal stopped
+  verifying, years later, with the evidence dossier still naming the higher
+  level. `can_produce` now runs in the adapter **before** the backend is called,
+  because every drained row is billable and a call already destined to produce
+  the wrong level should not be paid for to discover that.
+
+  **The contract is now pinned by core's own kit.** `dpp-domain` ships
+  `ports::seal::conformance::check_seal_port`, and nothing in this repo — its
+  only real implementor — ran it. A test now does, against the local development
+  sealer, because the kit seals once per advertised pair and would spend real
+  money against a live QTSP. It covers refusing the unadvertised, returning the
+  format that was asked for rather than substituting one, and verdict coherence:
+  no pass founded on nothing checked, and no placeholder read as a qualified
+  pass.
+
+  A refused row backs off and eventually exhausts, which the boot reconciliation
+  log and the `seal_outbox_*` gauges already report as published-but-unsealed.
+
 ### Changed
 
 - **`POST /vault/api/v1/dpp` refuses a `schemaVersion` that is not the sector's
@@ -136,6 +175,59 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   `None`, so the key was never emitted — only the spec claimed otherwise. The
   sector-level `productCategory` inside `sectorData` (steel, electronics) is a
   different field and is untouched.
+
+- **Pinned to `dpp-core` 0.18.0**, superseding the 0.17.0 pin recorded above.
+  Four of its changes are visible here, and **one of its new refusals is still
+  not reached by this engine** — the same shape of gap the 0.17.0 entry names,
+  and for the same reason.
+
+  **`Passport` carries `placedOnMarketDate`.** Previously the date lived only on
+  `BatteryData`, which left the governing law underivable for every other
+  sector. It is envelope lifecycle data and it selects a rule, so it now sits
+  beside `publishedAt`. Additive on the wire; `POST /vault/api/v1/dpp` accepts
+  it as an optional field.
+
+  **`ComplianceRegistry::compute` and `ComplianceStrategy::compute` take the
+  governing-law date.** Threaded from `passport.placed_on_market_date` at both
+  call sites — create and the publish-time violation check. Never
+  `Utc::now()`:
+  a determination made against today is wrong for every product not placed on
+  the market today, and would change its own answer as phase dates pass. The
+  Wasm plugin path deliberately does not take it, because a guest receives the
+  sector payload as JSON and reads `placedOnMarketDate` from it directly, which
+  is the only channel the ABI has.
+
+  **`SealVerification` moved to the ETSI validation-indication model.** The
+  `valid: bool` it carried became `indication` (passed / failed /
+  indeterminate) and `checks` — what the verdict was actually founded on. The
+  local sealer reports `SignatureOnly`, which is exactly what its verification
+  does: the signature against the certificate carried inside the seal, no
+  certificate path, no revocation, no timestamp, no Trusted List. A placeholder
+  envelope now returns *indeterminate* rather than a pass or a failure, because
+  no validation was attempted on it.
+
+  **`dpp-registry`'s modules moved to the crate root**, so the imports drop a
+  `registry::` segment.
+
+  **A sector with no plugin loaded now lifts its declared metrics.** The
+  previous entry promised the strategy seam would stay inert "until this engine
+  repins", because `PassthroughRegistry` in 0.17.0 registered no strategies. It
+  registers two in 0.18.0, so a node with no battery plugin routes battery
+  through `PassthroughBatteryStrategy` and `co2eScore` now carries the declared
+  figure where it was previously absent. No determination is made — the status
+  is still `PassthroughNoValidation`, and the field is documented as "calculated
+  **or** manufacturer-supplied" — but a reader watching that field will see it
+  populate. A plugin-host integration test asserted the old absence and now
+  asserts the value is carried through unchanged; it was pinning the inline
+  passthrough that #131 removed, not the contract.
+
+  **The unreached refusal:** 0.18.0 makes `Passport::validate()` refuse a
+  passport whose two market dates — the new envelope field and
+  `BatteryData.placedOnMarketDate` — disagree. `Passport::validate()` is still
+  called nowhere in this repo, so that refusal cannot fire here. It joins the
+  unsold-goods `commodity_code` check named in the 0.17.0 entry above: same
+  method, same reason, and one more rule core enforces that this engine does
+  not run.
 
 ### Fixed
 
@@ -355,6 +447,55 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   explains the rejection, says so — otherwise the operator rotates a perfectly
   good credential and the failure persists. `429` is likewise typed separately
   from a generic provider error, with `Retry-After` surfaced when present.
+
+- **An Art. 8 recycled-content determination, with a receipt — the first
+  calculation this engine performs on a passport.** `CalcBatteryStrategy` starts
+  from the passthrough's answer, so the declared metrics are lifted exactly as
+  they are on any other node, then attaches an EU 2023/1542 Art. 8
+  minimum-recycled-share determination: `rulesetVersion`, `assessedAt` and a
+  `CalculationReceipt` under `receipt`. Those three fields existed on
+  `ComplianceResult` and nothing had ever populated them, which is why
+  `calcReceipts` in the evidence dossier was documented as always empty.
+
+  **It runs host-side rather than in the battery plugin.** The plugin already
+  checks Art. 8 and keeps doing so. What it cannot do is mint a receipt:
+  `dpp-calc` is not reachable from `wasm32-wasip1` without pulling `chrono`,
+  `uuid`, `sha2` and `serde_jcs` into every plugin binary, and a receipt minted
+  inside a sandbox is only as trustworthy as the sandbox. A threshold change
+  would also mean recompiling and re-signing ten artefacts.
+
+  **Which battery, and when, decides everything.** Scope is taken from the
+  battery's Art. 8 category — and for industrial batteries its energy capacity,
+  read from the rated figure or nominal V × Ah. Declared shares are filtered to
+  the metals the chemistry actually contains, so an LFP cell is never reported
+  short of the cobalt or nickel it cannot hold. A battery Art. 8 does not reach
+  produces no finding at all: an obligation that does not apply is not one an
+  operator has failed.
+
+  Two states are reported as warnings rather than silently: a battery whose
+  `placedOnMarketDate` is absent gets `market_date_missing` and **no
+  determination**, because without the date there is no phase to select and
+  picking today's would produce an answer that changes on 18 Aug 2031 for a
+  battery that has not; and a battery in scope but placed on the market before
+  its phase begins gets `not_yet_binding` naming the ruleset and the date it
+  starts. Neither is a shortfall.
+
+  **Registered on the node, and only reached where no battery plugin is
+  loaded.** `boot()` hands `WasmPluginHost` a `PassthroughRegistry` with this
+  strategy substituted for the passthrough battery entry. The host dispatches to
+  a plugin whenever one is loaded for the sector and to this registry only when
+  none is — so on a node carrying `sector-battery.wasm`, which is every node
+  `compliance_trust` rates above `Ghost`, the plugin's findings are still what a
+  battery passport gets. The two are not interchangeable and neither contains
+  the other: the plugin checks the Commission's per-category data-point table
+  and Annex VII's parameter sets, which this strategy does not, and this strategy
+  mints a receipt, which the plugin cannot. Changing that precedence would trade
+  one set of checks for the other, so it has not been changed.
+
+- **`placedOnMarketDate` on passport create.** Optional on
+  `POST /vault/api/v1/dpp`, and omitting it is not neutral — a determination that
+  depends on a phase date has no answer without it, and the node will not
+  substitute today's date to manufacture one.
 
 ### Breaking
 

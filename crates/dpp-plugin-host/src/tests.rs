@@ -137,7 +137,8 @@ fn empty_host_compliance_returns_passthrough() {
         repair_count: None,
         pef_score: None,
     }));
-    let result = ComplianceRegistry::compute(&host, Sector::Textile.catalog_key(), &data).unwrap();
+    let result =
+        ComplianceRegistry::compute(&host, Sector::Textile.catalog_key(), &data, None).unwrap();
     assert_eq!(
         result.compliance_status,
         ComplianceStatus::PassthroughNoValidation
@@ -173,6 +174,7 @@ fn a_sector_without_a_plugin_is_served_by_the_fallback_registry() {
             &self,
             _sector_key: &str,
             _data: &SectorData,
+            _law_in_force_on: Option<chrono::NaiveDate>,
         ) -> Result<ComplianceResult, ComplianceError> {
             self.0.fetch_add(1, Ordering::SeqCst);
             Ok(ComplianceResult {
@@ -187,7 +189,7 @@ fn a_sector_without_a_plugin_is_served_by_the_fallback_registry() {
 
     let data = SectorData::other(serde_json::json!({ "sector": "quantum-widget" }))
         .expect("an unmodelled sector tag builds SectorData::Other");
-    let result = ComplianceRegistry::compute(&host, "quantum-widget", &data)
+    let result = ComplianceRegistry::compute(&host, "quantum-widget", &data, None)
         .expect("fallback must serve the sector");
 
     assert_eq!(
