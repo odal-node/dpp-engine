@@ -209,6 +209,18 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   **`dpp-registry`'s modules moved to the crate root**, so the imports drop a
   `registry::` segment.
 
+  **A sector with no plugin loaded now lifts its declared metrics.** The
+  previous entry promised the strategy seam would stay inert "until this engine
+  repins", because `PassthroughRegistry` in 0.17.0 registered no strategies. It
+  registers two in 0.18.0, so a node with no battery plugin routes battery
+  through `PassthroughBatteryStrategy` and `co2eScore` now carries the declared
+  figure where it was previously absent. No determination is made — the status
+  is still `PassthroughNoValidation`, and the field is documented as "calculated
+  **or** manufacturer-supplied" — but a reader watching that field will see it
+  populate. A plugin-host integration test asserted the old absence and now
+  asserts the value is carried through unchanged; it was pinning the inline
+  passthrough that #131 removed, not the contract.
+
   **The unreached refusal:** 0.18.0 makes `Passport::validate()` refuse a
   passport whose two market dates — the new envelope field and
   `BatteryData.placedOnMarketDate` — disagree. `Passport::validate()` is still

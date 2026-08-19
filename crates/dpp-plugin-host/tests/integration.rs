@@ -235,8 +235,31 @@ fn passthrough_when_no_plugin_registered_for_sector() {
         ),
         "empty host must return PassthroughNoValidation"
     );
-    assert!(r.co2e_score.is_none());
-    assert!(r.repairability_index.is_none());
+
+    // The declared CO2e is lifted, and that is the passthrough working rather
+    // than a determination being made. This used to assert `is_none()`, which
+    // was true of the bare passthrough the host returned inline — before it
+    // dispatched through `PassthroughRegistry` at all. Now that it does, battery
+    // routes to `PassthroughBatteryStrategy`, whose whole job is to carry
+    // manufacturer-supplied values verbatim into the sector-agnostic fields.
+    //
+    // The invariant that must not move is the status above: no determination is
+    // made for any sector. A lifted metric claims nothing about itself — the
+    // field is documented as "calculated **or** manufacturer-supplied" — so
+    // asserting its absence pinned the stub, not the contract.
+    assert_eq!(
+        r.co2e_score,
+        Some(150.0),
+        "the strategy must carry the declared figure through unchanged"
+    );
+    assert!(
+        r.repairability_index.is_none(),
+        "nothing declared a repairability figure, so none may appear"
+    );
+    assert!(
+        r.receipt.is_none() && r.ruleset_version.is_none(),
+        "no calculation ran, so there is no receipt to show for one"
+    );
 }
 
 #[test]
