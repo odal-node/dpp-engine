@@ -486,10 +486,12 @@ mod tests {
     /// battery determination to a bare passthrough.
     #[test]
     fn a_booted_host_uses_the_calc_strategy_for_battery() {
-        let tmp = std::env::temp_dir().join(format!("odal-fb-{}", uuid::Uuid::now_v7()));
-        std::fs::create_dir_all(&tmp).unwrap();
-        let host = boot(tmp.to_str().unwrap()).unwrap();
-        std::fs::remove_dir_all(&tmp).ok();
+        // `tempfile` rather than a name assembled under `env::temp_dir()`: it
+        // creates the directory with owner-only permissions instead of racing
+        // for a predictable path, and drops it on unwind as well as on success.
+        // The neighbouring tests predate this and still build their own path.
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let host = boot(tmp.path().to_str().expect("utf-8 path")).expect("boot with no plugins");
 
         // No battery plugin is loaded, so the host dispatches to the fallback.
         assert!(!host.has_plugin("battery"));
