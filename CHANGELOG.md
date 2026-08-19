@@ -122,6 +122,15 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   because every drained row is billable and a call already destined to produce
   the wrong level should not be paid for to discover that.
 
+  **The contract is now pinned by core's own kit.** `dpp-domain` ships
+  `ports::seal::conformance::check_seal_port`, and nothing in this repo — its
+  only real implementor — ran it. A test now does, against the local development
+  sealer, because the kit seals once per advertised pair and would spend real
+  money against a live QTSP. It covers refusing the unadvertised, returning the
+  format that was asked for rather than substituting one, and verdict coherence:
+  no pass founded on nothing checked, and no placeholder read as a qualified
+  pass.
+
   A refused row backs off and eventually exhausts, which the boot reconciliation
   log and the `seal_outbox_*` gauges already report as published-but-unsealed.
 

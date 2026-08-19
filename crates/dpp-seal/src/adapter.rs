@@ -231,4 +231,48 @@ mod tests {
             .await
             .expect("a request within the backend's capabilities must be served");
     }
+
+    /// The whole `SealPort` contract, run against a real backend.
+    ///
+    /// `dpp-domain` defines the rules and ships the kit that checks them;
+    /// nothing asserted that this crate — its only real implementor — obeyed
+    /// them, and a contract with one implementor that ignores it reads as a
+    /// guarantee while being none. The kit covers refusing what is not
+    /// advertised, returning the format that was asked for rather than
+    /// substituting one, and verdict coherence: no pass founded on nothing
+    /// checked, and no placeholder counted as a qualified pass.
+    ///
+    /// Run against the local development sealer deliberately. The kit calls
+    /// `seal` once per advertised pair, which against a live QTSP would spend
+    /// real money — and this backend produces genuine CAdES bytes, so the rules
+    /// are exercised rather than simulated.
+    #[tokio::test]
+    async fn the_adapter_satisfies_the_seal_port_conformance_kit() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let backend = crate::local::LocalIdentity::load_or_create(dir.path()).expect("identity");
+        let adapter = QtspSealAdapter::new(backend);
+
+        let report = dpp_domain::ports::seal::conformance::check_seal_port(&adapter).await;
+
+        assert!(
+            report.is_conformant(),
+            "QtspSealAdapter must satisfy the SealPort contract:\n{report}"
+        );
+        assert!(
+            report.combinations_checked > 0,
+            "a kit run that exercised no combination proves nothing"
+        );
+        // A note, not a failure, and one worth pinning: this backend is
+        // self-signed with no timestamp, so `BaselineB` is the only level it can
+        // honestly advertise — and the kit says out loud that such a seal stops
+        // verifying inside the retention period of anything it covers.
+        assert!(
+            report
+                .notes
+                .iter()
+                .any(|n| n.contains("certificate expiry")),
+            "the kit must still report that these seals do not outlive the certificate: {:?}",
+            report.notes
+        );
+    }
 }
