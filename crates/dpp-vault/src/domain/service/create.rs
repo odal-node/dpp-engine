@@ -260,7 +260,12 @@ fn apply_compliance(passport: &mut Passport, registry: &dyn ComplianceRegistry) 
         return;
     };
     let sector = sector_data.sector();
-    if let Ok(mut result) = registry.compute(sector.catalog_key(), sector_data) {
+    // The date the governing law attached to this product, read from its own
+    // record. Never `Utc::now()`: a determination made against today's date is
+    // wrong for every product not placed on the market today, and would change
+    // its own answer as phase dates pass.
+    let law_in_force_on = passport.placed_on_market_date;
+    if let Ok(mut result) = registry.compute(sector.catalog_key(), sector_data, law_in_force_on) {
         // Backfill the two display metrics only when the caller didn't supply them.
         if passport.co2e_per_unit.is_none() {
             passport.co2e_per_unit = result.co2e_score.map(CarbonFootprint::from_kg);
@@ -466,6 +471,7 @@ mod tests {
             created_at: Utc::now(),
             updated_at: Utc::now(),
             published_at: None,
+            placed_on_market_date: None,
             schema_version: "1.0.0".into(),
             retention_locked: false,
             version: 1,
@@ -484,7 +490,12 @@ mod tests {
     struct NoopRegistry;
 
     impl ComplianceRegistry for NoopRegistry {
-        fn compute(&self, _: &str, _: &SectorData) -> Result<ComplianceResult, ComplianceError> {
+        fn compute(
+            &self,
+            _: &str,
+            _: &SectorData,
+            _: Option<chrono::NaiveDate>,
+        ) -> Result<ComplianceResult, ComplianceError> {
             Err(ComplianceError {
                 kind: ComplianceErrorKind::UnknownSector,
                 message: "noop".into(),

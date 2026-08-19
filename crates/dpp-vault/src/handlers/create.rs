@@ -38,6 +38,13 @@ pub struct CreateRequest {
     pub repairability_score: Option<f64>,
     pub sector_data: Option<SectorData>,
     pub batch_id: Option<String>,
+    /// The date this product was placed on the EU market — the regulated
+    /// triggering event that fixes which law governs it.
+    ///
+    /// Optional, and omitting it is not neutral: a determination that depends
+    /// on a phase date has no answer without it, and the node will not
+    /// substitute today's date to produce one.
+    pub placed_on_market_date: Option<chrono::NaiveDate>,
     pub schema_version: Option<String>,
     /// Customs tariff classification — HS-6, CN-8 or TARIC-10 digits.
     /// Registration data the EU registry stores and range-checks per product
@@ -258,6 +265,7 @@ pub async fn create_handler(
         created_at: Utc::now(),
         updated_at: Utc::now(),
         published_at: None,
+        placed_on_market_date: body.placed_on_market_date,
         schema_version,
         batch_id: body.batch_id,
         retention_locked: false,

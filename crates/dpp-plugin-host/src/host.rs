@@ -5,6 +5,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
 
+use chrono::NaiveDate;
 use dpp_common::plugin_admin::{InstalledPlugin, PluginAdmin, PluginInstallError};
 use dpp_domain::{
     PassthroughRegistry, SectorCatalog,
@@ -437,11 +438,18 @@ impl ComplianceRegistry for WasmPluginHost {
         &self,
         sector_key: &str,
         data: &SectorData,
+        law_in_force_on: Option<NaiveDate>,
     ) -> Result<ComplianceResult, ComplianceError> {
         if self.has_plugin(sector_key) {
+            // The plugin path does not take the date as an argument: a plugin
+            // receives the sector payload as JSON and reads
+            // `placedOnMarketDate` from it directly, because that is the only
+            // channel the Wasm ABI has. The date is passed on the host path,
+            // where the caller holds the passport envelope and the guest does
+            // not.
             PluginHost::compute(self, sector_key, data)
         } else {
-            self.fallback.compute(sector_key, data)
+            self.fallback.compute(sector_key, data, law_in_force_on)
         }
     }
 }
