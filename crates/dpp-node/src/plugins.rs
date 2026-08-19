@@ -3,13 +3,14 @@ use std::sync::Arc;
 
 use anyhow::Result;
 
-use dpp_domain::{SectorCatalog, ports::plugin_host_port::PluginHost};
+use dpp_domain::{PassthroughRegistry, SectorCatalog, ports::plugin_host_port::PluginHost};
 use dpp_plugin_host::{
     WasmPluginHost,
     loader::{LoadedPlugin, discover_plugins},
     runtime::build_engine,
 };
 use dpp_types::trust::TrustMode;
+use dpp_vault::domain::compliance::CalcBatteryStrategy;
 
 /// Boot the Wasm plugin host and load all `*.wasm` files from `plugins_dir`.
 ///
@@ -39,11 +40,10 @@ pub fn boot(plugins_dir: &str) -> Result<Arc<WasmPluginHost>> {
 
     // The host keeps the engine, pinned key, and plugins dir so it can verify and
     // persist runtime installs (`odal plugin install`) against the same policy.
-    let host = Arc::new(WasmPluginHost::with_runtime(
-        engine.clone(),
-        trusted_key,
-        dir.to_path_buf(),
-    ));
+    let host = Arc::new(
+        WasmPluginHost::with_runtime(engine.clone(), trusted_key, dir.to_path_buf())
+            .with_fallback(Arc::new(fallback_registry())),
+    );
 
     let discovered = discover_plugins(dir)?;
 
@@ -91,6 +91,32 @@ pub fn boot(plugins_dir: &str) -> Result<Arc<WasmPluginHost>> {
     }
 
     Ok(host)
+}
+
+/// The registry that serves a sector with no Wasm plugin loaded for it.
+///
+/// `PassthroughRegistry::new` ships the Apache-2.0 strategies; `register`
+/// replaces one by sector key, which is the documented way a host substitutes a
+/// sector's behaviour without reimplementing the registry. Battery is
+/// substituted because `CalcBatteryStrategy` mints a `CalculationReceipt` — the
+/// ruleset id, version and assessment timestamp that make a determination
+/// evidence rather than an opinion — which the passthrough strategy does not
+/// compute and a Wasm guest cannot.
+///
+/// # This does not displace the battery plugin
+///
+/// `WasmPluginHost::compute` dispatches to a plugin whenever one is loaded for
+/// the sector and reaches this registry only when none is. So on a node with
+/// `sector-battery.wasm` installed — which is every node `compliance_trust`
+/// rates above `Ghost` — the strategy registered here does not run, and the
+/// plugin's findings are what a battery passport carries. The two are not
+/// interchangeable: the plugin checks the Commission's per-category data-point
+/// table and Annex VII's parameter sets, which this strategy does not, and this
+/// strategy mints a receipt, which the plugin cannot.
+fn fallback_registry() -> PassthroughRegistry {
+    let mut registry = PassthroughRegistry::new();
+    registry.register(Box::new(CalcBatteryStrategy));
+    registry
 }
 
 /// The trust tier this node's compliance evaluation is actually running at.
@@ -392,5 +418,93 @@ mod tests {
         // Ghost because no *in-force* sector is covered — not because of the
         // provisional ones, which are simply not counted either way.
         assert_eq!(compliance_trust(&host), TrustMode::Ghost);
+    }
+
+    // ── fallback registry ────────────────────────────────────────────────────
+
+    use dpp_domain::domain::sector::{BatteryData, SectorData};
+    use dpp_domain::ports::compliance::ComplianceRegistry;
+
+    /// An EV battery, which Art. 8 reaches by category alone.
+    fn ev_battery() -> SectorData {
+        let battery: BatteryData = serde_json::from_value(serde_json::json!({
+            "gtin": "09506000134352",
+            "batteryChemistry": "NMC",
+            "batteryType": "ev",
+            "nominalVoltageV": 400.0,
+            "nominalCapacityAh": 200.0,
+            "co2ePerUnitKg": 5100.0,
+            "ratedCapacityKwh": 80.0
+        }))
+        .expect("a minimal battery deserialises");
+        SectorData::Battery(Box::new(battery))
+    }
+
+    fn day(y: i32, m: u32, d: u32) -> chrono::NaiveDate {
+        chrono::NaiveDate::from_ymd_opt(y, m, d).expect("valid date")
+    }
+
+    /// The registry the node boots with routes battery through
+    /// `CalcBatteryStrategy`, not through the passthrough it replaces.
+    ///
+    /// Asserted on a finding **only the calc strategy can produce**: it resolved
+    /// a ruleset for the battery's category and found the phase not yet binding
+    /// on the date it was placed on the market. A passthrough strategy produces
+    /// no findings at all, so this cannot pass by accident.
+    #[test]
+    fn battery_is_served_by_the_calc_strategy() {
+        let result = fallback_registry()
+            .compute("battery", &ev_battery(), Some(day(2026, 8, 19)))
+            .expect("battery computes");
+
+        let codes: Vec<&str> = result.warnings.iter().map(|w| w.code.as_str()).collect();
+        assert!(
+            codes.contains(&"battery.recycled_content.not_yet_binding"),
+            "the calc strategy must have resolved an Art. 8 ruleset, got {codes:?}"
+        );
+    }
+
+    /// The control for the test above: the stock registry says nothing about
+    /// Art. 8, so the finding there is the substitution and not the input.
+    #[test]
+    fn the_stock_registry_makes_no_art8_finding() {
+        let result = PassthroughRegistry::new()
+            .compute("battery", &ev_battery(), Some(day(2026, 8, 19)))
+            .expect("battery computes");
+
+        assert!(
+            result.warnings.is_empty(),
+            "PassthroughBatteryStrategy computes nothing, got {:?}",
+            result.warnings
+        );
+    }
+
+    /// And the node actually boots with it — the wiring, not just the builder.
+    ///
+    /// Goes through `boot()` and asks the host itself, so a future change that
+    /// drops `.with_fallback` fails here rather than silently reverting every
+    /// battery determination to a bare passthrough.
+    #[test]
+    fn a_booted_host_uses_the_calc_strategy_for_battery() {
+        let tmp = std::env::temp_dir().join(format!("odal-fb-{}", uuid::Uuid::now_v7()));
+        std::fs::create_dir_all(&tmp).unwrap();
+        let host = boot(tmp.to_str().unwrap()).unwrap();
+        std::fs::remove_dir_all(&tmp).ok();
+
+        // No battery plugin is loaded, so the host dispatches to the fallback.
+        assert!(!host.has_plugin("battery"));
+        let result = ComplianceRegistry::compute(
+            host.as_ref(),
+            "battery",
+            &ev_battery(),
+            Some(day(2026, 8, 19)),
+        )
+        .expect("battery computes");
+
+        let codes: Vec<&str> = result.warnings.iter().map(|w| w.code.as_str()).collect();
+        assert!(
+            codes.contains(&"battery.recycled_content.not_yet_binding"),
+            "boot() must install the calc-backed fallback, got {codes:?}"
+        );
     }
 }
