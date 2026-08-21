@@ -679,6 +679,84 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   `PassportRepository::find_published_by_gtin`, so the handler never learns the
   passport exists at all. That trait is defined in `dpp-core`, so making the
   lookup status-aware is a core change and a repin, not an engine one.
+- **The unstated-resolver warning no longer fires on a resolver that was
+  stated.** `odal profile create prod --resolver-url http://localhost:8103
+  --kind prod` warned that the resolver "is still" the default and told the
+  operator to set it with the flag they had just passed. The check inferred
+  "nobody set this" from "the value is localhost", which breaks whenever
+  localhost is the deliberate answer — as it is for a full containerised stack
+  run on one machine.
+
+  `create` and `init` now warn only when no `--resolver-url` was supplied on the
+  invocation: a flag that was passed is a stated answer whatever its value. The
+  value test also compares against the default rather than testing for
+  localhost, so a chosen localhost resolver on a non-default port is not
+  mistaken for an untouched one.
+
+  `odal profile show` has no invocation flag to consult and cannot know whether
+  a stored value was chosen or left alone, so it no longer claims one. It states
+  what is true — that the profile is prod and resolves locally — and leaves the
+  judgement to the operator.
+- **`RESOLVER_BASE_URL` is documented in `.env.example`.** It decides the URL
+  printed onto the product, and was the one variable with that consequence
+  absent from the file operators are told to copy. Its default is the project's
+  own demo resolver, which is not wired up: an operator who never set it minted
+  QR codes that resolve to nothing, and the mistake only surfaces when someone
+  scans a printed label — after the ESPR retention window has made reissuing
+  expensive. Every operator serves their own resolver, so this is a value each
+  deployment must state.
+
+- **`.env.example`'s mangled characters are repaired.** Seventeen comment
+  characters were double-encoded — an em dash and a middle dot read as
+  Windows-1252 and re-encoded as UTF-8, rendering as `â€"` and `Â·`. Comments
+  only, no functional effect, but the file is the one operators copy.
+
+- **Every demo dataset and sector template imports again.** All of them were
+  rejected outright: the GTINs were 13 digits where 14 are required, *and* their
+  check digits were wrong, so padding alone did not rescue them. They are now
+  valid GTIN-14 values, kept distinct — widening on the first twelve digits
+  would have collapsed 176 products into 29, since many differ only in the
+  thirteenth.
+
+  The battery datasets needed a second repair: `batteryType` became required and
+  the fixtures never gained the column, though `templates/battery-v1.csv`
+  already had it. Values are chosen to match each product (`ev` for traction
+  modules, `lmt` for the e-bike pack, `portable` for home storage).
+
+  `05-textile-invalid-gtin.csv` keeps its purpose: it is a catalogue of distinct
+  defects — too short, too long, non-numeric, bad check digit, spaces, hyphens —
+  so each row keeps the defect it demonstrates rather than being made valid, and
+  its one contrast row is now genuinely valid.
+
+  `11-mixed-sectors.csv` still rejects its battery rows, and that is not a data
+  defect: `detect_sector` reads the sector from the first data row and the import
+  endpoint is per-sector, so a file mixing sectors is validated entirely against
+  the first one. Its GTINs are corrected; the mixing behaviour is a property of
+  the design.
+- **An import no longer reports about eighteen quintillion successes.** A row
+  can fail several checks, so the error list is longer than the number of
+  rejected rows. `successCount` was `total_rows - all_errors.len()`, which
+  underflows as soon as any row fails twice — and `usize` wraps rather than
+  panics in release builds, so the API returned a number near `usize::MAX` and
+  the CLI printed it verbatim:
+
+  ```
+  Import complete: 18446744073709551613 created, 8 failed
+  ```
+
+  Both counts are now per row, which is what their names and the line that
+  renders them always implied: `successCount` is the rows that were not
+  rejected, and `errorCount` the rows that were, counted once each however many
+  checks a row failed. Success is deliberately not "wrote a record" — a row
+  already up to date, or one that conflicted, writes nothing and is still not a
+  failure. The
+  `errors` array is unchanged and still carries one entry per failed field, so
+  `errorCount` and `errors.length` are deliberately different numbers — now
+  documented as such in the API description.
+
+  Every existing fixture failed at most one check per row, so the two counts
+  coincided and the defect stayed invisible. The regression test uses a row that
+  fails two.
 
 - **A profile pointed at a remote node no longer keeps localhost service URLs.**
   `odal profile create prod --vault-url https://node.example.com/vault` wrote a

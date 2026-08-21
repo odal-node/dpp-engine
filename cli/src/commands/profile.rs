@@ -65,9 +65,16 @@ pub fn run_profile_show(name: Option<String>) -> Result<()> {
     // with the localhost default, and they never see the warning `create`
     // now prints. This is where an operator looks when `status` reports the
     // resolver down, so it is where the reason belongs.
+    // `show` has no invocation flag to consult, so it cannot know whether this
+    // value was chosen or left alone. It states the fact and lets the operator
+    // judge, rather than asserting — as it used to — that nobody set it.
     if config::resolver_is_unstated_default(p.kind, &p.resolver_url) {
-        println!();
-        warn_unstated_resolver(&p.resolver_url);
+        println!(
+            "\n{} This prod profile resolves locally ({}). If the node is remote,",
+            style("!").yellow().bold(),
+            style(&p.resolver_url).dim()
+        );
+        println!("  its resolver almost certainly is not — set it with `--resolver-url <url>`.");
     }
     Ok(())
 }
@@ -96,7 +103,8 @@ pub fn run_profile_create(
     if let Some(url) = vault_url.filter(|s| !s.trim().is_empty()) {
         profile.vault_url = url;
     }
-    if let Some(url) = resolver_url.filter(|s| !s.trim().is_empty()) {
+    let stated_resolver = resolver_url.filter(|s| !s.trim().is_empty());
+    if let Some(url) = stated_resolver.clone() {
         profile.resolver_url = url;
     }
     profile.kind = match kind.as_deref() {
@@ -105,9 +113,11 @@ pub fn run_profile_create(
         Some(other) => bail!("unknown kind '{other}' (expected 'dev' or 'prod')"),
         None => EnvKind::infer(&profile.vault_url),
     };
-    let unstated_resolver =
-        config::resolver_is_unstated_default(profile.kind, &profile.resolver_url)
-            .then(|| profile.resolver_url.clone());
+    // A flag that was passed is a stated answer whatever its value, so the
+    // warning is gated on its absence rather than inferred from the URL.
+    let unstated_resolver = (stated_resolver.is_none()
+        && config::resolver_is_unstated_default(profile.kind, &profile.resolver_url))
+    .then(|| profile.resolver_url.clone());
 
     config::create_profile(name, profile, force)?;
     println!(
