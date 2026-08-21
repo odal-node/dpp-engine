@@ -648,6 +648,24 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ### Fixed
 
+- **The GS1 Digital Link route answers with a problem document.** It returned an
+  ad-hoc `{"error":"NOT_FOUND","message":…}` object while `/dpp/{id}` on the
+  same resolver returned RFC 9457, so the two public doors described the same
+  failure in two vocabularies and a client had to know which one it had knocked
+  on to read the reply. Both now use the shared shape.
+
+  Its message also stopped claiming more than it knows. "No published DPP for
+  this GTIN" read as *this GTIN is unknown*, when the lookup behind it filters
+  to published passports and so cannot tell an unknown GTIN from a withdrawn
+  one. It now says no published passport **resolves** for the GTIN, which is the
+  true and weaker statement.
+
+  **This does not restore the withdrawal signal.** A suspended passport is still
+  served as `404` on the route a consumer reaches by scanning a product, where
+  `410 Gone` is what marks a recall. That needs the lookup to stop folding the
+  publication decision into a `None`, and the lookup is a `dpp-core` port —
+  tracked upstream, not fixable here.
+
 - **`odal schema check` reports something true.** Both of its lines were
   incapable of being correct on any node, on any network. The local half read a
   `schema_version` field from `/health` that the node stopped emitting, so it

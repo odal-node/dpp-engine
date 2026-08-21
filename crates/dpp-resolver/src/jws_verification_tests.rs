@@ -934,3 +934,46 @@ fn battery_fixture_is_a_valid_passport() {
         panic!("battery fixture is not a valid Passport: {e}");
     }
 }
+
+/// Both public doors must describe a failure in the same vocabulary. The GS1
+/// route answered with an ad-hoc `{"error","message"}` object while `/dpp/{id}`
+/// answered with RFC 9457, so a client had to know which door it had knocked on
+/// to read the reply.
+#[tokio::test]
+async fn the_gs1_route_answers_with_a_problem_document() {
+    let vault = Router::new().route(
+        "/public/dpp/by-gtin/{gtin}",
+        get(|| async { StatusCode::NOT_FOUND }),
+    );
+    let port = start_mock_vault(vault).await;
+    let app = router::build(test_state(format!("http://127.0.0.1:{port}")));
+
+    let req = Request::builder()
+        .uri("/01/09506000134352")
+        .body(Body::empty())
+        .unwrap();
+
+    let resp = app.oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    assert_eq!(
+        resp.headers()
+            .get("content-type")
+            .and_then(|v| v.to_str().ok()),
+        Some("application/problem+json")
+    );
+
+    let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let problem: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(problem["status"], 404, "{problem}");
+    assert_eq!(problem["title"], "Not Found", "{problem}");
+    // Deliberately does not claim the GTIN is unknown: the lookup filters to
+    // published, so this route cannot tell that apart from a withdrawal.
+    assert!(
+        problem["detail"]
+            .as_str()
+            .is_some_and(|d| d.contains("No published DPP")),
+        "{problem}"
+    );
+}
