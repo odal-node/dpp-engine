@@ -12,6 +12,31 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ### Breaking
 
+- **`publishValid` is now `sectorDataValid`.** *(Breaking: a response field is
+  renamed.)* The dry-run route reported a field named for publish that checked
+  one of publish's preconditions. It returned `publishValid: true` for bodies
+  publish then refused — demonstrated against a running node, where the same
+  body came back `422 — missing required registry identity`.
+
+  The endpoint's prose already scoped it to the sector-data gates, but a client
+  reading the field name rather than the description had no way to know that,
+  and the name promised the stronger thing. `sectorDataValid` says what is
+  measured.
+
+  The description now names the gates it does **not** run: the registry-identity
+  requirement, which needs operator state this route never reads; the
+  category-mandatory-content gate, which is reachable only by attempting the
+  lifecycle transition and so cannot be previewed at all; and the compliance
+  gate, which needs a `placedOnMarketDate` and a stored passport.
+
+  The middle one is a limitation in `dpp-core` rather than here — the gate is
+  private so that a consumer cannot decline it, which also means no consumer can
+  ask about it. Tracked upstream; until it can be previewed, this route reports
+  what it can check and names what it cannot.
+
+  `odal passport validate <file>` renders the line as `sector` rather than
+  `publish` to match.
+
 
 - **A battery passport can no longer be published without the content its
   category makes mandatory.** Publishing an electric-vehicle, LMT or industrial

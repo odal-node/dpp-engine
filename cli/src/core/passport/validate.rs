@@ -71,7 +71,7 @@ pub async fn action_validate_body(
     if !http_status.is_success() {
         return Ok(DryRunVerdict {
             create_valid: false,
-            publish_valid: false,
+            sector_data_valid: false,
             detail: Some(describe_error(http_status, &body)),
         });
     }
@@ -83,8 +83,8 @@ pub async fn action_validate_body(
             .get("createValid")
             .and_then(|b| b.as_bool())
             .unwrap_or(false),
-        publish_valid: v
-            .get("publishValid")
+        sector_data_valid: v
+            .get("sectorDataValid")
             .and_then(|b| b.as_bool())
             .unwrap_or(false),
         detail: v.get("detail").and_then(|d| d.as_str()).map(str::to_owned),

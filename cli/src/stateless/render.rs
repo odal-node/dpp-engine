@@ -201,18 +201,18 @@ pub fn render_dry_run(verdict: &DryRunVerdict) {
     // neither of which this preview runs. Reporting a pass here as acceptance
     // would promise more than the node checked.
     println!(
-        "{} publish  {}",
-        mark(verdict.publish_valid),
-        if verdict.publish_valid {
-            "passes the sector-data schema gate"
+        "{} sector   {}",
+        mark(verdict.sector_data_valid),
+        if verdict.sector_data_valid {
+            "clears the publish-time schema gate"
         } else {
-            "would be refused"
+            "would be refused at publish"
         }
     );
     if let Some(detail) = &verdict.detail {
         println!("\n{detail}");
     }
-    if verdict.create_valid && verdict.publish_valid {
+    if verdict.create_valid && verdict.sector_data_valid {
         println!(
             "\n{}",
             style(

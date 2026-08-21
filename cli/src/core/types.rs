@@ -235,9 +235,12 @@ pub struct WhoAmI {
 pub struct DryRunVerdict {
     /// Would `POST /api/v1/dpp` accept it?
     pub create_valid: bool,
-    /// Would `publish` accept it afterwards? Stricter than create, so a body
-    /// can be creatable and not yet publishable.
-    pub publish_valid: bool,
+    /// Would the sector data clear the publish-time schema gates?
+    ///
+    /// Deliberately not named for publish: it is one of publish's
+    /// preconditions, not all of them. Registry identity and
+    /// category-mandatory content also gate publish and are not checked here.
+    pub sector_data_valid: bool,
     /// Why not, when either verdict is false.
     pub detail: Option<String>,
 }
