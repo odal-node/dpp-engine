@@ -33,7 +33,7 @@ pub enum TrustMode {
 }
 
 impl TrustMode {
-    /// Lower-case label used in `/health` and logs.
+    /// Lower-case label used in the trust posture and in logs.
     #[must_use]
     pub fn as_str(&self) -> &'static str {
         match self {
@@ -120,8 +120,9 @@ pub struct TrustPort {
     pub required: bool,
 }
 
-/// The node's resolved trust posture — logged at boot, surfaced on `/health`,
-/// exported as gauges, and enforced against the profile.
+/// The node's resolved trust posture — logged at boot, served on the
+/// authenticated node-state route, exported as gauges, and enforced against
+/// the profile.
 #[derive(Debug, Clone)]
 pub struct NodeTrustReport {
     /// Active deployment profile.
@@ -184,9 +185,14 @@ impl NodeTrustReport {
         ))
     }
 
-    /// `/health` fragment: `{ "profile": …, "trust_mode": { port: mode, … } }`.
+    /// The node's trust posture as an API fragment:
+    /// `{ "profile": …, "trustMode": { port: mode, … } }`.
+    ///
+    /// Named for the posture rather than for `/health`, which no longer carries
+    /// it — the posture is served on the authenticated node-state route, and
+    /// `camelCase` because that is what every other key on that response uses.
     #[must_use]
-    pub fn health_json(&self) -> serde_json::Value {
+    pub fn posture_json(&self) -> serde_json::Value {
         let modes: serde_json::Map<String, serde_json::Value> = self
             .ports
             .iter()
@@ -194,7 +200,7 @@ impl NodeTrustReport {
             .collect();
         serde_json::json!({
             "profile": self.profile,
-            "trust_mode": modes,
+            "trustMode": modes,
         })
     }
 }
@@ -268,16 +274,16 @@ mod tests {
     }
 
     #[test]
-    fn health_json_surfaces_each_port_mode() {
+    fn posture_json_surfaces_each_port_mode() {
         let report = NodeTrustReport::new(
             NodeProfile::Production,
             ports(TrustMode::Ghost, TrustMode::Sandbox, TrustMode::Live),
         );
-        let j = report.health_json();
+        let j = report.posture_json();
         assert_eq!(j["profile"], "production");
-        assert_eq!(j["trust_mode"]["seal"], "ghost");
-        assert_eq!(j["trust_mode"]["registry_sync"], "sandbox");
-        assert_eq!(j["trust_mode"]["archive"], "live");
+        assert_eq!(j["trustMode"]["seal"], "ghost");
+        assert_eq!(j["trustMode"]["registry_sync"], "sandbox");
+        assert_eq!(j["trustMode"]["archive"], "live");
     }
 
     /// A production node refuses a **sandbox** tier, not only a ghost.

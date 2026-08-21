@@ -60,9 +60,69 @@ pub async fn node_state_handler(
         Json(NodeState {
             bootstrapped,
             operator_complete,
-            trust: state.trust.as_ref().map(|t| t.health_json()),
+            trust: state.trust.as_ref().map(|t| t.posture_json()),
             ruleset_version: state.ruleset_version.clone(),
         }),
     )
         .into_response()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::NodeState;
+    use dpp_types::trust::{NodeProfile, NodeTrustReport, TrustMode, TrustPort};
+
+    fn report() -> NodeTrustReport {
+        NodeTrustReport::new(
+            NodeProfile::Development,
+            vec![TrustPort {
+                port: "seal",
+                mode: TrustMode::Ghost,
+                required: true,
+            }],
+        )
+    }
+
+    /// Pins the wire shape, because it is documented in the API description and
+    /// two of its keys arrive by a different route from the rest: `profile` and
+    /// `trustMode` are flattened in from the trust report's own JSON, which emits
+    /// them already in `camelCase`, matching the rest of this response.
+    #[test]
+    fn trust_fields_flatten_in_beside_the_setup_state() {
+        let json = serde_json::to_value(NodeState {
+            bootstrapped: true,
+            operator_complete: false,
+            trust: Some(report().posture_json()),
+            ruleset_version: Some("baseline".into()),
+        })
+        .expect("serialises");
+
+        assert_eq!(json["bootstrapped"], true);
+        assert_eq!(json["operatorComplete"], false);
+        assert_eq!(json["rulesetVersion"], "baseline");
+        assert_eq!(json["profile"], "development");
+        assert_eq!(json["trustMode"]["seal"], "ghost");
+    }
+
+    /// A standalone vault resolves no trust ports, and must say nothing rather
+    /// than report a null posture a client could read as "no ghosts".
+    #[test]
+    fn a_node_without_a_trust_report_omits_the_fields_entirely() {
+        let json = serde_json::to_value(NodeState {
+            bootstrapped: true,
+            operator_complete: true,
+            trust: None,
+            ruleset_version: None,
+        })
+        .expect("serialises");
+
+        assert_eq!(
+            json.as_object().map(serde_json::Map::len),
+            Some(2),
+            "only the two setup-state fields belong here: {json}"
+        );
+        for absent in ["profile", "trustMode", "rulesetVersion"] {
+            assert!(json.get(absent).is_none(), "`{absent}` must be omitted");
+        }
+    }
 }

@@ -93,7 +93,7 @@ mod tests {
         let Json(body) = node_health();
 
         assert_eq!(body["status"], "ok");
-        for leaked in ["profile", "trust_mode", "ruleset"] {
+        for leaked in ["profile", "trustMode", "ruleset"] {
             assert!(
                 body.get(leaked).is_none(),
                 "`{leaked}` must not be readable without authentication"

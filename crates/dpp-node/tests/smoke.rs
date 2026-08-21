@@ -324,7 +324,7 @@ async fn authenticated_node_state_reports_trust_modes() {
 
     let body: serde_json::Value = resp.json().await.expect("node state is JSON");
     assert_eq!(body["profile"], "development");
-    assert_eq!(body["trust_mode"]["registry_sync"], "ghost");
+    assert_eq!(body["trustMode"]["registry_sync"], "ghost");
     assert_eq!(body["rulesetVersion"], "baseline");
 }
 
@@ -342,7 +342,7 @@ async fn public_health_reports_liveness_without_trust_detail() {
     // ghost-honesty invariant is asserted there instead.
     let body: serde_json::Value = resp.json().await.expect("health is JSON");
     assert_eq!(body["status"], "ok");
-    for leaked in ["profile", "trust_mode", "ruleset"] {
+    for leaked in ["profile", "trustMode", "ruleset"] {
         assert!(
             body.get(leaked).is_none(),
             "`{leaked}` must not be readable without authentication"

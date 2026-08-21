@@ -15,7 +15,7 @@ properties:
     description: |
       The node's deployment profile. Absent on a standalone vault, which has no
       composition root to resolve one.
-  trust_mode:
+  trustMode:
     type: object
     additionalProperties:
       type: string
