@@ -54,9 +54,10 @@ ADMIN_USERNAME=<your-admin-login>                 # NOT "admin" — see below
 ADMIN_PASSWORD=<temporary-admin-password>
 
 # --- Required before you publish anything. ---
-# The public origin printed onto the product. Every passport's QR code points
-# here, permanently. The default is our hosted resolver, which is not a host
-# you control — set it to your own.
+# The public origin printed onto the product. Every passport's QR code resolves
+# against this, permanently. Each operator serves their own resolver — the
+# built-in default is the project's demo resolver and is not wired up, so
+# leaving it prints codes that resolve to nothing.
 RESOLVER_BASE_URL=https://dpp.your-domain.example
 
 # --- Optional. Defaults shown. ---
@@ -431,7 +432,7 @@ location / {
 | `odal passport import` rejects every row on `gtin` | GTINs are 13-digit, or their check digit is wrong | Use GTIN-14; the error names the expected check digit |
 | `odal passport archive` fails: *"retention policy forbids archiving before …"* | ESPR retention is still running on that passport | Use `odal passport suspend <id>` to withdraw it from public view instead |
 | `odal verify <id>` says *"Dossier not found"* | A **passport** id was passed | `verify` takes a **dossier** id — generate one with `odal passport evidence <passport-id>` |
-| Scanned QR codes reach `id.odal-node.io` | `RESOLVER_BASE_URL` was left at its default when those passports were published | Set it before publishing; already-published carriers cannot be changed |
+| Scanned QR codes resolve to nothing | `RESOLVER_BASE_URL` was left at its default when those passports were published | Set it to your own resolver before publishing; already-published carriers cannot be changed |
 | A second `odal up` elsewhere on the host took over the first deployment | The compose project name is fixed, so all install roots share one deployment | Run one deployment per host, or set `COMPOSE_PROJECT_NAME` |
 | Console shows "not running (connection refused)" | Node not started | Run `odal up` or **Infrastructure › Start** |
 | `odal status` shows vault healthy but identity unhealthy | Identity sub-router not responding | Check node logs: `docker compose logs node` |
