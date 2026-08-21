@@ -5,7 +5,8 @@ use anyhow::{Result, bail};
 use crate::{
     config::{Config, EnvKind},
     core::infra::{
-        action_up, compose_file, missing_scaffold_files, preflight_prod_env, source_tree_present,
+        action_up, compose_file, deployment_owned_elsewhere, missing_scaffold_files,
+        preflight_prod_env, source_tree_present,
     },
 };
 
@@ -36,6 +37,20 @@ pub async fn run_up() -> Result<()> {
                     .join("\n")
             );
         }
+    }
+
+    // Compose fixes the project name, so a second install root does not get a
+    // second deployment — it takes over the first one's containers and volumes,
+    // including the one holding the signing key. Refuse rather than adopt.
+    if let Some(owner) = deployment_owned_elsewhere(&compose) {
+        bail!(
+            "a deployment of this project is already running, started from:\n  {owner}\n\
+             Starting it from here would recreate those containers with this \
+             directory's .env, against that deployment's volumes — including the \
+             one holding the signing key.\n\n\
+             Run `odal up` from that directory instead, or set \
+             COMPOSE_PROJECT_NAME to give this install its own deployment."
+        );
     }
 
     // Build from source only when this install actually carries it; otherwise

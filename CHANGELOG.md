@@ -623,6 +623,24 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ### Fixed
 
+- **`odal up` refuses to take over a deployment started somewhere else.** The
+  compose file fixes the project name, and Compose resolves a project by that
+  name wherever it is invoked from — so `odal up` in a second install root never
+  started a second deployment. It recreated the first one's containers with the
+  second root's `.env`, against the first one's volumes, one of which holds the
+  Ed25519 signing key the compose file is explicit about never losing.
+
+  Nothing clashed and no port was taken, so the command reported success while
+  quietly repointing a running node at another directory's configuration. It now
+  compares the running project's `com.docker.compose.project.working_dir` label
+  against this install root and refuses, naming the directory that owns the
+  deployment and the two ways forward.
+
+  The project name is deliberately left alone: renaming it would orphan every
+  existing deployment's volumes, which is the failure this is meant to prevent.
+  The check is a guard, not a dependency — an unreachable Docker, an empty
+  project, or a missing label all let `up` proceed.
+
 - **An inline comment in `.env` no longer defeats the production secret guard.**
   `parse_env` skipped whole-line `#` comments but not trailing ones, so
   `ADMIN_USERNAME=admin  # the operator login` parsed as the whole string

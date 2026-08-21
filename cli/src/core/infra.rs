@@ -386,6 +386,61 @@ async fn http_probes(client: &OdalClient, cfg: &Config) -> Result<Vec<ServiceHea
     Ok(probes)
 }
 
+/// The install root a running deployment was started from, when that is not
+/// this one.
+///
+/// The compose file fixes the project name (`name: odal-node`), and Compose
+/// resolves a project by that name wherever it is invoked from. So `odal up` in
+/// a second install root does not start a second deployment — it recreates the
+/// first one's containers with *this* root's `.env`, against the first one's
+/// volumes. One of those volumes holds the Ed25519 signing key, and the compose
+/// file is explicit that a recreate which loses it invalidates every passport
+/// ever signed.
+///
+/// The failure is silent: nothing clashes, no port is taken, the command
+/// reports success. Docker labels each container with the directory it was
+/// composed from, so the takeover is at least detectable.
+///
+/// Returns `None` when nothing is running, when Docker cannot be reached, or
+/// when the deployment belongs to this root — this is a guard, not a
+/// dependency, and it must never be the reason `up` fails.
+pub fn deployment_owned_elsewhere(compose_file: &Path) -> Option<String> {
+    let ours = compose_file.parent()?;
+
+    let listed = compose_command(compose_file)
+        .args(["ps", "-a", "--format", "json"])
+        .output()
+        .ok()?;
+    if !listed.status.success() {
+        return None;
+    }
+    let container = String::from_utf8_lossy(&listed.stdout)
+        .lines()
+        .filter_map(|l| serde_json::from_str::<serde_json::Value>(l.trim()).ok())
+        .find_map(|v| v.get("Name").and_then(|n| n.as_str()).map(str::to_owned))?;
+
+    let inspected = std::process::Command::new("docker")
+        .args([
+            "inspect",
+            &container,
+            "--format",
+            "{{index .Config.Labels \"com.docker.compose.project.working_dir\"}}",
+        ])
+        .output()
+        .ok()?;
+    let theirs = String::from_utf8_lossy(&inspected.stdout).trim().to_owned();
+    if theirs.is_empty() {
+        return None;
+    }
+
+    // Compare resolved paths so `./docker` and an absolute path to the same
+    // directory are not read as two different install roots.
+    let same = match (fs::canonicalize(ours), fs::canonicalize(&theirs)) {
+        (Ok(a), Ok(b)) => a == b,
+        _ => Path::new(&theirs) == ours,
+    };
+    (!same).then_some(theirs)
+}
 /// Report Docker container health for the full-stack compose project.
 pub(crate) fn infra_container_status() -> Result<Vec<ContainerHealth>> {
     let compose = compose_file()?;
