@@ -1,0 +1,8 @@
+get:
+  operationId: identityReady
+  summary: Identity readiness check
+  tags:
+    - Health
+  responses:
+    '200':
+      description: Service is ready.

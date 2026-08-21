@@ -1,0 +1,50 @@
+get:
+  operationId: listApiKeys
+  summary: List active API keys
+  description: |
+    Lists all active API keys for this deployment. Only the key prefix
+    is returned — the full secret is shown once at creation time.
+  tags:
+    - API Keys
+  security:
+    - BearerApiKey: []
+    - BasicAuth: []
+  responses:
+    '200':
+      description: List of API keys.
+      content:
+        application/json:
+          schema:
+            type: array
+            items:
+              $ref: ../components/schemas/ApiKey.yaml
+    '401':
+      $ref: ../components/responses/Unauthorized.yaml
+post:
+  operationId: createApiKey
+  summary: Create a new API key
+  description: |
+    Generate a new API key. The response includes the full plain-text
+    `secret` — this is the only time it will be shown. Store it securely.
+  tags:
+    - API Keys
+  security:
+    - BearerApiKey: []
+    - BasicAuth: []
+  requestBody:
+    required: true
+    content:
+      application/json:
+        schema:
+          $ref: ../components/schemas/CreateApiKeyRequest.yaml
+  responses:
+    '201':
+      description: API key created. The `secret` field is shown ONCE.
+      content:
+        application/json:
+          schema:
+            $ref: ../components/schemas/NewApiKey.yaml
+    '401':
+      $ref: ../components/responses/Unauthorized.yaml
+    '422':
+      $ref: ../components/responses/ValidationError.yaml

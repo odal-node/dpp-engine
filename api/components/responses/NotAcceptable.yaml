@@ -1,0 +1,17 @@
+description: |
+  No representation matches the request's `Accept` header. The response
+  body names the media types this resource can produce.
+
+  A passport carrying no GTIN — an unsold-goods report, or an untyped
+  sector — also gets this for `application/aas+json`: it identifies no
+  trade item, so it has no AAS asset identity and therefore no AAS
+  representation.
+content:
+  application/problem+json:
+    schema:
+      $ref: ../schemas/ApiError.yaml
+    example:
+      error: NOT_ACCEPTABLE
+      message: >-
+        No representation matches 'application/pdf'. This resource is available
+        as text/html, application/ld+json, or application/aas+json.

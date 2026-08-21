@@ -1,0 +1,7 @@
+type: object
+required:
+  - operator_id
+properties:
+  operator_id:
+    type: string
+    example: self_hosted

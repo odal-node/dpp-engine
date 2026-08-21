@@ -1,0 +1,37 @@
+type: object
+required:
+  - id
+  - passportId
+  - operatorId
+  - actor
+  - action
+  - timestamp
+properties:
+  id:
+    type: string
+    format: uuid
+  passportId:
+    type: string
+  operatorId:
+    type: string
+  actor:
+    type: string
+    example: admin@example.com
+  action:
+    type: string
+    example: published
+  previousStatus:
+    type:
+      - string
+      - 'null'
+  newStatus:
+    type:
+      - string
+      - 'null'
+  metadata:
+    type:
+      - object
+      - 'null'
+  timestamp:
+    type: string
+    format: date-time

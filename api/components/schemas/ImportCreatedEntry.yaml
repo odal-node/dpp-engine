@@ -1,0 +1,14 @@
+type: object
+required:
+  - row
+  - passportId
+  - status
+properties:
+  row:
+    type: integer
+    description: 1-based row number from the uploaded file.
+  passportId:
+    type: string
+  status:
+    type: string
+    example: draft

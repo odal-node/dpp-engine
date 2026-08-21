@@ -1,0 +1,10 @@
+description: |
+  The credential is authenticated but lacks the required scope — e.g. a
+  `write`/`read` key attempting an admin-only action (registry identity).
+content:
+  application/json:
+    schema:
+      $ref: ../schemas/ApiError.yaml
+    example:
+      error: FORBIDDEN
+      message: Registry-identity management requires an admin-scoped credential.

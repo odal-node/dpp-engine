@@ -1,0 +1,54 @@
+get:
+  operationId: listFacilities
+  summary: List facilities
+  description: |
+    Lists the operator's facilities (ESPR Annex III). The `isDefault`
+    facility is stamped onto new passports. Requires an admin-scoped key.
+  tags:
+    - Facilities
+  security:
+    - BearerApiKey: []
+    - BasicAuth: []
+  responses:
+    '200':
+      description: List of facilities.
+      content:
+        application/json:
+          schema:
+            type: array
+            items:
+              $ref: ../components/schemas/Facility.yaml
+    '401':
+      $ref: ../components/responses/Unauthorized.yaml
+    '403':
+      $ref: ../components/responses/Forbidden.yaml
+post:
+  operationId: addFacility
+  summary: Add a facility
+  description: |
+    Add a facility. The identifier is validated by scheme — a `gln` must
+    pass the GS1 mod-10 check digit. Requires an admin-scoped key.
+  tags:
+    - Facilities
+  security:
+    - BearerApiKey: []
+    - BasicAuth: []
+  requestBody:
+    required: true
+    content:
+      application/json:
+        schema:
+          $ref: ../components/schemas/CreateFacilityRequest.yaml
+  responses:
+    '201':
+      description: Facility created.
+      content:
+        application/json:
+          schema:
+            $ref: ../components/schemas/Facility.yaml
+    '401':
+      $ref: ../components/responses/Unauthorized.yaml
+    '403':
+      $ref: ../components/responses/Forbidden.yaml
+    '422':
+      $ref: ../components/responses/ValidationError.yaml

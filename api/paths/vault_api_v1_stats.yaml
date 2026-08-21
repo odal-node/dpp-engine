@@ -1,0 +1,45 @@
+get:
+  operationId: getOperatorScanStats
+  summary: Operator-wide scan telemetry rollup
+  description: |
+    Aggregate resolution counts across all of the operator's passports over
+    a trailing window — the "your passports were resolved N times" figure.
+    Scans and QR-image renders are separate; nothing about the scanner is
+    collected.
+  tags:
+    - Scan Telemetry
+  security:
+    - BearerApiKey: []
+    - BasicAuth: []
+  parameters:
+    - name: days
+      in: query
+      required: false
+      description: Trailing window in days (default 30, clamped to 1..=730).
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 730
+        default: 30
+  responses:
+    '200':
+      description: Operator-wide aggregate scan counts.
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              windowDays:
+                type: integer
+                example: 30
+              totalScans:
+                type: integer
+                example: 4213
+              totalQrRenders:
+                type: integer
+                example: 57
+              distinctPassportsScanned:
+                type: integer
+                example: 312
+    '401':
+      $ref: ../components/responses/Unauthorized.yaml

@@ -1,0 +1,8 @@
+get:
+  operationId: integratorHealth
+  summary: Integrator health check
+  tags:
+    - Health
+  responses:
+    '200':
+      description: Service is up.

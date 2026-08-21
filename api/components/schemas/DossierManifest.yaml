@@ -1,0 +1,34 @@
+type: object
+description: |
+  Signed metadata binding every dossier member into one atomic,
+  tamper-evident unit.
+required:
+  - formatVersion
+  - passportId
+  - issuerDid
+  - createdAt
+  - nodeVersion
+  - contentHashes
+properties:
+  formatVersion:
+    type: string
+    example: '1'
+  passportId:
+    type: string
+  issuerDid:
+    type: string
+    example: did:web:node.example.com
+  createdAt:
+    type: string
+    format: date-time
+  nodeVersion:
+    type: string
+  rulesetVersion:
+    type:
+      - string
+      - 'null'
+  contentHashes:
+    type: object
+    description: member name -> hex SHA-256 of that member's JCS-canonical bytes.
+    additionalProperties:
+      type: string

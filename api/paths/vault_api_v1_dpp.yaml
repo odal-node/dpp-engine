@@ -1,0 +1,48 @@
+post:
+  operationId: createDpp
+  summary: Create a DPP
+  description: |
+    Create a new Digital Product Passport in `draft` status.
+    Only `productName` (non-blank) and `manufacturer` (with `name`
+    and `address`) are required. All other fields can be supplied
+    later via `PUT` before publishing.
+
+    Returns the full passport record with a server-assigned UUID v7 `id`.
+  tags:
+    - DPP Management
+  security:
+    - BearerApiKey: []
+    - BasicAuth: []
+  requestBody:
+    required: true
+    content:
+      application/json:
+        schema:
+          $ref: ../components/schemas/CreateRequest.yaml
+        example:
+          productName: EcoCell Pro 48V
+          sector: battery
+          manufacturer:
+            name: EcoTech GmbH
+            address: Hauptstraße 1, 10115 Berlin
+          co2ePerUnit: 4.2
+          batchId: BATCH-2026-04-001
+          sectorData:
+            sector: battery
+            gtin: '09506000134352'
+            batteryChemistry: LFP
+            nominalVoltageV: 48
+            nominalCapacityAh: 100
+            expectedLifetimeCycles: 3000
+            co2ePerUnitKg: 45.2
+  responses:
+    '201':
+      description: DPP created in draft status.
+      content:
+        application/json:
+          schema:
+            $ref: ../components/schemas/PassportResponse.yaml
+    '401':
+      $ref: ../components/responses/Unauthorized.yaml
+    '422':
+      $ref: ../components/responses/ValidationError.yaml

@@ -1,0 +1,35 @@
+type: object
+required:
+  - jobId
+  - status
+  - progress
+properties:
+  jobId:
+    type: string
+    format: uuid
+  status:
+    type: string
+    enum:
+      - queued
+      - processing
+      - completed
+      - failed
+  progress:
+    type: object
+    properties:
+      processed:
+        type: integer
+      total:
+        type: integer
+  result:
+    type:
+      - object
+      - 'null'
+    description: Populated on completion (created/errors) or failure (reason).
+  report:
+    type:
+      - object
+      - 'null'
+    description: >-
+      The row-addressed findings report — populated for every job, dry-run or
+      apply, independent of `result`.

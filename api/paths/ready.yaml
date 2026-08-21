@@ -1,0 +1,8 @@
+get:
+  operationId: resolverReady
+  summary: Resolver readiness check
+  tags:
+    - Health
+  responses:
+    '200':
+      description: Resolver is ready.

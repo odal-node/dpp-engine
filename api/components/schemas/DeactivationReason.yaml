@@ -1,0 +1,41 @@
+description: >-
+  Why a passport reached end-of-life, internally tagged by `kind`. Destruction
+  alone requires a `derogation` citing the lawful basis.
+oneOf:
+  - type: object
+    required:
+      - kind
+    properties:
+      kind:
+        type: string
+        enum:
+          - recycled
+  - type: object
+    required:
+      - kind
+      - derogation
+    properties:
+      kind:
+        type: string
+        enum:
+          - destroyed
+      derogation:
+        $ref: ./DerogationRef.yaml
+  - type: object
+    required:
+      - kind
+    properties:
+      kind:
+        type: string
+        enum:
+          - exported
+  - type: object
+    required:
+      - kind
+    properties:
+      kind:
+        type: string
+        enum:
+          - lost
+example:
+  kind: recycled

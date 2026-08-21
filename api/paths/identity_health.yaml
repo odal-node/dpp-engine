@@ -1,0 +1,8 @@
+get:
+  operationId: identityHealth
+  summary: Identity health check
+  tags:
+    - Health
+  responses:
+    '200':
+      description: Service is up.

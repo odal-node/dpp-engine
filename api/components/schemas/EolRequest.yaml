@@ -1,0 +1,21 @@
+type: object
+required:
+  - reason
+description: Request body for declaring a passport end-of-life.
+properties:
+  reason:
+    $ref: ./DeactivationReason.yaml
+  declaredBy:
+    type:
+      - string
+      - 'null'
+    description: DID of the declaring operator; defaults to the authenticated actor.
+  materialRecovery:
+    type:
+      - object
+      - 'null'
+    description: Optional recovered-material summary (Battery Annex XIII circularity).
+  notes:
+    type:
+      - string
+      - 'null'

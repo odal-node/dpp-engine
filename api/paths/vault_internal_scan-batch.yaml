@@ -1,0 +1,24 @@
+post:
+  operationId: ingestScanBatch
+  summary: Flush a scan-telemetry batch (internal, mTLS)
+  description: |
+    The mTLS-gated sink the public resolver flushes its in-memory
+    aggregate scan/QR-render counters to (`CN=odal-resolver` only). The
+    resolver holds no operator API key and no database of its own.
+  tags:
+    - Vault (internal)
+  security:
+    - MutualTLS: []
+  requestBody:
+    required: true
+    content:
+      application/json:
+        schema:
+          $ref: ../components/schemas/ScanBatch.yaml
+  responses:
+    '204':
+      description: Batch ingested.
+    '401':
+      $ref: ../components/responses/Unauthorized.yaml
+    '403':
+      $ref: ../components/responses/Forbidden.yaml
