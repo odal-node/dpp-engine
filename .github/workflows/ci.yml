@@ -268,6 +268,12 @@ jobs:
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: 24.18.0
+      # The description's version and the crate version move together on a
+      # release. Checked here as well as in `just check` because this is the
+      # job that owns the spec.
+      - name: Check the spec version matches the crate version
+        working-directory: dpp-engine
+        run: bash scripts/spec-version-check.sh
       # The bundle is a committed build artifact. `redocly bundle` is
       # byte-deterministic, so regenerating it and diffing proves the shipped
       # single file still matches the multi-file tree it came from.

@@ -185,7 +185,8 @@ The `ComplianceRegistry` trait in `dpp-domain::ports` is a technical extension s
 | [docs/architecture/DATA-MODEL.md](docs/architecture/DATA-MODEL.md) | Tables, migrations, and bootstrap |
 | [docs/architecture/AUTH.md](docs/architecture/AUTH.md) | Authentication and authorisation |
 | [docs/ops/PRODUCTION-RUNBOOK.md](docs/ops/PRODUCTION-RUNBOOK.md) | Running Odal Node for real operators — topology, hardening, backups, upgrades |
-| [api/openapi.yaml](api/openapi.yaml) | HTTP surface specification |
+| [api/openapi.bundled.yaml](api/openapi.bundled.yaml) | HTTP surface specification — the single-file form to read or feed to a tool |
+| [api/README.md](api/README.md) | How that file is produced: the spec is authored multi-file under `api/` and bundled |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | Repo layout and contribution flow |
 | [SECURITY.md](SECURITY.md) | Vulnerability disclosure policy |
 | [GOVERNANCE.md](GOVERNANCE.md) | Decision-making structure and maintainer authority |

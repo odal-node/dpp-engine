@@ -206,6 +206,11 @@ outbound-check:
 mod-rs-check:
     bash scripts/mod-rs-check.sh
 
+# The API description's version must match the workspace crate version. Pure
+# text comparison — no Node, so unlike openapi-check this belongs in the gate.
+spec-version-check:
+    bash scripts/spec-version-check.sh
+
 # Run security audit against the RustSec advisory database. --deny yanked/
 # unmaintained so those stop passing silently (a yanked crate is a
 # maintainer's explicit "don't use this") — kept separate from vulnerability
@@ -221,7 +226,7 @@ doc:
     cargo doc --workspace --no-deps
 
 # Fast gate (no Docker) — mirrors CI jobs: fmt, clippy, debug-prints, test-unit, audit
-check: fmt-check lint debug-check subjects-check mod-rs-check outbound-check grants-check migrations-check check-plugins test check-integration audit
+check: fmt-check lint debug-check subjects-check mod-rs-check spec-version-check outbound-check grants-check migrations-check check-plugins test check-integration audit
 
 # Full local CI mirror — adds integration-feature clippy + the Docker tiers (needs Docker running)
 ci: check lint-integration test-integration test-pg

@@ -12,6 +12,7 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ### Breaking
 
+
 - **A battery passport can no longer be published without the content its
   category makes mandatory.** Publishing an electric-vehicle, LMT or industrial
   battery now requires all 38 fields the Commission's guidance marks mandatory
@@ -134,139 +135,43 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   A refused row backs off and eventually exhausts, which the boot reconciliation
   log and the `seal_outbox_*` gauges already report as published-but-unsealed.
 
-### Changed
 
-- **`POST /vault/api/v1/dpp` refuses a `schemaVersion` that is not the sector's
-  current one**, with `422`. Omitting it is unchanged, and remains the normal
-  case.
+- **`NODE_PROFILE=production` now refuses a `Sandbox` trust tier, not only a
+  ghost.** A production node asserts that its passports are backed by real
+  authorities; admitting a sandbox tier made that untrue, and a provider's test
+  certificate could seal a passport claiming to be real. The tiers are ordered
+  `Ghost < Sandbox < Live` so a profile states a floor rather than enumerating
+  what it rejects — adding a tier later cannot silently pass an existing guard.
 
-  Previously the field was accepted and silently discarded: the handler resolved
-  it, and `PassportService::create` then overwrote it from the catalog on
-  persist. So no caller-supplied version ever reached the database — but nothing
-  said so, and a client sending `"1.0.0"` had no way to learn it got `2.6.0`.
-
-  That overwrite is also, as of this release, the only thing standing between a
-  caller and the disclosure table its passport is served under, which the same
-  release makes version-dependent (above). An older table classifies fewer
-  fields and `SectorAccessPolicy` defaults the rest to public — battery v1.0.0
-  annotates 11 against v2.6.0's 68, so a passport filtered at v1.0.0 would serve
-  `stateOfHealth` and thirteen others publicly. That hazard is pinned by
-  `an_older_schema_version_widens_the_public_view`. Refusing the mismatch at the
-  edge means the guarantee no longer rests on a single line in the service.
-
-- **Two battery fields became public** at core's battery schema v2.6.0, on its
-  cited reading of Annex XIII: `criticalRawMaterials` (point 1(b), listed
-  alongside chemistry and hazardous substances as publicly accessible material
-  composition) and `dueDiligenceUrl` (point 1(d)). Both are widenings of what the
-  public and AAS doors emit. The cross-door masking tests name their fields
-  explicitly rather than re-reading the catalog, so each had to be re-checked
-  against the schema's stated basis rather than silently dropped.
-
-- **The electronics page renders a device-type label, not the wire value.**
-  `productCategory` became a closed `DeviceType` with kebab-case values, so
-  rendering it raw would have put `other-mobile-phone` in front of a consumer.
-  Unrecognised values pass through untouched — a token this mapping does not know
-  is one it cannot honestly relabel.
-
-- **`productCategory` is gone from the documented passport response.** Core
-  removed `Passport.product_category` in 0.17.0, so the API spec described a
-  field the response no longer carries. No wire change: the field was
-  `skip_serializing_if = "Option::is_none"` and every write path set it to
-  `None`, so the key was never emitted — only the spec claimed otherwise. The
-  sector-level `productCategory` inside `sectorData` (steel, electronics) is a
-  different field and is untouched.
-
-- **Pinned to `dpp-core` 0.18.0**, superseding the 0.17.0 pin recorded above.
-  Four of its changes are visible here, and **one of its new refusals is still
-  not reached by this engine** — the same shape of gap the 0.17.0 entry names,
-  and for the same reason.
-
-  **`Passport` carries `placedOnMarketDate`.** Previously the date lived only on
-  `BatteryData`, which left the governing law underivable for every other
-  sector. It is envelope lifecycle data and it selects a rule, so it now sits
-  beside `publishedAt`. Additive on the wire; `POST /vault/api/v1/dpp` accepts
-  it as an optional field.
-
-  **`ComplianceRegistry::compute` and `ComplianceStrategy::compute` take the
-  governing-law date.** Threaded from `passport.placed_on_market_date` at both
-  call sites — create and the publish-time violation check. Never
-  `Utc::now()`:
-  a determination made against today is wrong for every product not placed on
-  the market today, and would change its own answer as phase dates pass. The
-  Wasm plugin path deliberately does not take it, because a guest receives the
-  sector payload as JSON and reads `placedOnMarketDate` from it directly, which
-  is the only channel the ABI has.
-
-  **`SealVerification` moved to the ETSI validation-indication model.** The
-  `valid: bool` it carried became `indication` (passed / failed /
-  indeterminate) and `checks` — what the verdict was actually founded on. The
-  local sealer reports `SignatureOnly`, which is exactly what its verification
-  does: the signature against the certificate carried inside the seal, no
-  certificate path, no revocation, no timestamp, no Trusted List. A placeholder
-  envelope now returns *indeterminate* rather than a pass or a failure, because
-  no validation was attempted on it.
-
-  **`dpp-registry`'s modules moved to the crate root**, so the imports drop a
-  `registry::` segment.
-
-  **A sector with no plugin loaded now lifts its declared metrics.** The
-  previous entry promised the strategy seam would stay inert "until this engine
-  repins", because `PassthroughRegistry` in 0.17.0 registered no strategies. It
-  registers two in 0.18.0, so a node with no battery plugin routes battery
-  through `PassthroughBatteryStrategy` and `co2eScore` now carries the declared
-  figure where it was previously absent. No determination is made — the status
-  is still `PassthroughNoValidation`, and the field is documented as "calculated
-  **or** manufacturer-supplied" — but a reader watching that field will see it
-  populate. A plugin-host integration test asserted the old absence and now
-  asserts the value is carried through unchanged; it was pinning the inline
-  passthrough that #131 removed, not the contract.
-
-  **The unreached refusal:** 0.18.0 makes `Passport::validate()` refuse a
-  passport whose two market dates — the new envelope field and
-  `BatteryData.placedOnMarketDate` — disagree. `Passport::validate()` is still
-  called nowhere in this repo, so that refusal cannot fire here. It joins the
-  unsold-goods `commodity_code` check named in the 0.17.0 entry above: same
-  method, same reason, and one more rule core enforces that this engine does
-  not run.
-
-### Fixed
-
-- **`WasmPluginHost` now serves an unplugged sector from a real registry.** It
-  returned a hard-coded `ComplianceResult::passthrough()` inline, so
-  `PassthroughRegistry` — and therefore the per-sector `ComplianceStrategy` seam
-  it dispatches through — **never ran in the node**, whatever `dpp-domain`
-  documented about it being the extension point a compliance tier wires into.
-  The host now holds an `Arc<dyn ComplianceRegistry>` fallback, defaulted to
-  `PassthroughRegistry`, and `with_fallback` replaces it.
-
-  Both halves are asserted by a test that fails on the previous behaviour: the
-  fallback is consulted when no plugin is loaded, and its result is returned
-  verbatim rather than replaced by a bare passthrough.
-
-  **No behaviour changes until this engine repins.** `PassthroughRegistry` in
-  the pinned `dpp-core` 0.17.0 is a unit struct registering no strategies, so
-  every sector still takes the same bare passthrough it did before. The strategy
-  dispatch it delegates to arrives with the next core version; this removes the
-  bypass that would have kept it unreachable when it does.
-
-- **`just build-plugins` no longer copies a months-old binary and reports
-  success.** It read the built artifact from `sector-<name>/target`, which the
-  sector plugins have not been built into since they moved to a shared cargo
-  workspace — cargo writes to `plugins/target`. Stale per-member target
-  directories from the older layout are still on disk, `ls | head -n1` found one,
-  and `cp` succeeded. The battery plugin shipped here ran two months behind its
-  source as a result.
-
-  The recipe now names the artifact rather than globbing, errors when it is
-  absent, and refuses to copy one older than its own source.
-
-- **`just check-plugins`**, wired into `just check`: fails when an installed
-  `plugins/*.wasm` is older than the source it was built from. Nothing noticed a
-  stale plugin binary before, because nothing looked. Skips cleanly when the
-  sibling `dpp-core` checkout is absent, so CI — which has neither that checkout
-  nor these unsigned dev artifacts — is unaffected.
+  **Migration.** A node running `NODE_PROFILE=production` against a provider's
+  test environment now fails to boot, naming the ports that resolved too low.
+  Either set the new **`NODE_PROFILE=sandbox`** — a full node in every respect
+  except that the authorities behind it are test ones, and still a hard boot
+  failure on ghosts — or point the backend at its production endpoint with
+  production credentials. Sandbox is deliberately a property of the *deployment*
+  rather than a tier a production node may quietly carry: running it as its own
+  environment is the closest rehearsal of production there is, and keeping the
+  two apart is what stops a test certificate ever sealing a real passport.
 
 ### Added
+
+- **`GET /vault/api/v1/whoami`** reports the presented credential's identity,
+  scope and key id. A client previously had no way to discover what its
+  credential was allowed to do — a read-only key found out by having a write
+  rejected, which cannot be checked ahead of time. Available to every scope,
+  including `read`. `keyId` is the key's row id, never the token, and is absent
+  for local Basic auth.
+
+- **`POST /vault/api/v1/dpp/validate`** dry-runs a passport body and persists
+  nothing. It runs the same validation `POST /vault/api/v1/dpp` runs — one
+  implementation, so a preview and the real create cannot disagree — and on
+  rejection returns the identical `422` create would have returned. It reports
+  **two** verdicts, `createValid` and `publishValid`, because the two gates
+  deliberately differ: create is lenient about a sector with no resolvable JSON
+  Schema, while publish fails closed on it. A body can be creatable and not yet
+  publishable, and that gap is now visible before publish is attempted rather
+  than after.
+
 
 - **Sealing is answerable from the control plane** — `GET /vault/api/v1/seal`
   and `odal seal status [id]`. With an id: that passport's seal, its signing
@@ -497,26 +402,121 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   depends on a phase date has no answer without it, and the node will not
   substitute today's date to manufacture one.
 
-### Breaking
-
-- **`NODE_PROFILE=production` now refuses a `Sandbox` trust tier, not only a
-  ghost.** A production node asserts that its passports are backed by real
-  authorities; admitting a sandbox tier made that untrue, and a provider's test
-  certificate could seal a passport claiming to be real. The tiers are ordered
-  `Ghost < Sandbox < Live` so a profile states a floor rather than enumerating
-  what it rejects — adding a tier later cannot silently pass an existing guard.
-
-  **Migration.** A node running `NODE_PROFILE=production` against a provider's
-  test environment now fails to boot, naming the ports that resolved too low.
-  Either set the new **`NODE_PROFILE=sandbox`** — a full node in every respect
-  except that the authorities behind it are test ones, and still a hard boot
-  failure on ghosts — or point the backend at its production endpoint with
-  production credentials. Sandbox is deliberately a property of the *deployment*
-  rather than a tier a production node may quietly carry: running it as its own
-  environment is the closest rehearsal of production there is, and keeping the
-  two apart is what stops a test certificate ever sealing a real passport.
-
 ### Changed
+
+- **The API description is authored multi-file and shipped as one file.**
+  `api/openapi.yaml` is now a thin root — `info`, `servers`, security schemes,
+  tags and a `$ref` per path — over `api/paths/` and `api/components/`.
+  `api/openapi.bundled.yaml` is the generated single file every consumer reads,
+  committed so the documentation site can verify its vendored copy against a
+  specific commit. `just openapi-bundle` regenerates it and CI fails if the
+  committed bundle has drifted from the tree.
+
+  Splitting discards YAML comments, so the four that carried design rationale
+  were moved somewhere durable first: the fused-versus-standalone identity
+  routing, the internal mTLS surface, and why `/credential/` sits outside both
+  `/public` and `/api/v1` are now tag descriptions; the OpenAPI 3.1 nullable
+  rule is in a new `api/README.md`.
+
+- **The API description's version tracks the crate version.** It read `0.1.0`
+  against an 0.11.0 engine. `just spec-version-check` now runs inside
+  `just check` and in CI, so the two move together on a release instead of
+  drifting apart between them.
+
+
+- **`POST /vault/api/v1/dpp` refuses a `schemaVersion` that is not the sector's
+  current one**, with `422`. Omitting it is unchanged, and remains the normal
+  case.
+
+  Previously the field was accepted and silently discarded: the handler resolved
+  it, and `PassportService::create` then overwrote it from the catalog on
+  persist. So no caller-supplied version ever reached the database — but nothing
+  said so, and a client sending `"1.0.0"` had no way to learn it got `2.6.0`.
+
+  That overwrite is also, as of this release, the only thing standing between a
+  caller and the disclosure table its passport is served under, which the same
+  release makes version-dependent (above). An older table classifies fewer
+  fields and `SectorAccessPolicy` defaults the rest to public — battery v1.0.0
+  annotates 11 against v2.6.0's 68, so a passport filtered at v1.0.0 would serve
+  `stateOfHealth` and thirteen others publicly. That hazard is pinned by
+  `an_older_schema_version_widens_the_public_view`. Refusing the mismatch at the
+  edge means the guarantee no longer rests on a single line in the service.
+
+- **Two battery fields became public** at core's battery schema v2.6.0, on its
+  cited reading of Annex XIII: `criticalRawMaterials` (point 1(b), listed
+  alongside chemistry and hazardous substances as publicly accessible material
+  composition) and `dueDiligenceUrl` (point 1(d)). Both are widenings of what the
+  public and AAS doors emit. The cross-door masking tests name their fields
+  explicitly rather than re-reading the catalog, so each had to be re-checked
+  against the schema's stated basis rather than silently dropped.
+
+- **The electronics page renders a device-type label, not the wire value.**
+  `productCategory` became a closed `DeviceType` with kebab-case values, so
+  rendering it raw would have put `other-mobile-phone` in front of a consumer.
+  Unrecognised values pass through untouched — a token this mapping does not know
+  is one it cannot honestly relabel.
+
+- **`productCategory` is gone from the documented passport response.** Core
+  removed `Passport.product_category` in 0.17.0, so the API spec described a
+  field the response no longer carries. No wire change: the field was
+  `skip_serializing_if = "Option::is_none"` and every write path set it to
+  `None`, so the key was never emitted — only the spec claimed otherwise. The
+  sector-level `productCategory` inside `sectorData` (steel, electronics) is a
+  different field and is untouched.
+
+- **Pinned to `dpp-core` 0.18.0**, superseding the 0.17.0 pin recorded above.
+  Four of its changes are visible here, and **one of its new refusals is still
+  not reached by this engine** — the same shape of gap the 0.17.0 entry names,
+  and for the same reason.
+
+  **`Passport` carries `placedOnMarketDate`.** Previously the date lived only on
+  `BatteryData`, which left the governing law underivable for every other
+  sector. It is envelope lifecycle data and it selects a rule, so it now sits
+  beside `publishedAt`. Additive on the wire; `POST /vault/api/v1/dpp` accepts
+  it as an optional field.
+
+  **`ComplianceRegistry::compute` and `ComplianceStrategy::compute` take the
+  governing-law date.** Threaded from `passport.placed_on_market_date` at both
+  call sites — create and the publish-time violation check. Never
+  `Utc::now()`:
+  a determination made against today is wrong for every product not placed on
+  the market today, and would change its own answer as phase dates pass. The
+  Wasm plugin path deliberately does not take it, because a guest receives the
+  sector payload as JSON and reads `placedOnMarketDate` from it directly, which
+  is the only channel the ABI has.
+
+  **`SealVerification` moved to the ETSI validation-indication model.** The
+  `valid: bool` it carried became `indication` (passed / failed /
+  indeterminate) and `checks` — what the verdict was actually founded on. The
+  local sealer reports `SignatureOnly`, which is exactly what its verification
+  does: the signature against the certificate carried inside the seal, no
+  certificate path, no revocation, no timestamp, no Trusted List. A placeholder
+  envelope now returns *indeterminate* rather than a pass or a failure, because
+  no validation was attempted on it.
+
+  **`dpp-registry`'s modules moved to the crate root**, so the imports drop a
+  `registry::` segment.
+
+  **A sector with no plugin loaded now lifts its declared metrics.** The
+  previous entry promised the strategy seam would stay inert "until this engine
+  repins", because `PassthroughRegistry` in 0.17.0 registered no strategies. It
+  registers two in 0.18.0, so a node with no battery plugin routes battery
+  through `PassthroughBatteryStrategy` and `co2eScore` now carries the declared
+  figure where it was previously absent. No determination is made — the status
+  is still `PassthroughNoValidation`, and the field is documented as "calculated
+  **or** manufacturer-supplied" — but a reader watching that field will see it
+  populate. A plugin-host integration test asserted the old absence and now
+  asserts the value is carried through unchanged; it was pinning the inline
+  passthrough that #131 removed, not the contract.
+
+  **The unreached refusal:** 0.18.0 makes `Passport::validate()` refuse a
+  passport whose two market dates — the new envelope field and
+  `BatteryData.placedOnMarketDate` — disagree. `Passport::validate()` is still
+  called nowhere in this repo, so that refusal cannot fire here. It joins the
+  unsold-goods `commodity_code` check named in the 0.17.0 entry above: same
+  method, same reason, and one more rule core enforces that this engine does
+  not run.
+
 
 - **Seal configuration is provider-neutral**: `SEAL_PROVIDER=eideasy|local|none`
   plus `SEAL_EIDEASY_*` / `SEAL_LOCAL_*`, replacing the bare `EIDEASY_*` names.
@@ -550,6 +550,51 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ### Fixed
 
+- **The OpenAPI lint runs.** The recipe existed and nothing invoked it, and the
+  same OpenAPI 3.0 `nullable` defect reached `main` twice as a result. It is now
+  a CI job, with Redocly pinned to one version in both the recipe and the
+  workflow so the two cannot disagree about what the spec is allowed to contain.
+
+- **The spec declares W3C VC Data Model 2.0**, matching the `credentials/v2`
+  context the code actually emits.
+
+
+- **`WasmPluginHost` now serves an unplugged sector from a real registry.** It
+  returned a hard-coded `ComplianceResult::passthrough()` inline, so
+  `PassthroughRegistry` — and therefore the per-sector `ComplianceStrategy` seam
+  it dispatches through — **never ran in the node**, whatever `dpp-domain`
+  documented about it being the extension point a compliance tier wires into.
+  The host now holds an `Arc<dyn ComplianceRegistry>` fallback, defaulted to
+  `PassthroughRegistry`, and `with_fallback` replaces it.
+
+  Both halves are asserted by a test that fails on the previous behaviour: the
+  fallback is consulted when no plugin is loaded, and its result is returned
+  verbatim rather than replaced by a bare passthrough.
+
+  **No behaviour changes until this engine repins.** `PassthroughRegistry` in
+  the pinned `dpp-core` 0.17.0 is a unit struct registering no strategies, so
+  every sector still takes the same bare passthrough it did before. The strategy
+  dispatch it delegates to arrives with the next core version; this removes the
+  bypass that would have kept it unreachable when it does.
+
+- **`just build-plugins` no longer copies a months-old binary and reports
+  success.** It read the built artifact from `sector-<name>/target`, which the
+  sector plugins have not been built into since they moved to a shared cargo
+  workspace — cargo writes to `plugins/target`. Stale per-member target
+  directories from the older layout are still on disk, `ls | head -n1` found one,
+  and `cp` succeeded. The battery plugin shipped here ran two months behind its
+  source as a result.
+
+  The recipe now names the artifact rather than globbing, errors when it is
+  absent, and refuses to copy one older than its own source.
+
+- **`just check-plugins`**, wired into `just check`: fails when an installed
+  `plugins/*.wasm` is older than the source it was built from. Nothing noticed a
+  stale plugin binary before, because nothing looked. Skips cleanly when the
+  sibling `dpp-core` checkout is absent, so CI — which has neither that checkout
+  nor these unsigned dev artifacts — is unaffected.
+
+
 - **An exhausted seal row was terminal forever.** `enqueue` used
   `ON CONFLICT DO NOTHING`, so a passport whose seal burned its retry budget
   during a provider outage stayed published and unsealed with no way back short
@@ -559,6 +604,7 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   same attestation twice. Caught by review before the feature shipped.
 
 ### Removed
+
 
 - The `csc` module. It modelled the Cloud Signature Consortium `credentials/sign`
   flow with OAuth2 and JAdES, which is not the API, the auth model, or the

@@ -212,7 +212,11 @@ just infra          # start PostgreSQL + Redis + NATS
 cp .env.example .env
 
 just check          # THE gate: fmt-check, clippy, debug/subject/mod-rs checks,
-                    # unit tests, integration-test compile, security audit
+                    # spec-version check, unit tests, integration-test compile,
+                    # security audit
+just openapi-check  # lints the bundle; needs Node, so NOT in `just check` — CI
+                    # runs it. Regenerates the bundle and fails if it drifted
+just openapi-bundle # regenerate api/openapi.bundled.yaml from the api/ tree
 just ci             # the above + integration-feature clippy + the Docker tiers
 
 just test           # unit only (nextest, no Docker)
@@ -303,8 +307,9 @@ Background cleanup task runs every 6 hours, deleting completed/failed jobs older
 > unauthenticated one that reaches the network, and listed four routes as plain
 > `Bearer` that in fact require `admin`. It is hand-maintained against a static
 > structure, which is a losing arrangement — the durable fix is to generate it,
-> or to delete it in favour of `api/openapi.yaml` (already linted by
-> `just openapi-check`) so the fact has one home. Until then: **`(admin)` and
+> or to delete it in favour of the API description (now authored multi-file
+> under `api/`, bundled to `api/openapi.bundled.yaml`, and linted in CI) so the
+> fact has one home. Until then: **`(admin)` and
 > `(write)` in the Auth column are enforced by `require_admin`/`require_write`
 > in the handler, not by the middleware**, so they are the column most likely to
 > go stale — verify against the handler's first lines before relying on a row.
@@ -321,6 +326,7 @@ Background cleanup task runs every 6 hours, deleting completed/failed jobs older
 | GET | `/vault/public/dpp/by-gtin/{gtin}` | None | Public passport read by GTIN |
 | GET | `/vault/credential/dpp/{dppId}` | **None** — `X-DPP-Credential` only | Audience-scoped read. Deliberately outside both `/public` (a public URL whose body varies by caller breaks caching and the meaning of `publicJwsSignature`) and `/api/v1` (a repairer or authority holds a credential and no API key). **Unauthenticated and network-touching**: it resolves the credential issuer's `did:web` over the guarded outbound path before anything is verified, and a verified read appends to the passport's audit trail. No credential ⇒ the public view, byte-identical to `/public/dpp/{dppId}` |
 | POST | `/vault/api/v1/dpp` | Bearer | Create passport |
+| POST | `/vault/api/v1/dpp/validate` | Bearer **(write)** | Dry-run a create body, persisting nothing. Runs the same `validate_create_request` the create route runs, so the preview cannot disagree with it, and returns the identical `422` on rejection. Reports `createValid` **and** `publishValid` separately — create is lenient about an unresolvable sector schema, publish fails closed on it |
 | GET | `/vault/api/v1/dpps` | Bearer | List passports |
 | GET | `/vault/api/v1/dpp/{dppId}` | Bearer | Read passport |
 | PUT | `/vault/api/v1/dpp/{dppId}` | Bearer | Update passport (draft only) |
@@ -347,6 +353,7 @@ Background cleanup task runs every 6 hours, deleting completed/failed jobs older
 | POST | `/vault/api/v1/evidence/{id}/verify` | Bearer | Verify a stored dossier |
 | POST | `/vault/api/v1/evidence/verify` | Bearer | Verify an uploaded dossier document |
 | GET | `/vault/api/v1/node/state` | Bearer | Node setup state (claimed / configured) |
+| GET | `/vault/api/v1/whoami` | Bearer | The presented credential's `userId`, `scope` and `keyId`. Every scope, including `read` — that is the scope that most needs to discover it is read-only. `keyId` is the key's row id, never the token, and is absent for local Basic auth |
 | GET | `/vault/api/v1/operator` | Bearer | Get operator config |
 | PATCH | `/vault/api/v1/operator` | Bearer (admin) | Update operator branding |
 | GET | `/vault/api/v1/api-keys` | Bearer (admin) | List API keys |
