@@ -351,6 +351,10 @@ async fn start_vault_with_identity(
         cors_allowed_origins: Vec::new(),
         scan_repo,
         plugin_admin: None,
+        // These tests exercise the vault in isolation, with no composition
+        // root resolving trust ports or a ruleset.
+        trust: None,
+        ruleset_version: None,
     };
 
     let app = router::build(state);

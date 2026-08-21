@@ -1,16 +1,11 @@
 //! Top-level Axum router for the `dpp-node` single binary.
 
-use std::sync::Arc;
-
 use axum::{Router, extract::DefaultBodyLimit, middleware, response::Json, routing::get};
 use tower_http::{
     catch_panic::CatchPanicLayer,
     request_id::{PropagateRequestIdLayer, SetRequestIdLayer},
     trace::TraceLayer,
 };
-
-use crate::infra::ruleset::ActiveRuleset;
-use dpp_types::trust::NodeTrustReport;
 
 /// Node-global request body cap (8 MiB). Generous enough for the largest
 /// legitimate body (the integrator's 5 MiB bulk import, which keeps its own
@@ -38,8 +33,6 @@ pub fn build(
     vault_state: VaultState,
     identity_state: IdentityState,
     integrator_state: IntegratorState,
-    trust: Arc<NodeTrustReport>,
-    active_ruleset: Arc<ActiveRuleset>,
 ) -> Router {
     let vault_router = dpp_vault::router::build(vault_state);
     // Public-only identity routes (did:web document + health). The internal
@@ -49,14 +42,7 @@ pub fn build(
     let integrator_router = dpp_integrator::router::build(integrator_state);
 
     Router::new()
-        .route(
-            "/health",
-            get(move || {
-                let trust = trust.clone();
-                let ruleset = active_ruleset.clone();
-                async move { node_health(&trust, &ruleset) }
-            }),
-        )
+        .route("/health", get(|| async { node_health() }))
         .nest("/vault", vault_router)
         .nest("/identity", identity_router)
         .nest("/integrator", integrator_router)
@@ -72,54 +58,51 @@ pub fn build(
         .layer(CatchPanicLayer::new())
 }
 
-/// Node health with the ghost-honesty trust report and the active
-/// Compliance Current ruleset version, so no surface can present a
-/// placeholder as real and the ruleset a passport was validated against is
-/// observable ("provably more current than a fork").
-pub fn node_health(
-    trust: &NodeTrustReport,
-    active_ruleset: &ActiveRuleset,
-) -> Json<serde_json::Value> {
-    let mut body = serde_json::json!({
-        "status": "ok",
-        "ruleset": { "version": active_ruleset.version() },
-    });
-    if let serde_json::Value::Object(map) = &mut body
-        && let serde_json::Value::Object(t) = trust.health_json()
-    {
-        map.extend(t);
-    }
-    Json(body)
+/// Node liveness. Unauthenticated, so it answers only whether the process is
+/// up.
+///
+/// It used to also return the deployment profile, every trust port's mode, and
+/// the active ruleset version. The ghost-honesty signal those carry is worth
+/// keeping — no surface may present a placeholder as real — but this endpoint
+/// normally sits behind a public reverse proxy so an external monitor can probe
+/// it, which made all of it readable by anyone who knew the host name. Which
+/// trust ports are degraded and in what way is a targeting signal, and a stale
+/// ruleset version says which validation rules a node is running.
+///
+/// So the honesty moved rather than went away: the profile, trust modes and
+/// ruleset version are on the authenticated `/vault/api/v1/node/state`. This
+/// sits alongside `/metrics`, which is off the public router for the same
+/// reason.
+pub fn node_health() -> Json<serde_json::Value> {
+    Json(serde_json::json!({ "status": "ok" }))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use dpp_types::trust::{NodeProfile, NodeTrustReport, TrustMode, TrustPort};
 
+    /// The public probe answers liveness and nothing else.
+    ///
+    /// This used to assert the opposite — that `/health` surfaced the profile,
+    /// every trust port's mode and the ruleset version. Those fields moved to
+    /// the authenticated `/vault/api/v1/node/state`; the assertions below are
+    /// the regression guard that they do not drift back onto an endpoint
+    /// anyone can reach.
     #[test]
-    fn node_health_surfaces_trust_modes() {
-        let report = NodeTrustReport::new(
-            NodeProfile::Development,
-            vec![
-                TrustPort {
-                    port: "seal",
-                    mode: TrustMode::Ghost,
-                    required: true,
-                },
-                TrustPort {
-                    port: "registry_sync",
-                    mode: TrustMode::Sandbox,
-                    required: true,
-                },
-            ],
-        );
-        let ruleset = ActiveRuleset::baseline();
-        let Json(body) = node_health(&report, &ruleset);
+    fn public_health_reports_liveness_only() {
+        let Json(body) = node_health();
+
         assert_eq!(body["status"], "ok");
-        assert_eq!(body["profile"], "development");
-        assert_eq!(body["trust_mode"]["seal"], "ghost");
-        assert_eq!(body["trust_mode"]["registry_sync"], "sandbox");
-        assert_eq!(body["ruleset"]["version"], "baseline");
+        for leaked in ["profile", "trustMode", "ruleset"] {
+            assert!(
+                body.get(leaked).is_none(),
+                "`{leaked}` must not be readable without authentication"
+            );
+        }
+        assert_eq!(
+            body.as_object().map(serde_json::Map::len),
+            Some(1),
+            "only `status` belongs on the unauthenticated probe"
+        );
     }
 }
