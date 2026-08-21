@@ -201,18 +201,18 @@ pub fn render_dry_run(verdict: &DryRunVerdict) {
     // neither of which this preview runs. Reporting a pass here as acceptance
     // would promise more than the node checked.
     println!(
-        "{} publish  {}",
-        mark(verdict.publish_valid),
-        if verdict.publish_valid {
-            "passes the sector-data schema gate"
+        "{} sector   {}",
+        mark(verdict.sector_data_valid),
+        if verdict.sector_data_valid {
+            "clears the publish-time schema gate"
         } else {
-            "would be refused"
+            "would be refused at publish"
         }
     );
     if let Some(detail) = &verdict.detail {
         println!("\n{detail}");
     }
-    if verdict.create_valid && verdict.publish_valid {
+    if verdict.create_valid && verdict.sector_data_valid {
         println!(
             "\n{}",
             style(
@@ -529,24 +529,27 @@ pub fn render_bootstrap_result(
 
 // ── Schema ───────────────────────────────────────────────────────────────────
 
+/// Report the versions that decide which rules a node applies.
+///
+/// Anything that could not be read says so, rather than printing `unknown` —
+/// which the previous version used both for "the node did not report it" and
+/// for "we never asked", making a dead command indistinguishable from a live
+/// one returning nothing.
 pub fn render_schema_check(result: &SchemaCheckResult) {
-    if result.offline {
-        println!("Cannot check — no internet connection");
-        println!("Local schema version: {}", result.local_version);
-        return;
-    }
-    if let Some(w) = &result.warning {
-        println!("Warning: {w}");
-    }
-    println!("Current version : {}", result.local_version);
-    println!(
-        "Latest version  : {}",
-        result.latest_version.as_deref().unwrap_or("unknown")
-    );
-    println!(
-        "Update available: {}",
-        if result.update_available { "yes" } else { "no" }
-    );
+    let line = |label: &str, value: &Option<String>, absent: &str| {
+        println!("{label:<9}: {}", value.as_deref().unwrap_or(absent));
+    };
+    line("node", &result.node_version, "(node did not answer)");
+    line("core", &result.core_version, "(node did not answer)");
+    // Without a credential the ruleset is unreadable — but so is everything
+    // else if the node never answered, and blaming the key then would send the
+    // reader after the wrong problem.
+    let ruleset_absent = if result.node_version.is_some() {
+        "(needs an API key to read)"
+    } else {
+        "(node did not answer)"
+    };
+    line("ruleset", &result.ruleset_version, ruleset_absent);
 }
 
 /// Render a passport's qualified-seal status.

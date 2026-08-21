@@ -251,16 +251,56 @@ fn parse_env(content: &str) -> HashMap<String, String> {
             continue;
         }
         if let Some((k, v)) = line.split_once('=') {
-            let v = v.trim();
-            let v = v
-                .strip_prefix('"')
-                .and_then(|s| s.strip_suffix('"'))
-                .or_else(|| v.strip_prefix('\'').and_then(|s| s.strip_suffix('\'')))
-                .unwrap_or(v);
-            map.insert(k.trim().to_owned(), v.to_owned());
+            map.insert(k.trim().to_owned(), parse_env_value(v));
         }
     }
     map
+}
+
+/// Read one `.env` value the way Docker Compose reads it.
+///
+/// Both parsers read the same file — `odal` for the preflight and the port
+/// lookups, Compose via `--env-file` — so disagreeing about what a line means
+/// would be worse than either rule on its own. These are Compose's, confirmed
+/// by running it against a file containing each case:
+///
+/// | line                | value             |
+/// |---------------------|-------------------|
+/// | `X=value  # note`   | `value`           |
+/// | `X=value#nospace`   | `value#nospace`   |
+/// | `X="value # inside"`| `value # inside`  |
+/// | `X=p@ss#word`       | `p@ss#word`       |
+///
+/// Only whole-line comments were handled before, so a trailing one became part
+/// of the value. That silently defeated `preflight_prod_env`: `ADMIN_USERNAME=admin
+/// # the operator login` parsed as `admin  # the operator login`, which is not
+/// the string `admin` the insecure-default check looks for, so the guard passed
+/// a credential it exists to reject.
+///
+/// The `#`-needs-preceding-whitespace rule is what keeps a password containing
+/// `#` intact — truncating at the first `#` would replace one silent failure
+/// with another.
+fn parse_env_value(raw: &str) -> String {
+    let v = raw.trim_start();
+
+    // A quoted value ends at its closing quote; anything after it is a comment,
+    // and a `#` inside the quotes is part of the value.
+    for quote in ['"', '\''] {
+        if let Some(rest) = v.strip_prefix(quote)
+            && let Some(end) = rest.find(quote)
+        {
+            return rest[..end].to_owned();
+        }
+    }
+
+    // Unquoted: an inline comment is a `#` with whitespace in front of it.
+    match v
+        .char_indices()
+        .find(|&(i, c)| c == '#' && i > 0 && v[..i].ends_with(char::is_whitespace))
+    {
+        Some((i, _)) => v[..i].trim_end().to_owned(),
+        None => v.trim_end().to_owned(),
+    }
 }
 
 /// Map a network error message to a short display category.
@@ -346,6 +386,61 @@ async fn http_probes(client: &OdalClient, cfg: &Config) -> Result<Vec<ServiceHea
     Ok(probes)
 }
 
+/// The install root a running deployment was started from, when that is not
+/// this one.
+///
+/// The compose file fixes the project name (`name: odal-node`), and Compose
+/// resolves a project by that name wherever it is invoked from. So `odal up` in
+/// a second install root does not start a second deployment — it recreates the
+/// first one's containers with *this* root's `.env`, against the first one's
+/// volumes. One of those volumes holds the Ed25519 signing key, and the compose
+/// file is explicit that a recreate which loses it invalidates every passport
+/// ever signed.
+///
+/// The failure is silent: nothing clashes, no port is taken, the command
+/// reports success. Docker labels each container with the directory it was
+/// composed from, so the takeover is at least detectable.
+///
+/// Returns `None` when nothing is running, when Docker cannot be reached, or
+/// when the deployment belongs to this root — this is a guard, not a
+/// dependency, and it must never be the reason `up` fails.
+pub fn deployment_owned_elsewhere(compose_file: &Path) -> Option<String> {
+    let ours = compose_file.parent()?;
+
+    let listed = compose_command(compose_file)
+        .args(["ps", "-a", "--format", "json"])
+        .output()
+        .ok()?;
+    if !listed.status.success() {
+        return None;
+    }
+    let container = String::from_utf8_lossy(&listed.stdout)
+        .lines()
+        .filter_map(|l| serde_json::from_str::<serde_json::Value>(l.trim()).ok())
+        .find_map(|v| v.get("Name").and_then(|n| n.as_str()).map(str::to_owned))?;
+
+    let inspected = std::process::Command::new("docker")
+        .args([
+            "inspect",
+            &container,
+            "--format",
+            "{{index .Config.Labels \"com.docker.compose.project.working_dir\"}}",
+        ])
+        .output()
+        .ok()?;
+    let theirs = String::from_utf8_lossy(&inspected.stdout).trim().to_owned();
+    if theirs.is_empty() {
+        return None;
+    }
+
+    // Compare resolved paths so `./docker` and an absolute path to the same
+    // directory are not read as two different install roots.
+    let same = match (fs::canonicalize(ours), fs::canonicalize(&theirs)) {
+        (Ok(a), Ok(b)) => a == b,
+        _ => Path::new(&theirs) == ours,
+    };
+    (!same).then_some(theirs)
+}
 /// Report Docker container health for the full-stack compose project.
 pub(crate) fn infra_container_status() -> Result<Vec<ContainerHealth>> {
     let compose = compose_file()?;
@@ -568,5 +663,37 @@ mod tests {
         assert_eq!(vars.get("ADMIN_USERNAME").unwrap(), "admin");
         assert_eq!(vars.get("EMPTY").unwrap(), "");
         assert!(!vars.contains_key("# a comment"));
+    }
+
+    /// The cases were taken from running `docker compose --env-file` against a
+    /// file containing each one, so this pins agreement with the other parser
+    /// that reads the same file rather than a rule invented here.
+    #[test]
+    fn env_values_are_read_the_way_compose_reads_them() {
+        let vars = parse_env(
+            "SPACED=value  # trailing comment\n\
+             TIGHT=value#nospace\n\
+             QUOTED=\"value # inside quotes\"\n\
+             SINGLE='value # inside singles'\n\
+             PASSWORD=p@ss#word\n\
+             TRAILING_WS=value   \n",
+        );
+        assert_eq!(vars["SPACED"], "value");
+        assert_eq!(vars["TIGHT"], "value#nospace");
+        assert_eq!(vars["QUOTED"], "value # inside quotes");
+        assert_eq!(vars["SINGLE"], "value # inside singles");
+        // Truncating at the first `#` would corrupt this, which is why the rule
+        // requires whitespace in front of it.
+        assert_eq!(vars["PASSWORD"], "p@ss#word");
+        assert_eq!(vars["TRAILING_WS"], "value");
+    }
+
+    /// The reason this matters: an inline comment used to become part of the
+    /// value, so the string the insecure-default check looks for never matched
+    /// and a `prod` stack booted on the credential the guard exists to refuse.
+    #[test]
+    fn an_inline_comment_no_longer_hides_an_insecure_default() {
+        let vars = parse_env("ADMIN_USERNAME=admin  # the operator login\n");
+        assert_eq!(vars["ADMIN_USERNAME"], "admin");
     }
 }

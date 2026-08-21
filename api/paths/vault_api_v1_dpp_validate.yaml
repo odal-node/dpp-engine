@@ -10,16 +10,27 @@ post:
     lenient about a sector with no resolvable JSON Schema — a draft is allowed
     to be incomplete — while publish fails closed on it, since a signed
     passport must have passed a real schema check. A body can therefore be
-    creatable but not yet publishable, and that gap is reported rather than
-    hidden until publish is attempted.
+    creatable but not yet clear the publish-time schema gate, and that gap is
+    reported rather than hidden until publish is attempted.
 
     A body that create **would reject** gets back the identical `422` create
     would have returned, not a paraphrase of it. A body create would accept
     returns `200` with the two verdicts.
 
-    `publishValid` covers the sector-data gates only. The compliance gate that
-    also runs at publish needs a `placedOnMarketDate` and a stored passport;
-    reporting a compliance verdict without them would be an invented answer.
+    **`sectorDataValid` is not a publish verdict.** It reports one of publish's
+    preconditions — the sector-data gates — and publish applies others this
+    route does not run:
+
+    - the **registry identity** requirement (a default facility and a primary
+      operator identifier), which needs operator state this route never reads;
+    - the **category-mandatory content** gate, which is reachable only by
+      attempting the lifecycle transition, so it cannot be previewed;
+    - the **compliance** gate, which needs a `placedOnMarketDate` and a stored
+      passport.
+
+    A `sectorDataValid: true` therefore means "this body clears the schema
+    gate", never "publish will succeed". The field was called `publishValid`
+    and was renamed because that name promised the latter.
   tags:
     - DPP Management
   security:
@@ -34,30 +45,31 @@ post:
   responses:
     '200':
       description: |
-        The body is creatable. `publishValid` says whether it would also clear
-        the publish-time sector-data gates.
+        The body is creatable. `sectorDataValid` says whether its sector data
+        would also clear the publish-time schema gate.
       content:
         application/json:
           schema:
             type: object
-            required: [createValid, publishValid]
+            required: [createValid, sectorDataValid]
             properties:
               createValid:
                 type: boolean
                 description: Always `true` on a 200 — a rejected body returns 422.
                 example: true
-              publishValid:
+              sectorDataValid:
                 type: boolean
                 description: |
-                  Whether the sector data would clear the publish-time gates.
-                  `true` when no sector data is supplied, since publish only
-                  validates it when present.
+                  Whether the sector data would clear the publish-time schema
+                  gate. `true` when no sector data is supplied, since publish
+                  only validates it when present. Not a publish verdict — see
+                  the endpoint description for the gates this does not run.
                 example: false
               detail:
                 type: [string, 'null']
                 description: |
-                  Why publish would refuse it. `null` when `publishValid` is
-                  `true`.
+                  Why the sector data would be refused. `null` when
+                  `sectorDataValid` is `true`.
                 example: >-
                   cannot publish: no registered JSON Schema for sector
                   'furniture' — publish requires a resolvable schema when

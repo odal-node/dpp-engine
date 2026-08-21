@@ -12,6 +12,31 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ### Breaking
 
+- **`publishValid` is now `sectorDataValid`.** *(Breaking: a response field is
+  renamed.)* The dry-run route reported a field named for publish that checked
+  one of publish's preconditions. It returned `publishValid: true` for bodies
+  publish then refused — demonstrated against a running node, where the same
+  body came back `422 — missing required registry identity`.
+
+  The endpoint's prose already scoped it to the sector-data gates, but a client
+  reading the field name rather than the description had no way to know that,
+  and the name promised the stronger thing. `sectorDataValid` says what is
+  measured.
+
+  The description now names the gates it does **not** run: the registry-identity
+  requirement, which needs operator state this route never reads; the
+  category-mandatory-content gate, which is reachable only by attempting the
+  lifecycle transition and so cannot be previewed at all; and the compliance
+  gate, which needs a `placedOnMarketDate` and a stored passport.
+
+  The middle one is a limitation in `dpp-core` rather than here — the gate is
+  private so that a consumer cannot decline it, which also means no consumer can
+  ask about it. Tracked upstream; until it can be previewed, this route reports
+  what it can check and names what it cannot.
+
+  `odal passport validate <file>` renders the line as `sector` rather than
+  `publish` to match.
+
 
 - **A battery passport can no longer be published without the content its
   category makes mandatory.** Publishing an electric-vehicle, LMT or industrial
@@ -622,6 +647,88 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   actually governs the trigger had been touched.
 
 ### Fixed
+
+- **The GS1 Digital Link route answers with a problem document.** It returned an
+  ad-hoc `{"error":"NOT_FOUND","message":…}` object while `/dpp/{id}` on the
+  same resolver returned RFC 9457, so the two public doors described the same
+  failure in two vocabularies and a client had to know which one it had knocked
+  on to read the reply. Both now use the shared shape.
+
+  Its message also stopped claiming more than it knows. "No published DPP for
+  this GTIN" read as *this GTIN is unknown*, when the lookup behind it filters
+  to published passports and so cannot tell an unknown GTIN from a withdrawn
+  one. It now says no published passport **resolves** for the GTIN, which is the
+  true and weaker statement.
+
+  **This does not restore the withdrawal signal.** A suspended passport is still
+  served as `404` on the route a consumer reaches by scanning a product, where
+  `410 Gone` is what marks a recall. That needs the lookup to stop folding the
+  publication decision into a `None`, and the lookup is a `dpp-core` port —
+  tracked upstream, not fixable here.
+
+- **`odal schema check` reports something true.** Both of its lines were
+  incapable of being correct on any node, on any network. The local half read a
+  `schema_version` field from `/health` that the node stopped emitting, so it
+  always printed `unknown`. The upstream half called a release feed whose
+  hostname does not resolve, so it always printed `Cannot check — no internet
+  connection` — blaming the caller's network for a host that was never stood up.
+
+  ```
+  Cannot check — no internet connection
+  Local schema version: unknown
+  ```
+
+  It now reports what the node actually serves: its build version and the
+  `dpp-core` version it applies, which is the value that decides which
+  regulatory schemas and rules are in force. The active ruleset comes from the
+  authenticated node state and is omitted rather than guessed when the caller
+  has no credential — the same trade `odal status` makes with the trust posture.
+
+  ```
+  node     : 0.11.0
+  core     : 0.18.0
+  ruleset  : baseline
+  ```
+
+  Each line says why it is missing rather than printing `unknown`, which the old
+  version used for both "the node did not report it" and "we never asked". A
+  node that cannot be reached now says so on every line instead of blaming a
+  missing API key for the one it would have needed.
+
+  The upstream comparison is removed rather than left calling a host that is not
+  there. It can come back when there is a service to ask.
+
+- **`odal up` refuses to take over a deployment started somewhere else.** The
+  compose file fixes the project name, and Compose resolves a project by that
+  name wherever it is invoked from — so `odal up` in a second install root never
+  started a second deployment. It recreated the first one's containers with the
+  second root's `.env`, against the first one's volumes, one of which holds the
+  Ed25519 signing key the compose file is explicit about never losing.
+
+  Nothing clashed and no port was taken, so the command reported success while
+  quietly repointing a running node at another directory's configuration. It now
+  compares the running project's `com.docker.compose.project.working_dir` label
+  against this install root and refuses, naming the directory that owns the
+  deployment and the two ways forward.
+
+  The project name is deliberately left alone: renaming it would orphan every
+  existing deployment's volumes, which is the failure this is meant to prevent.
+  The check is a guard, not a dependency — an unreachable Docker, an empty
+  project, or a missing label all let `up` proceed.
+
+- **An inline comment in `.env` no longer defeats the production secret guard.**
+  `parse_env` skipped whole-line `#` comments but not trailing ones, so
+  `ADMIN_USERNAME=admin  # the operator login` parsed as the whole string
+  including the comment. That is not `admin`, so `preflight_prod_env` had
+  nothing to match and started a prod stack on the exact credential it exists to
+  refuse — a comment written to be helpful silently disabled the check.
+
+  Values are now read the way Docker Compose reads them, since both parsers read
+  the same file and disagreeing would be worse than either rule alone. Confirmed
+  by running Compose against a file containing each case: a `#` preceded by
+  whitespace starts a comment, a `#` tight against the value or inside quotes is
+  part of it. That last rule is what keeps a password containing `#` intact —
+  truncating at the first `#` would swap one silent failure for another.
 
 - **A packaged install can start.** `odal init` scaffolded `docker/docker-compose.yml`
   and nothing else, and `odal up` then forced that install down a path requiring

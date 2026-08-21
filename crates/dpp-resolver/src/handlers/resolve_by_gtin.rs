@@ -16,6 +16,7 @@ use axum::{
     http::{HeaderMap, StatusCode, header},
     response::IntoResponse,
 };
+use dpp_common::http_problem;
 use dpp_digital_link::Gs1LinkType;
 use serde::Deserialize;
 use serde_json::Value;
@@ -78,6 +79,34 @@ pub async fn resolve_by_gtin_batch_serial_handler(
     resolve_gtin(state, gtin, query, headers).await
 }
 
+/// What the GS1 route can honestly say when it finds nothing.
+///
+/// Deliberately not "this GTIN is unknown": the lookup behind it filters to
+/// published passports, so a withdrawn one is indistinguishable from one that
+/// never existed. Saying which would be inventing an answer this route does not
+/// have. Serving `410 Gone` for a withdrawal — the recall signal a scanner
+/// should see — needs the lookup to stop folding that decision in, which is a
+/// `dpp-core` change, tracked upstream.
+const NO_DPP_FOR_GTIN: &str = "No published DPP resolves for this GTIN.";
+
+/// Render a GS1-route failure as RFC 9457, the shape every other public route
+/// on this resolver uses.
+///
+/// This route answered with an ad-hoc `{"error","message"}` object while
+/// `/dpp/{id}` answered with a problem document, so the two public doors
+/// described the same failure in two different vocabularies and a client had to
+/// know which one it had knocked on.
+fn gtin_problem(status: StatusCode, detail: &str) -> axum::response::Response {
+    let problem = http_problem::Problem::new(status, status.canonical_reason().unwrap_or("Error"))
+        .with_detail(detail);
+    (
+        status,
+        [(header::CONTENT_TYPE, "application/problem+json")],
+        serde_json::to_string(&problem).unwrap_or_default(),
+    )
+        .into_response()
+}
+
 /// Shared implementation: every GS1 Digital Link route resolves on the GTIN.
 async fn resolve_gtin(
     State(state): State<AppState>,
@@ -88,24 +117,12 @@ async fn resolve_gtin(
     // Validate the GTIN at the edge before it reaches the server-to-server vault
     // URL — a percent-decoded `../admin` must not path-traverse/SSRF the vault.
     if !crate::domain::is_valid_gtin(&gtin) {
-        return (
-            StatusCode::NOT_FOUND,
-            [(header::CONTENT_TYPE, "application/json")],
-            r#"{"error":"NOT_FOUND","message":"No published DPP for this GTIN"}"#.to_owned(),
-        )
-            .into_response();
+        return gtin_problem(StatusCode::NOT_FOUND, NO_DPP_FOR_GTIN);
     }
 
     let passport = match fetch_by_gtin(&state, &gtin).await {
         Ok(v) => v,
-        Err(status) => {
-            return (
-                status,
-                [(header::CONTENT_TYPE, "application/json")],
-                r#"{"error":"NOT_FOUND","message":"No published DPP for this GTIN"}"#.to_owned(),
-            )
-                .into_response();
-        }
+        Err(status) => return gtin_problem(status, NO_DPP_FOR_GTIN),
     };
 
     // Verify the public signature against the operator DID before trusting
@@ -116,13 +133,7 @@ async fn resolve_gtin(
         match did::verify_passport_jws(&state.http, &state.operator_did_url, &passport).await {
             Ok(v) => v,
             Err(status) => {
-                return (
-                status,
-                [(header::CONTENT_TYPE, "application/json")],
-                r#"{"error":"UNVERIFIED","message":"Passport signature could not be verified"}"#
-                    .to_owned(),
-            )
-                .into_response();
+                return gtin_problem(status, "The passport's signature could not be verified.");
             }
         };
 

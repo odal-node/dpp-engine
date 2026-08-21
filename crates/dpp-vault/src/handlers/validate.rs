@@ -60,7 +60,7 @@ pub async fn validate_handler(
         StatusCode::OK,
         Json(json!({
             "createValid": true,
-            "publishValid": publish_blocker.is_none(),
+            "sectorDataValid": publish_blocker.is_none(),
             "detail": publish_blocker,
         })),
     )
