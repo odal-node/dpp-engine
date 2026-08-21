@@ -219,9 +219,10 @@ pub fn load_client() -> Result<(OdalClient, crate::config::Config)> {
 /// Load the active profile and build a client **without** requiring that
 /// anything be configured.
 ///
-/// For the commands that authenticate nothing: `odal status` reads public
-/// `/health` endpoints, and on an unconfigured machine probing the localhost
-/// defaults is a truthful answer rather than a misleading one.
+/// For the two commands that authenticate nothing: `odal status` reads public
+/// `/health` endpoints and `odal schema check` reads `/health` plus a public
+/// upstream. On an unconfigured machine, probing the localhost defaults is a
+/// truthful answer rather than a misleading one.
 pub fn load_client_unchecked() -> Result<(OdalClient, crate::config::Config)> {
     let cfg = crate::config::Config::load()?;
     let client = OdalClient::new(&cfg.api_key);

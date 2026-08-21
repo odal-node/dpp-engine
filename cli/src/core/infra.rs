@@ -177,9 +177,18 @@ pub async fn action_status(client: &OdalClient, cfg: &Config) -> Result<StatusRe
     // The trust posture lives on the authenticated `/node/state`, while the
     // probes above need no credential. `status` must keep answering for a
     // caller who has none, so an unreadable posture is absent, not fatal.
-    let node = crate::core::onboarding::action_node_state(client, cfg)
-        .await
-        .ok();
+    //
+    // Only asked when the vault answered its health probe: `/node/state` is on
+    // the same origin, so a vault that did not respond cannot serve it either,
+    // and asking anyway spends a second connection timeout to learn nothing.
+    let vault_is_up = probes.iter().any(|p| p.name == "vault" && p.status.is_ok());
+    let node = if vault_is_up {
+        crate::core::onboarding::action_node_state(client, cfg)
+            .await
+            .ok()
+    } else {
+        None
+    };
     Ok(StatusReport {
         probes,
         containers,

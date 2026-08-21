@@ -33,7 +33,7 @@ fn step_connect() -> Result<()> {
     // The local node's URLs are determined by its `.env` (NODE_PORT /
     // RESOLVER_PORT) — there's nothing to ask the operator. We still write the
     // config so the rest of the CLI has a target to talk to; remote nodes are
-    // configured separately via `odal profile create --vault-url …`.
+    // configured separately via `odal profile create --node-url …`.
     let mut cfg = Config::load().unwrap_or_default();
     let (vault, identity, resolver) = local_urls();
     cfg.vault_url = vault;
