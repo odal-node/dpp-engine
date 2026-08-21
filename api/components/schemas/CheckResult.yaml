@@ -1,0 +1,18 @@
+type: object
+description: Outcome of a single named verification check.
+required:
+  - name
+  - status
+properties:
+  name:
+    type: string
+    example: audit_chain
+  status:
+    type: string
+    enum:
+      - pass
+      - fail
+      - absent
+  detail:
+    type: string
+    description: Present when status is `fail` or `absent`.

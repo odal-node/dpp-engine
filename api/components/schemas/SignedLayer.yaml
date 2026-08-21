@@ -1,0 +1,13 @@
+type: object
+description: |
+  A JWS alongside the exact JSON payload it was signed over — embedded
+  directly rather than left for a verifier to reconstruct.
+required:
+  - payload
+  - jws
+properties:
+  payload:
+    type: object
+  jws:
+    type: string
+    description: Compact EdDSA JWS.

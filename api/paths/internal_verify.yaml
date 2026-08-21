@@ -1,0 +1,33 @@
+servers:
+  - url: http://localhost:8002
+    description: odal-identity standalone (mTLS internal)
+post:
+  operationId: internalVerify
+  summary: Verify a JWS this service issued (internal, mTLS)
+  description: |
+    Checks a compact JWS against the named operator's key *and* confirms
+    it was signed over the given payload — a validly-signed JWS for
+    different content does not pass. Never errors on a signature that
+    simply fails to verify; that is `{ "valid": false }`, not a fault.
+    Service-to-service only — gated by mTLS (`CN=odal-vault`).
+  tags:
+    - Identity (internal)
+  security:
+    - MutualTLS: []
+  requestBody:
+    required: true
+    content:
+      application/json:
+        schema:
+          $ref: ../components/schemas/VerifyRequest.yaml
+  responses:
+    '200':
+      description: >-
+        Verification result. Always `200` — an unverifiable signature is `{
+        "valid": false }`, not an error status.
+      content:
+        application/json:
+          schema:
+            $ref: ../components/schemas/VerifyResponse.yaml
+    '422':
+      $ref: ../components/responses/ValidationError.yaml

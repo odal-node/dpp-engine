@@ -1,0 +1,14 @@
+type: object
+required:
+  - name
+properties:
+  name:
+    type: string
+    description: Human-readable label for this key.
+    example: CI pipeline
+  expiresAt:
+    type:
+      - string
+      - 'null'
+    format: date-time
+    description: Optional expiration. Null = never expires.

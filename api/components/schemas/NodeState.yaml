@@ -1,0 +1,11 @@
+type: object
+required:
+  - bootstrapped
+  - operatorComplete
+properties:
+  bootstrapped:
+    type: boolean
+    description: True once at least one active API key exists (the node is claimed).
+  operatorComplete:
+    type: boolean
+    description: True once the operator identity is complete enough to publish.

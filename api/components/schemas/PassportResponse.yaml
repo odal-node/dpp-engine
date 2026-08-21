@@ -1,0 +1,73 @@
+type: object
+required:
+  - id
+  - productName
+  - manufacturer
+  - materials
+  - status
+  - schemaVersion
+  - createdAt
+  - updatedAt
+  - retentionLocked
+properties:
+  id:
+    $ref: ./DppId.yaml
+  batchId:
+    type:
+      - string
+      - 'null'
+  productName:
+    type: string
+    example: EcoCell Pro 48V
+  manufacturer:
+    $ref: ./ManufacturerInfo.yaml
+  materials:
+    type: array
+    items:
+      $ref: ./MaterialEntry.yaml
+  co2ePerUnit:
+    type:
+      - number
+      - 'null'
+  repairabilityScore:
+    type:
+      - number
+      - 'null'
+  sectorData:
+    $ref: ./SectorData.yaml
+  status:
+    $ref: ./PassportStatus.yaml
+  qrCodeUrl:
+    type:
+      - string
+      - 'null'
+    format: uri
+    description: >-
+      GS1 Digital Link the carrier (QR) encodes, set on publish:
+      {resolverBase}/01/{gtin}/21/{serial} for a trade item, else
+      {resolverBase}/dpp/{id}. resolverBase is per-deployment
+      (RESOLVER_BASE_URL, default https://id.odal-node.io).
+  jwsSignature:
+    type:
+      - string
+      - 'null'
+    description: JWS compact serialisation (Ed25519). Null until published.
+  createdAt:
+    type: string
+    format: date-time
+  updatedAt:
+    type: string
+    format: date-time
+  publishedAt:
+    type:
+      - string
+      - 'null'
+    format: date-time
+  schemaVersion:
+    type: string
+    example: 1.0.0
+  retentionLocked:
+    type: boolean
+    description: |
+      Set to `true` permanently on first publish. Retention-locked
+      passports must remain accessible for the EU ESPR retention period.

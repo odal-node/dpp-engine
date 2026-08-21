@@ -1,0 +1,14 @@
+type: object
+required:
+  - scans
+  - qrRenders
+description: The full flush payload the resolver sends to the vault.
+properties:
+  scans:
+    type: array
+    items:
+      $ref: ./ScanCount.yaml
+  qrRenders:
+    type: array
+    items:
+      $ref: ./QrRenderCount.yaml

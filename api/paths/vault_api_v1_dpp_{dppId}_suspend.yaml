@@ -1,0 +1,43 @@
+post:
+  operationId: suspendDpp
+  summary: Suspend a DPP
+  description: |
+    Transition an `active` DPP to `suspended`.
+    The DPP becomes non-resolvable. The JWS signature is preserved.
+    Emits a `dpp.suspended` NATS event.
+
+    An optional request body with a `reason` field can be provided.
+  tags:
+    - DPP Lifecycle
+  security:
+    - BearerApiKey: []
+    - BasicAuth: []
+  parameters:
+    - name: dppId
+      in: path
+      required: true
+      schema:
+        $ref: ../components/schemas/DppId.yaml
+  requestBody:
+    required: false
+    content:
+      application/json:
+        schema:
+          type: object
+          properties:
+            reason:
+              type: string
+              example: Product recall — safety investigation pending
+  responses:
+    '200':
+      description: DPP suspended. Returns the full passport record.
+      content:
+        application/json:
+          schema:
+            $ref: ../components/schemas/PassportResponse.yaml
+    '401':
+      $ref: ../components/responses/Unauthorized.yaml
+    '404':
+      $ref: ../components/responses/NotFound.yaml
+    '409':
+      $ref: ../components/responses/Conflict.yaml

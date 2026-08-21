@@ -1,0 +1,13 @@
+type: object
+required:
+  - row
+  - field
+  - message
+properties:
+  row:
+    type: integer
+  field:
+    type: string
+    description: Column name, or "vault" / "auth" / "internal".
+  message:
+    type: string

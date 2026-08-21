@@ -1,0 +1,36 @@
+get:
+  operationId: resolveByGtin
+  summary: GS1 Digital Link resolver
+  description: |
+    GS1-conformant resolver (GS1-CRSV1) keyed by GTIN-14. Behaviour depends
+    on the `linkType` query / `Accept` header:
+    - default → `307` redirect to the HTML DPP page
+    - `?linkType=gs1:pip` / `gs1:dpp` (and related) → `307` redirect to the DPP
+    - `?linkType=linkset` or `Accept: application/linkset+json` → `200`
+      RFC 9264 linkset
+  tags:
+    - Public Resolver
+  parameters:
+    - name: gtin
+      in: path
+      required: true
+      schema:
+        type: string
+        example: '09506000134352'
+    - name: linkType
+      in: query
+      required: false
+      schema:
+        type: string
+      description: e.g. linkset, gs1:pip, gs1:dpp
+  responses:
+    '200':
+      description: RFC 9264 linkset (when a linkset is requested).
+      content:
+        application/linkset+json:
+          schema:
+            type: object
+    '307':
+      description: Redirect to the DPP page (`Location` header).
+    '404':
+      description: No published DPP for this GTIN, or unknown link type.

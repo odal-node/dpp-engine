@@ -1,0 +1,13 @@
+get:
+  operationId: vaultInfo
+  summary: Service info
+  description: Returns version and build information.
+  tags:
+    - Health
+  responses:
+    '200':
+      description: Service info.
+      content:
+        application/json:
+          schema:
+            $ref: ../components/schemas/VaultInfo.yaml

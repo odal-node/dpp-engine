@@ -1,0 +1,16 @@
+type: object
+required:
+  - name
+  - address
+properties:
+  name:
+    type: string
+    example: EcoTech GmbH
+  address:
+    type: string
+    example: Hauptstraße 1, 10115 Berlin
+  didWebUrl:
+    type: string
+    format: uri
+    description: did:web URL for the manufacturer
+    example: https://ecotech.example.com/.well-known/did.json

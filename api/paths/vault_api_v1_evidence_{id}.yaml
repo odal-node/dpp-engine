@@ -1,0 +1,29 @@
+get:
+  operationId: getEvidenceDossier
+  summary: Fetch one stored dossier's document
+  description: >-
+    Returns the dossier document itself — the same shape `POST .../evidence`
+    returns on generation, not the summary wrapper the list endpoint shows.
+  tags:
+    - Evidence Dossiers
+  security:
+    - BearerApiKey: []
+    - BasicAuth: []
+  parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  responses:
+    '200':
+      description: The evidence dossier document.
+      content:
+        application/json:
+          schema:
+            $ref: ../components/schemas/EvidenceDossier.yaml
+    '401':
+      $ref: ../components/responses/Unauthorized.yaml
+    '404':
+      $ref: ../components/responses/NotFound.yaml

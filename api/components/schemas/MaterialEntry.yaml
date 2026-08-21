@@ -1,0 +1,24 @@
+type: object
+required:
+  - name
+  - weightKg
+properties:
+  name:
+    type: string
+    example: Lithium carbonate
+  weightKg:
+    type: number
+    description: Weight in kilograms
+    example: 12.5
+  recycledPct:
+    type: number
+    minimum: 0
+    maximum: 100
+    description: Percentage of recycled content (0.0–100.0)
+    example: 35
+  originCountry:
+    type: string
+    minLength: 2
+    maxLength: 2
+    description: ISO 3166-1 alpha-2 country code
+    example: DE

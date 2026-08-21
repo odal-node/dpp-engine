@@ -104,12 +104,29 @@ lint-integration:
 #
 # Not in `just check`: this needs Node and the network, which nothing else in
 # that gate does. CI is what enforces it.
-openapi-check:
-    npx --yes @redocly/cli@{{ REDOCLY_VERSION }} lint api/openapi.yaml
+#
+# Lints the BUNDLE, not the multi-file root. `.redocly.lint-ignore.yaml` is
+# keyed by filename and JSON pointer; the bundle has the same document shape the
+# baseline was written against, so those pointers still resolve. Linting the
+# root instead would report every problem against a `paths/*.yaml` file and
+# force the baseline to be regenerated.
+openapi-check: openapi-bundle
+    git diff --exit-code -- api/openapi.bundled.yaml
+    npx --yes @redocly/cli@{{ REDOCLY_VERSION }} lint api/openapi.bundled.yaml
+
+# Regenerate the single-file bundle from the multi-file tree.
+#
+# api/openapi.bundled.yaml is a committed build artifact: the docs site verifies
+# its vendored copy with `git show <commit>:<path>`, which reads a blob out of
+# history and so cannot see a file that only exists after a build step.
+# `redocly bundle` is byte-deterministic, so `openapi-check` can prove the
+# committed bundle still matches the tree with a plain diff.
+openapi-bundle:
+    npx --yes @redocly/cli@{{ REDOCLY_VERSION }} bundle api/openapi.yaml -o api/openapi.bundled.yaml
 
 # Regenerate the browsable spec (api/openapi.html, git-ignored build artifact).
 openapi-html:
-    npx --yes @redocly/cli@{{ REDOCLY_VERSION }} build-docs api/openapi.yaml -o api/openapi.html
+    npx --yes @redocly/cli@{{ REDOCLY_VERSION }} build-docs api/openapi.bundled.yaml -o api/openapi.html
 
 # Capture a frozen stored-doc fixture for the compatibility guard (needs Docker).
 #

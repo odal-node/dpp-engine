@@ -1,0 +1,29 @@
+type: object
+required:
+  - id
+  - scheme
+  - value
+  - isPrimary
+  - createdAt
+description: An economic-operator identifier (ESPR Art. 13).
+properties:
+  id:
+    type: string
+    format: uuid
+  scheme:
+    type: string
+    description: Identifier scheme, e.g. "vat", "lei", "eori", "duns".
+    example: lei
+  value:
+    type: string
+    example: 5493001KJTIIGC8Y1R12
+  label:
+    type:
+      - string
+      - 'null'
+  isPrimary:
+    type: boolean
+    description: The primary identifier is stamped onto new passports.
+  createdAt:
+    type: string
+    format: date-time
