@@ -680,12 +680,12 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   passport exists at all. That trait is defined in `dpp-core`, so making the
   lookup status-aware is a core change and a repin, not an engine one.
 - **`RESOLVER_BASE_URL` is documented in `.env.example`.** It decides the URL
-  printed onto the product, defaults to `https://id.odal-node.io`, and was the
-  one variable with that consequence absent from the file operators are told to
-  copy. A self-hosted node following the documented setup therefore minted QR
-  codes pointing at a host the operator does not control, and the mistake only
-  surfaces when someone scans a printed label — after the ESPR retention window
-  has made reissuing expensive.
+  printed onto the product, and was the one variable with that consequence
+  absent from the file operators are told to copy. Its built-in default names a
+  domain reserved for future use which is not wired up, so a self-hosted node
+  following the documented setup minted QR codes that resolve to nothing — and
+  the mistake only surfaces when someone scans a printed label, after the ESPR
+  retention window has made reissuing expensive.
 
 - **`.env.example`'s mangled characters are repaired.** Seventeen comment
   characters were double-encoded — an em dash and a middle dot read as
