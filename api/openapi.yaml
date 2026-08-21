@@ -3915,9 +3915,16 @@ tags:
   - name: Node
     description: Node setup/readiness state.
   - name: Identity
-    description: Public did:web identity — DID document, health, readiness.
+    description: >-
+      Public did:web identity — DID document, health, readiness. On the fused
+      node these are served under `/identity/*`. The standalone identity
+      service (:8002) serves them at the root — `/health`, `/ready`,
+      `/.well-known/did.json`.
   - name: Identity (internal)
-    description: mTLS service-to-service signing/rotation (standalone identity service only).
+    description: >-
+      mTLS service-to-service signing/rotation. **Not exposed by the fused
+      node**, which signs in-process — reachable only on the standalone
+      identity service, and only from a client presenting `CN=odal-vault`.
   - name: Integrator
     description: CSV/XLSX bulk import — templates, upload, async job polling.
   - name: Public (Vault)
@@ -3926,6 +3933,10 @@ tags:
     description: >-
       Audience-scoped passport reads authenticated by a verifiable credential
       rather than an API key — repairers, market-surveillance authorities.
+      Deliberately outside both `/public` (a public URL whose body varies by
+      caller breaks caching and the meaning of `publicJwsSignature`) and
+      `/api/v1` (API keys are the operator's own machine access; a repairer or
+      authority holds a credential and no key).
   - name: Vault (internal)
     description: mTLS service-to-service telemetry ingestion (resolver → vault only).
   - name: Public Resolver
