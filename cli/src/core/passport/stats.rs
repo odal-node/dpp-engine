@@ -7,7 +7,10 @@
 use anyhow::Result;
 use serde_json::Value;
 
-use crate::{config::Config, http::OdalClient};
+use crate::{
+    config::Config,
+    http::{OdalClient, describe_error},
+};
 
 /// `GET /api/v1/dpp/{id}/stats?days=N` — one passport's scan + QR-render counts.
 pub async fn action_passport_stats(
@@ -29,7 +32,10 @@ pub async fn action_operator_stats(days: u32, client: &OdalClient, cfg: &Config)
 async fn fetch_stats(url: &str, client: &OdalClient) -> Result<Value> {
     let (status, body) = client.get(url).await?;
     if !status.is_success() {
-        anyhow::bail!("failed to fetch scan telemetry (HTTP {status}): {body}");
+        anyhow::bail!(
+            "failed to fetch scan telemetry: {}",
+            describe_error(status, &body)
+        );
     }
     Ok(serde_json::from_str(&body).unwrap_or(Value::Null))
 }

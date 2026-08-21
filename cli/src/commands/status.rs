@@ -8,7 +8,7 @@ use crate::{
 };
 
 pub async fn run_status() -> Result<()> {
-    let (client, cfg) = crate::http::load_client()?;
+    let (client, cfg) = crate::http::load_client_unchecked()?;
     let report = action_status(&client, &cfg).await?;
     render_status(&report);
     let all_ok = report
