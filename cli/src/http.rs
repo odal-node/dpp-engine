@@ -204,6 +204,25 @@ impl OdalClient {
 /// key — the standard startup glue every stateless command and console menu
 /// action needs before it can talk to the node.
 pub fn load_client() -> Result<(OdalClient, crate::config::Config)> {
+    let (client, cfg) = load_client_unchecked()?;
+    // A fresh install has no profile and no credential. Reaching the node in
+    // that state earns a 401, and the CLI then reports a credential problem to
+    // someone who has not configured anything yet — the one thing they cannot
+    // act on. An API key from the environment with no profile is a legitimate
+    // 12-factor deployment, so the absence of *both* is what identifies this.
+    if cfg.api_key.is_empty() && !crate::config::has_profiles() {
+        anyhow::bail!(crate::config::NO_PROFILE_HINT);
+    }
+    Ok((client, cfg))
+}
+
+/// Load the active profile and build a client **without** requiring that
+/// anything be configured.
+///
+/// For the commands that authenticate nothing: `odal status` reads public
+/// `/health` endpoints, and on an unconfigured machine probing the localhost
+/// defaults is a truthful answer rather than a misleading one.
+pub fn load_client_unchecked() -> Result<(OdalClient, crate::config::Config)> {
     let cfg = crate::config::Config::load()?;
     let client = OdalClient::new(&cfg.api_key);
     Ok((client, cfg))

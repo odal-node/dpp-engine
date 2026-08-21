@@ -15,8 +15,7 @@ use crate::credentials;
 pub fn run_profile_list() -> Result<()> {
     let entries = config::list_profiles()?;
     if entries.is_empty() {
-        println!("No profiles configured yet. Run `odal` to set one up, or");
-        println!("`odal profile create <name> --vault-url <url>`.");
+        println!("{}", config::NO_PROFILE_HINT);
         return Ok(());
     }
     println!("{:<3} {:<16} {:<6} URL", "", "NAME", "KIND");

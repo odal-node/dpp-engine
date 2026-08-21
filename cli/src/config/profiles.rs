@@ -194,6 +194,25 @@ impl ConfigFile {
     }
 }
 
+/// What to tell someone whose CLI holds no configuration at all.
+///
+/// One string, because two commands say it and the pair drifting is the whole
+/// complaint: `profile list` reported the real state while every other command
+/// reached the node anyway and blamed the credential for a 401.
+pub const NO_PROFILE_HINT: &str = "No profile configured yet. Run `odal` to set one up, or \
+     `odal profile create <name> --node-url <url>`.";
+
+/// True when the config file holds at least one profile.
+///
+/// Distinguishes "not configured yet" from "configured and wrong", which the
+/// CLI could not previously tell apart: [`Config::load`] hands back a default
+/// localhost profile on a fresh install so first-run setup works, and every
+/// caller downstream then behaved as though the operator had chosen it.
+///
+/// [`Config::load`]: crate::config::Config::load
+pub fn has_profiles() -> bool {
+    ConfigFile::load().is_ok_and(|f| !f.profiles.is_empty())
+}
 // ── Profile management (used by `odal profile …`) ───────────────────────────────
 
 /// A profile entry for listing: name, the profile, and whether it is active.

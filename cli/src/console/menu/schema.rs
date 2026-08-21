@@ -5,7 +5,7 @@ use inquire::{InquireError, Select};
 
 use crate::{core::schema::action_schema_check, stateless::render::render_schema_check};
 
-use super::{MenuItem, client, hint, print_err};
+use super::{MenuItem, client_unchecked, hint, print_err};
 
 const SCHEMA: &[MenuItem] = &[
     MenuItem::new(
@@ -22,7 +22,7 @@ pub(super) async fn schema() -> Result<()> {
             .prompt()
         {
             Ok(item) => match item.label {
-                "Check for updates" => match client() {
+                "Check for updates" => match client_unchecked() {
                     Ok((client, cfg)) => match action_schema_check(&client, &cfg).await {
                         Ok(result) => {
                             println!();

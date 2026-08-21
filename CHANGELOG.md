@@ -577,6 +577,30 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   correct remote host. Profiles are now normalised on the way out too, so the
   file says what the CLI will do.
 
+- **An unconfigured CLI now says so, instead of blaming the credential.** On a
+  machine with no `config.toml`, every command that talks to the node reached
+  localhost anyway and reported `Unauthorized — Missing or invalid Authorization
+  header.` — pointing at a credential, when the actual state was that nothing
+  had been configured yet. `profile list` already reported it correctly, so the
+  signal existed and simply was not used. Both now say the same sentence, from
+  one string, and the commands that need a credential exit non-zero while
+  `profile list` still exits `0`.
+
+  An API key supplied through `ODAL_API_KEY` with no profile on disk is a
+  legitimate deployment, so the absence of **both** a profile and a credential
+  is what identifies a fresh install.
+
+  `odal status` and `odal schema check` are deliberately exempt: they read
+  public endpoints and authenticate nothing, so on an unconfigured machine
+  probing the localhost defaults is a truthful answer rather than a misleading
+  one. Every other command that reaches the node goes through the check.
+
+- **`odal stats` no longer prints a raw RFC 7807 body.** Against the same node,
+  the same HTTP 401 rendered as a sentence from `odal key list` and as a JSON
+  dump — `requestId`, `status` and `type` included — from `odal stats`, which
+  was the one call site of fifty-nine that formatted the response itself
+  instead of going through the shared renderer. It now goes through it too.
+
 - **The OpenAPI lint runs.** The recipe existed and nothing invoked it, and the
   same OpenAPI 3.0 `nullable` defect reached `main` twice as a result. It is now
   a CI job, with Redocly pinned to one version in both the recipe and the
