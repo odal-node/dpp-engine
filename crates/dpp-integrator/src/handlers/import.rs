@@ -10,7 +10,7 @@ use dpp_common::http_problem::{self, Problem};
 use serde::Serialize;
 use uuid::Uuid;
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 
 use crate::{
     domain::{
@@ -389,6 +389,20 @@ pub async fn import_file(
         let (created, updated, batch_errors) = batch_result_into_entries(batch.clone());
         let mut all_errors = row_errors;
         all_errors.extend(batch_errors);
+
+        // One row can fail several checks, so `all_errors` is longer than the
+        // number of rejected rows. Counting entries as though they were rows made
+        // `total_rows - all_errors.len()` underflow as soon as any row failed
+        // twice — and `usize` wraps rather than panics in release builds, so the
+        // API reported a success count near `usize::MAX` instead of failing
+        // loudly. Both counts are now per row, which is what their names and the
+        // CLI line that renders them ("N created, M failed") already implied.
+        //
+        // Success is "not rejected", not "wrote a record": an unchanged or
+        // conflicting row produces no `created`/`updated` entry and is still not
+        // a failure. `failed_rows` is a subset of the rows, so this cannot
+        // underflow the way counting error entries did.
+        let failed_rows: BTreeSet<usize> = all_errors.iter().map(|e| e.row).collect();
         if let Err(e) = state.job_store.complete(job_id, batch).await {
             tracing::error!(%job_id, error = %e, "failed to record import job completion");
         }
@@ -398,8 +412,8 @@ pub async fn import_file(
             Json(SyncImportResponse {
                 job_id: job_id.to_string(),
                 total_rows,
-                success_count: total_rows - all_errors.len(),
-                error_count: all_errors.len(),
+                success_count: total_rows - failed_rows.len(),
+                error_count: failed_rows.len(),
                 created,
                 updated,
                 errors: all_errors,
@@ -1446,6 +1460,42 @@ mod tests {
         assert_eq!(json["errorCount"], 1);
         assert_eq!(json["errors"][0]["field"], "gtin");
         assert_eq!(mock.create_hits.load(Ordering::SeqCst), 1);
+    }
+
+    /// A row can fail more than one check, and every existing fixture fails at
+    /// most one — which is why `success_count: total_rows - all_errors.len()`
+    /// survived. With two errors on one row of two, that subtraction is `2 - 3`,
+    /// and `usize` wraps in release builds rather than panicking, so the API
+    /// reported roughly `usize::MAX` successes.
+    #[tokio::test]
+    async fn a_row_failing_two_checks_does_not_underflow_the_success_count() {
+        let (state, _mock) = live_vault_state().await;
+        let app = build_router(state);
+
+        let mut csv = String::from(BATTERY_CSV_HEADER);
+        csv.push('\n');
+        csv.push_str(&battery_csv_row(VALID_GTIN));
+        csv.push('\n');
+        // Two defects on one row: the GTIN is too short *and* the battery type
+        // is not one Annex VI Part A recognises.
+        csv.push_str(
+            "EV Battery Bad,1234,BATCH-2,Acme Energy,DE,LFP,48.0,100.0,3000,85.4,banana\n",
+        );
+
+        let body = multipart_body("X", "battery.csv", &csv, None);
+        let resp = app.oneshot(import_request("battery", body)).await.unwrap();
+        assert_eq!(resp.status(), axum::http::StatusCode::OK);
+
+        let json = response_json(resp).await;
+        assert!(
+            json["errors"].as_array().unwrap().len() >= 2,
+            "this fixture must produce more errors than the row count to be the \
+             regression it claims: {json}"
+        );
+        assert_eq!(json["totalRows"], 2, "{json}");
+        // One row in, one row out — counted per row, not per error entry.
+        assert_eq!(json["successCount"], 1, "{json}");
+        assert_eq!(json["errorCount"], 1, "{json}");
     }
 
     #[tokio::test]
