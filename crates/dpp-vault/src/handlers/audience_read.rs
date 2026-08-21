@@ -39,11 +39,16 @@
 //!
 //! # What this route still does not do
 //!
-//! Product-category scope is not enforced — `credential_subject` carries
-//! free-string categories with no defined mapping to the typed
-//! `ProductCategory`, whose `Other(_)` variant does not even serialise as a
-//! plain string. Enforcing it would mean inventing a correspondence and then
-//! relying on it as a security control. Sector scope *is* enforced.
+//! Product-category scope is not *evaluated*, and a credential that claims one
+//! therefore unlocks nothing here. Sector scope is enforced; category has no
+//! counterpart to be enforced against, because a passport carries no product
+//! category — the field that once did was renamed `sector`, and category is now
+//! a per-sector concept with a different shape in each.
+//!
+//! Rather than reading an unevaluable restriction as no restriction, which
+//! granted a narrowed credential its full audience over every product in its
+//! sectors, such a credential is downgraded to `Audience::Public`. See
+//! [`crate::middleware::credential::VerifiedCredential::audience_for_sector`].
 
 use axum::{
     extract::{Path, State},
