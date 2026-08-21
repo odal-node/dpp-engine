@@ -64,7 +64,12 @@ pub fn should_enter_interactive() -> bool {
 
 pub async fn dispatch(cmd: Commands) -> anyhow::Result<()> {
     match cmd {
-        Commands::Init { vault_url, api_key } => run_init(vault_url, api_key).await,
+        Commands::Init {
+            node_url,
+            vault_url,
+            resolver_url,
+            api_key,
+        } => run_init(node_url, vault_url, resolver_url, api_key).await,
         Commands::Up => run_up().await,
         Commands::Down => run_down().await,
         Commands::Status => run_status().await,
@@ -200,11 +205,13 @@ pub async fn dispatch(cmd: Commands) -> anyhow::Result<()> {
             command:
                 ProfileCommands::Create {
                     name,
+                    node_url,
                     vault_url,
+                    resolver_url,
                     kind,
                     force,
                 },
-        } => run_profile_create(&name, vault_url, kind, force),
+        } => run_profile_create(&name, node_url, vault_url, resolver_url, kind, force),
         Commands::Profile {
             command: ProfileCommands::Remove { name },
         } => run_profile_remove(&name),

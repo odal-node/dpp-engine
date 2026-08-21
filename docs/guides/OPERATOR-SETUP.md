@@ -93,7 +93,8 @@ rendered loudly so you always know what you're operating on.
 
 ```sh
 odal profile list                       # all profiles (active marked *)
-odal profile create prod --vault-url https://node.acme.example/vault
+odal profile create prod --node-url https://node.acme.example \
+    --resolver-url https://dpp.acme.example
 odal profile use prod                   # switch
 odal --profile dev status               # one-off override
 ```
@@ -162,7 +163,8 @@ Run `odal --help` or `odal <subcommand> --help` for flags.
 For non-interactive setup (e.g. in a deployment pipeline):
 
 ```sh
-odal profile create prod --vault-url https://node.example.com/vault
+odal profile create prod --node-url https://node.example.com \
+    --resolver-url https://dpp.example.com
 odal --profile prod init
 odal --profile prod bootstrap \
   --admin-user admin --admin-pass "$ADMIN_PASSWORD"   # mints first key (idempotent)

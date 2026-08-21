@@ -85,18 +85,31 @@ pub(super) async fn environment() -> Result<()> {
                         None => continue,
                     };
                     let kind = EnvKind::infer(&url);
-                    let profile = Profile {
+                    let mut profile = Profile {
                         kind,
                         vault_url: url,
                         ..Profile::default()
                     };
+                    // A remote node's resolver is a separate deployment on its
+                    // own host, so it cannot be derived from the vault URL the
+                    // way identity can. Ask while the operator is still here,
+                    // rather than let `odal status` report a dead resolver.
+                    if kind == EnvKind::Prod {
+                        let current = profile.resolver_url.clone();
+                        match ask(Text::new("Resolver URL:").with_default(&current).prompt())? {
+                            Some(r) => profile.resolver_url = r,
+                            None => continue,
+                        }
+                    }
                     match config::create_profile(&name, profile, false) {
                         Ok(()) => {
                             println!(
                                 "\n  {} Created profile '{name}' ({kind}). Use Switch to activate it.\n",
                                 style("✓").green()
                             );
-                            hint(&format!("odal profile create {name} --vault-url …"));
+                            hint(&format!(
+                                "odal profile create {name} --node-url … --resolver-url …"
+                            ));
                         }
                         Err(e) => print_err(e),
                     }

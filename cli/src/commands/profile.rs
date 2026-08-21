@@ -62,6 +62,14 @@ pub fn run_profile_show(name: Option<String>) -> Result<()> {
     println!("identity_url : {}", p.identity_url);
     println!("resolver_url : {}", p.resolver_url);
     println!("api_key      : {}", config::mask_secret(&api_key));
+    // Profiles written before the resolver became statable are still on disk
+    // with the localhost default, and they never see the warning `create`
+    // now prints. This is where an operator looks when `status` reports the
+    // resolver down, so it is where the reason belongs.
+    if config::resolver_is_unstated_default(p.kind, &p.resolver_url) {
+        println!();
+        warn_unstated_resolver(&p.resolver_url);
+    }
     Ok(())
 }
 
@@ -75,13 +83,22 @@ pub fn run_profile_use(name: &str) -> Result<()> {
 /// `odal profile create <name>` — add a new profile (refuses overwrite without --force).
 pub fn run_profile_create(
     name: &str,
+    node_url: Option<String>,
     vault_url: Option<String>,
+    resolver_url: Option<String>,
     kind: Option<String>,
     force: bool,
 ) -> Result<()> {
     let mut profile = Profile::default();
+    // The parser makes these two mutually exclusive, so at most one arm runs.
+    if let Some(origin) = node_url {
+        profile.vault_url = config::vault_url_from_node(&origin);
+    }
     if let Some(url) = vault_url {
         profile.vault_url = url;
+    }
+    if let Some(url) = resolver_url {
+        profile.resolver_url = url;
     }
     profile.kind = match kind.as_deref() {
         Some("dev") => EnvKind::Dev,
@@ -89,12 +106,35 @@ pub fn run_profile_create(
         Some(other) => bail!("unknown kind '{other}' (expected 'dev' or 'prod')"),
         None => EnvKind::infer(&profile.vault_url),
     };
+    let unstated_resolver =
+        config::resolver_is_unstated_default(profile.kind, &profile.resolver_url)
+            .then(|| profile.resolver_url.clone());
+
     config::create_profile(name, profile, force)?;
     println!(
         "{} Created profile '{name}'. Switch to it with `odal profile use {name}`.",
         style("✓").green()
     );
+    if let Some(url) = unstated_resolver {
+        warn_unstated_resolver(&url);
+    }
     Ok(())
+}
+
+/// Warn that a profile pointed at a remote node kept the localhost resolver.
+///
+/// A warning rather than a refusal: a node whose resolver is not yet deployed
+/// is a real intermediate state, and blocking profile creation would stop it.
+/// Silence is the thing to avoid — it is what leaves `odal status` reporting a
+/// dead resolver against a healthy node with nothing naming the cause.
+pub(crate) fn warn_unstated_resolver(resolver_url: &str) {
+    println!(
+        "{} The resolver URL is still {}, which is not where a remote",
+        style("!").yellow().bold(),
+        style(resolver_url).dim(),
+    );
+    println!("  node's resolver runs. It is a separate deployment on its own host, so it cannot");
+    println!("  be derived from the node's URL — set it with `--resolver-url <url>`.");
 }
 
 /// `odal profile remove <name>` — delete a profile.

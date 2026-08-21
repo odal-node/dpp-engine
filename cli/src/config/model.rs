@@ -80,6 +80,32 @@ impl Default for Profile {
     }
 }
 
+/// True when a profile targets a remote node but kept the localhost resolver
+/// default.
+///
+/// The resolver is a separately deployed process on its own host, so
+/// [`normalize`] cannot re-host it the way it re-hosts identity. An unstated
+/// resolver stays pointed at the operator's own machine, which `odal status`
+/// then reports as a permanently unreachable resolver against a perfectly
+/// healthy deployment.
+pub fn resolver_is_unstated_default(kind: EnvKind, resolver_url: &str) -> bool {
+    kind == EnvKind::Prod && url_is_localhost(resolver_url)
+}
+
+/// Derive a vault URL from a node origin.
+///
+/// The single-binary node mounts the vault and identity sub-routers on one
+/// origin, so stating that origin once fixes both — [`normalize`] aligns
+/// identity onto the vault's host and scheme. The resolver is deployed
+/// separately and is deliberately not derived here.
+pub fn vault_url_from_node(node_url: &str) -> String {
+    let base = node_url.trim_end_matches('/');
+    match base.strip_suffix("/vault") {
+        Some(_) => base.to_owned(),
+        None => format!("{base}/vault"),
+    }
+}
+
 /// The resolved active profile, plus its name — what the rest of the CLI sees.
 ///
 /// Field names match the legacy flat config so existing call sites
@@ -164,16 +190,7 @@ impl Config {
     /// 0600 credentials store (see [`crate::credentials`]).
     pub fn save(&self) -> Result<()> {
         let mut file = ConfigFile::load().unwrap_or_default();
-        file.profiles.insert(
-            self.name.clone(),
-            Profile {
-                kind: self.kind,
-                vault_url: self.vault_url.clone(),
-                identity_url: self.identity_url.clone(),
-                resolver_url: self.resolver_url.clone(),
-                api_key: String::new(), // secrets live in credentials.toml
-            },
-        );
+        file.profiles.insert(self.name.clone(), self.to_profile());
         if file.current_profile.is_none() {
             file.current_profile = Some(self.name.clone());
         }
@@ -198,6 +215,21 @@ impl Config {
             Some(base) => format!("{base}/integrator"),
             None => format!("{}/integrator", self.vault_url.trim_end_matches('/')),
         }
+    }
+
+    /// The on-disk profile this config writes, normalised.
+    ///
+    /// Normalising on the way out is what keeps `config.toml` honest. `load`
+    /// normalises on the way in, so a profile written raw shows one identity
+    /// URL in the file and a different one everywhere the CLI reports it.
+    fn to_profile(&self) -> Profile {
+        normalize(Profile {
+            kind: self.kind,
+            vault_url: self.vault_url.clone(),
+            identity_url: self.identity_url.clone(),
+            resolver_url: self.resolver_url.clone(),
+            api_key: String::new(), // secrets live in credentials.toml
+        })
     }
 }
 
@@ -237,5 +269,88 @@ mod tests {
             EnvKind::infer("https://node.acme.example/vault"),
             EnvKind::Prod
         );
+    }
+
+    #[test]
+    fn node_origin_derives_the_vault_url() {
+        assert_eq!(
+            vault_url_from_node("https://node.example.com"),
+            "https://node.example.com/vault"
+        );
+        assert_eq!(
+            vault_url_from_node("https://node.example.com/"),
+            "https://node.example.com/vault"
+        );
+        // Idempotent, so an operator who passes the URL they already know does
+        // not get `/vault/vault`.
+        assert_eq!(
+            vault_url_from_node("https://node.example.com/vault"),
+            "https://node.example.com/vault"
+        );
+        // A node mounted under a path keeps the path.
+        assert_eq!(
+            vault_url_from_node("https://example.com/odal"),
+            "https://example.com/odal/vault"
+        );
+    }
+
+    /// The guarantee `--node-url` makes: one origin settles both sub-routers,
+    /// and neither is left on localhost.
+    #[test]
+    fn node_origin_settles_both_sub_routers() {
+        let p = normalize(Profile {
+            kind: EnvKind::Prod,
+            vault_url: vault_url_from_node("https://node.example.com"),
+            ..Profile::default()
+        });
+        assert_eq!(p.vault_url, "https://node.example.com/vault");
+        assert_eq!(p.identity_url, "https://node.example.com/identity");
+    }
+
+    /// The write path must normalise. `load` normalises on the way in, so a
+    /// profile written raw leaves a localhost identity URL on disk under a
+    /// remote vault URL — `config.toml` then disagrees with every command that
+    /// reports it, and hand-editing the file is the only apparent remedy.
+    #[test]
+    fn saved_profile_is_normalised() {
+        let written = Config {
+            name: "prod".into(),
+            kind: EnvKind::Prod,
+            vault_url: "https://node.example.com/vault".into(),
+            identity_url: default_identity_url(),
+            resolver_url: default_resolver_url(),
+            api_key: "odal_sk_example".into(),
+        }
+        .to_profile();
+
+        assert_eq!(written.identity_url, "https://node.example.com/identity");
+        // Secrets live in the 0600 credentials store, never in config.toml.
+        assert!(written.api_key.is_empty());
+        // The resolver is deliberately NOT derived: it is a separate deployment
+        // on its own host, and guessing it would only replace one wrong answer
+        // with another. `resolver_is_unstated_default` is what surfaces it.
+        assert_eq!(written.resolver_url, default_resolver_url());
+    }
+
+    /// A prod profile that never stated a resolver keeps pointing at the
+    /// operator's own machine. Nothing else in the config path catches this,
+    /// which is why `odal status` reported a dead resolver against a healthy
+    /// node with no indication of the cause.
+    #[test]
+    fn unstated_resolver_is_flagged_only_for_remote_profiles() {
+        assert!(resolver_is_unstated_default(
+            EnvKind::Prod,
+            &default_resolver_url()
+        ));
+        // A dev profile is supposed to resolve locally.
+        assert!(!resolver_is_unstated_default(
+            EnvKind::Dev,
+            &default_resolver_url()
+        ));
+        // Stated explicitly — nothing to warn about.
+        assert!(!resolver_is_unstated_default(
+            EnvKind::Prod,
+            "https://dpp.example.com"
+        ));
     }
 }

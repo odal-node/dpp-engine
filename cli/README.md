@@ -41,7 +41,8 @@ rendered loudly).
 
 ```sh
 odal profile list                          # all profiles (active marked *)
-odal profile create prod --vault-url https://node.acme.example/vault
+odal profile create prod --node-url https://node.acme.example \
+    --resolver-url https://dpp.acme.example
 odal profile use prod                      # switch the active profile
 odal --profile dev status                  # one-off override
 odal profile show                          # active profile (api key masked)
@@ -118,7 +119,8 @@ configure your node without leaving the Console.
 For scripting and CI, all steps are also available as subcommands:
 
 ```sh
-odal profile create prod --vault-url https://node.acme.example/vault
+odal profile create prod --node-url https://node.acme.example \
+    --resolver-url https://dpp.acme.example
 odal profile use prod
 odal init                            # scaffold docker/docker-compose.yml for the active profile
 # create .env in the deployment root (DATABASE_POSTGRES_PASS, DATABASE_APP_PASS,
@@ -192,7 +194,7 @@ least-privilege key cannot mutate the operator's registry identity).
 | `odal profile list` | List profiles (active marked `*`) | none |
 | `odal profile show [name]` | Show a profile (API key masked) | none |
 | `odal profile use <name>` | Switch the active profile | none |
-| `odal profile create <name> [--vault-url] [--kind] [--force]` | Add a profile | none |
+| `odal profile create <name> [--node-url|--vault-url] [--resolver-url] [--kind] [--force]` | Add a profile | none |
 | `odal profile remove <name>` | Delete a profile (+ its credential) | none |
 | `odal profile rename <old> <new>` | Rename a profile (+ its credential) | none |
 

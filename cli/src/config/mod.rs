@@ -5,7 +5,7 @@ mod paths;
 mod profiles;
 mod secrets;
 
-pub use model::{Config, EnvKind, Profile};
+pub use model::{Config, EnvKind, Profile, resolver_is_unstated_default, vault_url_from_node};
 pub use paths::{config_dir, export_target};
 pub use profiles::{
     active_profile_name, create_profile, list_profiles, remove_profile, rename_profile,
