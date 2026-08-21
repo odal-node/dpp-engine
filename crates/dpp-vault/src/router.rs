@@ -58,6 +58,7 @@ use crate::{
             webhooks_create_handler, webhooks_delete_handler, webhooks_list_handler,
             webhooks_test_handler,
         },
+        whoami::whoami_handler,
     },
     middleware::auth::auth_middleware,
     state::AppState,
@@ -110,6 +111,10 @@ pub fn build(state: AppState) -> Router {
         .route("/evidence/{id}/verify", post(verify_evidence_handler))
         // ── Node setup state ──────────────────────────────────────────
         .route("/node/state", get(node_state_handler))
+        // ── Caller identity ───────────────────────────────────────────
+        // Any scope: it reports only what the caller already presented, and a
+        // read-only key needs it precisely to learn that it is read-only.
+        .route("/whoami", get(whoami_handler))
         // ── Operator config ───────────────────────────────────────────
         .route(
             "/operator",

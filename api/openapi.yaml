@@ -134,6 +134,8 @@ paths:
     $ref: paths/vault_api_v1_webhooks_{id}_test.yaml
   /vault/api/v1/node/state:
     $ref: paths/vault_api_v1_node_state.yaml
+  /vault/api/v1/whoami:
+    $ref: paths/vault_api_v1_whoami.yaml
   /vault/api/v1/facilities:
     $ref: paths/vault_api_v1_facilities.yaml
   /vault/api/v1/facilities/{id}:
