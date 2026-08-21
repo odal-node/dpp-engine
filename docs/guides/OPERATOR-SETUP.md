@@ -99,10 +99,12 @@ odal profile use prod                   # switch
 odal --profile dev status               # one-off override
 ```
 
-The profile's **kind** (`dev`/`prod`) decides which Docker Compose file
-`odal up`/`down`/`update` target: dev starts infra only (you run the node from
-source), prod starts the full containerised stack and **refuses to start on
-missing or dev-default secrets**.
+The profile's **kind** (`dev`/`prod`) does not change which stack starts —
+`odal up`/`down`/`update` always target the full self-host stack (node +
+resolver + infra). What it changes is that a **prod** profile **refuses to start
+on missing or dev-default secrets**. Whether `odal up` builds the images from
+source or uses the published ones is decided separately, by whether the install
+actually carries the engine source tree.
 
 You can also drive all of this from inside the Console: **Environment** in the
 top-level menu.

@@ -7,7 +7,7 @@ use std::{
     time::Instant,
 };
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 
 use super::types::{ContainerHealth, ServiceHealth, ServiceStatus, StatusReport};
 use crate::{config::Config, http::OdalClient};
@@ -43,6 +43,124 @@ pub const COMPOSE_FILE: &str = "docker-compose.yml";
 /// (`odal init` and the console's guided setup). Single source of truth so the
 /// two scaffolders never drift.
 pub const COMPOSE_TEMPLATE: &str = include_str!("../../../docker/docker-compose.yml");
+
+/// The role-provisioning hook and the SQL it runs, embedded for the same reason
+/// as [`COMPOSE_TEMPLATE`].
+///
+/// The compose file bind-mounts both of these out of `<root>/ops/bootstrap/`.
+/// Docker does not fail on a missing bind-mount source — it creates an empty
+/// **directory** in its place — and the Postgres entrypoint silently skips a
+/// directory. An install scaffolded without them therefore starts, reports
+/// success, and never sets the `odal_app` password, leaving the node retrying
+/// `password authentication failed` for as long as it runs.
+pub const PG_INIT_TEMPLATE: &str = include_str!("../../../ops/bootstrap/pg-init.sh");
+pub const BOOTSTRAP_SQL_TEMPLATE: &str = include_str!("../../../ops/bootstrap/bootstrap.sql");
+
+/// One file an install root needs, and what to write into it.
+struct ScaffoldFile {
+    rel: &'static str,
+    contents: &'static str,
+    /// The Postgres entrypoint runs an executable `.sh` hook and *sources* a
+    /// non-executable one. `pg-init.sh` uses `set -e` and `exit 1`, which mean
+    /// different things to a sourced script, so it is written executable.
+    executable: bool,
+}
+
+const SCAFFOLD: &[ScaffoldFile] = &[
+    ScaffoldFile {
+        rel: "docker/docker-compose.yml",
+        contents: COMPOSE_TEMPLATE,
+        executable: false,
+    },
+    ScaffoldFile {
+        rel: "ops/bootstrap/pg-init.sh",
+        contents: PG_INIT_TEMPLATE,
+        executable: true,
+    },
+    ScaffoldFile {
+        rel: "ops/bootstrap/bootstrap.sql",
+        contents: BOOTSTRAP_SQL_TEMPLATE,
+        executable: false,
+    },
+];
+
+/// Write every file the compose stack needs under `root`, leaving any that
+/// already exist untouched. Returns the paths actually created.
+///
+/// Scaffolding the compose file alone is not enough, and the gap is silent
+/// rather than loud — see [`PG_INIT_TEMPLATE`]. Both scaffolders call this so
+/// neither can write a partial install.
+pub fn scaffold_install(root: &Path) -> Result<Vec<PathBuf>> {
+    let mut created = Vec::new();
+    for file in SCAFFOLD {
+        let path = root.join(file.rel);
+        if path.exists() {
+            continue;
+        }
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)
+                .with_context(|| format!("Failed to create {}", parent.display()))?;
+        }
+        fs::write(&path, file.contents)
+            .with_context(|| format!("Failed to write {}", path.display()))?;
+        if file.executable {
+            make_executable(&path)?;
+        }
+        created.push(path);
+    }
+    Ok(created)
+}
+
+/// Report which of the compose stack's files are missing from `root`.
+///
+/// Used before invoking compose, because Docker fabricates an empty directory
+/// for a missing bind-mount source instead of refusing — so without this the
+/// stack comes up and fails later, somewhere unrelated to the cause.
+pub fn missing_scaffold_files(root: &Path) -> Vec<&'static str> {
+    SCAFFOLD
+        .iter()
+        .filter(|f| !root.join(f.rel).is_file())
+        .map(|f| f.rel)
+        .collect()
+}
+
+#[cfg(unix)]
+fn make_executable(path: &Path) -> Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    fs::set_permissions(path, fs::Permissions::from_mode(0o755))
+        .with_context(|| format!("Failed to set permissions on {}", path.display()))
+}
+
+#[cfg(not(unix))]
+fn make_executable(_path: &Path) -> Result<()> {
+    // Windows has no executable bit; Docker applies its own mode to the mount.
+    Ok(())
+}
+
+/// True when the compose file's `build:` context resolves — that is, when this
+/// install carries the engine source tree.
+///
+/// `odal up` used to decide whether to build from the profile *kind*. That asks
+/// "is this a production deployment" and was being read as "does this operator
+/// have the engine source". The two coincide only for someone developing the
+/// engine: every self-hosted node is reached over localhost and therefore
+/// infers `dev`, so every packaged install was forced down a build path with no
+/// source to build from.
+pub fn source_tree_present(compose_file: &Path) -> bool {
+    // The compose file lives at `<root>/docker/<file>`, and its `build.context`
+    // is `../..` from there, with `dpp-engine/docker/node.Dockerfile` inside.
+    compose_file
+        .parent()
+        .and_then(Path::parent)
+        .and_then(Path::parent)
+        .is_some_and(|context| {
+            context
+                .join("dpp-engine")
+                .join("docker")
+                .join("node.Dockerfile")
+                .is_file()
+        })
+}
 
 /// Resolve the full-stack compose file at the install root, erroring helpfully
 /// if it is absent.
@@ -350,6 +468,83 @@ pub async fn action_update(compose_file: &Path) -> Result<()> {
 mod tests {
     use super::*;
 
+    /// The compose file bind-mounts the two `ops/bootstrap/` files, and Docker
+    /// fabricates an empty directory for a missing mount source instead of
+    /// failing. A scaffolder that writes only the compose file therefore
+    /// produces an install that starts and then fails at role provisioning.
+    #[test]
+    fn scaffolding_writes_every_file_the_stack_mounts() {
+        let root = tempfile::TempDir::new().unwrap();
+        let created = scaffold_install(root.path()).unwrap();
+
+        assert_eq!(created.len(), SCAFFOLD.len());
+        for file in SCAFFOLD {
+            let path = root.path().join(file.rel);
+            assert!(path.is_file(), "{} was not written", file.rel);
+            assert!(path.metadata().unwrap().len() > 0, "{} is empty", file.rel);
+        }
+        assert!(missing_scaffold_files(root.path()).is_empty());
+    }
+
+    /// Re-running `odal init` on a configured install must not overwrite an
+    /// operator's edited compose file.
+    #[test]
+    fn scaffolding_leaves_existing_files_alone() {
+        let root = tempfile::TempDir::new().unwrap();
+        scaffold_install(root.path()).unwrap();
+
+        let compose = root.path().join("docker").join(COMPOSE_FILE);
+        std::fs::write(&compose, "# edited by the operator\n").unwrap();
+
+        assert!(scaffold_install(root.path()).unwrap().is_empty());
+        assert_eq!(
+            std::fs::read_to_string(&compose).unwrap(),
+            "# edited by the operator\n"
+        );
+    }
+
+    /// What `odal up` checks before invoking compose. A mount source that is a
+    /// *directory* is exactly what Docker leaves behind, so it must not count
+    /// as present.
+    #[test]
+    fn a_fabricated_directory_does_not_count_as_a_scaffolded_file() {
+        let root = tempfile::TempDir::new().unwrap();
+        scaffold_install(root.path()).unwrap();
+
+        let hook = root.path().join("ops/bootstrap/pg-init.sh");
+        std::fs::remove_file(&hook).unwrap();
+        std::fs::create_dir_all(&hook).unwrap();
+
+        assert_eq!(
+            missing_scaffold_files(root.path()),
+            vec!["ops/bootstrap/pg-init.sh"]
+        );
+    }
+
+    /// Whether to build is decided by the source tree being present, not by the
+    /// profile kind — every self-hosted node is on localhost and so infers
+    /// `dev`, which used to force a source build on installs with no source.
+    #[test]
+    fn source_tree_is_detected_from_the_build_context() {
+        let parent = tempfile::TempDir::new().unwrap();
+
+        // A packaged install: <root>/docker/docker-compose.yml, no sibling source.
+        let packaged = parent.path().join("install");
+        scaffold_install(&packaged).unwrap();
+        let compose = packaged.join("docker").join(COMPOSE_FILE);
+        assert!(!source_tree_present(&compose));
+
+        // Now place the Dockerfile where the compose `build.context` expects it:
+        // `../..` from the compose file's directory, then dpp-engine/docker/.
+        let dockerfile = parent
+            .path()
+            .join("dpp-engine")
+            .join("docker")
+            .join("node.Dockerfile");
+        std::fs::create_dir_all(dockerfile.parent().unwrap()).unwrap();
+        std::fs::write(&dockerfile, "FROM scratch\n").unwrap();
+        assert!(source_tree_present(&compose));
+    }
     #[test]
     fn compose_file_is_the_full_stack() {
         assert_eq!(COMPOSE_FILE, "docker-compose.yml");
