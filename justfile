@@ -7,6 +7,10 @@
 
 set dotenv-load
 
+# Pinned Redocly CLI release. CI pins the same string; the two must stay equal
+# or they will disagree about what the spec is allowed to contain.
+REDOCLY_VERSION := "2.46.2"
+
 # ---------------------------------------------------------------------------
 # Why the gate's checks live in scripts/ rather than as shebang recipes
 #
@@ -93,12 +97,19 @@ lint-integration:
 # the same validator that renders the spec. `.redocly.lint-ignore.yaml` baselines
 # the problems the spec has today so this passes now and fails on NEW ones —
 # shrink that file, never regenerate it, or the gate stops meaning anything.
+#
+# The version is pinned and CI pins the same one. With `@latest` the two
+# disagree about what is valid the moment Redocly publishes, and a spec that did
+# not change starts failing. Bump both together or not at all.
+#
+# Not in `just check`: this needs Node and the network, which nothing else in
+# that gate does. CI is what enforces it.
 openapi-check:
-    npx --yes @redocly/cli@latest lint api/openapi.yaml
+    npx --yes @redocly/cli@{{ REDOCLY_VERSION }} lint api/openapi.yaml
 
 # Regenerate the browsable spec (api/openapi.html, git-ignored build artifact).
 openapi-html:
-    npx --yes @redocly/cli@latest build-docs api/openapi.yaml -o api/openapi.html
+    npx --yes @redocly/cli@{{ REDOCLY_VERSION }} build-docs api/openapi.yaml -o api/openapi.html
 
 # Capture a frozen stored-doc fixture for the compatibility guard (needs Docker).
 #
