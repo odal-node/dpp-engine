@@ -43,18 +43,35 @@ directory and start your services. Before confirming **Start services**, create 
 `.env` file in the same directory:
 
 ```sh
-# .env — never commit this file
-# Two database passwords, each set once:
+# .env — never commit this file. `odal` does not create or modify it.
+
+# --- Required. The node refuses to start a prod profile without these. ---
 DATABASE_POSTGRES_PASS=<strong-random-password>   # Postgres superuser (migrations)
-DATABASE_APP_PASS=<different-strong-password>      # odal_app role (least-privilege: no DDL; what the node uses)
-KEY_STORE_PASSPHRASE=<passphrase-for-Ed25519-key-store>
+DATABASE_APP_PASS=<different-strong-password>     # odal_app role the node connects with
+KEY_STORE_PASSPHRASE=<passphrase-for-the-Ed25519-key-store>
 DID_WEB_BASE_URL=https://your-domain.example
-ADMIN_USERNAME=admin
+ADMIN_USERNAME=<your-admin-login>                 # NOT "admin" — see below
 ADMIN_PASSWORD=<temporary-admin-password>
+
+# --- Required before you publish anything. ---
+# The public origin printed onto the product. Every passport's QR code points
+# here, permanently. The default is our hosted resolver, which is not a host
+# you control — set it to your own.
+RESOLVER_BASE_URL=https://dpp.your-domain.example
+
+# --- Optional. Defaults shown. ---
+NODE_PORT=8001
+RESOLVER_PORT=8003
 ```
 
-> The node auto-applies all database migrations at startup — no manual migration
-> step is needed.
+> **`ADMIN_USERNAME=admin` is rejected.** A `prod` profile runs a secrets
+> preflight before starting, and `admin` is on its list of known dev defaults
+> alongside `dev_only_password` and `change_me_in_env`. `odal up` will refuse
+> with *"ADMIN_USERNAME is still a dev default"*. Pick a real username.
+
+> The node applies all database migrations at startup — there is no manual
+> migration step. First boot takes about 90 seconds: it loads each Wasm sector
+> plugin in turn before it starts listening.
 
 ### Step 3 — Onboard
 
@@ -74,12 +91,19 @@ address, contact email). This is the EU responsible-economic-operator identity
 and is **required before you can publish** — the node refuses to publish until it
 is complete. It is editable any time via **Operator › Edit** (`odal operator set`).
 
-Before your first publish, also register at least one **facility** and one
-**operator identifier** — see [Facility & operator identifier
-management](#facility--operator-identifier-management) below. Unlike operator
-identity, these are not currently a hard publish gate, but they're what
-satisfies ESPR Annex III (unique facility identifier) and Art. 13 (economic-
-operator identifier) on every passport you create afterwards.
+Before your first publish you must **also** register at least one **facility**
+and one **operator identifier** — see [Facility & operator identifier
+management](#facility--operator-identifier-management) below. These are a hard
+publish gate, not a recommendation: publish refuses with
+
+```
+cannot publish: missing required registry identity — facility (Annex III unique
+facility identifier); operatorIdentifier (Annex III responsible-operator
+identifier).
+```
+
+They are what satisfies ESPR Annex III (unique facility identifier) and Art. 13
+(economic-operator identifier) on every passport you create afterwards.
 
 After setup, the Console drops into its normal top-level menu.
 
@@ -162,42 +186,56 @@ odal status
 
 Run `odal --help` or `odal <subcommand> --help` for flags.
 
-For non-interactive setup (e.g. in a deployment pipeline):
+For non-interactive setup (e.g. in a deployment pipeline). This is the whole
+path from an empty directory to a published passport, in order — every step
+depends on the ones above it:
 
 ```sh
+# 1. Point the CLI at the node, and scaffold the install files.
 odal profile create prod --node-url https://node.example.com \
     --resolver-url https://dpp.example.com
-odal --profile prod init
+odal --profile prod init          # writes docker/ and ops/bootstrap/
+
+# 2. Create .env next to docker/ — see "First-time setup" above.
+#    `odal` never writes this file. `odal up` refuses without it.
+
+# 3. Start the stack. First boot takes ~90s (Wasm plugins load serially).
+odal --profile prod up
+odal --profile prod status        # wait for vault/identity/resolver OK
+
+# 4. Claim the node and mint the first API key. Idempotent — a claimed node
+#    is refused rather than given a second key.
 odal --profile prod bootstrap \
-  --admin-user admin --admin-pass "$ADMIN_PASSWORD"   # mints first key (idempotent)
+  --admin-user "$ADMIN_USERNAME" --admin-pass "$ADMIN_PASSWORD"
+
+# 5. Operator identity. Required before publish.
 odal --profile prod operator set \
   --legal-name "Acme GmbH" --country DE \
   --address "1 Allee, Berlin" --contact-email ops@acme.example
+
+# 6. Registry identity. ALSO required before publish — publish 422s without
+#    both of these, however complete the operator identity is.
 odal --profile prod facility add \
   --name "Berlin Plant" --scheme gln --value 4012345000009 \
   --country DE --default
 odal --profile prod operator-id add \
   --scheme vat --value DE123456789 --primary
+
+# 7. Load products, check them, issue them.
+odal --profile prod passport import products.csv
+odal --profile prod passport validate      # stored drafts
+odal --profile prod passport publish
 ```
 
-In CI you can skip the files entirely and pass everything via the environment —
-`ODAL_PROFILE`, `ODAL_VAULT_URL`, `ODAL_API_KEY` take precedence over
-`~/.config/odal`. `bootstrap` is idempotent: re-running it against an
-already-claimed node fails fast instead of minting duplicate keys (use `--force`
-to override, or `odal key create` for additional keys).
-
----
-
-## API key management
-
-Your node can have multiple API keys — useful for CI, third-party integrations,
-or rotating credentials without downtime.
+Check what your credential actually is at any point:
 
 ```sh
-odal key create ci-pipeline         # mint a new key (secret shown once)
-odal key list                       # list all active keys
-odal key revoke <id>                # permanently revoke a key
+odal --profile prod whoami        # identity, scope, key id
 ```
+
+`whoami` is the only authenticated route a `read`-scoped key can reach —
+`odal key list` needs `admin`, so without it a least-privilege key has no way to
+discover its own limits short of having a write rejected.
 
 To rotate the primary key:
 1. Create a new key.
@@ -237,6 +275,85 @@ grouping/attribution, never a tenancy or isolation boundary.
 
 ---
 
+---
+
+## What your data has to look like
+
+**GTINs must be GTIN-14 with a valid check digit** — exactly 14 ASCII digits.
+A 13-digit retail GTIN is not accepted as-is; pad it on the left with a zero,
+which GS1 defines as the same identifier and which preserves the check digit.
+The importer names the digit it expected, so a rejected row tells you the answer:
+
+```
+✗ Row 1 [gtin]: GTIN check digit invalid for '03801234567890': expected 8, got 0
+```
+
+Sector templates with the current required columns live in
+`crates/dpp-integrator/templates/` (`textile-v1.csv`, `battery-v1.csv`, …), and
+worked examples in `ops/demo/datasets/`.
+
+**One file, one sector.** The sector is read from the first data row and applied
+to the whole file, so a file mixing sectors is validated entirely against
+whichever sector came first. Split them.
+
+**Check a file before you commit to it.** `odal passport validate <file>`
+dry-runs a single passport body against the node and writes nothing:
+
+```
+✓ create   would be accepted
+✓ publish  passes the sector-data schema gate
+```
+
+Read that second line precisely. It is the sector-data schema gate alone —
+publish additionally requires the registry identity above, and category-mandatory
+content for some product categories, neither of which the preview runs.
+
+---
+
+## What this node's output is worth
+
+Run `odal status` after onboarding and read the **TRUST** section:
+
+```
+TRUST
+profile             development
+seal                ghost
+archive             ghost
+ruleset             baseline
+
+! Running on a stand-in: archive, credential_issuers, registry_sync, seal.
+  Simulated, not the real service — nothing this node produces
+  is fit for compliance use.
+```
+
+A stock node runs every trust port on a stand-in. Passports it issues are
+well-formed, signed with your own Ed25519 key, and independently verifiable —
+but the qualified seal, the third-party archive, and the registry notifications
+are simulated. Wiring those up is a separate exercise; until then, treat the
+output as operationally real and legally not.
+
+`odal seal status` reports the sealing side specifically.
+
+---
+
+## Passports are hard to take back
+
+Two things to know before you publish at scale:
+
+**The carrier URL is permanent.** `RESOLVER_BASE_URL` is baked into every
+passport's QR code at publish time. Getting it wrong means reprinting labels.
+
+**Publishing starts a retention clock.** ESPR retention is enforced by the node,
+not just documented: `odal passport archive` refuses inside the window.
+
+```
+Error: archive failed: retention policy forbids archiving before 2036-08-18
+```
+
+To withdraw a passport from public view, suspend it — `odal passport suspend
+<id>` — which serves `410 Gone` on the passport's own URL. Suspension is
+reversible; archiving is terminal and gated.
+
 ## Updating the node
 
 ```sh
@@ -252,11 +369,30 @@ Or from the Console: **Infrastructure › Update images**, then **Stop**, then *
 
 ## Backup
 
-The node's state lives entirely in PostgreSQL. Back up the `odal` database
-according to your DR policy. The key store (`KEY_STORE_PATH`, defaults to
-`./keys/`) holds your Ed25519 signing key — include it in backups. Losing the
-key store means you cannot sign new passports.
+Two things must be backed up together, and losing either is unrecoverable.
 
+**1. The database.** All node state lives in PostgreSQL. Back up the `odal`
+database according to your DR policy.
+
+**2. The Ed25519 signing key.** In the containerised stack it is
+`/data/keystore.enc` inside the node container, on the **`node-data` Docker
+volume** — not a file in your install directory. The compose file pins it there
+deliberately: `.env`'s `KEY_STORE_PATH` default would land it in the container's
+throwaway layer, where a recreate mints a new key and invalidates every passport
+ever signed.
+
+```sh
+# Copy the key store out of the running node
+docker compose cp node:/data/keystore.enc ./keystore-backup.enc
+
+# Or archive the whole volume
+docker run --rm -v odal-node_node-data:/data -v "$PWD":/backup alpine \
+    tar czf /backup/node-data.tar.gz -C /data .
+```
+
+Back it up encrypted, and keep `KEY_STORE_PASSPHRASE` somewhere separate — the
+file is useless without it, and so are you without the file. Losing the key
+store means you cannot sign new passports, and cannot re-sign the ones you have.
 ---
 
 ## Network / domain setup
@@ -287,6 +423,16 @@ location / {
 
 | Symptom | Likely cause | Fix |
 |---|---|---|
+| `odal up` fails: *"is still a dev default"* | A `prod` profile's `.env` still has a placeholder — commonly `ADMIN_USERNAME=admin` | Set real values; `admin`, `dev_only_password` and `change_me_in_env` are all rejected |
+| `odal up` fails: *"this install is missing files the stack needs"* | The install predates `odal init` scaffolding `ops/bootstrap/` | Run `odal init` again — it writes what is missing and leaves existing files alone |
+| Node stays `health: starting`, logs repeat *"password authentication failed for user odal_app"* | The database role never got its password, because the role-provisioning hook was not mounted | Confirm `ops/bootstrap/` exists next to `docker/`, then recreate the stack (the hook only runs on first volume init) |
+| Any command: *"No profile configured yet"* | Nothing is configured on this machine | `odal init` or `odal profile create <name> --node-url <url>` |
+| `odal passport publish` fails 422: *"missing required registry identity"* | No default facility and/or no primary operator identifier | `odal facility add … --default` and `odal operator-id add … --primary` |
+| `odal passport import` rejects every row on `gtin` | GTINs are 13-digit, or their check digit is wrong | Use GTIN-14; the error names the expected check digit |
+| `odal passport archive` fails: *"retention policy forbids archiving before …"* | ESPR retention is still running on that passport | Use `odal passport suspend <id>` to withdraw it from public view instead |
+| `odal verify <id>` says *"Dossier not found"* | A **passport** id was passed | `verify` takes a **dossier** id — generate one with `odal passport evidence <passport-id>` |
+| Scanned QR codes reach `id.odal-node.io` | `RESOLVER_BASE_URL` was left at its default when those passports were published | Set it before publishing; already-published carriers cannot be changed |
+| A second `odal up` elsewhere on the host took over the first deployment | The compose project name is fixed, so all install roots share one deployment | Run one deployment per host, or set `COMPOSE_PROJECT_NAME` |
 | Console shows "not running (connection refused)" | Node not started | Run `odal up` or **Infrastructure › Start** |
 | `odal status` shows vault healthy but identity unhealthy | Identity sub-router not responding | Check node logs: `docker compose logs node` |
 | `odal bootstrap` fails with 401 | Wrong `ADMIN_USERNAME`/`ADMIN_PASSWORD` | Verify against `.env`; re-run setup |
