@@ -78,6 +78,8 @@ components:
 paths:
   /vault/api/v1/dpp:
     $ref: paths/vault_api_v1_dpp.yaml
+  /vault/api/v1/dpp/validate:
+    $ref: paths/vault_api_v1_dpp_validate.yaml
   /vault/api/v1/dpps:
     $ref: paths/vault_api_v1_dpps.yaml
   /vault/api/v1/dpp/by-identity:
@@ -134,6 +136,8 @@ paths:
     $ref: paths/vault_api_v1_webhooks_{id}_test.yaml
   /vault/api/v1/node/state:
     $ref: paths/vault_api_v1_node_state.yaml
+  /vault/api/v1/whoami:
+    $ref: paths/vault_api_v1_whoami.yaml
   /vault/api/v1/facilities:
     $ref: paths/vault_api_v1_facilities.yaml
   /vault/api/v1/facilities/{id}:

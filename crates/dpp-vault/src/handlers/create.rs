@@ -74,98 +74,11 @@ pub async fn create_handler(
     if let Some(resp) = require_write(&auth, "Creating a passport") {
         return resp;
     }
-    if body.product_name.trim().is_empty() {
-        return api_error(
-            StatusCode::UNPROCESSABLE_ENTITY,
-            "VALIDATION_ERROR",
-            "productName is required",
-        );
-    }
-    if body.manufacturer.name.trim().is_empty() || body.manufacturer.address.trim().is_empty() {
-        return api_error(
-            StatusCode::UNPROCESSABLE_ENTITY,
-            "VALIDATION_ERROR",
-            "manufacturer.name and manufacturer.address are required",
-        );
-    }
-
-    // Reject control / bidirectional-override characters in free text — they have
-    // no place in DPP data and enable display spoofing and downstream injection.
-    let text_fields = [
-        body.product_name.as_str(),
-        body.manufacturer.name.as_str(),
-        body.manufacturer.address.as_str(),
-        body.batch_id.as_deref().unwrap_or(""),
-    ];
-    if text_fields.iter().any(|s| has_unsafe_text(s)) {
-        return api_error(
-            StatusCode::UNPROCESSABLE_ENTITY,
-            "VALIDATION_ERROR",
-            "text fields must not contain control or bidirectional characters",
-        );
-    }
-
-    // Numeric sanity: footprints/scores must be finite and in range.
-    if let Some(co2e) = body.co2e_per_unit
-        && (!co2e.is_finite() || co2e < 0.0)
-    {
-        return api_error(
-            StatusCode::UNPROCESSABLE_ENTITY,
-            "VALIDATION_ERROR",
-            "co2ePerUnit must be a finite, non-negative number",
-        );
-    }
-    if let Some(score) = body.repairability_score
-        && (!score.is_finite() || !(0.0..=10.0).contains(&score))
-    {
-        return api_error(
-            StatusCode::UNPROCESSABLE_ENTITY,
-            "VALIDATION_ERROR",
-            "repairabilityScore must be between 0 and 10",
-        );
-    }
-
-    if let Some(ref sd) = body.sector_data {
-        if let Err(errs) = validate_sector_data(sd) {
-            return api_error(
-                StatusCode::UNPROCESSABLE_ENTITY,
-                "VALIDATION_ERROR",
-                &errs.to_display(),
-            );
-        }
-
-        // GS1 GTIN check-digit validation for Battery passports.
-        if let SectorData::Battery(battery) = sd
-            && let Err(e) = validate_gtin(battery.gtin.as_str())
-        {
-            return api_error(
-                StatusCode::UNPROCESSABLE_ENTITY,
-                "VALIDATION_ERROR",
-                &format!("sectorData.gtin: {e}"),
-            );
-        }
-
-        // JSON-Schema validation against the sector's current versioned schema —
-        // catches schema-only constraints (string patterns, enum sets, numeric
-        // ranges) that the Rust types don't express.
-        if let Err(msg) = validate_against_schema(sd) {
-            return api_error(StatusCode::UNPROCESSABLE_ENTITY, "VALIDATION_ERROR", &msg);
-        }
-    }
-
-    // Lineage/BOM refs are fetched cross-operator at verify time, so hold each
-    // URI to the same SSRF guard as webhooks (https, no internal hosts) and
-    // require the pin to be a lowercase hex SHA-256. Local cycles among
-    // `componentRefs` are refused later by the service (it has the repo).
-    if let Some(ref parent) = body.parent_passport_ref
-        && let Err(e) = validate_passport_ref(parent, "parentPassportRef")
-    {
-        return api_error(StatusCode::UNPROCESSABLE_ENTITY, "VALIDATION_ERROR", &e);
-    }
-    for (i, r) in body.component_refs.iter().enumerate() {
-        if let Err(e) = validate_passport_ref(r, &format!("componentRefs[{i}]")) {
-            return api_error(StatusCode::UNPROCESSABLE_ENTITY, "VALIDATION_ERROR", &e);
-        }
+    // Every check below is shared with `POST /api/v1/dpp/validate`, which runs
+    // it without persisting. One implementation, so a dry-run verdict and the
+    // real create can never disagree.
+    if let Some(resp) = validate_create_request(&body) {
+        return resp;
     }
 
     // Sector is the dispatch key: explicit if supplied, else derived from the
@@ -196,22 +109,6 @@ pub async fn create_handler(
     let schema_version = catalog()
         .resolve_schema_version(sector.catalog_key(), None)
         .unwrap_or_else(|| "1.0.0".into());
-    if let Some(requested) = body.schema_version.as_deref()
-        && requested != schema_version
-    {
-        return api_error(
-            StatusCode::UNPROCESSABLE_ENTITY,
-            "VALIDATION_ERROR",
-            &format!(
-                "schemaVersion must be `{schema_version}` for sector `{}` (or omitted); \
-                 `{requested}` was requested. A new passport is always written at the \
-                 sector's current schema version — the stored version selects the \
-                 disclosure table its public view is signed under, so it is not the \
-                 caller's to choose.",
-                sector.catalog_key()
-            ),
-        );
-    }
 
     // If co2e_per_unit not supplied at the top level, derive it from the
     // typed sector data so callers don't have to duplicate the value.
@@ -516,4 +413,144 @@ mod schema_validation {
             "schema must reject a GTIN that violates its pattern"
         );
     }
+}
+
+/// Every validation `POST /api/v1/dpp` applies to a request body, with no side
+/// effects. Returns the rejection response, or `None` when the body would be
+/// accepted.
+///
+/// Extracted so the dry-run endpoint runs *this* rather than a second copy — a
+/// preview that disagreed with the real thing would be worse than none, because
+/// the direction it disagrees is the direction bad data gets through.
+pub(crate) fn validate_create_request(body: &CreateRequest) -> Option<axum::response::Response> {
+    // Shadows the module-level helper so every check below keeps the exact
+    // form it had inside `create_handler` — the extraction is a move, not a
+    // rewrite, and the compiler enforces that.
+    fn api_error(status: StatusCode, code: &str, detail: &str) -> Option<axum::response::Response> {
+        Some(super::error::api_error(status, code, detail))
+    }
+    if body.product_name.trim().is_empty() {
+        return api_error(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "VALIDATION_ERROR",
+            "productName is required",
+        );
+    }
+    if body.manufacturer.name.trim().is_empty() || body.manufacturer.address.trim().is_empty() {
+        return api_error(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "VALIDATION_ERROR",
+            "manufacturer.name and manufacturer.address are required",
+        );
+    }
+
+    // Reject control / bidirectional-override characters in free text — they have
+    // no place in DPP data and enable display spoofing and downstream injection.
+    let text_fields = [
+        body.product_name.as_str(),
+        body.manufacturer.name.as_str(),
+        body.manufacturer.address.as_str(),
+        body.batch_id.as_deref().unwrap_or(""),
+    ];
+    if text_fields.iter().any(|s| has_unsafe_text(s)) {
+        return api_error(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "VALIDATION_ERROR",
+            "text fields must not contain control or bidirectional characters",
+        );
+    }
+
+    // Numeric sanity: footprints/scores must be finite and in range.
+    if let Some(co2e) = body.co2e_per_unit
+        && (!co2e.is_finite() || co2e < 0.0)
+    {
+        return api_error(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "VALIDATION_ERROR",
+            "co2ePerUnit must be a finite, non-negative number",
+        );
+    }
+    if let Some(score) = body.repairability_score
+        && (!score.is_finite() || !(0.0..=10.0).contains(&score))
+    {
+        return api_error(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "VALIDATION_ERROR",
+            "repairabilityScore must be between 0 and 10",
+        );
+    }
+
+    if let Some(ref sd) = body.sector_data {
+        if let Err(errs) = validate_sector_data(sd) {
+            return api_error(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "VALIDATION_ERROR",
+                &errs.to_display(),
+            );
+        }
+
+        // GS1 GTIN check-digit validation for Battery passports.
+        if let SectorData::Battery(battery) = sd
+            && let Err(e) = validate_gtin(battery.gtin.as_str())
+        {
+            return api_error(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "VALIDATION_ERROR",
+                &format!("sectorData.gtin: {e}"),
+            );
+        }
+
+        // JSON-Schema validation against the sector's current versioned schema —
+        // catches schema-only constraints (string patterns, enum sets, numeric
+        // ranges) that the Rust types don't express.
+        if let Err(msg) = validate_against_schema(sd) {
+            return api_error(StatusCode::UNPROCESSABLE_ENTITY, "VALIDATION_ERROR", &msg);
+        }
+    }
+
+    // Lineage/BOM refs are fetched cross-operator at verify time, so hold each
+    // URI to the same SSRF guard as webhooks (https, no internal hosts) and
+    // require the pin to be a lowercase hex SHA-256. Local cycles among
+    // `componentRefs` are refused later by the service (it has the repo).
+    if let Some(ref parent) = body.parent_passport_ref
+        && let Err(e) = validate_passport_ref(parent, "parentPassportRef")
+    {
+        return api_error(StatusCode::UNPROCESSABLE_ENTITY, "VALIDATION_ERROR", &e);
+    }
+    for (i, r) in body.component_refs.iter().enumerate() {
+        if let Err(e) = validate_passport_ref(r, &format!("componentRefs[{i}]")) {
+            return api_error(StatusCode::UNPROCESSABLE_ENTITY, "VALIDATION_ERROR", &e);
+        }
+    }
+
+    // Sector is the dispatch key: explicit if supplied, else derived from the
+    // typed sector data, else Other. Derived again here rather than passed in —
+    // it is pure, and computing it locally keeps this function callable on a
+    // bare request body with nothing else in hand.
+    let sector = body
+        .sector
+        .clone()
+        .or_else(|| body.sector_data.as_ref().map(|d| d.sector()))
+        .unwrap_or_else(|| Sector::Other("other".to_owned()));
+    let schema_version = catalog()
+        .resolve_schema_version(sector.catalog_key(), None)
+        .unwrap_or_else(|| "1.0.0".into());
+
+    if let Some(requested) = body.schema_version.as_deref()
+        && requested != schema_version
+    {
+        return api_error(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "VALIDATION_ERROR",
+            &format!(
+                "schemaVersion must be `{schema_version}` for sector `{}` (or omitted); \
+                 `{requested}` was requested. A new passport is always written at the \
+                 sector's current schema version — the stored version selects the \
+                 disclosure table its public view is signed under, so it is not the \
+                 caller's to choose.",
+                sector.catalog_key()
+            ),
+        );
+    }
+    None
 }

@@ -28,5 +28,7 @@ pub mod stats;
 pub mod suspend;
 pub mod transfer;
 pub mod update;
+pub mod validate;
 pub mod verify_tree;
 pub mod webhooks;
+pub mod whoami;

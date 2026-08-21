@@ -1,0 +1,50 @@
+get:
+  operationId: whoami
+  summary: Identity and scope of the presented credential
+  description: |
+    Echoes back what the caller's own credential is. A client cannot otherwise
+    discover what it is allowed to do — a `read` key learns it is read-only by
+    having a write rejected, which cannot be checked ahead of time.
+
+    Reports only what the caller already presented; it reveals nothing about
+    any other key. `keyId` is the key's row id, never the token, and is absent
+    for local Basic auth, which has no key row.
+
+    Available to every scope, including `read`.
+  tags:
+    - Node
+  security:
+    - BearerApiKey: []
+    - BasicAuth: []
+  responses:
+    '200':
+      description: The caller's identity and scope.
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [userId, scope]
+            properties:
+              userId:
+                type: string
+                description: |
+                  Caller identity — the API key's label, or the admin username
+                  for local Basic auth.
+                example: svc-dashboard
+              scope:
+                type: string
+                enum: [read, write, admin]
+                description: |
+                  What this credential authorises. `write` covers passport
+                  create/update/lifecycle; `admin` additionally covers API-key
+                  management and operator config.
+                example: read
+              keyId:
+                type: [string, 'null']
+                format: uuid
+                description: |
+                  Id of the API key row that authenticated this request.
+                  `null` for local Basic auth, which has no key row.
+                example: 0198f3a1-4c2e-7b3d-9f10-2a5c8e7d1b40
+    '401':
+      $ref: ../components/responses/Unauthorized.yaml
