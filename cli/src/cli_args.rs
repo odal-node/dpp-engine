@@ -44,6 +44,8 @@ pub enum Commands {
     Down,
     /// Show health status of all services
     Status,
+    /// Report what the configured API key actually is (identity and scope)
+    Whoami,
     /// Pull latest container images
     Update,
     // ── Onboarding & auth ────────────────────────────────────────────────────
@@ -175,8 +177,12 @@ pub enum PassportCommands {
         /// Path to the CSV/TSV/JSON file
         file: String,
     },
-    /// Validate draft passports against sector schemas
-    Validate,
+    /// Validate draft passports, or dry-run a passport body from a file
+    Validate {
+        /// Path to a passport JSON body to dry-run against the node. Nothing is
+        /// created. Omit to validate the passports already stored as drafts.
+        file: Option<String>,
+    },
     /// Sign and publish draft passports (all drafts, or a specific ID)
     Publish {
         /// Specific passport ID to publish (publishes all drafts if omitted)

@@ -155,6 +155,49 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ### Added
 
+- **`odal whoami`** reports what the configured credential actually is —
+  identity, scope, and key id. It is the only authenticated route a `read`
+  scoped key can reach, which is the point: `odal key list` requires `admin`,
+  so a least-privilege credential previously discovered its own limits by
+  having a write rejected. Local-admin Basic auth has no key row and is
+  reported as such rather than given a placeholder id.
+
+- **`odal passport validate <file>`** dry-runs a passport body against the node
+  and persists nothing. Without an argument the command still checks the stored
+  drafts, so the existing behaviour is unchanged.
+
+  Both verdicts are always shown, because create and publish deliberately
+  differ and collapsing them would hide the gap until publish time. The publish
+  line is labelled as the **sector-data schema gate**, not as acceptance:
+  publish additionally requires registry identity, and category-mandatory
+  content for some product categories, and the preview runs neither. Reporting
+  its pass as "would be accepted" would promise more than the node checked.
+
+  A rejection comes back as the identical response `create` would have sent, so
+  a non-2xx is the verdict. `401`/`403` are the exception — those mean the
+  caller was not entitled to ask, which says nothing about the file, and are
+  reported as errors rather than as a verdict about it.
+
+- **`odal status` surfaces the node's trust posture.** The deployment profile,
+  each trust port's mode, and the active ruleset version now appear, so
+  `seal: ghost` is visible from the CLI. The posture lives on the authenticated
+  `/node/state`, while the health probes need no credential, so an unreadable
+  posture is reported as absent rather than failing the command — `status`
+  keeps working for a caller who has no key. A node that reports no posture
+  renders nothing, because "not reported" and "nothing is a ghost" are
+  different claims and only one is safe to make.
+
+  Only `ghost` ports are called stand-ins. `sandbox` is a real service in a
+  test tier, and warning about it would teach operators to ignore the line that
+  matters.
+
+- **`odal status` no longer renders two kinds of check as one table.** HTTP
+  probes have a URL and a round-trip latency; Docker containers have a name and
+  a state and no latency at all. They shared a table, which gave every container
+  an empty latency cell and implied it had been probed over HTTP. They are now
+  two tables, and the probe failure reason moved out of the fixed-width status
+  column, where anything longer than eight characters broke the rows below it.
+
 - **`GET /vault/api/v1/whoami`** reports the presented credential's identity,
   scope and key id. A client previously had no way to discover what its
   credential was allowed to do — a read-only key found out by having a write

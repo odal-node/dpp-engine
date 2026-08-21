@@ -2,7 +2,7 @@
 
 use anyhow::{Context, Result};
 
-use super::super::types::{ValidationRecord, ValidationReport};
+use super::super::types::{DryRunVerdict, ValidationRecord, ValidationReport};
 use crate::{
     config::Config,
     http::{OdalClient, describe_error},
@@ -43,6 +43,51 @@ pub async fn action_validate(client: &OdalClient, cfg: &Config) -> Result<Valida
                 issues: find_issues(rec),
             })
             .collect(),
+    })
+}
+
+/// `POST /api/v1/dpp/validate` — would this body be accepted, without creating
+/// anything.
+///
+/// A rejection comes back as **the identical response `create` would have
+/// sent**, so a non-2xx here is the verdict rather than a transport failure.
+/// The exception is 401/403: the dry run is write-scoped, because it runs
+/// schema validation on caller-supplied input, so those mean the caller was not
+/// entitled to ask — which says nothing about the file and must not be reported
+/// as though it did.
+pub async fn action_validate_body(
+    path: &str,
+    client: &OdalClient,
+    cfg: &Config,
+) -> Result<DryRunVerdict> {
+    let bytes = std::fs::read(path).with_context(|| format!("Cannot read file: {path}"))?;
+    let url = format!("{}/api/v1/dpp/validate", cfg.vault_url);
+    // Sent verbatim, so the node judges exactly what is on disk.
+    let (http_status, body) = client.post_bytes(&url, bytes).await?;
+
+    if matches!(http_status.as_u16(), 401 | 403) {
+        anyhow::bail!("cannot validate: {}", describe_error(http_status, &body));
+    }
+    if !http_status.is_success() {
+        return Ok(DryRunVerdict {
+            create_valid: false,
+            publish_valid: false,
+            detail: Some(describe_error(http_status, &body)),
+        });
+    }
+
+    let v: serde_json::Value =
+        serde_json::from_str(&body).context("could not parse the validation verdict")?;
+    Ok(DryRunVerdict {
+        create_valid: v
+            .get("createValid")
+            .and_then(|b| b.as_bool())
+            .unwrap_or(false),
+        publish_valid: v
+            .get("publishValid")
+            .and_then(|b| b.as_bool())
+            .unwrap_or(false),
+        detail: v.get("detail").and_then(|d| d.as_str()).map(str::to_owned),
     })
 }
 

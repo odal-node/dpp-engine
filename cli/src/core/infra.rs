@@ -9,7 +9,7 @@ use std::{
 
 use anyhow::Result;
 
-use super::types::{ServiceHealth, ServiceStatus, StatusReport};
+use super::types::{ContainerHealth, ServiceHealth, ServiceStatus, StatusReport};
 use crate::{config::Config, http::OdalClient};
 
 /// Walk up from CWD to find the installation root — the directory that contains
@@ -168,17 +168,36 @@ pub fn classify_error(msg: &str) -> &'static str {
 /// "is the node serving?" and "are the containers up?". A remote/managed node
 /// has no local containers, so only the HTTP trio is shown.
 pub async fn action_status(client: &OdalClient, cfg: &Config) -> Result<StatusReport> {
-    let mut services = http_status(client, cfg).await?.services;
-    if cfg.is_localhost()
-        && let Ok(report) = infra_container_status()
-    {
-        services.extend(report.services);
-    }
-    Ok(StatusReport { services })
+    let probes = http_probes(client, cfg).await?;
+    let containers = if cfg.is_localhost() {
+        infra_container_status().unwrap_or_default()
+    } else {
+        Vec::new()
+    };
+    // The trust posture lives on the authenticated `/node/state`, while the
+    // probes above need no credential. `status` must keep answering for a
+    // caller who has none, so an unreadable posture is absent, not fatal.
+    //
+    // Only asked when the vault answered its health probe: `/node/state` is on
+    // the same origin, so a vault that did not respond cannot serve it either,
+    // and asking anyway spends a second connection timeout to learn nothing.
+    let vault_is_up = probes.iter().any(|p| p.name == "vault" && p.status.is_ok());
+    let node = if vault_is_up {
+        crate::core::onboarding::action_node_state(client, cfg)
+            .await
+            .ok()
+    } else {
+        None
+    };
+    Ok(StatusReport {
+        probes,
+        containers,
+        node,
+    })
 }
 
 /// Probe the node's HTTP health endpoints (vault / identity / resolver).
-async fn http_status(client: &OdalClient, cfg: &Config) -> Result<StatusReport> {
+async fn http_probes(client: &OdalClient, cfg: &Config) -> Result<Vec<ServiceHealth>> {
     #[allow(clippy::type_complexity)]
     let endpoints: &[(&'static str, fn(&Config) -> String)] = &[
         ("vault", |c| format!("{}/health", c.vault_url)),
@@ -186,19 +205,19 @@ async fn http_status(client: &OdalClient, cfg: &Config) -> Result<StatusReport> 
         ("resolver", |c| format!("{}/health", c.resolver_url)),
     ];
 
-    let mut services = Vec::with_capacity(endpoints.len());
+    let mut probes = Vec::with_capacity(endpoints.len());
     for (name, url_fn) in endpoints {
         let url = url_fn(cfg);
         let start = Instant::now();
         let result = client.get_public(&url).await;
-        let latency_ms = Some(start.elapsed().as_millis() as u64);
+        let latency_ms = start.elapsed().as_millis() as u64;
 
         let status = match result {
             Ok((s, _)) if s.is_success() => ServiceStatus::Ok,
             Ok((s, _)) => ServiceStatus::HttpError(s.as_u16()),
             Err(e) => ServiceStatus::Failed(classify_error(&e.to_string()).to_owned()),
         };
-        services.push(ServiceHealth {
+        probes.push(ServiceHealth {
             name: (*name).to_owned(),
             url,
             status,
@@ -206,11 +225,11 @@ async fn http_status(client: &OdalClient, cfg: &Config) -> Result<StatusReport> 
         });
     }
 
-    Ok(StatusReport { services })
+    Ok(probes)
 }
 
 /// Report Docker container health for the full-stack compose project.
-pub(crate) fn infra_container_status() -> Result<StatusReport> {
+pub(crate) fn infra_container_status() -> Result<Vec<ContainerHealth>> {
     let compose = compose_file()?;
     let output = compose_command(&compose)
         .args(["ps", "--format", "json"])
@@ -242,24 +261,22 @@ pub(crate) fn infra_container_status() -> Result<StatusReport> {
         } else {
             ServiceStatus::Failed(status_text.to_owned())
         };
-        services.push(ServiceHealth {
-            name: name.to_owned(),
-            url: container.to_owned(),
+        services.push(ContainerHealth {
+            service: name.to_owned(),
+            container: container.to_owned(),
             status,
-            latency_ms: None,
         });
     }
 
     if services.is_empty() {
-        services.push(ServiceHealth {
-            name: "infrastructure".to_owned(),
-            url: String::new(),
+        services.push(ContainerHealth {
+            service: "infrastructure".to_owned(),
+            container: String::new(),
             status: ServiceStatus::Failed("not running — run `odal up`".to_owned()),
-            latency_ms: None,
         });
     }
 
-    Ok(StatusReport { services })
+    Ok(services)
 }
 
 /// Build a `docker compose -f <file>` command.

@@ -11,8 +11,9 @@ use dpp_types::evidence::{CheckStatus, VerificationReport};
 
 use crate::config::{Config, EnvKind};
 use crate::core::types::{
-    AuditEntry, BootstrapResult, ExportResult, ImportSummary, KeyCreateResult, KeyEntry,
-    PassportPage, PublishSummary, SchemaCheckResult, ServiceStatus, StatusReport, ValidationReport,
+    AuditEntry, BootstrapResult, DryRunVerdict, ExportResult, ImportSummary, KeyCreateResult,
+    KeyEntry, NodeState, PassportPage, PublishSummary, SchemaCheckResult, ServiceStatus,
+    StatusReport, ValidationReport, WhoAmI,
 };
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -53,31 +54,173 @@ pub fn render_profile_banner(cfg: &Config) {
 
 // ── Infrastructure ───────────────────────────────────────────────────────────
 
+/// Render what `odal status` found.
+///
+/// Three sections, because they answer three different questions: is the node
+/// serving, are the local containers up, and what does the node's trust
+/// actually rest on. The first two were one table, which gave a container an
+/// empty latency cell and implied it had been probed over HTTP.
 pub fn render_status(report: &StatusReport) {
     println!("{:<12} {:<38} {:<8} LATENCY", "SERVICE", "URL", "STATUS");
     println!("{}", "─".repeat(72));
-    for svc in &report.services {
-        let url = truncate(&svc.url, 38);
-        // HTTP checks carry a round-trip latency; container checks don't.
-        let latency = match svc.latency_ms {
-            Some(ms) => format!("{ms}ms"),
-            None => String::new(),
+    for svc in &report.probes {
+        // The reason a probe failed goes after the latency, not into the status
+        // column — it is free text and long enough to break every row below it.
+        let (label, reason) = match &svc.status {
+            ServiceStatus::Ok => ("OK".to_owned(), String::new()),
+            ServiceStatus::HttpError(code) => (format!("HTTP {code}"), String::new()),
+            ServiceStatus::Failed(reason) => ("FAIL".to_owned(), format!("  {reason}")),
         };
-        match &svc.status {
-            ServiceStatus::Ok => {
-                println!("{:<12} {:<38} {:<8} {}", svc.name, url, "OK", latency)
-            }
-            ServiceStatus::HttpError(code) => println!(
-                "{:<12} {:<38} {:<8} {}",
-                svc.name,
-                url,
-                format!("HTTP {code}"),
-                latency
-            ),
-            ServiceStatus::Failed(reason) => {
-                println!("{:<12} {:<38} {:<8} {}", svc.name, url, "FAIL", reason);
-            }
+        println!(
+            "{:<12} {:<38} {:<8} {}ms{}",
+            svc.name,
+            truncate(&svc.url, 38),
+            label,
+            svc.latency_ms,
+            reason
+        );
+    }
+
+    if !report.containers.is_empty() {
+        println!();
+        println!("{:<12} {:<38} STATE", "CONTAINER", "NAME");
+        println!("{}", "─".repeat(72));
+        for c in &report.containers {
+            let state = match &c.status {
+                ServiceStatus::Ok => "OK".to_owned(),
+                ServiceStatus::HttpError(code) => format!("HTTP {code}"),
+                ServiceStatus::Failed(reason) => reason.clone(),
+            };
+            println!(
+                "{:<12} {:<38} {}",
+                c.service,
+                truncate(&c.container, 38),
+                state
+            );
         }
+    }
+
+    if let Some(node) = &report.node {
+        render_trust_posture(node);
+    }
+}
+
+/// The node's trust posture, when it reported one.
+///
+/// A node that resolves no trust ports says nothing here rather than reporting
+/// an empty posture, because "not reported" and "nothing is a ghost" are
+/// different claims and only one of them is safe to make.
+fn render_trust_posture(node: &NodeState) {
+    if !node.has_trust_posture() {
+        return;
+    }
+    // Port names vary in length (`seal` to `credential_issuers`), so the label
+    // column is measured rather than guessed.
+    let width = node
+        .trust_mode
+        .keys()
+        .map(String::len)
+        .chain(["profile".len(), "ruleset".len()])
+        .max()
+        .unwrap_or(8);
+
+    println!();
+    println!("TRUST");
+    println!("{}", "─".repeat(72));
+    if let Some(profile) = &node.profile {
+        println!("{:<width$}  {}", "profile", profile);
+    }
+    for (port, mode) in &node.trust_mode {
+        let rendered = if mode == "ghost" {
+            style(mode).yellow().to_string()
+        } else {
+            mode.clone()
+        };
+        println!("{port:<width$}  {rendered}");
+    }
+    if let Some(version) = &node.ruleset_version {
+        println!("{:<width$}  {}", "ruleset", version);
+    }
+
+    let ghosts = node.ghost_ports();
+    if !ghosts.is_empty() {
+        // Deliberately not "carries no legal weight". That is exactly right for
+        // `seal`, whose whole purpose is an eIDAS qualified seal, and wrong for
+        // a port like `archive`, which underwrites a durability obligation
+        // rather than producing anything that bears legal weight itself. One
+        // sentence has to hold for every port, so it says what is true of all
+        // of them: the service is simulated, so its output is not usable.
+        println!(
+            "\n{} Running on a stand-in: {}.",
+            style("!").yellow().bold(),
+            ghosts.join(", ")
+        );
+        println!("  Simulated, not the real service — nothing this node produces");
+        println!("  is fit for compliance use.");
+    }
+}
+
+/// `odal whoami` — what the presented credential actually is.
+pub fn render_whoami(who: &WhoAmI) {
+    println!("user  : {}", who.user_id);
+    println!("scope : {}", who.scope);
+    match &who.key_id {
+        Some(id) => println!("key   : {id}"),
+        // Local-admin Basic auth has no key row. Saying so beats printing a
+        // blank that reads like a missing value.
+        None => println!("key   : (local admin — no API key row)"),
+    }
+}
+
+/// `odal validate <file>` — the dry-run verdict.
+///
+/// Both verdicts are always shown. Create is lenient about a sector with no
+/// resolvable schema and publish fails closed on it, so a body can be
+/// creatable and not yet publishable — collapsing the two into one line would
+/// hide that gap until the operator tried to publish.
+pub fn render_dry_run(verdict: &DryRunVerdict) {
+    let mark = |ok: bool| {
+        if ok {
+            style("✓").green().to_string()
+        } else {
+            style("✗").red().to_string()
+        }
+    };
+    println!(
+        "{} create   {}",
+        mark(verdict.create_valid),
+        if verdict.create_valid {
+            "would be accepted"
+        } else {
+            "would be refused"
+        }
+    );
+    // Deliberately not "would be accepted". The node's publish verdict is its
+    // sector-data schema gate alone; publish additionally requires registry
+    // identity, and category-mandatory content for some product categories,
+    // neither of which this preview runs. Reporting a pass here as acceptance
+    // would promise more than the node checked.
+    println!(
+        "{} publish  {}",
+        mark(verdict.publish_valid),
+        if verdict.publish_valid {
+            "passes the sector-data schema gate"
+        } else {
+            "would be refused"
+        }
+    );
+    if let Some(detail) = &verdict.detail {
+        println!("\n{detail}");
+    }
+    if verdict.create_valid && verdict.publish_valid {
+        println!(
+            "\n{}",
+            style(
+                "Publish applies further checks this preview does not run \
+                 (registry identity, category-mandatory content)."
+            )
+            .dim()
+        );
     }
 }
 

@@ -6,11 +6,8 @@ use inquire::{InquireError, Select};
 
 use crate::{
     config::{Config, EnvKind},
-    core::{
-        infra::{
-            action_down, action_status, action_up, action_update, compose_file, preflight_prod_env,
-        },
-        types::ServiceStatus,
+    core::infra::{
+        action_down, action_status, action_up, action_update, compose_file, preflight_prod_env,
     },
     stateless::render::render_status,
 };
@@ -54,11 +51,7 @@ pub(super) async fn infrastructure() -> Result<()> {
                         Ok(report) => {
                             println!();
                             render_status(&report);
-                            let all_ok = report
-                                .services
-                                .iter()
-                                .all(|s| matches!(s.status, ServiceStatus::Ok));
-                            if !all_ok {
+                            if !report.all_ok() {
                                 println!(
                                     "\n  {} One or more services are unhealthy.",
                                     style("⚠").yellow()

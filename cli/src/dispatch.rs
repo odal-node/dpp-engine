@@ -38,6 +38,7 @@ use crate::commands::{
     validate::run_validate,
     verify::run_verify,
     webhook::{run_webhook_add, run_webhook_list, run_webhook_remove, run_webhook_test},
+    whoami::run_whoami,
 };
 
 /// Resolve an API-key secret without requiring it as a shell argument (which
@@ -73,6 +74,7 @@ pub async fn dispatch(cmd: Commands) -> anyhow::Result<()> {
         Commands::Up => run_up().await,
         Commands::Down => run_down().await,
         Commands::Status => run_status().await,
+        Commands::Whoami => run_whoami().await,
         Commands::Update => run_update().await,
         Commands::Bootstrap {
             legal_name,
@@ -241,8 +243,8 @@ pub async fn dispatch(cmd: Commands) -> anyhow::Result<()> {
             command: PassportCommands::Import { file },
         } => run_import(&file).await,
         Commands::Passport {
-            command: PassportCommands::Validate,
-        } => run_validate().await,
+            command: PassportCommands::Validate { file },
+        } => run_validate(file).await,
         Commands::Passport {
             command: PassportCommands::Publish { id },
         } => run_publish(id.as_deref()).await,
