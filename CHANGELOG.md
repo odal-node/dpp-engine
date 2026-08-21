@@ -679,6 +679,41 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   `PassportRepository::find_published_by_gtin`, so the handler never learns the
   passport exists at all. That trait is defined in `dpp-core`, so making the
   lookup status-aware is a core change and a repin, not an engine one.
+- **`RESOLVER_BASE_URL` is documented in `.env.example`.** It decides the URL
+  printed onto the product, defaults to `https://id.odal-node.io`, and was the
+  one variable with that consequence absent from the file operators are told to
+  copy. A self-hosted node following the documented setup therefore minted QR
+  codes pointing at a host the operator does not control, and the mistake only
+  surfaces when someone scans a printed label — after the ESPR retention window
+  has made reissuing expensive.
+
+- **`.env.example`'s mangled characters are repaired.** Seventeen comment
+  characters were double-encoded — an em dash and a middle dot read as
+  Windows-1252 and re-encoded as UTF-8, rendering as `â€"` and `Â·`. Comments
+  only, no functional effect, but the file is the one operators copy.
+
+- **Every demo dataset and sector template imports again.** All of them were
+  rejected outright: the GTINs were 13 digits where 14 are required, *and* their
+  check digits were wrong, so padding alone did not rescue them. They are now
+  valid GTIN-14 values, kept distinct — widening on the first twelve digits
+  would have collapsed 176 products into 29, since many differ only in the
+  thirteenth.
+
+  The battery datasets needed a second repair: `batteryType` became required and
+  the fixtures never gained the column, though `templates/battery-v1.csv`
+  already had it. Values are chosen to match each product (`ev` for traction
+  modules, `lmt` for the e-bike pack, `portable` for home storage).
+
+  `05-textile-invalid-gtin.csv` keeps its purpose: it is a catalogue of distinct
+  defects — too short, too long, non-numeric, bad check digit, spaces, hyphens —
+  so each row keeps the defect it demonstrates rather than being made valid, and
+  its one contrast row is now genuinely valid.
+
+  `11-mixed-sectors.csv` still rejects its battery rows, and that is not a data
+  defect: `detect_sector` reads the sector from the first data row and the import
+  endpoint is per-sector, so a file mixing sectors is validated entirely against
+  the first one. Its GTINs are corrected; the mixing behaviour is a property of
+  the design.
 
 - **A profile pointed at a remote node no longer keeps localhost service URLs.**
   `odal profile create prod --vault-url https://node.example.com/vault` wrote a

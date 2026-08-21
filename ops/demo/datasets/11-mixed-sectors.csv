@@ -1,6 +1,6 @@
-productName,sector,gtin,manufacturerName,manufacturerCountry,batchId,fibreComposition,countryOfOrigin,careInstructions,chemicalComplianceStandard,batteryChemistry,nominalVoltageV,nominalCapacityAh,expectedLifetimeCycles,co2ePerUnitKg
-Glamor Classic T-Shirt,textile,3801234500601,Glamor Clothing,DE,BATCH-MIX-001,"[{""fibre"":""cotton"",""pct"":100.0}]",DE,Machine wash 40°C.,OEKO-TEX Standard 100,,,,,
-Voltex EV Module 75kWh,battery,4901234567201,Voltex Battery GmbH,DE,VB-MIX-001,,,,,NMC811,400.0,188.0,2000,61.2
-Glamor Summer Dress,textile,3801234500602,Glamor Clothing,DE,BATCH-MIX-002,"[{""fibre"":""viscose"",""pct"":100.0}]",DE,Hand wash 30°C.,REACH Compliant,,,,,
-Voltex Home Storage 5kWh,battery,4901234567202,Voltex Battery GmbH,DE,VB-MIX-002,,,,,LFP,48.0,104.0,6000,42.1
-Glamor Sport Jacket,textile,3801234500603,Glamor Clothing,DE,BATCH-MIX-003,"[{""fibre"":""polyester"",""pct"":100.0}]",DE,Machine wash 30°C.,OEKO-TEX Standard 100,,,,,
+productName,sector,gtin,manufacturerName,manufacturerCountry,batchId,fibreComposition,countryOfOrigin,careInstructions,chemicalComplianceStandard,batteryChemistry,nominalVoltageV,nominalCapacityAh,expectedLifetimeCycles,co2ePerUnitKg,batteryType
+Glamor Classic T-Shirt,textile,38012345006015,Glamor Clothing,DE,BATCH-MIX-001,"[{""fibre"":""cotton"",""pct"":100.0}]",DE,Machine wash 40°C.,OEKO-TEX Standard 100,,,,,,
+Voltex EV Module 75kWh,battery,49012345672018,Voltex Battery GmbH,DE,VB-MIX-001,,,,,NMC811,400.0,188.0,2000,61.2,ev
+Glamor Summer Dress,textile,38012345006022,Glamor Clothing,DE,BATCH-MIX-002,"[{""fibre"":""viscose"",""pct"":100.0}]",DE,Hand wash 30°C.,REACH Compliant,,,,,,
+Voltex Home Storage 5kWh,battery,49012345672025,Voltex Battery GmbH,DE,VB-MIX-002,,,,,LFP,48.0,104.0,6000,42.1,portable
+Glamor Sport Jacket,textile,38012345006039,Glamor Clothing,DE,BATCH-MIX-003,"[{""fibre"":""polyester"",""pct"":100.0}]",DE,Machine wash 30°C.,OEKO-TEX Standard 100,,,,,,
