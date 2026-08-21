@@ -155,6 +155,36 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ### Added
 
+- **The CLI has an automated test tier.** `cli/tests/` runs the `odal` binary as
+  a child process and asserts on exit codes, output, and what lands in
+  `config.toml`. Nothing in the suite previously reached the CLI's behaviour —
+  only pure functions inside `cli/src/**` were covered — which is why the recent
+  CLI audit had to be a manual walkthrough of every command against a clean
+  `$HOME`.
+
+  **No new dependencies.** `CARGO_BIN_EXE_odal` resolves the binary under test
+  and `tempfile` was already a dev-dependency, so a child process plus two
+  assertions covers what `assert_cmd` and `predicates` would have added a
+  dependency subtree for.
+
+  **The environment is set per child, never on the test process.** `std::env`
+  mutation is process-global, so a suite that relied on it would describe the
+  runner rather than the CLI. The harness also clears `HOMEDRIVE`/`HOMEPATH` and
+  the `ODAL_*` variables — a developer with any of them exported would otherwise
+  get different results — and sets the child's working directory, because
+  `find_install_root` walks up from it and would otherwise find the repository's
+  own compose file and shell out to `docker compose ps`.
+
+  **No feature gate and no Docker.** The one behaviour that looked like it
+  needed a live node — consistent RFC 7807 rendering — is tested against a local
+  stub server that emits a problem body, because what is under test is how the
+  CLI renders one rather than a node that means it. Gating this tier behind
+  `integration-tests` would have kept it out of `just check`, which is the lane
+  where it catches a regression.
+
+  Each test was confirmed to fail when its behaviour is reverted, rather than
+  only to pass against the fixed code.
+
 - **`odal whoami`** reports what the configured credential actually is —
   identity, scope, and key id. It is the only authenticated route a `read`
   scoped key can reach, which is the point: `odal key list` requires `admin`,
