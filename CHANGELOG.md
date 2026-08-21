@@ -681,11 +681,12 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   lookup status-aware is a core change and a repin, not an engine one.
 - **`RESOLVER_BASE_URL` is documented in `.env.example`.** It decides the URL
   printed onto the product, and was the one variable with that consequence
-  absent from the file operators are told to copy. Its built-in default names a
-  domain reserved for future use which is not wired up, so a self-hosted node
-  following the documented setup minted QR codes that resolve to nothing — and
-  the mistake only surfaces when someone scans a printed label, after the ESPR
-  retention window has made reissuing expensive.
+  absent from the file operators are told to copy. Its default is the project's
+  own demo resolver, which is not wired up: an operator who never set it minted
+  QR codes that resolve to nothing, and the mistake only surfaces when someone
+  scans a printed label — after the ESPR retention window has made reissuing
+  expensive. Every operator serves their own resolver, so this is a value each
+  deployment must state.
 
 - **`.env.example`'s mangled characters are repaired.** Seventeen comment
   characters were double-encoded — an em dash and a middle dot read as
