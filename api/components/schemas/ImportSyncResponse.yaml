@@ -1,0 +1,30 @@
+type: object
+required:
+  - jobId
+  - totalRows
+  - successCount
+  - errorCount
+  - created
+  - errors
+description: Returned for synchronous imports (≤ 100 valid rows) and dry runs.
+properties:
+  jobId:
+    type: string
+    format: uuid
+    description: >-
+      The job this response's report was persisted under — retrievable later via
+      the job-status endpoint.
+  totalRows:
+    type: integer
+  successCount:
+    type: integer
+  errorCount:
+    type: integer
+  created:
+    type: array
+    items:
+      $ref: ./ImportCreatedEntry.yaml
+  errors:
+    type: array
+    items:
+      $ref: ./ImportErrorEntry.yaml

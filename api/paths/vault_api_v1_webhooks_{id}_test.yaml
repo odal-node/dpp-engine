@@ -1,0 +1,25 @@
+post:
+  operationId: testWebhook
+  summary: Send a test delivery
+  description: |
+    Enqueues a synthetic `dpp.webhook.test` delivery to the subscription so a
+    receiver can be proven end-to-end. Admin-scoped.
+  tags:
+    - Webhooks
+  security:
+    - BearerApiKey: []
+    - BasicAuth: []
+  parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  responses:
+    '202':
+      description: Test delivery enqueued.
+    '401':
+      $ref: ../components/responses/Unauthorized.yaml
+    '404':
+      $ref: ../components/responses/NotFound.yaml

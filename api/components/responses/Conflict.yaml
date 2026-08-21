@@ -1,0 +1,7 @@
+description: |
+  State conflict — e.g. attempting to publish an already-published DPP
+  or updating an archived DPP.
+content:
+  application/json:
+    schema:
+      $ref: ../schemas/ApiError.yaml

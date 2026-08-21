@@ -1,0 +1,18 @@
+type: string
+enum:
+  - draft
+  - active
+  - suspended
+  - archived
+description: |
+  DPP lifecycle state. The domain model uses `Published` internally;
+  the wire format uses `active`. Deserialization accepts both.
+  - `draft`: under construction; not publicly resolvable
+  - `active`: published and signed; publicly resolvable via QR
+  - `suspended`: temporarily hidden (recall, dispute); JWS preserved
+  - `archived`: end-of-life; immutable; retained for regulatory record-keeping
+
+  Valid transitions:
+  draft → active, draft → archived,
+  active → suspended, active → archived,
+  suspended → active, suspended → archived.

@@ -1,0 +1,14 @@
+get:
+  operationId: getDidDocument
+  summary: did:web DID document
+  description: |
+    Serves the operator's `did:web` DID document. Public, unauthenticated.
+  tags:
+    - Identity
+  responses:
+    '200':
+      description: The DID document.
+      content:
+        application/json:
+          schema:
+            $ref: ../components/schemas/DidDocument.yaml

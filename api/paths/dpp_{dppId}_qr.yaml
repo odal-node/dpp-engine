@@ -1,0 +1,26 @@
+get:
+  operationId: getDppQrCode
+  summary: Get QR code for a DPP
+  description: |
+    Returns a QR code image for the given DPP. The QR encodes the passport's
+    GS1 Digital Link on the resolver's configured base
+    (e.g. `https://id.odal-node.io/01/{gtin}/21/{serial}`).
+    This endpoint is on the **resolver** service (port 8003).
+  tags:
+    - Public Resolver
+  parameters:
+    - name: dppId
+      in: path
+      required: true
+      schema:
+        $ref: ../components/schemas/DppId.yaml
+  responses:
+    '200':
+      description: QR code image.
+      content:
+        image/png:
+          schema:
+            type: string
+            format: binary
+    '404':
+      $ref: ../components/responses/NotFound.yaml

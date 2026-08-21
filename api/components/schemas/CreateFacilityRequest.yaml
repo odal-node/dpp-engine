@@ -1,0 +1,29 @@
+type: object
+required:
+  - name
+  - identifierScheme
+  - identifierValue
+  - country
+properties:
+  name:
+    type: string
+  identifierScheme:
+    type: string
+    example: gln
+  identifierValue:
+    type: string
+    description: Validated by scheme — a "gln" must pass the GS1 mod-10 check digit.
+    example: '4012345000009'
+  country:
+    type: string
+    minLength: 2
+    maxLength: 2
+    example: DE
+  address:
+    type:
+      - string
+      - 'null'
+  isDefault:
+    type: boolean
+    default: false
+    description: Make this the default facility on creation (unsets any previous default).

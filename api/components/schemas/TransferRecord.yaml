@@ -1,0 +1,56 @@
+type: object
+required:
+  - transferId
+  - passportId
+  - fromOperator
+  - toOperator
+  - reason
+  - initiatedAt
+description: >-
+  A single transfer-of-responsibility event, dual-signed by the outgoing and
+  incoming operators.
+properties:
+  transferId:
+    type: string
+    format: uuid
+  passportId:
+    type: string
+    format: uuid
+  fromOperator:
+    $ref: ./ResponsibleOperator.yaml
+  toOperator:
+    $ref: ./ResponsibleOperator.yaml
+  reason:
+    $ref: ./TransferReason.yaml
+  fromSignature:
+    type:
+      - string
+      - 'null'
+    description: Compact JWS from the outgoing operator, authorising the handover.
+  toSignature:
+    type:
+      - string
+      - 'null'
+    description: Compact JWS from the incoming operator, accepting responsibility.
+  initiatedAt:
+    type: string
+    format: date-time
+  completedAt:
+    type:
+      - string
+      - 'null'
+    format: date-time
+  rejectedAt:
+    type:
+      - string
+      - 'null'
+    format: date-time
+  cancelledAt:
+    type:
+      - string
+      - 'null'
+    format: date-time
+  notes:
+    type:
+      - string
+      - 'null'

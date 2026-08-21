@@ -1,0 +1,10 @@
+type: string
+description: The reason for a transfer of DPP responsibility.
+enum:
+  - sale
+  - return
+  - remanufacturing
+  - repurposing
+  - preparationForReuse
+  - import
+  - insolvencySuccession

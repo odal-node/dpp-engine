@@ -1,0 +1,19 @@
+type: object
+required:
+  - dppId
+  - day
+  - variant
+  - count
+description: One aggregated scan increment since the resolver's last flush.
+properties:
+  dppId:
+    type: string
+    description: The resolved passport id, as an opaque string (validated at ingest).
+  day:
+    type: string
+    format: date
+  variant:
+    $ref: ./ScanVariant.yaml
+  count:
+    type: integer
+    minimum: 0

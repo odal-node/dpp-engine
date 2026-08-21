@@ -1,0 +1,80 @@
+type: object
+required:
+  - productName
+  - manufacturer
+description: |
+  Request body for creating a new DPP. Only `productName` and
+  `manufacturer` are required. All other fields are optional and
+  can be filled in later via `PUT` before publishing.
+properties:
+  productName:
+    type: string
+    description: Human-readable product name. Must not be blank.
+    example: EcoCell Pro 48V
+  sector:
+    type: string
+    description: |
+      EU ESPR sector (the dispatch key), e.g. `battery`, `textile`,
+      `electronics`. Optional — derived from `sectorData` when omitted.
+    example: battery
+  manufacturer:
+    $ref: ./ManufacturerInfo.yaml
+  materials:
+    type: array
+    items:
+      $ref: ./MaterialEntry.yaml
+  co2ePerUnit:
+    type: number
+    description: CO₂ equivalent per unit in kg
+    example: 4.2
+  repairabilityScore:
+    type: number
+    minimum: 0
+    maximum: 100
+    description: >-
+      Non-regulatory repairability indicator (0–100). NOT the EU 2023/1669
+      repairability class. Optional.
+  sectorData:
+    $ref: ./SectorData.yaml
+  batchId:
+    type: string
+    description: Optional batch or lot identifier
+    example: BATCH-2026-04-001
+  placedOnMarketDate:
+    type: string
+    format: date
+    description: |
+      The date this product was placed on the EU market — the regulated
+      triggering event that fixes which law governs it.
+
+      Optional, and omitting it is not neutral. A compliance determination
+      whose rule is phased by date has no answer without it: the node
+      reports the missing fact rather than substituting today's date, which
+      would produce a determination that silently changes its own answer
+      when a phase begins. For batteries this decides which EU 2023/1542
+      Art. 8 minimum recycled shares apply.
+    example: '2026-03-14'
+  schemaVersion:
+    type: string
+    description: |
+      Sector schema version. Optional, and the only accepted value is the
+      sector's **current** version — omitting it is equivalent. Any other
+      value is rejected with `422`.
+
+      It is not the caller's to choose: the stored version selects the
+      disclosure table the passport's public view is filtered through and
+      signed under, and an older table classifies fewer fields, defaulting
+      the rest to public. The body is validated against the current schema
+      in either case, so a differing declaration is already false about the
+      body it accompanies.
+    example: 2.6.0
+  parentPassportRef:
+    $ref: ./PassportRef.yaml
+  componentRefs:
+    type: array
+    items:
+      $ref: ./PassportRef.yaml
+    description: >-
+      Cross-operator references to this product's constituent passports (its
+      bill of materials). Local cycles / over-depth are refused at
+      create/update; immutable after publish.

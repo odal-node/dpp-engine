@@ -268,17 +268,28 @@ jobs:
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: 24.18.0
+      # The bundle is a committed build artifact. `redocly bundle` is
+      # byte-deterministic, so regenerating it and diffing proves the shipped
+      # single file still matches the multi-file tree it came from.
+      - name: Check the bundle is current
+        working-directory: dpp-engine
+        run: |
+          npx --yes @redocly/cli@2.46.2 bundle api/openapi.yaml -o api/openapi.bundled.yaml
+          git diff --exit-code -- api/openapi.bundled.yaml \
+            || { echo "ERROR: api/openapi.bundled.yaml is stale — run 'just openapi-bundle' and commit it"; exit 1; }
       # The version is pinned and must stay equal to the one in the `just
       # openapi-check` recipe. With `@latest` the two disagree about what is
       # valid the moment Redocly publishes, and a spec that did not change
       # starts failing.
       #
-      # `.redocly.lint-ignore.yaml` baselines the problems the spec has today, so
-      # this passes now and fails on NEW ones. Shrink that file, never
-      # regenerate it, or the gate stops meaning anything.
-      - name: Lint api/openapi.yaml
+      # Lints the BUNDLE, not the multi-file root: `.redocly.lint-ignore.yaml`
+      # baselines today's problems by filename and JSON pointer, and only the
+      # bundle keeps the document shape those pointers were written against.
+      # Shrink that file, never regenerate it, or the gate stops meaning
+      # anything.
+      - name: Lint api/openapi.bundled.yaml
         working-directory: dpp-engine
-        run: npx --yes @redocly/cli@2.46.2 lint api/openapi.yaml
+        run: npx --yes @redocly/cli@2.46.2 lint api/openapi.bundled.yaml
 
   audit:
     name: Security audit

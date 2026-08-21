@@ -1,0 +1,8 @@
+description: Resource not found within the operator's scope.
+content:
+  application/json:
+    schema:
+      $ref: ../schemas/ApiError.yaml
+    example:
+      error: NOT_FOUND
+      message: DPP not found.

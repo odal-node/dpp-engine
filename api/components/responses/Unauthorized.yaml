@@ -1,0 +1,8 @@
+description: Missing or invalid authentication credentials.
+content:
+  application/json:
+    schema:
+      $ref: ../schemas/ApiError.yaml
+    example:
+      error: UNAUTHORIZED
+      message: Missing or invalid Authorization header.

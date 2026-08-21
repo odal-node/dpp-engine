@@ -1,0 +1,26 @@
+type: object
+required:
+  - scheme
+  - value
+properties:
+  scheme:
+    type: string
+    description: Identifier scheme, e.g. "vat", "lei", "eori", "duns".
+    example: lei
+  value:
+    type: string
+    description: >-
+      Validated by scheme — LEI uses ISO 7064 MOD 97-10; DUNS is 9 digits;
+      EORI/VAT require a 2-letter country prefix. Unknown schemes are accepted
+      without structural verification.
+    example: 5493001KJTIIGC8Y1R12
+  label:
+    type:
+      - string
+      - 'null'
+  isPrimary:
+    type: boolean
+    default: false
+    description: >-
+      Make this the primary identifier on creation (unsets any previous
+      primary).

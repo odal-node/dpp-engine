@@ -1,0 +1,8 @@
+get:
+  operationId: resolverHealth
+  summary: Resolver health check
+  tags:
+    - Health
+  responses:
+    '200':
+      description: Resolver is up.
