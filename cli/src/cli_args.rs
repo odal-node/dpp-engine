@@ -23,9 +23,17 @@ pub enum Commands {
     /// Save connection config and scaffold docker/docker-compose.yml (for scripting/CI).
     /// Interactive operators: just run `odal` with no arguments.
     Init {
+        /// Node origin, e.g. https://node.example.com. Sets both the vault and
+        /// identity URLs, which the single-binary node serves on one origin.
+        #[arg(long, conflicts_with = "vault_url")]
+        node_url: Option<String>,
         /// Vault URL to save (default: http://localhost:8001/vault)
         #[arg(long)]
         vault_url: Option<String>,
+        /// Resolver URL, e.g. https://dpp.example.com. Deployed separately from
+        /// the node, so --node-url cannot derive it.
+        #[arg(long)]
+        resolver_url: Option<String>,
         /// API key to save to config
         #[arg(long)]
         api_key: Option<String>,
@@ -270,9 +278,20 @@ pub enum ProfileCommands {
     Create {
         /// Profile name
         name: String,
+        /// Node origin, e.g. https://node.example.com. The single-binary node
+        /// serves the vault and identity sub-routers on one origin, so this
+        /// sets both. It cannot set the resolver, which deploys separately.
+        #[arg(long, conflicts_with = "vault_url")]
+        node_url: Option<String>,
         /// Vault URL for the new profile
         #[arg(long)]
         vault_url: Option<String>,
+        /// Resolver URL, e.g. https://dpp.example.com. The resolver is a
+        /// separate deployment on its own host, so it is never derived from
+        /// --node-url; a prod profile that omits it keeps the localhost
+        /// default and `odal status` will report the resolver unreachable.
+        #[arg(long)]
+        resolver_url: Option<String>,
         /// Environment kind: dev or prod (inferred from the URL if omitted)
         #[arg(long)]
         kind: Option<String>,

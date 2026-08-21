@@ -550,6 +550,33 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ### Fixed
 
+- **A profile pointed at a remote node no longer keeps localhost service URLs.**
+  `odal profile create prod --vault-url https://node.example.com/vault` wrote a
+  profile whose `identity_url` and `resolver_url` were still `localhost`, and
+  neither command took a flag to set them — hand-editing `config.toml` was the
+  only remedy, which nothing in either command's help text suggested existed.
+
+  Both commands now accept `--node-url`, which settles the vault and identity
+  URLs together: the single-binary node serves both sub-routers on one origin,
+  so a normal install states one URL rather than three. `--vault-url` still
+  works and is rejected alongside `--node-url`, since the two describe the same
+  thing at different depths and a silent precedence rule would be undiscoverable.
+
+  **The resolver is not derived from the node's origin, and is not going to be.**
+  It is a separately deployed process on its own host, so guessing it would only
+  replace one wrong answer with another. It takes `--resolver-url`, and a profile
+  that infers `kind = prod` while keeping the localhost resolver now says so, at
+  `create`, at `init`, and in `profile show` — the last of those so a profile
+  written by an earlier version, which never saw the warning, still explains
+  itself when an operator goes looking. The guided console prompts for it
+  instead, since the operator is right there.
+
+  **The on-disk file was also disagreeing with the CLI.** `load` normalises
+  service URLs on the way in but the write path did not, so `config.toml` showed
+  a localhost identity URL while every command that reported one showed the
+  correct remote host. Profiles are now normalised on the way out too, so the
+  file says what the CLI will do.
+
 - **The OpenAPI lint runs.** The recipe existed and nothing invoked it, and the
   same OpenAPI 3.0 `nullable` defect reached `main` twice as a result. It is now
   a CI job, with Redocly pinned to one version in both the recipe and the

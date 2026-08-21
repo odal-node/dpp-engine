@@ -242,7 +242,7 @@ pub fn create_profile(name: &str, profile: Profile, force: bool) -> Result<()> {
     if file.profiles.contains_key(name) && !force {
         bail!("profile '{name}' already exists. Pass --force to overwrite it.");
     }
-    file.profiles.insert(name.to_owned(), profile);
+    file.profiles.insert(name.to_owned(), normalize(profile));
     if file.current_profile.is_none() {
         file.current_profile = Some(name.to_owned());
     }

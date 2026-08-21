@@ -97,6 +97,8 @@ mod tests {
             "prod",
             "--vault-url",
             "https://n.example/vault",
+            "--resolver-url",
+            "https://dpp.n.example",
             "--kind",
             "prod",
             "--force",
@@ -105,18 +107,109 @@ mod tests {
             command:
                 ProfileCommands::Create {
                     name,
+                    node_url,
                     vault_url,
+                    resolver_url,
                     kind,
                     force,
                 },
         }) = cli.command
         {
             assert_eq!(name, "prod");
+            assert!(node_url.is_none());
             assert_eq!(vault_url.as_deref(), Some("https://n.example/vault"));
+            assert_eq!(resolver_url.as_deref(), Some("https://dpp.n.example"));
             assert_eq!(kind.as_deref(), Some("prod"));
             assert!(force);
         } else {
             panic!("expected Profile::Create");
+        }
+    }
+
+    /// The two-flag shape a normal remote install uses: one origin for the node,
+    /// one URL for the separately deployed resolver.
+    #[test]
+    fn parse_profile_create_with_node_origin() {
+        let cli = Cli::parse_from([
+            "odal",
+            "profile",
+            "create",
+            "prod",
+            "--node-url",
+            "https://node.example.com",
+            "--resolver-url",
+            "https://dpp.example.com",
+        ]);
+        if let Some(Commands::Profile {
+            command:
+                ProfileCommands::Create {
+                    node_url,
+                    vault_url,
+                    resolver_url,
+                    ..
+                },
+        }) = cli.command
+        {
+            assert_eq!(node_url.as_deref(), Some("https://node.example.com"));
+            assert!(vault_url.is_none());
+            assert_eq!(resolver_url.as_deref(), Some("https://dpp.example.com"));
+        } else {
+            panic!("expected Profile::Create");
+        }
+    }
+
+    /// `--node-url` and `--vault-url` describe the same thing at different
+    /// depths. Rejecting the pair at the parser is what keeps the handlers free
+    /// of a silent precedence rule no help text could explain.
+    #[test]
+    fn node_url_and_vault_url_are_mutually_exclusive() {
+        for argv in [
+            vec![
+                "odal",
+                "profile",
+                "create",
+                "prod",
+                "--node-url",
+                "https://node.example.com",
+                "--vault-url",
+                "https://node.example.com/vault",
+            ],
+            vec![
+                "odal",
+                "init",
+                "--node-url",
+                "https://node.example.com",
+                "--vault-url",
+                "https://node.example.com/vault",
+            ],
+        ] {
+            assert!(
+                Cli::try_parse_from(&argv).is_err(),
+                "expected a conflict for {argv:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn parse_init_with_node_origin() {
+        let cli = Cli::parse_from([
+            "odal",
+            "init",
+            "--node-url",
+            "https://node.example.com",
+            "--resolver-url",
+            "https://dpp.example.com",
+        ]);
+        if let Some(Commands::Init {
+            node_url,
+            resolver_url,
+            ..
+        }) = cli.command
+        {
+            assert_eq!(node_url.as_deref(), Some("https://node.example.com"));
+            assert_eq!(resolver_url.as_deref(), Some("https://dpp.example.com"));
+        } else {
+            panic!("expected Init");
         }
     }
 
