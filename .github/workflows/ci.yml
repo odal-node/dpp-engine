@@ -256,6 +256,30 @@ jobs:
               exit 1
           fi
 
+  openapi-lint:
+    name: OpenAPI spec lints
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          path: dpp-engine
+      # Node rather than the Rust toolchain, so this is cheap and independent of
+      # the build. Redocly 2.x requires Node >= 22.12.
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 24.18.0
+      # The version is pinned and must stay equal to the one in the `just
+      # openapi-check` recipe. With `@latest` the two disagree about what is
+      # valid the moment Redocly publishes, and a spec that did not change
+      # starts failing.
+      #
+      # `.redocly.lint-ignore.yaml` baselines the problems the spec has today, so
+      # this passes now and fails on NEW ones. Shrink that file, never
+      # regenerate it, or the gate stops meaning anything.
+      - name: Lint api/openapi.yaml
+        working-directory: dpp-engine
+        run: npx --yes @redocly/cli@2.46.2 lint api/openapi.yaml
+
   audit:
     name: Security audit
     runs-on: ubuntu-latest
