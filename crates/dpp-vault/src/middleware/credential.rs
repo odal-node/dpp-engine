@@ -123,18 +123,38 @@ impl VerifiedCredential {
     /// revocation were all settled in [`read_and_verify`] before the database
     /// was reached.
     ///
-    /// Product category is deliberately **not** scoped. `credential_subject`
-    /// carries free-string `product_categories`, and there is no defined
-    /// mapping between those strings and the typed
-    /// [`dpp_domain::ProductCategory`] a passport carries — its `Other(_)`
-    /// variant does not even serialise as a plain string. Inventing a
-    /// correspondence here would be a guess enforced as a security control.
+    /// ## A product-category scope this node cannot evaluate grants nothing
+    ///
+    /// `credential_subject` may carry free-string `product_categories`. There
+    /// is nothing to match them against: a passport has no product category.
+    /// The field that once held one was renamed `sector` because it was
+    /// misnamed, and category is now a per-sector concept with a different
+    /// shape in each — a device type here, a plain string there, an Art. 8
+    /// scope bucket elsewhere that is explicitly not the passport's category.
+    ///
+    /// So this axis is not scoped, and the consequence used to be inverted:
+    /// passing `None` for the required category meant an issuer who narrowed a
+    /// credential to one category got a credential valid over **every** product
+    /// in its sectors. The restriction was read as its opposite.
+    ///
+    /// A restriction that cannot be evaluated is treated as unsatisfied, never
+    /// as satisfied: a credential naming any product category resolves to
+    /// [`Audience::Public`] here. That is the same downgrade an out-of-sector
+    /// credential gets — it is valid, it simply unlocks nothing on this node —
+    /// and it makes the gap loud for an issuer rather than silently generous.
+    ///
+    /// Enforcing the axis properly needs a decision about what a product
+    /// category *is* across sectors, which is not this layer's to invent.
     #[must_use]
     pub fn audience_for_sector(
         &self,
         sector_key: &str,
         trust: &dyn TrustedIssuerRegistry,
     ) -> Audience {
+        if !self.0.credential_subject.product_categories.is_empty() {
+            return Audience::Public;
+        }
+
         let scoped = dpp_vc::verify_credential_claims_with_trust(
             &self.0,
             Some(sector_key),
@@ -672,6 +692,63 @@ mod tests {
         };
         assert_eq!(
             c.audience_for_sector("textile", &trusting()),
+            Audience::LegitimateInterest
+        );
+    }
+
+    /// A credential naming a product category unlocks nothing, even where its
+    /// sector matches.
+    ///
+    /// There is nothing on a passport to match the category against, so the
+    /// restriction cannot be evaluated. Before this, the unevaluated axis was
+    /// passed as "no requirement" and the credential kept its full audience —
+    /// an issuer's narrowing read as its opposite. Failing closed is the only
+    /// direction that cannot over-grant.
+    #[tokio::test]
+    async fn a_product_category_scope_grants_nothing() {
+        let (key, kid) = key_and_kid();
+        let mut cred = credential(CredentialRole::AuthorisedRepairer, 30);
+        cred.credential_subject.product_categories = vec!["smartphone".into()];
+        let jws = sign_credential(&key, &kid, &cred);
+        let out = read_and_verify(
+            &headers_with(Some(&jws)),
+            &Directory::with(Some(did_doc(&key, &kid))),
+            &trusting(),
+        )
+        .await;
+        let CredentialOutcome::Verified(c) = out else {
+            panic!("the credential itself is valid");
+        };
+
+        // The credential is genuinely valid and its role is elevated …
+        assert_eq!(c.audience(), Audience::LegitimateInterest);
+        // … and it still unlocks nothing, in its own sector.
+        assert_eq!(
+            c.audience_for_sector("battery", &trusting()),
+            Audience::Public,
+            "an unevaluable restriction must not be read as no restriction"
+        );
+    }
+
+    /// The common case must stay unaffected: no product category named means no
+    /// restriction claimed, and sector scope alone decides.
+    #[tokio::test]
+    async fn an_empty_product_category_list_changes_nothing() {
+        let (key, kid) = key_and_kid();
+        let mut cred = credential(CredentialRole::AuthorisedRepairer, 30);
+        cred.credential_subject.product_categories = Vec::new();
+        let jws = sign_credential(&key, &kid, &cred);
+        let out = read_and_verify(
+            &headers_with(Some(&jws)),
+            &Directory::with(Some(did_doc(&key, &kid))),
+            &trusting(),
+        )
+        .await;
+        let CredentialOutcome::Verified(c) = out else {
+            panic!("valid credential");
+        };
+        assert_eq!(
+            c.audience_for_sector("battery", &trusting()),
             Audience::LegitimateInterest
         );
     }
