@@ -168,6 +168,10 @@ async fn main() -> anyhow::Result<()> {
         // The standalone vault binary hosts no Wasm plugin engine; runtime
         // plugin install is available only on the fused node.
         plugin_admin: None,
+        // No composition root here resolves trust ports or a ruleset, so this
+        // binary reports neither rather than inventing a posture for them.
+        trust: None,
+        ruleset_version: None,
     };
 
     let app = router::build(state);

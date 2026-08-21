@@ -66,4 +66,21 @@ pub struct AppState {
     /// Runtime plugin administration (the Wasm plugin host). `None` on
     /// deployments with no plugin host wired (e.g. the standalone vault binary).
     pub plugin_admin: Option<Arc<dyn PluginAdmin>>,
+    /// The node's resolved trust posture — which trust ports are live, sandbox
+    /// or ghost.
+    ///
+    /// Reported on the **authenticated** `/api/v1/node/state`, never on the
+    /// public `/health`. The honesty property is worth keeping; who it is
+    /// honest *to* is the question. Which ports are degraded, and how, is a
+    /// targeting signal, and it sits alongside `/metrics` — also deliberately
+    /// off the public router — as operational detail a caller should have to be
+    /// entitled to read.
+    ///
+    /// `None` for the standalone vault binary, which has no composition root to
+    /// resolve trust ports.
+    pub trust: Option<Arc<dpp_types::trust::NodeTrustReport>>,
+    /// Version of the Compliance Current ruleset this node validates against,
+    /// reported alongside `trust`. A string rather than the ruleset type: that
+    /// type belongs to the node binary, which depends on this crate.
+    pub ruleset_version: Option<String>,
 }

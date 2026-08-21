@@ -3695,6 +3695,44 @@ components:
         operatorComplete:
           type: boolean
           description: True once the operator identity is complete enough to publish.
+        profile:
+          type: string
+          enum:
+            - development
+            - staging
+            - production
+          description: |
+            The node's deployment profile. Absent on a standalone vault, which has no
+            composition root to resolve one.
+        trust_mode:
+          type: object
+          additionalProperties:
+            type: string
+            enum:
+              - ghost
+              - sandbox
+              - live
+          description: |
+            Each resolved trust port and the tier it operates at — `ghost` is a
+            placeholder with no real authority behind it, `sandbox` a real but
+            non-production service, `live` a production one.
+
+            This is the ghost-honesty signal: no surface may present a placeholder as
+            real. It is reported here rather than on the unauthenticated `/health`
+            because which ports are degraded, and how, is a targeting signal — the
+            same reasoning that keeps `/metrics` off the public router.
+
+            Absent on a standalone vault, which resolves no trust ports.
+          example:
+            seal: ghost
+            registry_sync: sandbox
+        rulesetVersion:
+          type: string
+          description: |
+            Version of the Compliance Current ruleset this node validates against, so
+            the rules a passport was checked under are observable. Absent on a
+            standalone vault.
+          example: baseline
     Facility:
       type: object
       required:

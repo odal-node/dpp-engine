@@ -209,6 +209,18 @@ async fn start_node_with_dal(dal: PgDal) -> String {
     ));
     let auth_provider: Arc<dyn dpp_types::auth::AuthProvider> = Arc::new(TestAuthProvider);
     let scan_repo = Arc::new(PgScanTelemetryRepo::new(dal.clone()));
+    // Declared before the vault state, which now carries the trust posture so
+    // the authenticated node-state route can report it.
+    let trust = std::sync::Arc::new(dpp_types::trust::NodeTrustReport::new(
+        dpp_types::trust::NodeProfile::Development,
+        vec![dpp_types::trust::TrustPort {
+            port: "registry_sync",
+            mode: dpp_types::trust::TrustMode::Ghost,
+            required: true,
+        }],
+    ));
+    let ruleset = std::sync::Arc::new(dpp_node::infra::ruleset::ActiveRuleset::baseline());
+
     let vault_state = VaultState {
         service,
         operator_service,
@@ -223,6 +235,10 @@ async fn start_node_with_dal(dal: PgDal) -> String {
         cors_allowed_origins: Vec::new(),
         scan_repo,
         plugin_admin: None,
+        // The trust posture is asserted through the authenticated node-state
+        // route, not the public probe.
+        trust: Some(trust.clone()),
+        ruleset_version: Some(ruleset.version().to_owned()),
     };
 
     let identity_state = IdentityState {
@@ -237,22 +253,7 @@ async fn start_node_with_dal(dal: PgDal) -> String {
         batch_concurrency: 4,
     };
 
-    let trust = std::sync::Arc::new(dpp_types::trust::NodeTrustReport::new(
-        dpp_types::trust::NodeProfile::Development,
-        vec![dpp_types::trust::TrustPort {
-            port: "registry_sync",
-            mode: dpp_types::trust::TrustMode::Ghost,
-            required: true,
-        }],
-    ));
-    let ruleset = std::sync::Arc::new(dpp_node::infra::ruleset::ActiveRuleset::baseline());
-    let app = dpp_node::router::build(
-        vault_state,
-        identity_state,
-        integrator_state,
-        trust,
-        ruleset,
-    );
+    let app = dpp_node::router::build(vault_state, identity_state, integrator_state);
 
     tokio::spawn(async move {
         axum::serve(listener, app).await.expect("node server error");
@@ -303,19 +304,50 @@ async fn start_db_and_node() -> (String, testcontainers::ContainerAsync<GenericI
     (node_url, container)
 }
 
+/// The ghost-honesty invariant, on the endpoint that now carries it.
+///
+/// This assertion used to live against `/health`. Moving it here is the point
+/// of the change: the node still refuses to hide that a trust port is a
+/// placeholder, but a caller has to be entitled to ask. The dev node under test
+/// has no registry credentials, so `registry_sync` is a ghost.
 #[tokio::test(flavor = "multi_thread")]
-async fn node_health_reports_trust_modes() {
+async fn authenticated_node_state_reports_trust_modes() {
+    let (base, _c) = start_db_and_node().await;
+    let token = make_jwt("00000000-0000-0000-0000-000000000091");
+    let resp = reqwest::Client::new()
+        .get(format!("{base}/vault/api/v1/node/state"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .expect("GET /vault/api/v1/node/state failed");
+    assert_eq!(resp.status(), 200);
+
+    let body: serde_json::Value = resp.json().await.expect("node state is JSON");
+    assert_eq!(body["profile"], "development");
+    assert_eq!(body["trust_mode"]["registry_sync"], "ghost");
+    assert_eq!(body["rulesetVersion"], "baseline");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn public_health_reports_liveness_without_trust_detail() {
     let (base, _c) = start_db_and_node().await;
     let resp = reqwest::get(format!("{base}/health"))
         .await
         .expect("GET /health failed");
     assert_eq!(resp.status(), 200);
-    // Ghost-honesty invariant: /health surfaces each trust port's
-    // tier. The dev node here has no registry creds, so registry_sync is a ghost.
+
+    // This endpoint is reachable by anyone who can reach the node, so the
+    // deployment profile, per-port trust modes and ruleset version are not on
+    // it — they moved to the authenticated `/vault/api/v1/node/state`. The
+    // ghost-honesty invariant is asserted there instead.
     let body: serde_json::Value = resp.json().await.expect("health is JSON");
     assert_eq!(body["status"], "ok");
-    assert_eq!(body["profile"], "development");
-    assert_eq!(body["trust_mode"]["registry_sync"], "ghost");
+    for leaked in ["profile", "trust_mode", "ruleset"] {
+        assert!(
+            body.get(leaked).is_none(),
+            "`{leaked}` must not be readable without authentication"
+        );
+    }
 }
 
 #[tokio::test(flavor = "multi_thread")]
