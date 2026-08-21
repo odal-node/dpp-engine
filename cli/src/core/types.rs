@@ -288,12 +288,20 @@ pub struct KeyRevokeParams {
 
 // ── Schema ───────────────────────────────────────────────────────────────────
 
+/// What `odal schema check` could actually read from the node.
+///
+/// Every field is optional because every one of them can be unreadable: the
+/// health probe may not answer, and the ruleset lives behind authentication.
+/// Reporting "unknown" for a value that was never fetched is what made the old
+/// output indistinguishable from a real answer.
 pub struct SchemaCheckResult {
-    pub local_version: String,
-    pub latest_version: Option<String>,
-    pub update_available: bool,
-    pub offline: bool,
-    pub warning: Option<String>,
+    /// The node's own build version.
+    pub node_version: Option<String>,
+    /// The `dpp-core` version it applies — what decides which regulatory
+    /// schemas and rules are in force for this node.
+    pub core_version: Option<String>,
+    /// Active Compliance Current ruleset. `None` without a credential.
+    pub ruleset_version: Option<String>,
 }
 
 // ── Progress ─────────────────────────────────────────────────────────────────

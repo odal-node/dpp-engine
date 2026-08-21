@@ -529,24 +529,27 @@ pub fn render_bootstrap_result(
 
 // ── Schema ───────────────────────────────────────────────────────────────────
 
+/// Report the versions that decide which rules a node applies.
+///
+/// Anything that could not be read says so, rather than printing `unknown` —
+/// which the previous version used both for "the node did not report it" and
+/// for "we never asked", making a dead command indistinguishable from a live
+/// one returning nothing.
 pub fn render_schema_check(result: &SchemaCheckResult) {
-    if result.offline {
-        println!("Cannot check — no internet connection");
-        println!("Local schema version: {}", result.local_version);
-        return;
-    }
-    if let Some(w) = &result.warning {
-        println!("Warning: {w}");
-    }
-    println!("Current version : {}", result.local_version);
-    println!(
-        "Latest version  : {}",
-        result.latest_version.as_deref().unwrap_or("unknown")
-    );
-    println!(
-        "Update available: {}",
-        if result.update_available { "yes" } else { "no" }
-    );
+    let line = |label: &str, value: &Option<String>, absent: &str| {
+        println!("{label:<9}: {}", value.as_deref().unwrap_or(absent));
+    };
+    line("node", &result.node_version, "(node did not answer)");
+    line("core", &result.core_version, "(node did not answer)");
+    // Without a credential the ruleset is unreadable — but so is everything
+    // else if the node never answered, and blaming the key then would send the
+    // reader after the wrong problem.
+    let ruleset_absent = if result.node_version.is_some() {
+        "(needs an API key to read)"
+    } else {
+        "(node did not answer)"
+    };
+    line("ruleset", &result.ruleset_version, ruleset_absent);
 }
 
 /// Render a passport's qualified-seal status.

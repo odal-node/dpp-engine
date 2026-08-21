@@ -623,6 +623,38 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ### Fixed
 
+- **`odal schema check` reports something true.** Both of its lines were
+  incapable of being correct on any node, on any network. The local half read a
+  `schema_version` field from `/health` that the node stopped emitting, so it
+  always printed `unknown`. The upstream half called a release feed whose
+  hostname does not resolve, so it always printed `Cannot check — no internet
+  connection` — blaming the caller's network for a host that was never stood up.
+
+  ```
+  Cannot check — no internet connection
+  Local schema version: unknown
+  ```
+
+  It now reports what the node actually serves: its build version and the
+  `dpp-core` version it applies, which is the value that decides which
+  regulatory schemas and rules are in force. The active ruleset comes from the
+  authenticated node state and is omitted rather than guessed when the caller
+  has no credential — the same trade `odal status` makes with the trust posture.
+
+  ```
+  node     : 0.11.0
+  core     : 0.18.0
+  ruleset  : baseline
+  ```
+
+  Each line says why it is missing rather than printing `unknown`, which the old
+  version used for both "the node did not report it" and "we never asked". A
+  node that cannot be reached now says so on every line instead of blaming a
+  missing API key for the one it would have needed.
+
+  The upstream comparison is removed rather than left calling a host that is not
+  there. It can come back when there is a service to ask.
+
 - **`odal up` refuses to take over a deployment started somewhere else.** The
   compose file fixes the project name, and Compose resolves a project by that
   name wherever it is invoked from — so `odal up` in a second install root never
