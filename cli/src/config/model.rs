@@ -80,16 +80,19 @@ impl Default for Profile {
     }
 }
 
-/// True when a profile targets a remote node but kept the localhost resolver
-/// default.
+/// True when a prod profile is still on the resolver URL nobody chose.
 ///
-/// The resolver is a separately deployed process on its own host, so
-/// [`normalize`] cannot re-host it the way it re-hosts identity. An unstated
-/// resolver stays pointed at the operator's own machine, which `odal status`
-/// then reports as a permanently unreachable resolver against a perfectly
-/// healthy deployment.
+/// Compares against [`default_resolver_url`] rather than merely testing for
+/// localhost. A localhost resolver an operator *chose* is a different thing
+/// from one they never set, and the only signal separating them in a stored
+/// profile is whether the value is still the default.
+///
+/// Even that is a proxy, so the callers that know better do not rely on it:
+/// `profile create` and `init` also require that no `--resolver-url` was given
+/// on the invocation, since a flag that was passed is a stated answer whatever
+/// its value.
 pub fn resolver_is_unstated_default(kind: EnvKind, resolver_url: &str) -> bool {
-    kind == EnvKind::Prod && url_is_localhost(resolver_url)
+    kind == EnvKind::Prod && resolver_url == default_resolver_url()
 }
 
 /// Derive a vault URL from a node origin.
@@ -360,6 +363,21 @@ mod tests {
         assert!(!resolver_is_unstated_default(
             EnvKind::Prod,
             "https://dpp.example.com"
+        ));
+    }
+
+    /// A localhost resolver the operator *chose* is not an unstated default.
+    /// Testing for localhost rather than for the default value is what made the
+    /// warning fire on a resolver that had just been passed on the command line.
+    #[test]
+    fn a_chosen_localhost_resolver_is_not_an_unstated_default() {
+        assert!(!resolver_is_unstated_default(
+            EnvKind::Prod,
+            "http://localhost:8103"
+        ));
+        assert!(resolver_is_unstated_default(
+            EnvKind::Prod,
+            &default_resolver_url()
         ));
     }
 }

@@ -26,7 +26,8 @@ pub async fn run_init(
         cfg.vault_url = url;
         cfg.kind = EnvKind::infer(&cfg.vault_url);
     }
-    if let Some(url) = resolver_url.filter(|s| !s.trim().is_empty()) {
+    let stated_resolver = resolver_url.filter(|s| !s.trim().is_empty());
+    if let Some(url) = stated_resolver.clone() {
         cfg.resolver_url = url;
     }
     if let Some(key) = api_key {
@@ -37,7 +38,10 @@ pub async fn run_init(
         "Configuration saved to ~/.config/odal/config.toml (profile '{}' · {})",
         cfg.name, cfg.kind
     );
-    if config::resolver_is_unstated_default(cfg.kind, &cfg.resolver_url) {
+    // A flag that was passed is a stated answer whatever its value.
+    if stated_resolver.is_none()
+        && config::resolver_is_unstated_default(cfg.kind, &cfg.resolver_url)
+    {
         super::profile::warn_unstated_resolver(&cfg.resolver_url);
     }
 

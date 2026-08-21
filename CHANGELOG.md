@@ -679,6 +679,24 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   `PassportRepository::find_published_by_gtin`, so the handler never learns the
   passport exists at all. That trait is defined in `dpp-core`, so making the
   lookup status-aware is a core change and a repin, not an engine one.
+- **The unstated-resolver warning no longer fires on a resolver that was
+  stated.** `odal profile create prod --resolver-url http://localhost:8103
+  --kind prod` warned that the resolver "is still" the default and told the
+  operator to set it with the flag they had just passed. The check inferred
+  "nobody set this" from "the value is localhost", which breaks whenever
+  localhost is the deliberate answer — as it is for a full containerised stack
+  run on one machine.
+
+  `create` and `init` now warn only when no `--resolver-url` was supplied on the
+  invocation: a flag that was passed is a stated answer whatever its value. The
+  value test also compares against the default rather than testing for
+  localhost, so a chosen localhost resolver on a non-default port is not
+  mistaken for an untouched one.
+
+  `odal profile show` has no invocation flag to consult and cannot know whether
+  a stored value was chosen or left alone, so it no longer claims one. It states
+  what is true — that the profile is prod and resolves locally — and leaves the
+  judgement to the operator.
 
 - **A profile pointed at a remote node no longer keeps localhost service URLs.**
   `odal profile create prod --vault-url https://node.example.com/vault` wrote a

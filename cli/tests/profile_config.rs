@@ -224,3 +224,29 @@ fn init_is_idempotent_and_does_not_overwrite() {
     assert_eq!(again.code, 0, "{}", again.output());
     assert_eq!(std::fs::read_to_string(&compose).unwrap(), "# edited\n");
 }
+
+/// The warning must not tell an operator to pass the flag they just passed.
+#[test]
+fn a_stated_resolver_is_not_warned_about() {
+    let home = TempDir::new().unwrap();
+    let run = odal(
+        home.path(),
+        &[
+            "profile",
+            "create",
+            "prod",
+            "--node-url",
+            "http://localhost:8101",
+            "--resolver-url",
+            "http://localhost:8103",
+            "--kind",
+            "prod",
+        ],
+    );
+    assert_eq!(run.code, 0, "{}", run.output());
+    assert!(
+        !run.output().contains("--resolver-url"),
+        "a resolver passed on the command line is a stated answer:\n{}",
+        run.output()
+    );
+}
