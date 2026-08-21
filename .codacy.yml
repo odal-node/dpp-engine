@@ -1,0 +1,15 @@
+---
+# Generated artifacts are not reviewed, so analysing them is noise.
+#
+# api/openapi.bundled.yaml is produced by `just openapi-bundle` from the
+# multi-file tree under api/. Every finding in it is, by construction, already
+# present in the source it was generated from — where Codacy does analyse it.
+# Because the bundle is a file rather than a diff, every pre-existing finding in
+# the spec re-appears as "new" the moment the bundle is added, which fails the
+# new-issue gate for something nobody wrote.
+#
+# Concretely: the `BasicAuth` security scheme has been on main since long before
+# the bundle existed and is deliberate — it is the operator's bootstrap
+# credential and the lockout-recovery path, documented as such in the spec.
+exclude_paths:
+  - "api/openapi.bundled.yaml"
