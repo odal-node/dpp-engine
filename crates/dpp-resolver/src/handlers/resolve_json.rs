@@ -25,11 +25,7 @@ pub async fn resolve_json_handler(
     // Validate the id at the resolver's own edge before it touches a cache
     // key or a server-to-server URL — do not rely on the vault for output safety.
     if !crate::domain::is_valid_dpp_id(&dpp_id) {
-        return (
-            StatusCode::NOT_FOUND,
-            axum::Json(http_problem::not_found("DPP not found")),
-        )
-            .into_response();
+        return fetch_problem(StatusCode::NOT_FOUND);
     }
 
     let caller_tier = parse_access_tier(&headers);
@@ -48,9 +44,7 @@ pub async fn resolve_json_handler(
 
     let passport = match fetch_passport(&state, &dpp_id).await {
         Ok(v) => v,
-        Err(status) => {
-            return (status, axum::Json(http_problem::not_found("DPP not found"))).into_response();
-        }
+        Err(status) => return fetch_problem(status),
     };
 
     // Verify the public signature against the operator DID. We serve the
@@ -241,6 +235,35 @@ pub(crate) async fn fetch_passport(state: &AppState, dpp_id: &str) -> Result<Val
     resp.json::<Value>()
         .await
         .map_err(|_| StatusCode::BAD_GATEWAY)
+}
+
+/// Render a passport-fetch failure as a problem document whose body agrees with
+/// its own status line.
+///
+/// The status comes from [`fetch_passport`] — 404 for an unknown id, 410 for a
+/// withdrawn passport, 502/503 for an upstream failure. The body used to be
+/// hardcoded to a 404 "DPP not found" whatever the status was, so a withdrawn
+/// passport arrived as `410 Gone` carrying a body that said it had never
+/// existed. That is the one distinction 410 exists to draw, and a consumer
+/// reading the structured half — which RFC 9457 says mirrors the status line —
+/// got the opposite answer from the one in the headers.
+pub(crate) fn fetch_problem(status: StatusCode) -> axum::response::Response {
+    let detail = match status {
+        StatusCode::GONE => "This passport has been withdrawn and is no longer served.",
+        StatusCode::NOT_FOUND => "DPP not found",
+        StatusCode::SERVICE_UNAVAILABLE => {
+            "The passport could not be read right now; try again later."
+        }
+        _ => "The passport could not be read.",
+    };
+    let problem = http_problem::Problem::new(status, status.canonical_reason().unwrap_or("Error"))
+        .with_detail(detail);
+    (
+        status,
+        [(header::CONTENT_TYPE, "application/problem+json")],
+        serde_json::to_string(&problem).unwrap_or_default(),
+    )
+        .into_response()
 }
 
 #[cfg(test)]

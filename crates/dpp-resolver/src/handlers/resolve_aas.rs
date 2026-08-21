@@ -43,7 +43,7 @@ pub async fn resolve_aas_handler(
 
     let raw = match fetch_passport(&state, &dpp_id).await {
         Ok(v) => v,
-        Err(status) => return problem(status, "DPP not found"),
+        Err(status) => return crate::handlers::resolve_json::fetch_problem(status),
     };
 
     // Fails closed: an unverifiable passport yields no projection at all.

@@ -113,7 +113,6 @@ async fn returns_404_for_nonexistent_passport() {
     let resp = app.oneshot(req).await.unwrap();
     assert_eq!(resp.status(), StatusCode::NOT_FOUND);
 }
-
 #[tokio::test]
 async fn returns_410_for_suspended_passport() {
     let vault = Router::new().route("/public/dpp/{id}", get(|| async { StatusCode::GONE }));
@@ -128,6 +127,51 @@ async fn returns_410_for_suspended_passport() {
 
     let resp = app.oneshot(req).await.unwrap();
     assert_eq!(resp.status(), StatusCode::GONE);
+
+    // The body has to agree with the status line. It was hardcoded to a 404
+    // "Not Found" problem whatever the status, so a withdrawn passport arrived
+    // as `410 Gone` carrying a body claiming it had never existed — inverting
+    // the one distinction 410 exists to draw. Asserting only the status line is
+    // what let that stand.
+    let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let problem: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(
+        problem["status"], 410,
+        "body status must mirror the line: {problem}"
+    );
+    assert_eq!(problem["title"], "Gone", "{problem}");
+    assert!(
+        problem["detail"]
+            .as_str()
+            .is_some_and(|d| d.contains("withdrawn")),
+        "detail must say withdrawn, not not-found: {problem}"
+    );
+}
+
+/// The control: a genuinely absent passport must still read as 404 throughout.
+#[tokio::test]
+async fn a_missing_passport_still_reads_as_not_found_in_body_and_line() {
+    let vault = Router::new().route("/public/dpp/{id}", get(|| async { StatusCode::NOT_FOUND }));
+    let port = start_mock_vault(vault).await;
+    let app = router::build(test_state(format!("http://127.0.0.1:{port}")));
+
+    let req = Request::builder()
+        .uri("/dpp/00000000-0000-4000-8000-000000000002")
+        .header("accept", "application/json")
+        .body(Body::empty())
+        .unwrap();
+
+    let resp = app.oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+
+    let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let problem: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(problem["status"], 404, "{problem}");
+    assert_eq!(problem["title"], "Not Found", "{problem}");
 }
 
 #[tokio::test]
