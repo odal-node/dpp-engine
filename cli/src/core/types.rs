@@ -1,27 +1,61 @@
 //! Shared parameter and outcome types passed between `core` actions and rendering.
 
+use std::collections::BTreeMap;
+
 use serde::Serialize;
 
 // ── Infrastructure ───────────────────────────────────────────────────────────
 
+/// What `odal status` found.
+///
+/// HTTP probes and container checks are kept apart deliberately. A probe has a
+/// URL and a round-trip latency; a container has a name and a state and no
+/// latency at all. Holding them in one list forced an `Option` on the latency
+/// and rendered them in one table, which implied a uniformity that is not there.
 pub struct StatusReport {
-    pub services: Vec<ServiceHealth>,
+    pub probes: Vec<ServiceHealth>,
+    pub containers: Vec<ContainerHealth>,
+    /// The node's own account of itself, when the caller could read it.
+    /// `None` when unauthenticated, unreachable, or not entitled — `status`
+    /// reports what it could see rather than failing over what it could not.
+    pub node: Option<NodeState>,
 }
 
+impl StatusReport {
+    /// True when every check that ran came back healthy.
+    pub fn all_ok(&self) -> bool {
+        self.probes.iter().all(|s| s.status.is_ok())
+            && self.containers.iter().all(|c| c.status.is_ok())
+    }
+}
+
+/// One HTTP health probe: the URL reached and how long it took.
 pub struct ServiceHealth {
     pub name: String,
-    /// For HTTP checks, the health URL probed. For container checks, the
-    /// container name (no URL to probe).
     pub url: String,
     pub status: ServiceStatus,
-    /// HTTP round-trip latency. `None` for container checks (not applicable).
-    pub latency_ms: Option<u64>,
+    pub latency_ms: u64,
+}
+
+/// One Docker container, as `docker compose ps` reports it.
+pub struct ContainerHealth {
+    /// The compose service name (`postgres`, `nats`, …).
+    pub service: String,
+    /// The running container's name. Empty when nothing is running.
+    pub container: String,
+    pub status: ServiceStatus,
 }
 
 pub enum ServiceStatus {
     Ok,
     HttpError(u16),
     Failed(String),
+}
+
+impl ServiceStatus {
+    pub fn is_ok(&self) -> bool {
+        matches!(self, ServiceStatus::Ok)
+    }
 }
 
 // ── Import ───────────────────────────────────────────────────────────────────
@@ -160,6 +194,52 @@ pub struct NodeState {
     pub bootstrapped: bool,
     /// True once the operator identity is complete enough to publish.
     pub operator_complete: bool,
+    /// Deployment profile (`development` / `production`). Absent on a
+    /// standalone vault, which resolves no trust ports.
+    pub profile: Option<String>,
+    /// Per-port trust mode, e.g. `seal → ghost`. Empty when the node reports
+    /// no posture — which is not the same as reporting no ghosts, so an empty
+    /// map must render as "not reported", never as "all real".
+    pub trust_mode: BTreeMap<String, String>,
+    /// Active Compliance Current ruleset version.
+    pub ruleset_version: Option<String>,
+}
+
+impl NodeState {
+    /// True when the node reported any trust posture at all.
+    pub fn has_trust_posture(&self) -> bool {
+        self.profile.is_some() || !self.trust_mode.is_empty()
+    }
+
+    /// The trust ports running on a stand-in rather than the real thing.
+    pub fn ghost_ports(&self) -> Vec<&str> {
+        self.trust_mode
+            .iter()
+            .filter(|(_, mode)| mode.as_str() == "ghost")
+            .map(|(port, _)| port.as_str())
+            .collect()
+    }
+}
+
+/// What the presented credential actually is (`GET /api/v1/whoami`).
+pub struct WhoAmI {
+    pub user_id: String,
+    pub scope: String,
+    /// The API key's row id. Absent for local-admin Basic auth, which has no
+    /// key row — rendered as such rather than as a placeholder id.
+    pub key_id: Option<String>,
+}
+
+/// The verdict from `POST /api/v1/dpp/validate` — would this body be accepted,
+/// without creating anything.
+pub struct DryRunVerdict {
+    /// Would `POST /api/v1/dpp` accept it?
+    pub create_valid: bool,
+    /// Would `publish` accept it afterwards? Stricter than create, so a body
+    /// can be creatable and not yet publishable.
+    pub publish_valid: bool,
+    /// Why not, when either verdict is false.
+    pub detail: Option<String>,
 }
 
 pub struct OperatorUpdateParams {
@@ -222,4 +302,90 @@ pub enum ProgressEvent {
     Started { total: Option<u64> },
     Tick { current: u64 },
     Done,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn posture(ports: &[(&str, &str)]) -> NodeState {
+        NodeState {
+            bootstrapped: true,
+            operator_complete: true,
+            profile: Some("development".into()),
+            trust_mode: ports
+                .iter()
+                .map(|(p, m)| ((*p).to_owned(), (*m).to_owned()))
+                .collect(),
+            ruleset_version: Some("baseline".into()),
+        }
+    }
+
+    /// Only `ghost` is a stand-in. `sandbox` is a real service in a test tier,
+    /// so warning about it would cry wolf and teach operators to ignore the line
+    /// that matters.
+    #[test]
+    fn only_ghost_ports_are_called_stand_ins() {
+        let node = posture(&[
+            ("seal", "ghost"),
+            ("compliance", "sandbox"),
+            ("archive", "live"),
+        ]);
+        assert_eq!(node.ghost_ports(), vec!["seal"]);
+    }
+
+    /// A node that resolves no trust ports must render nothing, because "not
+    /// reported" and "nothing is a ghost" are different claims and only one of
+    /// them is safe to make on an operator's behalf.
+    #[test]
+    fn a_node_reporting_no_posture_makes_no_claim() {
+        let silent = NodeState {
+            bootstrapped: true,
+            operator_complete: true,
+            profile: None,
+            trust_mode: BTreeMap::new(),
+            ruleset_version: None,
+        };
+        assert!(!silent.has_trust_posture());
+        assert!(silent.ghost_ports().is_empty());
+        assert!(posture(&[("seal", "ghost")]).has_trust_posture());
+    }
+
+    /// A container failure must fail the run. Before the split these lived in
+    /// one list, so it is worth pinning that both halves still count.
+    #[test]
+    fn all_ok_covers_probes_and_containers() {
+        let probe = |status| ServiceHealth {
+            name: "vault".into(),
+            url: "http://localhost:8001/vault/health".into(),
+            status,
+            latency_ms: 3,
+        };
+        let container = |status| ContainerHealth {
+            service: "postgres".into(),
+            container: "odal-node-postgres-1".into(),
+            status,
+        };
+
+        let healthy = StatusReport {
+            probes: vec![probe(ServiceStatus::Ok)],
+            containers: vec![container(ServiceStatus::Ok)],
+            node: None,
+        };
+        assert!(healthy.all_ok());
+
+        let bad_probe = StatusReport {
+            probes: vec![probe(ServiceStatus::HttpError(503))],
+            containers: vec![container(ServiceStatus::Ok)],
+            node: None,
+        };
+        assert!(!bad_probe.all_ok());
+
+        let bad_container = StatusReport {
+            probes: vec![probe(ServiceStatus::Ok)],
+            containers: vec![container(ServiceStatus::Failed("exited".into()))],
+            node: None,
+        };
+        assert!(!bad_container.all_ok());
+    }
 }

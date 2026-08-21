@@ -232,6 +232,37 @@ mod tests {
     }
 
     #[test]
+    fn parse_whoami() {
+        let cli = Cli::parse_from(["odal", "whoami"]);
+        assert!(matches!(cli.command, Some(Commands::Whoami)));
+    }
+
+    /// The file argument is optional: without it `validate` keeps checking the
+    /// stored drafts, with it the same command dry-runs a body.
+    #[test]
+    fn parse_passport_validate_with_and_without_a_file() {
+        let stored = Cli::parse_from(["odal", "passport", "validate"]);
+        if let Some(Commands::Passport {
+            command: PassportCommands::Validate { file },
+        }) = stored.command
+        {
+            assert!(file.is_none());
+        } else {
+            panic!("expected Passport::Validate");
+        }
+
+        let dry_run = Cli::parse_from(["odal", "passport", "validate", "body.json"]);
+        if let Some(Commands::Passport {
+            command: PassportCommands::Validate { file },
+        }) = dry_run.command
+        {
+            assert_eq!(file.as_deref(), Some("body.json"));
+        } else {
+            panic!("expected Passport::Validate");
+        }
+    }
+
+    #[test]
     fn parse_status() {
         let cli = Cli::parse_from(["odal", "status"]);
         assert!(matches!(cli.command, Some(Commands::Status)));

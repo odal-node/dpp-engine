@@ -24,3 +24,4 @@ pub mod update;
 pub mod validate;
 pub mod verify;
 pub mod webhook;
+pub mod whoami;

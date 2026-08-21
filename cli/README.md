@@ -133,7 +133,8 @@ odal operator set \
   --address "1 Allee, Berlin" \
   --contact-email ops@acme.example   # set the legal operator identity (required before publish)
 odal passport import products.csv    # create draft passports
-odal passport validate               # check drafts against sector schema
+odal passport validate               # check stored drafts against sector schema
+odal passport validate body.json     # dry-run one body, creating nothing
 odal passport publish                # sign + publish (mints GS1 Digital Link / QR)
 ```
 
@@ -155,7 +156,8 @@ odal passport publish                # sign + publish (mints GS1 Digital Link / 
 | `odal up` | Start the full stack (node + resolver + infra); dev builds from source, prod pulls + runs a `.env` secret preflight | none |
 | `odal down` | Stop the full stack | none |
 | `odal update` | Pull latest container images | none |
-| `odal status` | Health of vault, identity, resolver | API key |
+| `odal status` | Health of vault, identity, resolver, containers, and the node's trust posture | none (trust posture needs an API key) |
+| `odal whoami` | What the configured API key is: identity, scope, key id | API key |
 
 ### Onboarding & auth
 
@@ -204,7 +206,8 @@ least-privilege key cannot mutate the operator's registry identity).
 |---|---|---|
 | `odal passport list [--status] [--q] [--facility-id] [--limit] [--json]` | List/search passports (optionally filtered to one facility) | API key |
 | `odal passport import <file>` | Create draft passports from CSV/TSV/JSON | API key |
-| `odal passport validate` | Check drafts for required fields | API key |
+| `odal passport validate` | Check stored drafts for required fields | API key |
+| `odal passport validate <file>` | Dry-run a passport body — would create accept it, and does it pass the publish schema gate. Persists nothing | API key (write) |
 | `odal passport publish [id]` | Sign + publish all drafts (or one) | API key |
 | `odal passport suspend <id>` | Suspend a published passport (serves 410) | API key |
 | `odal passport archive <id>` | Archive (terminal state) | API key |

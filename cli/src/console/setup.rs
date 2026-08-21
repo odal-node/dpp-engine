@@ -15,7 +15,6 @@ use crate::{
             infra_container_status, preflight_prod_env,
         },
         onboarding::{action_bootstrap, action_node_state},
-        types::ServiceStatus,
     },
     http::OdalClient,
 };
@@ -195,12 +194,9 @@ async fn wait_for_healthy() -> bool {
     // A fresh node runs DB migrations on first boot, so allow generous time.
     for _ in 0..60 {
         sleep(Duration::from_secs(2)).await;
-        if let Ok(report) = infra_container_status()
-            && !report.services.is_empty()
-            && report
-                .services
-                .iter()
-                .all(|s| matches!(s.status, ServiceStatus::Ok))
+        if let Ok(containers) = infra_container_status()
+            && !containers.is_empty()
+            && containers.iter().all(|c| c.status.is_ok())
         {
             return true;
         }
