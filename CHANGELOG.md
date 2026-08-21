@@ -733,6 +733,30 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   endpoint is per-sector, so a file mixing sectors is validated entirely against
   the first one. Its GTINs are corrected; the mixing behaviour is a property of
   the design.
+- **An import no longer reports about eighteen quintillion successes.** A row
+  can fail several checks, so the error list is longer than the number of
+  rejected rows. `successCount` was `total_rows - all_errors.len()`, which
+  underflows as soon as any row fails twice — and `usize` wraps rather than
+  panics in release builds, so the API returned a number near `usize::MAX` and
+  the CLI printed it verbatim:
+
+  ```
+  Import complete: 18446744073709551613 created, 8 failed
+  ```
+
+  Both counts are now per row, which is what their names and the line that
+  renders them always implied: `successCount` is the rows that were not
+  rejected, and `errorCount` the rows that were, counted once each however many
+  checks a row failed. Success is deliberately not "wrote a record" — a row
+  already up to date, or one that conflicted, writes nothing and is still not a
+  failure. The
+  `errors` array is unchanged and still carries one entry per failed field, so
+  `errorCount` and `errors.length` are deliberately different numbers — now
+  documented as such in the API description.
+
+  Every existing fixture failed at most one check per row, so the two counts
+  coincided and the defect stayed invisible. The regression test uses a row that
+  fails two.
 
 - **A profile pointed at a remote node no longer keeps localhost service URLs.**
   `odal profile create prod --vault-url https://node.example.com/vault` wrote a

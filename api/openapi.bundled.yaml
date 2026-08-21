@@ -4134,10 +4134,13 @@ components:
           description: The job this response's report was persisted under — retrievable later via the job-status endpoint.
         totalRows:
           type: integer
+          description: Rows read from the uploaded file, excluding the header.
         successCount:
           type: integer
+          description: 'Rows **not rejected**, counted once each. Deliberately not the size of `created` plus `updated`: a row whose record was already up to date, or which conflicted, writes nothing and is still not a failure. Always `0` for a dry run, which writes nothing at all.'
         errorCount:
           type: integer
+          description: Rows **rejected**, counted once each. A row that fails several checks contributes one to this count and several entries to `errors`, so `errorCount` and `errors.length` differ and are not interchangeable.
         created:
           type: array
           items:
