@@ -53,6 +53,7 @@ use crate::{
         suspend::suspend_handler,
         transfer::{transfer_accept_handler, transfer_initiate_handler},
         update::update_handler,
+        validate::validate_handler,
         verify_tree::verify_tree_handler,
         webhooks::{
             webhooks_create_handler, webhooks_delete_handler, webhooks_list_handler,
@@ -72,6 +73,12 @@ pub fn build(state: AppState) -> Router {
     let authenticated = Router::new()
         // ── DPP CRUD ──────────────────────────────────────────────────
         .route("/dpp", post(create_handler))
+        // Dry-run of the line above. It shares a prefix with `/dpp/{dppId}`;
+        // axum gives a literal segment precedence over a parameter regardless
+        // of registration order, so `validate` is never read as a passport id.
+        // Asserted in `handlers::validate::tests`, because that precedence is
+        // a routing-library property and not something to take on trust.
+        .route("/dpp/validate", post(validate_handler))
         .route("/dpps", get(list_handler))
         .route("/dpp/by-identity", get(find_by_identity_handler))
         .route("/dpp/{dppId}", get(read_handler).put(update_handler))

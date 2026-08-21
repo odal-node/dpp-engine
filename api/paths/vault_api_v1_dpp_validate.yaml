@@ -1,0 +1,70 @@
+post:
+  operationId: validateDpp
+  summary: Dry-run a passport body without creating it
+  description: |
+    Runs exactly the validation `POST /vault/api/v1/dpp` runs, and persists
+    nothing. The same code path serves both, so a preview and the real create
+    cannot disagree.
+
+    **Two verdicts, because create and publish deliberately differ.** Create is
+    lenient about a sector with no resolvable JSON Schema — a draft is allowed
+    to be incomplete — while publish fails closed on it, since a signed
+    passport must have passed a real schema check. A body can therefore be
+    creatable but not yet publishable, and that gap is reported rather than
+    hidden until publish is attempted.
+
+    A body that create **would reject** gets back the identical `422` create
+    would have returned, not a paraphrase of it. A body create would accept
+    returns `200` with the two verdicts.
+
+    `publishValid` covers the sector-data gates only. The compliance gate that
+    also runs at publish needs a `placedOnMarketDate` and a stored passport;
+    reporting a compliance verdict without them would be an invented answer.
+  tags:
+    - DPP Management
+  security:
+    - BearerApiKey: []
+    - BasicAuth: []
+  requestBody:
+    required: true
+    content:
+      application/json:
+        schema:
+          $ref: ../components/schemas/CreateRequest.yaml
+  responses:
+    '200':
+      description: |
+        The body is creatable. `publishValid` says whether it would also clear
+        the publish-time sector-data gates.
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [createValid, publishValid]
+            properties:
+              createValid:
+                type: boolean
+                description: Always `true` on a 200 — a rejected body returns 422.
+                example: true
+              publishValid:
+                type: boolean
+                description: |
+                  Whether the sector data would clear the publish-time gates.
+                  `true` when no sector data is supplied, since publish only
+                  validates it when present.
+                example: false
+              detail:
+                type: [string, 'null']
+                description: |
+                  Why publish would refuse it. `null` when `publishValid` is
+                  `true`.
+                example: >-
+                  cannot publish: no registered JSON Schema for sector
+                  'furniture' — publish requires a resolvable schema when
+                  sector data is present
+    '401':
+      $ref: ../components/responses/Unauthorized.yaml
+    '403':
+      $ref: ../components/responses/Forbidden.yaml
+    '422':
+      $ref: ../components/responses/ValidationError.yaml

@@ -455,6 +455,21 @@ impl PassportService {
     }
 }
 
+impl PassportService {
+    /// Whether this sector data would clear the publish-time gates, without
+    /// publishing anything.
+    ///
+    /// Runs the same two checks `publish` runs, in the same order, so a
+    /// dry-run verdict cannot drift from the real one. Deliberately excludes
+    /// the compliance gate below them: that needs a `placed_on_market_date`
+    /// and a persisted passport, and reporting "compliant" against a date the
+    /// caller has not supplied would be a fabricated answer.
+    pub fn publish_readiness(&self, sector_data: &SectorData) -> Result<(), DppError> {
+        dpp_domain::validate_sector_data(sector_data).map_err(DppError::Validation)?;
+        validate_schema_for_publish(sector_data)
+    }
+}
+
 /// Validate `sector_data` against its sector's current JSON Schema before it
 /// can be published. Fails closed: a published, signed DPP must pass a real
 /// schema check whenever it carries sector data — unlike `create`, where a
