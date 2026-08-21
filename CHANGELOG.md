@@ -623,6 +623,20 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ### Fixed
 
+- **An inline comment in `.env` no longer defeats the production secret guard.**
+  `parse_env` skipped whole-line `#` comments but not trailing ones, so
+  `ADMIN_USERNAME=admin  # the operator login` parsed as the whole string
+  including the comment. That is not `admin`, so `preflight_prod_env` had
+  nothing to match and started a prod stack on the exact credential it exists to
+  refuse — a comment written to be helpful silently disabled the check.
+
+  Values are now read the way Docker Compose reads them, since both parsers read
+  the same file and disagreeing would be worse than either rule alone. Confirmed
+  by running Compose against a file containing each case: a `#` preceded by
+  whitespace starts a comment, a `#` tight against the value or inside quotes is
+  part of it. That last rule is what keeps a password containing `#` intact —
+  truncating at the first `#` would swap one silent failure for another.
+
 - **A packaged install can start.** `odal init` scaffolded `docker/docker-compose.yml`
   and nothing else, and `odal up` then forced that install down a path requiring
   the engine source tree, so the documented quickstart could only ever work from
