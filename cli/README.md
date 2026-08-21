@@ -194,7 +194,7 @@ least-privilege key cannot mutate the operator's registry identity).
 | `odal profile list` | List profiles (active marked `*`) | none |
 | `odal profile show [name]` | Show a profile (API key masked) | none |
 | `odal profile use <name>` | Switch the active profile | none |
-| `odal profile create <name> [--node-url|--vault-url] [--resolver-url] [--kind] [--force]` | Add a profile | none |
+| `odal profile create <name> [--node-url \| --vault-url] [--resolver-url] [--kind] [--force]` | Add a profile | none |
 | `odal profile remove <name>` | Delete a profile (+ its credential) | none |
 | `odal profile rename <old> <new>` | Rename a profile (+ its credential) | none |
 

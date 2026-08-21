@@ -91,13 +91,13 @@ pub fn run_profile_create(
 ) -> Result<()> {
     let mut profile = Profile::default();
     // The parser makes these two mutually exclusive, so at most one arm runs.
-    if let Some(origin) = node_url {
+    if let Some(origin) = node_url.filter(|s| !s.trim().is_empty()) {
         profile.vault_url = config::vault_url_from_node(&origin);
     }
-    if let Some(url) = vault_url {
+    if let Some(url) = vault_url.filter(|s| !s.trim().is_empty()) {
         profile.vault_url = url;
     }
-    if let Some(url) = resolver_url {
+    if let Some(url) = resolver_url.filter(|s| !s.trim().is_empty()) {
         profile.resolver_url = url;
     }
     profile.kind = match kind.as_deref() {

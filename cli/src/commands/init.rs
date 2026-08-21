@@ -22,15 +22,15 @@ pub async fn run_init(
     let mut cfg = Config::load().unwrap_or_default();
 
     // The parser makes these two mutually exclusive, so at most one arm runs.
-    if let Some(origin) = node_url {
+    if let Some(origin) = node_url.filter(|s| !s.trim().is_empty()) {
         cfg.vault_url = config::vault_url_from_node(&origin);
         cfg.kind = EnvKind::infer(&cfg.vault_url);
     }
-    if let Some(url) = vault_url {
+    if let Some(url) = vault_url.filter(|s| !s.trim().is_empty()) {
         cfg.vault_url = url;
         cfg.kind = EnvKind::infer(&cfg.vault_url);
     }
-    if let Some(url) = resolver_url {
+    if let Some(url) = resolver_url.filter(|s| !s.trim().is_empty()) {
         cfg.resolver_url = url;
     }
     if let Some(key) = api_key {

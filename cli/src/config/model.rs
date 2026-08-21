@@ -99,7 +99,11 @@ pub fn resolver_is_unstated_default(kind: EnvKind, resolver_url: &str) -> bool {
 /// identity onto the vault's host and scheme. The resolver is deployed
 /// separately and is deliberately not derived here.
 pub fn vault_url_from_node(node_url: &str) -> String {
-    let base = node_url.trim_end_matches('/');
+    let base = node_url.trim().trim_end_matches('/');
+    if base.is_empty() {
+        // Let `normalize` supply the default rather than inventing "/vault".
+        return String::new();
+    }
     match base.strip_suffix("/vault") {
         Some(_) => base.to_owned(),
         None => format!("{base}/vault"),
@@ -292,6 +296,11 @@ mod tests {
             vault_url_from_node("https://example.com/odal"),
             "https://example.com/odal/vault"
         );
+        // A blank value must fall back to the default, not become the bare
+        // path "/vault" — which `normalize` cannot repair and `EnvKind::infer`
+        // reads as a remote host.
+        assert_eq!(vault_url_from_node(""), "");
+        assert_eq!(vault_url_from_node("   "), "");
     }
 
     /// The guarantee `--node-url` makes: one origin settles both sub-routers,
