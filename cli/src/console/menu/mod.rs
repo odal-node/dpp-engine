@@ -115,6 +115,13 @@ pub(super) fn client() -> Result<(crate::http::OdalClient, Config)> {
     crate::http::load_client()
 }
 
+/// A client for the console actions that authenticate nothing, matching what
+/// `odal status` does. Health probes read public endpoints, so refusing them
+/// on an unconfigured machine would withhold an answer the CLI can give.
+pub(super) fn client_unchecked() -> Result<(crate::http::OdalClient, Config)> {
+    crate::http::load_client_unchecked()
+}
+
 pub(super) fn hint(cmd: &str) {
     println!("  {}", style(format!("≡ {cmd}")).dim());
 }

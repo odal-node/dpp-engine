@@ -588,9 +588,12 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
   An API key supplied through `ODAL_API_KEY` with no profile on disk is a
   legitimate deployment, so the absence of **both** a profile and a credential
-  is what identifies a fresh install. `odal status` is deliberately exempt: it
-  reads public `/health` endpoints and authenticates nothing, and on an
-  unconfigured machine probing the localhost defaults is a truthful answer.
+  is what identifies a fresh install.
+
+  `odal status` and `odal schema check` are deliberately exempt: they read
+  public endpoints and authenticate nothing, so on an unconfigured machine
+  probing the localhost defaults is a truthful answer rather than a misleading
+  one. Every other command that reaches the node goes through the check.
 
 - **`odal stats` no longer prints a raw RFC 7807 body.** Against the same node,
   the same HTTP 401 rendered as a sentence from `odal key list` and as a JSON

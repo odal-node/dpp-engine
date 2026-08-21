@@ -15,7 +15,7 @@ use crate::{
     stateless::render::render_status,
 };
 
-use super::{MenuItem, client, hint, print_err};
+use super::{MenuItem, client_unchecked, hint, print_err};
 
 pub(super) async fn infrastructure() -> Result<()> {
     // Docker commands are only relevant for self-hosted nodes (localhost).
@@ -49,7 +49,7 @@ pub(super) async fn infrastructure() -> Result<()> {
             .prompt()
         {
             Ok(item) => match item.label {
-                "Status" => match client() {
+                "Status" => match client_unchecked() {
                     Ok((client, cfg)) => match action_status(&client, &cfg).await {
                         Ok(report) => {
                             println!();
