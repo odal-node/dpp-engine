@@ -1,15 +1,11 @@
-//! `odal init` — save connection config and scaffold the Docker Compose file.
-
-use std::fs;
-
-use anyhow::Result;
-
+//! `odal init` — save connection config and scaffold the install files.
 use crate::{
     config::{self, Config, EnvKind},
-    core::infra::COMPOSE_TEMPLATE,
+    core,
 };
+use anyhow::Result;
 
-/// `odal init` — save connection config and scaffold `docker/docker-compose.yml`.
+/// `odal init` — save connection config and scaffold the install files.
 ///
 /// Intended for scripting and CI. Interactive operators should run `odal` instead.
 /// The operator's `.env` is never created or modified here.
@@ -45,17 +41,19 @@ pub async fn run_init(
         super::profile::warn_unstated_resolver(&cfg.resolver_url);
     }
 
+    // The compose file is not the whole install: it bind-mounts the database
+    // role-provisioning hook out of `ops/bootstrap/`, and a missing mount
+    // source becomes an empty directory rather than an error.
     let cwd = std::env::current_dir()?;
-    let docker_dir = cwd.join("docker");
-    if !docker_dir.exists() {
-        fs::create_dir_all(&docker_dir)?;
-    }
-    let compose_path = docker_dir.join("docker-compose.yml");
-    if compose_path.exists() {
-        println!("docker/docker-compose.yml already exists — skipping scaffold");
-    } else {
-        fs::write(&compose_path, COMPOSE_TEMPLATE)?;
-        println!("Created {}", compose_path.display());
+    match core::infra::scaffold_install(&cwd)? {
+        created if created.is_empty() => {
+            println!("Install files already present — nothing to scaffold");
+        }
+        created => {
+            for path in created {
+                println!("Created {}", path.display());
+            }
+        }
     }
 
     Ok(())

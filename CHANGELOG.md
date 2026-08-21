@@ -623,6 +623,40 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ### Fixed
 
+- **A packaged install can start.** `odal init` scaffolded `docker/docker-compose.yml`
+  and nothing else, and `odal up` then forced that install down a path requiring
+  the engine source tree, so the documented quickstart could only ever work from
+  inside a checkout of this repository. Two independent failures, both fixed:
+
+  **`odal up` decided whether to build from the profile kind.** `kind` answers
+  "is this a production deployment"; it was being read as "does this operator
+  have the engine source". Those coincide only for someone developing the
+  engine — every self-hosted node is reached over localhost and therefore infers
+  `dev` — so every packaged install was built from a source tree it did not
+  have, failing with `GetFileAttributesEx …/dpp-engine: The system cannot find
+  the file specified`. It now builds only when the compose file's `build:`
+  context actually resolves, and uses the published image otherwise. The pull
+  path always worked; the flag was overriding it.
+
+  **The compose file bind-mounts two files `odal init` never wrote.** The
+  database role-provisioning hook and its SQL live in `ops/bootstrap/`. Docker
+  does not fail on a missing bind-mount source — it creates an empty
+  **directory** — and the Postgres entrypoint skips a directory without
+  comment. So the stack started, `odal up` reported success, and the node then
+  retried `password authentication failed for user "odal_app"` for as long as it
+  ran, because migration `0001` deliberately creates that role *without* a
+  password and only `bootstrap.sql` sets one. Both scaffolders now write the
+  whole install through one function, so neither can produce a partial one.
+
+  **`odal up` also refuses up front** when a mount source is missing, naming the
+  files and pointing at `odal init`. A silently fabricated directory is why this
+  failed late and somewhere unrelated to its cause, so the check is worth having
+  even once the scaffolder is fixed — an install created by an earlier version
+  still has no `ops/`.
+
+  Existing files are never overwritten, so re-running `init` on a configured
+  install leaves an edited compose file alone.
+
 - **A profile pointed at a remote node no longer keeps localhost service URLs.**
   `odal profile create prod --vault-url https://node.example.com/vault` wrote a
   profile whose `identity_url` and `resolver_url` were still `localhost`, and

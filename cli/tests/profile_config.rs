@@ -175,3 +175,52 @@ fn init_writes_the_same_urls_as_profile_create() {
     assert!(config.contains(r#"identity_url = "https://node.example.com/identity""#));
     assert!(config.contains(r#"resolver_url = "https://dpp.example.com""#));
 }
+
+/// `odal init` must scaffold every file the compose stack bind-mounts, not just
+/// the compose file.
+///
+/// Docker does not fail on a missing bind-mount source — it creates an empty
+/// directory there — and the Postgres entrypoint skips a directory. An install
+/// scaffolded with only the compose file therefore starts, reports success, and
+/// never provisions the database role's password, leaving the node retrying
+/// authentication for as long as it runs.
+#[test]
+fn init_scaffolds_every_file_the_stack_mounts() {
+    let home = TempDir::new().unwrap();
+    let run = odal(
+        home.path(),
+        &["init", "--node-url", "http://localhost:8001"],
+    );
+    assert_eq!(run.code, 0, "{}", run.output());
+
+    for rel in [
+        "docker/docker-compose.yml",
+        "ops/bootstrap/pg-init.sh",
+        "ops/bootstrap/bootstrap.sql",
+    ] {
+        let path = home.path().join(rel);
+        assert!(
+            path.is_file(),
+            "{rel} was not scaffolded:\n{}",
+            run.output()
+        );
+        assert!(
+            path.metadata().unwrap().len() > 0,
+            "{rel} was scaffolded empty"
+        );
+    }
+}
+
+/// Re-running `init` must not clobber an operator's edited compose file.
+#[test]
+fn init_is_idempotent_and_does_not_overwrite() {
+    let home = TempDir::new().unwrap();
+    odal(home.path(), &["init"]);
+
+    let compose = home.path().join("docker/docker-compose.yml");
+    std::fs::write(&compose, "# edited\n").unwrap();
+
+    let again = odal(home.path(), &["init"]);
+    assert_eq!(again.code, 0, "{}", again.output());
+    assert_eq!(std::fs::read_to_string(&compose).unwrap(), "# edited\n");
+}

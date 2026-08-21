@@ -1,6 +1,6 @@
 //! Guided first-run setup flow for the interactive console.
 
-use std::{fs, time::Duration};
+use std::time::Duration;
 
 use anyhow::Result;
 use console::style;
@@ -11,8 +11,8 @@ use crate::{
     config::{Config, EnvKind},
     core::{
         infra::{
-            COMPOSE_FILE, COMPOSE_TEMPLATE, action_up, deployment_env_var, find_install_root,
-            infra_container_status, preflight_prod_env,
+            COMPOSE_FILE, action_up, deployment_env_var, find_install_root, infra_container_status,
+            preflight_prod_env, scaffold_install,
         },
         onboarding::{action_bootstrap, action_node_state},
     },
@@ -80,28 +80,25 @@ async fn step_infrastructure(cfg: &Config) -> Result<()> {
 
     // `odal` runs the full self-host stack (node + resolver + infra). Find the
     // compose file in the source tree, or scaffold it for a packaged install.
-    let compose_path = match find_install_root() {
-        Ok(root) => {
-            let p = root.join("docker").join(COMPOSE_FILE);
-            if p.exists() {
-                println!("  {} Found {}.\n", style("✓").green(), p.display());
-            } else {
-                fs::write(&p, COMPOSE_TEMPLATE)?;
-                println!("  {} Scaffolded {}.\n", style("✓").green(), p.display());
-            }
-            p
+    // Scaffold the whole install, not just the compose file: it bind-mounts the
+    // database role-provisioning hook out of `ops/bootstrap/`, and Docker turns
+    // a missing mount source into an empty directory rather than an error — so
+    // a partial scaffold fails silently, later, at role provisioning.
+    let root = find_install_root().or_else(|_| std::env::current_dir())?;
+    let created = scaffold_install(&root)?;
+    let compose_path = root.join("docker").join(COMPOSE_FILE);
+    if created.is_empty() {
+        println!(
+            "  {} Found {}.\n",
+            style("✓").green(),
+            compose_path.display()
+        );
+    } else {
+        for path in &created {
+            println!("  {} Scaffolded {}.", style("✓").green(), path.display());
         }
-        Err(_) => {
-            let docker_dir = std::env::current_dir()?.join("docker");
-            if !docker_dir.exists() {
-                fs::create_dir_all(&docker_dir)?;
-            }
-            let p = docker_dir.join(COMPOSE_FILE);
-            fs::write(&p, COMPOSE_TEMPLATE)?;
-            println!("  {} Scaffolded {}.\n", style("✓").green(), p.display());
-            p
-        }
-    };
+        println!();
+    }
 
     // The node container reads its secrets from the deployment `.env`. Confirm
     // it's there, or list what it must contain.
