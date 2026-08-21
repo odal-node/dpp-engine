@@ -656,6 +656,29 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
   Existing files are never overwritten, so re-running `init` on a configured
   install leaves an edited compose file alone.
+- **A withdrawn passport no longer reports itself as never having existed.** The
+  resolver's by-id and AAS routes took their HTTP status from the fetch result —
+  404 for an unknown id, 410 for a suspended passport, 502/503 upstream — and
+  then attached a body hardcoded to a 404 "Not Found" problem regardless. A
+  suspended passport arrived as `410 Gone` carrying `"status": 404` and
+  `"title": "Not Found"`, inverting the one distinction 410 exists to draw, for
+  any client reading the structured half rather than the status line.
+
+  The body is now built from the status it ships with, and says what actually
+  happened: a withdrawn passport reads *"This passport has been withdrawn and is
+  no longer served."* Error responses also carry `application/problem+json`
+  rather than `application/json`, matching what the AAS route already did.
+
+  The existing regression test asserted only the status line, which is why this
+  stood. It now asserts the body agrees, with a companion test pinning that a
+  genuinely absent passport still reads 404 in both halves.
+
+  **The GS1 Digital Link route is not fixed by this** and still answers 404 for
+  a suspended passport — the route a consumer reaches by scanning the product.
+  The vault's by-GTIN lookup filters to `status = 'active'` inside
+  `PassportRepository::find_published_by_gtin`, so the handler never learns the
+  passport exists at all. That trait is defined in `dpp-core`, so making the
+  lookup status-aware is a core change and a repin, not an engine one.
 
 - **A profile pointed at a remote node no longer keeps localhost service URLs.**
   `odal profile create prod --vault-url https://node.example.com/vault` wrote a
