@@ -34,7 +34,9 @@ for rule in "${rules[@]}"; do
 
     if [ -n "$hits" ]; then
         echo "ERROR: '$pattern' is defined outside $home:"
-        echo "$hits" | sed 's/^/  /'
+        while IFS= read -r hit; do
+            echo "  $hit"
+        done <<< "$hits"
         echo "  Use instead: $remedy"
         status=1
     fi
