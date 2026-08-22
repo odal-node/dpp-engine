@@ -23,13 +23,9 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use axum::{Router, extract::State, http::HeaderMap, http::StatusCode, routing::post};
 use hmac::{Hmac, KeyInit, Mac};
 use sha2::Sha256;
-use testcontainers::{
-    GenericImage, ImageExt,
-    core::{WaitFor, ports::ContainerPort},
-    runners::AsyncRunner,
-};
 
-use dpp_dal::pg::{PgDal, PgWebhookRepo, sqlx};
+use dpp_dal::pg::{PgWebhookRepo, sqlx};
+use dpp_dal::test_harness::start_pg;
 use dpp_node::infra::webhook_drain::{MAX_ATTEMPTS, drain_once};
 use dpp_types::{
     NewWebhookSubscription, WebhookDeliveryRow, WebhookOutbox, WebhookSubscriptionStore,
@@ -38,41 +34,6 @@ use dpp_types::{
 type HmacSha256 = Hmac<Sha256>;
 
 // ─── Postgres harness ─────────────────────────────────────────────────────────
-
-async fn start_pg() -> (PgDal, testcontainers::ContainerAsync<GenericImage>) {
-    let image = GenericImage::new("postgres", "17")
-        .with_exposed_port(ContainerPort::Tcp(5432))
-        .with_wait_for(WaitFor::message_on_stderr(
-            "database system is ready to accept connections",
-        ))
-        .with_env_var("POSTGRES_USER", "postgres")
-        .with_env_var("POSTGRES_PASSWORD", "test")
-        .with_env_var("POSTGRES_DB", "odal");
-
-    let container = image.start().await.expect("start postgres container");
-    let port = container
-        .get_host_port_ipv4(5432)
-        .await
-        .expect("mapped port");
-    let admin_url = format!("postgres://postgres:test@127.0.0.1:{port}/odal");
-
-    tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
-
-    let admin = sqlx::postgres::PgPoolOptions::new()
-        .max_connections(1)
-        .connect(&admin_url)
-        .await
-        .expect("admin connect");
-    sqlx::query("CREATE ROLE odal_app LOGIN PASSWORD 'test'")
-        .execute(&admin)
-        .await
-        .expect("create app role");
-    PgDal::migrate(&admin_url).await.expect("apply migrations");
-
-    let app_url = format!("postgres://odal_app:test@127.0.0.1:{port}/odal");
-    let dal = PgDal::connect(&app_url).await.expect("app connect");
-    (dal, container)
-}
 
 // ─── Mock receiver ────────────────────────────────────────────────────────────
 
@@ -184,7 +145,8 @@ async fn one_due(outbox: &Arc<dyn WebhookOutbox>) -> WebhookDeliveryRow {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn delivers_signed_and_honours_subject_filter() {
-    let (dal, _c) = start_pg().await;
+    let _c = start_pg().await;
+    let dal = _c.dal.clone();
     let store = PgWebhookRepo::new(dal.clone());
     let outbox: Arc<dyn WebhookOutbox> = Arc::new(PgWebhookRepo::new(dal.clone()));
     let (url, receiver) = start_receiver().await;
@@ -246,7 +208,8 @@ async fn delivers_signed_and_honours_subject_filter() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn retries_then_exhausts_then_reconstructed_outbox_redelivers() {
-    let (dal, _c) = start_pg().await;
+    let _c = start_pg().await;
+    let dal = _c.dal.clone();
     let store = PgWebhookRepo::new(dal.clone());
     let outbox: Arc<dyn WebhookOutbox> = Arc::new(PgWebhookRepo::new(dal.clone()));
     let (url, receiver) = start_receiver().await;

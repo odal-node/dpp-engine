@@ -39,6 +39,10 @@ tracing             = { workspace = true }
 tracing-subscriber  = { workspace = true }
 
 [dev-dependencies]
+# Test keystores hold Ed25519 private keys. `tempfile` creates the directory
+# with restrictive permissions and removes it on drop; `env::temp_dir()` does
+# neither, and left a file behind on every run.
+tempfile     = "3"
 uuid          = { version = "1", features = ["v4"] }
 tracing-test  = "0.2"
 tower         = { version = "0.5", features = ["util"] }

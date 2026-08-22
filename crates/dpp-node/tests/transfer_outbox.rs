@@ -20,14 +20,10 @@
 use std::sync::Arc;
 
 use chrono::Utc;
-use testcontainers::{
-    GenericImage, ImageExt,
-    core::{WaitFor, ports::ContainerPort},
-    runners::AsyncRunner,
-};
 use uuid::Uuid;
 
 use dpp_dal::pg::{PgDal, PgPassportRepo, PgRegistryTransferRepo, sqlx};
+use dpp_dal::test_harness::start_pg;
 use dpp_domain::{
     domain::{
         passport::{ManufacturerInfo, Passport, PassportId},
@@ -42,41 +38,6 @@ use dpp_domain::{
 use dpp_types::{RegistryTransferOutbox, RegistryTransferStatus};
 
 // ─── Harness ────────────────────────────────────────────────────────────────
-
-async fn start_pg() -> (PgDal, testcontainers::ContainerAsync<GenericImage>) {
-    let image = GenericImage::new("postgres", "17")
-        .with_exposed_port(ContainerPort::Tcp(5432))
-        .with_wait_for(WaitFor::message_on_stderr(
-            "database system is ready to accept connections",
-        ))
-        .with_env_var("POSTGRES_USER", "postgres")
-        .with_env_var("POSTGRES_PASSWORD", "test")
-        .with_env_var("POSTGRES_DB", "odal");
-
-    let container = image.start().await.expect("start postgres container");
-    let port = container
-        .get_host_port_ipv4(5432)
-        .await
-        .expect("mapped port");
-    let admin_url = format!("postgres://postgres:test@127.0.0.1:{port}/odal");
-
-    tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
-
-    let admin = sqlx::postgres::PgPoolOptions::new()
-        .max_connections(1)
-        .connect(&admin_url)
-        .await
-        .expect("admin connect");
-    sqlx::query("CREATE ROLE odal_app LOGIN PASSWORD 'test'")
-        .execute(&admin)
-        .await
-        .expect("create app role");
-    PgDal::migrate(&admin_url).await.expect("apply migrations");
-
-    let app_url = format!("postgres://odal_app:test@127.0.0.1:{port}/odal");
-    let dal = PgDal::connect(&app_url).await.expect("app connect");
-    (dal, container)
-}
 
 fn published_passport() -> Passport {
     Passport {
@@ -178,7 +139,8 @@ async fn accept(
 /// transaction: the row exists, carries the signed record, and is drainable.
 #[tokio::test]
 async fn accepting_a_transfer_enqueues_a_pending_notification() {
-    let (dal, _c) = start_pg().await;
+    let _c = start_pg().await;
+    let dal = _c.dal.clone();
     let (passport_id, outbox) = setup(&dal).await;
 
     let mut chain = TransferChain::new(passport_id, operator("did:web:acme.example", "Acme"));
@@ -216,7 +178,8 @@ async fn accepting_a_transfer_enqueues_a_pending_notification() {
 /// would overwrite the first and the registry would never hear about it.
 #[tokio::test]
 async fn a_passport_transferred_twice_owes_two_notifications() {
-    let (dal, _c) = start_pg().await;
+    let _c = start_pg().await;
+    let dal = _c.dal.clone();
     let (passport_id, outbox) = setup(&dal).await;
 
     let mut chain = TransferChain::new(passport_id, operator("did:web:acme.example", "Acme"));
@@ -254,7 +217,8 @@ async fn a_passport_transferred_twice_owes_two_notifications() {
 /// one handover.
 #[tokio::test]
 async fn re_accepting_the_same_transfer_never_re_notifies() {
-    let (dal, _c) = start_pg().await;
+    let _c = start_pg().await;
+    let dal = _c.dal.clone();
     let (passport_id, outbox) = setup(&dal).await;
 
     let mut chain = TransferChain::new(passport_id, operator("did:web:acme.example", "Acme"));
@@ -287,7 +251,8 @@ async fn re_accepting_the_same_transfer_never_re_notifies() {
 /// attempt into the future — the notification is never lost, just deferred.
 #[tokio::test]
 async fn a_transient_failure_backs_off_without_losing_the_row() {
-    let (dal, _c) = start_pg().await;
+    let _c = start_pg().await;
+    let dal = _c.dal.clone();
     let (passport_id, outbox) = setup(&dal).await;
 
     let mut chain = TransferChain::new(passport_id, operator("did:web:acme.example", "Acme"));
@@ -323,7 +288,8 @@ async fn a_transient_failure_backs_off_without_losing_the_row() {
 /// A terminal rejection stops the row draining but keeps it for audit.
 #[tokio::test]
 async fn a_rejected_notification_is_kept_for_audit() {
-    let (dal, _c) = start_pg().await;
+    let _c = start_pg().await;
+    let dal = _c.dal.clone();
     let (passport_id, outbox) = setup(&dal).await;
 
     let mut chain = TransferChain::new(passport_id, operator("did:web:acme.example", "Acme"));

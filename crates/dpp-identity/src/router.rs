@@ -78,17 +78,28 @@ mod tests {
     use serial_test::serial;
     use tower::ServiceExt;
 
-    fn temp_store() -> dpp_crypto::keystore::KeyStore {
-        let path = std::env::temp_dir().join(format!("router-test-{}.json", uuid::Uuid::now_v7()));
-        dpp_crypto::keystore::KeyStore::open(path, "test").expect("open store")
+    /// A throwaway keystore in a directory that is removed when the returned
+    /// `TempDir` drops.
+    ///
+    /// The `TempDir` comes back with it deliberately: it owns the directory the
+    /// store writes into, so a helper returning only the `KeyStore` would have
+    /// the file vanish underneath it. `tempfile` also creates the directory with
+    /// restrictive permissions, which `env::temp_dir()` does not — this holds
+    /// Ed25519 private keys, throwaway or not.
+    fn temp_store() -> (dpp_crypto::keystore::KeyStore, tempfile::TempDir) {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let store = dpp_crypto::keystore::KeyStore::open(dir.path().join("keystore.json"), "test")
+            .expect("open store");
+        (store, dir)
     }
 
     /// No X-Client-Cert-Subject header → 401 Unauthorized (enforcement on by default).
     #[tokio::test]
     #[serial]
     async fn mtls_rejects_internal_request_without_cert() {
+        let (store, _dir) = temp_store();
         let state = crate::state::AppState {
-            store: Arc::new(temp_store()),
+            store: Arc::new(store),
             did_web_base_url: "http://localhost".into(),
         };
         let app = super::build(state);
@@ -111,7 +122,7 @@ mod tests {
     /// done in-process; these endpoints must simply not exist here.
     #[tokio::test]
     async fn public_router_has_no_internal_endpoints() {
-        let store = temp_store();
+        let (store, _dir) = temp_store();
         store.generate_key("root").expect("provision root key");
         let state = crate::state::AppState {
             store: Arc::new(store),
@@ -160,8 +171,9 @@ mod tests {
     #[serial]
     async fn mtls_rejects_wrong_cn() {
         unsafe { std::env::set_var("MTLS_PROXY_SHARED_SECRET", "s3cr3t") };
+        let (store, _dir) = temp_store();
         let state = crate::state::AppState {
-            store: Arc::new(temp_store()),
+            store: Arc::new(store),
             did_web_base_url: "http://localhost".into(),
         };
         let app = super::build(state);

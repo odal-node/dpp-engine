@@ -238,10 +238,13 @@ fn auth() -> AuthContext {
 /// ports, plus the DID the identity's did:web document actually publishes as
 /// (pathless form — see `dpp_vc::did_builder`).
 async fn build_service() -> (PassportService, Arc<InMemoryEvidenceRepo>, String) {
-    let key_path =
-        std::env::temp_dir().join(format!("evidence-test-{}.json", uuid::Uuid::new_v4()));
+    // `tempfile` creates the directory with restrictive permissions and removes
+    // it on drop; `env::temp_dir()` did neither, leaving an Ed25519 private key
+    // behind on every run.
+    let key_dir = tempfile::tempdir().expect("temp dir");
     let store =
-        dpp_crypto::keystore::KeyStore::open(&key_path, "test-pass").expect("open keystore");
+        dpp_crypto::keystore::KeyStore::open(key_dir.path().join("keystore.json"), "test-pass")
+            .expect("open keystore");
     store.generate_key("root").expect("generate key");
     let base_url = "evidence-test.example.com".to_owned();
     let issuer_did = format!("did:web:{}", base_url.replace(':', "%3A"));

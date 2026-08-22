@@ -98,9 +98,19 @@ mod tests {
     use super::*;
     use crate::state::AppState;
 
-    fn temp_store() -> dpp_crypto::keystore::KeyStore {
-        let path = std::env::temp_dir().join(format!("rotate-test-{}.json", uuid::Uuid::now_v7()));
-        dpp_crypto::keystore::KeyStore::open(path, "test").expect("open store")
+    /// A throwaway keystore in a directory that is removed when the returned
+    /// `TempDir` drops.
+    ///
+    /// The `TempDir` comes back with it deliberately: it owns the directory the
+    /// store writes into, so a helper returning only the `KeyStore` would have
+    /// the file vanish underneath it. `tempfile` also creates the directory with
+    /// restrictive permissions, which `env::temp_dir()` does not — this holds
+    /// Ed25519 private keys, throwaway or not.
+    fn temp_store() -> (dpp_crypto::keystore::KeyStore, tempfile::TempDir) {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let store = dpp_crypto::keystore::KeyStore::open(dir.path().join("keystore.json"), "test")
+            .expect("open store");
+        (store, dir)
     }
 
     /// Regression (custody runbook §"key rotation"): a JWS signed before a key
@@ -111,7 +121,7 @@ mod tests {
     /// rotation — this is the fix the runbook flags as needing a green test.
     #[tokio::test]
     async fn signature_signed_before_rotation_still_verifies_after() {
-        let store = temp_store();
+        let (store, _dir) = temp_store();
         store.generate_key("op1").expect("provision initial key");
 
         let payload = json!({"id": "dpp:test:1", "status": "published"});

@@ -28,14 +28,25 @@ chrono       = { workspace = true }
 tracing      = { workspace = true }
 metrics      = { workspace = true }
 
+testcontainers = { workspace = true, optional = true }
+
 sqlx = { version = "0.9", default-features = false, features = [
   "postgres", "runtime-tokio", "tls-rustls", "uuid", "chrono", "json", "migrate", "macros",
 ] }
 
 [features]
 integration-tests = []
+# Exposes `test_harness`: the shared Postgres container harness, used by this
+# crate's own suites and by dpp-node's. Off by default so `testcontainers` and a
+# container-spawning API stay out of every ordinary build of the DAL. Only ever
+# enabled from a `[dev-dependencies]` entry.
+test-harness = ["dep:testcontainers"]
 
 [dev-dependencies]
+# This crate depends on itself with `test-harness` on, because its integration
+# suites in `tests/` are separate crates and cannot see a feature-gated module
+# otherwise. Legal and self-contained; it reads oddly, which is why it is noted.
+dpp-dal        = { path = ".", features = ["test-harness"] }
 testcontainers = { workspace = true }
 tokio          = { workspace = true }
 uuid           = { workspace = true }

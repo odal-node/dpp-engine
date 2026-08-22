@@ -220,10 +220,13 @@ fn auth() -> AuthContext {
 
 /// A `PassportService` with real signing + in-memory ports + the reconcile outbox.
 async fn build_service() -> (PassportService, InMemorySnapshotOutbox) {
-    let key_path =
-        std::env::temp_dir().join(format!("snapshot-test-{}.json", uuid::Uuid::new_v4()));
+    // `tempfile` creates the directory with restrictive permissions and removes
+    // it on drop; `env::temp_dir()` did neither, leaving an Ed25519 private key
+    // behind on every run.
+    let key_dir = tempfile::tempdir().expect("temp dir");
     let store =
-        dpp_crypto::keystore::KeyStore::open(&key_path, "test-pass").expect("open keystore");
+        dpp_crypto::keystore::KeyStore::open(key_dir.path().join("keystore.json"), "test-pass")
+            .expect("open keystore");
     store.generate_key("root").expect("generate key");
     let identity = Arc::new(dpp_vc::LocalIdentityService::new(
         Arc::new(store),

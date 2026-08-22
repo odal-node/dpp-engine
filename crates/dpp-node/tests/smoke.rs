@@ -14,18 +14,14 @@ use std::sync::{Arc, OnceLock};
 
 use async_trait::async_trait;
 use metrics_exporter_prometheus::{PrometheusBuilder, PrometheusHandle};
-use testcontainers::{
-    GenericImage, ImageExt,
-    core::{WaitFor, ports::ContainerPort},
-    runners::AsyncRunner,
-};
 
 use base64::Engine as _;
 use dpp_crypto::keystore::KeyStore;
 use dpp_dal::pg::{
     PgApiKeyRepo, PgAuditRepo, PgDal, PgEvidenceDossierRepo, PgOperatorConfigRepo, PgPassportRepo,
-    PgRegistryIdentityRepo, PgScanTelemetryRepo, PgTransferRepo, PgWebhookRepo, sqlx,
+    PgRegistryIdentityRepo, PgScanTelemetryRepo, PgTransferRepo, PgWebhookRepo,
 };
+use dpp_dal::test_harness::{TestPg, start_pg};
 use dpp_domain::domain::passport::PassportRef;
 use dpp_domain::{
     DppError, GhostArchive, GhostRegistrySync,
@@ -88,45 +84,6 @@ impl AuthProvider for TestAuthProvider {
 // DB setup helpers
 // ---------------------------------------------------------------------------
 
-async fn start_pg() -> (PgDal, testcontainers::ContainerAsync<GenericImage>) {
-    let image = GenericImage::new("postgres", "17")
-        .with_exposed_port(ContainerPort::Tcp(5432))
-        .with_wait_for(WaitFor::message_on_stderr(
-            "database system is ready to accept connections",
-        ))
-        // POSTGRES_USER/PASSWORD/DB are the official Postgres image's required
-        // env vars for this throwaway testcontainer — NOT the app's
-        // DATABASE_POSTGRES_PASS / DATABASE_APP_PASS scheme.
-        .with_env_var("POSTGRES_USER", "postgres")
-        .with_env_var("POSTGRES_PASSWORD", "test")
-        .with_env_var("POSTGRES_DB", "odal");
-
-    let container = image.start().await.expect("start postgres container");
-    let port = container
-        .get_host_port_ipv4(5432)
-        .await
-        .expect("mapped port");
-    let admin_url = format!("postgres://postgres:test@127.0.0.1:{port}/odal");
-
-    tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
-
-    let admin = sqlx::postgres::PgPoolOptions::new()
-        .max_connections(1)
-        .connect(&admin_url)
-        .await
-        .expect("admin connect");
-    sqlx::query("CREATE ROLE odal_app LOGIN PASSWORD 'test'")
-        .execute(&admin)
-        .await
-        .expect("create app role");
-
-    PgDal::migrate(&admin_url).await.expect("apply migrations");
-
-    let app_url = format!("postgres://odal_app:test@127.0.0.1:{port}/odal");
-    let dal = PgDal::connect(&app_url).await.expect("app connect");
-    (dal, container)
-}
-
 // ---------------------------------------------------------------------------
 // Node factory helpers
 // ---------------------------------------------------------------------------
@@ -162,8 +119,14 @@ async fn start_node_with_dal(dal: PgDal) -> String {
     // In-process signing — the fused node signs via LocalIdentityService exactly
     // as main.rs does; the internal HTTP sign route is intentionally unmounted
     // (ATK-1). The same key store backs both signing and the did:web document.
-    let ks_path = std::env::temp_dir().join(format!("node-smoke-ks-{}.json", uuid::Uuid::now_v7()));
-    let key_store = Arc::new(KeyStore::open(&ks_path, "test-passphrase").expect("open key store"));
+    // `tempfile` creates the directory with restrictive permissions and removes
+    // it on drop; `env::temp_dir()` did neither, leaving an Ed25519 private key
+    // behind on every run.
+    let ks_dir = tempfile::tempdir().expect("temp dir");
+    let key_store = Arc::new(
+        KeyStore::open(ks_dir.path().join("keystore.json"), "test-passphrase")
+            .expect("open key store"),
+    );
     key_store
         .generate_key("root")
         .expect("provision root issuer key");
@@ -298,10 +261,12 @@ async fn seed_complete_operator(repo: &PgOperatorConfigRepo) {
 // Tier 1 — health + auth (uses a shared DB container; auth fires before DB)
 // ---------------------------------------------------------------------------
 
-async fn start_db_and_node() -> (String, testcontainers::ContainerAsync<GenericImage>) {
-    let (dal, container) = start_pg().await;
-    let node_url = start_node_with_dal(dal).await;
-    (node_url, container)
+// Returns the whole `TestPg` rather than just the container: it owns the
+// container privately, and the caller only needs to keep it alive.
+async fn start_db_and_node() -> (String, TestPg) {
+    let pg = start_pg().await;
+    let node_url = start_node_with_dal(pg.dal.clone()).await;
+    (node_url, pg)
 }
 
 /// The ghost-honesty invariant, on the endpoint that now carries it.

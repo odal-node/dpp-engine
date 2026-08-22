@@ -139,15 +139,21 @@ mod tests {
     use super::*;
     use base64::Engine;
 
-    /// A throwaway publisher key store; returns the store, key id, and the
-    /// base64url public key a node would pin.
-    fn publisher() -> (KeyStore, String, String) {
-        let path = std::env::temp_dir().join(format!("ruleset-pub-{}.enc", uuid::Uuid::now_v7()));
-        let store = KeyStore::open_and_migrate(&path, "test-passphrase").expect("open keystore");
+    /// A throwaway publisher key store; returns the store, key id, the
+    /// base64url public key a node would pin, and the directory holding it.
+    ///
+    /// The `TempDir` is returned rather than dropped because it owns the
+    /// directory the keystore writes into. `tempfile` creates that directory
+    /// with restrictive permissions and removes it on drop; `env::temp_dir()`
+    /// did neither, and left an Ed25519 private key behind on every run.
+    fn publisher() -> (KeyStore, String, String, tempfile::TempDir) {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let store = KeyStore::open_and_migrate(dir.path().join("publisher.enc"), "test-passphrase")
+            .expect("open keystore");
         let entry = store.generate_key("publisher").expect("generate key");
         let pubkey_b64 =
             base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(entry.verifying_key.as_bytes());
-        (store, "publisher".to_owned(), pubkey_b64)
+        (store, "publisher".to_owned(), pubkey_b64, dir)
     }
 
     fn bundle(store: &KeyStore, key_id: &str, version: &str, threshold: i64) -> SignedBundle {
@@ -165,7 +171,7 @@ mod tests {
 
     #[test]
     fn signed_bundle_verifies_and_carries_version() {
-        let (store, kid, pubkey) = publisher();
+        let (store, kid, pubkey, _dir) = publisher();
         let b = bundle(&store, &kid, "2026-Q3.1", 5);
         let v = verify_bundle(&b, &pubkey, &DppCryptoVerifier).expect("must verify");
         assert_eq!(v.version(), "2026-Q3.1");
@@ -174,7 +180,7 @@ mod tests {
 
     #[test]
     fn tampered_signature_is_refused() {
-        let (store, kid, pubkey) = publisher();
+        let (store, kid, pubkey, _dir) = publisher();
         let mut b = bundle(&store, &kid, "2026-Q3.1", 5);
         // Flip the second-to-last char of the JWS signature segment. The very
         // last base64url char of a 64-byte Ed25519 signature carries only 2
@@ -195,7 +201,7 @@ mod tests {
 
     #[test]
     fn tampered_content_is_refused() {
-        let (store, kid, pubkey) = publisher();
+        let (store, kid, pubkey, _dir) = publisher();
         let mut b = bundle(&store, &kid, "2026-Q3.1", 5);
         // Change the content without re-signing the manifest.
         b.content = serde_json::json!({ "textileFibreThreshold": 999 });
@@ -207,8 +213,8 @@ mod tests {
 
     #[test]
     fn wrong_publisher_key_is_refused() {
-        let (store, kid, _pubkey) = publisher();
-        let (_other_store, _oid, other_pubkey) = publisher();
+        let (store, kid, _pubkey, _dir) = publisher();
+        let (_other_store, _oid, other_pubkey, _dir) = publisher();
         let b = bundle(&store, &kid, "2026-Q3.1", 5);
         assert!(matches!(
             verify_bundle(&b, &other_pubkey, &DppCryptoVerifier),
@@ -218,7 +224,7 @@ mod tests {
 
     #[test]
     fn active_ruleset_hot_swaps_a_verified_bundle() {
-        let (store, kid, pubkey) = publisher();
+        let (store, kid, pubkey, _dir) = publisher();
         let active = ActiveRuleset::baseline();
         assert_eq!(active.version(), "baseline");
 
@@ -229,7 +235,7 @@ mod tests {
         assert_eq!(active.get().content["textileFibreThreshold"], 7);
 
         // A bad bundle leaves the active ruleset unchanged (fail-closed).
-        let (bad_store, bad_kid, _) = publisher();
+        let (bad_store, bad_kid, _, _dir) = publisher();
         let forged = bundle(&bad_store, &bad_kid, "evil", 0);
         assert!(active.load_and_swap(&forged, &pubkey).is_err());
         assert_eq!(active.version(), "2026-Q3.2");
