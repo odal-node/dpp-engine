@@ -40,13 +40,9 @@ use base64::engine::general_purpose::STANDARD as BASE64;
 use chrono::Utc;
 use hmac::{Hmac, KeyInit, Mac};
 use sha2::{Digest, Sha256};
-use testcontainers::{
-    GenericImage, ImageExt,
-    core::{WaitFor, ports::ContainerPort},
-    runners::AsyncRunner,
-};
 
-use dpp_dal::pg::{PgAuditRepo, PgDal, PgPassportRepo, PgSealOutboxRepo, sqlx};
+use dpp_dal::pg::{PgAuditRepo, PgPassportRepo, PgSealOutboxRepo};
+use dpp_dal::test_harness::start_pg;
 use dpp_domain::domain::passport::{ManufacturerInfo, Passport, PassportId};
 use dpp_domain::domain::sector::Sector;
 use dpp_domain::domain::status::PassportStatus;
@@ -145,40 +141,6 @@ async fn spawn_mock(state: Arc<MockState>) -> String {
 }
 
 // ─── Postgres harness ─────────────────────────────────────────────────────────
-
-async fn start_pg() -> (PgDal, testcontainers::ContainerAsync<GenericImage>) {
-    let image = GenericImage::new("postgres", "17")
-        .with_exposed_port(ContainerPort::Tcp(5432))
-        .with_wait_for(WaitFor::message_on_stderr(
-            "database system is ready to accept connections",
-        ))
-        .with_env_var("POSTGRES_USER", "postgres")
-        .with_env_var("POSTGRES_PASSWORD", "test")
-        .with_env_var("POSTGRES_DB", "odal");
-
-    let container = image.start().await.expect("start postgres container");
-    let port = container
-        .get_host_port_ipv4(5432)
-        .await
-        .expect("mapped port");
-    let admin_url = format!("postgres://postgres:test@127.0.0.1:{port}/odal");
-
-    tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
-    let admin = sqlx::postgres::PgPoolOptions::new()
-        .max_connections(1)
-        .connect(&admin_url)
-        .await
-        .expect("admin connect");
-    sqlx::query("CREATE ROLE odal_app LOGIN PASSWORD 'test'")
-        .execute(&admin)
-        .await
-        .expect("create app role");
-    PgDal::migrate(&admin_url).await.expect("apply migrations");
-
-    let app_url = format!("postgres://odal_app:test@127.0.0.1:{port}/odal");
-    let dal = PgDal::connect(&app_url).await.expect("app connect");
-    (dal, container)
-}
 
 // ─── Service harness ──────────────────────────────────────────────────────────
 
@@ -306,7 +268,8 @@ fn eideasy_adapter(cfg: dpp_seal::eideasy::EideasyConfig) -> Arc<dyn SealPort> {
 /// print every record produced along the way.
 #[tokio::test]
 async fn publish_then_drain_seals_the_passport_end_to_end() {
-    let (dal, _pg) = start_pg().await;
+    let _pg = start_pg().await;
+    let dal = _pg.dal.clone();
     let mock = Arc::new(MockState::default());
     let base_url = spawn_mock(mock.clone()).await;
 
@@ -460,7 +423,8 @@ async fn publish_then_drain_seals_the_passport_end_to_end() {
 /// silently be taken as covering the new signature.
 #[tokio::test]
 async fn a_republish_needs_and_gets_its_own_seal() {
-    let (dal, _pg) = start_pg().await;
+    let _pg = start_pg().await;
+    let dal = _pg.dal.clone();
     let mock = Arc::new(MockState::default());
     let base_url = spawn_mock(mock.clone()).await;
 
@@ -555,7 +519,8 @@ async fn a_republish_needs_and_gets_its_own_seal() {
 /// simulation would actually catch that.
 #[tokio::test]
 async fn a_wrong_key_is_rejected_and_the_row_stays_pending() {
-    let (dal, _pg) = start_pg().await;
+    let _pg = start_pg().await;
+    let dal = _pg.dal.clone();
     let mock = Arc::new(MockState::default());
     let base_url = spawn_mock(mock.clone()).await;
 

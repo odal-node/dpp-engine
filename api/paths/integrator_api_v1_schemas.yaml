@@ -1,0 +1,37 @@
+get:
+  operationId: listSectorSchemas
+  summary: List sector schemas and their versions
+  description: |
+    Every sector with a JSON Schema, the version a new passport is validated
+    against (`current`), and every version a stored passport may legitimately
+    record (`versions`). Unauthenticated.
+  tags:
+    - Integrator
+  responses:
+    '200':
+      description: The available sector schemas.
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              schemas:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    sector:
+                      type: string
+                      example: battery
+                    current:
+                      type:
+                        - string
+                        - 'null'
+                      example: 2.6.0
+                    versions:
+                      type: array
+                      items:
+                        type: string
+                      example:
+                        - 1.0.0
+                        - 2.6.0

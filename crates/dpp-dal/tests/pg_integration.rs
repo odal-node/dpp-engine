@@ -22,17 +22,13 @@
 
 #![cfg(feature = "integration-tests")]
 
-use testcontainers::{
-    GenericImage, ImageExt,
-    core::{WaitFor, ports::ContainerPort},
-    runners::AsyncRunner,
-};
 use uuid::Uuid;
 
 use dpp_dal::pg::{
     PgApiKeyRepo, PgAuditRepo, PgDal, PgEvidenceDossierRepo, PgPassportRepo, PgScanTelemetryRepo,
     PgSnapshotOutboxRepo, sqlx,
 };
+use dpp_dal::test_harness::start_pg;
 use dpp_domain::{
     domain::{
         gtin::Gtin,
@@ -53,62 +49,6 @@ use dpp_types::{
     snapshot::SnapshotOutbox,
 };
 use sqlx::Row;
-
-struct TestPg {
-    dal: PgDal,
-    /// Superuser URL kept for raw admin-side assertions (T4 trigger checks).
-    admin_url: String,
-    _container: testcontainers::ContainerAsync<GenericImage>,
-}
-
-async fn start_pg() -> TestPg {
-    let image = GenericImage::new("postgres", "17")
-        .with_exposed_port(ContainerPort::Tcp(5432))
-        .with_wait_for(WaitFor::message_on_stderr(
-            "database system is ready to accept connections",
-        ))
-        // POSTGRES_USER/PASSWORD/DB are the official Postgres image's required
-        // env vars for this throwaway testcontainer — NOT the app's
-        // DATABASE_POSTGRES_PASS / DATABASE_APP_PASS scheme.
-        .with_env_var("POSTGRES_USER", "postgres")
-        .with_env_var("POSTGRES_PASSWORD", "test")
-        .with_env_var("POSTGRES_DB", "odal");
-
-    let container = image.start().await.expect("start postgres container");
-    let port = container
-        .get_host_port_ipv4(5432)
-        .await
-        .expect("mapped port");
-    let admin_url = format!("postgres://postgres:test@127.0.0.1:{port}/odal");
-
-    // Postgres restarts once during init — give it a moment, then provision
-    // the app role exactly like ops/bootstrap/pg-init.sh does.
-    tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
-    let admin = sqlx::postgres::PgPoolOptions::new()
-        .max_connections(1)
-        .connect(&admin_url)
-        .await
-        .expect("admin connect");
-    sqlx::query("CREATE ROLE odal_app LOGIN PASSWORD 'test'")
-        .execute(&admin)
-        .await
-        .expect("create app role");
-
-    // Migrations require DDL privileges; run them via the admin pool directly,
-    // then connect as odal_app (PgDal::migrate mirrors the ops/just workflow).
-    PgDal::migrate(&admin_url)
-        .await
-        .expect("apply 0001_init via admin");
-
-    let app_url = format!("postgres://odal_app:test@127.0.0.1:{port}/odal");
-    let dal = PgDal::connect(&app_url).await.expect("app connect");
-
-    TestPg {
-        dal,
-        admin_url,
-        _container: container,
-    }
-}
 
 fn make_passport() -> Passport {
     Passport {

@@ -30,13 +30,9 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use async_trait::async_trait;
 use chrono::Utc;
-use testcontainers::{
-    GenericImage, ImageExt,
-    core::{WaitFor, ports::ContainerPort},
-    runners::AsyncRunner,
-};
 
 use dpp_dal::pg::{PgDal, PgPassportRepo, PgRegistrySyncRepo, sqlx};
+use dpp_dal::test_harness::{start_pg, start_pg_before};
 use dpp_domain::{
     DppError,
     domain::{
@@ -66,41 +62,6 @@ fn test_operator() -> RegisteringOperator<'static> {
 use dpp_types::{RegistryStatusIntent, RegistrySyncOutbox, RegistrySyncStatus};
 
 // ─── Harness ────────────────────────────────────────────────────────────────
-
-async fn start_pg() -> (PgDal, testcontainers::ContainerAsync<GenericImage>) {
-    let image = GenericImage::new("postgres", "17")
-        .with_exposed_port(ContainerPort::Tcp(5432))
-        .with_wait_for(WaitFor::message_on_stderr(
-            "database system is ready to accept connections",
-        ))
-        .with_env_var("POSTGRES_USER", "postgres")
-        .with_env_var("POSTGRES_PASSWORD", "test")
-        .with_env_var("POSTGRES_DB", "odal");
-
-    let container = image.start().await.expect("start postgres container");
-    let port = container
-        .get_host_port_ipv4(5432)
-        .await
-        .expect("mapped port");
-    let admin_url = format!("postgres://postgres:test@127.0.0.1:{port}/odal");
-
-    tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
-
-    let admin = sqlx::postgres::PgPoolOptions::new()
-        .max_connections(1)
-        .connect(&admin_url)
-        .await
-        .expect("admin connect");
-    sqlx::query("CREATE ROLE odal_app LOGIN PASSWORD 'test'")
-        .execute(&admin)
-        .await
-        .expect("create app role");
-    PgDal::migrate(&admin_url).await.expect("apply migrations");
-
-    let app_url = format!("postgres://odal_app:test@127.0.0.1:{port}/odal");
-    let dal = PgDal::connect(&app_url).await.expect("app connect");
-    (dal, container)
-}
 
 fn draft_passport() -> Passport {
     Passport {
@@ -275,7 +236,8 @@ fn mock_with_poll(
 
 #[tokio::test(flavor = "multi_thread")]
 async fn publish_is_atomic_idempotent_and_drains_exactly_once() {
-    let (dal, _c) = start_pg().await;
+    let _c = start_pg().await;
+    let dal = _c.dal.clone();
     let outbox: Arc<dyn RegistrySyncOutbox> = Arc::new(PgRegistrySyncRepo::new(dal.clone()));
     let repo = PgPassportRepo::new(dal.clone());
 
@@ -328,7 +290,8 @@ async fn publish_is_atomic_idempotent_and_drains_exactly_once() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn drain_backs_off_on_transient_and_marks_terminal_rejection() {
-    let (dal, _c) = start_pg().await;
+    let _c = start_pg().await;
+    let dal = _c.dal.clone();
     let outbox: Arc<dyn RegistrySyncOutbox> = Arc::new(PgRegistrySyncRepo::new(dal.clone()));
 
     // (c) transient failure → attempts++, still pending, pushed into the future.
@@ -367,59 +330,6 @@ async fn drain_backs_off_on_transient_and_marks_terminal_rejection() {
 /// the clobbered rows), and the app URL is what `PgDal::connect` takes — it
 /// refuses a superuser role, since a superuser owns the audit table and the
 /// append-only trigger cannot bind it.
-async fn start_pg_before_0024() -> (String, String, testcontainers::ContainerAsync<GenericImage>) {
-    let image = GenericImage::new("postgres", "17")
-        .with_exposed_port(ContainerPort::Tcp(5432))
-        .with_wait_for(WaitFor::message_on_stderr(
-            "database system is ready to accept connections",
-        ))
-        .with_env_var("POSTGRES_USER", "postgres")
-        .with_env_var("POSTGRES_PASSWORD", "test")
-        .with_env_var("POSTGRES_DB", "odal");
-
-    let container = image.start().await.expect("start postgres container");
-    let port = container
-        .get_host_port_ipv4(5432)
-        .await
-        .expect("mapped port");
-    let admin_url = format!("postgres://postgres:test@127.0.0.1:{port}/odal");
-
-    tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
-
-    let admin = sqlx::postgres::PgPoolOptions::new()
-        .max_connections(1)
-        .connect(&admin_url)
-        .await
-        .expect("admin connect");
-    sqlx::query("CREATE ROLE odal_app LOGIN PASSWORD 'test'")
-        .execute(&admin)
-        .await
-        .expect("create app role");
-    let app_url = format!("postgres://odal_app:test@127.0.0.1:{port}/odal");
-
-    let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../../ops/pg");
-    let mut files: Vec<_> = std::fs::read_dir(dir)
-        .expect("read ops/pg")
-        .filter_map(|e| e.ok().map(|e| e.path()))
-        .filter(|p| p.extension().is_some_and(|x| x == "sql"))
-        .collect();
-    files.sort();
-    for path in files {
-        let name = path.file_name().unwrap().to_string_lossy().to_string();
-        if name.starts_with("0024_") {
-            break; // stop at the migration under test
-        }
-        let sql = std::fs::read_to_string(&path).expect("read migration");
-        // Repo-controlled migration text from ops/pg, not caller input.
-        sqlx::raw_sql(sqlx::AssertSqlSafe(sql))
-            .execute(&admin)
-            .await
-            .unwrap_or_else(|e| panic!("apply {name}: {e}"));
-    }
-    admin.close().await;
-    (admin_url, app_url, container)
-}
-
 /// Insert a passport plus a `registry_sync` row in the shape the old
 /// `enqueue_status` left behind — an intent sitting in the `status` column.
 async fn insert_clobbered_row(
@@ -456,7 +366,8 @@ async fn insert_clobbered_row(
 /// registrations in an existing deployment.
 #[tokio::test(flavor = "multi_thread")]
 async fn migration_0024_restores_registrations_lost_before_the_fix() {
-    let (admin_url, app_url, _c) = start_pg_before_0024().await;
+    let _c = start_pg_before("0024_").await;
+    let (admin_url, app_url) = (_c.admin_url.clone(), _c.app_url.clone());
     let admin = sqlx::postgres::PgPoolOptions::new()
         .max_connections(1)
         .connect(&admin_url)
@@ -541,7 +452,8 @@ async fn migration_0024_restores_registrations_lost_before_the_fix() {
 /// a row can stay pending indefinitely.
 #[tokio::test(flavor = "multi_thread")]
 async fn suspend_before_drain_must_not_drop_the_pending_registration() {
-    let (dal, _c) = start_pg().await;
+    let _c = start_pg().await;
+    let dal = _c.dal.clone();
     let outbox: Arc<dyn RegistrySyncOutbox> = Arc::new(PgRegistrySyncRepo::new(dal.clone()));
 
     let id = create_and_publish(&dal, &outbox).await;
@@ -580,7 +492,8 @@ async fn suspend_before_drain_must_not_drop_the_pending_registration() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn suspend_enqueues_status_intent_and_counts_reflect_state() {
-    let (dal, _c) = start_pg().await;
+    let _c = start_pg().await;
+    let dal = _c.dal.clone();
     let outbox: Arc<dyn RegistrySyncOutbox> = Arc::new(PgRegistrySyncRepo::new(dal.clone()));
 
     let id = create_and_publish(&dal, &outbox).await;
@@ -612,7 +525,8 @@ async fn suspend_enqueues_status_intent_and_counts_reflect_state() {
 /// publish transaction and by nothing else.
 #[tokio::test(flavor = "multi_thread")]
 async fn archiving_an_unpublished_draft_creates_no_outbox_row() {
-    let (dal, _c) = start_pg().await;
+    let _c = start_pg().await;
+    let dal = _c.dal.clone();
     let outbox: Arc<dyn RegistrySyncOutbox> = Arc::new(PgRegistrySyncRepo::new(dal.clone()));
     let repo = PgPassportRepo::new(dal.clone());
 
@@ -651,7 +565,8 @@ async fn archiving_an_unpublished_draft_creates_no_outbox_row() {
 /// passport that is live again.
 #[tokio::test(flavor = "multi_thread")]
 async fn republish_clears_a_stale_suspend_intent() {
-    let (dal, _c) = start_pg().await;
+    let _c = start_pg().await;
+    let dal = _c.dal.clone();
     let outbox: Arc<dyn RegistrySyncOutbox> = Arc::new(PgRegistrySyncRepo::new(dal.clone()));
 
     let id = create_and_publish(&dal, &outbox).await;
@@ -694,7 +609,8 @@ async fn republish_clears_a_stale_suspend_intent() {
 /// submission as complete and never learned if it was later refused.
 #[tokio::test(flavor = "multi_thread")]
 async fn an_accepted_submission_is_not_yet_a_registration() {
-    let (dal, _c) = start_pg().await;
+    let _c = start_pg().await;
+    let dal = _c.dal.clone();
     let outbox: Arc<dyn RegistrySyncOutbox> = Arc::new(PgRegistrySyncRepo::new(dal.clone()));
     let id = create_and_publish(&dal, &outbox).await;
 
@@ -722,7 +638,8 @@ async fn an_accepted_submission_is_not_yet_a_registration() {
 /// register the same product twice.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_submitted_row_is_polled_not_resubmitted() {
-    let (dal, _c) = start_pg().await;
+    let _c = start_pg().await;
+    let dal = _c.dal.clone();
     let outbox: Arc<dyn RegistrySyncOutbox> = Arc::new(PgRegistrySyncRepo::new(dal.clone()));
     let id = create_and_publish(&dal, &outbox).await;
 
@@ -758,7 +675,8 @@ async fn a_submitted_row_is_polled_not_resubmitted() {
 /// the submission was defective, so there is nothing to correct and resubmit.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_deactivated_record_is_terminal_but_not_rejected() {
-    let (dal, _c) = start_pg().await;
+    let _c = start_pg().await;
+    let dal = _c.dal.clone();
     let outbox: Arc<dyn RegistrySyncOutbox> = Arc::new(PgRegistrySyncRepo::new(dal.clone()));
     let id = create_and_publish(&dal, &outbox).await;
 
@@ -788,7 +706,8 @@ async fn a_deactivated_record_is_terminal_but_not_rejected() {
 /// surfaces those without fabricating a row that could never drain.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_published_passport_with_no_outbox_row_is_counted() {
-    let (dal, _c) = start_pg().await;
+    let _c = start_pg().await;
+    let dal = _c.dal.clone();
     let outbox: Arc<dyn RegistrySyncOutbox> = Arc::new(PgRegistrySyncRepo::new(dal.clone()));
     let repo = PgPassportRepo::new(dal.clone());
 
@@ -827,7 +746,8 @@ async fn a_published_passport_with_no_outbox_row_is_counted() {
 /// A draft is not owed a registration, so it is not an orphan.
 #[tokio::test(flavor = "multi_thread")]
 async fn an_unpublished_draft_is_not_counted_as_unregistered() {
-    let (dal, _c) = start_pg().await;
+    let _c = start_pg().await;
+    let dal = _c.dal.clone();
     let outbox: Arc<dyn RegistrySyncOutbox> = Arc::new(PgRegistrySyncRepo::new(dal.clone()));
     let repo = PgPassportRepo::new(dal.clone());
 
@@ -867,7 +787,8 @@ async fn operator_verified_at(
 /// touching the rows, so re-verification resumes everything untouched.
 #[tokio::test(flavor = "multi_thread")]
 async fn an_expired_operator_holds_the_drain_without_losing_rows() {
-    let (dal, _c) = start_pg().await;
+    let _c = start_pg().await;
+    let dal = _c.dal.clone();
     let outbox: Arc<dyn RegistrySyncOutbox> = Arc::new(PgRegistrySyncRepo::new(dal.clone()));
     let id = create_and_publish(&dal, &outbox).await;
 
@@ -900,7 +821,8 @@ async fn an_expired_operator_holds_the_drain_without_losing_rows() {
 /// Never verified is the same refusal: there is no verified status to rely on.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_never_verified_operator_also_holds_the_drain() {
-    let (dal, _c) = start_pg().await;
+    let _c = start_pg().await;
+    let dal = _c.dal.clone();
     let outbox: Arc<dyn RegistrySyncOutbox> = Arc::new(PgRegistrySyncRepo::new(dal.clone()));
     create_and_publish(&dal, &outbox).await;
 

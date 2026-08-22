@@ -3,4 +3,5 @@
 pub mod health;
 pub mod import;
 pub mod job_status;
+pub mod schemas;
 pub mod templates;

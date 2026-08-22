@@ -58,10 +58,13 @@ pub fn boot(plugins_dir: &str) -> Result<Arc<WasmPluginHost>> {
         .unwrap_or(false);
     ensure_signing_policy(trusted_key.is_some(), discovered.len(), allow_unsigned)?;
 
+    let mut loaded: Vec<String> = Vec::with_capacity(discovered.len());
+
     for (sector_key, path) in discovered {
         match LoadedPlugin::from_file(&engine, &path, &sector_key, trusted_key.as_ref()) {
             Ok(plugin) => {
                 tracing::info!(sector = %sector_key, path = %path.display(), "plugin loaded");
+                loaded.push(sector_key.clone());
                 host.register(sector_key, plugin);
             }
             // Fail the boot rather than skip. This used to be a `warn!`, which
@@ -90,7 +93,46 @@ pub fn boot(plugins_dir: &str) -> Result<Arc<WasmPluginHost>> {
         }
     }
 
+    report_sectors_without_plugins(&SectorCatalog::new(), &loaded);
+
     Ok(host)
+}
+
+/// Say which catalogued sectors are running with no plugin.
+///
+/// Passthrough is a legitimate configuration, so this does not refuse to boot.
+/// But a sector with no plugin and a sector whose plugin found nothing wrong
+/// produce the same thing — a determination with no findings — so from the
+/// outside they are indistinguishable. Left unsaid, "no violations" reads as
+/// "checked and clean" when it may mean "never checked".
+///
+/// `warn` rather than `info`: a production node loads a full signed set from the
+/// release pipeline, so a gap there is a misconfiguration worth noticing, and
+/// `info` is where it would be missed. A node deliberately running a subset in
+/// development sees one line at boot and can ignore it.
+fn report_sectors_without_plugins(catalog: &SectorCatalog, loaded: &[String]) {
+    let mut missing: Vec<&str> = catalog
+        .keys()
+        .into_iter()
+        .filter(|key| !loaded.iter().any(|l| l == key))
+        .collect();
+    missing.sort_unstable();
+
+    if missing.is_empty() {
+        tracing::info!(
+            sectors = catalog.len(),
+            "every catalogued sector has a plugin loaded"
+        );
+        return;
+    }
+
+    tracing::warn!(
+        sectors = %missing.join(", "),
+        count = missing.len(),
+        "no plugin loaded for these catalogued sectors; passports in them take the \
+         passthrough path — declared values are carried verbatim, with no sector \
+         validation and no findings"
+    );
 }
 
 /// The registry that serves a sector with no Wasm plugin loaded for it.
@@ -178,6 +220,33 @@ fn ensure_signing_policy(has_key: bool, plugin_count: usize, allow_unsigned: boo
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_sector_with_no_plugin_is_named() {
+        let catalog = SectorCatalog::new();
+        // Every catalogued sector but the first is missing a plugin.
+        let keys: Vec<String> = catalog.keys().into_iter().map(str::to_owned).collect();
+        let loaded = vec![keys[0].clone()];
+
+        let missing: Vec<&str> = catalog
+            .keys()
+            .into_iter()
+            .filter(|k| !loaded.iter().any(|l| l == k))
+            .collect();
+
+        assert_eq!(
+            missing.len(),
+            keys.len() - 1,
+            "every sector except the one loaded must be reported"
+        );
+        assert!(
+            !missing.contains(&keys[0].as_str()),
+            "the loaded sector must not be reported as missing"
+        );
+        // The reporting path itself must not panic on either branch.
+        report_sectors_without_plugins(&catalog, &loaded);
+        report_sectors_without_plugins(&catalog, &keys);
+    }
 
     #[test]
     fn boot_with_empty_dir() {

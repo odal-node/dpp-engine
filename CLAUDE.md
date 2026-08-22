@@ -444,7 +444,10 @@ Test tiers:
 Two things that bite:
 
 - **A feature-gated suite that stops compiling fails only in CI.** `just test` skips them entirely. Run `just check` before pushing, not `just test`.
-- **Adding a `#[cfg(test)]` helper does not make it reachable from another crate.** Rust cannot share test code across crate boundaries, which is why the Postgres harness is duplicated per suite. Follow the local copy rather than inventing a new one.
+- **Adding a `#[cfg(test)]` helper does not make it reachable from another crate.** Rust cannot share test code across crate boundaries, so the reflex is to copy — and the Postgres harness reached eight copies that had drifted into six different implementations before anyone noticed.
+- **Shared test scaffolding has one home, behind `dpp-dal`'s `test-harness` feature**, enabled from `[dev-dependencies]`. Two things live there today: `test_harness` (`start_pg`, `start_pg_raw`, `start_pg_before`) and `in_memory_repo` (`InMemoryPassportRepo`). **Do not write another one** — if the shared version cannot do what a suite needs, extend it there rather than forking a copy. `just harness-check` fails the build if you do.
+- **Not everything that shares a name is duplication.** Checked and deliberately left alone: the three `serde_json::Value` passport builders (wire-shaped, for HTTP tests — a different thing from the typed `Passport` builders), and the `TestAuthProvider` / `AlwaysFail` doubles (different implementations per suite, small, purpose-built). Merging those would couple unrelated tests to one double's behaviour. The three *typed* `Passport` builders are a real candidate and are deferred, not rejected — extract them when a fourth appears, or when two of the three need the same new field.
+- **A test keystore uses `tempfile::tempdir()`, never `std::env::temp_dir()`.** These files hold Ed25519 private keys; `tempfile` creates the directory with restrictive permissions and removes it on drop, and the hand-rolled path did neither. Return the `TempDir` alongside the store so the directory outlives it.
 
 ## Standing Conventions
 

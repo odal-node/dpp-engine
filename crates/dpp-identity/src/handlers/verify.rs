@@ -90,9 +90,19 @@ mod tests {
 
     use super::*;
 
-    fn temp_store() -> dpp_crypto::keystore::KeyStore {
-        let path = std::env::temp_dir().join(format!("verify-test-{}.json", uuid::Uuid::now_v7()));
-        dpp_crypto::keystore::KeyStore::open(path, "test").expect("open store")
+    /// A throwaway keystore in a directory that is removed when the returned
+    /// `TempDir` drops.
+    ///
+    /// The `TempDir` comes back with it deliberately: it owns the directory the
+    /// store writes into, so a helper returning only the `KeyStore` would have
+    /// the file vanish underneath it. `tempfile` also creates the directory with
+    /// restrictive permissions, which `env::temp_dir()` does not — this holds
+    /// Ed25519 private keys, throwaway or not.
+    fn temp_store() -> (dpp_crypto::keystore::KeyStore, tempfile::TempDir) {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let store = dpp_crypto::keystore::KeyStore::open(dir.path().join("keystore.json"), "test")
+            .expect("open store");
+        (store, dir)
     }
 
     fn app(store: dpp_crypto::keystore::KeyStore) -> Router {
@@ -122,7 +132,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_signature_this_service_issued_verifies_true() {
-        let store = temp_store();
+        let (store, _dir) = temp_store();
         store.generate_key("root").expect("provision key");
         let payload = json!({"passportId": "abc", "productName": "Widget"});
         let jws = signer::sign(&store, "root", &payload).expect("sign");
@@ -138,7 +148,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_signature_over_different_content_is_rejected() {
-        let store = temp_store();
+        let (store, _dir) = temp_store();
         store.generate_key("root").expect("provision key");
         let signed_payload = json!({"passportId": "abc"});
         let jws = signer::sign(&store, "root", &signed_payload).expect("sign");
@@ -155,7 +165,7 @@ mod tests {
 
     #[tokio::test]
     async fn an_unknown_operator_is_rejected_without_provisioning_a_key() {
-        let store = temp_store();
+        let (store, _dir) = temp_store();
         let payload = json!({"passportId": "abc"});
 
         let app = app(store);
@@ -169,7 +179,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_malformed_jws_is_rejected_not_a_500() {
-        let store = temp_store();
+        let (store, _dir) = temp_store();
         store.generate_key("root").expect("provision key");
         let payload = json!({"passportId": "abc"});
 
@@ -189,7 +199,7 @@ mod tests {
     /// no-such-operator case above which never gets that far.
     #[tokio::test]
     async fn a_structurally_malformed_signature_segment_is_rejected_not_a_500() {
-        let store = temp_store();
+        let (store, _dir) = temp_store();
         store.generate_key("root").expect("provision key");
         let payload = json!({"passportId": "abc"});
 

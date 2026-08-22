@@ -24,64 +24,14 @@
 #![cfg(feature = "integration-tests")]
 
 use chrono::Utc;
-use dpp_dal::pg::{PgDal, PgPassportRepo, PgSealOutboxRepo};
+use dpp_dal::pg::{PgPassportRepo, PgSealOutboxRepo};
+use dpp_dal::test_harness::start_pg;
 use dpp_domain::domain::passport::{ManufacturerInfo, Passport, PassportId};
 use dpp_domain::domain::sector::Sector;
 use dpp_domain::domain::status::PassportStatus;
 use dpp_domain::ports::passport_repo::PassportRepository;
 use dpp_domain::ports::seal::{SealFormat, SealedEnvelope};
 use dpp_types::SealOutbox;
-use testcontainers::core::{ContainerPort, WaitFor};
-use testcontainers::runners::AsyncRunner;
-use testcontainers::{GenericImage, ImageExt};
-
-struct TestPg {
-    dal: PgDal,
-    _container: testcontainers::ContainerAsync<GenericImage>,
-}
-
-async fn start_pg() -> TestPg {
-    let image = GenericImage::new("postgres", "17")
-        .with_exposed_port(ContainerPort::Tcp(5432))
-        .with_wait_for(WaitFor::message_on_stderr(
-            "database system is ready to accept connections",
-        ))
-        .with_env_var("POSTGRES_USER", "postgres")
-        .with_env_var("POSTGRES_PASSWORD", "test")
-        .with_env_var("POSTGRES_DB", "odal");
-
-    let container = image.start().await.expect("start postgres container");
-    let port = container
-        .get_host_port_ipv4(5432)
-        .await
-        .expect("mapped port");
-    let admin_url = format!("postgres://postgres:test@127.0.0.1:{port}/odal");
-
-    tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
-    let admin = sqlx::postgres::PgPoolOptions::new()
-        .max_connections(1)
-        .connect(&admin_url)
-        .await
-        .expect("admin connect");
-    sqlx::query("CREATE ROLE odal_app LOGIN PASSWORD 'test'")
-        .execute(&admin)
-        .await
-        .expect("create app role");
-
-    // Applying the whole migration set is itself part of what this file checks:
-    // 0028 has never run against a real Postgres before these tests.
-    PgDal::migrate(&admin_url)
-        .await
-        .expect("migrations apply, including 0028_seal_outbox");
-
-    let app_url = format!("postgres://odal_app:test@127.0.0.1:{port}/odal");
-    let dal = PgDal::connect(&app_url).await.expect("app connect");
-
-    TestPg {
-        dal,
-        _container: container,
-    }
-}
 
 /// A passport in the state the drain actually finds one in: published, signed,
 /// and retention-locked. The lock is the whole point — an unlocked row would
