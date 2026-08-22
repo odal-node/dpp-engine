@@ -444,7 +444,9 @@ Test tiers:
 Two things that bite:
 
 - **A feature-gated suite that stops compiling fails only in CI.** `just test` skips them entirely. Run `just check` before pushing, not `just test`.
-- **Adding a `#[cfg(test)]` helper does not make it reachable from another crate.** Rust cannot share test code across crate boundaries, which is why the Postgres harness is duplicated per suite. Follow the local copy rather than inventing a new one.
+- **Adding a `#[cfg(test)]` helper does not make it reachable from another crate.** Rust cannot share test code across crate boundaries, so the reflex is to copy — and the Postgres harness reached eight copies that had drifted into six different implementations before anyone noticed.
+- **The Postgres harness has one home: `dpp_dal::test_harness`.** `start_pg`, `start_pg_raw`, and `start_pg_before` behind `dpp-dal`'s `test-harness` feature, enabled from `[dev-dependencies]`. A suite needing a database uses those. **Do not write another `start_pg`** — if the shared one cannot do what a suite needs, extend it there rather than forking a ninth copy.
+- **A test keystore uses `tempfile::tempdir()`, never `std::env::temp_dir()`.** These files hold Ed25519 private keys; `tempfile` creates the directory with restrictive permissions and removes it on drop, and the hand-rolled path did neither. Return the `TempDir` alongside the store so the directory outlives it.
 
 ## Standing Conventions
 
