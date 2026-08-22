@@ -59,8 +59,14 @@ RUN apt-get update && apt-get upgrade -y && apt-get install -y --no-install-reco
     ca-certificates libssl3 curl \
     && rm -rf /var/lib/apt/lists/*
 
-# Fixed, non-zero uid/gid — the resolver has no local state (Redis + upstream
-# vault only), so no volume ownership to worry about.
+# Fixed, non-zero uid/gid — and for the resolver this number is part of the
+# deployment contract, not an implementation detail. The shipped compose mounts
+# no volumes here, but a deployment that enables scan telemetry over mTLS
+# bind-mounts a host PEM (SCAN_FLUSH_CLIENT_IDENTITY); that file is
+# mode-restricted because it holds a private key, so its host owner must match
+# this uid for the resolver to read it. A mismatch fails the resolver at boot,
+# in build_scan_flush_client. Treat a change to 1000 as a breaking change for
+# any deployment that mounts a credential in.
 RUN groupadd --system --gid 1000 odal \
     && useradd --system --uid 1000 --gid odal --no-create-home --shell /usr/sbin/nologin odal
 

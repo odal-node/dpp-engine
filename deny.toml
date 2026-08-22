@@ -171,18 +171,16 @@ registries = [
 # https://embarkstudios.github.io/cargo-deny/checks/bans/cfg.html
 [bans]
 # Lint level for when multiple versions of the same crate are detected.
-# "warn" not "deny": `cargo tree -d` currently reports ~70 distinct
-# duplicated crate/version pairs (windows-sys, hyper 0.14 vs 1.x, rustls 0.21
-# vs 0.23, etc.) — the ordinary shape of a workspace pulling in the AWS SDK,
-# wasmtime, sqlx, axum, and testcontainers, each with their own dependency
-# trees that don't always align. Denying outright needs a deliberately-sized
-# skip list, not a guess; "warn" keeps this visible without an immediate,
-# noisy red build. Revisit once a real skip list is curated.
-# Warn, not deny: this graph carries ~172 duplicate crate-versions (mostly
-# transitive churn in the AWS, wayland and hyper stacks). Denying without a
-# curated skip list would fail CI on day one and the reflex fix would be a
-# blanket skip, which is worse than a warning nobody suppressed. Revisit as
-# its own change, with the skip list justified entry by entry.
+# "warn" not "deny": measured 2026-08-22 on Windows, `cargo tree -d` reports 64
+# distinct crates across 148 duplicated crate-version entries — the ordinary
+# shape of a workspace pulling in the AWS SDK, wasmtime, sqlx, axum and
+# testcontainers, each with its own dependency tree, plus the `windows-sys`
+# family that will differ on Linux CI. Denying outright needs a deliberately
+# sized skip list, and the reflex version of that is a blanket skip, which is
+# worse than a warning nobody suppressed. "warn" keeps it visible without a
+# red build. Revisit as its own change, with the skip list justified entry by
+# entry — and re-measure on Linux first, since the count above is platform
+# dependent.
 multiple-versions = "warn"
 # Lint level for when a crate version requirement is `*`
 # A wildcard version requirement accepts whatever the registry serves next.
