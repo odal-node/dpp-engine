@@ -10,6 +10,8 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-08-23
+
 ### Breaking
 
 - **`publishValid` is now `sectorDataValid`.** *(Breaking: a response field is
@@ -179,6 +181,47 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   two apart is what stops a test certificate ever sealing a real passport.
 
 ### Added
+
+- **Sector JSON Schemas are fetchable.** `GET /integrator/api/v1/schemas` lists
+  every sector with a schema, the version a new passport is validated against,
+  and every version a stored passport may legitimately record;
+  `/schemas/{sector}` serves the current one and `/schemas/{sector}/{version}`
+  a pinned one (a leading `v` is accepted). Unauthenticated.
+
+  An SDK or dashboard previously had no way to see the contract before building
+  a body — the only feedback was a rejection from the create route, or the CSV
+  import template, which is an import artefact rather than a schema. These
+  resolve through the same registry the publish gate validates against, never a
+  copy: a second copy would drift, and the direction it drifts is the one where
+  a body passes here and fails at publish.
+
+  **Every `description` is omitted from the served document, deliberately and
+  temporarily.** Those fields make regulatory assertions — act numbers,
+  adoption dates, effective dates, product-class scope, annex references — that
+  have not been verified against primary text; two electronics descriptions once
+  asserted an adoption date, an effective date, three named priority product
+  classes and a phase-two date for an act that does not exist. Inside a library
+  those are developer-facing comments; on a public endpoint they become a
+  product surface a consumer reads, caches and relies on. Everything that
+  decides accept or reject — types, `enum`, `required`, `pattern`, bounds,
+  `additionalProperties` — is served in full, so a client can pre-validate a
+  body and get the verdict the create route would give. The prose is restored
+  once the audit has verified it; the stripping is one function and one call
+  site, marked as such.
+
+  `title` is kept: they are short labels, not assertions.
+
+- **A node says which catalogued sectors have no plugin loaded.** One line at
+  boot naming them, at `warn`.
+
+  Passthrough is a legitimate configuration, so this does not refuse to boot.
+  But a sector with no plugin and a sector whose plugin found nothing wrong
+  produce the same thing — a determination with no findings — so from the
+  outside they were indistinguishable, and "no violations" read as "checked and
+  clean" when it could mean "never checked". `warn` rather than `info` because a
+  production node loads a full signed set from the release pipeline, so a gap
+  there is a misconfiguration, and `info` is where it would be missed.
+
 
 - **The CLI has an automated test tier.** `cli/tests/` runs the `odal` binary as
   a child process and asserts on exit codes, output, and what lands in
@@ -501,6 +544,33 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   substitute today's date to manufacture one.
 
 ### Changed
+
+- **Shared test scaffolding has one home, and a gate that keeps it that way.**
+  The throwaway-Postgres harness and the in-memory `PassportRepository` double
+  now live behind `dpp-dal`'s dev-only `test-harness` feature, as
+  `dpp_dal::test_harness` and `dpp_dal::in_memory_repo`.
+
+  Rust cannot share `#[cfg(test)]` code across crate boundaries, so copying is
+  the path of least resistance and nothing signalled when it happened. `start_pg`
+  had reached **eight copies that had drifted into six distinct
+  implementations**, each carrying its own hardcoded readiness sleep; the
+  repository double had reached three, with the `impl` blocks byte-identical and
+  the structs already diverging. `just harness-check` now fails the build when
+  either is defined outside its home, and was verified to fail before being
+  wired in. No new crate: every consumer already depends on `dpp-dal`, which is
+  `publish = false`, so none of this ships.
+
+  Checked and deliberately left alone: the wire-shaped `serde_json::Value`
+  passport builders (a different thing from the typed ones) and the per-suite
+  auth doubles (different implementations, small, purpose-built). Merging those
+  would couple unrelated tests to one double's behaviour.
+
+- **Test keystores use `tempfile::tempdir()`.** Nine sites opened an Ed25519
+  keystore at a hand-built path under `std::env::temp_dir()`, which gives no
+  restrictive permissions and no cleanup — every run left the file behind.
+  Severity was low and stays stated plainly: the passphrases are literals, the
+  keys are throwaway, and nothing production-adjacent reads those paths.
+
 
 - **The API description is authored multi-file and shipped as one file.**
   `api/openapi.yaml` is now a thin root — `info`, `servers`, security schemes,
