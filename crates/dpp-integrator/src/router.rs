@@ -17,7 +17,7 @@ use dpp_common::{
 };
 
 use crate::{
-    handlers::{health, import, job_status, templates},
+    handlers::{health, import, job_status, schemas, templates},
     state::AppState,
 };
 
@@ -34,6 +34,12 @@ pub fn build(state: AppState) -> Router {
     Router::new()
         .route("/health", get(health::health_handler))
         .route("/api/v1/templates/{sector}", get(templates::get_template))
+        .route("/api/v1/schemas", get(schemas::list_schemas))
+        .route("/api/v1/schemas/{sector}", get(schemas::get_current_schema))
+        .route(
+            "/api/v1/schemas/{sector}/{version}",
+            get(schemas::get_pinned_schema),
+        )
         .route(
             "/api/v1/import/{sector}",
             post(import::import_file).layer(DefaultBodyLimit::max(IMPORT_BODY_LIMIT)),
@@ -86,6 +92,56 @@ mod tests {
             vault_client: Arc::new(VaultHttpClient::new("http://127.0.0.1:1")),
             job_store: Arc::new(InMemoryJobStore::new()),
             batch_concurrency: 1,
+        }
+    }
+
+    /// The three schema routes serve, and what they serve carries no prose.
+    ///
+    /// End-to-end through the router rather than against `strip_descriptions`
+    /// directly: the unit test proves the function strips, this proves the route
+    /// actually calls it before the bytes leave.
+    #[tokio::test]
+    async fn schema_routes_serve_without_descriptions() {
+        for uri in [
+            "/api/v1/schemas",
+            "/api/v1/schemas/battery",
+            "/api/v1/schemas/battery/2.6.0",
+            // A `v` prefix is accepted, since that is how the versions are
+            // spelled on disk and in the fixture directories.
+            "/api/v1/schemas/battery/v2.6.0",
+        ] {
+            let app = super::build(test_state());
+            let req = Request::builder().uri(uri).body(Body::empty()).unwrap();
+            let resp = app.oneshot(req).await.unwrap();
+            assert_eq!(resp.status(), StatusCode::OK, "{uri} must serve");
+
+            let body = axum::body::to_bytes(resp.into_body(), 4 * 1024 * 1024)
+                .await
+                .unwrap();
+            let text = String::from_utf8(body.to_vec()).unwrap();
+            assert!(
+                !text.contains("\"description\""),
+                "{uri} leaked an unaudited regulatory description"
+            );
+        }
+    }
+
+    /// An unknown sector and an unknown version are told apart, and both name
+    /// what is available rather than only refusing.
+    #[tokio::test]
+    async fn schema_routes_refuse_helpfully() {
+        for (uri, status) in [
+            ("/api/v1/schemas/nosuchsector", StatusCode::NOT_FOUND),
+            ("/api/v1/schemas/battery/9.9.9", StatusCode::NOT_FOUND),
+            (
+                "/api/v1/schemas/battery/not-semver",
+                StatusCode::BAD_REQUEST,
+            ),
+        ] {
+            let app = super::build(test_state());
+            let req = Request::builder().uri(uri).body(Body::empty()).unwrap();
+            let resp = app.oneshot(req).await.unwrap();
+            assert_eq!(resp.status(), status, "{uri}");
         }
     }
 

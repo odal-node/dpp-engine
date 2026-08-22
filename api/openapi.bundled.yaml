@@ -2292,6 +2292,125 @@ paths:
           description: No template for this sector.
         '501':
           description: XLSX export not yet implemented.
+  /integrator/api/v1/schemas:
+    get:
+      operationId: listSectorSchemas
+      summary: List sector schemas and their versions
+      description: |
+        Every sector with a JSON Schema, the version a new passport is validated
+        against (`current`), and every version a stored passport may legitimately
+        record (`versions`). Unauthenticated.
+      tags:
+        - Integrator
+      responses:
+        '200':
+          description: The available sector schemas.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  schemas:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        sector:
+                          type: string
+                          example: battery
+                        current:
+                          type:
+                            - string
+                            - 'null'
+                          example: 2.6.0
+                        versions:
+                          type: array
+                          items:
+                            type: string
+                          example:
+                            - 1.0.0
+                            - 2.6.0
+  /integrator/api/v1/schemas/{sector}:
+    get:
+      operationId: getCurrentSectorSchema
+      summary: Fetch a sector's current JSON Schema
+      description: |
+        The schema a passport created today is validated against, resolved through
+        the same registry the publish gate uses — never a copy, which would drift in
+        the direction where a body passes here and fails at publish. Unauthenticated.
+
+        Every `description` is omitted from the served document. Those fields make
+        regulatory assertions that have not been verified against primary text, and
+        serving them would turn developer-facing comments into a product surface.
+        Everything that decides accept or reject — types, `enum`, `required`,
+        `pattern`, bounds, `additionalProperties` — is served in full, so a client
+        can pre-validate a body and get the verdict the create route would give.
+      tags:
+        - Integrator
+      parameters:
+        - name: sector
+          in: path
+          required: true
+          schema:
+            type: string
+            example: battery
+      responses:
+        '200':
+          description: The sector's current JSON Schema.
+          content:
+            application/json:
+              schema:
+                type: object
+        '404':
+          description: No schema for this sector; the body names the known sectors.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+  /integrator/api/v1/schemas/{sector}/{version}:
+    get:
+      operationId: getPinnedSectorSchema
+      summary: Fetch a pinned version of a sector's JSON Schema
+      description: |
+        A stored passport records the `schemaVersion` it was written under, so a
+        client holding one needs that exact schema rather than whatever is current.
+        The version may be given with or without a leading `v`. Unauthenticated.
+
+        Descriptions are omitted, as on the current-schema route.
+      tags:
+        - Integrator
+      parameters:
+        - name: sector
+          in: path
+          required: true
+          schema:
+            type: string
+            example: battery
+        - name: version
+          in: path
+          required: true
+          schema:
+            type: string
+            example: 2.6.0
+      responses:
+        '200':
+          description: The sector's JSON Schema at that version.
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          description: The version is not a semver string.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '404':
+          description: No schema at that version; the body names what is available.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
   /integrator/api/v1/import/{sector}:
     post:
       operationId: importFile
@@ -4100,6 +4219,41 @@ components:
           type: boolean
         did_document:
           $ref: '#/components/schemas/DidDocument'
+    Problem:
+      type: object
+      description: |
+        RFC 7807 / RFC 9457 problem details. The shape
+        `dpp-common::http_problem::Problem` produces, served as
+        `application/problem+json`.
+
+        `type` is derived from `title`, so each distinct `title` used across the
+        codebase is a stable catalogue key that clients may depend on.
+      required:
+        - type
+        - title
+        - status
+      properties:
+        type:
+          type: string
+          format: uri
+          description: Absolute URI identifying the problem type.
+          example: https://problems.odal-node.io/not-found
+        title:
+          type: string
+          description: Short human-readable summary of the problem type.
+          example: Not Found
+        status:
+          type: integer
+          description: The HTTP status code, mirroring the status line.
+          example: 404
+        detail:
+          type: string
+          description: Human-readable explanation for this specific occurrence.
+          example: 'No schema for sector ''nosuchsector''. Known sectors: aluminium, battery.'
+        instance:
+          type: string
+          format: uri-reference
+          description: URI reference identifying this specific occurrence.
     ImportCreatedEntry:
       type: object
       required:
