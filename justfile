@@ -226,7 +226,7 @@ doc:
     cargo doc --workspace --no-deps
 
 # Fast gate (no Docker) — mirrors CI jobs: fmt, clippy, debug-prints, test-unit, audit
-check: fmt-check lint debug-check subjects-check mod-rs-check spec-version-check outbound-check grants-check migrations-check check-plugins test check-integration audit
+check: fmt-check lint debug-check subjects-check mod-rs-check harness-check spec-version-check outbound-check grants-check migrations-check check-plugins test check-integration audit
 
 # Full local CI mirror — adds integration-feature clippy + the Docker tiers (needs Docker running)
 ci: check lint-integration test-integration test-pg
@@ -428,3 +428,13 @@ check-plugins:
 # Clean build artefacts
 clean:
     cargo clean
+
+# Refuse a forked copy of shared test scaffolding.
+#
+# Rust cannot share `#[cfg(test)]` code across crates, so copying is the path of
+# least resistance and nothing signals when it happens: the Postgres harness
+# reached eight copies and six divergent implementations before anyone counted.
+# Both it and the in-memory PassportRepository double now live behind dpp-dal's
+# `test-harness` feature; this is the signal that was missing.
+harness-check:
+    bash scripts/harness-check.sh

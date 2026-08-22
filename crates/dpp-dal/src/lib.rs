@@ -9,3 +9,9 @@ pub mod pg;
 /// `[dev-dependencies]` entry may enable.
 #[cfg(feature = "test-harness")]
 pub mod test_harness;
+
+/// An in-memory [`PassportRepository`](dpp_domain::ports::passport_repo::PassportRepository)
+/// for suites that need the port without a database. Dev-only, same gate as
+/// [`test_harness`].
+#[cfg(feature = "test-harness")]
+pub mod in_memory_repo;

@@ -16,6 +16,7 @@ use async_trait::async_trait;
 use chrono::Utc;
 use uuid::Uuid;
 
+use dpp_dal::in_memory_repo::InMemoryPassportRepo;
 use dpp_domain::{
     DppError, GhostArchive, GhostRegistrySync,
     compliance::passthrough_registry::PassthroughRegistry,
@@ -26,7 +27,6 @@ use dpp_domain::{
         status::PassportStatus,
         transfer::{OperatorRole, ResponsibleOperator, TransferChain, TransferReason},
     },
-    ports::passport_repo::PassportRepository,
 };
 use dpp_types::{
     api_key::ApiKeyScope,
@@ -42,72 +42,6 @@ use dpp_vault::domain::service::{OperatorIdentity, PassportService};
 // ---------------------------------------------------------------------------
 // In-memory ports (no Docker/Postgres — see module doc comment)
 // ---------------------------------------------------------------------------
-
-#[derive(Default)]
-struct InMemoryPassportRepo {
-    store: Mutex<HashMap<PassportId, Passport>>,
-}
-
-#[async_trait]
-impl PassportRepository for InMemoryPassportRepo {
-    async fn create(&self, passport: Passport) -> Result<Passport, DppError> {
-        self.store
-            .lock()
-            .unwrap()
-            .insert(passport.id, passport.clone());
-        Ok(passport)
-    }
-    async fn find_by_id(&self, id: PassportId) -> Result<Option<Passport>, DppError> {
-        Ok(self.store.lock().unwrap().get(&id).cloned())
-    }
-    async fn find_published_by_id(&self, id: PassportId) -> Result<Option<Passport>, DppError> {
-        self.find_by_id(id).await
-    }
-    async fn find_published_by_gtin(&self, _gtin: &str) -> Result<Option<Passport>, DppError> {
-        Ok(None)
-    }
-    async fn find_by_id_any_status(&self, id: PassportId) -> Result<Option<Passport>, DppError> {
-        self.find_by_id(id).await
-    }
-    async fn update(&self, passport: Passport) -> Result<Passport, DppError> {
-        self.store
-            .lock()
-            .unwrap()
-            .insert(passport.id, passport.clone());
-        Ok(passport)
-    }
-    async fn update_status(
-        &self,
-        id: PassportId,
-        status: PassportStatus,
-    ) -> Result<Passport, DppError> {
-        let mut g = self.store.lock().unwrap();
-        let mut p = g
-            .get(&id)
-            .cloned()
-            .ok_or_else(|| DppError::NotFound(id.to_string()))?;
-        p.status = status;
-        g.insert(id, p.clone());
-        Ok(p)
-    }
-    async fn list(
-        &self,
-        _status: Option<PassportStatus>,
-        _q: Option<&str>,
-        _facility_id: Option<&str>,
-        _limit: u32,
-        _offset: u32,
-    ) -> Result<Vec<Passport>, DppError> {
-        Ok(self.store.lock().unwrap().values().cloned().collect())
-    }
-    async fn count(
-        &self,
-        _status: Option<PassportStatus>,
-        _facility_id: Option<&str>,
-    ) -> Result<u64, DppError> {
-        Ok(self.store.lock().unwrap().len() as u64)
-    }
-}
 
 /// Chains entries exactly as `dpp-dal::pg::repo_audit::PgAuditRepo` does —
 /// read the current head's `entry_hash` (or genesis), fold it into the new
