@@ -188,6 +188,18 @@ jobs:
           name: integration-test-results-${{ github.run_id }}
           path: dpp-engine/results/*.xml
           retention-days: 90
+      # Reads the JUnit written above rather than re-running anything, so it
+      # measures what happened and cannot itself be flaky. Enforced here and not
+      # locally: the slowest test on a Linux runner is ~5s, while the same test
+      # behind Docker Desktop reaches 17s, so a dev machine would fail honest
+      # work. `slow-timeout` in .config/nextest.toml warns there instead.
+      #
+      # `if: always()` so a slow test is still reported when another test failed
+      # — the run is red either way, and knowing both is better than knowing one.
+      - name: Slow-test budget
+        if: always()
+        working-directory: dpp-engine
+        run: bash scripts/slow-test-check.sh 10 results/*.xml
 
   debug-prints:
     name: No debug prints in service crates

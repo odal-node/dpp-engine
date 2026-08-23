@@ -1,2 +1,38 @@
+[profile.default]
+# A slow-test budget.
+#
+# Nothing objected when a resolver test drifted to **50 seconds** — a debug-build
+# loop asserting a bound that holds at any size. It sat there being the slowest
+# test in the workspace by ~500x, and the only reason it was found was a
+# deliberate hunt for where CI time went. A number nobody watches is not a
+# budget; this makes crossing the line say so.
+#
+# `period` is the warn threshold, not a failure: nextest prints SLOW and keeps
+# going. `terminate-after` multiplies it into a hard kill at 120s, which is set
+# to catch a **hang**, not a slow test. Deliberately generous — CI runners are
+# slower than a dev machine, and a budget that fails the build intermittently is
+# a budget people delete.
+#
+# 10s is above everything on the shared-Postgres path except the overrides
+# below, and the overrides are the actual budget: a list, reviewed, that grows
+# only on purpose. A new slow test is not on it, so it warns.
+#
+# Running without `ODAL_TEST_PG_ADMIN_URL` puts every database test back on
+# container-per-test at ~20s, so they will all warn. That is fair — the fallback
+# path *is* slow, and `just test-integration` is the fast one.
+slow-timeout = { period = "10s", terminate-after = 12 }
+
 [profile.default.junit]
 path = "junit.xml"
+
+# ── Slow by design ───────────────────────────────────────────────────────────
+#
+# Each entry starts its own container and cannot use the shared server. Add one
+# only with a reason; if the reason is "it got slow", fix the test instead.
+
+[[profile.default.overrides]]
+# Applies a migration to a server that predates it, which by definition needs a
+# server the migration has not been applied to — so it cannot clone the shared
+# template. `start_pg_before` boots its own Postgres, and 17s is that boot.
+filter = 'test(migration_0024_restores_registrations_lost_before_the_fix)'
+slow-timeout = { period = "40s", terminate-after = 3 }
