@@ -57,7 +57,20 @@ check-integration:
     bash scripts/check-integration.sh
 
 # Run the Docker-backed integration tiers (dal, vault, plugin-host, node)
+#
+# One shared Postgres for the whole run rather than one container per test.
+# The 171 tests that started their own were 86% of all test time; the harness
+# now clones a per-test database from a migrated template on this server
+# instead, at roughly 190ms against 12-16s.
+#
+# `just test-integration-isolated` keeps the old container-per-test behaviour,
+# which is what a bare `cargo nextest run` still does.
 test-integration:
+    bash scripts/shared-test-pg.sh just _test-integration-tiers
+
+# The tiers themselves. Runs against whatever `ODAL_TEST_PG_ADMIN_URL` names,
+# or container-per-test when it is unset.
+_test-integration-tiers:
     #!/usr/bin/env bash
     set -euo pipefail
     cargo nextest run -p dpp-dal         --features integration-tests
@@ -450,3 +463,11 @@ harness-check:
 # attributable to one crate. Run `just check` before pushing regardless.
 test-changed BASE="origin/main":
     bash scripts/test-changed.sh {{ BASE }}
+
+# The integration tiers with a container per test — the pre-sharing behaviour.
+#
+# Kept because it is the only arrangement that proves the fallback path still
+# works, and because a suspected cross-test interaction is worth re-running
+# under full isolation before believing it.
+test-integration-isolated:
+    just _test-integration-tiers
