@@ -438,3 +438,15 @@ clean:
 # `test-harness` feature; this is the signal that was missing.
 harness-check:
     bash scripts/harness-check.sh
+
+# Run only the tests a change can affect.
+#
+# Maps changed files to their crates and hands nextest an `rdeps()` filterset.
+# Measured against the 1,041-test workspace: a dpp-resolver edit selects 67
+# tests, dpp-integrator 247, dpp-vault 471, dpp-dal 511.
+#
+# An iteration aid, not a gate. It reasons about crate boundaries, not
+# behaviour, and falls back to the full suite whenever a change is not
+# attributable to one crate. Run `just check` before pushing regardless.
+test-changed BASE="origin/main":
+    bash scripts/test-changed.sh {{ BASE }}

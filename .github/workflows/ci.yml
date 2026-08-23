@@ -40,39 +40,30 @@ jobs:
       - uses: Swatinem/rust-cache@258712b0b7b1ddf8bddc9fc3b0faca682b2736c3 # v2
         with:
           workspaces: dpp-engine
-      - name: cargo clippy
-        working-directory: dpp-engine
-        run: cargo clippy --workspace --all-targets -- -D warnings
-
-  check-features:
-    name: Feature-gated code compiles
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          path: dpp-engine
-      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
-        with:
-          toolchain: stable
-      - uses: Swatinem/rust-cache@258712b0b7b1ddf8bddc9fc3b0faca682b2736c3 # v2
-        with:
-          workspaces: dpp-engine
-      # The clippy and test-unit jobs above build default features only, so the
-      # `integration-tests` suites are compiled nowhere except the Docker tiers
-      # — which need `test-unit` to pass first. A stale import in one of them
-      # therefore surfaces late, or not at all when Docker is unavailable. This
-      # is compile-only: no test runs, no Docker, so it can sit in the fast lane.
+      # Linted with the `integration-tests` features ON, which folds in what a
+      # separate compile-only job used to do.
+      #
+      # Those suites are otherwise compiled nowhere except the Docker tiers,
+      # which need `test-unit` to pass first — so a stale import in one surfaced
+      # late, or not at all when Docker was unavailable. Clippy with the features
+      # on type-checks them and lints them, which a `cargo check` did not.
+      #
+      # Safe to fold rather than run twice: features are additive and the
+      # workspace has **zero** `cfg(not(feature = "integration-tests"))` code, so
+      # nothing compiled by the default build is skipped by this one. If that
+      # ever stops being true, the default-feature pass has to come back.
       #
       # Features are named per package rather than via `--all-features`, which
       # would also enable `cli/desktop` (pulls rfd's ashpd/Wayland subtree, kept
       # out of server-side builds on purpose — see cli/Cargo.toml) and
       # `dpp-plugin-host/wasm-fixture-tests` (needs the wasm32-wasip1 target and
-      # a nested cargo build). Neither is the gap this closes.
-      - name: cargo check with the integration-tests features on
+      # a nested cargo build). Neither is a gap this closes.
+      - name: cargo clippy
         working-directory: dpp-engine
         run: |
-          cargo check --workspace --all-targets \
-            --features dpp-dal/integration-tests,dpp-vault/integration-tests,dpp-plugin-host/integration-tests,dpp-node/integration-tests
+          cargo clippy --workspace --all-targets \
+            --features dpp-dal/integration-tests,dpp-vault/integration-tests,dpp-plugin-host/integration-tests,dpp-node/integration-tests \
+            -- -D warnings
 
   test-unit:
     name: Unit tests

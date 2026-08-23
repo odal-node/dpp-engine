@@ -32,12 +32,29 @@ use dpp_resolver::{config::Config, infra::cache::Cache, router, state::AppState}
 /// keep memory bounded regardless of input.
 const MAX_BUCKETS: usize = 50_000;
 
+/// How much smaller the expiry sweep's threshold is than the hard cap.
+///
+/// The sweep runs first and drops only *expired* buckets; the cap is the
+/// backstop for when none are. Derived rather than a second constant so the two
+/// cannot drift, and so a test can shrink both together — `MAX_BUCKETS /
+/// SWEEP_DIVISOR` is exactly the 10,000 that was hardcoded here.
+const SWEEP_DIVISOR: usize = 5;
+
 struct RateLimiter {
     max: u32,
     window: Duration,
     /// Whether to trust the `X-Forwarded-For` header (only safe behind a proxy
     /// that sets it and strips inbound copies). Off by default.
     trust_forwarded_for: bool,
+    /// Hard cap on bucket count. Always [`MAX_BUCKETS`] in production —
+    /// [`RateLimiter::new`] is the only constructor a binary calls.
+    ///
+    /// A field rather than a constant read directly so the bound can be proven
+    /// against a small cap. The property under test is "the map never exceeds
+    /// its cap", which does not depend on the cap being 50,000 — and driving
+    /// 55,000 iterations through a debug build to assert it cost 50 seconds,
+    /// making it the slowest test in the workspace by a factor of ~500.
+    max_buckets: usize,
     buckets: Mutex<HashMap<IpAddr, (Instant, u32)>>,
 }
 
@@ -47,8 +64,16 @@ impl RateLimiter {
             max,
             window,
             trust_forwarded_for,
+            max_buckets: MAX_BUCKETS,
             buckets: Mutex::new(HashMap::new()),
         }
+    }
+
+    /// Shrink the bucket cap. Test-only: no binary path sets this.
+    #[cfg(test)]
+    fn with_max_buckets(mut self, max_buckets: usize) -> Self {
+        self.max_buckets = max_buckets;
+        self
     }
 
     /// Returns `true` if the request from `ip` is within the limit.
@@ -56,12 +81,12 @@ impl RateLimiter {
         let now = Instant::now();
         let mut buckets = self.buckets.lock().unwrap();
         // Bound memory: drop expired buckets once the map grows large.
-        if buckets.len() > 10_000 {
+        if buckets.len() > self.max_buckets / SWEEP_DIVISOR {
             buckets.retain(|_, (start, _)| now.duration_since(*start) < self.window);
         }
         // Hard cap: under a flood of fresh (spoofed) IPs none are expired, so the
         // expiry retain above can't shrink the map. Clear it to stay bounded.
-        if buckets.len() > MAX_BUCKETS {
+        if buckets.len() > self.max_buckets {
             buckets.clear();
         }
         let entry = buckets.entry(ip).or_insert((now, 0));
@@ -342,15 +367,31 @@ mod security_regression {
     fn bucket_map_stays_bounded_under_fresh_ip_flood() {
         // A flood of distinct, never-expiring IPs must not grow the map without
         // bound; the hard cap clears it well before it can exhaust memory.
-        let limiter = RateLimiter::new(1, Duration::from_secs(3600), false);
-        for i in 0u32..(MAX_BUCKETS as u32 + 5_000) {
+        //
+        // Driven against a small cap. The property is that the map never
+        // exceeds `max_buckets`, which holds at any cap — and asserting it at
+        // the production 50,000 meant 55,000 iterations through a debug build,
+        // 50 seconds, and the slowest test in the workspace by ~500x. The cap's
+        // production *value* is pinned separately below.
+        const CAP: usize = 50;
+        let limiter = RateLimiter::new(1, Duration::from_secs(3600), false).with_max_buckets(CAP);
+        for i in 0u32..(CAP as u32 + 500) {
             let ip = IpAddr::from((0x0a00_0000u32 + i).to_be_bytes());
             limiter.check(ip);
         }
         let len = limiter.buckets.lock().unwrap().len();
-        assert!(
-            len <= MAX_BUCKETS,
-            "bucket map grew to {len}, cap {MAX_BUCKETS}"
-        );
+        assert!(len <= CAP, "bucket map grew to {len}, cap {CAP}");
+    }
+
+    /// The cap the binary actually runs with.
+    ///
+    /// Separated from the property test so shrinking the cap there cannot
+    /// quietly shrink it in production: that test proves the bound holds, this
+    /// one proves the bound is the one we intend.
+    #[test]
+    fn the_default_limiter_uses_the_production_cap() {
+        let limiter = RateLimiter::new(1, Duration::from_secs(60), false);
+        assert_eq!(limiter.max_buckets, MAX_BUCKETS);
+        assert_eq!(MAX_BUCKETS / SWEEP_DIVISOR, 10_000, "sweep threshold moved");
     }
 }
