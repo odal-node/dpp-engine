@@ -16,8 +16,14 @@
 set -euo pipefail
 
 # "<home file>|<regex>|<what to do instead>"
+#
+# The Postgres rule matches on **starting a container**, not on a function name.
+# Naming it `^async fn start_pg` let a ninth copy sit in
+# `dpp-vault/tests/helpers/mod.rs` for the length of the consolidation, spelled
+# `start_postgres` — 109 call sites and the bulk of the workspace's slowest
+# tests, invisible to a gate written to catch exactly the copy already found.
 rules=(
-  "crates/dpp-dal/src/test_harness.rs|^async fn start_pg|use dpp_dal::test_harness::{start_pg, start_pg_raw, start_pg_before}"
+  "crates/dpp-dal/src/test_harness.rs|GenericImage::new\\(\"postgres\"|use dpp_dal::test_harness::{start_pg, start_pg_raw, start_pg_before}"
   "crates/dpp-dal/src/in_memory_repo.rs|^impl PassportRepository for InMemoryPassportRepo|use dpp_dal::in_memory_repo::InMemoryPassportRepo"
 )
 

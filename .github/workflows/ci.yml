@@ -94,6 +94,35 @@ jobs:
     name: Integration tests (testcontainers)
     runs-on: ubuntu-latest
     needs: [test-unit]
+    # One Postgres for the whole job, rather than one container per test.
+    #
+    # `start_pg` is called from 170 places and used to boot a fresh `postgres:17`
+    # each time; measured on this workspace, the tests that did so were 86% of
+    # all test time at 12-16s apiece. The harness now clones a per-test database
+    # from a migrated template on this server — roughly 190ms — and falls back to
+    # starting its own container when `ODAL_TEST_PG_ADMIN_URL` is unset, which is
+    # what a bare `cargo nextest run` still does.
+    #
+    # Docker is still needed: the plugin-host suite uses it, and the migration
+    # tests (`start_pg_before`) deliberately keep starting their own server,
+    # because a test of a migration needs one the migration has not been applied
+    # to.
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      ODAL_TEST_PG_ADMIN_URL: postgres://postgres:test@127.0.0.1:5432/postgres
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:

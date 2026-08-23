@@ -11,16 +11,11 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use base64::Engine;
-use testcontainers::{
-    GenericImage, ImageExt,
-    core::{WaitFor, ports::ContainerPort},
-    runners::AsyncRunner,
-};
 
 use dpp_dal::pg::{
     PgApiKeyRepo, PgAuditRepo, PgDal, PgEvidenceDossierRepo, PgOperatorConfigRepo, PgPassportRepo,
     PgRegistryIdentityRepo, PgRegistrySyncRepo, PgRegistryTransferRepo, PgScanTelemetryRepo,
-    PgSealOutboxRepo, PgWebhookRepo, sqlx,
+    PgSealOutboxRepo, PgWebhookRepo,
 };
 use dpp_domain::{
     DppError, GhostArchive, GhostRegistrySync,
@@ -106,55 +101,33 @@ impl AuthProvider for TestAuthProvider {
 // PostgreSQL container
 // ---------------------------------------------------------------------------
 
-/// A running PostgreSQL testcontainer together with an app-role PgDal ready for use.
+/// A database ready for use, and whatever is keeping it alive.
+///
+/// The name is kept because 109 call sites across 27 files use it. What it
+/// holds is no longer necessarily a container — see [`start_postgres`].
 pub struct PgContainer {
     pub dal: PgDal,
-    _container: testcontainers::ContainerAsync<GenericImage>,
+    /// Held so the database outlives the test. On the shared-server path this
+    /// owns nothing; on the fallback path it owns the container.
+    _pg: dpp_dal::test_harness::TestPg,
 }
 
-/// Start a fresh postgres:17 container, provision the `odal_app` role, run
-/// migrations, and return an app-role `PgDal`.
+/// A migrated database with an app-role `PgDal` connected to it.
+///
+/// Delegates to the shared harness. This used to start its own `postgres:17`
+/// per call — a **ninth** copy of a harness that had already been consolidated,
+/// missed by `just harness-check` only because it was spelled `start_postgres`
+/// rather than `start_pg`. That gate now matches on starting a Postgres
+/// container at all, not on a function name.
+///
+/// The cost was not small: these 109 call sites were the bulk of the 171 tests
+/// that consumed 86% of all test time, at 12-16s each. Through the shared
+/// harness the same tests take one to two seconds.
 pub async fn start_postgres() -> PgContainer {
-    let image = GenericImage::new("postgres", "17")
-        .with_exposed_port(ContainerPort::Tcp(5432))
-        .with_wait_for(WaitFor::message_on_stderr(
-            "database system is ready to accept connections",
-        ))
-        // POSTGRES_USER/PASSWORD/DB are the official Postgres image's required
-        // env vars for this throwaway testcontainer — NOT the app's
-        // DATABASE_POSTGRES_PASS / DATABASE_APP_PASS scheme.
-        .with_env_var("POSTGRES_USER", "postgres")
-        .with_env_var("POSTGRES_PASSWORD", "test")
-        .with_env_var("POSTGRES_DB", "odal");
-
-    let container = image.start().await.expect("start postgres container");
-    let port = container
-        .get_host_port_ipv4(5432)
-        .await
-        .expect("mapped port");
-    let admin_url = format!("postgres://postgres:test@127.0.0.1:{port}/odal");
-
-    // PG restarts once during init — give it a moment.
-    tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
-
-    let admin = sqlx::postgres::PgPoolOptions::new()
-        .max_connections(1)
-        .connect(&admin_url)
-        .await
-        .expect("admin connect");
-    sqlx::query("CREATE ROLE odal_app LOGIN PASSWORD 'test'")
-        .execute(&admin)
-        .await
-        .expect("create app role");
-
-    PgDal::migrate(&admin_url).await.expect("apply migrations");
-
-    let app_url = format!("postgres://odal_app:test@127.0.0.1:{port}/odal");
-    let dal = PgDal::connect(&app_url).await.expect("app connect");
-
+    let pg = dpp_dal::test_harness::start_pg().await;
     PgContainer {
-        dal,
-        _container: container,
+        dal: pg.dal.clone(),
+        _pg: pg,
     }
 }
 
