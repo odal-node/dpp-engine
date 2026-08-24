@@ -56,7 +56,7 @@ pub async fn eol_handler(
     eol.notes = body.notes;
 
     match state.service.declare_eol(passport_id, eol, &auth).await {
-        Ok(p) => (StatusCode::OK, Json(p)).into_response(),
+        Ok(p) => (StatusCode::OK, Json(crate::api::PassportResponse::from(&p))).into_response(),
         Err(dpp_domain::DppError::NotFound(_)) => not_found_error("DPP not found."),
         Err(dpp_domain::DppError::InvalidTransition { .. }) => {
             conflict_error("DPP cannot be deactivated from its current state.")

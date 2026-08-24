@@ -38,7 +38,9 @@ pub async fn find_by_identity_handler(
     };
 
     match state.service.find_by_identity(&identity).await {
-        Ok(Some(p)) => (StatusCode::OK, Json(p)).into_response(),
+        Ok(Some(p)) => {
+            (StatusCode::OK, Json(crate::api::PassportResponse::from(&p))).into_response()
+        }
         Ok(None) => dpp_common::http_problem::not_found("No passport matches that identity.")
             .into_response(),
         Err(e) => internal_error(e),

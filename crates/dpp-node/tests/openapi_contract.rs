@@ -236,8 +236,16 @@ fn object_cases() -> Vec<ObjectCase> {
         };
     }
 
-    // ── dpp-core: the passport aggregate and its parts ────────────────────
-    case!("PassportResponse", fixtures::passport());
+    // ── the API's own response shape, and the core parts it embeds ───────
+    //
+    // `PassportResponse` is this service's type, not the core aggregate. It was
+    // the aggregate until the API model was cut, which meant this gate proved
+    // the spec matched a *library's internal shape* — so a rename inside core
+    // rewrote the published API with no step where anyone agreed to it.
+    case!(
+        "PassportResponse",
+        dpp_vault::api::PassportResponse::from(&fixtures::passport())
+    );
     case!("ManufacturerInfo", fixtures::manufacturer());
     case!("MaterialEntry", fixtures::material());
     case!("PassportRef", fixtures::passport_ref());
@@ -1931,7 +1939,7 @@ mod fixtures {
 
     pub fn passport_list_response() -> PassportListResponse {
         PassportListResponse {
-            dpps: vec![passport()],
+            dpps: vec![dpp_vault::api::PassportResponse::from(&passport())],
             total: 42,
             limit: 20,
             skip: 0,

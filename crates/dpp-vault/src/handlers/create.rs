@@ -189,7 +189,11 @@ pub async fn create_handler(
     };
 
     match state.service.create(passport, &auth).await {
-        Ok(p) => (StatusCode::CREATED, Json(p)).into_response(),
+        Ok(p) => (
+            StatusCode::CREATED,
+            Json(crate::api::PassportResponse::from(&p)),
+        )
+            .into_response(),
         Err(e) => internal_error(e),
     }
 }
