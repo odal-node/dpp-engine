@@ -50,12 +50,12 @@ async fn fetch_passport(state: &AppState, dpp_id: &str) -> Result<Value, StatusC
 /// Generate and return a PNG QR code encoding the passport's GS1 Digital Link
 /// URI.
 ///
-/// The URI is built from `gtin` (`sectorData.gtin`) and `batchId`, read from
+/// The URI is built from `gtin` (`productGroupData.gtin`) and `batchId`, read from
 /// the verified passport JSON — NOT from the stored `qrCodeUrl`, which is set
 /// *after* signing and is therefore content-binding-exempt and tamperable
 /// (red-team RT2-2). The passport's JWS is verified first, exactly as the
 /// HTML/JSON paths do, so the QR image fails closed on a tampered or
-/// unverifiable passport. A passport whose sector data carries no GTIN (e.g.
+/// unverifiable passport. A passport whose product group data carries no GTIN (e.g.
 /// an unsold-goods report) has no valid GS1 Digital Link carrier and fails
 /// closed with `422` rather than printing a broken or misleading code.
 pub async fn resolve_qr_handler(

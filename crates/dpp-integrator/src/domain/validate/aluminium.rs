@@ -4,7 +4,7 @@ use std::collections::HashMap;
 
 use dpp_domain::domain::{
     passport::ManufacturerInfo,
-    sector::{AluminiumData, ProductionRoute, Sector, SectorData},
+    product_group::{AluminiumData, ProductGroup, ProductGroupData, ProductionRoute},
 };
 
 use crate::domain::fields::{optional_f64, optional_str, parse_gtin, require_f64, require_str};
@@ -47,7 +47,7 @@ pub fn validate_aluminium_row(
     Ok(CreatePassportRequest {
         product_name: product_name
             .expect("field verified present by errors.is_empty() guard above"),
-        sector: Some(Sector::Aluminium),
+        product_group: Some(ProductGroup::Aluminium),
         manufacturer: ManufacturerInfo {
             name: manufacturer_name
                 .expect("field verified present by errors.is_empty() guard above"),
@@ -58,7 +58,7 @@ pub fn validate_aluminium_row(
         materials: None,
         co2e_per_unit: None,
         repairability_score: None,
-        sector_data: Some(SectorData::Aluminium(AluminiumData {
+        product_group_data: Some(ProductGroupData::Aluminium(AluminiumData {
             gtin: gtin.expect("field verified present by errors.is_empty() guard above"),
             alloy_grade: alloy_grade
                 .expect("field verified present by errors.is_empty() guard above"),
@@ -103,16 +103,16 @@ mod tests {
     fn valid_aluminium_row_produces_request() {
         let row = aluminium_row();
         let req = validate_aluminium_row(&row, 1).expect("valid aluminium row");
-        assert_eq!(req.sector, Some(Sector::Aluminium));
-        match req.sector_data.unwrap() {
-            SectorData::Aluminium(d) => {
+        assert_eq!(req.product_group, Some(ProductGroup::Aluminium));
+        match req.product_group_data.unwrap() {
+            ProductGroupData::Aluminium(d) => {
                 assert_eq!(d.recycled_content_pct, 75.0);
                 assert!(matches!(
                     d.production_route,
                     ProductionRoute::SecondaryRecycled
                 ));
             }
-            _ => panic!("expected aluminium sector data"),
+            _ => panic!("expected aluminium product_group data"),
         }
     }
 }

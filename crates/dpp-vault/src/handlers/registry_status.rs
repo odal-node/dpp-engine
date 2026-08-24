@@ -33,53 +33,53 @@ const STALL_THRESHOLD: i32 = 5;
 /// One passport's registration, as the registry queue holds it.
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
-struct RegistrationView {
+pub struct RegistrationView {
     /// Queue state: `pending`, `submitted`, `registered`, `rejected`,
     /// `deactivated`.
-    status: &'static str,
+    pub status: &'static str,
     /// The registry's own record id, once it has issued one.
     #[serde(skip_serializing_if = "Option::is_none")]
-    registry_id: Option<String>,
+    pub registry_id: Option<String>,
     /// The last thing the registry (or the drain) said about it.
     #[serde(skip_serializing_if = "Option::is_none")]
-    message: Option<String>,
+    pub message: Option<String>,
     /// Attempts so far, and whether that count has reached the stall threshold.
-    attempts: i32,
-    stalled: bool,
+    pub attempts: i32,
+    pub stalled: bool,
     /// A status change owed to the registry, independent of the queue state.
     #[serde(skip_serializing_if = "Option::is_none")]
-    status_intent: Option<&'static str>,
+    pub status_intent: Option<&'static str>,
 }
 
 /// One transfer-of-responsibility notification.
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
-struct TransferView {
-    transfer_id: uuid::Uuid,
+pub struct TransferView {
+    pub transfer_id: uuid::Uuid,
     /// Queue state: `pending`, `notified`, `rejected`.
-    status: &'static str,
+    pub status: &'static str,
     #[serde(skip_serializing_if = "Option::is_none")]
-    registry_id: Option<String>,
+    pub registry_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    message: Option<String>,
-    attempts: i32,
-    stalled: bool,
+    pub message: Option<String>,
+    pub attempts: i32,
+    pub stalled: bool,
 }
 
 /// `GET /api/v1/dpp/{dppId}/registry` response.
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
-struct PassportRegistryView {
-    passport_id: String,
+pub struct PassportRegistryView {
+    pub passport_id: String,
     /// Whether this deployment has registry queues at all.
-    configured: bool,
+    pub configured: bool,
     /// `None` when the passport has never been published — it owes no
     /// registration, which is different from owing one that has not happened.
     #[serde(skip_serializing_if = "Option::is_none")]
-    registration: Option<RegistrationView>,
+    pub registration: Option<RegistrationView>,
     /// Every handover notification recorded for this passport, newest first.
     #[serde(skip_serializing_if = "Vec::is_empty")]
-    transfers: Vec<TransferView>,
+    pub transfers: Vec<TransferView>,
     /// Who is responsible for this passport **now**, from its transfer chain.
     ///
     /// Reported separately because the passport's own `operatorIdentifier` is
@@ -89,31 +89,31 @@ struct PassportRegistryView {
     /// fact about the product, not a defect. `None` when the passport has never
     /// been transferred, in which case the passport's own field is current.
     #[serde(skip_serializing_if = "Option::is_none")]
-    current_operator: Option<CurrentOperatorView>,
+    pub current_operator: Option<CurrentOperatorView>,
 }
 
 /// The operator responsible for a passport today, per its transfer chain.
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
-struct CurrentOperatorView {
-    did: String,
-    name: String,
-    country: String,
+pub struct CurrentOperatorView {
+    pub did: String,
+    pub name: String,
+    pub country: String,
     /// How many completed handovers this passport has been through.
-    transfer_count: usize,
+    pub transfer_count: usize,
 }
 
 /// `GET /api/v1/registry` response.
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
-struct RegistryRollupView {
-    configured: bool,
+pub struct RegistryRollupView {
+    pub configured: bool,
     /// Whether this operator may currently register anything at all.
-    verification: VerificationView,
+    pub verification: VerificationView,
     #[serde(skip_serializing_if = "Option::is_none")]
-    registrations: Option<RegistrationCounts>,
+    pub registrations: Option<RegistrationCounts>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    transfers: Option<TransferCounts>,
+    pub transfers: Option<TransferCounts>,
 }
 
 /// The operator's verified-registry standing.
@@ -124,36 +124,36 @@ struct RegistryRollupView {
 /// reported whether or not the queues are configured.
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
-struct VerificationView {
+pub struct VerificationView {
     /// `false` both when never verified and when lapsed — the registry refuses
     /// either way, though they are different situations to act on.
-    current: bool,
+    pub current: bool,
     /// `None` when never verified.
     #[serde(skip_serializing_if = "Option::is_none")]
-    verified_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub verified_at: Option<chrono::DateTime<chrono::Utc>>,
     /// The three-year cap. The eID means may expire sooner, which this cannot
     /// see, so it is an upper bound rather than a promise.
     #[serde(skip_serializing_if = "Option::is_none")]
-    expires_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub expires_at: Option<chrono::DateTime<chrono::Utc>>,
     /// Days remaining, negative once lapsed. Absent when never verified.
     #[serde(skip_serializing_if = "Option::is_none")]
-    days_remaining: Option<i64>,
+    pub days_remaining: Option<i64>,
 }
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
-struct RegistrationCounts {
-    pending: i64,
-    submitted: i64,
-    registered: i64,
-    rejected: i64,
-    deactivated: i64,
+pub struct RegistrationCounts {
+    pub pending: i64,
+    pub submitted: i64,
+    pub registered: i64,
+    pub rejected: i64,
+    pub deactivated: i64,
     /// Status changes owed to the registry. Nothing drains these — the registry
     /// publishes no status-push API — so they are held durably and counted here
     /// rather than accumulating out of sight.
-    status_intents: i64,
+    pub status_intents: i64,
     /// Rows that have retried past the point of self-recovery.
-    stalled: i64,
+    pub stalled: i64,
     /// Published passports with **no** outbox row at all.
     ///
     /// These owe a registration nobody is tracking: passports published before
@@ -161,16 +161,16 @@ struct RegistrationCounts {
     /// not repaired — the queued payload is what a drain replays, and there is
     /// none to rebuild, so fabricating a row would create an entry that can
     /// never drain.
-    unregistered_published: i64,
+    pub unregistered_published: i64,
 }
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
-struct TransferCounts {
-    pending: i64,
-    notified: i64,
-    rejected: i64,
-    stalled: i64,
+pub struct TransferCounts {
+    pub pending: i64,
+    pub notified: i64,
+    pub rejected: i64,
+    pub stalled: i64,
 }
 
 fn registration_status(s: dpp_types::RegistrySyncStatus) -> &'static str {

@@ -174,7 +174,7 @@ pub fn render_whoami(who: &WhoAmI) {
 
 /// `odal validate <file>` — the dry-run verdict.
 ///
-/// Both verdicts are always shown. Create is lenient about a sector with no
+/// Both verdicts are always shown. Create is lenient about a product group with no
 /// resolvable schema and publish fails closed on it, so a body can be
 /// creatable and not yet publishable — collapsing the two into one line would
 /// hide that gap until the operator tried to publish.
@@ -196,14 +196,14 @@ pub fn render_dry_run(verdict: &DryRunVerdict) {
         }
     );
     // Deliberately not "would be accepted". The node's publish verdict is its
-    // sector-data schema gate alone; publish additionally requires registry
+    // product group-data schema gate alone; publish additionally requires registry
     // identity, and category-mandatory content for some product categories,
     // neither of which this preview runs. Reporting a pass here as acceptance
     // would promise more than the node checked.
     println!(
-        "{} sector   {}",
-        mark(verdict.sector_data_valid),
-        if verdict.sector_data_valid {
+        "{} product_group   {}",
+        mark(verdict.product_group_data_valid),
+        if verdict.product_group_data_valid {
             "clears the publish-time schema gate"
         } else {
             "would be refused at publish"
@@ -212,7 +212,7 @@ pub fn render_dry_run(verdict: &DryRunVerdict) {
     if let Some(detail) = &verdict.detail {
         println!("\n{detail}");
     }
-    if verdict.create_valid && verdict.sector_data_valid {
+    if verdict.create_valid && verdict.product_group_data_valid {
         println!(
             "\n{}",
             style(
@@ -241,7 +241,7 @@ pub fn render_passport_list(page: &PassportPage) {
             "{:<10} {:<32} {:<9} {:<18} {}",
             r.status,
             truncate(&r.product_name, 32),
-            r.sector,
+            r.product_group,
             r.batch.as_deref().unwrap_or("—"),
             r.updated
         );
@@ -261,7 +261,7 @@ pub fn render_passport_details(doc: &serde_json::Value) {
 
     line("Product", s("productName").unwrap_or("—"));
     line("Status", s("status").unwrap_or("—"));
-    line("Sector", s("sector").unwrap_or("—"));
+    line("ProductGroup", s("productGroup").unwrap_or("—"));
     line("Batch / ref", s("batchId").unwrap_or("—"));
     if let Some(name) = doc
         .get("manufacturer")

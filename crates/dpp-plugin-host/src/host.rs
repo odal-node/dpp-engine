@@ -1,5 +1,5 @@
-//! `WasmPluginHost` — the `ComplianceRegistry` impl, per-sector dispatch, and
-//! passthrough fallback when no plugin is loaded for a sector.
+//! `WasmPluginHost` — the `ComplianceRegistry` impl, per-product group dispatch, and
+//! passthrough fallback when no plugin is loaded for a product group.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -8,8 +8,8 @@ use std::sync::{Arc, RwLock};
 use chrono::NaiveDate;
 use dpp_common::plugin_admin::{InstalledPlugin, PluginAdmin, PluginInstallError};
 use dpp_domain::{
-    PassthroughRegistry, SectorCatalog,
-    domain::sector::{Sector, SectorData},
+    InstrumentCatalog, PassthroughRegistry,
+    domain::product_group::{ProductGroup, ProductGroupData},
     ports::{
         compliance::{
             ComplianceError, ComplianceErrorKind, ComplianceFinding, ComplianceRegistry,
@@ -37,16 +37,16 @@ struct InstallConfig {
     plugins_dir: PathBuf,
 }
 
-/// Thread-safe registry of loaded Wasm sector plugins.
+/// Thread-safe registry of loaded Wasm product group plugins.
 ///
 /// The node boots this at startup, scanning `/plugins/*.wasm`.
 /// Requests are dispatched here; fallback to `PassthroughRegistry` when
-/// no plugin is loaded for the requested sector.
+/// no plugin is loaded for the requested product group.
 pub struct WasmPluginHost {
     plugins: Arc<RwLock<HashMap<String, Arc<LoadedPlugin>>>>,
     /// Runtime install capability; `None` on a passthrough/test host.
     install: Option<InstallConfig>,
-    /// Serves any sector with no loaded plugin.
+    /// Serves any product group with no loaded plugin.
     ///
     /// This used to be a hard-coded `ComplianceResult::passthrough()`, which
     /// meant `PassthroughRegistry` — and therefore the whole `ComplianceStrategy`
@@ -86,12 +86,12 @@ impl WasmPluginHost {
         }
     }
 
-    /// Replace the registry that serves sectors with no loaded plugin.
+    /// Replace the registry that serves product groups with no loaded plugin.
     ///
-    /// The per-sector `ComplianceStrategy` seam is reached through here: a build
-    /// that computes a real determination for one sector registers its strategy
+    /// The per-product group `ComplianceStrategy` seam is reached through here: a build
+    /// that computes a real determination for one product group registers its strategy
     /// on a `PassthroughRegistry` and hands the result to this, leaving every
-    /// other sector on the passthrough it already had.
+    /// other product group on the passthrough it already had.
     #[must_use]
     pub fn with_fallback(mut self, fallback: Arc<dyn ComplianceRegistry>) -> Self {
         self.fallback = fallback;
@@ -99,28 +99,28 @@ impl WasmPluginHost {
     }
 
     /// Register a plugin that was loaded by `loader::load_plugin`.
-    pub fn register(&self, sector_key: String, plugin: LoadedPlugin) {
+    pub fn register(&self, product_group_key: String, plugin: LoadedPlugin) {
         self.plugins
             .write()
             .unwrap()
-            .insert(sector_key, Arc::new(plugin));
+            .insert(product_group_key, Arc::new(plugin));
     }
 
-    /// Fetch the plugin bound to `sector_key`, cloning its `Arc` out from under a
+    /// Fetch the plugin bound to `product_group_key`, cloning its `Arc` out from under a
     /// momentary read lock so the (potentially long) Wasm invocation runs without
     /// holding the registry lock. This is what lets a [`reload_plugin`] swap and
     /// in-flight invocations proceed concurrently.
     ///
     /// [`reload_plugin`]: Self::reload_plugin
-    pub fn get_plugin(&self, sector_key: &str) -> Option<Arc<LoadedPlugin>> {
-        self.plugins.read().unwrap().get(sector_key).cloned()
+    pub fn get_plugin(&self, product_group_key: &str) -> Option<Arc<LoadedPlugin>> {
+        self.plugins.read().unwrap().get(product_group_key).cloned()
     }
 
-    /// Atomically swap in a freshly loaded plugin, keyed on its own sector.
+    /// Atomically swap in a freshly loaded plugin, keyed on its own product group.
     ///
     /// The swap only affects invocations that *begin* after it returns; an
     /// invocation already running holds its own `Arc` to the previous instance
-    /// and completes normally (last-good continuity). Returns the sector key that
+    /// and completes normally (last-good continuity). Returns the product group key that
     /// was (re)bound.
     ///
     /// Callers build the replacement via [`LoadedPlugin::from_file`] first —
@@ -128,12 +128,12 @@ impl WasmPluginHost {
     /// module by calling `describe()`. A rejected artifact errors there and never
     /// reaches this method, so the previously bound plugin keeps serving.
     pub fn reload_plugin(&self, plugin: LoadedPlugin) -> String {
-        let sector_key = plugin.sector_key.clone();
+        let product_group_key = plugin.product_group_key.clone();
         self.plugins
             .write()
             .unwrap()
-            .insert(sector_key.clone(), Arc::new(plugin));
-        sector_key
+            .insert(product_group_key.clone(), Arc::new(plugin));
+        product_group_key
     }
 
     /// Verify a signed artifact, persist it, and hot-swap it into service —
@@ -147,7 +147,7 @@ impl WasmPluginHost {
     /// previously installed plugin keeps serving.
     pub fn install_plugin(
         &self,
-        sector: &str,
+        product_group: &str,
         artifact: Vec<u8>,
         sig: Vec<u8>,
         precompiled: bool,
@@ -157,17 +157,17 @@ impl WasmPluginHost {
             .as_ref()
             .ok_or(PluginInstallError::NotSupported)?;
 
-        // Guard the sector key before it becomes a filename: it is interpolated
-        // verbatim into `sector-{sector}.wasm`, so an admin-supplied value like
+        // Guard the product group key before it becomes a filename: it is interpolated
+        // verbatim into `product-group-{product group}.wasm`, so an admin-supplied value like
         // `../evil` would escape the plugins directory (a path-traversal write).
-        // Sector catalog keys are lowercase kebab-case; reject anything else.
-        if sector.is_empty()
-            || !sector
+        // ProductGroup catalog keys are lowercase kebab-case; reject anything else.
+        if product_group.is_empty()
+            || !product_group
                 .bytes()
                 .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
         {
             return Err(PluginInstallError::Rejected(format!(
-                "invalid sector key '{sector}' — expected lowercase letters, digits, and '-'"
+                "invalid product_group key '{product_group}' — expected lowercase letters, digits, and '-'"
             )));
         }
 
@@ -178,7 +178,7 @@ impl WasmPluginHost {
         // A precompiled artifact is persisted as `.cwasm` so `discover_plugins`
         // and `from_file` treat it as AOT (deserialize) rather than compile.
         let ext = if precompiled { "cwasm" } else { "wasm" };
-        let file_stem = format!("sector-{sector}");
+        let file_stem = format!("product-group-{product_group}");
 
         // Stage inside the plugins dir so the final promotion is a same-filesystem
         // rename. `verify_plugin_signature` derives the `.sig` path by appending
@@ -195,7 +195,7 @@ impl WasmPluginHost {
         let loaded = LoadedPlugin::from_file(
             &cfg.engine,
             &staged_artifact,
-            sector,
+            product_group,
             cfg.trusted_key.as_ref(),
         )
         .map_err(|e| {
@@ -217,20 +217,20 @@ impl WasmPluginHost {
         }
         let _ = std::fs::remove_dir_all(&staging);
 
-        // Retire any stale opposite-format artifact for this sector so a restart
-        // discovers exactly one file per sector (never a `.wasm` and a `.cwasm`).
+        // Retire any stale opposite-format artifact for this product group so a restart
+        // discovers exactly one file per product group (never a `.wasm` and a `.cwasm`).
         let stale_ext = if precompiled { "wasm" } else { "cwasm" };
         let _ = std::fs::remove_file(cfg.plugins_dir.join(format!("{file_stem}.{stale_ext}")));
         let _ = std::fs::remove_file(cfg.plugins_dir.join(format!("{file_stem}.{stale_ext}.sig")));
 
         let abi = loaded.capabilities.abi_version;
         let report = InstalledPlugin {
-            sector: sector.to_owned(),
+            product_group: product_group.to_owned(),
             abi_version: format!("{}.{}", abi.major, abi.minor),
         };
         self.reload_plugin(loaded);
         tracing::info!(
-            sector = %report.sector,
+            product_group = %report.product_group,
             abi = %report.abi_version,
             precompiled,
             "Wasm plugin installed and hot-swapped"
@@ -250,13 +250,13 @@ impl WasmPluginHost {
     /// The returned value is structurally validated to be a non-null JSON object.
     pub fn generate_passport_payload(
         &self,
-        sector: &Sector,
-        data: &SectorData,
+        product_group: &ProductGroup,
+        data: &ProductGroupData,
     ) -> Result<Value, ComplianceError> {
-        let key = sector.catalog_key();
+        let key = product_group.catalog_key();
         let plugin = self.get_plugin(key).ok_or_else(|| ComplianceError {
-            kind: ComplianceErrorKind::UnknownSector,
-            message: format!("no Wasm plugin loaded for sector '{key}'"),
+            kind: ComplianceErrorKind::UnknownProductGroup,
+            message: format!("no Wasm plugin loaded for product_group '{key}'"),
         })?;
 
         let input = enrich_input(
@@ -291,10 +291,10 @@ impl WasmPluginHost {
         }
 
         // Host-side backstop mirroring compute()'s determination gate: a
-        // provisional (not-in-force) sector can never surface a binding
+        // provisional (not-in-force) product group can never surface a binding
         // compliance claim, even if the plugin ignores the advisory __isInForce
         // flag and injects one into its generated output.
-        if !catalog().is_in_force(key)
+        if !passport_determinable(key)
             && let Some(obj) = payload.as_object_mut()
         {
             obj.remove("complianceStatus");
@@ -314,12 +314,12 @@ impl Default for WasmPluginHost {
 impl PluginAdmin for WasmPluginHost {
     fn install(
         &self,
-        sector: &str,
+        product_group: &str,
         artifact: Vec<u8>,
         sig: Vec<u8>,
         precompiled: bool,
     ) -> Result<InstalledPlugin, PluginInstallError> {
-        self.install_plugin(sector, artifact, sig, precompiled)
+        self.install_plugin(product_group, artifact, sig, precompiled)
     }
 }
 
@@ -338,20 +338,20 @@ fn staging_dir_name() -> String {
 }
 
 impl PluginHost for WasmPluginHost {
-    fn has_plugin(&self, sector_key: &str) -> bool {
-        self.plugins.read().unwrap().contains_key(sector_key)
+    fn has_plugin(&self, product_group_key: &str) -> bool {
+        self.plugins.read().unwrap().contains_key(product_group_key)
     }
 
-    #[tracing::instrument(skip(self, data), fields(sector = %sector_key))]
+    #[tracing::instrument(skip(self, data), fields(product_group = %product_group_key))]
     fn compute(
         &self,
-        sector_key: &str,
-        data: &SectorData,
+        product_group_key: &str,
+        data: &ProductGroupData,
     ) -> Result<ComplianceResult, ComplianceError> {
-        let key = sector_key;
+        let key = product_group_key;
         let plugin = self.get_plugin(key).ok_or_else(|| ComplianceError {
-            kind: ComplianceErrorKind::UnknownSector,
-            message: format!("no Wasm plugin loaded for sector '{key}'"),
+            kind: ComplianceErrorKind::UnknownProductGroup,
+            message: format!("no Wasm plugin loaded for product_group '{key}'"),
         })?;
 
         let input = enrich_input(
@@ -374,30 +374,30 @@ impl PluginHost for WasmPluginHost {
                 if msg.starts_with("fuel exhausted") {
                     metrics::counter!(
                         "plugin_fuel_exhausted_total",
-                        "sector" => key.to_owned()
+                        "productGroup" => key.to_owned()
                     )
                     .increment(1);
                     tracing::warn!(
                         code = dpp_common::event_codes::PLUGIN_FUEL_EXHAUSTED,
-                        sector = %key,
+                        product_group = %key,
                         "Wasm plugin exhausted fuel budget"
                     );
                 }
                 if msg.starts_with("memory cap exceeded") {
                     metrics::counter!(
                         "plugin_mem_capped_total",
-                        "sector" => key.to_owned()
+                        "productGroup" => key.to_owned()
                     )
                     .increment(1);
                     tracing::warn!(
                         code = dpp_common::event_codes::PLUGIN_MEM_CAPPED,
-                        sector = %key,
+                        product_group = %key,
                         "Wasm plugin hit memory cap"
                     );
                 }
                 metrics::counter!(
                     "plugin_invocations_total",
-                    "sector" => key.to_owned(),
+                    "productGroup" => key.to_owned(),
                     "outcome" => "error"
                 )
                 .increment(1);
@@ -408,14 +408,14 @@ impl PluginHost for WasmPluginHost {
             }
         };
 
-        // Enforce regulatory status centrally: a provisional sector can never
+        // Enforce regulatory status centrally: a provisional product group can never
         // surface a binding determination, regardless of what the plugin returns.
         result.compliance_status =
-            gate_determination(catalog().is_in_force(key), result.compliance_status);
+            gate_determination(passport_determinable(key), result.compliance_status);
 
         metrics::counter!(
             "plugin_invocations_total",
-            "sector" => key.to_owned(),
+            "productGroup" => key.to_owned(),
             "outcome" => "ok"
         )
         .increment(1);
@@ -426,45 +426,46 @@ impl PluginHost for WasmPluginHost {
 
 /// `ComplianceRegistry` impl allows wiring `WasmPluginHost` directly into `PassportService`.
 ///
-/// When a plugin is loaded for the sector, it is invoked. Otherwise the sector is
+/// When a plugin is loaded for the product group, it is invoked. Otherwise the product group is
 /// served by the fallback registry — `PassthroughRegistry` by default, which
-/// routes through that sector's `ComplianceStrategy` if one is registered and
+/// routes through that product group's `ComplianceStrategy` if one is registered and
 /// otherwise returns a bare passthrough. Either way the *status* is
 /// `PassthroughNoValidation`; the difference is that a strategy lifts the
-/// sector's declared metrics into the result's sector-agnostic fields, which a
+/// product group's declared metrics into the result's product group-agnostic fields, which a
 /// hard-coded passthrough cannot do because it never sees the payload.
 impl ComplianceRegistry for WasmPluginHost {
     fn compute(
         &self,
-        sector_key: &str,
-        data: &SectorData,
+        product_group_key: &str,
+        data: &ProductGroupData,
         law_in_force_on: Option<NaiveDate>,
     ) -> Result<ComplianceResult, ComplianceError> {
-        if self.has_plugin(sector_key) {
+        if self.has_plugin(product_group_key) {
             // The plugin path does not take the date as an argument: a plugin
-            // receives the sector payload as JSON and reads
+            // receives the product group payload as JSON and reads
             // `placedOnMarketDate` from it directly, because that is the only
             // channel the Wasm ABI has. The date is passed on the host path,
             // where the caller holds the passport envelope and the guest does
             // not.
-            PluginHost::compute(self, sector_key, data)
+            PluginHost::compute(self, product_group_key, data)
         } else {
-            self.fallback.compute(sector_key, data, law_in_force_on)
+            self.fallback
+                .compute(product_group_key, data, law_in_force_on)
         }
     }
 }
 
 /// Inject host-side metadata into the plugin input before dispatch.
 ///
-/// `__isInForce` tells the plugin whether the sector regulation is currently
+/// `__isInForce` tells the plugin whether the product group regulation is currently
 /// active (in-force) so it can apply strict thresholds vs. provisional behaviour.
 /// The key uses camelCase to match the rest of the JSON field convention.
-pub(crate) fn enrich_input(input: Value, sector_key: &str) -> Value {
+pub(crate) fn enrich_input(input: Value, product_group_key: &str) -> Value {
     match input {
         Value::Object(mut m) => {
             m.insert(
                 "__isInForce".into(),
-                catalog().is_in_force(sector_key).into(),
+                passport_determinable(product_group_key).into(),
             );
             Value::Object(m)
         }
@@ -472,10 +473,26 @@ pub(crate) fn enrich_input(input: Value, sector_key: &str) -> Value {
     }
 }
 
-/// Process-wide sector catalog (manifests parsed once) for status gating.
-fn catalog() -> &'static SectorCatalog {
-    static CATALOG: std::sync::OnceLock<SectorCatalog> = std::sync::OnceLock::new();
-    CATALOG.get_or_init(SectorCatalog::new)
+/// Process-wide instrument catalog (manifests parsed once) for status gating.
+fn instruments() -> &'static InstrumentCatalog {
+    static CATALOG: std::sync::OnceLock<InstrumentCatalog> = std::sync::OnceLock::new();
+    CATALOG.get_or_init(InstrumentCatalog::new)
+}
+
+/// Whether any in-force act reaching `product_group` requires a passport, which
+/// is what gates a *binding passport determination*.
+///
+/// Both halves are load-bearing and neither implies the other. An act can bind a
+/// product group today while imposing no passport at all — ESPR Arts. 24-25 — and
+/// an act can bind while its passport duty is discharged through another system
+/// under Art. 9(4)(b), which is the position of the ecodesign and energy
+/// labelling pair for mobile devices. Gating on "is it in force" alone is exactly
+/// how a binding claim came to be asserted against an obligation that does not
+/// exist, for a product group that is in force and owes no passport.
+fn passport_determinable(product_group: &str) -> bool {
+    let catalog = instruments();
+    !catalog.determinable_for(product_group).is_empty()
+        && catalog.passport_required_for(product_group)
 }
 
 /// Convert a `PluginResult` into a `ComplianceResult` for the core compliance port.

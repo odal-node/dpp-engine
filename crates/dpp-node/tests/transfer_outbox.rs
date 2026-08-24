@@ -27,7 +27,7 @@ use dpp_dal::test_harness::start_pg;
 use dpp_domain::{
     domain::{
         passport::{ManufacturerInfo, Passport, PassportId},
-        sector::Sector,
+        product_group::ProductGroup,
         status::PassportStatus,
         transfer::{
             OperatorRole, ResponsibleOperator, TransferChain, TransferReason, TransferRecord,
@@ -44,7 +44,9 @@ fn published_passport() -> Passport {
         id: PassportId::new(),
         batch_id: None,
         product_name: "Transferred Battery".into(),
-        sector: Sector::Battery,
+        product_group: ProductGroup::Battery,
+        applicable_instruments: Vec::new(),
+        granularity: None,
         manufacturer: ManufacturerInfo {
             name: "TestCorp GmbH".into(),
             address: "Berlin, DE".into(),
@@ -55,7 +57,7 @@ fn published_passport() -> Passport {
         repairability_score: None,
         compliance_result: None,
         lint_result: None,
-        sector_data: None,
+        product_group_data: None,
         status: PassportStatus::Published,
         qr_code_url: None,
         jws_signature: None,

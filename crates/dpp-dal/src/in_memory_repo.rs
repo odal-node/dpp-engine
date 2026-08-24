@@ -80,6 +80,14 @@ impl PassportRepository for InMemoryPassportRepo {
         Ok(None)
     }
 
+    /// Answers nothing, for the same reason as `find_published_by_gtin` above:
+    /// the real lookup is a `LIKE` over `qrCodeUrl` with a numeric-only guard,
+    /// and approximating that here would make a test pass against behaviour the
+    /// database does not have.
+    async fn find_by_gtin_any_status(&self, _gtin: &str) -> Result<Option<Passport>, DppError> {
+        Ok(None)
+    }
+
     async fn find_by_id_any_status(&self, id: PassportId) -> Result<Option<Passport>, DppError> {
         self.find_by_id(id).await
     }

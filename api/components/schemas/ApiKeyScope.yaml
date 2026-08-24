@@ -1,0 +1,9 @@
+type: string
+description: >-
+  What an API key authorises. `admin` is the default when a key is minted
+  without an explicit scope, so a key issued to an integration should name
+  `read` or `write` deliberately.
+enum:
+  - read
+  - write
+  - admin

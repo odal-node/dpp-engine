@@ -23,7 +23,7 @@ async fn a_published_passport_reports_its_registration() {
     let token = make_jwt("00000000-0000-0000-0000-000000000001");
     let client = TestClient::new(&vault_url, &token);
 
-    // Battery is an in-force sector, so publish requires the Annex III facility
+    // Battery is an in-force product group, so publish requires the Annex III facility
     // and the Art. 13 operator identifier. Seed both through the API, exactly as
     // an operator would.
     let resp = client
@@ -57,16 +57,16 @@ async fn a_published_passport_reports_its_registration() {
             "/api/v1/dpp",
             serde_json::json!({
                 "productName": "Registry Surface Battery",
-                "sector": "battery",
+                "productGroup": "battery",
                 "manufacturer": { "name": "TestCorp GmbH", "address": "Berlin, DE" },
                 "commodityCode": "85076000",
-                // A battery passport can no longer publish with no sector data
+                // A battery passport can no longer publish with no product group data
                 // at all — the mandatory-content gate refuses it before asking
                 // which fields are missing. Portable is outside the guidance's
                 // scope, so this carries the schema minimum and nothing more:
                 // the subject here is the registry surface, not battery content.
-                "sectorData": {
-                    "sector": "battery",
+                "productGroupData": {
+                    "productGroup": "battery",
                     "gtin": "09506000134352",
                     "batteryType": "portable",
                     "batteryChemistry": "LFP",
@@ -139,7 +139,7 @@ async fn a_commodity_code_survives_to_the_passport() {
             "/api/v1/dpp",
             serde_json::json!({
                 "productName": "Tariff-classified Battery",
-                "sector": "battery",
+                "productGroup": "battery",
                 "manufacturer": { "name": "TestCorp GmbH", "address": "Berlin, DE" },
                 "commodityCode": "8507600090"
             }),
@@ -169,7 +169,7 @@ async fn a_malformed_commodity_code_is_refused_at_create() {
                 "/api/v1/dpp",
                 serde_json::json!({
                     "productName": "Bad Tariff Code",
-                    "sector": "battery",
+                    "productGroup": "battery",
                     "manufacturer": { "name": "TestCorp GmbH", "address": "Berlin, DE" },
                     "commodityCode": bad
                 }),

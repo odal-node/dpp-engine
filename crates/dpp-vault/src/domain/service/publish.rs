@@ -9,7 +9,7 @@ use dpp_domain::{
     domain::{
         error::DppError,
         passport::{Passport, PassportId},
-        sector::SectorData,
+        product_group::ProductGroupData,
         status::PassportStatus,
     },
     ports::registry_sync::{RegisteringOperator, RegistrationGranularity, RegistrationRequest},
@@ -26,13 +26,13 @@ use super::{catalog, schema_registry};
 mod reason {
     pub const INVALID_TRANSITION: &str = "invalid_transition";
     pub const MISSING_REGISTRY_IDENTITY: &str = "missing_registry_identity";
-    pub const SECTOR_DATA_INVALID: &str = "sector_data_invalid";
+    pub const SECTOR_DATA_INVALID: &str = "product_group_data_invalid";
     pub const SCHEMA_INVALID: &str = "schema_invalid";
     pub const COMPLIANCE_VIOLATIONS: &str = "compliance_violations";
     pub const SIGNING_FAILED: &str = "signing_failed";
     /// The battery's category requires content the passport does not carry.
     ///
-    /// Distinct from `sector_data_invalid`, which is data that is present and
+    /// Distinct from `product_group_data_invalid`, which is data that is present and
     /// wrong. This is data that is absent, and it is the one rejection a caller
     /// cannot diagnose from their own request: the requirement lives in
     /// `dpp-domain`'s category table, not in anything they sent.
@@ -75,7 +75,7 @@ fn reject(reason: &'static str, e: DppError) -> DppError {
 impl PassportService {
     /// Sign and publish a draft passport with Ed25519 / JWS.
     ///
-    /// Validates sector data, calls the identity service to sign, atomically
+    /// Validates product group data, calls the identity service to sign, atomically
     /// writes the JWS + QR URL + `Published` status, seals the retention clock,
     /// fires non-blocking EU registry sync, and emits `dpp.passport.published`.
     ///
@@ -100,7 +100,7 @@ impl PassportService {
             ));
         }
 
-        // Annex III completeness (ESPR): a published DPP for an in-force sector must
+        // Annex III completeness (ESPR): a published DPP for an in-force product group must
         // carry the unique facility identifier (Annex III point (i)) and the
         // responsible-operator identifier (point (k)). Backfill from the current
         // registry defaults first — so a draft created before the default facility /
@@ -127,7 +127,7 @@ impl PassportService {
                     primary_identifier.as_ref().map(|(_, value)| value.clone());
             }
         }
-        if catalog().is_in_force(passport.sector.catalog_key()) {
+        if super::passport_obligation_live(passport.product_group.catalog_key()) {
             let mut missing = Vec::new();
             if passport.facility.is_none() {
                 missing.push("facility (Annex III unique facility identifier)");
@@ -156,32 +156,32 @@ impl PassportService {
             }
         }
 
-        // Publish-time validation (domain Gap 7 / vault V3): never sign sector
+        // Publish-time validation (domain Gap 7 / vault V3): never sign product group
         // data that fails its JSON Schema + cross-field rules.
         //
-        // NOTE: this validates sector data *when present*. Hard-requiring its
-        // presence at publish (a published EU DPP should always carry sector
+        // NOTE: this validates product group data *when present*. Hard-requiring its
+        // presence at publish (a published EU DPP should always carry product group
         // data) is the stricter completeness policy — deferred until the
         // integration fixtures that publish minimal passports are updated and a
         // Docker run confirms them (roadmap 1.3).
-        if let Some(sector_data) = passport.sector_data.as_ref() {
-            dpp_domain::validate_sector_data(sector_data)
+        if let Some(product_group_data) = passport.product_group_data.as_ref() {
+            dpp_domain::validate_product_group_data(product_group_data)
                 .map_err(|e| reject(REASON_SECTOR_DATA_INVALID, DppError::Validation(e)))?;
 
             // JSON Schema gate (fail-closed): enum sets, string patterns, and
             // numeric ranges that the Rust types don't enforce. Runs after typed
             // validation so field-level messages are the primary signal.
-            validate_schema_for_publish(sector_data)
+            validate_schema_for_publish(product_group_data)
                 .map_err(|e| reject(REASON_SCHEMA_INVALID, e))?;
 
-            // Compliance gate: a sector whose DPP obligation is in force must not
+            // Compliance gate: a product group whose DPP obligation is in force must not
             // be signed/published while it carries *binding* violations. Advisory
             // warnings (e.g. recycled-content thresholds not yet in force) never
             // block — they are surfaced on the persisted determination instead.
-            if catalog().is_in_force(sector_data.sector().catalog_key())
+            if super::passport_obligation_live(product_group_data.product_group().catalog_key())
                 && let Ok(determination) = self.compliance.compute(
-                    sector_data.sector().catalog_key(),
-                    sector_data,
+                    product_group_data.product_group().catalog_key(),
+                    product_group_data,
                     passport.placed_on_market_date,
                 )
                 && determination.has_violations()
@@ -233,7 +233,7 @@ impl PassportService {
             .map_err(|e| reject(REASON_MANDATORY_CONTENT, e))?;
 
         // Engine-side obligations, which core has no view of: the retention
-        // horizon comes from this deployment's sector catalog, and the carrier
+        // horizon comes from this deployment's product group catalog, and the carrier
         // URL from its resolver. Both are derived from the timestamp core just
         // set, so all three agree on when the publish happened.
         if first_publish && passport.retention_until.is_none() {
@@ -242,7 +242,7 @@ impl PassportService {
             // act that imposes it. A stricter delegated-act period can be set
             // by the operator before publishing.
             let published_at = passport.published_at.unwrap_or_else(Utc::now);
-            let years = retention_years_for(&passport.sector);
+            let years = retention_years_for(&passport.product_group);
             passport.retention_until =
                 Some(published_at + chrono::Duration::days(365 * i64::from(years)));
         }
@@ -282,7 +282,7 @@ impl PassportService {
         // stays Confidential for authenticated full-passport verification.
         let public_view = crate::public_view::public_view(
             &payload,
-            passport.sector.catalog_key(),
+            passport.product_group.catalog_key(),
             &passport.schema_version,
         );
         let public_jws = self
@@ -314,7 +314,7 @@ impl PassportService {
             self.identity.as_ref(),
             passport.id,
             &payload,
-            passport.sector.catalog_key(),
+            passport.product_group.catalog_key(),
             &passport.schema_version,
         )
         .await
@@ -423,7 +423,7 @@ impl PassportService {
         // Failures are logged but never propagated; the DB write is the source of truth.
         // Same resolver as the seal above, so the archived copy and the sealed
         // deadline cannot disagree.
-        let retention_years = retention_years_for(&updated.sector);
+        let retention_years = retention_years_for(&updated.product_group);
         if let Err(e) = self.archive.archive(&updated, retention_years).await {
             tracing::warn!(
                 passport_id = %updated.id,
@@ -456,7 +456,7 @@ impl PassportService {
 }
 
 impl PassportService {
-    /// Whether this sector data would clear the publish-time gates, without
+    /// Whether this product group data would clear the publish-time gates, without
     /// publishing anything.
     ///
     /// Runs the same two checks `publish` runs, in the same order, so a
@@ -464,45 +464,46 @@ impl PassportService {
     /// the compliance gate below them: that needs a `placed_on_market_date`
     /// and a persisted passport, and reporting "compliant" against a date the
     /// caller has not supplied would be a fabricated answer.
-    pub fn publish_readiness(&self, sector_data: &SectorData) -> Result<(), DppError> {
-        dpp_domain::validate_sector_data(sector_data).map_err(DppError::Validation)?;
-        validate_schema_for_publish(sector_data)
+    pub fn publish_readiness(&self, product_group_data: &ProductGroupData) -> Result<(), DppError> {
+        dpp_domain::validate_product_group_data(product_group_data)
+            .map_err(DppError::Validation)?;
+        validate_schema_for_publish(product_group_data)
     }
 }
 
-/// Validate `sector_data` against its sector's current JSON Schema before it
+/// Validate `product_group_data` against its product group's current JSON Schema before it
 /// can be published. Fails closed: a published, signed DPP must pass a real
-/// schema check whenever it carries sector data — unlike `create`, where a
+/// schema check whenever it carries product group data — unlike `create`, where a
 /// draft may stay lenient. `Ok` covers a resolved-and-valid schema; `Err`
 /// covers both a resolved-but-invalid schema and no schema resolved at all.
-fn validate_schema_for_publish(sector_data: &SectorData) -> Result<(), DppError> {
-    let schema_key = sector_data.sector().catalog_key().to_owned();
+fn validate_schema_for_publish(product_group_data: &ProductGroupData) -> Result<(), DppError> {
+    let schema_key = product_group_data.product_group().catalog_key().to_owned();
     let Some(schema_version) = catalog().resolve_schema_version(&schema_key, None) else {
-        // Every built-in sector has a catalog entry (CI-enforced parity guard),
-        // so this is unreachable via `SectorData`'s named variants today; the
-        // only value that resolves here is `SectorData::Other`, which is itself
-        // already blocked by `validate_sector_data` above (no "other" validator
+        // Every built-in product group has a catalog entry (CI-enforced parity guard),
+        // so this is unreachable via `ProductGroupData`'s named variants today; the
+        // only value that resolves here is `ProductGroupData::Other`, which is itself
+        // already blocked by `validate_product_group_data` above (no "other" validator
         // is registered by default). Kept fail-closed as defence in depth for
-        // when the open sector model gains a real per-sector validator.
-        metrics::counter!("publish_schema_unresolved_total", "sector" => schema_key.clone())
+        // when the open product group model gains a real per-product group validator.
+        metrics::counter!("publish_schema_unresolved_total", "productGroup" => schema_key.clone())
             .increment(1);
         tracing::warn!(
-            sector = %schema_key,
-            "publish blocked — no registered JSON Schema for this sector"
+            product_group = %schema_key,
+            "publish blocked — no registered JSON Schema for this product_group"
         );
         return Err(DppError::Validation(
             format!(
-                "cannot publish: no registered JSON Schema for sector '{schema_key}' — \
-                 publish requires a resolvable schema when sector data is present"
+                "cannot publish: no registered JSON Schema for product_group '{schema_key}' — \
+                 publish requires a resolvable schema when product_group data is present"
             )
             .into(),
         ));
     };
-    let mut sd_json =
-        serde_json::to_value(sector_data).map_err(|e| DppError::Serialisation(e.to_string()))?;
-    // SectorData is internally tagged; schemas validate the inner object.
+    let mut sd_json = serde_json::to_value(product_group_data)
+        .map_err(|e| DppError::Serialisation(e.to_string()))?;
+    // ProductGroupData is internally tagged; schemas validate the inner object.
     if let Some(obj) = sd_json.as_object_mut() {
-        obj.remove("sector");
+        obj.remove("productGroup");
     }
     schema_registry()
         .validate_strict(&schema_key, &schema_version, &sd_json)
@@ -512,7 +513,7 @@ fn validate_schema_for_publish(sector_data: &SectorData) -> Result<(), DppError>
 /// Build the carrier (QR / Data Matrix) URL a passport should encode, on the
 /// node's configured resolver base.
 ///
-/// When the sector data carries a GTIN — every trade-item sector — produces a
+/// When the product group data carries a GTIN — every trade-item product group — produces a
 /// GS1 Digital Link (`{base}/01/{gtin}[/10/{batch}]/21/{serial}`) with a
 /// GS1-conformant 20-char serial derived from the passport id. When it does not
 /// (an unsold-goods report or untyped record, which identify no trade item),
@@ -520,7 +521,11 @@ fn validate_schema_for_publish(sector_data: &SectorData) -> Result<(), DppError>
 /// never a hardcoded host.
 fn build_carrier_url(passport: &Passport, resolver_base: &str) -> String {
     let base = resolver_base.trim_end_matches('/');
-    match passport.sector_data.as_ref().and_then(SectorData::gtin) {
+    match passport
+        .product_group_data
+        .as_ref()
+        .and_then(ProductGroupData::gtin)
+    {
         Some(gtin) => build_qr_url(
             base,
             gtin,
@@ -589,7 +594,7 @@ mod tests {
     use dpp_domain::domain::{
         error::DppError,
         passport::{ManufacturerInfo, Passport, PassportId},
-        sector::{Sector, SectorData},
+        product_group::{ProductGroup, ProductGroupData},
         status::PassportStatus,
     };
 
@@ -598,7 +603,9 @@ mod tests {
             id: PassportId::new(),
             batch_id: None,
             product_name: "Test".into(),
-            sector: Sector::Battery,
+            product_group: ProductGroup::Battery,
+            applicable_instruments: Vec::new(),
+            granularity: None,
             manufacturer: ManufacturerInfo {
                 name: "ACME".into(),
                 address: "1 Street".into(),
@@ -609,7 +616,7 @@ mod tests {
             repairability_score: None,
             compliance_result: None,
             lint_result: None,
-            sector_data: None,
+            product_group_data: None,
             status: PassportStatus::Draft,
             qr_code_url: None,
             jws_signature: None,
@@ -641,17 +648,17 @@ mod tests {
         // An unsold-goods report / untyped record carries no trade-item GTIN, so
         // the carrier points at the passport's own page on the configured base —
         // never the old hardcoded `p.odal-node.io` host.
-        let p = stub(); // sector_data is None → no GTIN
+        let p = stub(); // product_group_data is None → no GTIN
         let url = build_carrier_url(&p, "https://id.example.com/");
         assert_eq!(url, format!("https://id.example.com/dpp/{}", p.id));
         assert!(!url.contains("p.odal-node.io"));
     }
 
     #[test]
-    fn gtin_sector_builds_gs1_dl_with_conformant_serial() {
-        use dpp_domain::domain::sector::ConstructionData;
+    fn gtin_product_group_builds_gs1_dl_with_conformant_serial() {
+        use dpp_domain::domain::product_group::ConstructionData;
         let mut p = stub();
-        p.sector_data = Some(SectorData::Construction(ConstructionData {
+        p.product_group_data = Some(ProductGroupData::Construction(ConstructionData {
             gtin: dpp_domain::Gtin::parse("09506000134352").unwrap(),
             product_family: "cement".into(),
             country_of_origin: "DE".into(),
@@ -678,12 +685,12 @@ mod tests {
     // ── validate_schema_for_publish (Q-2) ────────────────────────────────────
 
     #[test]
-    fn unresolvable_sector_schema_fails_closed() {
-        // `SectorData::Other`'s catalog key ("other") has no embedded schema —
-        // the only value that can reach this branch, since every named sector
+    fn unresolvable_product_group_schema_fails_closed() {
+        // `ProductGroupData::Other`'s catalog key ("other") has no embedded schema —
+        // the only value that can reach this branch, since every named product group
         // has a catalog entry (CI-enforced parity guard). Publish must refuse
         // it outright, not warn-and-pass.
-        let sd = SectorData::other(serde_json::json!({"anything": "goes"}))
+        let sd = ProductGroupData::other(serde_json::json!({"anything": "goes"}))
             .expect("an untagged payload has no typed variant");
         let err = validate_schema_for_publish(&sd).unwrap_err();
         assert!(matches!(err, DppError::Validation(_)));

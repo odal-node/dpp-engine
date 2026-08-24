@@ -71,7 +71,7 @@ pub async fn resolve_aas_handler(
     };
 
     // The AAS asset identity is the GTIN. Unsold-goods reports and untyped
-    // sectors carry none — they do not identify a trade item — so no AAS
+    // product groups carry none — they do not identify a trade item — so no AAS
     // representation of them exists. 406 is the honest answer to "I want this
     // as AAS": the resource has no representation matching the request.
     //
@@ -82,7 +82,11 @@ pub async fn resolve_aas_handler(
     // is unavailable is *this* representation at *this* URL, and the fix is not
     // to invent a `globalAssetId`: a fabricated trade-item identifier inside a
     // document an integrator treats as authoritative is worse than a 406.
-    let Some(gtin) = passport.sector_data.as_ref().and_then(|sd| sd.gtin()) else {
+    let Some(gtin) = passport
+        .product_group_data
+        .as_ref()
+        .and_then(|sd| sd.gtin())
+    else {
         return problem(
             StatusCode::NOT_ACCEPTABLE,
             "This passport has no GTIN, so it has no AAS representation.",

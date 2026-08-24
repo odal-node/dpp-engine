@@ -29,8 +29,8 @@ post:
     '404':
       description: No pending transfer to accept for this DPP.
       content:
-        application/json:
+        application/problem+json:
           schema:
-            $ref: ../components/schemas/ApiError.yaml
+            $ref: ../components/schemas/Problem.yaml
     '422':
       $ref: ../components/responses/ValidationError.yaml

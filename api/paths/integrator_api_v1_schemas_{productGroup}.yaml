@@ -1,6 +1,6 @@
 get:
   operationId: getCurrentSectorSchema
-  summary: Fetch a sector's current JSON Schema
+  summary: Fetch a product group's current JSON Schema
   description: |
     The schema a passport created today is validated against, resolved through
     the same registry the publish gate uses — never a copy, which would drift in
@@ -15,7 +15,7 @@ get:
   tags:
     - Integrator
   parameters:
-    - name: sector
+    - name: product group
       in: path
       required: true
       schema:
@@ -23,13 +23,13 @@ get:
         example: battery
   responses:
     '200':
-      description: The sector's current JSON Schema.
+      description: The product group's current JSON Schema.
       content:
         application/json:
           schema:
             type: object
     '404':
-      description: No schema for this sector; the body names the known sectors.
+      description: No schema for this product group; the body names the known product groups.
       content:
         application/problem+json:
           schema:

@@ -1,10 +1,10 @@
-//! Textile sector HTML section, including the fibre-composition bar chart.
+//! Textile product group HTML section, including the fibre-composition bar chart.
 
 use crate::esc::esc;
 use crate::fields::{f64_field, str_field};
 
 pub(super) fn build_textile_section(p: &serde_json::Value) -> String {
-    let sd = match p.get("sectorData") {
+    let sd = match p.get("productGroupData") {
         Some(v) => v,
         None => return String::new(),
     };
@@ -106,7 +106,7 @@ mod tests {
     #[test]
     fn full_data_populates_all_fields() {
         let p = crate::sections::typed_fixture(serde_json::json!({
-            "sector": "textile",
+            "productGroup": "textile",
             "gtin": "09506000134352",
             "countryOfOrigin": "Germany",
             "careInstructions": "Machine wash cold",
@@ -128,28 +128,28 @@ mod tests {
 
     #[test]
     fn missing_fields_fall_back_to_dashes() {
-        let p = serde_json::json!({"sectorData": {}});
+        let p = serde_json::json!({"productGroupData": {}});
         let html = build_textile_section(&p);
         assert!(html.contains("Textile Information"));
         assert!(html.contains(">-<"));
     }
 
     #[test]
-    fn absent_sector_data_returns_empty_string() {
+    fn absent_product_group_data_returns_empty_string() {
         let p = serde_json::json!({});
         assert_eq!(build_textile_section(&p), "");
     }
 
-    /// The textile sector catalog (`dpp-core/crates/dpp-domain/sectors/textile.json`)
+    /// The textile product group catalog (`dpp-core/crates/dpp-domain/product groups/textile.json`)
     /// marks `svhcSubstances`, `disassemblyInstructions` and `sparePartsAvailable` as
     /// professional-tier, not public. This section is expected to receive an
     /// already-redacted Public-tier view and performs no filtering of its own — but
     /// it also never names these fields, so even an unredacted passport renders
     /// none of them. Guards that property against a future edit that starts
-    /// serializing `sectorData` wholesale instead of field-by-field.
+    /// serializing `productGroupData` wholesale instead of field-by-field.
     #[test]
     fn professional_tier_fields_are_never_rendered() {
-        let p = serde_json::json!({"sectorData": {
+        let p = serde_json::json!({"productGroupData": {
             "countryOfOrigin": "Germany",
             "svhcSubstances": "MARKER_SVHC_SUBSTANCE",
             "disassemblyInstructions": "MARKER_DISASSEMBLY_INSTRUCTIONS",

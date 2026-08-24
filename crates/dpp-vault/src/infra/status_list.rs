@@ -87,7 +87,7 @@ mod tests {
             name: "Repair Co".into(),
             role: CredentialRole::AuthorisedRepairer,
             country: "DE".into(),
-            sectors: vec!["battery".into()],
+            product_groups: vec!["battery".into()],
             product_categories: vec![],
         };
         let mut builder = CredentialBuilder::new("did:web:authority.example.com".into(), subject);

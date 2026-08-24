@@ -153,7 +153,7 @@ dpp-render                      — the ONE renderer for the public passport pag
                                   snapshot, so the two cannot drift
 dpp-integrator                  — CSV/XLSX bulk import
 dpp-common                      — event bus trait, telemetry, config helpers, RFC 7807 errors
-dpp-plugin-host                 — wasmtime sandbox for sector Wasm plugins
+dpp-plugin-host                 — wasmtime sandbox for product group Wasm plugins
 dpp-node                        — MVP single binary fusing vault + identity + integrator
 dpp-seal                        — eIDAS qualified seal adapter: one `SealBackend` behind the
                                   `SealPort`, selected by SEAL_PROVIDER (hosted QTSP / local dev
@@ -189,7 +189,7 @@ development, copy `.cargo/config.toml.example` to `.cargo/config.toml` (or run
 `just core-local`) to add a `[patch.crates-io]` override that points each core crate
 at the sibling `../dpp-core` working tree. That file is git-ignored, so it never
 reaches CI; `just core-published` removes it to build against the registry again.
-- `dpp-domain` — domain types (`Passport`, `SectorData`), port traits (`PassportRepository`, `IdentityPort`, `ComplianceRegistry`), schema validation, per-field disclosure policy (`access`)
+- `dpp-domain` — domain types (`Passport`, `ProductGroupData`), port traits (`PassportRepository`, `IdentityPort`, `ComplianceRegistry`), schema validation, per-field disclosure policy (`access`)
 - `dpp-crypto` — Ed25519, JWS compact serialisation, encrypted key store
 - `dpp-vc` — W3C Verifiable Credentials, `did:web` document builder, status lists, `LocalIdentityService`, JSON-LD context
 - `dpp-digital-link` — GS1 Digital Link parser and link-type negotiation
@@ -299,7 +299,7 @@ Background cleanup task runs every 6 hours, deleting completed/failed jobs older
 
 ### Wasm Plugin Host
 
-`dpp-plugin-host` loads `*.wasm` sector plugins from `PLUGINS_DIR`. Implements `ComplianceRegistry` from `dpp-domain::ports`. Sandbox: 10M fuel, 64 MiB memory, deny-all WASI. Falls back to `PassthroughRegistry` when no plugin is available for a sector.
+`dpp-plugin-host` loads `*.wasm` product group plugins from `PLUGINS_DIR`. Implements `ComplianceRegistry` from `dpp-domain::ports`. Sandbox: 10M fuel, 64 MiB memory, deny-all WASI. Falls back to `PassthroughRegistry` when no plugin is available for a product group.
 
 ## All HTTP Routes
 
@@ -326,7 +326,7 @@ Background cleanup task runs every 6 hours, deleting completed/failed jobs older
 | GET | `/vault/public/dpp/by-gtin/{gtin}` | None | Public passport read by GTIN |
 | GET | `/vault/credential/dpp/{dppId}` | **None** — `X-DPP-Credential` only | Audience-scoped read. Deliberately outside both `/public` (a public URL whose body varies by caller breaks caching and the meaning of `publicJwsSignature`) and `/api/v1` (a repairer or authority holds a credential and no API key). **Unauthenticated and network-touching**: it resolves the credential issuer's `did:web` over the guarded outbound path before anything is verified, and a verified read appends to the passport's audit trail. No credential ⇒ the public view, byte-identical to `/public/dpp/{dppId}` |
 | POST | `/vault/api/v1/dpp` | Bearer | Create passport |
-| POST | `/vault/api/v1/dpp/validate` | Bearer **(write)** | Dry-run a create body, persisting nothing. Runs the same `validate_create_request` the create route runs, so the preview cannot disagree with it, and returns the identical `422` on rejection. Reports `createValid` **and** `publishValid` separately — create is lenient about an unresolvable sector schema, publish fails closed on it |
+| POST | `/vault/api/v1/dpp/validate` | Bearer **(write)** | Dry-run a create body, persisting nothing. Runs the same `validate_create_request` the create route runs, so the preview cannot disagree with it, and returns the identical `422` on rejection. Reports `createValid` **and** `publishValid` separately — create is lenient about an unresolvable product group schema, publish fails closed on it |
 | GET | `/vault/api/v1/dpps` | Bearer | List passports |
 | GET | `/vault/api/v1/dpp/{dppId}` | Bearer | Read passport |
 | PUT | `/vault/api/v1/dpp/{dppId}` | Bearer | Update passport (draft only) |
@@ -337,7 +337,7 @@ Background cleanup task runs every 6 hours, deleting completed/failed jobs older
 | POST | `/vault/api/v1/dpp/{dppId}/eol` | Bearer (write) | Declare end of life |
 | POST | `/vault/api/v1/dpp/{dppId}/transfer/initiate` | Bearer (write) | Sign a pending transfer of responsibility |
 | POST | `/vault/api/v1/dpp/{dppId}/transfer/accept` | Bearer (write) | Countersign and complete it |
-| GET | `/vault/api/v1/dpp/by-identity` | Bearer | Find by (sector, GTIN, batch) — backs the import delta-matcher |
+| GET | `/vault/api/v1/dpp/by-identity` | Bearer | Find by (product group, GTIN, batch) — backs the import delta-matcher |
 | GET | `/vault/api/v1/dpp/{dppId}/verify-tree` | Bearer | Walk and verify the component (BOM) graph |
 | GET | `/vault/api/v1/dpp/{dppId}/registry` | Bearer | EU-registry sync status for one passport |
 | GET | `/vault/api/v1/registry` | Bearer | EU-registry sync rollup |
@@ -359,7 +359,7 @@ Background cleanup task runs every 6 hours, deleting completed/failed jobs older
 | GET | `/vault/api/v1/api-keys` | Bearer (admin) | List API keys |
 | POST | `/vault/api/v1/api-keys` | Bearer (admin) | Create API key |
 | DELETE | `/vault/api/v1/api-keys/{id}` | Bearer (admin) | Revoke API key |
-| POST | `/vault/api/v1/plugins` | Bearer (admin) | Install a **signed** sector plugin and hot-swap it |
+| POST | `/vault/api/v1/plugins` | Bearer (admin) | Install a **signed** product group plugin and hot-swap it |
 | GET | `/vault/api/v1/webhooks` | Bearer (admin) | List webhook subscriptions |
 | POST | `/vault/api/v1/webhooks` | Bearer (admin) | Create one (SSRF-guarded URL) |
 | DELETE | `/vault/api/v1/webhooks/{id}` | Bearer (admin) | Remove one |
@@ -378,8 +378,8 @@ Background cleanup task runs every 6 hours, deleting completed/failed jobs older
 | GET | `/identity/ready` | None | Identity ready |
 | GET | `/identity/.well-known/did.json` | None | DID document |
 | GET | `/integrator/health` | None | Integrator health |
-| GET | `/integrator/api/v1/templates/{sector}` | None | CSV template download |
-| POST | `/integrator/api/v1/import/{sector}` | Bearer (forwarded) | File upload import |
+| GET | `/integrator/api/v1/templates/{productGroup}` | None | CSV template download |
+| POST | `/integrator/api/v1/import/{productGroup}` | Bearer (forwarded) | File upload import |
 | GET | `/integrator/api/v1/imports/{job_id}` | Bearer | Poll job status |
 
 > The node mounts identity via `build_public` — only the public `/identity/*`

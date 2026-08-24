@@ -12,7 +12,7 @@ use dpp_domain::{
         error::DppError,
         graph::{ComponentEdges, DEFAULT_DEPTH_CAP, EdgeRejection, check_edge},
         passport::{Passport, PassportId, PassportRef},
-        sector::{CarbonFootprint, RepairabilityScore, SectorData},
+        product_group::{CarbonFootprint, ProductGroupData, RepairabilityScore},
         status::PassportStatus,
     },
     ports::compliance::ComplianceRegistry,
@@ -27,7 +27,7 @@ use super::catalog;
 impl PassportService {
     /// Create a new passport in `Draft` status.
     ///
-    /// Assigns a fresh `PassportId`, normalises `schema_version` from the sector
+    /// Assigns a fresh `PassportId`, normalises `schema_version` from the product group
     /// catalog, runs compliance enrichment, persists, appends an audit entry,
     /// and emits `dpp.passport.created` (non-blocking — failure is logged only).
     #[tracing::instrument(skip(self, passport), fields(passport_id = tracing::field::Empty))]
@@ -42,7 +42,7 @@ impl PassportService {
         passport.created_at = Utc::now();
         passport.updated_at = Utc::now();
         passport.schema_version = catalog()
-            .current_schema_version(passport.sector.catalog_key())
+            .current_schema_version(passport.product_group.catalog_key())
             .unwrap_or("1.0.0")
             .to_owned();
 
@@ -256,16 +256,20 @@ fn local_component_id(uri: &str) -> Option<PassportId> {
 }
 
 fn apply_compliance(passport: &mut Passport, registry: &dyn ComplianceRegistry) {
-    let Some(sector_data) = passport.sector_data.as_ref() else {
+    let Some(product_group_data) = passport.product_group_data.as_ref() else {
         return;
     };
-    let sector = sector_data.sector();
+    let product_group = product_group_data.product_group();
     // The date the governing law attached to this product, read from its own
     // record. Never `Utc::now()`: a determination made against today's date is
     // wrong for every product not placed on the market today, and would change
     // its own answer as phase dates pass.
     let law_in_force_on = passport.placed_on_market_date;
-    if let Ok(mut result) = registry.compute(sector.catalog_key(), sector_data, law_in_force_on) {
+    if let Ok(mut result) = registry.compute(
+        product_group.catalog_key(),
+        product_group_data,
+        law_in_force_on,
+    ) {
         // Backfill the two display metrics only when the caller didn't supply them.
         if passport.co2e_per_unit.is_none() {
             passport.co2e_per_unit = result.co2e_score.map(CarbonFootprint::from_kg);
@@ -288,10 +292,10 @@ fn apply_compliance(passport: &mut Passport, registry: &dyn ComplianceRegistry) 
 /// Backfill `lint_result` from the `dpp-rules` plausibility lint pack.
 /// Unlike `apply_compliance`, always overwrites — the pack is cheap to
 /// re-run and freshness (not preserving a caller-supplied value) is the
-/// point. A no-op when the passport carries no sector data.
+/// point. A no-op when the passport carries no product group data.
 fn apply_lint(passport: &mut Passport) {
-    if let Some(sector_data) = passport.sector_data.as_ref() {
-        passport.lint_result = Some(dpp_domain::LintResult::compute(sector_data));
+    if let Some(product_group_data) = passport.product_group_data.as_ref() {
+        passport.lint_result = Some(dpp_domain::LintResult::compute(product_group_data));
     }
 }
 
@@ -313,7 +317,7 @@ const PATCHABLE_FIELDS: [&str; 5] = [
     "productName",
     "co2ePerUnit",
     "repairabilityScore",
-    "sectorData",
+    "productGroupData",
     "componentRefs",
 ];
 
@@ -335,7 +339,7 @@ fn delta_for(passport: &Passport, applied: &[&'static str]) -> serde_json::Map<S
             "productName" => serde_json::json!(passport.product_name),
             "co2ePerUnit" => serde_json::json!(passport.co2e_per_unit),
             "repairabilityScore" => serde_json::json!(passport.repairability_score),
-            "sectorData" => serde_json::json!(passport.sector_data),
+            "productGroupData" => serde_json::json!(passport.product_group_data),
             "componentRefs" => serde_json::json!(passport.component_refs),
             // Unreachable: `applied` only ever contains `PATCHABLE_FIELDS`
             // entries, and adding one there without a case here fails the
@@ -357,7 +361,7 @@ fn delta_for(passport: &Passport, applied: &[&'static str]) -> serde_json::Map<S
 /// # Why unrecognised keys are ignored rather than refused
 ///
 /// The integrator PUTs a full create-shaped body on its `update_draft` path
-/// (`CreatePassportRequest`), which legitimately carries `sector`,
+/// (`CreatePassportRequest`), which legitimately carries `product_group`,
 /// `manufacturer`, `batchId` and `schemaVersion` — fields that are fixed at
 /// create by design. Refusing the request would break a real caller for sending
 /// a shape it has always sent. What must not happen is those fields *taking
@@ -388,12 +392,13 @@ fn apply_patch(
         passport.repairability_score = Some(RepairabilityScore::from_scalar(v));
         applied.push("repairabilityScore");
     }
-    if let Some(v) = obj.get("sectorData") {
-        let sector_data: SectorData = serde_json::from_value(v.clone())
-            .map_err(|e| DppError::Validation(format!("invalid sectorData: {e}").into()))?;
-        dpp_domain::validate_sector_data(&sector_data).map_err(DppError::Validation)?;
-        passport.sector_data = Some(sector_data);
-        applied.push("sectorData");
+    if let Some(v) = obj.get("productGroupData") {
+        let product_group_data: ProductGroupData = serde_json::from_value(v.clone())
+            .map_err(|e| DppError::Validation(format!("invalid productGroupData: {e}").into()))?;
+        dpp_domain::validate_product_group_data(&product_group_data)
+            .map_err(DppError::Validation)?;
+        passport.product_group_data = Some(product_group_data);
+        applied.push("productGroupData");
     }
     if let Some(v) = obj.get("componentRefs") {
         let refs: Vec<PassportRef> = serde_json::from_value(v.clone())
@@ -438,7 +443,7 @@ mod tests {
         domain::{
             error::DppError,
             passport::{ManufacturerInfo, Passport, PassportId},
-            sector::{Sector, SectorData},
+            product_group::{ProductGroup, ProductGroupData},
             status::PassportStatus,
         },
         ports::compliance::{
@@ -451,7 +456,9 @@ mod tests {
             id: PassportId::new(),
             batch_id: None,
             product_name: "Test".into(),
-            sector: Sector::Battery,
+            product_group: ProductGroup::Battery,
+            applicable_instruments: Vec::new(),
+            granularity: None,
             manufacturer: ManufacturerInfo {
                 name: "ACME".into(),
                 address: "1 Street".into(),
@@ -462,7 +469,7 @@ mod tests {
             repairability_score: None,
             compliance_result: None,
             lint_result: None,
-            sector_data: None,
+            product_group_data: None,
             status: PassportStatus::Draft,
             qr_code_url: None,
             jws_signature: None,
@@ -493,11 +500,11 @@ mod tests {
         fn compute(
             &self,
             _: &str,
-            _: &SectorData,
+            _: &ProductGroupData,
             _: Option<chrono::NaiveDate>,
         ) -> Result<ComplianceResult, ComplianceError> {
             Err(ComplianceError {
-                kind: ComplianceErrorKind::UnknownSector,
+                kind: ComplianceErrorKind::UnknownProductGroup,
                 message: "noop".into(),
             })
         }
@@ -580,12 +587,12 @@ mod tests {
     }
 
     /// A create-shaped body is what the integrator actually PUTs on its
-    /// `update_draft` path, and `CreatePassportRequest` serialises `sector` and
+    /// `update_draft` path, and `CreatePassportRequest` serialises `product_group` and
     /// `schemaVersion` as explicit `null` (neither carries
     /// `skip_serializing_if`). Both are in the repository's protected list, and
     /// `contains_key` is true for a null value — so the old
     /// echo-the-request-body delta made that request fail with
-    /// "cannot modify protected field(s): schemaVersion, sector" on **every**
+    /// "cannot modify protected field(s): schemaVersion, product group" on **every**
     /// call. Building from the allow-list drops them before the repository sees
     /// them.
     #[test]
@@ -593,14 +600,14 @@ mod tests {
         let mut p = stub();
         let patch = serde_json::json!({
             "productName": "Imported",
-            "sector": serde_json::Value::Null,
+            "productGroup": serde_json::Value::Null,
             "schemaVersion": serde_json::Value::Null,
             "manufacturer": { "name": "ACME", "address": "1 Street" },
             "batchId": serde_json::Value::Null,
         });
         let applied = apply_patch(&mut p, &patch).unwrap();
         let delta = super::delta_for(&p, &applied);
-        for protected in ["sector", "schemaVersion", "manufacturer", "batchId"] {
+        for protected in ["productGroup", "schemaVersion", "manufacturer", "batchId"] {
             assert!(!delta.contains_key(protected), "{protected} leaked");
         }
         assert_eq!(delta.len(), 1, "only productName should be written");
@@ -663,11 +670,11 @@ mod tests {
     }
 
     #[test]
-    fn patch_invalid_sector_data_returns_validation_error() {
+    fn patch_invalid_product_group_data_returns_validation_error() {
         let mut p = stub();
         let err = apply_patch(
             &mut p,
-            &serde_json::json!({"sectorData": {"type": "unknown", "garbage": true}}),
+            &serde_json::json!({"productGroupData": {"type": "unknown", "garbage": true}}),
         )
         .unwrap_err();
         assert!(matches!(err, DppError::Validation(_)));
@@ -684,8 +691,8 @@ mod tests {
     // ── apply_compliance ─────────────────────────────────────────────────────
 
     #[test]
-    fn no_sector_data_is_noop() {
-        let mut p = stub(); // sector_data is None → early return
+    fn no_product_group_data_is_noop() {
+        let mut p = stub(); // product_group_data is None → early return
         apply_compliance(&mut p, &NoopRegistry);
         assert!(p.co2e_per_unit.is_none());
         assert!(p.repairability_score.is_none());

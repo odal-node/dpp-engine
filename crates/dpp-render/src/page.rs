@@ -63,16 +63,16 @@ pub fn render_page(
         .get("status")
         .and_then(|v| v.as_str())
         .unwrap_or("unknown"));
-    // `gtin` lives in the sector-specific payload, not on the passport itself
+    // `gtin` lives in the product group-specific payload, not on the passport itself
     // (see `crate::domain::carrier_uri`'s doc comment for the JSON shape).
     let gtin = esc(p
-        .get("sectorData")
+        .get("productGroupData")
         .and_then(|sd| sd.get("gtin"))
         .and_then(|v| v.as_str())
         .unwrap_or("-"));
     let batch_id = esc(p.get("batchId").and_then(|v| v.as_str()).unwrap_or("-"));
 
-    let sector_html = sections::build_sector_section(p);
+    let product_group_html = sections::build_product_group_section(p);
     let qr_svg = carrier_uri(p, resolver_base_url, dpp_id)
         .map(|uri| build_qr_svg(&uri))
         .unwrap_or_default();
@@ -131,7 +131,7 @@ pub fn render_page(
       <tr><th scope="row">Batch ID</th><td>{batch_id}</td></tr>
     </table>
 
-    {sector_html}
+    {product_group_html}
 
     <div class="qr-wrap" aria-label="QR code linking to this passport">
       {qr_svg}
@@ -200,7 +200,7 @@ mod tests {
     const DPP_ID: &str = "0190a9f0-1234-7abc-8def-0123456789ab";
 
     /// Deliberately **not** a realistic Public-tier view: it includes `batchId`,
-    /// which `SectorAccessPolicy::passport_default` tiers as Professional (see
+    /// which `ProductGroupAccessPolicy::passport_default` tiers as Professional (see
     /// the README), so a genuine public read would never contain it. Used here
     /// to test `render_page`'s raw mechanics — it renders whatever it is given,
     /// by design — not to model what a real public render looks like.
@@ -210,7 +210,7 @@ mod tests {
             "manufacturer": { "name": "Sample Textiles Co." },
             "status": "active",
             "batchId": "BATCH-42",
-            "sectorData": { "sector": "textile", "gtin": "09506000134352" }
+            "productGroupData": { "productGroup": "textile", "gtin": "09506000134352" }
         })
     }
 
@@ -244,7 +244,7 @@ mod tests {
             "productName": "Organic Cotton T-Shirt",
             "manufacturer": { "name": "Sample Textiles Co." },
             "status": "active",
-            "sectorData": { "sector": "textile", "gtin": "09506000134352" }
+            "productGroupData": { "productGroup": "textile", "gtin": "09506000134352" }
         });
         let html = render_page(DPP_ID, &p, "https://id.odal-node.io", SnapshotNotice::Live);
         assert!(

@@ -1,0 +1,10 @@
+type: string
+description: >-
+  Overall compliance determination. `PASSTHROUGH_NO_VALIDATION` means no product group
+  plugin was loaded and nothing was assessed — it is not a pass.
+enum:
+  - PASSTHROUGH_NO_VALIDATION
+  - COMPLIANT
+  - NON_COMPLIANT
+  - NOT_ASSESSED
+  - NOT_IMPLEMENTED

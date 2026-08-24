@@ -4,7 +4,7 @@ use std::collections::HashMap;
 
 use dpp_domain::domain::{
     passport::ManufacturerInfo,
-    sector::{ProductionRoute, Sector, SectorData, SteelData},
+    product_group::{ProductGroup, ProductGroupData, ProductionRoute, SteelData},
 };
 
 use crate::domain::fields::{optional_f64, optional_str, parse_gtin, require_f64, require_str};
@@ -47,7 +47,7 @@ pub fn validate_steel_row(
     Ok(CreatePassportRequest {
         product_name: product_name
             .expect("field verified present by errors.is_empty() guard above"),
-        sector: Some(Sector::Steel),
+        product_group: Some(ProductGroup::Steel),
         manufacturer: ManufacturerInfo {
             name: manufacturer_name
                 .expect("field verified present by errors.is_empty() guard above"),
@@ -58,7 +58,7 @@ pub fn validate_steel_row(
         materials: None,
         co2e_per_unit: None,
         repairability_score: None,
-        sector_data: Some(SectorData::Steel(SteelData {
+        product_group_data: Some(ProductGroupData::Steel(SteelData {
             gtin: gtin.expect("field verified present by errors.is_empty() guard above"),
             co2e_per_tonne_steel: co2e
                 .expect("field verified present by errors.is_empty() guard above"),
@@ -103,13 +103,13 @@ mod tests {
     fn valid_steel_row_produces_request() {
         let row = steel_row();
         let req = validate_steel_row(&row, 1).expect("valid steel row");
-        assert_eq!(req.sector, Some(Sector::Steel));
-        match req.sector_data.unwrap() {
-            SectorData::Steel(d) => {
+        assert_eq!(req.product_group, Some(ProductGroup::Steel));
+        match req.product_group_data.unwrap() {
+            ProductGroupData::Steel(d) => {
                 assert_eq!(d.co2e_per_tonne_steel, 1.85);
                 assert!(matches!(d.production_route, ProductionRoute::ElectricArc));
             }
-            _ => panic!("expected steel sector data"),
+            _ => panic!("expected steel product_group data"),
         }
     }
 

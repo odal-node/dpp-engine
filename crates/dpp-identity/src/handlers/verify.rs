@@ -6,8 +6,7 @@
 use axum::{Json, extract::State, http::StatusCode, response::IntoResponse};
 use base64::Engine;
 use dpp_common::http_problem;
-use serde::Deserialize;
-use serde_json::json;
+use serde::{Deserialize, Serialize};
 
 use dpp_crypto::jws::signer;
 
@@ -15,7 +14,7 @@ use super::sign::is_valid_operator_id;
 use crate::state::AppState;
 
 /// Request body for the verification endpoint.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct VerifyRequest {
     /// Operator id whose key the signature is checked against.
     pub operator_id: String,
@@ -23,6 +22,17 @@ pub struct VerifyRequest {
     pub jws: String,
     /// The payload the caller expects the JWS to have been signed over.
     pub payload: serde_json::Value,
+}
+
+/// Response body for the verification endpoint.
+///
+/// A named type rather than a `json!` literal so the OpenAPI contract test can
+/// check `components/schemas/VerifyResponse` against it.
+#[derive(Debug, Serialize)]
+pub struct VerifyResponse {
+    /// True iff the signature verifies against the named operator's key **and**
+    /// was signed over exactly this payload.
+    pub valid: bool,
 }
 
 /// `POST /internal/verify` — check a JWS against the operator's key *and*
@@ -45,7 +55,7 @@ pub async fn verify_handler(
 
     // No key on file for this operator: cannot be a signature we issued.
     if !state.store.has_key(&body.operator_id) {
-        return (StatusCode::OK, Json(json!({"valid": false}))).into_response();
+        return (StatusCode::OK, Json(VerifyResponse { valid: false })).into_response();
     }
 
     // A structurally malformed signature segment (bad base64, wrong decoded
@@ -64,7 +74,9 @@ pub async fn verify_handler(
 
     (
         StatusCode::OK,
-        Json(json!({"valid": sig_valid && payload_matches})),
+        Json(VerifyResponse {
+            valid: sig_valid && payload_matches,
+        }),
     )
         .into_response()
 }

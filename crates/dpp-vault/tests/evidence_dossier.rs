@@ -23,7 +23,7 @@ use dpp_domain::{
     domain::{
         eol::{DeactivationReason, EolEvent},
         passport::{FacilitySnapshot, ManufacturerInfo, Passport, PassportId},
-        sector::Sector,
+        product_group::ProductGroup,
         status::PassportStatus,
         transfer::{OperatorRole, ResponsibleOperator, TransferChain, TransferReason},
     },
@@ -214,7 +214,9 @@ fn draft_passport() -> Passport {
         id: PassportId::new(),
         batch_id: None,
         product_name: "Evidence Dossier Test Widget".into(),
-        sector: Sector::Textile,
+        product_group: ProductGroup::Textile,
+        applicable_instruments: Vec::new(),
+        granularity: None,
         manufacturer: ManufacturerInfo {
             name: "Evidence Test GmbH".into(),
             address: "Berlin, DE".into(),
@@ -225,7 +227,7 @@ fn draft_passport() -> Passport {
         repairability_score: None,
         compliance_result: None,
         lint_result: None,
-        sector_data: None,
+        product_group_data: None,
         status: PassportStatus::Draft,
         qr_code_url: None,
         jws_signature: None,

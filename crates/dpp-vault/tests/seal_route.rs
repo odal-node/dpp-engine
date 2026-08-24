@@ -15,7 +15,7 @@ use helpers::{TestClient, make_jwt, start_postgres, start_vault};
 use chrono::Utc;
 use dpp_dal::pg::{PgDal, PgPassportRepo};
 use dpp_domain::domain::passport::{ManufacturerInfo, Passport, PassportId};
-use dpp_domain::domain::sector::Sector;
+use dpp_domain::domain::product_group::ProductGroup;
 use dpp_domain::domain::status::PassportStatus;
 use dpp_domain::ports::passport_repo::PassportRepository;
 use dpp_domain::ports::seal::{SealFormat, SealedEnvelope};
@@ -35,7 +35,9 @@ async fn seed(dal: &PgDal, seal: Option<SealedEnvelope>, jws: Option<&str>) -> P
         id: PassportId::new(),
         batch_id: None,
         product_name: "Seal Route Battery".into(),
-        sector: Sector::Battery,
+        product_group: ProductGroup::Battery,
+        applicable_instruments: Vec::new(),
+        granularity: None,
         manufacturer: ManufacturerInfo {
             name: "TestCorp GmbH".into(),
             address: "Berlin, DE".into(),
@@ -46,7 +48,7 @@ async fn seed(dal: &PgDal, seal: Option<SealedEnvelope>, jws: Option<&str>) -> P
         repairability_score: None,
         compliance_result: None,
         lint_result: None,
-        sector_data: None,
+        product_group_data: None,
         status: PassportStatus::Published,
         qr_code_url: None,
         jws_signature: jws.map(ToOwned::to_owned),

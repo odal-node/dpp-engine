@@ -355,8 +355,8 @@ async fn access_tier_header_cannot_unlock_restricted_fields() {
         "productName": "Tee",
         "status": "active",
         "manufacturer": { "name": "Acme" },
-        "sectorData": {
-            "sector": "textile",
+        "productGroupData": {
+            "productGroup": "textile",
             "fibreComposition": [{ "fibre": "cotton", "pct": 100.0 }],
             "svhcSubstances": [{ "casNumber": "117-81-7", "substanceName": "DEHP", "concentrationPct": 0.05 }],
             "disassemblyInstructions": "SECRET REPAIR PROCESS"
@@ -397,13 +397,13 @@ fn battery_passport_json() -> serde_json::Value {
     json!({
         "id": "00000000-0000-4000-8000-0000000000aa",
         "productName": "Test Battery",
-        "sector": "battery",
+        "productGroup": "battery",
         "manufacturer": { "name": "Acme Corp", "address": "1 Main St, Berlin, DE" },
         "materials": [],
         "co2ePerUnit": null,
         "repairabilityScore": null,
-        "sectorData": {
-            "sector": "battery",
+        "productGroupData": {
+            "productGroup": "battery",
             "gtin": "09506000134352",
             "batteryChemistry": "LFP",
             "batteryType": "ev",

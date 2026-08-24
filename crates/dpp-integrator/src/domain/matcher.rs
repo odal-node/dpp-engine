@@ -1,5 +1,5 @@
 //! Delta-import matcher: classifies each valid row against existing passports
-//! by exact compound identity (sector, GTIN, batch), so a re-uploaded sheet
+//! by exact compound identity (product group, GTIN, batch), so a re-uploaded sheet
 //! updates what changed instead of creating duplicates.
 //!
 //! Classification names what should happen to each row
@@ -49,14 +49,14 @@ pub struct Classification {
 /// excludes `co2ePerUnit`/`repairabilityScore`: `CreatePassportRequest`
 /// carries these as bare numbers but the persisted `Passport` carries them as
 /// computed objects (e.g. `CarbonFootprint`), so comparing them directly
-/// would always report a spurious change. `sectorData` already carries the
+/// would always report a spurious change. `productGroupData` already carries the
 /// source values these are usually derived from.
 const COMPARABLE_FIELDS: &[&str] = &[
     "productName",
-    "sector",
+    "productGroup",
     "manufacturer",
     "materials",
-    "sectorData",
+    "productGroupData",
     "batchId",
 ];
 
@@ -81,17 +81,17 @@ pub fn comparable_fingerprint(value: &serde_json::Value) -> String {
 }
 
 /// Derive the compound identity from a not-yet-created request, or `None` if
-/// its sector carries no GTIN (mirrors `ProductIdentity::from_passport`, but
+/// its product group carries no GTIN (mirrors `ProductIdentity::from_passport`, but
 /// operates on the pre-create request shape).
 pub fn identity_from_request(req: &CreatePassportRequest) -> Option<ProductIdentity> {
-    let sector = req.sector.clone().or_else(|| {
-        req.sector_data
+    let product_group = req.product_group.clone().or_else(|| {
+        req.product_group_data
             .as_ref()
-            .map(dpp_domain::domain::sector::SectorData::sector)
+            .map(dpp_domain::domain::product_group::ProductGroupData::product_group)
     })?;
-    let gtin = req.sector_data.as_ref()?.gtin()?.to_owned();
+    let gtin = req.product_group_data.as_ref()?.gtin()?.to_owned();
     Some(ProductIdentity {
-        sector,
+        product_group,
         gtin,
         batch_id: req.batch_id.clone(),
     })
@@ -99,7 +99,7 @@ pub fn identity_from_request(req: &CreatePassportRequest) -> Option<ProductIdent
 
 /// Classify one row against the vault's existing passports.
 ///
-/// Rows whose sector carries no GTIN (no identity derivable) always classify
+/// Rows whose product group carries no GTIN (no identity derivable) always classify
 /// as `Create` — there is nothing to match against.
 pub async fn classify_row(
     vault_client: &VaultHttpClient,

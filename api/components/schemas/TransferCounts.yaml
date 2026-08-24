@@ -1,0 +1,15 @@
+type: object
+required:
+  - pending
+  - notified
+  - rejected
+  - stalled
+properties:
+  pending:
+    type: integer
+  notified:
+    type: integer
+  rejected:
+    type: integer
+  stalled:
+    type: integer

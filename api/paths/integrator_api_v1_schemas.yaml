@@ -1,15 +1,15 @@
 get:
   operationId: listSectorSchemas
-  summary: List sector schemas and their versions
+  summary: List product group schemas and their versions
   description: |
-    Every sector with a JSON Schema, the version a new passport is validated
+    Every product group with a JSON Schema, the version a new passport is validated
     against (`current`), and every version a stored passport may legitimately
     record (`versions`). Unauthenticated.
   tags:
     - Integrator
   responses:
     '200':
-      description: The available sector schemas.
+      description: The available product group schemas.
       content:
         application/json:
           schema:
@@ -20,7 +20,7 @@ get:
                 items:
                   type: object
                   properties:
-                    sector:
+                    productGroup:
                       type: string
                       example: battery
                     current:

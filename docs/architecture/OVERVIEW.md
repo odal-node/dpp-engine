@@ -102,8 +102,8 @@ Sub-services communicate via localhost HTTP (e.g., vault calls identity for sign
 ### Bulk Import Path
 
 ```
-1. Operator uploads CSV/XLSX via POST /integrator/api/v1/import/{sector}
-2. File parsed and validated row-by-row against sector schema
+1. Operator uploads CSV/XLSX via POST /integrator/api/v1/import/{productGroup}
+2. File parsed and validated row-by-row against product group schema
 3. Each valid row becomes a POST to vault service (localhost HTTP)
 4. Job tracked in JobStore with status (queued -> processing -> completed/failed)
 5. Operator polls GET /integrator/api/v1/imports/{job_id} for progress

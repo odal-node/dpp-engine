@@ -37,6 +37,6 @@ get:
     '422':
       description: The requested `schema_view` is unavailable.
       content:
-        application/json:
+        application/problem+json:
           schema:
-            $ref: ../components/schemas/ApiError.yaml
+            $ref: ../components/schemas/Problem.yaml

@@ -5,8 +5,7 @@
 use axum::{Json, extract::State, http::StatusCode, response::IntoResponse};
 use base64::Engine;
 use dpp_common::http_problem;
-use serde::Deserialize;
-use serde_json::json;
+use serde::{Deserialize, Serialize};
 
 use dpp_crypto::jws::signer;
 
@@ -26,7 +25,7 @@ pub(crate) fn is_valid_operator_id(id: &str) -> bool {
 }
 
 /// Request body for the signing endpoint.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct SignRequest {
     /// Operator id whose key is used for signing. Auto-provisioned on first use.
     pub operator_id: String,
@@ -34,6 +33,22 @@ pub struct SignRequest {
     pub passport_id: String,
     /// Base64-encoded canonical JSON of the payload to sign.
     pub payload: String,
+}
+
+/// Response body for the signing endpoint.
+///
+/// A named type rather than a `json!` literal so the OpenAPI contract test can
+/// check `components/schemas/SignResponse` against it.
+///
+/// Note the field is `jws_signature`, not `jwsSignature`: this internal
+/// service-to-service surface is snake_case, unlike the public `/api/v1` one.
+/// That is the shape already on the wire and the shape the spec records; it is
+/// not changed here, because renaming it would break the vault client for a
+/// consistency the internal surface never claimed.
+#[derive(Debug, Serialize)]
+pub struct SignResponse {
+    /// Compact JWS (EdDSA over RFC 8785 canonical bytes).
+    pub jws_signature: String,
 }
 
 /// `POST /internal/sign` — sign a base64-encoded payload with the operator's Ed25519 key.
@@ -78,7 +93,7 @@ pub async fn sign_handler(
     }
 
     match signer::sign(&state.store, &body.operator_id, &payload_value) {
-        Ok(jws) => (StatusCode::OK, Json(json!({"jws_signature": jws}))).into_response(),
+        Ok(jws) => (StatusCode::OK, Json(SignResponse { jws_signature: jws })).into_response(),
         Err(e) => {
             tracing::error!(operator_id = %body.operator_id, error = %e, "signing failed");
             http_problem::internal_error(e.to_string()).into_response()

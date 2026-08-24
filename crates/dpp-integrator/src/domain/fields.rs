@@ -1,4 +1,4 @@
-//! Field extraction helpers shared by every sector's row validator.
+//! Field extraction helpers shared by every product group's row validator.
 
 use std::collections::HashMap;
 
@@ -9,11 +9,11 @@ use super::request::RowError;
 
 /// Parse `gtin` (when present) into the validated [`Gtin`] newtype, pushing a
 /// `RowError` instead if it is not a structurally valid GS1 GTIN-14 (14 digits +
-/// mod-10 check digit). Shared by the sector importers so steel/aluminium/tyre
+/// mod-10 check digit). Shared by the product group importers so steel/aluminium/tyre
 /// validate the checksum the same way the battery importer already does — a bad
 /// checksum must not pass through the pipeline unchecked.
 ///
-/// Returns the parsed value rather than validating and discarding it: the sector
+/// Returns the parsed value rather than validating and discarding it: the product group
 /// structs now hold `Gtin`, and parsing once here means a call site cannot end up
 /// re-parsing a string it has already proven valid.
 pub(super) fn parse_gtin(
@@ -46,7 +46,7 @@ fn normalize_key(key: &str) -> String {
 }
 
 /// Look up a field tolerantly: exact key first, then a case/separator-insensitive
-/// match. This lets **every** sector validator accept both camelCase and
+/// match. This lets **every** product group validator accept both camelCase and
 /// snake_case headers (`manufacturerName` ≡ `manufacturer_name`) with no per-field
 /// alias lists. Semantically-different headers (e.g. `manufacturerCountry` vs a
 /// full `manufacturer_address`) still need explicit aliases via [`aliased`].

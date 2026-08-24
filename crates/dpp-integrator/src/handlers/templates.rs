@@ -1,4 +1,4 @@
-//! `GET /api/v1/templates/{sector}` — serve the canonical CSV import template for a sector.
+//! `GET /api/v1/templates/{product group}` — serve the canonical CSV import template for a product group.
 
 use axum::{
     extract::{Path, Query},
@@ -21,12 +21,12 @@ pub struct TemplateQuery {
     pub format: Option<String>,
 }
 
-/// `GET /api/v1/templates/{sector}[?format=csv|xlsx]`
+/// `GET /api/v1/templates/{product group}[?format=csv|xlsx]`
 ///
-/// Returns the canonical import CSV template for the requested sector.
+/// Returns the canonical import CSV template for the requested product group.
 /// XLSX download is not yet implemented (returns 501).
 pub async fn get_template(
-    Path(sector): Path<String>,
+    Path(product_group): Path<String>,
     Query(query): Query<TemplateQuery>,
 ) -> Response {
     let format = query.format.as_deref().unwrap_or("csv");
@@ -40,7 +40,7 @@ pub async fn get_template(
             .into_response();
     }
 
-    let (content, filename): (&str, &str) = match sector.as_str() {
+    let (content, filename): (&str, &str) = match product_group.as_str() {
         "battery" => (BATTERY_TEMPLATE, "odal-battery-template.csv"),
         "textile" => (TEXTILE_TEMPLATE, "odal-textile-template.csv"),
         "steel" => (STEEL_TEMPLATE, "odal-steel-template.csv"),
@@ -50,7 +50,7 @@ pub async fn get_template(
             return (
                 StatusCode::NOT_FOUND,
                 format!(
-                    "No template available for sector: '{sector}'. Valid values: battery, \
+                    "No template available for product_group: '{product_group}'. Valid values: battery, \
                      textile, steel, aluminium, tyre."
                 ),
             )
@@ -78,7 +78,7 @@ pub async fn get_template(
 }
 
 /// Golden-pairing test: each shipped template's own example rows must be
-/// accepted by that sector's row validator. Without this, a validator's
+/// accepted by that product group's row validator. Without this, a validator's
 /// required-field list can silently drift away from the header set the
 /// template actually ships (or vice versa) with nothing catching it.
 #[cfg(test)]
@@ -88,15 +88,18 @@ mod template_validator_pairing {
     };
     use crate::domain::{csv_parser, validate};
 
-    fn assert_all_rows_validate(sector: &str, csv: &str) {
+    fn assert_all_rows_validate(product_group: &str, csv: &str) {
         let rows = csv_parser::parse_csv(csv.as_bytes()).expect("template must parse as CSV");
-        assert!(!rows.is_empty(), "{sector} template has no example rows");
+        assert!(
+            !rows.is_empty(),
+            "{product_group} template has no example rows"
+        );
         for (i, row) in rows.iter().enumerate() {
             let row_num = i + 1;
             if let Err(validate::RowValidationError::Invalid(errs)) =
-                validate::validate_row(sector, row, row_num)
+                validate::validate_row(product_group, row, row_num)
             {
-                panic!("{sector} template row {row_num} failed validation: {errs:?}");
+                panic!("{product_group} template row {row_num} failed validation: {errs:?}");
             }
         }
     }

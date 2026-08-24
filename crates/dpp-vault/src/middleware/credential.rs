@@ -99,26 +99,26 @@ impl VerifiedCredential {
     /// The Art. 77(2) audience this credential grants **before** it is scoped to
     /// a particular passport.
     ///
-    /// Prefer [`Self::audience_for_sector`] at a read site: a credential issued
-    /// for one sector must not elevate a reader on another, and this method
+    /// Prefer [`Self::audience_for_product_group`] at a read site: a credential issued
+    /// for one product group must not elevate a reader on another, and this method
     /// cannot know which passport is being read.
     #[must_use]
     pub fn audience(&self) -> Audience {
         self.0.credential_subject.role.audience()
     }
 
-    /// The audience this credential grants **over a passport in `sector_key`**.
+    /// The audience this credential grants **over a passport in `product_group_key`**.
     ///
-    /// A credential naming sectors grants nothing extra outside them, so an
+    /// A credential naming product groups grants nothing extra outside them, so an
     /// out-of-scope credential resolves to [`Audience::Public`] rather than an
     /// error: it is a valid credential that simply does not cover this product,
     /// and public access is the baseline every caller already has. Denying
-    /// instead would also make the route a probe for which sector a passport is
+    /// instead would also make the route a probe for which product group a passport is
     /// in.
     ///
-    /// The scope rule itself is core's — an empty `sectors` list means unscoped,
-    /// a populated one must contain the sector — applied by re-running the pure
-    /// claims check with the sector now known. Nothing here re-implements it,
+    /// The scope rule itself is core's — an empty `product_groups` list means unscoped,
+    /// a populated one must contain the product group — applied by re-running the pure
+    /// claims check with the product group now known. Nothing here re-implements it,
     /// and nothing here touches the network: authentication, issuer trust and
     /// revocation were all settled in [`read_and_verify`] before the database
     /// was reached.
@@ -127,28 +127,28 @@ impl VerifiedCredential {
     ///
     /// `credential_subject` may carry free-string `product_categories`. There
     /// is nothing to match them against: a passport has no product category.
-    /// The field that once held one was renamed `sector` because it was
-    /// misnamed, and category is now a per-sector concept with a different
+    /// The field that once held one was renamed `product_group` because it was
+    /// misnamed, and category is now a per-product group concept with a different
     /// shape in each — a device type here, a plain string there, an Art. 8
     /// scope bucket elsewhere that is explicitly not the passport's category.
     ///
     /// So this axis is not scoped, and the consequence used to be inverted:
     /// passing `None` for the required category meant an issuer who narrowed a
     /// credential to one category got a credential valid over **every** product
-    /// in its sectors. The restriction was read as its opposite.
+    /// in its product groups. The restriction was read as its opposite.
     ///
     /// A restriction that cannot be evaluated is treated as unsatisfied, never
     /// as satisfied: a credential naming any product category resolves to
-    /// [`Audience::Public`] here. That is the same downgrade an out-of-sector
+    /// [`Audience::Public`] here. That is the same downgrade an out-of-product group
     /// credential gets — it is valid, it simply unlocks nothing on this node —
     /// and it makes the gap loud for an issuer rather than silently generous.
     ///
     /// Enforcing the axis properly needs a decision about what a product
-    /// category *is* across sectors, which is not this layer's to invent.
+    /// category *is* across product groups, which is not this layer's to invent.
     #[must_use]
-    pub fn audience_for_sector(
+    pub fn audience_for_product_group(
         &self,
-        sector_key: &str,
+        product_group_key: &str,
         trust: &dyn TrustedIssuerRegistry,
     ) -> Audience {
         if !self.0.credential_subject.product_categories.is_empty() {
@@ -157,7 +157,7 @@ impl VerifiedCredential {
 
         let scoped = dpp_vc::verify_credential_claims_with_trust(
             &self.0,
-            Some(sector_key),
+            Some(product_group_key),
             None,
             chrono::Utc::now(),
             trust,
@@ -247,10 +247,10 @@ pub async fn read_and_verify(
 
     // Claims, issuer trust and revocation in core's composed path, so the
     // fail-closed revocation policy is applied where it is defined rather than
-    // re-implemented here. `required_sector`/`required_product_category` are
+    // re-implemented here. `required_product_group`/`required_product_category` are
     // None because this layer does not know which passport is being read; the
-    // sector scope is applied afterwards by
-    // [`VerifiedCredential::audience_for_sector`], once the row is loaded. That
+    // product group scope is applied afterwards by
+    // [`VerifiedCredential::audience_for_product_group`], once the row is loaded. That
     // split is deliberate: everything that can make a credential *invalid* is
     // settled here, before the database is touched, so a bad credential gets
     // the same 401 whether or not the passport exists. Scope is not validity —
@@ -278,7 +278,7 @@ pub async fn read_and_verify(
 ///
 /// **Nothing the caller supplied is echoed back.** `MalformedCredential` and
 /// `OutOfScope` carry free text built from the credential's own contents (its
-/// declared sectors, for instance). Reflecting attacker-chosen strings into a
+/// declared product groups, for instance). Reflecting attacker-chosen strings into a
 /// response body is a habit worth not having, whatever this particular endpoint
 /// renders them into.
 ///
@@ -360,7 +360,7 @@ mod tests {
                 name: "Example Co".to_owned(),
                 role,
                 country: "DE".to_owned(),
-                sectors: vec!["battery".to_owned()],
+                product_groups: vec!["battery".to_owned()],
                 product_categories: Vec::new(),
             },
         )
@@ -616,7 +616,7 @@ mod tests {
     /// passport. The credential stays valid — it simply grants nothing beyond
     /// public here, which is why the answer is a downgrade and not a 401.
     #[tokio::test]
-    async fn a_credential_does_not_elevate_outside_its_sectors() {
+    async fn a_credential_does_not_elevate_outside_its_product_groups() {
         let (key, kid) = key_and_kid();
         let jws = sign_credential(
             &key,
@@ -633,21 +633,21 @@ mod tests {
             panic!("the credential itself is valid");
         };
         assert_eq!(
-            c.audience_for_sector("battery", &trusting()),
+            c.audience_for_product_group("battery", &trusting()),
             Audience::LegitimateInterest,
             "in scope: the credential names battery"
         );
         assert_eq!(
-            c.audience_for_sector("textile", &trusting()),
+            c.audience_for_product_group("textile", &trusting()),
             Audience::Public,
             "out of scope: a battery credential must not unlock a textile passport"
         );
     }
 
-    /// An unmodelled sector is not in any credential's scope list either, so it
+    /// An unmodelled product group is not in any credential's scope list either, so it
     /// gets the same downgrade rather than falling through to the raw audience.
     #[tokio::test]
-    async fn an_unknown_sector_is_out_of_scope() {
+    async fn an_unknown_product_group_is_out_of_scope() {
         let (key, kid) = key_and_kid();
         let jws = sign_credential(
             &key,
@@ -666,20 +666,20 @@ mod tests {
         };
         assert_eq!(c.audience(), Audience::Authority);
         assert_eq!(
-            c.audience_for_sector("not-a-sector", &trust),
+            c.audience_for_product_group("not-a-product_group", &trust),
             Audience::Public
         );
     }
 
-    /// A credential naming **no** sectors is unscoped by core's rule, so it
+    /// A credential naming **no** product groups is unscoped by core's rule, so it
     /// keeps its audience everywhere. Locking this in because the downgrade
     /// above must not silently become "deny unless listed" — that would break
     /// every general-purpose authority credential.
     #[tokio::test]
-    async fn a_credential_with_no_sectors_is_unscoped() {
+    async fn a_credential_with_no_product_groups_is_unscoped() {
         let (key, kid) = key_and_kid();
         let mut cred = credential(CredentialRole::Recycler, 30);
-        cred.credential_subject.sectors = Vec::new();
+        cred.credential_subject.product_groups = Vec::new();
         let jws = sign_credential(&key, &kid, &cred);
         let out = read_and_verify(
             &headers_with(Some(&jws)),
@@ -691,13 +691,13 @@ mod tests {
             panic!("valid credential");
         };
         assert_eq!(
-            c.audience_for_sector("textile", &trusting()),
+            c.audience_for_product_group("textile", &trusting()),
             Audience::LegitimateInterest
         );
     }
 
     /// A credential naming a product category unlocks nothing, even where its
-    /// sector matches.
+    /// product group matches.
     ///
     /// There is nothing on a passport to match the category against, so the
     /// restriction cannot be evaluated. Before this, the unevaluated axis was
@@ -722,16 +722,16 @@ mod tests {
 
         // The credential is genuinely valid and its role is elevated …
         assert_eq!(c.audience(), Audience::LegitimateInterest);
-        // … and it still unlocks nothing, in its own sector.
+        // … and it still unlocks nothing, in its own product group.
         assert_eq!(
-            c.audience_for_sector("battery", &trusting()),
+            c.audience_for_product_group("battery", &trusting()),
             Audience::Public,
             "an unevaluable restriction must not be read as no restriction"
         );
     }
 
     /// The common case must stay unaffected: no product category named means no
-    /// restriction claimed, and sector scope alone decides.
+    /// restriction claimed, and product group scope alone decides.
     #[tokio::test]
     async fn an_empty_product_category_list_changes_nothing() {
         let (key, kid) = key_and_kid();
@@ -748,7 +748,7 @@ mod tests {
             panic!("valid credential");
         };
         assert_eq!(
-            c.audience_for_sector("battery", &trusting()),
+            c.audience_for_product_group("battery", &trusting()),
             Audience::LegitimateInterest
         );
     }
@@ -768,7 +768,7 @@ mod tests {
     /// Rejection details are fixed sentences: no `Debug` formatting, and
     /// nothing derived from the credential the caller supplied. The old
     /// `{result:?}` emitted `UntrustedIssuer { issuer_did: "…" }` and
-    /// `OutOfScope { reason: "Credential covers sectors […]" }` — Rust internals
+    /// `OutOfScope { reason: "Credential covers product groups […]" }` — Rust internals
     /// and caller-chosen strings, straight into a public response body.
     #[test]
     fn rejection_details_are_fixed_sentences_not_debug_output() {
@@ -783,7 +783,7 @@ mod tests {
                 issuer_did: "did:web:attacker-chosen.example".to_owned(),
             },
             V::OutOfScope {
-                reason: "Credential covers sectors [\"<script>\"]".to_owned(),
+                reason: "Credential covers product_groups [\"<script>\"]".to_owned(),
             },
             V::MalformedCredential("attacker text".to_owned()),
         ];
@@ -796,7 +796,7 @@ mod tests {
                 "did:web:",
                 "attacker",
                 "script",
-                "sectors",
+                "product_groups",
                 "expired_at",
             ] {
                 assert!(

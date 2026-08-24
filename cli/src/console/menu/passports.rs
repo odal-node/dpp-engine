@@ -396,7 +396,7 @@ impl std::fmt::Display for BrowseChoice {
                 status_dot(&p.status),
                 p.status,
                 truncate_label(&p.product_name, 30),
-                p.sector,
+                p.product_group,
                 p.batch.as_deref().unwrap_or("—"),
             ),
             BrowseChoice::NextPage => write!(f, "{}", style("→ Next page").cyan()),

@@ -29,11 +29,21 @@ impl PassportService {
     }
 
     /// Fetch a published passport by GS1 GTIN (O(n) scan — see `PgPassportRepo`).
+    ///
+    /// **Not for a public route.** It folds "no such GTIN" and "suspended" into
+    /// the same `None`, so a caller cannot serve `410 Gone` for a recall. Use
+    /// [`find_by_gtin_any_status`](Self::find_by_gtin_any_status) there.
     pub async fn find_published_by_gtin(&self, gtin: &str) -> Result<Option<Passport>, DppError> {
         self.repo.find_published_by_gtin(gtin).await
     }
 
-    /// Fetch a passport by exact compound identity (sector, GTIN, batch),
+    /// Fetch a passport by GS1 GTIN regardless of status, so the caller can
+    /// distinguish a missing product from a recalled one.
+    pub async fn find_by_gtin_any_status(&self, gtin: &str) -> Result<Option<Passport>, DppError> {
+        self.repo.find_by_gtin_any_status(gtin).await
+    }
+
+    /// Fetch a passport by exact compound identity (product group, GTIN, batch),
     /// across `Draft` and `Published` — the import delta-matcher's lookup.
     pub async fn find_by_identity(
         &self,

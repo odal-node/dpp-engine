@@ -86,7 +86,7 @@ impl PassportService {
     /// Permanently archive a passport after retention expiry.
     ///
     /// Blocked by the ESPR retention guard: if `retention_locked` is set and the
-    /// sector's minimum retention period has not yet elapsed from `published_at`,
+    /// product group's minimum retention period has not yet elapsed from `published_at`,
     /// returns `DppError::Validation`. Emits `dpp.passport.archived`.
     #[tracing::instrument(skip(self), fields(passport_id = %id))]
     pub async fn archive(&self, id: PassportId, auth: &AuthContext) -> Result<Passport, DppError> {
@@ -108,7 +108,7 @@ impl PassportService {
         {
             // Same resolver publish uses, so the guard and the sealed deadline
             // agree by construction.
-            let retention_years = i64::from(retention_years_for(&passport.sector));
+            let retention_years = i64::from(retention_years_for(&passport.product_group));
             let retention_end = published_at + chrono::Duration::days(365 * retention_years);
             if Utc::now() < retention_end {
                 tracing::warn!(

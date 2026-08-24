@@ -5,8 +5,9 @@ use std::collections::HashMap;
 use dpp_domain::domain::{
     gtin::Gtin,
     passport::ManufacturerInfo,
-    sector::{
-        BatteryChemistry, BatteryData, BatteryType, CarbonFootprintClass, Sector, SectorData,
+    product_group::{
+        BatteryChemistry, BatteryData, BatteryType, CarbonFootprintClass, ProductGroup,
+        ProductGroupData,
     },
 };
 
@@ -128,7 +129,7 @@ pub fn validate_battery_row(
         serde_json::from_value(serde_json::Value::String(chemistry_raw))
             .unwrap_or(BatteryChemistry::Other);
 
-    let battery_data = SectorData::Battery(Box::new(BatteryData {
+    let battery_data = ProductGroupData::Battery(Box::new(BatteryData {
         gtin: gtin.expect("field verified present by errors.is_empty() guard above"),
         battery_chemistry: battery_chemistry_parsed,
         nominal_voltage_v: nominal_voltage_v
@@ -221,7 +222,7 @@ pub fn validate_battery_row(
     Ok(CreatePassportRequest {
         product_name: product_name
             .expect("field verified present by errors.is_empty() guard above"),
-        sector: Some(Sector::Battery),
+        product_group: Some(ProductGroup::Battery),
         manufacturer: ManufacturerInfo {
             name: manufacturer_name
                 .expect("field verified present by errors.is_empty() guard above"),
@@ -232,7 +233,7 @@ pub fn validate_battery_row(
         materials: (!materials.is_empty()).then_some(materials),
         co2e_per_unit: None, // vault derives from BatteryData
         repairability_score,
-        sector_data: Some(battery_data),
+        product_group_data: Some(battery_data),
         batch_id,
         schema_version: None,
     })
@@ -269,14 +270,14 @@ mod tests {
         let row = battery_row();
         let req = validate_battery_row(&row, 1).expect("valid row should succeed");
         assert_eq!(req.product_name, "EV Battery 48V");
-        assert_eq!(req.sector, Some(Sector::Battery));
-        match req.sector_data.unwrap() {
-            SectorData::Battery(b) => {
+        assert_eq!(req.product_group, Some(ProductGroup::Battery));
+        match req.product_group_data.unwrap() {
+            ProductGroupData::Battery(b) => {
                 assert_eq!(b.gtin.as_str(), "09506000134352");
                 assert_eq!(b.battery_chemistry, BatteryChemistry::Lfp);
                 assert_eq!(b.nominal_voltage_v, 48.0);
             }
-            _ => panic!("expected battery sector data"),
+            _ => panic!("expected battery product_group data"),
         }
     }
 
@@ -362,15 +363,15 @@ mod tests {
         assert_eq!(materials[0].country_of_origin.as_deref(), Some("CN"));
 
         // Extended battery fields carried through (no longer dropped).
-        match req.sector_data.unwrap() {
-            SectorData::Battery(b) => {
+        match req.product_group_data.unwrap() {
+            ProductGroupData::Battery(b) => {
                 assert_eq!(b.recycled_content_lithium_pct, Some(12.5));
                 assert_eq!(b.recycled_content_cobalt_pct, Some(0.0));
                 assert_eq!(b.recycled_content_nickel_pct, Some(0.0));
                 assert_eq!(b.state_of_health_pct, Some(100.0));
                 assert_eq!(b.rated_capacity_kwh, Some(4.8));
             }
-            _ => panic!("expected battery sector data"),
+            _ => panic!("expected battery product_group data"),
         }
     }
 }

@@ -62,7 +62,7 @@ pub struct NodeConfig {
     /// Tracing/logging level, e.g. `"info"` or `"debug,odal=trace"`.
     pub log_level: String,
 
-    /// Path to the directory containing `*.wasm` sector plugin files.
+    /// Path to the directory containing `*.wasm` product group plugin files.
     pub plugins_dir: String,
 
     /// Bind address for the **private** Prometheus metrics listener (`GET /metrics`).

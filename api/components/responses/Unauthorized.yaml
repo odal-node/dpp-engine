@@ -1,8 +1,10 @@
 description: Missing or invalid authentication credentials.
 content:
-  application/json:
+  application/problem+json:
     schema:
-      $ref: ../schemas/ApiError.yaml
+      $ref: ../schemas/Problem.yaml
     example:
-      error: UNAUTHORIZED
-      message: Missing or invalid Authorization header.
+      type: https://problems.odal-node.io/unauthorized
+      title: Unauthorized
+      status: 401
+      detail: Missing or invalid Authorization header.

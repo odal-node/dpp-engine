@@ -74,8 +74,8 @@ async fn published_passport_is_served_as_the_payload_its_proof_signed() {
                 "manufacturer": { "name": "GreenCell GmbH", "address": "Berlin, DE" },
                 "materials": [{ "name": "Lithium", "weightKg": 1.2 }],
                 "batchId": "LOT-2026-07",
-                "sectorData": {
-                    "sector": "battery",
+                "productGroupData": {
+                    "productGroup": "battery",
                     "gtin": "09506000134352",
                     "batteryChemistry": "LFP",
                     "batteryType": "portable",

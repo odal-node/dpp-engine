@@ -1,5 +1,5 @@
 //! `GET /api/v1/dpp/by-identity` — exact compound identity lookup for the
-//! import delta-matcher (sector, GTIN, batch), across `Draft` and `Published`.
+//! import delta-matcher (product group, GTIN, batch), across `Draft` and `Published`.
 
 use axum::{
     Json,
@@ -9,7 +9,7 @@ use axum::{
 };
 use serde::Deserialize;
 
-use dpp_domain::domain::{product_identity::ProductIdentity, sector::Sector};
+use dpp_domain::domain::{product_group::ProductGroup, product_identity::ProductIdentity};
 
 use crate::{middleware::auth::AuthContext, state::AppState};
 
@@ -19,7 +19,7 @@ use super::error::internal_error;
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct IdentityQuery {
-    pub sector: Sector,
+    pub product_group: ProductGroup,
     pub gtin: String,
     /// Omit to match only passports with no batch set.
     pub batch_id: Option<String>,
@@ -32,7 +32,7 @@ pub async fn find_by_identity_handler(
     Query(query): Query<IdentityQuery>,
 ) -> impl IntoResponse {
     let identity = ProductIdentity {
-        sector: query.sector,
+        product_group: query.product_group,
         gtin: query.gtin,
         batch_id: query.batch_id,
     };

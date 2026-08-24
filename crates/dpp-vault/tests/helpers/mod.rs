@@ -374,7 +374,7 @@ pub async fn seed_operator_config(dal: &PgDal) {
 
 /// Seed a *complete, publishable* operator: the config plus the Annex III default
 /// facility (point (i)) and primary operator identifier (point (k)) that
-/// `publish` now requires for in-force sectors. Use in publish-flow tests.
+/// `publish` now requires for in-force product groups. Use in publish-flow tests.
 pub async fn seed_complete_operator(dal: &PgDal) {
     use dpp_types::operator::STANDALONE_OPERATOR_ID;
     use dpp_types::registry_identity::{Facility, OperatorIdentifier, RegistryIdentityRepository};

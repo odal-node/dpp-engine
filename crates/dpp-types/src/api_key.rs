@@ -137,7 +137,7 @@ impl std::fmt::Debug for NewApiKey {
 }
 
 /// Request body for `POST /api/v1/api-keys`.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CreateApiKeyRequest {
     /// Human-readable name for the key (e.g. `"CI pipeline"`, `"Mobile app"`).
