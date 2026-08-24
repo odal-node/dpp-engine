@@ -1,6 +1,6 @@
 //! Integration tests for the registry-identity governance rules:
 //!   * publish is gated on Annex III facility + operator identifier for in-force
-//!     sectors, backfilling from the current defaults first (finding #2);
+//!     product groups, backfilling from the current defaults first (finding #2);
 //!   * the default facility can't be retired while alternatives exist (finding #3);
 //!   * the append-only audit trail is retrievable via the API (finding #5).
 
@@ -15,8 +15,8 @@ fn battery_body() -> serde_json::Value {
     json!({
         "productName": "EcoBattery LFP 3000",
         "manufacturer": { "name": "GreenCell GmbH", "address": "Berlin, DE" },
-        "sectorData": {
-            "sector": "battery",
+        "productGroupData": {
+            "productGroup": "battery",
             "gtin": "09506000134352",
             "batteryChemistry": "LFP",
             "batteryType": "portable",

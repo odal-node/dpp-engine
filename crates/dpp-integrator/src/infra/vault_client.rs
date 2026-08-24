@@ -148,18 +148,21 @@ impl VaultHttpClient {
         }
     }
 
-    /// Look up a passport by exact compound identity (sector, GTIN, batch).
+    /// Look up a passport by exact compound identity (product group, GTIN, batch).
     /// `Ok(None)` means no passport matches — not an error.
     pub async fn find_by_identity(
         &self,
         identity: &ProductIdentity,
         auth_token: &str,
     ) -> Result<Option<serde_json::Value>, VaultClientError> {
-        let sector = serde_json::to_value(&identity.sector)
+        let product_group = serde_json::to_value(&identity.product_group)
             .ok()
             .and_then(|v| v.as_str().map(str::to_owned))
             .unwrap_or_default();
-        let mut params = vec![("sector", sector), ("gtin", identity.gtin.clone())];
+        let mut params = vec![
+            ("productGroup", product_group),
+            ("gtin", identity.gtin.clone()),
+        ];
         if let Some(ref batch_id) = identity.batch_id {
             params.push(("batchId", batch_id.clone()));
         }
@@ -263,7 +266,7 @@ mod tests {
     fn sample_request() -> CreatePassportRequest {
         CreatePassportRequest {
             product_name: "Test Widget".into(),
-            sector: None,
+            product_group: None,
             manufacturer: ManufacturerInfo {
                 name: "Acme".into(),
                 address: "1 Main St".into(),
@@ -272,7 +275,7 @@ mod tests {
             materials: None,
             co2e_per_unit: None,
             repairability_score: None,
-            sector_data: None,
+            product_group_data: None,
             batch_id: None,
             schema_version: None,
         }

@@ -3,7 +3,7 @@
 //! Covers functionality not exercised by the inline unit tests in `lib.rs`:
 //! - QR PNG generation and cacheability
 //! - Content negotiation edge cases (no Accept, wildcard Accept)
-//! - HTML rendering with battery and textile sector data
+//! - HTML rendering with battery and textile product group data
 //! - Health and readiness probes
 //!
 //! JWS verification itself (valid/tampered/missing signatures, DID
@@ -67,11 +67,11 @@ fn sample_passport() -> serde_json::Value {
     })
 }
 
-/// `sample_passport()` plus sector data carrying a GTIN — what a real
+/// `sample_passport()` plus product group data carrying a GTIN — what a real
 /// carrier-bearing product passport looks like, for the QR tests.
 fn sample_passport_with_gtin() -> serde_json::Value {
     let mut p = sample_passport();
-    p["sectorData"] = json!({ "sector": "electronics", "gtin": "09506000134352" });
+    p["productGroupData"] = json!({ "productGroup": "electronics", "gtin": "09506000134352" });
     p
 }
 
@@ -81,8 +81,8 @@ fn sample_battery_passport() -> serde_json::Value {
         "productName": "EcoCell 48V",
         "status": "active",
         "manufacturer": {"name": "GreenCell GmbH", "address": "Munich, DE"},
-        "sectorData": {
-            "sector": "battery",
+        "productGroupData": {
+            "productGroup": "battery",
             "batteryChemistry": "LFP",
             "nominalVoltageV": 48.0,
             "nominalCapacityAh": 100.0,
@@ -100,8 +100,8 @@ fn sample_textile_passport() -> serde_json::Value {
         "productName": "Eco Jacket",
         "status": "active",
         "manufacturer": {"name": "FabriqGreen", "address": "Milan, IT"},
-        "sectorData": {
-            "sector": "textile",
+        "productGroupData": {
+            "productGroup": "textile",
             "countryOfOrigin": "IT",
             "careInstructions": "Machine wash cold",
             "chemicalComplianceStandard": "OEKO-TEX 100",
@@ -191,8 +191,8 @@ async fn qr_endpoint_returns_png() {
     assert!(body.len() > 100, "PNG must not be empty");
 }
 
-/// A passport whose sector data carries no GTIN (e.g. an unsold-goods report,
-/// or here simply no `sectorData` at all) has no valid GS1 Digital Link
+/// A passport whose product group data carries no GTIN (e.g. an unsold-goods report,
+/// or here simply no `productGroupData` at all) has no valid GS1 Digital Link
 /// carrier to print — the endpoint must fail closed, not encode a broken or
 /// misleading code.
 #[tokio::test]
@@ -294,11 +294,11 @@ async fn wildcard_accept_returns_json_ld() {
 }
 
 // ---------------------------------------------------------------------------
-// HTML rendering with sector data
+// HTML rendering with product group data
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-async fn html_includes_battery_sector_data() {
+async fn html_includes_battery_product_group_data() {
     let passport = sample_battery_passport();
     let vault = {
         let p = passport.clone();
@@ -584,7 +584,7 @@ async fn gtin_resolution_verifies_a_valid_signature() {
     let passport = json!({
         "id": passport_id,
         "productName": "Signed GTIN Widget",
-        "sectorData": { "sector": "electronics", "gtin": gtin },
+        "productGroupData": { "productGroup": "electronics", "gtin": gtin },
         "publicJwsSignature": valid_jws
     });
     let vault = Router::new().route(

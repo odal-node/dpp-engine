@@ -27,7 +27,7 @@ pub async fn action_import(
     // CSV/XLSX go through the integrator's bulk endpoint — the single validated
     // path that maps every column (Annex XIII fields, materials) and runs the
     // compliance determination server-side via the vault create handler. The
-    // sector is detected from the file's `sector` (or `productCategory`) column.
+    // product group is detected from the file's `product_group` (or `productCategory`) column.
     let bytes = std::fs::read(&params.file)
         .with_context(|| format!("Cannot read file: {}", params.file))?;
     let filename = std::path::Path::new(&params.file)
@@ -35,9 +35,9 @@ pub async fn action_import(
         .and_then(|s| s.to_str())
         .unwrap_or("upload.csv")
         .to_owned();
-    let sector = detect_sector(&bytes).with_context(|| {
+    let product_group = detect_product_group(&bytes).with_context(|| {
         format!(
-            "Could not determine the sector for {}. Add a `sector` column \
+            "Could not determine the product_group for {}. Add a `product_group` column \
              (battery, textile, steel, aluminium, tyre).",
             params.file
         )
@@ -46,7 +46,7 @@ pub async fn action_import(
     if let Some(f) = progress {
         f(ProgressEvent::Started { total: None });
     }
-    let url = format!("{}/api/v1/import/{}", cfg.integrator_url(), sector);
+    let url = format!("{}/api/v1/import/{}", cfg.integrator_url(), product_group);
     let (status, body) = client.upload_file(&url, &filename, bytes).await?;
     if let Some(f) = progress {
         f(ProgressEvent::Done);
@@ -118,15 +118,15 @@ pub fn parse_json_payloads(content: &str) -> Result<Vec<serde_json::Value>> {
     }
 }
 
-/// Detect the import sector from a CSV's `sector` (or `productCategory`) column.
+/// Detect the import product group from a CSV's `product_group` (or `productCategory`) column.
 ///
-/// Returns `None` for non-UTF-8 input (e.g. XLSX) or when no recognisable sector
+/// Returns `None` for non-UTF-8 input (e.g. XLSX) or when no recognisable product group
 /// column/value is present. Delimiter is auto-detected (comma / tab / semicolon).
 ///
 /// Uses a real CSV reader so a quoted field containing the delimiter (e.g. an
 /// address `"Street 1, City, DE"`) does not shift the column positions — a naive
-/// `split` would mis-locate the sector value.
-pub fn detect_sector(bytes: &[u8]) -> Option<String> {
+/// `split` would mis-locate the product group value.
+pub fn detect_product_group(bytes: &[u8]) -> Option<String> {
     let first_line = bytes.split(|&b| b == b'\n').next().unwrap_or(bytes);
     let delim = if first_line.contains(&b'\t') {
         b'\t'
@@ -150,7 +150,7 @@ pub fn detect_sector(bytes: &[u8]) -> Option<String> {
             .map(str::trim)
             .filter(|v| !v.is_empty())
     };
-    let raw = value_for("sector")
+    let raw = value_for("productGroup")
         .or_else(|| value_for("productCategory"))
         .or_else(|| value_for("product_category"))?;
     Some(raw.to_ascii_lowercase())
@@ -255,35 +255,35 @@ mod tests {
     use super::*;
 
     #[test]
-    fn detect_sector_reads_sector_column() {
-        let csv = b"productName,sector,gtin\nCell A,battery,09506000134352\n";
-        assert_eq!(detect_sector(csv).as_deref(), Some("battery"));
+    fn detect_product_group_reads_product_group_column() {
+        let csv = b"productName,productGroup,gtin\nCell A,battery,09506000134352\n";
+        assert_eq!(detect_product_group(csv).as_deref(), Some("battery"));
     }
 
     #[test]
-    fn detect_sector_falls_back_to_product_category() {
+    fn detect_product_group_falls_back_to_product_category() {
         let csv = b"productName,productCategory,gtin\nTee,TEXTILE,09506000134352\n";
-        assert_eq!(detect_sector(csv).as_deref(), Some("textile"));
+        assert_eq!(detect_product_group(csv).as_deref(), Some("textile"));
     }
 
     #[test]
-    fn detect_sector_handles_semicolon_delimiter() {
-        let csv = b"productName;sector;gtin\nCell;battery;09506000134352\n";
-        assert_eq!(detect_sector(csv).as_deref(), Some("battery"));
+    fn detect_product_group_handles_semicolon_delimiter() {
+        let csv = b"productName;productGroup;gtin\nCell;battery;09506000134352\n";
+        assert_eq!(detect_product_group(csv).as_deref(), Some("battery"));
     }
 
     #[test]
-    fn detect_sector_none_without_sector_column() {
+    fn detect_product_group_none_without_product_group_column() {
         let csv = b"productName,gtin\nWidget,09506000134352\n";
-        assert!(detect_sector(csv).is_none());
+        assert!(detect_product_group(csv).is_none());
     }
 
     #[test]
-    fn detect_sector_handles_quoted_comma_in_earlier_field() {
+    fn detect_product_group_handles_quoted_comma_in_earlier_field() {
         // Regression: a quoted address with embedded commas must not shift the
-        // sector column (the bug that produced "Unknown sector: '90.0'").
-        let csv = b"productName,address,sector,gtin\n\
+        // product group column (the bug that produced "Unknown product group: '90.0'").
+        let csv = b"productName,address,productGroup,gtin\n\
                     Cell,\"Prenzlauer Berg 12, 10405 Berlin, DE\",battery,09506000134352\n";
-        assert_eq!(detect_sector(csv).as_deref(), Some("battery"));
+        assert_eq!(detect_product_group(csv).as_deref(), Some("battery"));
     }
 }

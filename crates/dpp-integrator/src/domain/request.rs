@@ -2,7 +2,7 @@
 
 use dpp_domain::domain::{
     passport::{ManufacturerInfo, MaterialEntry},
-    sector::{Sector, SectorData},
+    product_group::{ProductGroup, ProductGroupData},
 };
 use serde::Serialize;
 
@@ -21,8 +21,8 @@ pub struct RowError {
 #[serde(rename_all = "camelCase")]
 pub struct CreatePassportRequest {
     pub product_name: String,
-    /// EU ESPR sector (dispatch key). The vault also derives it from `sectorData`.
-    pub sector: Option<Sector>,
+    /// EU ESPR product group (dispatch key). The vault also derives it from `productGroupData`.
+    pub product_group: Option<ProductGroup>,
     pub manufacturer: ManufacturerInfo,
     /// Bill of materials parsed from `material_N_*` columns. The vault stores
     /// these on the passport; they are not silently dropped at import.
@@ -30,7 +30,7 @@ pub struct CreatePassportRequest {
     pub materials: Option<Vec<MaterialEntry>>,
     pub co2e_per_unit: Option<f64>,
     pub repairability_score: Option<f64>,
-    pub sector_data: Option<SectorData>,
+    pub product_group_data: Option<ProductGroupData>,
     pub batch_id: Option<String>,
     pub schema_version: Option<String>,
 }

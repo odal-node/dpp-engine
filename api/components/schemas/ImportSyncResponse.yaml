@@ -5,6 +5,7 @@ required:
   - successCount
   - errorCount
   - created
+  - updated
   - errors
 description: Returned for synchronous imports (≤ 100 valid rows) and dry runs.
 properties:
@@ -38,3 +39,11 @@ properties:
     type: array
     items:
       $ref: ./ImportErrorEntry.yaml
+  updated:
+    type: array
+    description: >-
+      Rows that matched an existing passport and updated it. Counted in
+      `successCount`, which is deliberately not `created.length +
+      updated.length` — see that field.
+    items:
+      $ref: ./ImportUpdatedEntry.yaml

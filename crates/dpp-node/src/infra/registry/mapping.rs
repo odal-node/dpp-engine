@@ -226,7 +226,7 @@ impl RegistrySyncPort for EuRegistrySync {
                     did: (request.operator_identifier_scheme == "did")
                         .then(|| request.operator_identifier.clone()),
                 },
-                sector: request.product_category.clone(),
+                product_group: request.product_category.clone(),
                 schema_version: request.schema_version.clone(),
                 digital_link_url: request.data_carrier_uri.clone(),
                 published_at: request.published_at.unwrap_or_else(Utc::now),

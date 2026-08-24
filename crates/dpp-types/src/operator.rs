@@ -116,12 +116,12 @@ fn default_data_residency() -> String {
 /// and Reg. (EU) 2024/3110 (CPR) imposes the same 10 years on the economic
 /// operator.
 ///
-/// This is a **floor**, not the answer: the per-sector figure lives in the
-/// catalog as `SectorDescriptor::retention_years`, and a sector whose act
+/// This is a **floor**, not the answer: the per-product group figure lives in the
+/// catalog as `ProductGroupDescriptor::retention_years`, and a product group whose act
 /// demands more must carry it there. Two cases this constant deliberately does
 /// not express — CPR additionally requires the *construction DPP system* to
 /// stay accessible for **25 years**, which binds a passport service provider
-/// rather than a node; and the ESPR sectors' figure is tied to expected product
+/// rather than a node; and the ESPR product groups' figure is tied to expected product
 /// lifetime, so their catalog value is an assumption rather than a citation.
 pub const MIN_RETENTION_DAYS: i64 = 3650;
 
@@ -187,7 +187,7 @@ impl OperatorConfig {
 /// Partial-update payload for `PATCH /api/v1/operator`.
 ///
 /// Only `Some` fields are applied; `None` fields leave the existing value unchanged.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UpdateOperatorConfig {
     pub legal_name: Option<String>,

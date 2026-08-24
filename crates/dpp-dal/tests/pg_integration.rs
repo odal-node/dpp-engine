@@ -33,8 +33,10 @@ use dpp_domain::{
     domain::{
         gtin::Gtin,
         passport::{FacilitySnapshot, ManufacturerInfo, Passport, PassportId},
+        product_group::{
+            BatteryChemistry, BatteryData, BatteryType, ProductGroup, ProductGroupData,
+        },
         product_identity::ProductIdentity,
-        sector::{BatteryChemistry, BatteryData, BatteryType, Sector, SectorData},
         status::PassportStatus,
     },
     ports::passport_repo::PassportRepository,
@@ -55,7 +57,9 @@ fn make_passport() -> Passport {
         id: PassportId::new(),
         batch_id: Some("LOT-PG-1".into()),
         product_name: "PG Parity Battery".into(),
-        sector: Sector::Battery,
+        product_group: ProductGroup::Battery,
+        applicable_instruments: Vec::new(),
+        granularity: None,
         manufacturer: ManufacturerInfo {
             name: "TestCorp GmbH".into(),
             address: "Berlin, DE".into(),
@@ -66,7 +70,7 @@ fn make_passport() -> Passport {
         repairability_score: None,
         compliance_result: None,
         lint_result: None,
-        sector_data: None,
+        product_group_data: None,
         status: PassportStatus::Draft,
         qr_code_url: None,
         jws_signature: None,
@@ -91,15 +95,15 @@ fn make_passport() -> Passport {
     }
 }
 
-/// A battery passport carrying real `sectorData` (with `gtin`) and `status`,
+/// A battery passport carrying real `productGroupData` (with `gtin`) and `status`,
 /// for the identity-lookup test — `make_passport()` deliberately leaves
-/// `sector_data: None`, which `find_by_identity` can never match.
+/// `product_group_data: None`, which `find_by_identity` can never match.
 fn battery_passport_with(gtin: &str, batch: Option<&str>, status: PassportStatus) -> Passport {
     let mut p = make_passport();
     p.id = PassportId::new();
     p.batch_id = batch.map(str::to_owned);
     p.status = status;
-    p.sector_data = Some(SectorData::Battery(Box::new(BatteryData {
+    p.product_group_data = Some(ProductGroupData::Battery(Box::new(BatteryData {
         gtin: Gtin::parse(gtin).expect("valid test gtin"),
         battery_chemistry: BatteryChemistry::Lfp,
         nominal_voltage_v: 3.2,
@@ -198,7 +202,7 @@ async fn t1_roundtrip_parity() {
 
     let found = repo.find_by_id(id).await.expect("find").expect("some");
     assert_eq!(found.product_name, "PG Parity Battery");
-    assert_eq!(found.sector, Sector::Battery);
+    assert_eq!(found.product_group, ProductGroup::Battery);
 
     let mut updated = found.clone();
     updated.product_name = "PG Parity Battery v2".into();
@@ -530,7 +534,7 @@ async fn t8_app_role_can_read_every_table() {
     }
 }
 
-// T9 — find_by_identity matches an exact (sector, gtin, batch) across both
+// T9 — find_by_identity matches an exact (product group, gtin, batch) across both
 // Draft and Published, ignores non-matching rows, and does so via
 // 0019_passport_identity_index.sql rather than a sequential scan.
 #[tokio::test]
@@ -561,7 +565,7 @@ async fn t9_find_by_identity_matches_draft_and_published_via_index() {
     repo.create(published).await.expect("create published");
 
     let draft_identity = ProductIdentity {
-        sector: Sector::Battery,
+        product_group: ProductGroup::Battery,
         gtin: "09506000134352".into(),
         batch_id: Some("BATCH-D".into()),
     };
@@ -574,7 +578,7 @@ async fn t9_find_by_identity_matches_draft_and_published_via_index() {
 
     // batch_id: None must match only passports with no batch set — not "any batch".
     let published_identity = ProductIdentity {
-        sector: Sector::Battery,
+        product_group: ProductGroup::Battery,
         gtin: "01234567890128".into(),
         batch_id: None,
     };
@@ -586,7 +590,7 @@ async fn t9_find_by_identity_matches_draft_and_published_via_index() {
     assert_eq!(found.id, published_id);
 
     let no_match = ProductIdentity {
-        sector: Sector::Battery,
+        product_group: ProductGroup::Battery,
         gtin: "01234567890128".into(),
         batch_id: Some("WRONG-BATCH".into()),
     };
@@ -601,8 +605,8 @@ async fn t9_find_by_identity_matches_draft_and_published_via_index() {
     let plan_rows = sqlx::query(
         "EXPLAIN SELECT doc FROM odal.passport \
          WHERE status IN ('draft','active') \
-           AND sector = 'battery' \
-           AND doc->'sectorData'->>'gtin' = '09506000134352' \
+           AND product_group = 'battery' \
+           AND doc->'productGroupData'->>'gtin' = '09506000134352' \
            AND doc->>'batchId' IS NOT DISTINCT FROM 'BATCH-D' \
          LIMIT 1",
     )

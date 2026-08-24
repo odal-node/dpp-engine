@@ -1,9 +1,9 @@
-//! Furniture sector HTML section.
+//! Furniture product group HTML section.
 
 use crate::fields::{f64_field, str_field};
 
 pub(super) fn build_furniture_section(p: &serde_json::Value) -> String {
-    let sd = match p.get("sectorData") {
+    let sd = match p.get("productGroupData") {
         Some(v) => v,
         None => return String::new(),
     };
@@ -33,7 +33,7 @@ mod tests {
     #[test]
     fn full_data_populates_all_fields() {
         let p = crate::sections::typed_fixture(serde_json::json!({
-            "sector": "furniture",
+            "productGroup": "furniture",
             "gtin": "09506000134352",
             "productType": "Office Chair",
             "primaryMaterial": "Steel & Fabric",
@@ -54,14 +54,14 @@ mod tests {
 
     #[test]
     fn missing_co2e_reports_not_disclosed() {
-        let p = serde_json::json!({"sectorData": {}});
+        let p = serde_json::json!({"productGroupData": {}});
         let html = build_furniture_section(&p);
         assert!(html.contains("Not disclosed"));
         assert!(html.contains(">-<"));
     }
 
     #[test]
-    fn absent_sector_data_returns_empty_string() {
+    fn absent_product_group_data_returns_empty_string() {
         let p = serde_json::json!({});
         assert_eq!(build_furniture_section(&p), "");
     }

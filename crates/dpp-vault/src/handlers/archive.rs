@@ -16,7 +16,7 @@ use super::error::{
 
 /// `POST /api/v1/dpp/{dppId}/archive` — permanently archive a published or suspended passport.
 ///
-/// Blocked by the ESPR retention guard until the sector's minimum retention
+/// Blocked by the ESPR retention guard until the product group's minimum retention
 /// period has elapsed from `published_at`. Returns `422` on a policy violation.
 pub async fn archive_handler(
     State(state): State<AppState>,

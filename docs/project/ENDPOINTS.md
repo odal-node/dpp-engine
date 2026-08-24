@@ -47,6 +47,6 @@ here; the vault signs in-process instead (see `ATK-1` regression test).
 | GET | `/identity/ready` | None | Identity |
 | GET | `/identity/.well-known/did.json` | None | Identity |
 | GET | `/integrator/health` | None | Integrator |
-| GET | `/integrator/api/v1/templates/{sector}` | None | Integrator |
-| POST | `/integrator/api/v1/import/{sector}` | Bearer | Integrator |
+| GET | `/integrator/api/v1/templates/{productGroup}` | None | Integrator |
+| POST | `/integrator/api/v1/import/{productGroup}` | Bearer | Integrator |
 | GET | `/integrator/api/v1/imports/{job_id}` | Bearer | Integrator |

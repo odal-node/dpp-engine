@@ -1,4 +1,4 @@
-//! `POST /api/v1/import/{sector}` — CSV/XLSX bulk import with sync and async paths.
+//! `POST /api/v1/import/{product group}` — CSV/XLSX bulk import with sync and async paths.
 
 use axum::{
     Json,
@@ -105,7 +105,7 @@ pub struct AsyncImportResponse {
 
 // ─── Handler ─────────────────────────────────────────────────────────────────
 
-/// `POST /api/v1/import/{sector}`
+/// `POST /api/v1/import/{product group}`
 ///
 /// Accepts a `multipart/form-data` upload with the following fields:
 /// - `file`  — CSV or XLSX file (required)
@@ -120,17 +120,18 @@ pub struct AsyncImportResponse {
 ///
 /// The caller's `Authorization: Bearer` JWT is forwarded to the vault service.
 pub async fn import_file(
-    Path(sector): Path<String>,
+    Path(product_group): Path<String>,
     State(state): State<AppState>,
     request_headers: HeaderMap,
     mut multipart: Multipart,
 ) -> impl IntoResponse {
-    // Validate sector early
-    if !validate::SUPPORTED_SECTORS.contains(&sector.as_str()) {
-        metrics::counter!("import_rejections_total", "reason" => "unknown_sector").increment(1);
+    // Validate product group early
+    if !validate::SUPPORTED_SECTORS.contains(&product_group.as_str()) {
+        metrics::counter!("import_rejections_total", "reason" => "unknown_product_group")
+            .increment(1);
         return Problem::new(StatusCode::NOT_FOUND, "Not Found")
             .with_detail(format!(
-                "Unknown sector: '{sector}'. Valid values: {}.",
+                "Unknown product_group: '{product_group}'. Valid values: {}.",
                 validate::SUPPORTED_SECTORS.join(", ")
             ))
             .into_response();
@@ -263,7 +264,7 @@ pub async fn import_file(
 
     for (i, raw_row) in raw_rows.iter().enumerate() {
         let row_num = i + 1; // 1-based for user-facing messages
-        match validate::validate_row(&sector, raw_row, row_num) {
+        match validate::validate_row(&product_group, raw_row, row_num) {
             Ok(req) => valid_rows.push((row_num, req)),
             Err(RowValidationError::Invalid(errs)) => {
                 for e in errs {
@@ -275,14 +276,14 @@ pub async fn import_file(
                 }
             }
             // The pre-upload SUPPORTED_SECTORS check above already rejected any
-            // sector that would land here — kept as a real, typed branch rather
+            // product group that would land here — kept as a real, typed branch rather
             // than `unreachable!()` so this stays correct if the two checks
             // ever move apart.
-            Err(RowValidationError::UnsupportedSector) => {
-                metrics::counter!("import_rejections_total", "reason" => "unknown_sector")
+            Err(RowValidationError::UnsupportedProductGroup) => {
+                metrics::counter!("import_rejections_total", "reason" => "unknown_product_group")
                     .increment(1);
                 return Problem::new(StatusCode::NOT_FOUND, "Not Found")
-                    .with_detail(format!("Unknown sector: '{sector}'."))
+                    .with_detail(format!("Unknown product_group: '{product_group}'."))
                     .into_response();
             }
         }
@@ -309,10 +310,10 @@ pub async fn import_file(
     let mut lint_findings: std::collections::HashMap<usize, Vec<RowFinding>> =
         std::collections::HashMap::new();
     for (row_num, req) in &valid_rows {
-        let Some(ref sd) = req.sector_data else {
+        let Some(ref sd) = req.product_group_data else {
             continue;
         };
-        let findings = dpp_domain::lint_sector_data(sd, chrono::Utc::now());
+        let findings = dpp_domain::lint_product_group_data(sd, chrono::Utc::now());
         if !findings.is_empty() {
             lint_findings.insert(
                 *row_num,
@@ -330,7 +331,7 @@ pub async fn import_file(
     }
 
     // Delta-matcher: classify each valid row against existing passports by
-    // exact identity (sector, GTIN, batch). Apply's write path below reads
+    // exact identity (product group, GTIN, batch). Apply's write path below reads
     // this same map back to decide create/update/skip per row.
     let classifications = matcher::classify_batch(
         &valid_rows,
@@ -715,10 +716,10 @@ mod tests {
         buf
     }
 
-    fn import_request(sector: &str, body: Vec<u8>) -> Request<Body> {
+    fn import_request(product_group: &str, body: Vec<u8>) -> Request<Body> {
         Request::builder()
             .method("POST")
-            .uri(format!("/api/v1/import/{sector}"))
+            .uri(format!("/api/v1/import/{product_group}"))
             .header("authorization", "Bearer test-token")
             .header("content-type", "multipart/form-data; boundary=X")
             .body(Body::from(body))
@@ -808,7 +809,7 @@ mod tests {
         #[derive(serde::Deserialize)]
         #[serde(rename_all = "camelCase")]
         struct IdentityParams {
-            sector: String,
+            product_group: String,
             gtin: String,
             #[serde(default)]
             batch_id: Option<String>,
@@ -824,11 +825,11 @@ mod tests {
                 .unwrap()
                 .iter()
                 .find(|p| {
-                    p.get("sectorData")
-                        .and_then(|sd| sd.get("sector"))
+                    p.get("productGroupData")
+                        .and_then(|sd| sd.get("productGroup"))
                         .and_then(|s| s.as_str())
-                        == Some(q.sector.as_str())
-                        && p.get("sectorData")
+                        == Some(q.product_group.as_str())
+                        && p.get("productGroupData")
                             .and_then(|sd| sd.get("gtin"))
                             .and_then(|g| g.as_str())
                             == Some(q.gtin.as_str())
@@ -969,7 +970,7 @@ mod tests {
             let mut passports = mock.passports.lock().unwrap();
             let published = passports
                 .iter_mut()
-                .find(|p| p["sectorData"]["gtin"].as_str() == Some(published_gtin.as_str()))
+                .find(|p| p["productGroupData"]["gtin"].as_str() == Some(published_gtin.as_str()))
                 .expect("BATCH-3 passport must exist after v1 import");
             published["status"] = serde_json::json!("active");
         }
@@ -1069,7 +1070,7 @@ mod tests {
             let mut passports = mock.passports.lock().unwrap();
             let published = passports
                 .iter_mut()
-                .find(|p| p["sectorData"]["gtin"].as_str() == Some(published_gtin.as_str()))
+                .find(|p| p["productGroupData"]["gtin"].as_str() == Some(published_gtin.as_str()))
                 .expect("BATCH-3 passport must exist after v1 import");
             published["status"] = serde_json::json!("active");
         }
@@ -1232,7 +1233,7 @@ mod tests {
             let mut passports = mock.passports.lock().unwrap();
             let published = passports
                 .iter_mut()
-                .find(|p| p["sectorData"]["gtin"].as_str() == Some(published_gtin.as_str()))
+                .find(|p| p["productGroupData"]["gtin"].as_str() == Some(published_gtin.as_str()))
                 .expect("BATCH-3 passport must exist after v1 import");
             published["status"] = serde_json::json!("active");
         }
@@ -1403,8 +1404,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn unknown_sector_is_rejected_before_any_vault_call() {
-        // Intentionally a dead vault URL: the sector check must reject this
+    async fn unknown_product_group_is_rejected_before_any_vault_call() {
+        // Intentionally a dead vault URL: the product group check must reject this
         // before auth or parsing ever contact it.
         let state = AppState {
             vault_client: Arc::new(VaultHttpClient::new("http://127.0.0.1:1")),
@@ -1415,7 +1416,7 @@ mod tests {
 
         let body = multipart_body("X", "x.csv", "a,b\n1,2\n", None);
         let resp = app
-            .oneshot(import_request("not-a-real-sector", body))
+            .oneshot(import_request("not-a-real-product_group", body))
             .await
             .unwrap();
         assert_eq!(resp.status(), axum::http::StatusCode::NOT_FOUND);

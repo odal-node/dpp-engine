@@ -1,4 +1,4 @@
-//! Integration tests for textile sector DPP lifecycle.
+//! Integration tests for textile product group DPP lifecycle.
 
 #![cfg(feature = "integration-tests")]
 
@@ -14,7 +14,7 @@ async fn test_textile_create_publish_resolve() {
     let token = make_jwt("00000000-0000-0000-0000-000000000002");
     let client = TestClient::new(&vault_url, &token);
 
-    // 1. POST /api/v1/dpp — textile sector with all required fields
+    // 1. POST /api/v1/dpp — textile product group with all required fields
     let create_body = serde_json::json!({
         "productName": "Organic Cotton T-Shirt",
         "manufacturer": {
@@ -24,8 +24,8 @@ async fn test_textile_create_publish_resolve() {
         "materials": [
             {"name": "Organic Cotton", "weightKg": 0.2}
         ],
-        "sectorData": {
-            "sector": "textile",
+        "productGroupData": {
+            "productGroup": "textile",
             "gtin": "09506000134352",
             "fibreComposition": [
                 {"fibre": "cotton", "pct": 95.0},
@@ -49,20 +49,22 @@ async fn test_textile_create_publish_resolve() {
         .await;
     assert_eq!(resp.status(), 200, "Failed to publish textile passport");
 
-    // 3. GET /public/dpp/{id} — assert sector: textile and fibreComposition present
+    // 3. GET /public/dpp/{id} — assert product group: textile and fibreComposition present
     let resp = client.get(&format!("/public/dpp/{id}")).await;
     assert_eq!(resp.status(), 200);
 
     let public: serde_json::Value = resp.json().await.unwrap();
     assert_eq!(
-        public["sectorData"]["sector"], "textile",
-        "Expected textile sector data"
+        public["productGroupData"]["productGroup"], "textile",
+        "Expected textile product_group data"
     );
     assert!(
-        public["sectorData"]["fibreComposition"].is_array(),
+        public["productGroupData"]["fibreComposition"].is_array(),
         "fibreComposition missing"
     );
 
-    let fibres = public["sectorData"]["fibreComposition"].as_array().unwrap();
+    let fibres = public["productGroupData"]["fibreComposition"]
+        .as_array()
+        .unwrap();
     assert_eq!(fibres.len(), 2, "Expected 2 fibre entries");
 }

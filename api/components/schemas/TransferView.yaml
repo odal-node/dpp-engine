@@ -1,0 +1,22 @@
+type: object
+description: One transfer-of-responsibility notification owed to the registry.
+required:
+  - transferId
+  - status
+  - attempts
+  - stalled
+properties:
+  transferId:
+    type: string
+    format: uuid
+  status:
+    type: string
+    enum: [pending, notified, rejected]
+  registryId:
+    type: string
+  message:
+    type: string
+  attempts:
+    type: integer
+  stalled:
+    type: boolean

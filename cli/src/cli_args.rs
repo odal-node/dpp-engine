@@ -102,7 +102,7 @@ pub enum Commands {
         #[command(subcommand)]
         command: WebhookCommands,
     },
-    /// Install signed sector plugins (verified, persisted, hot-swapped)
+    /// Install signed product group plugins (verified, persisted, hot-swapped)
     Plugin {
         #[command(subcommand)]
         command: PluginCommands,
@@ -420,7 +420,7 @@ pub enum OperatorIdCommands {
 
 #[derive(Subcommand)]
 pub enum PluginCommands {
-    /// Install a signed sector plugin. Uploads the `.wasm` and its sibling
+    /// Install a signed product group plugin. Uploads the `.wasm` and its sibling
     /// `<file>.sig`; the node verifies the signature against its pinned publisher
     /// key, gates the ABI, persists it, and hot-swaps it into service — no restart.
     Install {

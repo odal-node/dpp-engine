@@ -37,7 +37,7 @@ use dpp_domain::{
     DppError,
     domain::{
         passport::{ManufacturerInfo, Passport, PassportId},
-        sector::Sector,
+        product_group::ProductGroup,
         status::PassportStatus,
     },
     ports::{
@@ -68,7 +68,9 @@ fn draft_passport() -> Passport {
         id: PassportId::new(),
         batch_id: Some("LOT-OUTBOX-1".into()),
         product_name: "Outbox Battery".into(),
-        sector: Sector::Battery,
+        product_group: ProductGroup::Battery,
+        applicable_instruments: Vec::new(),
+        granularity: None,
         manufacturer: ManufacturerInfo {
             name: "TestCorp GmbH".into(),
             address: "Berlin, DE".into(),
@@ -79,7 +81,7 @@ fn draft_passport() -> Passport {
         repairability_score: None,
         compliance_result: None,
         lint_result: None,
-        sector_data: None,
+        product_group_data: None,
         status: PassportStatus::Draft,
         qr_code_url: None,
         jws_signature: None,
@@ -339,7 +341,7 @@ async fn insert_clobbered_row(
 ) -> uuid::Uuid {
     let id = uuid::Uuid::now_v7();
     sqlx::query(
-        r#"INSERT INTO odal.passport (id, sector, status, schema_version, doc)
+        r#"INSERT INTO odal.passport (id, product_group, status, schema_version, doc)
            VALUES ($1, 'battery', 'suspended', '2.0.0', '{}'::jsonb)"#,
     )
     .bind(id)

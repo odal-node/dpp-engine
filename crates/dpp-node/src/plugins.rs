@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use anyhow::Result;
 
-use dpp_domain::{PassthroughRegistry, SectorCatalog, ports::plugin_host_port::PluginHost};
+use dpp_domain::{PassthroughRegistry, ProductGroupCatalog, ports::plugin_host_port::PluginHost};
 use dpp_plugin_host::{
     WasmPluginHost,
     loader::{LoadedPlugin, discover_plugins},
@@ -16,7 +16,7 @@ use dpp_vault::domain::compliance::CalcBatteryStrategy;
 ///
 /// Returns an `Arc<WasmPluginHost>` that implements `PluginHost` from core.
 /// If `plugins_dir` does not exist or is empty, the host boots with zero plugins;
-/// the compliance engine falls back to `PassthroughRegistry` for each sector.
+/// the compliance engine falls back to `PassthroughRegistry` for each product group.
 pub fn boot(plugins_dir: &str) -> Result<Arc<WasmPluginHost>> {
     let engine = build_engine().map_err(|e| anyhow::anyhow!("{e}"))?;
     let dir = Path::new(plugins_dir);
@@ -60,17 +60,17 @@ pub fn boot(plugins_dir: &str) -> Result<Arc<WasmPluginHost>> {
 
     let mut loaded: Vec<String> = Vec::with_capacity(discovered.len());
 
-    for (sector_key, path) in discovered {
-        match LoadedPlugin::from_file(&engine, &path, &sector_key, trusted_key.as_ref()) {
+    for (product_group_key, path) in discovered {
+        match LoadedPlugin::from_file(&engine, &path, &product_group_key, trusted_key.as_ref()) {
             Ok(plugin) => {
-                tracing::info!(sector = %sector_key, path = %path.display(), "plugin loaded");
-                loaded.push(sector_key.clone());
-                host.register(sector_key, plugin);
+                tracing::info!(product_group = %product_group_key, path = %path.display(), "plugin loaded");
+                loaded.push(product_group_key.clone());
+                host.register(product_group_key, plugin);
             }
             // Fail the boot rather than skip. This used to be a `warn!`, which
             // meant a plugin whose signature did not verify — tampered, corrupt,
             // or signed by the wrong key — silently turned into "no rules for
-            // this sector", and `compute` then returned a passthrough
+            // this product group", and `compute` then returned a passthrough
             // determination that the publish gate waves through because it
             // carries no violations. The line above about refusing unsigned
             // plugins was doing half a job: it closed "no key configured" and
@@ -78,30 +78,30 @@ pub fn boot(plugins_dir: &str) -> Result<Arc<WasmPluginHost>> {
             //
             // A file is in `PLUGINS_DIR` because an operator put it there. That
             // it will not load is a misconfiguration, never a reason to serve a
-            // sector with no rules — so it stops the boot, where an operator
+            // product group with no rules — so it stops the boot, where an operator
             // sees it, instead of degrading a determination they will not.
             Err(e) => {
                 anyhow::bail!(
-                    "plugin for sector '{sector_key}' at {} failed to load: {e}\n\
+                    "plugin for product_group '{product_group_key}' at {} failed to load: {e}\n\
                      Refusing to boot: a plugin that cannot be verified or instantiated \
-                     would leave this sector with no compliance rules, and a passport \
+                     would leave this product_group with no compliance rules, and a passport \
                      published under it would carry a passthrough determination. Remove \
-                     the file to run without this sector's rules deliberately.",
+                     the file to run without this product_group's rules deliberately.",
                     path.display()
                 );
             }
         }
     }
 
-    report_sectors_without_plugins(&SectorCatalog::new(), &loaded);
+    report_product_groups_without_plugins(&ProductGroupCatalog::new(), &loaded);
 
     Ok(host)
 }
 
-/// Say which catalogued sectors are running with no plugin.
+/// Say which catalogued product groups are running with no plugin.
 ///
 /// Passthrough is a legitimate configuration, so this does not refuse to boot.
-/// But a sector with no plugin and a sector whose plugin found nothing wrong
+/// But a product group with no plugin and a product group whose plugin found nothing wrong
 /// produce the same thing — a determination with no findings — so from the
 /// outside they are indistinguishable. Left unsaid, "no violations" reads as
 /// "checked and clean" when it may mean "never checked".
@@ -110,7 +110,7 @@ pub fn boot(plugins_dir: &str) -> Result<Arc<WasmPluginHost>> {
 /// release pipeline, so a gap there is a misconfiguration worth noticing, and
 /// `info` is where it would be missed. A node deliberately running a subset in
 /// development sees one line at boot and can ignore it.
-fn report_sectors_without_plugins(catalog: &SectorCatalog, loaded: &[String]) {
+fn report_product_groups_without_plugins(catalog: &ProductGroupCatalog, loaded: &[String]) {
     let mut missing: Vec<&str> = catalog
         .keys()
         .into_iter()
@@ -120,26 +120,26 @@ fn report_sectors_without_plugins(catalog: &SectorCatalog, loaded: &[String]) {
 
     if missing.is_empty() {
         tracing::info!(
-            sectors = catalog.len(),
-            "every catalogued sector has a plugin loaded"
+            product_groups = catalog.len(),
+            "every catalogued product_group has a plugin loaded"
         );
         return;
     }
 
     tracing::warn!(
-        sectors = %missing.join(", "),
+        product_groups = %missing.join(", "),
         count = missing.len(),
-        "no plugin loaded for these catalogued sectors; passports in them take the \
-         passthrough path — declared values are carried verbatim, with no sector \
+        "no plugin loaded for these catalogued product_groups; passports in them take the \
+         passthrough path — declared values are carried verbatim, with no product_group \
          validation and no findings"
     );
 }
 
-/// The registry that serves a sector with no Wasm plugin loaded for it.
+/// The registry that serves a product group with no Wasm plugin loaded for it.
 ///
 /// `PassthroughRegistry::new` ships the Apache-2.0 strategies; `register`
-/// replaces one by sector key, which is the documented way a host substitutes a
-/// sector's behaviour without reimplementing the registry. Battery is
+/// replaces one by product group key, which is the documented way a host substitutes a
+/// product group's behaviour without reimplementing the registry. Battery is
 /// substituted because `CalcBatteryStrategy` mints a `CalculationReceipt` — the
 /// ruleset id, version and assessment timestamp that make a determination
 /// evidence rather than an opinion — which the passthrough strategy does not
@@ -148,8 +148,8 @@ fn report_sectors_without_plugins(catalog: &SectorCatalog, loaded: &[String]) {
 /// # This does not displace the battery plugin
 ///
 /// `WasmPluginHost::compute` dispatches to a plugin whenever one is loaded for
-/// the sector and reaches this registry only when none is. So on a node with
-/// `sector-battery.wasm` installed — which is every node `compliance_trust`
+/// the product group and reaches this registry only when none is. So on a node with
+/// `product-group-battery.wasm` installed — which is every node `compliance_trust`
 /// rates above `Ghost` — the strategy registered here does not run, and the
 /// plugin's findings are what a battery passport carries. The two are not
 /// interchangeable: the plugin checks the Commission's per-category data-point
@@ -175,20 +175,32 @@ fn fallback_registry() -> PassthroughRegistry {
 /// invariant exists to prevent, on the one port that decides whether a passport
 /// was checked against EU rules at all.
 ///
-/// - `Ghost` — no plugin for any in-force sector. Nothing is evaluated.
-/// - `Sandbox` — some in-force sectors have rules and some do not. A real
+/// - `Ghost` — no plugin for any in-force product group. Nothing is evaluated.
+/// - `Sandbox` — some in-force product groups have rules and some do not. A real
 ///   determination is possible, but not for every product this node may publish.
-/// - `Live` — every in-force sector in the catalog has a plugin loaded.
+/// - `Live` — every in-force product group in the catalog has a plugin loaded.
 ///
-/// Sectors that are **not** in force are deliberately not counted: their
+/// ProductGroups that are **not** in force are deliberately not counted: their
 /// determinations are gated to non-binding by `gate_determination` regardless of
 /// what a plugin returns, so a missing plugin there changes nothing a consumer
 /// could rely on.
 pub fn compliance_trust(host: &WasmPluginHost) -> TrustMode {
-    let catalog = SectorCatalog::new();
-    let in_force: Vec<&str> = catalog.in_force().iter().map(|d| d.key.as_str()).collect();
+    let catalog = ProductGroupCatalog::new();
+    let instruments = dpp_domain::InstrumentCatalog::new();
+    // A product group counts only when some in-force act reaching it actually
+    // requires a passport. Being in force is not enough on its own: an act can
+    // bind a group while imposing no passport, and a missing plugin there
+    // changes nothing a consumer could rely on.
+    let in_force: Vec<&str> = catalog
+        .all()
+        .iter()
+        .map(|d| d.key.as_str())
+        .filter(|key| {
+            !instruments.determinable_for(key).is_empty() && instruments.passport_required_for(key)
+        })
+        .collect();
 
-    // No in-force sector is an empty conjunction, which would make `all()` true
+    // No in-force product group is an empty conjunction, which would make `all()` true
     // and report Live on a node evaluating nothing. Treat it as Ghost: whatever
     // this node is doing, it is not applying an in-force rule.
     if in_force.is_empty() {
@@ -222,9 +234,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_sector_with_no_plugin_is_named() {
-        let catalog = SectorCatalog::new();
-        // Every catalogued sector but the first is missing a plugin.
+    fn a_product_group_with_no_plugin_is_named() {
+        let catalog = ProductGroupCatalog::new();
+        // Every catalogued product group but the first is missing a plugin.
         let keys: Vec<String> = catalog.keys().into_iter().map(str::to_owned).collect();
         let loaded = vec![keys[0].clone()];
 
@@ -237,15 +249,15 @@ mod tests {
         assert_eq!(
             missing.len(),
             keys.len() - 1,
-            "every sector except the one loaded must be reported"
+            "every product_group except the one loaded must be reported"
         );
         assert!(
             !missing.contains(&keys[0].as_str()),
-            "the loaded sector must not be reported as missing"
+            "the loaded product_group must not be reported as missing"
         );
         // The reporting path itself must not panic on either branch.
-        report_sectors_without_plugins(&catalog, &loaded);
-        report_sectors_without_plugins(&catalog, &keys);
+        report_product_groups_without_plugins(&catalog, &loaded);
+        report_product_groups_without_plugins(&catalog, &keys);
     }
 
     #[test]
@@ -307,7 +319,11 @@ mod tests {
         std::fs::create_dir_all(&tmp).unwrap();
         // Contents are irrelevant: the signing-policy gate fires before any
         // attempt to compile the module.
-        std::fs::write(tmp.join("sector-evil.wasm"), b"\0asm not-a-real-module").unwrap();
+        std::fs::write(
+            tmp.join("product-group-evil.wasm"),
+            b"\0asm not-a-real-module",
+        )
+        .unwrap();
 
         let result = boot(tmp.to_str().unwrap());
 
@@ -323,7 +339,7 @@ mod tests {
         );
     }
 
-    /// A minimal, real (compilable) sector plugin: just enough to satisfy
+    /// A minimal, real (compilable) product group plugin: just enough to satisfy
     /// `LoadedPlugin::from_file`'s `describe()` ABI-compatibility check.
     fn minimal_plugin_wasm() -> Vec<u8> {
         let describe_off = 4096u32;
@@ -363,7 +379,11 @@ mod tests {
 
         let tmp = std::env::temp_dir().join(format!("odal-n5-{}", uuid::Uuid::now_v7()));
         std::fs::create_dir_all(&tmp).unwrap();
-        std::fs::write(tmp.join("sector-battery.wasm"), minimal_plugin_wasm()).unwrap();
+        std::fs::write(
+            tmp.join("product-group-battery.wasm"),
+            minimal_plugin_wasm(),
+        )
+        .unwrap();
 
         let result = boot(tmp.to_str().unwrap());
 
@@ -378,7 +398,7 @@ mod tests {
     }
 
     /// A discovered plugin that will not load stops the boot rather than
-    /// downgrading its sector to no rules. Uses the dev opt-in so the *signing*
+    /// downgrading its product group to no rules. Uses the dev opt-in so the *signing*
     /// gate passes and the failure comes from the load itself — which is the
     /// case that used to be a `warn!`: a file present, permitted, and not
     /// runnable.
@@ -394,7 +414,7 @@ mod tests {
         std::fs::create_dir_all(&tmp).unwrap();
         // Well-formed enough to be discovered, not a valid module.
         std::fs::write(
-            tmp.join("sector-battery.wasm"),
+            tmp.join("product-group-battery.wasm"),
             b"\0asm\x01\x00\x00\x00garbage",
         )
         .unwrap();
@@ -405,12 +425,12 @@ mod tests {
         unsafe { std::env::remove_var("ALLOW_UNSIGNED_PLUGINS") };
 
         let err = match result {
-            Ok(_) => panic!("an unloadable plugin must not boot into a passthrough sector"),
+            Ok(_) => panic!("an unloadable plugin must not boot into a passthrough product_group"),
             Err(e) => e.to_string(),
         };
         assert!(
             err.contains("failed to load") && err.contains("battery"),
-            "the error must name the sector and the cause, got: {err}"
+            "the error must name the product_group and the cause, got: {err}"
         );
     }
 
@@ -428,18 +448,34 @@ mod tests {
         assert_eq!(compliance_trust(&host), TrustMode::Ghost);
     }
 
+    /// The product groups `compliance_trust` counts — those an in-force act
+    /// reaches *and* requires a passport for. Mirrors the predicate in
+    /// `compliance_trust` so a test cannot drift from the thing it tests.
+    fn counted_product_groups() -> Vec<String> {
+        let catalog = ProductGroupCatalog::new();
+        let instruments = dpp_domain::InstrumentCatalog::new();
+        catalog
+            .all()
+            .iter()
+            .map(|d| d.key.clone())
+            .filter(|key| {
+                !instruments.determinable_for(key).is_empty()
+                    && instruments.passport_required_for(key)
+            })
+            .collect()
+    }
+
     /// Partial coverage is `Sandbox`: a real determination is possible, but not
     /// for every product this node may publish. Collapsing it into `Live` would
-    /// let a node claim rules it has for one sector as rules it has for all.
+    /// let a node claim rules it has for one product group as rules it has for all.
     #[test]
     #[serial_test::serial]
     fn partial_in_force_coverage_is_sandbox_not_live() {
         if std::env::var("PLUGIN_SIGNING_KEY").is_ok() {
             return;
         }
-        let catalog = SectorCatalog::new();
-        let in_force = catalog.in_force();
-        // Meaningless unless the catalog has more than one in-force sector —
+        let in_force = counted_product_groups();
+        // Meaningless unless the catalog has more than one in-force product group —
         // with exactly one, "partial" and "complete" are the same state.
         if in_force.len() < 2 {
             return;
@@ -448,9 +484,9 @@ mod tests {
 
         let tmp = std::env::temp_dir().join(format!("odal-ct2-{}", uuid::Uuid::now_v7()));
         std::fs::create_dir_all(&tmp).unwrap();
-        let one = in_force[0].key.clone();
+        let one = in_force[0].clone();
         std::fs::write(
-            tmp.join(format!("sector-{one}.wasm")),
+            tmp.join(format!("product-group-{one}.wasm")),
             minimal_plugin_wasm(),
         )
         .unwrap();
@@ -463,39 +499,39 @@ mod tests {
         assert_eq!(
             compliance_trust(&host),
             TrustMode::Sandbox,
-            "{one} is covered but the other {} in-force sector(s) are not",
+            "{one} is covered but the other {} in-force product_group(s) are not",
             in_force.len() - 1
         );
     }
 
-    /// The tier is computed over **in-force** sectors only. A provisional
-    /// sector's determination is gated to non-binding regardless of what a
+    /// The tier is computed over **in-force** product groups only. A provisional
+    /// product group's determination is gated to non-binding regardless of what a
     /// plugin returns, so a missing plugin there changes nothing a consumer
     /// could rely on — and counting it would make `Live` unreachable for no
     /// safety gain.
     #[test]
-    fn provisional_sectors_do_not_affect_the_tier() {
-        let catalog = SectorCatalog::new();
+    fn provisional_product_groups_do_not_affect_the_tier() {
+        let catalog = ProductGroupCatalog::new();
         assert!(
-            !catalog.provisional().is_empty(),
-            "fixture assumption: the catalog carries provisional sectors"
+            catalog.all().len() > counted_product_groups().len(),
+            "fixture assumption: some product group is not counted — either no act              reaches it in force, or none requires a passport for it"
         );
         let tmp = std::env::temp_dir().join(format!("odal-ct3-{}", uuid::Uuid::now_v7()));
         std::fs::create_dir_all(&tmp).unwrap();
         let host = boot(tmp.to_str().unwrap()).unwrap();
         std::fs::remove_dir_all(&tmp).ok();
-        // Ghost because no *in-force* sector is covered — not because of the
+        // Ghost because no *in-force* product group is covered — not because of the
         // provisional ones, which are simply not counted either way.
         assert_eq!(compliance_trust(&host), TrustMode::Ghost);
     }
 
     // ── fallback registry ────────────────────────────────────────────────────
 
-    use dpp_domain::domain::sector::{BatteryData, SectorData};
+    use dpp_domain::domain::product_group::{BatteryData, ProductGroupData};
     use dpp_domain::ports::compliance::ComplianceRegistry;
 
     /// An EV battery, which Art. 8 reaches by category alone.
-    fn ev_battery() -> SectorData {
+    fn ev_battery() -> ProductGroupData {
         let battery: BatteryData = serde_json::from_value(serde_json::json!({
             "gtin": "09506000134352",
             "batteryChemistry": "NMC",
@@ -506,7 +542,7 @@ mod tests {
             "ratedCapacityKwh": 80.0
         }))
         .expect("a minimal battery deserialises");
-        SectorData::Battery(Box::new(battery))
+        ProductGroupData::Battery(Box::new(battery))
     }
 
     fn day(y: i32, m: u32, d: u32) -> chrono::NaiveDate {

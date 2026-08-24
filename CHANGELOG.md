@@ -10,6 +10,54 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ## [Unreleased]
 
+### Breaking
+
+- **`sector` is `productGroup` everywhere the engine touches it.** *(Breaking:
+  the `sector` request and response field becomes `productGroup`, `sectorData`
+  becomes `productGroupData`, `sectorDataValid` becomes `productGroupDataValid`,
+  the four integrator routes take `{productGroup}` instead of `{sector}`, the
+  `SectorData` schema is renamed `ProductGroupData`, plugin artifacts are
+  `product-group-<key>.wasm` rather than `sector-<key>.wasm`, and the
+  `passport.sector` column becomes `passport.product_group`.)*
+
+  ESPR defines **product group**; "sector" is not a term of art anywhere in the
+  Regulation. The core library retired the word and this follows it. No
+  compatibility aliases: two spellings in circulation is the problem the rename
+  exists to end.
+
+  **Database:** migration `0032` renames the column, renames its index, and
+  drops and rebuilds the identity index — that one indexes an expression over
+  the document, and the JSON key inside it changed too, so a rename would have
+  left it matching a key no passport emits. Added as a new migration rather than
+  edited into `0004`/`0019`: `sqlx::migrate!` checksums every file, so editing an
+  applied one stops a node that already ran it from booting. No data moves; the
+  column's values are catalog keys like `battery`, which did not change.
+
+  **Stored documents do not survive this.** Every frozen fixture under
+  `crates/dpp-dal/tests/fixtures/passport_docs` is now listed in
+  `UNREADABLE_FIXTURES` — `productGroup` is required, so a document of the old
+  shape is refused loudly rather than read with the field silently missing. That
+  is defensible only because no such document exists in any deployment, which is
+  the condition the guard itself states. The consequence is that the guard is
+  currently vacuous, and it says so at the top of the file: it passes because
+  every failure is documented, not because the read path works.
+
+- **A passport records the acts it was issued under.** *(Breaking: two new
+  `PassportResponse` fields, `applicableInstruments` and `granularity`.)*
+
+  `applicableInstruments` names each applicable instrument and whether it was
+  resolved from the catalog or asserted by the operator. Recorded at creation and
+  never recomputed: the law that governs a product is the law at placing on the
+  market, and the set is not derivable from the product group, so re-deriving it
+  could only narrow it. `granularity` is the model/batch/item level the
+  applicable delegated act fixes, absent while no adopted act fixes one.
+
+  The determination gate moves with them. It asked "is this product group in
+  force", which is *yes* both for an act that imposes no passport at all and for
+  one whose information duty is discharged through another system — so it enforced
+  passport obligations that do not exist. It now requires an in-force act that
+  also requires a passport.
+
 ## [0.12.0] - 2026-08-23
 
 ### Breaking

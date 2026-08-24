@@ -21,7 +21,7 @@ use dpp_domain::{
     DppError,
     domain::{
         passport::{ManufacturerInfo, Passport, PassportId},
-        sector::Sector,
+        product_group::ProductGroup,
         status::PassportStatus,
     },
     ports::passport_repo::PassportRepository,
@@ -189,7 +189,9 @@ fn passport(status: PassportStatus) -> Passport {
         id,
         batch_id: None,
         product_name: product_name.into(),
-        sector: Sector::Textile,
+        product_group: ProductGroup::Textile,
+        applicable_instruments: Vec::new(),
+        granularity: None,
         manufacturer: ManufacturerInfo {
             name: "Drain Test GmbH".into(),
             address: "Berlin, DE".into(),
@@ -200,7 +202,7 @@ fn passport(status: PassportStatus) -> Passport {
         repairability_score: None,
         compliance_result: None,
         lint_result: None,
-        sector_data: None,
+        product_group_data: None,
         status,
         qr_code_url: None,
         jws_signature: Some("full.jws.signature".into()),

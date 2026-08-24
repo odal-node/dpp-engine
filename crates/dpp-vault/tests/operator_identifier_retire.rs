@@ -42,8 +42,8 @@ async fn retiring_an_operator_identifier_preserves_passport_provenance_and_audit
             json!({
                 "productName": "EcoBattery LFP 3000",
                 "manufacturer": { "name": "GreenCell GmbH", "address": "Berlin, DE" },
-                "sectorData": {
-                    "sector": "battery",
+                "productGroupData": {
+                    "productGroup": "battery",
                     "gtin": "09506000134352",
                     "batteryChemistry": "LFP",
                     "batteryType": "portable",

@@ -7,7 +7,7 @@ use axum::{
     response::IntoResponse,
 };
 use dpp_domain::domain::eol::{DeactivationReason, EolEvent};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::{middleware::auth::AuthContext, state::AppState};
 
@@ -17,7 +17,7 @@ use super::error::{
 
 /// EOL request body: the typed reason plus optional circularity data. The
 /// passport id comes from the path; `declaredAt` is server-stamped.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct EolRequest {
     /// Why the passport is being deactivated (recycled / destroyed / exported / lost).

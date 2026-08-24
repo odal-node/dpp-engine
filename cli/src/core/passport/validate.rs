@@ -1,4 +1,4 @@
-//! Validate: fetch drafts and flag rows missing required sector-data fields.
+//! Validate: fetch drafts and flag rows missing required product group-data fields.
 
 use anyhow::{Context, Result};
 
@@ -71,7 +71,7 @@ pub async fn action_validate_body(
     if !http_status.is_success() {
         return Ok(DryRunVerdict {
             create_valid: false,
-            sector_data_valid: false,
+            product_group_data_valid: false,
             detail: Some(describe_error(http_status, &body)),
         });
     }
@@ -83,8 +83,8 @@ pub async fn action_validate_body(
             .get("createValid")
             .and_then(|b| b.as_bool())
             .unwrap_or(false),
-        sector_data_valid: v
-            .get("sectorDataValid")
+        product_group_data_valid: v
+            .get("productGroupDataValid")
             .and_then(|b| b.as_bool())
             .unwrap_or(false),
         detail: v.get("detail").and_then(|d| d.as_str()).map(str::to_owned),
@@ -94,14 +94,14 @@ pub async fn action_validate_body(
 pub fn find_issues(rec: &serde_json::Value) -> Vec<String> {
     let mut issues = Vec::new();
 
-    for field in &["productName", "sectorData"] {
+    for field in &["productName", "productGroupData"] {
         if rec.get(field).is_none() || rec[field].is_null() {
             issues.push(format!("missing {field}"));
         }
     }
 
-    if let Some(sd) = rec.get("sectorData").and_then(|v| v.as_object()) {
-        match sd.get("sector").and_then(|s| s.as_str()) {
+    if let Some(sd) = rec.get("productGroupData").and_then(|v| v.as_object()) {
+        match sd.get("productGroup").and_then(|s| s.as_str()) {
             Some("battery") => {
                 for f in &[
                     "gtin",
@@ -112,7 +112,7 @@ pub fn find_issues(rec: &serde_json::Value) -> Vec<String> {
                     "co2ePerUnitKg",
                 ] {
                     if sd.get(*f).is_none() {
-                        issues.push(format!("sectorData.{f} missing"));
+                        issues.push(format!("productGroupData.{f} missing"));
                     }
                 }
             }
@@ -125,12 +125,12 @@ pub fn find_issues(rec: &serde_json::Value) -> Vec<String> {
                     "chemicalComplianceStandard",
                 ] {
                     if sd.get(*f).is_none() {
-                        issues.push(format!("sectorData.{f} missing"));
+                        issues.push(format!("productGroupData.{f} missing"));
                     }
                 }
             }
             _ => {
-                issues.push("unknown sector".into());
+                issues.push("unknown product_group".into());
             }
         }
     }
@@ -147,8 +147,8 @@ mod tests {
     fn no_issues_for_complete_textile() {
         let rec = json!({
             "productName": "T-Shirt",
-            "sectorData": {
-                "sector": "textile",
+            "productGroupData": {
+                "productGroup": "textile",
                 "gtin": "09506000134352",
                 "fibreComposition": [{"fibre": "cotton", "pct": 100.0}],
                 "countryOfOrigin": "DE",
@@ -163,8 +163,8 @@ mod tests {
     fn no_issues_for_complete_battery() {
         let rec = json!({
             "productName": "EV Battery",
-            "sectorData": {
-                "sector": "battery",
+            "productGroupData": {
+                "productGroup": "battery",
                 "gtin": "09876543210123",
                 "batteryChemistry": "NMC",
                 "nominalVoltageV": 3.7,
@@ -178,28 +178,33 @@ mod tests {
 
     #[test]
     fn missing_product_name() {
-        let rec = json!({ "sectorData": { "sector": "textile" } });
+        let rec = json!({ "productGroupData": { "productGroup": "textile" } });
         assert!(find_issues(&rec).iter().any(|i| i.contains("productName")));
     }
 
     #[test]
     fn missing_gtin() {
-        let rec = json!({ "productName": "Widget", "sectorData": { "sector": "battery" } });
+        let rec =
+            json!({ "productName": "Widget", "productGroupData": { "productGroup": "battery" } });
         assert!(find_issues(&rec).iter().any(|i| i.contains("gtin")));
     }
 
     #[test]
-    fn missing_sector_data() {
+    fn missing_product_group_data() {
         let rec = json!({ "productName": "Widget" });
-        assert!(find_issues(&rec).iter().any(|i| i.contains("sectorData")));
+        assert!(
+            find_issues(&rec)
+                .iter()
+                .any(|i| i.contains("productGroupData"))
+        );
     }
 
     #[test]
     fn textile_missing_gtin() {
         let rec = json!({
             "productName": "T-Shirt",
-            "sectorData": {
-                "sector": "textile",
+            "productGroupData": {
+                "productGroup": "textile",
                 "fibreComposition": [{"fibre": "cotton", "pct": 100.0}],
                 "countryOfOrigin": "DE",
                 "careInstructions": "wash",
@@ -213,8 +218,8 @@ mod tests {
     fn textile_missing_fibre_composition() {
         let rec = json!({
             "productName": "T-Shirt",
-            "sectorData": {
-                "sector": "textile",
+            "productGroupData": {
+                "productGroup": "textile",
                 "countryOfOrigin": "DE",
                 "careInstructions": "wash",
                 "chemicalComplianceStandard": "REACH"
@@ -231,8 +236,8 @@ mod tests {
     fn battery_missing_chemistry() {
         let rec = json!({
             "productName": "Battery",
-            "sectorData": {
-                "sector": "battery",
+            "productGroupData": {
+                "productGroup": "battery",
                 "nominalVoltageV": 3.7,
                 "nominalCapacityAh": 50.0,
                 "expectedLifetimeCycles": 2000,
@@ -247,12 +252,13 @@ mod tests {
     }
 
     #[test]
-    fn unknown_sector_flagged() {
-        let rec = json!({ "productName": "Widget", "sectorData": { "sector": "alien" } });
+    fn unknown_product_group_flagged() {
+        let rec =
+            json!({ "productName": "Widget", "productGroupData": { "productGroup": "alien" } });
         assert!(
             find_issues(&rec)
                 .iter()
-                .any(|i| i.contains("unknown sector"))
+                .any(|i| i.contains("unknown product_group"))
         );
     }
 

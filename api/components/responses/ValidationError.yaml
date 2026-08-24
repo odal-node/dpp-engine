@@ -1,5 +1,10 @@
 description: One or more fields failed validation.
 content:
-  application/json:
+  application/problem+json:
     schema:
-      $ref: ../schemas/ApiError.yaml
+      $ref: ../schemas/Problem.yaml
+    example:
+      type: https://problems.odal-node.io/unprocessable-entity
+      title: Unprocessable Entity
+      status: 422
+      detail: productName must not be empty.

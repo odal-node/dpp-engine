@@ -1,8 +1,8 @@
 post:
   operationId: installPlugin
-  summary: Install a signed sector plugin
+  summary: Install a signed product group plugin
   description: |
-    Verify, persist, and hot-swap a signed sector plugin — no node restart.
+    Verify, persist, and hot-swap a signed product group plugin — no node restart.
 
     The node verifies the uploaded artifact's detached signature against its
     pinned publisher key, gates the plugin's declared ABI, instantiate-smokes
@@ -32,16 +32,16 @@ post:
               format: binary
               description: >
                 The `.wasm` or precompiled `.cwasm` plugin artifact. Its
-                filename determines the sector when `sector` is omitted
-                (`sector-<key>.wasm`) and whether it is treated as precompiled
+                filename determines the product group when `productGroup` is omitted
+                (`product group-<key>.wasm`) and whether it is treated as precompiled
                 (`.cwasm`).
             sig:
               type: string
               format: binary
               description: Detached Ed25519 signature over SHA-256 of the artifact bytes.
-            sector:
+            productGroup:
               type: string
-              description: Sector key; derived from the filename if omitted.
+              description: Product group key; derived from the filename if omitted.
               example: battery
   responses:
     '201':
@@ -49,17 +49,10 @@ post:
       content:
         application/json:
           schema:
-            type: object
-            properties:
-              sector:
-                type: string
-                example: battery
-              abiVersion:
-                type: string
-                example: '1.1'
+            $ref: ../components/schemas/InstalledPlugin.yaml
     '400':
       description: >-
-        Malformed multipart body (missing `wasm`/`sig`, or the sector could not
+        Malformed multipart body (missing `wasm`/`sig`, or the product group could not
         be determined).
     '401':
       $ref: ../components/responses/Unauthorized.yaml

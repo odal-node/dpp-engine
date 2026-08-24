@@ -4,7 +4,7 @@ use std::collections::HashMap;
 
 use dpp_domain::domain::{
     passport::ManufacturerInfo,
-    sector::{Sector, SectorData, TyreData},
+    product_group::{ProductGroup, ProductGroupData, TyreData},
 };
 
 use crate::domain::fields::{optional_f64, optional_str, parse_gtin, require_f64, require_str};
@@ -45,7 +45,7 @@ pub fn validate_tyre_row(
     Ok(CreatePassportRequest {
         product_name: product_name
             .expect("field verified present by errors.is_empty() guard above"),
-        sector: Some(Sector::Tyre),
+        product_group: Some(ProductGroup::Tyre),
         manufacturer: ManufacturerInfo {
             name: manufacturer_name
                 .expect("field verified present by errors.is_empty() guard above"),
@@ -56,7 +56,7 @@ pub fn validate_tyre_row(
         materials: None,
         co2e_per_unit: co2e,
         repairability_score: None,
-        sector_data: Some(SectorData::Tyre(TyreData {
+        product_group_data: Some(ProductGroupData::Tyre(TyreData {
             gtin: gtin.expect("field verified present by errors.is_empty() guard above"),
             tyre_class: tyre_class
                 .expect("field verified present by errors.is_empty() guard above"),
@@ -102,13 +102,13 @@ mod tests {
     fn valid_tyre_row_produces_request() {
         let row = tyre_row();
         let req = validate_tyre_row(&row, 1).expect("valid tyre row");
-        assert_eq!(req.sector, Some(Sector::Tyre));
-        match req.sector_data.unwrap() {
-            SectorData::Tyre(d) => {
+        assert_eq!(req.product_group, Some(ProductGroup::Tyre));
+        match req.product_group_data.unwrap() {
+            ProductGroupData::Tyre(d) => {
                 assert_eq!(d.tyre_class, "C1");
                 assert_eq!(d.external_rolling_noise_db, 68.0);
             }
-            _ => panic!("expected tyre sector data"),
+            _ => panic!("expected tyre product_group data"),
         }
     }
 }

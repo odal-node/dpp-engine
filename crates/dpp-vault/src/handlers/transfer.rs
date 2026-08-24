@@ -8,7 +8,7 @@ use axum::{
     response::IntoResponse,
 };
 use dpp_domain::domain::transfer::{ResponsibleOperator, TransferReason};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::{middleware::auth::AuthContext, state::AppState};
 
@@ -19,7 +19,7 @@ use super::error::{
 
 /// Body for initiating a transfer: the outgoing and incoming operators and the
 /// reason. In the managed single-node model the caller supplies both parties.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TransferInitiateRequest {
     /// The current (outgoing) responsible operator — must match the chain head.

@@ -7,14 +7,14 @@
 //!
 //! These tests compile minimal WAT (WebAssembly Text Format) modules at test
 //! time to exercise the full load → sandbox → invoke pipeline without needing
-//! pre-built `.wasm` sector plugin binaries.
+//! pre-built `.wasm` product group plugin binaries.
 
 #![cfg(feature = "integration-tests")]
 
 use std::io::Write as IoWrite;
 
 use dpp_domain::{
-    domain::sector::{Sector, SectorData},
+    domain::product_group::{ProductGroup, ProductGroupData},
     ports::compliance::ComplianceRegistry,
 };
 use dpp_plugin_host::{
@@ -119,7 +119,7 @@ fn compile_wat_to_temp_file(wat_src: &str) -> tempfile::NamedTempFile {
 
 /// Load a plugin the same way [`LoadedPlugin::from_file`] with `trusted_key:
 /// None` used to, before unsigned loading required an explicit opt-in. These
-/// tests load throwaway WAT fixtures, not real sector plugins, so unsigned
+/// tests load throwaway WAT fixtures, not real product group plugins, so unsigned
 /// loading is the correct mode here — opt in for the duration of the call.
 ///
 /// SAFETY: mutates a process-global env var; sound because nextest runs each
@@ -128,20 +128,20 @@ fn compile_wat_to_temp_file(wat_src: &str) -> tempfile::NamedTempFile {
 fn load_unsigned_test_plugin(
     engine: &wasmtime::Engine,
     path: &std::path::Path,
-    sector_key: &str,
+    product_group_key: &str,
 ) -> anyhow::Result<LoadedPlugin> {
     unsafe { std::env::set_var("ALLOW_UNSIGNED_PLUGINS", "true") };
-    LoadedPlugin::from_file(engine, path, sector_key, None)
+    LoadedPlugin::from_file(engine, path, product_group_key, None)
 }
 
-fn battery_sector_data() -> SectorData {
+fn battery_product_group_data() -> ProductGroupData {
     // Minimal battery input — the passthrough plugin ignores it but the host
     // still serialises it and writes it to Wasm memory, exercising that path.
     use dpp_domain::domain::{
         gtin::Gtin,
-        sector::{BatteryChemistry, BatteryData, BatteryType},
+        product_group::{BatteryChemistry, BatteryData, BatteryType},
     };
-    SectorData::Battery(Box::new(BatteryData {
+    ProductGroupData::Battery(Box::new(BatteryData {
         gtin: Gtin::parse("09506000134352").unwrap(),
         battery_chemistry: BatteryChemistry::Lfp,
         nominal_voltage_v: 400.0,
@@ -219,12 +219,12 @@ fn battery_sector_data() -> SectorData {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn passthrough_when_no_plugin_registered_for_sector() {
+fn passthrough_when_no_plugin_registered_for_product_group() {
     let host = WasmPluginHost::new();
     let result = ComplianceRegistry::compute(
         &host,
-        Sector::Battery.catalog_key(),
-        &battery_sector_data(),
+        ProductGroup::Battery.catalog_key(),
+        &battery_product_group_data(),
         None,
     );
     let r = result.expect("passthrough must not error");
@@ -241,10 +241,10 @@ fn passthrough_when_no_plugin_registered_for_sector() {
     // was true of the bare passthrough the host returned inline — before it
     // dispatched through `PassthroughRegistry` at all. Now that it does, battery
     // routes to `PassthroughBatteryStrategy`, whose whole job is to carry
-    // manufacturer-supplied values verbatim into the sector-agnostic fields.
+    // manufacturer-supplied values verbatim into the product group-agnostic fields.
     //
     // The invariant that must not move is the status above: no determination is
-    // made for any sector. A lifted metric claims nothing about itself — the
+    // made for any product group. A lifted metric claims nothing about itself — the
     // field is documented as "calculated **or** manufacturer-supplied" — so
     // asserting its absence pinned the stub, not the contract.
     assert_eq!(
@@ -303,8 +303,8 @@ fn register_plugin_and_compute_via_host() {
 
     let result = ComplianceRegistry::compute(
         &host,
-        Sector::Battery.catalog_key(),
-        &battery_sector_data(),
+        ProductGroup::Battery.catalog_key(),
+        &battery_product_group_data(),
         None,
     )
     .expect("compute failed");
@@ -379,8 +379,8 @@ fn discover_plugins_finds_wasm_files_in_dir() {
 
     // Create two fake .wasm files and one non-.wasm file.
     let wasm_bytes = wat::parse_str(PASSTHROUGH_WAT).expect("parse WAT");
-    std::fs::write(dir.path().join("sector-battery.wasm"), &wasm_bytes).unwrap();
-    std::fs::write(dir.path().join("sector-textile.wasm"), &wasm_bytes).unwrap();
+    std::fs::write(dir.path().join("product-group-battery.wasm"), &wasm_bytes).unwrap();
+    std::fs::write(dir.path().join("product-group-textile.wasm"), &wasm_bytes).unwrap();
     std::fs::write(dir.path().join("readme.txt"), b"ignored").unwrap();
 
     let found = discover_plugins(dir.path()).expect("discover_plugins failed");
@@ -390,11 +390,11 @@ fn discover_plugins_finds_wasm_files_in_dir() {
     let keys: Vec<&str> = found.iter().map(|(k, _)| k.as_str()).collect();
     assert!(
         keys.contains(&"battery"),
-        "should strip 'sector-' prefix → 'battery'"
+        "should strip 'product-group-' prefix → 'battery'"
     );
     assert!(
         keys.contains(&"textile"),
-        "should strip 'sector-' prefix → 'textile'"
+        "should strip 'product-group-' prefix → 'textile'"
     );
 }
 

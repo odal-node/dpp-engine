@@ -1,4 +1,4 @@
-//! Sector-plugin administration via the node API — upload a signed artifact for
+//! ProductGroup-plugin administration via the node API — upload a signed artifact for
 //! runtime install. Pure HTTP; the node owns verification and persistence.
 
 use anyhow::{Context, Result, bail};
@@ -11,7 +11,7 @@ use crate::{
 
 /// An installed plugin as reported by the node.
 pub struct InstalledPlugin {
-    pub sector: String,
+    pub product_group: String,
     pub abi_version: String,
 }
 
@@ -42,8 +42,8 @@ pub async fn action_plugin_install(
     }
     let v: serde_json::Value = serde_json::from_str(&body).unwrap_or(serde_json::Value::Null);
     Ok(InstalledPlugin {
-        sector: v
-            .get("sector")
+        product_group: v
+            .get("productGroup")
             .and_then(|s| s.as_str())
             .unwrap_or("?")
             .to_owned(),

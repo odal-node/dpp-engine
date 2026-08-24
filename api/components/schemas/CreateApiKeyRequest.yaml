@@ -12,3 +12,9 @@ properties:
       - 'null'
     format: date-time
     description: Optional expiration. Null = never expires.
+  scope:
+    allOf:
+      - $ref: ./ApiKeyScope.yaml
+    description: >-
+      Defaults to `admin` when omitted. Name `read` or `write` explicitly for a
+      key issued to an integration.

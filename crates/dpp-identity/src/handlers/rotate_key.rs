@@ -9,18 +9,35 @@
 
 use axum::{Json, extract::State, http::StatusCode, response::IntoResponse};
 use dpp_common::http_problem;
-use serde::Deserialize;
-use serde_json::json;
+use serde::{Deserialize, Serialize};
 
 use dpp_vc::did_builder;
 
 use crate::state::AppState;
 
 /// Request body for the key rotation endpoint.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct RotateRequest {
     /// The operator whose active signing key is to be rotated.
     pub operator_id: String,
+}
+
+/// Response body for the key rotation endpoint.
+///
+/// A named type rather than a `json!` literal so the OpenAPI contract test can
+/// check `components/schemas/RotateResponse` against it. snake_case, like the
+/// rest of this internal service-to-service surface.
+#[derive(Debug, Serialize)]
+pub struct RotateResponse {
+    pub operator_id: String,
+    /// The new primary verification method, e.g. `did:web:…#key-1`.
+    pub new_key_id: String,
+    /// SHA-256 fingerprint (hex) of the new public key.
+    pub fingerprint: String,
+    pub rotated: bool,
+    /// The rebuilt DID document, carrying the new primary key and every
+    /// archived one (so signatures issued before the rotation still verify).
+    pub did_document: serde_json::Value,
 }
 
 /// Rotate the Ed25519 signing key for an operator.
@@ -78,13 +95,15 @@ pub async fn rotate_key_handler(
 
     (
         StatusCode::OK,
-        Json(json!({
-            "operator_id": body.operator_id,
-            "new_key_id": format!("{}#key-1", did_document["id"].as_str().unwrap_or("")),
-            "fingerprint": new_key.fingerprint,
-            "rotated": true,
-            "did_document": did_document
-        })),
+        Json(RotateResponse {
+            new_key_id: format!("{}#key-1", did_document["id"].as_str().unwrap_or("")),
+            operator_id: body.operator_id,
+            // `KeyEntry` implements `Drop` (zeroizing), so the field is cloned
+            // rather than moved out.
+            fingerprint: new_key.fingerprint.clone(),
+            rotated: true,
+            did_document,
+        }),
     )
         .into_response()
 }
@@ -94,6 +113,7 @@ mod tests {
     use std::sync::Arc;
 
     use dpp_crypto::jws::{signer, verifier};
+    use serde_json::json;
 
     use super::*;
     use crate::state::AppState;

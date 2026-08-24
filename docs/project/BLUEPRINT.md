@@ -72,9 +72,9 @@ fails, the operation still succeeds. Consumers must be idempotent.
 | Operator identifiers (VAT, EORI, LEI) | Done | Database tables and seed data |
 | Facility records | Done | ESPR Annex III (point (i)) |
 | Audit trail | Done | Append-only, per-passport |
-| CSV/XLSX bulk import | Done | Per-sector templates, async jobs |
+| CSV/XLSX bulk import | Done | Per-product group templates, async jobs |
 | Event bus (NATS JetStream) | Done | Fire-after-commit, NoOp fallback |
-| Wasm plugin compliance | Done | Sandboxed sector plugins |
+| Wasm plugin compliance | Done | Sandboxed product group plugins |
 | EU Central Registry sync | **Outbox done**; adapter ghost until spec | Registration intent committed in the publish transaction to the durable `registry_sync` outbox; background drain with backoff; `EuRegistrySync` HTTP adapter activates when the Commission publishes the Art. 13 API |
 | Unsold goods reporting | Done | ESPR Arts. 24 (disclosure) / 25 (destruction ban, 19 Jul 2026); standardised disclosure format (implementing act of 9 Feb 2026) applies Q1 2027 — conformance pass pending (implementation plan 07) |
 | End-of-life & transfer of responsibility | Done | Typed EOL declaration; dual-signed transfer handshake (initiate/accept, fail-closed verify); hash-chained audit |

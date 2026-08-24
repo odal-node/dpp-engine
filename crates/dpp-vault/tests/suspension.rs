@@ -19,8 +19,8 @@ async fn test_suspension_flow() {
         "productName": "Suspension Test Product",
         "manufacturer": {"name": "Suspend Inc", "address": "Test"},
         "materials": [{"name": "Nickel", "weightKg": 0.5}],
-        "sectorData": {
-            "sector": "battery",
+        "productGroupData": {
+            "productGroup": "battery",
             "gtin": "09506000134352",
             "batteryChemistry": "NiMH",
             "batteryType": "portable",

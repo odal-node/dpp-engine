@@ -133,7 +133,7 @@ pub fn build(state: AppState) -> Router {
             get(api_keys_list_handler).post(api_keys_create_handler),
         )
         .route("/api-keys/{id}", delete(api_keys_delete_handler))
-        // ── Plugins (signed sector-plugin hot-install) ────────────────
+        // ── Plugins (signed product group-plugin hot-install) ────────────────
         .route("/plugins", post(install_plugin_handler))
         // ── Webhooks (signed outbound delivery) ───────────────────────
         .route(

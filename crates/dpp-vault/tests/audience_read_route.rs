@@ -11,7 +11,7 @@
 //! - anonymous reads return the same signed public body as `/public/dpp/{id}`,
 //!   because public access must work without registration;
 //! - a credential grants exactly its audience's fields, and only on a passport
-//!   in the sectors it names;
+//!   in the product groups it names;
 //! - an unusable credential is a 401 that reveals nothing about whether the
 //!   passport exists;
 //! - a node with the credential path unconfigured serves public rather than
@@ -63,7 +63,7 @@ fn sign_credential(key: &SigningKey, cred: &DppAccessCredential) -> String {
     format!("{signing_input}.{}", B64.encode(sig.to_bytes()))
 }
 
-fn credential_for(role: CredentialRole, sectors: &[&str]) -> DppAccessCredential {
+fn credential_for(role: CredentialRole, product_groups: &[&str]) -> DppAccessCredential {
     CredentialBuilder::new(
         ISSUER.to_owned(),
         DppCredentialSubject {
@@ -71,7 +71,7 @@ fn credential_for(role: CredentialRole, sectors: &[&str]) -> DppAccessCredential
             name: "Example Repair Co".to_owned(),
             role,
             country: "DE".to_owned(),
-            sectors: sectors.iter().map(|s| (*s).to_owned()).collect(),
+            product_groups: product_groups.iter().map(|s| (*s).to_owned()).collect(),
             product_categories: Vec::new(),
         },
     )
@@ -79,8 +79,8 @@ fn credential_for(role: CredentialRole, sectors: &[&str]) -> DppAccessCredential
     .build()
 }
 
-fn credential_header(role: CredentialRole, sectors: &[&str]) -> String {
-    sign_credential(&issuer_key(), &credential_for(role, sectors))
+fn credential_header(role: CredentialRole, product_groups: &[&str]) -> String {
+    sign_credential(&issuer_key(), &credential_for(role, product_groups))
 }
 
 /// Serves the issuer's DID document from memory. The network half is covered by
@@ -132,13 +132,13 @@ fn wiring() -> (
 /// Create and publish a battery passport carrying one field of each disclosure
 /// class, on the current schema:
 ///
-/// - `stateOfHealthPct` — `individual` (Annex XIII point 4), sector-level
-/// - `cathodeMaterial` — `restricted` (point 2), sector-level
+/// - `stateOfHealthPct` — `individual` (Annex XIII point 4), product group-level
+/// - `cathodeMaterial` — `restricted` (point 2), product group-level
 /// - `batchId` — `restricted`, passport-level
 /// - `retentionLocked` — `conformity` (point 3), stamped at publish
 ///
-/// Both a sector-level and a passport-level restricted field are present on
-/// purpose: they take different paths through the filter (the sector catalog's
+/// Both a product group-level and a passport-level restricted field are present on
+/// purpose: they take different paths through the filter (the product group catalog's
 /// disclosure map vs. `PASSPORT_FIELD_DISCLOSURE`), and a fixture with only one
 /// would leave the other untested.
 async fn publish_battery(client: &TestClient) -> String {
@@ -150,8 +150,8 @@ async fn publish_battery(client: &TestClient) -> String {
                 "manufacturer": { "name": "GreenCell GmbH", "address": "Berlin, DE" },
                 "materials": [{ "name": "Lithium", "weightKg": 1.2 }],
                 "batchId": "LOT-2026-07",
-                "sectorData": {
-                    "sector": "battery",
+                "productGroupData": {
+                    "productGroup": "battery",
                     "gtin": "09506000134352",
                     "batteryChemistry": "LFP",
                     "batteryType": "portable",
@@ -188,10 +188,10 @@ async fn get_with_credential(base: &str, id: &str, credential: Option<&str>) -> 
     req.send().await.expect("request failed")
 }
 
-fn sector_data(v: &Value) -> &serde_json::Map<String, Value> {
-    v.get("sectorData")
+fn product_group_data(v: &Value) -> &serde_json::Map<String, Value> {
+    v.get("productGroupData")
         .and_then(Value::as_object)
-        .expect("body carries sectorData")
+        .expect("body carries productGroupData")
 }
 
 // ---------------------------------------------------------------------------
@@ -228,7 +228,7 @@ async fn an_anonymous_read_serves_exactly_the_public_view() {
         "an anonymous credential-route read must be the same representation as /public"
     );
     assert!(
-        !sector_data(&credential_body).contains_key("stateOfHealthPct"),
+        !product_group_data(&credential_body).contains_key("stateOfHealthPct"),
         "individual-item data must never reach an anonymous caller"
     );
 }
@@ -251,13 +251,13 @@ async fn a_legitimate_interest_credential_unlocks_individual_item_data() {
     let body: Value = resp.json().await.unwrap();
 
     assert_eq!(
-        sector_data(&body).get("stateOfHealthPct"),
+        product_group_data(&body).get("stateOfHealthPct"),
         Some(&json!(87.5)),
         "a repairer must receive individual-item data"
     );
     assert!(
-        sector_data(&body).contains_key("cathodeMaterial"),
-        "sector-level restricted data is shared with legitimate interest"
+        product_group_data(&body).contains_key("cathodeMaterial"),
+        "product_group-level restricted data is shared with legitimate interest"
     );
     assert_eq!(
         body.get("batchId"),
@@ -442,7 +442,7 @@ async fn an_out_of_scope_credentialed_read_is_still_recorded() {
 /// battery passport. It is not rejected — it is simply not elevated, which is
 /// why the answer is a 200 carrying the public view.
 #[tokio::test(flavor = "multi_thread")]
-async fn a_credential_for_another_sector_grants_only_public() {
+async fn a_credential_for_another_product_group_grants_only_public() {
     let pg = start_postgres().await;
     let (directory, trust) = wiring();
     let base = start_vault_with_credentials(pg.dal.clone(), directory, trust).await;
@@ -461,7 +461,7 @@ async fn a_credential_for_another_sector_grants_only_public() {
     let body: Value = resp.json().await.unwrap();
 
     assert!(
-        !sector_data(&body).contains_key("stateOfHealthPct"),
+        !product_group_data(&body).contains_key("stateOfHealthPct"),
         "a textile credential must not unlock battery individual-item data"
     );
     assert!(body.get("batchId").is_none(), "nor restricted data");
@@ -583,7 +583,7 @@ async fn an_unconfigured_node_serves_public_and_grants_nothing() {
     );
     let body: Value = resp.json().await.unwrap();
     assert!(
-        !sector_data(&body).contains_key("cathodeMaterial") && body.get("batchId").is_none(),
+        !product_group_data(&body).contains_key("cathodeMaterial") && body.get("batchId").is_none(),
         "an unconfigured node must not grant restricted data either"
     );
 }

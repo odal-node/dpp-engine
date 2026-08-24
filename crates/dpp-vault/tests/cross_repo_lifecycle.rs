@@ -6,7 +6,7 @@
 //! 4. JWS signing via `IdentityPort` (mock)
 //! 5. NATS event bus (NoOp — verified indirectly by publish success)
 //! 6. Retention lock enforcement after first publish
-//! 7. Sector-specific data round-trip (Battery with Annex XIII fields)
+//! 7. ProductGroup-specific data round-trip (Battery with Annex XIII fields)
 //!
 //! This bridges `dpp-core` domain rules and `dpp-engine` infrastructure
 //! in a single test flow. A full resolver integration (NATS → Redis → public
@@ -47,8 +47,8 @@ async fn full_lifecycle_draft_to_archived() {
             {"name": "Lithium", "weightKg": 0.8, "recycledPct": 30.0, "countryOfOrigin": "CL"},
             {"name": "Aluminium", "weightKg": 0.3, "recycledPct": 90.0, "countryOfOrigin": "DE"}
         ],
-        "sectorData": {
-            "sector": "battery",
+        "productGroupData": {
+            "productGroup": "battery",
             "gtin": "09506000134352",
             "batteryChemistry": "NMC",
             "batteryType": "portable",
@@ -67,7 +67,7 @@ async fn full_lifecycle_draft_to_archived() {
     let created: serde_json::Value = resp.json().await.unwrap();
     let id = created["id"].as_str().expect("missing id");
     assert_eq!(created["status"], "draft");
-    assert_eq!(created["sector"], "battery");
+    assert_eq!(created["productGroup"], "battery");
     assert!(
         created.get("retentionLocked").is_none()
             || created["retentionLocked"] == serde_json::Value::Bool(false),
@@ -99,16 +99,16 @@ async fn full_lifecycle_draft_to_archived() {
     );
     let first_published_at = published["publishedAt"].as_str().unwrap().to_owned();
 
-    // ── 3. Verify read-back includes sector data ────────────────────
+    // ── 3. Verify read-back includes product group data ────────────────────
     let resp = client.get(&format!("/api/v1/dpp/{id}")).await;
     assert_eq!(resp.status(), 200);
     let read_back: serde_json::Value = resp.json().await.unwrap();
     assert_eq!(read_back["status"], "active");
 
-    // Battery sector data survived the core→platform→DB round trip
-    // (SectorData is internally tagged: flat object with a `sector` discriminator)
-    let sd = &read_back["sectorData"];
-    assert_eq!(sd["sector"], "battery");
+    // Battery product group data survived the core→platform→DB round trip
+    // (ProductGroupData is internally tagged: flat object with a `product_group` discriminator)
+    let sd = &read_back["productGroupData"];
+    assert_eq!(sd["productGroup"], "battery");
     // `BatteryChemistry` models "NMC" (not the NMC811 sub-ratio); a faithful
     // round-trip uses a real variant — an unknown code coerces to "Other".
     assert_eq!(sd["batteryChemistry"], "NMC");

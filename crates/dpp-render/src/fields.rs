@@ -1,5 +1,5 @@
-//! Field-extraction helpers for `sectorData` — the same get→as_T→format→
-//! fallback shape repeats across every sector section in [`super::sections`].
+//! Field-extraction helpers for `productGroupData` — the same get→as_T→format→
+//! fallback shape repeats across every product group section in [`super::sections`].
 
 use serde_json::Value;
 

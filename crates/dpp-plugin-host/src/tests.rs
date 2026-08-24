@@ -2,7 +2,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use dpp_domain::{
-    domain::sector::{FibreEntry, Sector, SectorData, TextileData},
+    domain::product_group::{FibreEntry, ProductGroup, ProductGroupData, TextileData},
     ports::compliance::{ComplianceRegistry, ComplianceStatus},
 };
 use dpp_plugin_traits::{
@@ -16,7 +16,7 @@ use crate::loader::LoadedPlugin;
 use crate::runtime::build_engine;
 use crate::{WasmPluginHost, plugin_result_to_compliance};
 
-// Sector → catalog key mapping is `Sector::catalog_key()` in dpp-core (tested there).
+// ProductGroup → catalog key mapping is `ProductGroup::catalog_key()` in dpp-core (tested there).
 
 // ── plugin_result_to_compliance() ────────────────────────────────────────
 
@@ -94,18 +94,18 @@ fn empty_host_has_no_plugins() {
 }
 
 #[test]
-fn empty_host_reports_no_sector_plugin() {
+fn empty_host_reports_no_product_group_plugin() {
     use dpp_domain::ports::plugin_host_port::PluginHost;
     let host = WasmPluginHost::new();
-    assert!(!host.has_plugin(Sector::Battery.catalog_key()));
-    assert!(!host.has_plugin(Sector::Textile.catalog_key()));
-    assert!(!host.has_plugin(Sector::Steel.catalog_key()));
+    assert!(!host.has_plugin(ProductGroup::Battery.catalog_key()));
+    assert!(!host.has_plugin(ProductGroup::Textile.catalog_key()));
+    assert!(!host.has_plugin(ProductGroup::Steel.catalog_key()));
 }
 
 #[test]
 fn empty_host_compliance_returns_passthrough() {
     let host = WasmPluginHost::new();
-    let data = SectorData::Textile(Box::new(TextileData {
+    let data = ProductGroupData::Textile(Box::new(TextileData {
         gtin: dpp_domain::Gtin::parse("09506000134352").unwrap(),
         fibre_composition: vec![FibreEntry {
             fibre: "Cotton".into(),
@@ -138,7 +138,8 @@ fn empty_host_compliance_returns_passthrough() {
         pef_score: None,
     }));
     let result =
-        ComplianceRegistry::compute(&host, Sector::Textile.catalog_key(), &data, None).unwrap();
+        ComplianceRegistry::compute(&host, ProductGroup::Textile.catalog_key(), &data, None)
+            .unwrap();
     assert_eq!(
         result.compliance_status,
         ComplianceStatus::PassthroughNoValidation
@@ -152,11 +153,11 @@ fn default_trait_creates_empty_host() {
     assert!(!host.has_any_plugin());
 }
 
-/// A sector with no loaded plugin is served by the fallback registry, not by a
+/// A product group with no loaded plugin is served by the fallback registry, not by a
 /// passthrough result the host invents.
 ///
 /// The host used to return `ComplianceResult::passthrough()` inline for this
-/// case, so `PassthroughRegistry` — and the whole per-sector `ComplianceStrategy`
+/// case, so `PassthroughRegistry` — and the whole per-product group `ComplianceStrategy`
 /// seam it dispatches through — never ran in the node, whatever `dpp-domain`
 /// documented.
 ///
@@ -164,7 +165,7 @@ fn default_trait_creates_empty_host() {
 /// precedence over the fallback — needs a real module and is
 /// `register_plugin_and_compute_via_host` in the integration tier.
 #[test]
-fn a_sector_without_a_plugin_is_served_by_the_fallback_registry() {
+fn a_product_group_without_a_plugin_is_served_by_the_fallback_registry() {
     use dpp_domain::ports::compliance::{ComplianceError, ComplianceResult};
     use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -172,8 +173,8 @@ fn a_sector_without_a_plugin_is_served_by_the_fallback_registry() {
     impl ComplianceRegistry for CountingRegistry {
         fn compute(
             &self,
-            _sector_key: &str,
-            _data: &SectorData,
+            _product_group_key: &str,
+            _data: &ProductGroupData,
             _law_in_force_on: Option<chrono::NaiveDate>,
         ) -> Result<ComplianceResult, ComplianceError> {
             self.0.fetch_add(1, Ordering::SeqCst);
@@ -187,10 +188,10 @@ fn a_sector_without_a_plugin_is_served_by_the_fallback_registry() {
     let calls = Arc::new(AtomicUsize::new(0));
     let host = WasmPluginHost::new().with_fallback(Arc::new(CountingRegistry(Arc::clone(&calls))));
 
-    let data = SectorData::other(serde_json::json!({ "sector": "quantum-widget" }))
-        .expect("an unmodelled sector tag builds SectorData::Other");
+    let data = ProductGroupData::other(serde_json::json!({ "productGroup": "quantum-widget" }))
+        .expect("an unmodelled product_group tag builds ProductGroupData::Other");
     let result = ComplianceRegistry::compute(&host, "quantum-widget", &data, None)
-        .expect("fallback must serve the sector");
+        .expect("fallback must serve the product_group");
 
     assert_eq!(
         calls.load(Ordering::SeqCst),
@@ -227,8 +228,8 @@ fn discover_returns_empty_for_empty_dir() {
 fn discover_finds_wasm_files() {
     let tmp = std::env::temp_dir().join(format!("odal-test-plugins-{}", uuid::Uuid::now_v7()));
     std::fs::create_dir_all(&tmp).unwrap();
-    std::fs::write(tmp.join("sector-textile.wasm"), b"fake").unwrap();
-    std::fs::write(tmp.join("sector-battery.wasm"), b"fake").unwrap();
+    std::fs::write(tmp.join("product-group-textile.wasm"), b"fake").unwrap();
+    std::fs::write(tmp.join("product-group-battery.wasm"), b"fake").unwrap();
     std::fs::write(tmp.join("readme.txt"), b"not a plugin").unwrap();
 
     let result = crate::loader::discover_plugins(&tmp).unwrap();
@@ -242,10 +243,10 @@ fn discover_finds_wasm_files() {
 }
 
 #[test]
-fn discover_strips_sector_prefix() {
+fn discover_strips_product_group_prefix() {
     let tmp = std::env::temp_dir().join(format!("odal-test-prefix-{}", uuid::Uuid::now_v7()));
     std::fs::create_dir_all(&tmp).unwrap();
-    std::fs::write(tmp.join("sector-steel.wasm"), b"fake").unwrap();
+    std::fs::write(tmp.join("product-group-steel.wasm"), b"fake").unwrap();
 
     let result = crate::loader::discover_plugins(&tmp).unwrap();
     assert_eq!(result[0].0, "steel");
@@ -276,9 +277,9 @@ fn enrich_input_non_object_passes_through() {
 // ── generate_passport_payload() ──────────────────────────────────────────
 
 #[test]
-fn generate_passport_payload_no_plugin_returns_unknown_sector() {
+fn generate_passport_payload_no_plugin_returns_unknown_product_group() {
     let host = WasmPluginHost::new();
-    let data = SectorData::Textile(Box::new(TextileData {
+    let data = ProductGroupData::Textile(Box::new(TextileData {
         gtin: dpp_domain::Gtin::parse("09506000134352").unwrap(),
         fibre_composition: vec![FibreEntry {
             fibre: "Cotton".into(),
@@ -310,12 +311,12 @@ fn generate_passport_payload_no_plugin_returns_unknown_sector() {
         repair_count: None,
         pef_score: None,
     }));
-    let result = host.generate_passport_payload(&Sector::Textile, &data);
+    let result = host.generate_passport_payload(&ProductGroup::Textile, &data);
     assert!(result.is_err());
     let err = result.unwrap_err();
     assert_eq!(
         err.kind,
-        dpp_domain::ports::compliance::ComplianceErrorKind::UnknownSector
+        dpp_domain::ports::compliance::ComplianceErrorKind::UnknownProductGroup
     );
 }
 
@@ -530,7 +531,7 @@ fn a_new_store_gets_a_new_instant() {
 
 // ── hot-reload: atomic swap under load + last-good on rejection ────────────
 
-/// Build a minimal sector plugin whose `describe()` advertises the given ABI
+/// Build a minimal product group plugin whose `describe()` advertises the given ABI
 /// version and whose `calculate_metrics` returns a fixed `co2e_score` (so two
 /// builds are behaviourally distinguishable). Input is ignored — the exports
 /// return pointers into canned `data` segments, mirroring the loader-test
@@ -585,7 +586,7 @@ fn hot_swap_under_load_never_drops_a_request() {
 
     let engine = build_engine().unwrap();
     let dir = tempfile::TempDir::new().unwrap();
-    let v1_path = write_wasm(&dir, "sector-battery.wasm", &plugin_wasm(1, 0, 1.5));
+    let v1_path = write_wasm(&dir, "product-group-battery.wasm", &plugin_wasm(1, 0, 1.5));
 
     let host = Arc::new(WasmPluginHost::new());
     host.register("battery".into(), load_dev(&engine, &v1_path));
@@ -636,7 +637,11 @@ fn hot_swap_under_load_never_drops_a_request() {
     {
         std::thread::yield_now();
     }
-    let v2_path = write_wasm(&dir, "sector-battery-v2.wasm", &plugin_wasm(1, 0, 2.5));
+    let v2_path = write_wasm(
+        &dir,
+        "product-group-battery-v2.wasm",
+        &plugin_wasm(1, 0, 2.5),
+    );
     host.reload_plugin(load_dev(&engine, &v2_path));
 
     for h in handles {
@@ -678,13 +683,17 @@ fn hot_swap_under_load_never_drops_a_request() {
 fn rejected_reload_leaves_previous_plugin_serving() {
     let engine = build_engine().unwrap();
     let dir = tempfile::TempDir::new().unwrap();
-    let v1_path = write_wasm(&dir, "sector-battery.wasm", &plugin_wasm(1, 0, 1.5));
+    let v1_path = write_wasm(&dir, "product-group-battery.wasm", &plugin_wasm(1, 0, 1.5));
 
     let host = WasmPluginHost::new();
     host.register("battery".into(), load_dev(&engine, &v1_path));
 
     // A replacement declaring a future major ABI: the load gate refuses it.
-    let bad_path = write_wasm(&dir, "sector-battery-bad.wasm", &plugin_wasm(2, 0, 9.9));
+    let bad_path = write_wasm(
+        &dir,
+        "product-group-battery-bad.wasm",
+        &plugin_wasm(2, 0, 9.9),
+    );
     unsafe { std::env::set_var("ALLOW_UNSIGNED_PLUGINS", "true") };
     let rejected = LoadedPlugin::from_file(&engine, &bad_path, "battery", None);
     assert!(
@@ -724,9 +733,9 @@ fn reboot(
     key: &ed25519_dalek::VerifyingKey,
 ) -> WasmPluginHost {
     let host = WasmPluginHost::new();
-    for (sector, path) in crate::loader::discover_plugins(dir).unwrap() {
-        let plugin = LoadedPlugin::from_file(engine, &path, &sector, Some(key)).unwrap();
-        host.register(sector, plugin);
+    for (product_group, path) in crate::loader::discover_plugins(dir).unwrap() {
+        let plugin = LoadedPlugin::from_file(engine, &path, &product_group, Some(key)).unwrap();
+        host.register(product_group, plugin);
     }
     host
 }
@@ -747,7 +756,7 @@ fn install_verifies_persists_and_serves() {
     let report = host
         .install("battery", wasm, sig, false)
         .expect("a correctly signed plugin must install");
-    assert_eq!(report.sector, "battery");
+    assert_eq!(report.product_group, "battery");
     assert_eq!(report.abi_version, "1.0");
 
     // Serving.
@@ -761,8 +770,8 @@ fn install_verifies_persists_and_serves() {
     assert!((score - 1.5).abs() < 1e-9);
 
     // Persisted so a restart re-loads it, and no staging dir left behind.
-    assert!(dir.path().join("sector-battery.wasm").exists());
-    assert!(dir.path().join("sector-battery.wasm.sig").exists());
+    assert!(dir.path().join("product-group-battery.wasm").exists());
+    assert!(dir.path().join("product-group-battery.wasm.sig").exists());
     let leftover: Vec<_> = std::fs::read_dir(dir.path())
         .unwrap()
         .filter_map(|e| e.ok())
@@ -865,10 +874,10 @@ fn install_not_supported_on_passthrough_host() {
     );
 }
 
-/// A crafted sector key must not escape the plugins directory (path traversal),
+/// A crafted product group key must not escape the plugins directory (path traversal),
 /// even from an admin caller — it is rejected before any file is written.
 #[test]
-fn install_rejects_path_traversal_sector() {
+fn install_rejects_path_traversal_product_group() {
     let engine = build_engine().unwrap();
     let dir = tempfile::TempDir::new().unwrap();
     let signer = ed25519_dalek::SigningKey::from_bytes(&[19u8; 32]);
@@ -880,19 +889,26 @@ fn install_rejects_path_traversal_sector() {
 
     let wasm = plugin_wasm(1, 0, 1.5);
     let sig = sign_wasm(&signer, &wasm);
-    for bad in ["../../evil", "a/b", "a\\b", "Battery", "sector.evil", ""] {
+    for bad in [
+        "../../evil",
+        "a/b",
+        "a\\b",
+        "Battery",
+        "product_group.evil",
+        "",
+    ] {
         let err = host
             .install(bad, wasm.clone(), sig.clone(), false)
             .unwrap_err();
         assert!(
             matches!(err, PluginInstallError::Rejected(_)),
-            "sector '{bad}' must be rejected, got: {err}"
+            "product_group '{bad}' must be rejected, got: {err}"
         );
     }
     // No file was created anywhere in (or escaping) the plugins dir.
     assert!(
         std::fs::read_dir(dir.path()).unwrap().next().is_none(),
-        "a rejected sector must not create any file"
+        "a rejected product_group must not create any file"
     );
 }
 
@@ -921,7 +937,7 @@ fn install_precompiled_cwasm_serves_and_persists() {
     let report = host
         .install("battery", cwasm, sig, true)
         .expect("a signed, engine-compatible .cwasm must install");
-    assert_eq!(report.sector, "battery");
+    assert_eq!(report.product_group, "battery");
 
     let score = host
         .get_plugin("battery")
@@ -933,9 +949,9 @@ fn install_precompiled_cwasm_serves_and_persists() {
     assert!((score - 3.5).abs() < 1e-9);
 
     // Persisted as `.cwasm` (not `.wasm`).
-    assert!(dir.path().join("sector-battery.cwasm").exists());
-    assert!(dir.path().join("sector-battery.cwasm.sig").exists());
-    assert!(!dir.path().join("sector-battery.wasm").exists());
+    assert!(dir.path().join("product-group-battery.cwasm").exists());
+    assert!(dir.path().join("product-group-battery.cwasm.sig").exists());
+    assert!(!dir.path().join("product-group-battery.wasm").exists());
 }
 
 /// Restart convergence holds for AOT too: a fresh host deserializes the
@@ -991,5 +1007,5 @@ fn install_rejects_incompatible_precompiled_artifact() {
 
     // Nothing was installed or persisted.
     assert!(host.get_plugin("battery").is_none());
-    assert!(!dir.path().join("sector-battery.cwasm").exists());
+    assert!(!dir.path().join("product-group-battery.cwasm").exists());
 }

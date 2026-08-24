@@ -44,7 +44,7 @@ use sha2::{Digest, Sha256};
 use dpp_dal::pg::{PgAuditRepo, PgPassportRepo, PgSealOutboxRepo};
 use dpp_dal::test_harness::start_pg;
 use dpp_domain::domain::passport::{ManufacturerInfo, Passport, PassportId};
-use dpp_domain::domain::sector::Sector;
+use dpp_domain::domain::product_group::ProductGroup;
 use dpp_domain::domain::status::PassportStatus;
 use dpp_domain::ports::compliance::ComplianceRegistry;
 use dpp_domain::ports::passport_repo::PassportRepository;
@@ -157,7 +157,9 @@ fn draft_passport() -> Passport {
         id: PassportId::new(),
         batch_id: Some("LOT-SEAL-SIM-1".into()),
         product_name: "Seal Simulation Battery".into(),
-        sector: Sector::Battery,
+        product_group: ProductGroup::Battery,
+        applicable_instruments: Vec::new(),
+        granularity: None,
         manufacturer: ManufacturerInfo {
             name: "Odal Simulation GmbH".into(),
             address: "Skopje, MK".into(),
@@ -168,7 +170,7 @@ fn draft_passport() -> Passport {
         repairability_score: None,
         compliance_result: None,
         lint_result: None,
-        // A battery passport cannot publish with no sector data at all — the
+        // A battery passport cannot publish with no product group data at all — the
         // mandatory-content gate refuses it before asking which fields are
         // missing. Portable is outside the Commission guidance's scope, so this
         // carries the schema minimum: the subject here is the seal outbox and
@@ -178,9 +180,9 @@ fn draft_passport() -> Passport {
         // derives no `Default` on purpose — a new Annex field should break every
         // literal and force a decision — and this test has no opinion about any
         // of the sixty fields it would then have to name.
-        sector_data: Some(
+        product_group_data: Some(
             serde_json::from_value(serde_json::json!({
-                "sector": "battery",
+                "productGroup": "battery",
                 "gtin": "09506000134352",
                 "batteryType": "portable",
                 "batteryChemistry": "LFP",
@@ -188,7 +190,7 @@ fn draft_passport() -> Passport {
                 "nominalCapacityAh": 2.5,
                 "co2ePerUnitKg": 1.8
             }))
-            .expect("valid battery sector data"),
+            .expect("valid battery product_group data"),
         ),
         status: PassportStatus::Draft,
         qr_code_url: None,
@@ -208,7 +210,7 @@ fn draft_passport() -> Passport {
         retention_until: None,
         product_id: None,
         commodity_code: None,
-        // Battery is an in-force sector, so publish refuses without the Annex III
+        // Battery is an in-force product group, so publish refuses without the Annex III
         // registry identity. Set here because the simulation has no operator
         // config to backfill from — the gate itself is correct and stays armed.
         operator_identifier: Some("LEI:529900T8BM49AURSDO55".into()),

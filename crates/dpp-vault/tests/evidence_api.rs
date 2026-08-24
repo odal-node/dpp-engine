@@ -18,8 +18,8 @@ fn create_body() -> serde_json::Value {
         "productName": "Evidence API Widget",
         "manufacturer": {"name": "Evidence API Inc", "address": "Berlin, DE"},
         "materials": [{"name": "Nickel", "weightKg": 0.5}],
-        "sectorData": {
-            "sector": "battery",
+        "productGroupData": {
+            "productGroup": "battery",
             "gtin": "09506000134352",
             "batteryChemistry": "NiMH",
             "batteryType": "portable",

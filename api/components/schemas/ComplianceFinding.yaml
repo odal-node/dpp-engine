@@ -1,0 +1,21 @@
+type: object
+description: >-
+  A single compliance finding. Severity is encoded by which array it lands in
+  on `ComplianceResult` — `violations` bind, `warnings` advise — so there is no
+  separate severity field.
+required:
+  - code
+  - message
+properties:
+  code:
+    type: string
+    description: Stable machine-readable code.
+    example: battery.recycled_content.cobalt_below_2031
+  field:
+    type: string
+    description: >-
+      JSON-pointer-style locator, or absent when the finding is not tied to a
+      single field.
+    example: /recycledContentCobaltPct
+  message:
+    type: string

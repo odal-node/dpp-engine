@@ -8,12 +8,50 @@
 - `components/schemas/`, `components/responses/` — one file per named component.
 - `openapi.bundled.yaml` — **generated, committed, never hand-edited.** The
   single-file form every consumer reads.
+- `openapi.bundled.json` — the same document in JSON, for the contract test
+  below. Also generated and committed; also never hand-edited.
 
 ```
-just openapi-bundle    # regenerate openapi.bundled.yaml from the tree
-just openapi-check     # lint the bundle
+just openapi-bundle    # regenerate both bundles from the tree
+just openapi-check     # diff the bundles, then lint the YAML one
 just openapi-html      # regenerate the browsable spec (git-ignored)
 ```
+
+## The spec is checked against the code, not just against itself
+
+`crates/dpp-node/tests/openapi_contract.rs` runs in the ordinary `just check`
+gate and fails when this description and the Rust types disagree:
+
+- **every named schema** is compared against the keys `serde` emits for a
+  maximally-populated instance of the type behind it — a field the server sends
+  and the spec omits fails, and so does a property the spec promises and the
+  server never sends;
+- **every enum schema** is compared against the wire strings the Rust enum
+  actually serialises to;
+- **every route** registered by each of the three deployables this document
+  describes — the node, the resolver, and the standalone identity service that
+  `servers` names as host of the mTLS signing surface — is compared against the
+  paths documented here, in both directions, with no exception list;
+- **every schema in this directory** must be registered in that test or listed
+  in its `UNCHECKED` table with a reason. A new schema nothing checks fails the
+  build rather than passing quietly.
+
+This exists because `openapi-check` reads only the spec. Redocly can prove this
+description is *valid*; it cannot prove it is *true*. Before the contract test,
+nothing in CI opened a `.rs` file on the spec's behalf, and the two had drifted
+apart in fourteen schemas, one enum and two routes — including a required
+property no endpoint ever returned, and two lifecycle states the server emits
+that the spec did not list.
+
+**Known limit: the contract test compares property *names*, not their types.**
+A property documented as `type: string` whose field is an object still passes.
+That gap is real — `co2ePerUnit` and `repairabilityScore` were both documented
+as bare numbers long after they became objects. Check the type when you touch a
+schema; the gate will not do it for you.
+
+When it fails, fix the spec or fix the type. Do not edit the test's fixtures to
+agree with a wrong spec — the fixtures are the statement of what the server
+sends.
 
 ## Why the bundle is committed rather than built on demand
 

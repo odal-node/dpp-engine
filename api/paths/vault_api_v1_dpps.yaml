@@ -48,23 +48,6 @@ get:
       content:
         application/json:
           schema:
-            type: object
-            required:
-              - dpps
-              - total
-              - limit
-              - skip
-            properties:
-              dpps:
-                type: array
-                items:
-                  $ref: ../components/schemas/PassportResponse.yaml
-              total:
-                type: integer
-                description: Total count (optionally filtered by status and/or facilityId)
-              limit:
-                type: integer
-              skip:
-                type: integer
+            $ref: ../components/schemas/PassportListResponse.yaml
     '401':
       $ref: ../components/responses/Unauthorized.yaml
