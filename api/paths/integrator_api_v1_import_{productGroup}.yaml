@@ -18,7 +18,7 @@ post:
   security:
     - BearerApiKey: []
   parameters:
-    - name: product group
+    - name: productGroup
       in: path
       required: true
       schema:

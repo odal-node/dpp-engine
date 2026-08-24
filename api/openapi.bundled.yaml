@@ -2048,7 +2048,7 @@ paths:
       tags:
         - Integrator
       parameters:
-        - name: product group
+        - name: productGroup
           in: path
           required: true
           schema:
@@ -2129,7 +2129,7 @@ paths:
       tags:
         - Integrator
       parameters:
-        - name: product group
+        - name: productGroup
           in: path
           required: true
           schema:
@@ -2161,7 +2161,7 @@ paths:
       tags:
         - Integrator
       parameters:
-        - name: product group
+        - name: productGroup
           in: path
           required: true
           schema:
@@ -2213,7 +2213,7 @@ paths:
       security:
         - BearerApiKey: []
       parameters:
-        - name: product group
+        - name: productGroup
           in: path
           required: true
           schema:
