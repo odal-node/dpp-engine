@@ -2908,7 +2908,7 @@
         ],
         "parameters": [
           {
-            "name": "product group",
+            "name": "productGroup",
             "in": "path",
             "required": true,
             "schema": {
@@ -3012,7 +3012,7 @@
         ],
         "parameters": [
           {
-            "name": "product group",
+            "name": "productGroup",
             "in": "path",
             "required": true,
             "schema": {
@@ -3055,7 +3055,7 @@
         ],
         "parameters": [
           {
-            "name": "product group",
+            "name": "productGroup",
             "in": "path",
             "required": true,
             "schema": {
@@ -3122,7 +3122,7 @@
         ],
         "parameters": [
           {
-            "name": "product group",
+            "name": "productGroup",
             "in": "path",
             "required": true,
             "schema": {

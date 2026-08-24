@@ -15,7 +15,7 @@ get:
   tags:
     - Integrator
   parameters:
-    - name: product group
+    - name: productGroup
       in: path
       required: true
       schema:
