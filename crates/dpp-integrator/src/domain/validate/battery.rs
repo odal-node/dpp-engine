@@ -12,8 +12,8 @@ use dpp_domain::domain::{
 };
 
 use crate::domain::fields::{
-    aliased, optional_f64, optional_str, parse_materials, require_aliased, require_f64,
-    require_str, require_u32,
+    aliased, optional_date, optional_f64, optional_str, parse_materials, require_aliased,
+    require_f64, require_str, require_u32,
 };
 use crate::domain::request::{CreatePassportRequest, RowError};
 
@@ -118,6 +118,9 @@ pub fn validate_battery_row(
 
     let repairability_score = optional_f64(row, "repairabilityScore", row_num, &mut errors);
     let materials = parse_materials(row);
+
+    // Envelope-level, so every product group reads it from the same column.
+    let placed_on_market_date = optional_date(row, "placedOnMarketDate", row_num, &mut errors);
 
     if !errors.is_empty() {
         return Err(errors);
@@ -236,6 +239,7 @@ pub fn validate_battery_row(
         product_group_data: Some(battery_data),
         batch_id,
         schema_version: None,
+        placed_on_market_date,
     })
 }
 

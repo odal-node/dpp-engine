@@ -7,7 +7,9 @@ use dpp_domain::domain::{
     product_group::{AluminiumData, ProductGroup, ProductGroupData, ProductionRoute},
 };
 
-use crate::domain::fields::{optional_f64, optional_str, parse_gtin, require_f64, require_str};
+use crate::domain::fields::{
+    optional_date, optional_f64, optional_str, parse_gtin, require_f64, require_str,
+};
 use crate::domain::request::{CreatePassportRequest, RowError};
 
 /// Validate a single aluminium row and convert it to a vault `CreatePassportRequest`.
@@ -34,6 +36,9 @@ pub fn validate_aluminium_row(
     let recycled = require_f64(row, "recycledContentPct", row_num, &mut errors);
     let country_of_origin = require_str(row, "countryOfOrigin", row_num, &mut errors);
     let annual = optional_f64(row, "annualProductionTonnes", row_num, &mut errors);
+
+    // Envelope-level, so every product group reads it from the same column.
+    let placed_on_market_date = optional_date(row, "placedOnMarketDate", row_num, &mut errors);
 
     if !errors.is_empty() {
         return Err(errors);
@@ -73,6 +78,7 @@ pub fn validate_aluminium_row(
         })),
         batch_id,
         schema_version: None,
+        placed_on_market_date,
     })
 }
 
@@ -83,6 +89,46 @@ mod tests {
     #[test]
     fn empty_row_aluminium_returns_err() {
         assert!(validate_aluminium_row(&HashMap::new(), 1).is_err());
+    }
+
+    /// The placed-on-market date survives import.
+    ///
+    /// It was absent from the import request entirely while the vault's own
+    /// create route accepted it, so the same product imported rather than posted
+    /// got a passport that could not say which law governed it — and, since the
+    /// applicable-instrument set is frozen at that moment, could not say what it
+    /// was issued under either.
+    #[test]
+    fn placed_on_market_date_reaches_the_request() {
+        let mut row = aluminium_row();
+        row.insert("placedOnMarketDate".into(), "2027-02-18".into());
+        let req = validate_aluminium_row(&row, 1).expect("valid aluminium row");
+        assert_eq!(
+            req.placed_on_market_date,
+            Some(chrono::NaiveDate::from_ymd_opt(2027, 2, 18).expect("a real date"))
+        );
+    }
+
+    /// Absent is a legitimate answer; unparseable is not.
+    ///
+    /// Ignoring a malformed date would import a passport whose governing law is
+    /// unknown while looking exactly like one where the operator deliberately
+    /// left the column blank.
+    #[test]
+    fn a_malformed_placed_on_market_date_is_refused_not_dropped() {
+        let mut row = aluminium_row();
+        row.insert("placedOnMarketDate".into(), "18/02/2027".into());
+        let errors = validate_aluminium_row(&row, 7).expect_err("malformed date must be refused");
+        assert!(
+            errors
+                .iter()
+                .any(|e| e.field == "placedOnMarketDate" && e.row == 7),
+            "expected a placedOnMarketDate error, got {errors:?}"
+        );
+
+        // An absent column stays absent, with no error.
+        let req = validate_aluminium_row(&aluminium_row(), 1).expect("valid row");
+        assert_eq!(req.placed_on_market_date, None);
     }
 
     fn aluminium_row() -> HashMap<String, String> {
