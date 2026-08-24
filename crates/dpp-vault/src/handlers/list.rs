@@ -8,7 +8,6 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 
-use dpp_domain::domain::passport::Passport;
 use dpp_domain::domain::status::PassportStatus;
 
 use crate::{middleware::auth::AuthContext, state::AppState};
@@ -23,7 +22,7 @@ use super::error::internal_error;
 #[serde(rename_all = "camelCase")]
 pub struct PassportListResponse {
     /// This page of passports, in the repository's order.
-    pub dpps: Vec<Passport>,
+    pub dpps: Vec<crate::api::PassportResponse>,
     /// Total matching the filter, across every page — not the length of `dpps`.
     pub total: u64,
     /// The page size actually applied, after clamping.
@@ -77,7 +76,10 @@ pub async fn list_handler(
     (
         StatusCode::OK,
         Json(PassportListResponse {
-            dpps: passports,
+            dpps: passports
+                .iter()
+                .map(crate::api::PassportResponse::from)
+                .collect(),
             total,
             limit,
             skip: offset,

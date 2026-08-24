@@ -10,6 +10,43 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ## [Unreleased]
 
+### Added
+
+- **Bulk import can set `placedOnMarketDate`.** The vault's own create route has
+  always accepted it; the import path had no field for it, so the same product
+  imported rather than posted got a passport that could not say which law
+  governed it.
+
+  That is not one field among many. Staged EU obligations attach at placing on
+  the market and do not move afterwards, so a determination computed without the
+  date is computed against the wrong date for every product not placed on the
+  market today — and the applicable-instrument set is frozen at that moment too,
+  which made the gap worse than when it was first noticed.
+
+  Every CSV template gains a `placedOnMarketDate [OPTIONAL]` column. A malformed
+  value is **refused**, not dropped: silently ignoring it would import a passport
+  whose governing law is unknown while looking exactly like one where the
+  operator deliberately left the column blank.
+
+- **`PassportResponse` is the API's own type.** Until now the JSON on the wire
+  *was* `dpp_domain::Passport` — a library's internal aggregate, serialised
+  straight out of the handler — so the published API was whatever core's struct
+  happened to be. The `sector` → `productGroup` rename demonstrated the cost:
+  it rewrote every response body, request body, database column and schema in one
+  step, with no point at which anyone had to agree the *API* should change.
+
+  The two shapes are identical today and a test proves it byte for byte, on a
+  minimal passport as well as a populated one, because `skip_serializing_if`
+  differences are invisible when every field is set. What changed is that they
+  are now allowed to differ, and that making them differ is an edit someone has
+  to write down. A second test checks the type against
+  `dpp_domain::PASSPORT_WIRE_KEYS`, so a field added to core is either served or
+  listed as deliberately withheld — otherwise a mirror would trade one silent
+  drift for a quieter one.
+
+  The OpenAPI contract gate now checks the spec against this type rather than
+  against the core aggregate, which is what it was always meant to check.
+
 ### Breaking
 
 - **`sector` is `productGroup` everywhere the engine touches it.** *(Breaking:

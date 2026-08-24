@@ -32,7 +32,7 @@ pub async fn update_handler(
     };
 
     match state.service.update(passport_id, body, &auth).await {
-        Ok(p) => (StatusCode::OK, Json(p)).into_response(),
+        Ok(p) => (StatusCode::OK, Json(crate::api::PassportResponse::from(&p))).into_response(),
         Err(dpp_domain::DppError::NotFound(_)) => not_found_error("DPP not found."),
         Err(dpp_domain::DppError::InvalidTransition { .. }) => {
             conflict_error("DPP is not in a state that allows updates.")
