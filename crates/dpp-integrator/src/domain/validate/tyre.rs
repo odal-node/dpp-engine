@@ -7,7 +7,9 @@ use dpp_domain::domain::{
     product_group::{ProductGroup, ProductGroupData, TyreData},
 };
 
-use crate::domain::fields::{optional_f64, optional_str, parse_gtin, require_f64, require_str};
+use crate::domain::fields::{
+    optional_date, optional_f64, optional_str, parse_gtin, require_f64, require_str,
+};
 use crate::domain::request::{CreatePassportRequest, RowError};
 
 /// Validate a single tyre row and convert it to a vault `CreatePassportRequest`.
@@ -37,6 +39,9 @@ pub fn validate_tyre_row(
     let rolling_res = optional_f64(row, "rollingResistanceNPerKn", row_num, &mut errors);
     let recycled_rubber = optional_f64(row, "recycledRubberPct", row_num, &mut errors);
     let co2e = optional_f64(row, "co2ePerTyreKg", row_num, &mut errors);
+
+    // Envelope-level, so every product group reads it from the same column.
+    let placed_on_market_date = optional_date(row, "placedOnMarketDate", row_num, &mut errors);
 
     if !errors.is_empty() {
         return Err(errors);
@@ -73,6 +78,7 @@ pub fn validate_tyre_row(
         })),
         batch_id,
         schema_version: None,
+        placed_on_market_date,
     })
 }
 

@@ -33,4 +33,19 @@ pub struct CreatePassportRequest {
     pub product_group_data: Option<ProductGroupData>,
     pub batch_id: Option<String>,
     pub schema_version: Option<String>,
+    /// The date the product was placed on the EU market.
+    ///
+    /// **The one field whose absence changes what the passport means.** Every
+    /// other omission here loses data; this one loses the *governing law*. Staged
+    /// EU obligations attach at placing on the market and do not move afterwards,
+    /// so a determination computed without it is computed against the wrong date
+    /// for every product not placed on the market today — and the set of
+    /// applicable instruments recorded at creation is frozen at this moment too.
+    ///
+    /// It was absent from this shape while the vault's own create route accepted
+    /// it, which made bulk import a quietly lossier path to the same endpoint:
+    /// the same product, imported rather than posted, got a passport that could
+    /// not say which law applied to it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub placed_on_market_date: Option<chrono::NaiveDate>,
 }

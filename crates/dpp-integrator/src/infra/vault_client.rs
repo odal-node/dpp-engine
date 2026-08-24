@@ -278,6 +278,7 @@ mod tests {
             product_group_data: None,
             batch_id: None,
             schema_version: None,
+            placed_on_market_date: None,
         }
     }
 

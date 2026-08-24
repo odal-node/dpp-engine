@@ -161,6 +161,33 @@ pub(super) fn optional_str(row: &HashMap<String, String>, field: &str) -> Option
         .cloned()
 }
 
+/// An optional ISO-8601 (`YYYY-MM-DD`) date column.
+///
+/// Rejects rather than ignores a malformed value. An unparseable date here is
+/// not a cosmetic problem: `placedOnMarketDate` is the regulated event that
+/// fixes **which law governs the product**, and dropping it silently would
+/// import a passport whose governing law is simply unknown — indistinguishable
+/// from one where the operator deliberately left the column blank.
+pub(super) fn optional_date(
+    row: &HashMap<String, String>,
+    field: &str,
+    row_num: usize,
+    errors: &mut Vec<RowError>,
+) -> Option<chrono::NaiveDate> {
+    let raw = get_field(row, field).filter(|v| !v.trim().is_empty())?;
+    match chrono::NaiveDate::parse_from_str(raw.trim(), "%Y-%m-%d") {
+        Ok(date) => Some(date),
+        Err(_) => {
+            errors.push(RowError {
+                row: row_num,
+                field: field.to_owned(),
+                message: format!("Expected an ISO-8601 date (YYYY-MM-DD), got '{raw}'"),
+            });
+            None
+        }
+    }
+}
+
 /// First present, non-empty value among header `aliases`. Each alias is matched
 /// case/separator-insensitively via [`get_field`], so the list only needs to
 /// cover *semantic* variants (e.g. `manufacturerCountry` vs `manufacturerAddress`).

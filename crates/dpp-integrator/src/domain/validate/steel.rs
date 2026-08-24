@@ -7,7 +7,9 @@ use dpp_domain::domain::{
     product_group::{ProductGroup, ProductGroupData, ProductionRoute, SteelData},
 };
 
-use crate::domain::fields::{optional_f64, optional_str, parse_gtin, require_f64, require_str};
+use crate::domain::fields::{
+    optional_date, optional_f64, optional_str, parse_gtin, require_f64, require_str,
+};
 use crate::domain::request::{CreatePassportRequest, RowError};
 
 /// Validate a single steel row and convert it to a vault `CreatePassportRequest`.
@@ -34,6 +36,9 @@ pub fn validate_steel_row(
     let country_of_origin = require_str(row, "countryOfOrigin", row_num, &mut errors);
     let production_route_raw = require_str(row, "productionRoute", row_num, &mut errors);
     let annual = optional_f64(row, "annualProductionTonnes", row_num, &mut errors);
+
+    // Envelope-level, so every product group reads it from the same column.
+    let placed_on_market_date = optional_date(row, "placedOnMarketDate", row_num, &mut errors);
 
     if !errors.is_empty() {
         return Err(errors);
@@ -73,6 +78,7 @@ pub fn validate_steel_row(
         })),
         batch_id,
         schema_version: None,
+        placed_on_market_date,
     })
 }
 
