@@ -5,14 +5,13 @@ use axum::{
     http::StatusCode,
     response::IntoResponse,
 };
-use serde::{Deserialize, Serialize};
 
 use chrono::Utc;
 use dpp_common::url_guard::validate_public_https_url;
 use dpp_digital_link::validate_gtin;
 use dpp_domain::{
     ProductGroupCatalog,
-    domain::passport::{ManufacturerInfo, MaterialEntry, Passport, PassportId, PassportRef},
+    domain::passport::{Passport, PassportId, PassportRef},
     domain::product_group::{CarbonFootprint, ProductGroup, ProductGroupData, RepairabilityScore},
     domain::status::PassportStatus,
     domain::validation::validate_product_group_data,
@@ -26,40 +25,11 @@ use crate::{middleware::auth::AuthContext, state::AppState};
 use super::error::{api_error, internal_error, require_write};
 
 /// Request body for passport creation.
-#[derive(Debug, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct CreateRequest {
-    pub product_name: String,
-    /// EU ESPR product group (dispatch key). Optional — derived from `productGroupData` when omitted.
-    pub product_group: Option<ProductGroup>,
-    pub manufacturer: ManufacturerInfo,
-    pub materials: Option<Vec<MaterialEntry>>,
-    pub co2e_per_unit: Option<f64>,
-    pub repairability_score: Option<f64>,
-    pub product_group_data: Option<ProductGroupData>,
-    pub batch_id: Option<String>,
-    /// The date this product was placed on the EU market — the regulated
-    /// triggering event that fixes which law governs it.
-    ///
-    /// Optional, and omitting it is not neutral: a determination that depends
-    /// on a phase date has no answer without it, and the node will not
-    /// substitute today's date to produce one.
-    pub placed_on_market_date: Option<chrono::NaiveDate>,
-    pub schema_version: Option<String>,
-    /// Customs tariff classification — HS-6, CN-8 or TARIC-10 digits.
-    /// Registration data the EU registry stores and range-checks per product
-    /// group. Optional: the regulation qualifies it "where relevant".
-    pub commodity_code: Option<String>,
-    /// Cross-operator predecessor this passport derives from (second-life
-    /// successor linkage). Shape-validated here; the hash is checked against the
-    /// fetched parent at verify time.
-    pub parent_passport_ref: Option<PassportRef>,
-    /// Cross-operator references to this product's constituent passports (its
-    /// bill of materials). Shape-validated here; local cycles/over-depth are
-    /// refused by the service.
-    #[serde(default)]
-    pub component_refs: Vec<PassportRef>,
-}
+///
+/// Re-exported rather than declared: the bulk importer builds the same body, and
+/// the two used to be separate structs kept in step by a comment. See the type
+/// for what that cost.
+pub use dpp_types::CreatePassportRequest as CreateRequest;
 
 /// `POST /api/v1/dpp` — validate fields and create a new passport in `Draft` status.
 ///

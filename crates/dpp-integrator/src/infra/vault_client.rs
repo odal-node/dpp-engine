@@ -279,6 +279,9 @@ mod tests {
             batch_id: None,
             schema_version: None,
             placed_on_market_date: None,
+            commodity_code: None,
+            parent_passport_ref: None,
+            component_refs: Vec::new(),
         }
     }
 

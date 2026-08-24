@@ -8,7 +8,8 @@ use dpp_domain::domain::{
 };
 
 use crate::domain::fields::{
-    optional_date, optional_f64, optional_str, parse_gtin, require_f64, require_str,
+    optional_commodity_code, optional_date, optional_f64, optional_str, parse_gtin, require_f64,
+    require_str,
 };
 use crate::domain::request::{CreatePassportRequest, RowError};
 
@@ -37,8 +38,9 @@ pub fn validate_aluminium_row(
     let country_of_origin = require_str(row, "countryOfOrigin", row_num, &mut errors);
     let annual = optional_f64(row, "annualProductionTonnes", row_num, &mut errors);
 
-    // Envelope-level, so every product group reads it from the same column.
+    // Envelope-level, so every product group reads them from the same columns.
     let placed_on_market_date = optional_date(row, "placedOnMarketDate", row_num, &mut errors);
+    let commodity_code = optional_commodity_code(row, "commodityCode", row_num, &mut errors);
 
     if !errors.is_empty() {
         return Err(errors);
@@ -79,6 +81,13 @@ pub fn validate_aluminium_row(
         batch_id,
         schema_version: None,
         placed_on_market_date,
+        commodity_code,
+        // A CSV cannot express these: each carries a URI *and* a hash of the
+        // referenced passport's public signature, and a hash cannot be authored
+        // by hand — an invented one produces a link that fails verification.
+        // Absent because the format cannot carry them, not by oversight.
+        parent_passport_ref: None,
+        component_refs: Vec::new(),
     })
 }
 
@@ -107,6 +116,42 @@ mod tests {
             req.placed_on_market_date,
             Some(chrono::NaiveDate::from_ymd_opt(2027, 2, 18).expect("a real date"))
         );
+    }
+
+    /// A commodity code reaches the request, and a bad one names its row.
+    ///
+    /// The vault rejects an invalid code too, but its error cannot say which row
+    /// of a thousand-line spreadsheet carried it — which leaves the operator to
+    /// find it by hand.
+    #[test]
+    fn commodity_code_is_validated_here_so_the_error_names_a_row() {
+        let mut row = aluminium_row();
+        row.insert("commodityCode".into(), "76042100".into());
+        let req = validate_aluminium_row(&row, 1).expect("valid aluminium row");
+        assert_eq!(req.commodity_code.as_deref(), Some("76042100"));
+
+        row.insert("commodityCode".into(), "not-a-code".into());
+        let errors = validate_aluminium_row(&row, 12).expect_err("invalid code must be refused");
+        assert!(
+            errors
+                .iter()
+                .any(|e| e.field == "commodityCode" && e.row == 12),
+            "expected a commodityCode error naming row 12, got {errors:?}"
+        );
+    }
+
+    /// A CSV cannot carry a passport reference, and the import path says so
+    /// rather than leaving the fields to be forgotten.
+    ///
+    /// Each reference carries a URI *and* a hash of the referenced passport's
+    /// public signature. A hash cannot be authored in a spreadsheet, and an
+    /// invented one produces a link that fails verification — so absent is the
+    /// only honest value here.
+    #[test]
+    fn passport_references_are_absent_because_csv_cannot_express_them() {
+        let req = validate_aluminium_row(&aluminium_row(), 1).expect("valid row");
+        assert!(req.parent_passport_ref.is_none());
+        assert!(req.component_refs.is_empty());
     }
 
     /// Absent is a legitimate answer; unparseable is not.

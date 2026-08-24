@@ -7,7 +7,9 @@ use dpp_domain::domain::{
     product_group::{FibreEntry, ProductGroup, ProductGroupData, TextileData},
 };
 
-use crate::domain::fields::{optional_date, optional_f64, parse_gtin, require_str};
+use crate::domain::fields::{
+    optional_commodity_code, optional_date, optional_f64, parse_gtin, require_str,
+};
 use crate::domain::request::{CreatePassportRequest, RowError};
 
 /// Validate a single textile row and convert it to a vault `CreatePassportRequest`.
@@ -57,8 +59,9 @@ pub fn validate_textile_row(
     let repair_score = optional_f64(row, "repairScore", row_num, &mut errors);
     let carbon_footprint = optional_f64(row, "carbonFootprintKgCo2e", row_num, &mut errors);
 
-    // Envelope-level, so every product group reads it from the same column.
+    // Envelope-level, so every product group reads them from the same columns.
     let placed_on_market_date = optional_date(row, "placedOnMarketDate", row_num, &mut errors);
+    let commodity_code = optional_commodity_code(row, "commodityCode", row_num, &mut errors);
 
     if !errors.is_empty() {
         return Err(errors);
@@ -114,6 +117,13 @@ pub fn validate_textile_row(
         batch_id,
         schema_version: None,
         placed_on_market_date,
+        commodity_code,
+        // A CSV cannot express these: each carries a URI *and* a hash of the
+        // referenced passport's public signature, and a hash cannot be authored
+        // by hand — an invented one produces a link that fails verification.
+        // Absent because the format cannot carry them, not by oversight.
+        parent_passport_ref: None,
+        component_refs: Vec::new(),
     })
 }
 
