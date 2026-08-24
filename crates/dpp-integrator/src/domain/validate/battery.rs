@@ -12,8 +12,8 @@ use dpp_domain::domain::{
 };
 
 use crate::domain::fields::{
-    aliased, optional_date, optional_f64, optional_str, parse_materials, require_aliased,
-    require_f64, require_str, require_u32,
+    aliased, optional_commodity_code, optional_date, optional_f64, optional_str, parse_materials,
+    require_aliased, require_f64, require_str, require_u32,
 };
 use crate::domain::request::{CreatePassportRequest, RowError};
 
@@ -119,8 +119,9 @@ pub fn validate_battery_row(
     let repairability_score = optional_f64(row, "repairabilityScore", row_num, &mut errors);
     let materials = parse_materials(row);
 
-    // Envelope-level, so every product group reads it from the same column.
+    // Envelope-level, so every product group reads them from the same columns.
     let placed_on_market_date = optional_date(row, "placedOnMarketDate", row_num, &mut errors);
+    let commodity_code = optional_commodity_code(row, "commodityCode", row_num, &mut errors);
 
     if !errors.is_empty() {
         return Err(errors);
@@ -240,6 +241,13 @@ pub fn validate_battery_row(
         batch_id,
         schema_version: None,
         placed_on_market_date,
+        commodity_code,
+        // A CSV cannot express these: each carries a URI *and* a hash of the
+        // referenced passport's public signature, and a hash cannot be authored
+        // by hand — an invented one produces a link that fails verification.
+        // Absent because the format cannot carry them, not by oversight.
+        parent_passport_ref: None,
+        component_refs: Vec::new(),
     })
 }
 

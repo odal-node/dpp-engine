@@ -12,6 +12,25 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ### Added
 
+- **The create request is one type, not two kept in step by a comment.**
+  `dpp_types::CreatePassportRequest` is now the body both sides use: the vault
+  deserialises it, the bulk importer serialises it. They were separate structs in
+  separate crates, coupled by a doc comment reading *"Shape must match …"* — and
+  the importer's copy had drifted four fields short. A comment cannot fail a
+  build; a shared type makes the gap unrepresentable, because a field the vault
+  accepts is now a field the importer must decide about or it does not compile.
+
+  Two of the four are now importable: `placedOnMarketDate` (below) and
+  `commodityCode`, which is validated at import so the error names the offending
+  **row** — the vault rejects a bad code too, but cannot say which line of a
+  thousand-row spreadsheet carried it.
+
+  `parentPassportRef` and `componentRefs` stay absent on the import path, now
+  explicitly and with a test saying why: each carries a URI *and* a hash of the
+  referenced passport's public signature, and a hash cannot be authored in a
+  spreadsheet. An invented one produces a link that fails verification, so absent
+  is the only honest value a CSV can supply.
+
 - **Bulk import can set `placedOnMarketDate`.** The vault's own create route has
   always accepted it; the import path had no field for it, so the same product
   imported rather than posted got a passport that could not say which law

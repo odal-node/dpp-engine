@@ -161,6 +161,36 @@ pub(super) fn optional_str(row: &HashMap<String, String>, field: &str) -> Option
         .cloned()
 }
 
+/// An optional customs tariff classification column (HS-6, CN-8 or TARIC-10).
+///
+/// Validated here, against the domain type, rather than left for the vault to
+/// reject. Both refuse the same values, but only this one can say *which row* —
+/// a bulk import that fails with "invalid commodity code" and no row number
+/// leaves the operator to find it across a spreadsheet by hand.
+///
+/// The value is sent on as a string, because that is what the request carries;
+/// parsing it is a check, not a conversion.
+pub(super) fn optional_commodity_code(
+    row: &HashMap<String, String>,
+    field: &str,
+    row_num: usize,
+    errors: &mut Vec<RowError>,
+) -> Option<String> {
+    let raw = get_field(row, field).filter(|v| !v.trim().is_empty())?;
+    let trimmed = raw.trim();
+    match dpp_domain::domain::commodity_code::CommodityCode::parse(trimmed) {
+        Ok(_) => Some(trimmed.to_owned()),
+        Err(e) => {
+            errors.push(RowError {
+                row: row_num,
+                field: field.to_owned(),
+                message: format!("Invalid commodity code '{raw}': {e}"),
+            });
+            None
+        }
+    }
+}
+
 /// An optional ISO-8601 (`YYYY-MM-DD`) date column.
 ///
 /// Rejects rather than ignores a malformed value. An unparseable date here is
