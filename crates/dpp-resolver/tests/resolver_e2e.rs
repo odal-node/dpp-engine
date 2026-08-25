@@ -740,3 +740,60 @@ async fn scan_telemetry_counts_terminal_views_and_qr_separately() {
     assert_eq!(batch.qr_renders[0].count, 1);
     assert_eq!(batch.qr_renders[0].dpp_id, id);
 }
+
+/// A restricted product-group field must not reach the public JSON view.
+///
+/// The resolver filters a passport in two passes: the envelope with the
+/// passport-level policy, then `productGroupData` — removed from the envelope and
+/// handed on as its own root document — with the product group's policy. The
+/// second pass has to say that its root is *already inside* the product group,
+/// because a payload filtered as an envelope has none of that product group's
+/// classes applied and every restricted field in it is served.
+///
+/// Nothing caught that before this test: the wrong scope compiles, returns 200,
+/// and produces a body that looks right unless you know which field should be
+/// missing. `cathodeMaterial` is Annex XIII point 2 — withheld from the public —
+/// so its presence here is the leak, in the response bytes.
+#[tokio::test]
+async fn a_restricted_product_group_field_is_absent_from_the_public_view() {
+    let mut passport = sample_battery_passport();
+    passport["schemaVersion"] = json!("2.6.0");
+    passport["productGroupData"]["cathodeMaterial"] = json!("LiFePO4 cathode, 12 kg");
+
+    let vault = {
+        let p = passport.clone();
+        Router::new().route(
+            "/public/dpp/{id}",
+            get(move || {
+                let pp = p.clone();
+                async move { axum::Json(pp) }
+            }),
+        )
+    };
+    let port = start_mock_vault(vault).await;
+    let app = router::build(test_state(format!("http://127.0.0.1:{port}")));
+
+    let req = Request::builder()
+        .uri("/dpp/00000000-0000-4000-9000-000000000002")
+        .header("accept", "application/ld+json")
+        .body(Body::empty())
+        .unwrap();
+    let resp = app.oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+        .await
+        .expect("read body");
+    let body = String::from_utf8(body.to_vec()).expect("utf-8");
+
+    assert!(
+        !body.contains("cathodeMaterial"),
+        "Annex XIII point 2 content reached the public view: {body}"
+    );
+    // The public half of the same payload is still served — this is a scoping
+    // test, not an argument for redacting everything.
+    assert!(
+        body.contains("batteryChemistry"),
+        "point 1 content must survive: {body}"
+    );
+}
