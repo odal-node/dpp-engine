@@ -10,6 +10,21 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ## [Unreleased]
 
+### Fixed
+
+- **A restricted product-group field could have reached the public view.** The
+  resolver filters a passport in two passes — the envelope, then
+  `productGroupData` handed on as its own root document. The core filter now
+  scopes a product group's disclosure classes to that payload, which means the
+  second pass has to declare that its root is *already inside* the product group.
+  Filtering it as an envelope applies none of that product group's classes and
+  serves every restricted field in it.
+
+  That failure compiles, returns 200, and produces a body that looks right unless
+  you know which field should be missing, so nothing in the suite would have
+  caught it. There is now a test asserting an Annex XIII point 2 field is absent
+  from the public response bytes — confirmed to fail when the scope is wrong.
+
 ### Added
 
 - **The create request is one type, not two kept in step by a comment.**

@@ -9,7 +9,9 @@ use dpp_common::http_problem;
 use serde_json::Value;
 
 use dpp_domain::Audience;
-use dpp_domain::access::{ProductGroupAccessPolicy, filter_by_audience};
+use dpp_domain::access::{
+    DocumentScope, ProductGroupAccessPolicy, filter_by_audience, filter_by_audience_in_scope,
+};
 
 use crate::{infra::did, state::AppState};
 
@@ -136,7 +138,12 @@ fn apply_access_tier_filter(passport: Value, tier: Audience) -> Value {
     {
         let product_group_policy = detect_product_group_policy(&sd, &schema_version);
         if let Some(policy) = product_group_policy {
-            let inner = filter_by_audience(&sd, &policy, tier);
+            // The sub-object was removed from the envelope above, so it is now
+            // its own root document — and its root is already inside the
+            // product group. Filtering it as an envelope would apply none of
+            // this product group's classes and serve every restricted field.
+            let inner =
+                filter_by_audience_in_scope(&sd, &policy, tier, DocumentScope::ProductGroupData);
             obj.insert("productGroupData".into(), inner.filtered_data);
         } else if is_tagged_unknown_product_group(&sd) {
             // Fail closed (RT2-1 / RT2-5): the sub-object carries a `product_group`
