@@ -163,12 +163,16 @@ fn unknown_version(product_group: &str, version: &str) -> Response {
 /// a naive walk — taking a real field out of the contract an SDK validates
 /// against. No schema declares one today; this costs nothing and stops that
 /// being a latent trap for whoever adds the first.
-fn strip_descriptions(node: &mut Value) {
-    /// Keywords whose object values are keyed by author-chosen names, not by
-    /// schema keywords — descend into the values, never treat the keys as
-    /// keywords.
-    const NAME_KEYED: [&str; 4] = ["properties", "$defs", "definitions", "patternProperties"];
+/// Keywords whose object values are keyed by author-chosen names, not by
+/// schema keywords — descend into the values, never treat the keys as
+/// keywords.
+///
+/// Module-level rather than local so the test that checks the result walks by
+/// the same list. Two copies of this would drift, and the direction they drift
+/// is a check that quietly stops looking.
+const NAME_KEYED: [&str; 4] = ["properties", "$defs", "definitions", "patternProperties"];
 
+fn strip_descriptions(node: &mut Value) {
     match node {
         Value::Object(map) => {
             map.remove("description");
@@ -268,6 +272,45 @@ mod tests {
         );
     }
 
+    /// Collect the paths of any surviving `description` **keyword**, walking the
+    /// tree the way `strip_descriptions` does.
+    ///
+    /// A substring search over the serialised schema cannot answer this, because
+    /// a property may legitimately be *named* `description` — unsold-goods
+    /// v2.0.0 has one, the line description of Impl. Reg. (EU) 2026/2 Annex I
+    /// note (e). Its name has to survive stripping; its own description keyword
+    /// must not. Only a structural walk can tell those apart.
+    fn surviving_description_keywords(node: &Value, path: &str, out: &mut Vec<String>) {
+        match node {
+            Value::Object(map) => {
+                if map.contains_key("description") {
+                    out.push(path.to_owned());
+                }
+                for (key, value) in map {
+                    if NAME_KEYED.contains(&key.as_str()) {
+                        if let Value::Object(named) = value {
+                            for (name, schema) in named {
+                                surviving_description_keywords(
+                                    schema,
+                                    &format!("{path}/{key}/{name}"),
+                                    out,
+                                );
+                            }
+                        }
+                    } else {
+                        surviving_description_keywords(value, &format!("{path}/{key}"), out);
+                    }
+                }
+            }
+            Value::Array(items) => {
+                for (i, item) in items.iter().enumerate() {
+                    surviving_description_keywords(item, &format!("{path}/{i}"), out);
+                }
+            }
+            _ => {}
+        }
+    }
+
     #[test]
     fn no_embedded_schema_keeps_a_description_after_stripping() {
         let registry = VersionedSchemaRegistry::new();
@@ -275,12 +318,41 @@ mod tests {
             let raw = registry.get(product_group, version).expect("just listed");
             let mut schema: Value = serde_json::from_str(raw).unwrap();
             strip_descriptions(&mut schema);
+
+            let mut surviving = Vec::new();
+            surviving_description_keywords(&schema, "", &mut surviving);
             assert!(
-                !serde_json::to_string(&schema)
-                    .unwrap()
-                    .contains("\"description\""),
-                "{product_group} v{version} still carries a description keyword after stripping"
+                surviving.is_empty(),
+                "{product_group} v{version} still carries a description keyword at: {}",
+                surviving.join(", ")
             );
         }
+    }
+
+    #[test]
+    fn the_detector_reports_keywords_and_ignores_a_property_of_that_name() {
+        // A green check proves nothing until it has been seen to fail, and this
+        // one replaced an assertion that could not distinguish these two cases
+        // at all. So: one schema, un-stripped, holding both.
+        let schema: Value = json!({
+            "description": "root prose",
+            "properties": {
+                // A field named `description` — a contract, not prose. Its own
+                // description keyword *is* prose and must be reported.
+                "description": { "type": "string", "description": "Note (e)" },
+                // No description keyword anywhere: must not be reported.
+                "unitsDiscarded": { "type": "integer" }
+            }
+        });
+
+        let mut found = Vec::new();
+        surviving_description_keywords(&schema, "", &mut found);
+        found.sort();
+
+        assert_eq!(
+            found,
+            vec!["".to_owned(), "/properties/description".to_owned()],
+            "the root keyword and the one on the `description` field, and nothing else"
+        );
     }
 }
