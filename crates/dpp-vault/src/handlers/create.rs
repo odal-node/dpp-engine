@@ -8,7 +8,6 @@ use axum::{
 
 use chrono::Utc;
 use dpp_common::url_guard::validate_public_https_url;
-use dpp_digital_link::validate_gtin;
 use dpp_domain::{
     ProductGroupCatalog,
     passport::{Passport, PassportId, PassportRef},
@@ -34,8 +33,12 @@ pub use dpp_types::CreatePassportRequest as CreateRequest;
 /// `POST /api/v1/dpp` — validate fields and create a new passport in `Draft` status.
 ///
 /// Rejects blank required fields, unsafe Unicode characters (null bytes, bidi
-/// overrides), out-of-range numeric values, invalid product group data, and malformed
-/// GTINs before touching the database.
+/// overrides), out-of-range numeric values and invalid product group data before
+/// touching the database.
+///
+/// A malformed GTIN never reaches here: every typed payload declares
+/// `gtin: Gtin`, whose `Deserialize` validates the GS1 check digit, so the body
+/// fails to parse. See the `gtin_boundary` tests.
 pub async fn create_handler(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthContext>,
@@ -399,6 +402,65 @@ mod schema_validation {
     }
 }
 
+#[cfg(test)]
+mod gtin_boundary {
+    //! Where a malformed GTIN is actually refused.
+    //!
+    //! Every typed payload declares `gtin: Gtin`, and `Gtin`'s `Deserialize`
+    //! calls `Gtin::parse`. So a bad check digit is rejected while the request
+    //! body is being parsed, for every product group at once, before any handler
+    //! validation runs. These tests pin that, because the handler's own GTIN
+    //! check reads as if it were the thing enforcing it.
+    use super::*;
+
+    fn tyre_body(gtin: &str) -> serde_json::Value {
+        serde_json::json!({
+            "productName": "All-season 205/55R16",
+            "manufacturer": { "name": "M", "address": "A" },
+            "productGroupData": {
+                "productGroup": "tyre",
+                "gtin": gtin,
+                "tyreClass": "C1",
+                "fuelEfficiencyClass": "A",
+                "wetGripClass": "A",
+                "externalRollingNoiseDb": 70.0
+            }
+        })
+    }
+
+    #[test]
+    fn a_bad_check_digit_is_refused_while_the_body_is_parsed() {
+        // Valid 14-digit shape, wrong GS1 mod-10 check digit.
+        let err = serde_json::from_value::<CreateRequest>(tyre_body("09506000134353"))
+            .expect_err("a bad check digit must not deserialize");
+        assert!(
+            err.to_string().to_lowercase().contains("check digit"),
+            "the rejection should name the check digit, got: {err}"
+        );
+    }
+
+    #[test]
+    fn a_valid_gtin_parses_and_the_request_is_accepted() {
+        let body = serde_json::from_value::<CreateRequest>(tyre_body("09506000134352"))
+            .expect("a valid GTIN must deserialize");
+        assert!(
+            validate_create_request(&body).is_none(),
+            "a well-formed tyre body must pass every create validation"
+        );
+    }
+
+    #[test]
+    fn the_handler_reads_the_gtin_generically_not_battery_only() {
+        // The handler asks the payload rather than matching on the variant. If
+        // this ever returns `None` for a product group that declares a `gtin`,
+        // the check silently stops covering it — which is how it came to cover
+        // battery alone.
+        let body = serde_json::from_value::<CreateRequest>(tyre_body("09506000134352")).unwrap();
+        let data = body.product_group_data.expect("payload present");
+        assert_eq!(data.gtin(), Some("09506000134352"));
+    }
+}
+
 /// Every validation `POST /api/v1/dpp` applies to a request body, with no side
 /// effects. Returns the rejection response, or `None` when the body would be
 /// accepted.
@@ -473,16 +535,17 @@ pub fn validate_create_request(body: &CreateRequest) -> Option<axum::response::R
             );
         }
 
-        // GS1 GTIN check-digit validation for Battery passports.
-        if let ProductGroupData::Battery(battery) = sd
-            && let Err(e) = validate_gtin(battery.gtin.as_str())
-        {
-            return api_error(
-                StatusCode::UNPROCESSABLE_ENTITY,
-                "VALIDATION_ERROR",
-                &format!("productGroupData.gtin: {e}"),
-            );
-        }
+        // No GTIN check here, deliberately. Every typed payload declares
+        // `gtin: Gtin`, and `Gtin`'s `Deserialize` calls `Gtin::parse`, so a bad
+        // check digit is refused while this body is being parsed — for all
+        // eleven product groups that carry one, before this function is
+        // reached. `Gtin`'s inner field is private and `parse` is the only
+        // constructor, so a `Gtin` that has not been validated cannot exist.
+        //
+        // What stood here re-validated `ProductGroupData::Battery`'s already-parsed
+        // GTIN and could not fail. It read as the thing enforcing GTIN validity
+        // for battery and no other product group, which is the opposite of what
+        // was true. See the `gtin_boundary` tests.
 
         // JSON-Schema validation against the product group's current versioned schema —
         // catches schema-only constraints (string patterns, enum sets, numeric

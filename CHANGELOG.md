@@ -12,6 +12,23 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ### Fixed
 
+- **A GTIN check on the create path could not fail, and read as though it were
+  the only thing checking.** `POST /api/v1/dpp` re-validated the GS1 check digit
+  of `ProductGroupData::Battery`'s GTIN — a value that had already been through
+  `Gtin::parse`, so the second check could only ever succeed.
+
+  The branch matched on the battery variant alone, which made it look like ten
+  other product groups carrying a `gtin` were going unchecked. They are not.
+  Every typed payload declares `gtin: Gtin`, `Gtin`'s `Deserialize` calls
+  `Gtin::parse`, and `Gtin`'s inner field is private with `parse` as its only
+  constructor — so an invalid GTIN cannot be deserialised, cannot be constructed,
+  and never reaches a handler, for all eleven product groups at once.
+
+  The dead branch is removed and three tests (`gtin_boundary`) pin where the
+  rejection actually happens, so the next reader does not have to re-derive it.
+  **No behaviour change**: a malformed GTIN was refused before this change and is
+  refused after it, at the same point in the request.
+
 - **A restricted product-group field could have reached the public view.** The
   resolver filters a passport in two passes — the envelope, then
   `productGroupData` handed on as its own root document. The core filter now
