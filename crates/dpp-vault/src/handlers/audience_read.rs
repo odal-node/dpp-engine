@@ -58,7 +58,7 @@ use axum::{
 use serde_json::Value;
 
 use dpp_domain::Audience;
-use dpp_domain::domain::status::PassportStatus;
+use dpp_domain::status::PassportStatus;
 
 use dpp_types::audit::AuditEntry;
 
@@ -185,7 +185,7 @@ pub const CREDENTIALED_READ: &str = "credentialed_read";
 /// exactly the event an operator wants to be able to find later.
 async fn record_access(
     state: &AppState,
-    passport: &dpp_domain::domain::passport::Passport,
+    passport: &dpp_domain::passport::Passport,
     credential: &VerifiedCredential,
     granted: Audience,
 ) -> Result<(), dpp_domain::DppError> {

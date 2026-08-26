@@ -13,7 +13,7 @@ use uuid::Uuid;
 
 use dpp_domain::{
     DppError,
-    domain::passport::{Passport, PassportId},
+    passport::{Passport, PassportId},
 };
 use dpp_types::{
     RegistryStatusIntent, RegistrySyncCounts, RegistrySyncOutbox, RegistrySyncRow,

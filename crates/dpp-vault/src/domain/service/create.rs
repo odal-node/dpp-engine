@@ -8,14 +8,12 @@ use dpp_common::event;
 use std::collections::HashSet;
 
 use dpp_domain::{
-    domain::{
-        error::DppError,
-        graph::{ComponentEdges, DEFAULT_DEPTH_CAP, EdgeRejection, check_edge},
-        passport::{Passport, PassportId, PassportRef},
-        product_group::{CarbonFootprint, ProductGroupData, RepairabilityScore},
-        status::PassportStatus,
-    },
+    error::DppError,
+    graph::{ComponentEdges, DEFAULT_DEPTH_CAP, EdgeRejection, check_edge},
+    passport::{Passport, PassportId, PassportRef},
     ports::compliance::ComplianceRegistry,
+    product_group::{CarbonFootprint, ProductGroupData, RepairabilityScore},
+    status::PassportStatus,
 };
 use dpp_types::{STANDALONE_OPERATOR_ID, audit::AuditEntry, auth::AuthContext};
 use serde_json::Value;
@@ -440,15 +438,12 @@ mod tests {
     use super::{apply_compliance, apply_patch};
     use chrono::Utc;
     use dpp_domain::{
-        domain::{
-            error::DppError,
-            passport::{ManufacturerInfo, Passport, PassportId},
-            product_group::{ProductGroup, ProductGroupData},
-            status::PassportStatus,
-        },
-        ports::compliance::{
-            ComplianceError, ComplianceErrorKind, ComplianceRegistry, ComplianceResult,
-        },
+        compliance::{ComplianceError, ComplianceErrorKind, ComplianceResult},
+        error::DppError,
+        passport::{ManufacturerInfo, Passport, PassportId},
+        ports::compliance::ComplianceRegistry,
+        product_group::{ProductGroup, ProductGroupData},
+        status::PassportStatus,
     };
 
     fn stub() -> Passport {

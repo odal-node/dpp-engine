@@ -17,7 +17,7 @@
 //!   the default and a backend that can genuinely verify has to say so.
 
 use async_trait::async_trait;
-use dpp_domain::ports::seal::{SealCapabilities, SealRequest, SealVerification, SealedEnvelope};
+use dpp_domain::seal::{SealCapabilities, SealRequest, SealVerification, SealedEnvelope};
 
 use crate::error::SealError;
 

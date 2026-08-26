@@ -8,7 +8,7 @@ use dpp_common::event_codes;
 use ed25519_dalek::VerifyingKey;
 use wasmtime::{Engine, Instance, Linker, Module, Store};
 
-use dpp_domain::ports::compliance::ComplianceResult;
+use dpp_domain::compliance::ComplianceResult;
 use dpp_plugin_traits::{AbiResult, PluginCapabilities, PluginResult, check_compatibility};
 
 use super::signing::verify_plugin_signature;
@@ -481,7 +481,7 @@ fn call_calculate(
 mod tests {
     use super::*;
     use crate::runtime::build_engine;
-    use dpp_domain::ports::compliance::ComplianceStatus;
+    use dpp_domain::compliance::ComplianceStatus;
     use dpp_plugin_traits::PluginCapability;
     use ed25519_dalek::SigningKey;
     use tempfile::TempDir;

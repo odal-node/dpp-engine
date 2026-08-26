@@ -1,9 +1,9 @@
 //! Read paths: fetch by id/GTIN, paginated list, count, and audit history.
 
-use dpp_domain::domain::{
+use dpp_domain::{
     error::DppError,
     passport::{Passport, PassportId},
-    product_identity::ProductIdentity,
+    product::ProductIdentity,
     status::PassportStatus,
 };
 use dpp_types::audit::AuditEntry;

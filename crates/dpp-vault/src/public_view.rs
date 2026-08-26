@@ -17,7 +17,7 @@ use base64::Engine;
 use serde_json::Value;
 
 use dpp_domain::access::{ProductGroupAccessPolicy, filter_by_audience};
-use dpp_domain::domain::passport::Passport;
+use dpp_domain::passport::Passport;
 use dpp_domain::{Audience, DppError};
 
 /// Build the public-read redaction policy for a product group **at the schema version
@@ -296,7 +296,7 @@ pub fn signed_audience_view(passport: &Passport, audience: Audience) -> Result<V
 /// reached `Published` without a proof for every audience it will serve is
 /// exactly the half-signed state this function exists to prevent.
 pub async fn sign_disclosure_views(
-    identity: &dyn dpp_domain::ports::identity_port::IdentityPort,
+    identity: &dyn dpp_domain::ports::identity::IdentityPort,
     passport_id: dpp_domain::PassportId,
     payload: &Value,
     product_group_key: &str,
@@ -454,7 +454,7 @@ pub(crate) mod tests {
     #[test]
     fn an_older_schema_version_widens_the_public_view() {
         let full = json!({
-            "id": dpp_domain::domain::passport::PassportId::new().to_string(),
+            "id": dpp_domain::passport::PassportId::new().to_string(),
             "productName": "Cell",
             "productGroupData": {
                 "productGroup": "battery",
@@ -483,9 +483,9 @@ pub(crate) mod tests {
     /// tests need the same fixture and duplicating it would let the two drift.
     pub(crate) fn stub_passport() -> Passport {
         use chrono::Utc;
-        use dpp_domain::domain::passport::{ManufacturerInfo, PassportId};
-        use dpp_domain::domain::product_group::ProductGroup;
-        use dpp_domain::domain::status::PassportStatus;
+        use dpp_domain::passport::{ManufacturerInfo, PassportId};
+        use dpp_domain::product_group::ProductGroup;
+        use dpp_domain::status::PassportStatus;
 
         Passport {
             id: PassportId::new(),

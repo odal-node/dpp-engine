@@ -8,8 +8,9 @@
 //! to start on.
 
 use async_trait::async_trait;
-use dpp_domain::ports::seal::{
-    SealCapabilities, SealPort, SealRequest, SealVerification, SealedEnvelope,
+use dpp_domain::{
+    ports::seal::SealPort,
+    seal::{SealCapabilities, SealRequest, SealVerification, SealedEnvelope},
 };
 use tracing::warn;
 
@@ -42,6 +43,6 @@ impl SealBackend for GhostSeal {
 }
 
 /// `GhostSeal` speaks the port's coarse error; nothing here can re-classify it.
-fn backend_err(e: dpp_domain::domain::error::DppError) -> SealError {
+fn backend_err(e: dpp_domain::error::DppError) -> SealError {
     SealError::Backend(e.to_string())
 }

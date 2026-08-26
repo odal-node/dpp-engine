@@ -19,10 +19,8 @@
 use async_trait::async_trait;
 use chrono::Utc;
 use dpp_domain::{
-    domain::{
-        error::DppError,
-        passport::{Passport, PassportId},
-    },
+    error::DppError,
+    passport::{Passport, PassportId},
     ports::archive::{ArchivePort, ArchiveReceipt, ArchiveStatus, ArchiveVerification},
 };
 

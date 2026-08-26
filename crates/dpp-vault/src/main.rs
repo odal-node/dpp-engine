@@ -11,8 +11,8 @@ use dpp_dal::pg::{
     PgRegistryIdentityRepo, PgScanTelemetryRepo, PgWebhookRepo,
 };
 use dpp_domain::{
-    DppError, GhostArchive, GhostRegistrySync,
-    compliance::passthrough_registry::PassthroughRegistry, ports::registry_sync::RegistrySyncPort,
+    DppError, GhostArchive, GhostRegistrySync, PassthroughRegistry,
+    ports::registry_sync::RegistrySyncPort,
 };
 use dpp_types::trust::{NodeProfile, NodeTrustReport, TrustMode, TrustPort};
 use dpp_vault::{

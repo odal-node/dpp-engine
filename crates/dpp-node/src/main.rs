@@ -17,8 +17,9 @@ use dpp_common::{
     event_codes,
 };
 use dpp_crypto::keystore::KeyStore;
-use dpp_domain::ports::{
-    archive::ArchivePort, compliance::ComplianceRegistry, registry_sync::RegistrySyncPort,
+use dpp_domain::{
+    ports::archive::ArchivePort, ports::compliance::ComplianceRegistry,
+    ports::registry_sync::RegistrySyncPort,
 };
 use dpp_identity_service::state::AppState as IdentityState;
 use dpp_integrator::{infra::vault_client::VaultHttpClient, state::AppState as IntegratorState};
@@ -101,7 +102,7 @@ async fn main() -> anyhow::Result<()> {
         store: key_store.clone(),
         did_web_base_url: cfg.did_web_base_url.clone(),
     };
-    let identity: Arc<dyn dpp_domain::ports::identity_port::IdentityPort> =
+    let identity: Arc<dyn dpp_domain::ports::identity::IdentityPort> =
         Arc::new(LocalIdentityService::new(
             key_store.clone(),
             ISSUER_KEY_ID.to_owned(),

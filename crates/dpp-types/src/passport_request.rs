@@ -1,7 +1,7 @@
 //! [`CreatePassportRequest`] — the body of `POST /vault/api/v1/dpp`.
 
-use dpp_domain::domain::passport::{ManufacturerInfo, MaterialEntry, PassportRef};
-use dpp_domain::domain::product_group::{ProductGroup, ProductGroupData};
+use dpp_domain::passport::{ManufacturerInfo, MaterialEntry, PassportRef};
+use dpp_domain::product_group::{ProductGroup, ProductGroupData};
 use serde::{Deserialize, Serialize};
 
 /// The request body for passport creation, as **one** type.

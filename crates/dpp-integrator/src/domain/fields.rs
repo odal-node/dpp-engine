@@ -2,8 +2,8 @@
 
 use std::collections::HashMap;
 
-use dpp_domain::domain::gtin::Gtin;
-use dpp_domain::domain::passport::MaterialEntry;
+use dpp_domain::identifier::gtin::Gtin;
+use dpp_domain::passport::MaterialEntry;
 
 use super::request::RowError;
 
@@ -178,7 +178,7 @@ pub(super) fn optional_commodity_code(
 ) -> Option<String> {
     let raw = get_field(row, field).filter(|v| !v.trim().is_empty())?;
     let trimmed = raw.trim();
-    match dpp_domain::domain::commodity_code::CommodityCode::parse(trimmed) {
+    match dpp_domain::identifier::commodity_code::CommodityCode::parse(trimmed) {
         Ok(_) => Some(trimmed.to_owned()),
         Err(e) => {
             errors.push(RowError {

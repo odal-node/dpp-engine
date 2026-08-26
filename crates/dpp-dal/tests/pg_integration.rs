@@ -30,16 +30,12 @@ use dpp_dal::pg::{
 };
 use dpp_dal::test_harness::start_pg;
 use dpp_domain::{
-    domain::{
-        gtin::Gtin,
-        passport::{FacilitySnapshot, ManufacturerInfo, Passport, PassportId},
-        product_group::{
-            BatteryChemistry, BatteryData, BatteryType, ProductGroup, ProductGroupData,
-        },
-        product_identity::ProductIdentity,
-        status::PassportStatus,
-    },
+    identifier::gtin::Gtin,
+    passport::{FacilitySnapshot, ManufacturerInfo, Passport, PassportId},
     ports::passport_repo::PassportRepository,
+    product::ProductIdentity,
+    product_group::{BatteryChemistry, BatteryData, BatteryType, ProductGroup, ProductGroupData},
+    status::PassportStatus,
 };
 use dpp_types::{
     api_key::{ApiKey, ApiKeyRecord, ApiKeyRepository},
@@ -632,7 +628,7 @@ async fn t9_find_by_identity_matches_draft_and_published_via_index() {
 /// generate 200 distinct, individually valid GTIN-14s.
 fn check_digit_for(data13: &str) -> u8 {
     let digits: Vec<u8> = data13.bytes().map(|b| b - b'0').collect();
-    dpp_domain::domain::gtin::gs1_check_digit(&digits)
+    dpp_domain::gs1_check_digit(&digits)
 }
 
 /// A structurally-valid but unsigned dossier — enough to persist/round-trip

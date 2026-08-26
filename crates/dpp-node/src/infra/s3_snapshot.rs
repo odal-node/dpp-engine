@@ -25,7 +25,7 @@ use aws_sdk_s3::{
     config::{BehaviorVersion, Builder as ConfigBuilder, Credentials, Region},
     primitives::ByteStream,
 };
-use dpp_domain::domain::error::DppError;
+use dpp_domain::error::DppError;
 use dpp_types::snapshot::SnapshotStore;
 
 pub struct S3SnapshotConfig {

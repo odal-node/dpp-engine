@@ -25,15 +25,11 @@ use uuid::Uuid;
 use dpp_dal::pg::{PgDal, PgPassportRepo, PgRegistryTransferRepo, sqlx};
 use dpp_dal::test_harness::start_pg;
 use dpp_domain::{
-    domain::{
-        passport::{ManufacturerInfo, Passport, PassportId},
-        product_group::ProductGroup,
-        status::PassportStatus,
-        transfer::{
-            OperatorRole, ResponsibleOperator, TransferChain, TransferReason, TransferRecord,
-        },
-    },
+    passport::{ManufacturerInfo, Passport, PassportId},
     ports::passport_repo::PassportRepository,
+    product_group::ProductGroup,
+    status::PassportStatus,
+    transfer::{OperatorRole, ResponsibleOperator, TransferChain, TransferReason, TransferRecord},
 };
 use dpp_types::{RegistryTransferOutbox, RegistryTransferStatus};
 

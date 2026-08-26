@@ -2,8 +2,8 @@
 
 use std::collections::HashMap;
 
-use dpp_domain::domain::{
-    gtin::Gtin,
+use dpp_domain::{
+    identifier::gtin::Gtin,
     passport::ManufacturerInfo,
     product_group::{
         BatteryChemistry, BatteryData, BatteryType, CarbonFootprintClass, ProductGroup,

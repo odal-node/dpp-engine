@@ -6,7 +6,7 @@
 
 use std::collections::BTreeMap;
 
-use dpp_domain::domain::{error::DppError, passport::PassportId, status::PassportStatus};
+use dpp_domain::{error::DppError, passport::PassportId, status::PassportStatus};
 use dpp_types::evidence::{
     DossierManifest, DossierV1, EvidenceDossierRecord, EvidenceDossierSummary, SignedLayer,
     VerificationReport, compute_content_hashes, content_hash,
@@ -187,7 +187,7 @@ impl PassportService {
             let report = crate::domain::verify::verify_tree(
                 &passport.component_refs,
                 crate::domain::verify::fetch_public_json,
-                dpp_domain::domain::graph::DEFAULT_DEPTH_CAP,
+                dpp_domain::graph::DEFAULT_DEPTH_CAP,
                 crate::domain::verify::DEFAULT_NODE_CAP,
             )
             .await;

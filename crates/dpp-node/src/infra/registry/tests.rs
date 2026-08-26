@@ -3,17 +3,15 @@ use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 
 use chrono::Utc;
-use dpp_domain::domain::passport::PassportId;
+use dpp_domain::passport::PassportId;
 use dpp_registry::{EuRegistryResponse, RegistryStatusCode};
 use uuid::Uuid;
 
 use dpp_domain::DppError;
-use dpp_domain::domain::transfer::{
-    OperatorRole, ResponsibleOperator, TransferReason, TransferRecord,
-};
 use dpp_domain::ports::registry_sync::{
     RegistrationGranularity, RegistrationRequest, RegistryStatus, RegistrySyncPort,
 };
+use dpp_domain::transfer::{OperatorRole, ResponsibleOperator, TransferReason, TransferRecord};
 
 use super::client::EuRegistrySync;
 use super::config::EuRegistrySyncConfig;

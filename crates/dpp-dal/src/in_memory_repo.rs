@@ -26,10 +26,10 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use dpp_domain::domain::error::DppError;
-use dpp_domain::domain::passport::{Passport, PassportId};
-use dpp_domain::domain::status::PassportStatus;
+use dpp_domain::error::DppError;
+use dpp_domain::passport::{Passport, PassportId};
 use dpp_domain::ports::passport_repo::PassportRepository;
+use dpp_domain::status::PassportStatus;
 
 /// A [`PassportRepository`] backed by a `HashMap`.
 ///

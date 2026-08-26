@@ -26,11 +26,11 @@
 use chrono::Utc;
 use dpp_dal::pg::{PgPassportRepo, PgSealOutboxRepo};
 use dpp_dal::test_harness::start_pg;
-use dpp_domain::domain::passport::{ManufacturerInfo, Passport, PassportId};
-use dpp_domain::domain::product_group::ProductGroup;
-use dpp_domain::domain::status::PassportStatus;
+use dpp_domain::passport::{ManufacturerInfo, Passport, PassportId};
 use dpp_domain::ports::passport_repo::PassportRepository;
-use dpp_domain::ports::seal::{SealFormat, SealedEnvelope};
+use dpp_domain::product_group::ProductGroup;
+use dpp_domain::seal::{SealFormat, SealedEnvelope};
+use dpp_domain::status::PassportStatus;
 use dpp_types::SealOutbox;
 
 /// A passport in the state the drain actually finds one in: published, signed,

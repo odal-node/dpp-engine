@@ -6,7 +6,7 @@
 use async_trait::async_trait;
 use sqlx::Row;
 
-use dpp_domain::{DppError, domain::passport::PassportId};
+use dpp_domain::{DppError, passport::PassportId};
 use dpp_types::scan::{
     DailyScanCount, OperatorScanStats, PassportScanStats, QrRenderIncrement, ScanIncrement,
     ScanPruneCounts, ScanTelemetryRepository,

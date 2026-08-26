@@ -8,10 +8,13 @@
 use chrono::NaiveDate;
 
 use dpp_domain::Gtin;
-use dpp_domain::domain::product_group::{
+use dpp_domain::product_group::{
     BatteryChemistry, BatteryData, BatteryType, ProductGroupData, TextileData,
 };
-use dpp_domain::ports::compliance::{ComplianceErrorKind, ComplianceStatus, ComplianceStrategy};
+use dpp_domain::{
+    compliance::{ComplianceErrorKind, ComplianceStatus},
+    ports::compliance::ComplianceStrategy,
+};
 
 use super::CalcBatteryStrategy;
 
@@ -49,7 +52,7 @@ fn battery_defaults() -> BatteryData {
     .expect("a minimal battery deserialises")
 }
 
-fn shortfall_codes(r: &dpp_domain::ports::compliance::ComplianceResult) -> Vec<&str> {
+fn shortfall_codes(r: &dpp_domain::compliance::ComplianceResult) -> Vec<&str> {
     r.warnings.iter().map(|w| w.code.as_str()).collect()
 }
 

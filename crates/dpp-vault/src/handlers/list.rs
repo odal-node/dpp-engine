@@ -8,7 +8,7 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 
-use dpp_domain::domain::status::PassportStatus;
+use dpp_domain::status::PassportStatus;
 
 use crate::{middleware::auth::AuthContext, state::AppState};
 

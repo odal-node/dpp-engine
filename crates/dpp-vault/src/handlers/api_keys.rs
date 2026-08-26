@@ -6,7 +6,7 @@ use axum::{
 };
 use uuid::Uuid;
 
-use dpp_domain::domain::error::DppError;
+use dpp_domain::error::DppError;
 use dpp_types::api_key::CreateApiKeyRequest;
 
 use crate::{middleware::auth::AuthContext, state::AppState};

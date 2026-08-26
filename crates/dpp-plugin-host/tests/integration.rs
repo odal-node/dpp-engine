@@ -14,8 +14,8 @@
 use std::io::Write as IoWrite;
 
 use dpp_domain::{
-    domain::product_group::{ProductGroup, ProductGroupData},
     ports::compliance::ComplianceRegistry,
+    product_group::{ProductGroup, ProductGroupData},
 };
 use dpp_plugin_host::{
     WasmPluginHost,
@@ -137,8 +137,8 @@ fn load_unsigned_test_plugin(
 fn battery_product_group_data() -> ProductGroupData {
     // Minimal battery input — the passthrough plugin ignores it but the host
     // still serialises it and writes it to Wasm memory, exercising that path.
-    use dpp_domain::domain::{
-        gtin::Gtin,
+    use dpp_domain::{
+        identifier::gtin::Gtin,
         product_group::{BatteryChemistry, BatteryData, BatteryType},
     };
     ProductGroupData::Battery(Box::new(BatteryData {
@@ -231,7 +231,7 @@ fn passthrough_when_no_plugin_registered_for_product_group() {
     assert!(
         matches!(
             r.compliance_status,
-            dpp_domain::ports::compliance::ComplianceStatus::PassthroughNoValidation
+            dpp_domain::compliance::ComplianceStatus::PassthroughNoValidation
         ),
         "empty host must return PassthroughNoValidation"
     );
@@ -278,7 +278,7 @@ fn load_wat_plugin_and_invoke_calculate() {
     assert!(
         matches!(
             result.compliance_status,
-            dpp_domain::ports::compliance::ComplianceStatus::PassthroughNoValidation
+            dpp_domain::compliance::ComplianceStatus::PassthroughNoValidation
         ),
         "WAT passthrough plugin must return PassthroughNoValidation; got {:?}",
         result.compliance_status
@@ -311,7 +311,7 @@ fn register_plugin_and_compute_via_host() {
     assert!(
         matches!(
             result.compliance_status,
-            dpp_domain::ports::compliance::ComplianceStatus::PassthroughNoValidation
+            dpp_domain::compliance::ComplianceStatus::PassthroughNoValidation
         ),
         "registered passthrough plugin must return PassthroughNoValidation"
     );

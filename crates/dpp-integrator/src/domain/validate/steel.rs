@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 
-use dpp_domain::domain::{
+use dpp_domain::{
     passport::ManufacturerInfo,
     product_group::{ProductGroup, ProductGroupData, ProductionRoute, SteelData},
 };

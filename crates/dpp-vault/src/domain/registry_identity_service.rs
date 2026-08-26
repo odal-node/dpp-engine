@@ -10,7 +10,7 @@ use std::sync::Arc;
 use chrono::Utc;
 use uuid::Uuid;
 
-use dpp_domain::domain::error::DppError;
+use dpp_domain::error::DppError;
 use dpp_types::operator::STANDALONE_OPERATOR_ID;
 use dpp_types::registry_identity::{
     CreateFacilityRequest, CreateOperatorIdentifierRequest, Facility, OperatorIdentifier,

@@ -43,8 +43,8 @@ pub fn validation_error(detail: &str) -> Response {
 
 /// Parse a UUID string into a `PassportId`, returning an RFC 7807 400 on failure.
 #[allow(clippy::result_large_err)]
-pub fn parse_passport_id(s: &str) -> Result<dpp_domain::domain::passport::PassportId, Response> {
-    use dpp_domain::domain::passport::PassportId;
+pub fn parse_passport_id(s: &str) -> Result<dpp_domain::passport::PassportId, Response> {
+    use dpp_domain::passport::PassportId;
     Uuid::parse_str(s)
         .map(PassportId)
         .map_err(|_| http_problem::bad_request("Invalid dppId").into_response())

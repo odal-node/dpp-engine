@@ -3,17 +3,17 @@
 use std::collections::BTreeMap;
 
 use chrono::{DateTime, NaiveDate, Utc};
-use dpp_domain::domain::commodity_code::CommodityCode;
-use dpp_domain::domain::lint::LintResult;
-use dpp_domain::domain::passport::{
+use dpp_domain::compliance::ComplianceResult;
+use dpp_domain::identifier::commodity_code::CommodityCode;
+use dpp_domain::lint::LintResult;
+use dpp_domain::passport::{
     FacilitySnapshot, ManufacturerInfo, MaterialEntry, Passport, PassportId, PassportRef,
 };
-use dpp_domain::domain::product_group::{
+use dpp_domain::product_group::{
     CarbonFootprint, ProductGroup, ProductGroupData, RepairabilityScore,
 };
-use dpp_domain::domain::seal::SealedEnvelope;
-use dpp_domain::domain::status::PassportStatus;
-use dpp_domain::ports::compliance::ComplianceResult;
+use dpp_domain::seal::SealedEnvelope;
+use dpp_domain::status::PassportStatus;
 use dpp_domain::{Granularity, InstrumentRef};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;

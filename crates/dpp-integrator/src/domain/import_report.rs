@@ -41,7 +41,7 @@ pub struct RowFinding {
     /// Set only for `Lint` findings — validation findings have no severity
     /// tier of their own (they simply block the row).
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub severity: Option<dpp_domain::domain::lint::LintSeverity>,
+    pub severity: Option<dpp_domain::lint::LintSeverity>,
 }
 
 /// One row's validation outcome.

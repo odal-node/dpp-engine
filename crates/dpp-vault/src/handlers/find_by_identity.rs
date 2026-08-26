@@ -9,7 +9,7 @@ use axum::{
 };
 use serde::Deserialize;
 
-use dpp_domain::domain::{product_group::ProductGroup, product_identity::ProductIdentity};
+use dpp_domain::{product::ProductIdentity, product_group::ProductGroup};
 
 use crate::{middleware::auth::AuthContext, state::AppState};
 

@@ -12,12 +12,10 @@ use testcontainers::{
 
 use chrono::Utc;
 use dpp_domain::{
-    domain::{
-        passport::{ManufacturerInfo, Passport, PassportId},
-        product_group::ProductGroup,
-        status::PassportStatus,
-    },
+    passport::{ManufacturerInfo, Passport, PassportId},
     ports::archive::ArchivePort,
+    product_group::ProductGroup,
+    status::PassportStatus,
 };
 use dpp_node::infra::s3_archive::{S3ArchiveAdapter, S3ArchiveConfig};
 

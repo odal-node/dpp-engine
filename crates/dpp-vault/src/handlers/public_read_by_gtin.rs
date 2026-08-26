@@ -3,7 +3,7 @@ use axum::{
     http::StatusCode,
     response::IntoResponse,
 };
-use dpp_domain::domain::status::PassportStatus;
+use dpp_domain::status::PassportStatus;
 
 use crate::public_view::signed_public_view;
 use crate::state::AppState;

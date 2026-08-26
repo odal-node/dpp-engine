@@ -59,7 +59,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use dpp_domain::ports::identity_port::IdentityPort;
+use dpp_domain::ports::identity::IdentityPort;
 use dpp_vc::{DppAccessCredential, StatusList};
 use reqwest::Client;
 

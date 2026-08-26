@@ -16,7 +16,7 @@ use axum::{
 use uuid::Uuid;
 
 use dpp_common::scan::ScanBatch;
-use dpp_domain::{DppError, domain::passport::PassportId};
+use dpp_domain::{DppError, passport::PassportId};
 use dpp_types::scan::{QrRenderIncrement, ScanIncrement, ScanTelemetryRepository};
 
 use super::error::internal_error;
