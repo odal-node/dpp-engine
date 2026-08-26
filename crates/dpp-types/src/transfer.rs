@@ -13,10 +13,7 @@
 
 use async_trait::async_trait;
 
-use dpp_domain::{
-    DppError,
-    domain::{passport::PassportId, transfer::TransferChain},
-};
+use dpp_domain::{DppError, passport::PassportId, transfer::TransferChain};
 
 /// Persists a passport's transfer chain (one per passport).
 #[async_trait]

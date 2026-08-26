@@ -33,10 +33,11 @@ mod transfer;
 use std::sync::Arc;
 
 use dpp_common::event::{DppEvent, EventBus};
-use dpp_domain::domain::passport::PassportId;
-use dpp_domain::ports::{
-    archive::ArchivePort, compliance::ComplianceRegistry, identity_port::IdentityPort,
-    passport_repo::PassportRepository, registry_sync::RegistrySyncPort,
+use dpp_domain::passport::PassportId;
+use dpp_domain::{
+    ports::archive::ArchivePort, ports::compliance::ComplianceRegistry,
+    ports::identity::IdentityPort, ports::passport_repo::PassportRepository,
+    ports::registry_sync::RegistrySyncPort,
 };
 use dpp_types::{
     STANDALONE_OPERATOR_ID, audit::AuditRepository, evidence::EvidenceDossierRepository,
@@ -393,7 +394,7 @@ fn schema_registry() -> &'static dpp_domain::schemas::VersionedSchemaRegistry {
 mod snapshot_render_tests {
     use base64::Engine;
     use chrono::Utc;
-    use dpp_domain::domain::{
+    use dpp_domain::{
         passport::{ManufacturerInfo, Passport, PassportId},
         product_group::ProductGroup,
         status::PassportStatus,

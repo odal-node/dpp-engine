@@ -8,7 +8,7 @@ use rand::Rng;
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
-use dpp_domain::domain::error::DppError;
+use dpp_domain::error::DppError;
 use dpp_types::api_key::{ApiKey, ApiKeyRecord, ApiKeyRepository, ApiKeyScope, NewApiKey};
 
 const KEY_PREFIX: &str = "odal_sk_";

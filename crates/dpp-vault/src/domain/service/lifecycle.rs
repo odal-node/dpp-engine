@@ -2,7 +2,7 @@
 
 use chrono::Utc;
 use dpp_common::{event, event_codes};
-use dpp_domain::domain::{
+use dpp_domain::{
     error::DppError,
     passport::{Passport, PassportId},
     status::PassportStatus,

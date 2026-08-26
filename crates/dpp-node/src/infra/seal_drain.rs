@@ -28,9 +28,11 @@
 
 use std::sync::Arc;
 
-use dpp_domain::ports::seal::{
-    SealConformanceLevel, SealCredentialRef, SealEnvelope, SealFormat, SealMode, SealPort,
-    SealRequest,
+use dpp_domain::{
+    ports::seal::SealPort,
+    seal::{
+        SealConformanceLevel, SealCredentialRef, SealEnvelope, SealFormat, SealMode, SealRequest,
+    },
 };
 use dpp_types::SealOutbox;
 
@@ -155,8 +157,8 @@ mod tests {
     use async_trait::async_trait;
     use dpp_domain::{
         DppError,
-        domain::passport::PassportId,
-        ports::seal::{SealCapabilities, SealVerification, SealedEnvelope},
+        passport::PassportId,
+        seal::{SealCapabilities, SealVerification, SealedEnvelope},
     };
     use dpp_types::{SealOutboxCounts, SealRow};
     use std::sync::Mutex;

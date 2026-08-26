@@ -19,12 +19,10 @@ use chrono::Utc;
 use dpp_dal::in_memory_repo::InMemoryPassportRepo;
 use dpp_domain::{
     DppError,
-    domain::{
-        passport::{ManufacturerInfo, Passport, PassportId},
-        product_group::ProductGroup,
-        status::PassportStatus,
-    },
+    passport::{ManufacturerInfo, Passport, PassportId},
     ports::passport_repo::PassportRepository,
+    product_group::ProductGroup,
+    status::PassportStatus,
 };
 use dpp_types::snapshot::{
     SnapshotOutbox, SnapshotOutboxCounts, SnapshotReconcileRow, SnapshotStore,

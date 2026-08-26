@@ -13,14 +13,12 @@ use uuid::Uuid;
 
 use dpp_domain::{
     catalog::ProductGroupCatalog,
-    domain::{
-        error::DppError,
-        passport::{Passport, PassportId},
-        product_identity::ProductIdentity,
-        status::PassportStatus,
-    },
+    error::DppError,
+    passport::{Passport, PassportId},
     ports::passport_repo::PassportRepository,
+    product::ProductIdentity,
     schemas::lens::LensRegistry,
+    status::PassportStatus,
 };
 
 use super::{PgDal, db_err};

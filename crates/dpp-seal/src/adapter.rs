@@ -8,8 +8,9 @@
 
 use async_trait::async_trait;
 use dpp_domain::{
-    domain::error::DppError,
-    ports::seal::{SealCapabilities, SealPort, SealRequest, SealVerification, SealedEnvelope},
+    error::DppError,
+    ports::seal::SealPort,
+    seal::{SealCapabilities, SealRequest, SealVerification, SealedEnvelope},
 };
 
 use crate::backend::SealBackend;
@@ -84,7 +85,7 @@ impl SealPort for QtspSealAdapter {
 mod tests {
     use super::*;
     use crate::ghost::GhostSeal;
-    use dpp_domain::ports::seal::{
+    use dpp_domain::seal::{
         SealConformanceLevel, SealCredentialRef, SealEnvelope, SealFormat, SealMode,
     };
 
@@ -120,7 +121,7 @@ mod tests {
         }
 
         let env = SealedEnvelope {
-            format: dpp_domain::ports::seal::SealFormat::Cades,
+            format: dpp_domain::seal::SealFormat::Cades,
             seal_value: "p7s".into(),
             signing_cert_ref: None,
             sealed_at: chrono::Utc::now(),

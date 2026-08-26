@@ -2,8 +2,9 @@ use std::path::Path;
 use std::sync::Arc;
 
 use dpp_domain::{
-    domain::product_group::{FibreEntry, ProductGroup, ProductGroupData, TextileData},
-    ports::compliance::{ComplianceRegistry, ComplianceStatus},
+    compliance::ComplianceStatus,
+    ports::compliance::ComplianceRegistry,
+    product_group::{FibreEntry, ProductGroup, ProductGroupData, TextileData},
 };
 use dpp_plugin_traits::{
     METRIC_CO2E_SCORE, METRIC_RECYCLED_CONTENT_PCT, METRIC_REPAIRABILITY_INDEX,
@@ -95,7 +96,7 @@ fn empty_host_has_no_plugins() {
 
 #[test]
 fn empty_host_reports_no_product_group_plugin() {
-    use dpp_domain::ports::plugin_host_port::PluginHost;
+    use dpp_domain::ports::plugin_host::PluginHost;
     let host = WasmPluginHost::new();
     assert!(!host.has_plugin(ProductGroup::Battery.catalog_key()));
     assert!(!host.has_plugin(ProductGroup::Textile.catalog_key()));
@@ -166,7 +167,7 @@ fn default_trait_creates_empty_host() {
 /// `register_plugin_and_compute_via_host` in the integration tier.
 #[test]
 fn a_product_group_without_a_plugin_is_served_by_the_fallback_registry() {
-    use dpp_domain::ports::compliance::{ComplianceError, ComplianceResult};
+    use dpp_domain::compliance::{ComplianceError, ComplianceResult};
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     struct CountingRegistry(Arc<AtomicUsize>);
@@ -316,7 +317,7 @@ fn generate_passport_payload_no_plugin_returns_unknown_product_group() {
     let err = result.unwrap_err();
     assert_eq!(
         err.kind,
-        dpp_domain::ports::compliance::ComplianceErrorKind::UnknownProductGroup
+        dpp_domain::compliance::ComplianceErrorKind::UnknownProductGroup
     );
 }
 

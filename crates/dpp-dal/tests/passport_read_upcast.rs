@@ -11,7 +11,7 @@
 
 use dpp_domain::Passport;
 use dpp_domain::catalog::ProductGroupCatalog;
-use dpp_domain::domain::error::DppError;
+use dpp_domain::error::DppError;
 use dpp_domain::schemas::lens::LensRegistry;
 use serde_json::json;
 
@@ -52,7 +52,7 @@ fn a_document_written_under_the_old_country_key_reads_successfully() {
     let passport = Passport::from_stored(old_textile_doc(), &lenses, &catalog)
         .expect("the registered textile 1.1.0 -> 1.2.0 lens must bridge this document");
 
-    let Some(dpp_domain::domain::product_group::ProductGroupData::Textile(textile)) =
+    let Some(dpp_domain::product_group::ProductGroupData::Textile(textile)) =
         passport.product_group_data
     else {
         panic!("expected textile product_group data");

@@ -6,7 +6,7 @@ use axum::{
     http::StatusCode,
     response::IntoResponse,
 };
-use dpp_domain::domain::eol::{DeactivationReason, EolEvent};
+use dpp_domain::eol::{DeactivationReason, EolEvent};
 use serde::{Deserialize, Serialize};
 
 use crate::{middleware::auth::AuthContext, state::AppState};

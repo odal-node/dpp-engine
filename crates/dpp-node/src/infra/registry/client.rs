@@ -25,7 +25,7 @@
 use std::sync::Arc;
 
 use dpp_common::event_codes;
-use dpp_domain::domain::error::DppError;
+use dpp_domain::error::DppError;
 use reqwest::Client;
 use tokio::sync::RwLock;
 

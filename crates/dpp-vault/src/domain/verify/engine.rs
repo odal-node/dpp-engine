@@ -613,8 +613,8 @@ mod tests {
 
     #[test]
     fn tampered_transfer_signature_flips_only_transfer_chain() {
-        use dpp_domain::domain::passport::PassportId;
-        use dpp_domain::domain::transfer::{
+        use dpp_domain::passport::PassportId;
+        use dpp_domain::transfer::{
             OperatorRole, ResponsibleOperator, TransferChain, TransferReason, TransferRecord,
         };
 
@@ -725,8 +725,8 @@ mod tests {
         // an unknown field inside it parses fine and is silently dropped by
         // serde. `deny_unknown_fields` on our own types can't catch this;
         // `input_fidelity` must.
-        use dpp_domain::domain::passport::PassportId;
-        use dpp_domain::domain::transfer::{
+        use dpp_domain::passport::PassportId;
+        use dpp_domain::transfer::{
             OperatorRole, ResponsibleOperator, TransferChain, TransferReason, TransferRecord,
         };
 

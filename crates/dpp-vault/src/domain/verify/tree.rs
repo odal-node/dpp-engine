@@ -19,7 +19,7 @@
 
 use std::collections::{HashSet, VecDeque};
 
-use dpp_domain::domain::passport::PassportRef;
+use dpp_domain::passport::PassportRef;
 use serde::Serialize;
 use serde_json::Value;
 

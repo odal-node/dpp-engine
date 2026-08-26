@@ -43,13 +43,13 @@ use sha2::{Digest, Sha256};
 
 use dpp_dal::pg::{PgAuditRepo, PgPassportRepo, PgSealOutboxRepo};
 use dpp_dal::test_harness::start_pg;
-use dpp_domain::domain::passport::{ManufacturerInfo, Passport, PassportId};
-use dpp_domain::domain::product_group::ProductGroup;
-use dpp_domain::domain::status::PassportStatus;
+use dpp_domain::passport::{ManufacturerInfo, Passport, PassportId};
 use dpp_domain::ports::compliance::ComplianceRegistry;
 use dpp_domain::ports::passport_repo::PassportRepository;
-use dpp_domain::ports::seal::{SealConformanceLevel, SealPort};
+use dpp_domain::product_group::ProductGroup;
+use dpp_domain::status::PassportStatus;
 use dpp_domain::{GhostArchive, GhostRegistrySync};
+use dpp_domain::{ports::seal::SealPort, seal::SealConformanceLevel};
 use dpp_node::infra::seal_drain::drain_once;
 use dpp_seal::QtspSealAdapter;
 use dpp_seal::eideasy::client::{ESEAL_PATH, hmac_message};
@@ -214,7 +214,7 @@ fn draft_passport() -> Passport {
         // registry identity. Set here because the simulation has no operator
         // config to backfill from — the gate itself is correct and stays armed.
         operator_identifier: Some("LEI:529900T8BM49AURSDO55".into()),
-        facility: Some(dpp_domain::domain::passport::FacilitySnapshot {
+        facility: Some(dpp_domain::passport::FacilitySnapshot {
             scheme: "gln".into(),
             value: "4035600210708".into(),
             name: "Odal Simulation Plant".into(),
@@ -250,8 +250,8 @@ fn eideasy_config(base_url: &str) -> dpp_seal::eideasy::EideasyConfig {
 /// selector value, plus the client the seal is billed to. No backend reads it —
 /// it is carried as provenance — but it is built here rather than in the drain
 /// so the drain stays provider-agnostic.
-fn mock_key_ref() -> dpp_domain::ports::seal::SealCredentialRef {
-    dpp_domain::ports::seal::SealCredentialRef {
+fn mock_key_ref() -> dpp_domain::seal::SealCredentialRef {
+    dpp_domain::seal::SealCredentialRef {
         qtsp_id: dpp_seal::eideasy::config::PROVIDER.to_owned(),
         credential_id: MOCK_CLIENT_ID.to_owned(),
     }
@@ -392,7 +392,7 @@ async fn publish_then_drain_seals_the_passport_end_to_end() {
     );
 
     assert!(!seal.placeholder, "a provider seal is never a placeholder");
-    assert_eq!(seal.format, dpp_domain::ports::seal::SealFormat::Cades);
+    assert_eq!(seal.format, dpp_domain::seal::SealFormat::Cades);
     // The stand-in embeds the digest it sealed, so the seal is visibly bound to
     // this passport's signature.
     let decoded = String::from_utf8(BASE64.decode(&seal.seal_value).unwrap()).unwrap();

@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use anyhow::Result;
 
-use dpp_domain::{PassthroughRegistry, ProductGroupCatalog, ports::plugin_host_port::PluginHost};
+use dpp_domain::{PassthroughRegistry, ProductGroupCatalog, ports::plugin_host::PluginHost};
 use dpp_plugin_host::{
     WasmPluginHost,
     loader::{LoadedPlugin, discover_plugins},
@@ -527,8 +527,8 @@ mod tests {
 
     // ── fallback registry ────────────────────────────────────────────────────
 
-    use dpp_domain::domain::product_group::{BatteryData, ProductGroupData};
     use dpp_domain::ports::compliance::ComplianceRegistry;
+    use dpp_domain::product_group::{BatteryData, ProductGroupData};
 
     /// An EV battery, which Art. 8 reaches by category alone.
     fn ev_battery() -> ProductGroupData {

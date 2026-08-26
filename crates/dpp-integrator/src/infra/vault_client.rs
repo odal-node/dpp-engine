@@ -2,7 +2,7 @@
 
 use std::fmt;
 
-use dpp_domain::domain::product_identity::ProductIdentity;
+use dpp_domain::product::ProductIdentity;
 
 use crate::domain::request::CreatePassportRequest;
 
@@ -233,7 +233,7 @@ mod tests {
         response::{IntoResponse, Response},
         routing::{get, post},
     };
-    use dpp_domain::domain::passport::ManufacturerInfo;
+    use dpp_domain::passport::ManufacturerInfo;
     use std::sync::Arc;
 
     struct MockResponse {

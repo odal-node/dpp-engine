@@ -22,11 +22,8 @@ use dpp_dal::pg::{
     PgRegistryIdentityRepo, PgScanTelemetryRepo, PgTransferRepo, PgWebhookRepo,
 };
 use dpp_dal::test_harness::{TestPg, start_pg};
-use dpp_domain::domain::passport::PassportRef;
-use dpp_domain::{
-    DppError, GhostArchive, GhostRegistrySync,
-    compliance::passthrough_registry::PassthroughRegistry,
-};
+use dpp_domain::passport::PassportRef;
+use dpp_domain::{DppError, GhostArchive, GhostRegistrySync, PassthroughRegistry};
 use dpp_identity_service::state::AppState as IdentityState;
 use dpp_integrator::{infra::vault_client::VaultHttpClient, state::AppState as IntegratorState};
 use dpp_node::infra::pg_job_store::PgJobStore;

@@ -6,13 +6,13 @@ use super::client::{EuRegistrySync, RetryableError};
 use async_trait::async_trait;
 use chrono::Utc;
 use dpp_domain::{
-    domain::error::DppError,
-    domain::passport::PassportId,
-    domain::transfer::{ResponsibleOperator, TransferRecord},
+    error::DppError,
+    passport::PassportId,
     ports::registry_sync::{
         RegistrationGranularity, RegistrationRequest, RegistryIdentifiers, RegistryRecord,
         RegistryStatus, RegistrySyncPort,
     },
+    transfer::{ResponsibleOperator, TransferRecord},
 };
 use dpp_registry::{
     EuRegistryEnvelope, EuRegistryResponse, FacilityIdentifier, Granularity, OperatorIdentifier,

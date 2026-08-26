@@ -35,18 +35,14 @@ use dpp_dal::pg::{PgDal, PgPassportRepo, PgRegistrySyncRepo, sqlx};
 use dpp_dal::test_harness::{start_pg, start_pg_before};
 use dpp_domain::{
     DppError,
-    domain::{
-        passport::{ManufacturerInfo, Passport, PassportId},
-        product_group::ProductGroup,
-        status::PassportStatus,
+    passport::{ManufacturerInfo, Passport, PassportId},
+    ports::passport_repo::PassportRepository,
+    ports::registry_sync::{
+        RegisteringOperator, RegistrationGranularity, RegistrationRequest, RegistryIdentifiers,
+        RegistryRecord, RegistryStatus, RegistrySyncPort,
     },
-    ports::{
-        passport_repo::PassportRepository,
-        registry_sync::{
-            RegisteringOperator, RegistrationGranularity, RegistrationRequest, RegistryIdentifiers,
-            RegistryRecord, RegistryStatus, RegistrySyncPort,
-        },
-    },
+    product_group::ProductGroup,
+    status::PassportStatus,
 };
 use dpp_node::infra::registry_drain::drain_once;
 
@@ -189,7 +185,7 @@ impl RegistrySyncPort for MockPort {
 
     async fn notify_transfer(
         &self,
-        _record: &dpp_domain::domain::transfer::TransferRecord,
+        _record: &dpp_domain::transfer::TransferRecord,
         _registry_id: &str,
     ) -> Result<RegistryRecord, DppError> {
         unimplemented!("not exercised")

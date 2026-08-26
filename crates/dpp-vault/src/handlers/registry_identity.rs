@@ -9,7 +9,7 @@ use axum::{
 };
 use uuid::Uuid;
 
-use dpp_domain::domain::error::DppError;
+use dpp_domain::error::DppError;
 use dpp_types::STANDALONE_OPERATOR_ID;
 use dpp_types::registry_identity::{CreateFacilityRequest, CreateOperatorIdentifierRequest};
 

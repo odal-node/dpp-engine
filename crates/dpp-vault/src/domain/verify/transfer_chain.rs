@@ -9,7 +9,7 @@
 
 use std::collections::BTreeMap;
 
-use dpp_domain::domain::transfer::TransferChain;
+use dpp_domain::transfer::TransferChain;
 
 use super::jws::{resolve_public_key, verify_jws_content};
 
@@ -129,7 +129,7 @@ mod tests {
     use base64::Engine;
     use chrono::Utc;
     use dpp_crypto::jws::canonicalize;
-    use dpp_domain::domain::{
+    use dpp_domain::{
         passport::PassportId,
         transfer::{OperatorRole, ResponsibleOperator, TransferReason, TransferRecord},
     };

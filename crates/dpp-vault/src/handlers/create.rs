@@ -11,11 +11,11 @@ use dpp_common::url_guard::validate_public_https_url;
 use dpp_digital_link::validate_gtin;
 use dpp_domain::{
     ProductGroupCatalog,
-    domain::passport::{Passport, PassportId, PassportRef},
-    domain::product_group::{CarbonFootprint, ProductGroup, ProductGroupData, RepairabilityScore},
-    domain::status::PassportStatus,
-    domain::validation::validate_product_group_data,
+    passport::{Passport, PassportId, PassportRef},
+    product_group::{CarbonFootprint, ProductGroup, ProductGroupData, RepairabilityScore},
     schemas::VersionedSchemaRegistry,
+    status::PassportStatus,
+    validation::validate_product_group_data,
 };
 use std::sync::OnceLock;
 use uuid::Uuid;
@@ -290,7 +290,7 @@ mod schema_validation {
     //! on the write path, catching schema-only constraints the Rust types miss.
     use super::*;
     use dpp_domain::Gtin;
-    use dpp_domain::domain::product_group::{BatteryChemistry, BatteryData, BatteryType};
+    use dpp_domain::product_group::{BatteryChemistry, BatteryData, BatteryType};
 
     fn valid_battery() -> ProductGroupData {
         ProductGroupData::Battery(Box::new(BatteryData {

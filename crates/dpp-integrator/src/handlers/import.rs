@@ -918,7 +918,7 @@ mod tests {
     fn nth_valid_gtin(n: u32) -> String {
         let data13 = format!("{n:013}");
         let digits: Vec<u8> = data13.bytes().map(|b| b - b'0').collect();
-        let check = dpp_domain::domain::gtin::gs1_check_digit(&digits);
+        let check = dpp_domain::gs1_check_digit(&digits);
         format!("{data13}{check}")
     }
 

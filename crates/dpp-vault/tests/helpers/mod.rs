@@ -18,13 +18,10 @@ use dpp_dal::pg::{
     PgSealOutboxRepo, PgWebhookRepo,
 };
 use dpp_domain::{
-    DppError, GhostArchive, GhostRegistrySync,
-    compliance::passthrough_registry::PassthroughRegistry,
-    domain::{
-        identity::{PassportCredential, PassportCredentialSubject, SignedCredential},
-        passport::PassportId,
-    },
-    ports::identity_port::IdentityPort,
+    DppError, GhostArchive, GhostRegistrySync, PassthroughRegistry,
+    credential::{PassportCredential, PassportCredentialSubject, SignedCredential},
+    passport::PassportId,
+    ports::identity::IdentityPort,
 };
 use dpp_types::auth::{AuthContext, AuthError, AuthProvider};
 use dpp_vault::{

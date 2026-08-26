@@ -1,6 +1,6 @@
 //! `relint` — on-demand plausibility-lint re-check (`POST /dpp/{dppId}/lint`).
 
-use dpp_domain::domain::{
+use dpp_domain::{
     error::DppError,
     passport::{Passport, PassportId},
 };

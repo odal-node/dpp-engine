@@ -9,8 +9,8 @@ use axum::{
 use serde::Deserialize;
 use serde_json::Value;
 
-use dpp_domain::domain::status::PassportStatus;
 use dpp_domain::schemas::{LensRegistry, UpcastError};
+use dpp_domain::status::PassportStatus;
 
 use crate::public_view::signed_public_view;
 use crate::state::AppState;

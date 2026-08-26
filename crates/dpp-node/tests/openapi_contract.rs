@@ -1168,10 +1168,10 @@ mod fixtures {
         plugin_admin::InstalledPlugin,
         scan::{QrRenderCount, ScanBatch, ScanCount, ScanVariant},
     };
-    use dpp_domain::domain::{
-        commodity_code::CommodityCode,
+    use dpp_domain::{
         compliance::{ComplianceFinding, ComplianceResult, ComplianceStatus},
         eol::{DeactivationReason, DerogationRef},
+        identifier::commodity_code::CommodityCode,
         lint::{LintFinding, LintResult, LintSeverity},
         passport::{
             FacilitySnapshot, ManufacturerInfo, MaterialEntry, Passport, PassportId, PassportRef,

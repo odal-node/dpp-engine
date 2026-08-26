@@ -6,13 +6,11 @@ use chrono::Utc;
 use dpp_common::{event, event_codes};
 use dpp_digital_link::{build_qr_url, short_serial};
 use dpp_domain::{
-    domain::{
-        error::DppError,
-        passport::{Passport, PassportId},
-        product_group::ProductGroupData,
-        status::PassportStatus,
-    },
+    error::DppError,
+    passport::{Passport, PassportId},
     ports::registry_sync::{RegisteringOperator, RegistrationGranularity, RegistrationRequest},
+    product_group::ProductGroupData,
+    status::PassportStatus,
 };
 use dpp_types::{STANDALONE_OPERATOR_ID, audit::AuditEntry, auth::AuthContext};
 
@@ -591,7 +589,7 @@ mod rejection_reasons {
 mod tests {
     use super::{build_carrier_url, validate_schema_for_publish};
     use chrono::Utc;
-    use dpp_domain::domain::{
+    use dpp_domain::{
         error::DppError,
         passport::{ManufacturerInfo, Passport, PassportId},
         product_group::{ProductGroup, ProductGroupData},
@@ -656,7 +654,7 @@ mod tests {
 
     #[test]
     fn gtin_product_group_builds_gs1_dl_with_conformant_serial() {
-        use dpp_domain::domain::product_group::ConstructionData;
+        use dpp_domain::product_group::ConstructionData;
         let mut p = stub();
         p.product_group_data = Some(ProductGroupData::Construction(ConstructionData {
             gtin: dpp_domain::Gtin::parse("09506000134352").unwrap(),

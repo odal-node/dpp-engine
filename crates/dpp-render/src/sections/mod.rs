@@ -148,7 +148,7 @@ pub(crate) fn rendered_keys(product_group: &str) -> &'static [&'static str] {
 /// the value quietly disappearing from the public page.
 #[cfg(test)]
 pub(super) fn typed_fixture(product_group_data: serde_json::Value) -> serde_json::Value {
-    let typed: dpp_domain::domain::product_group::ProductGroupData =
+    let typed: dpp_domain::product_group::ProductGroupData =
         serde_json::from_value(product_group_data)
             .expect("section fixture must satisfy dpp-domain's ProductGroupData contract");
     serde_json::json!({ "productGroupData": serde_json::to_value(typed).expect("serialize") })

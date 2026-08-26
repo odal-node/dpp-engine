@@ -25,7 +25,7 @@
 //! Sealing is a paid call to a third-party QTSP aggregator. See
 //! `dpp_types::seal` for why publish must not depend on that provider being up.
 
-use dpp_domain::domain::passport::Passport;
+use dpp_domain::passport::Passport;
 
 use super::PassportService;
 
@@ -140,7 +140,7 @@ mod tests {
         let before = passport_with_jws(Some("a.b.c"));
         let mut after = passport_with_jws(Some("a.b.c"));
         after.lint_result = None;
-        after.status = dpp_domain::domain::status::PassportStatus::Suspended;
+        after.status = dpp_domain::status::PassportStatus::Suspended;
         after.qr_code_url = Some("https://example.test/dpp/x".into());
         after.updated_at = chrono::Utc::now();
 

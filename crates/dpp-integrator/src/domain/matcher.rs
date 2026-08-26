@@ -13,7 +13,7 @@ use std::collections::HashMap;
 use futures::stream::{self, StreamExt};
 use sha2::{Digest, Sha256};
 
-use dpp_domain::domain::product_identity::ProductIdentity;
+use dpp_domain::product::ProductIdentity;
 
 use crate::domain::request::CreatePassportRequest;
 use crate::infra::vault_client::{VaultClientError, VaultHttpClient};
@@ -87,7 +87,7 @@ pub fn identity_from_request(req: &CreatePassportRequest) -> Option<ProductIdent
     let product_group = req.product_group.clone().or_else(|| {
         req.product_group_data
             .as_ref()
-            .map(dpp_domain::domain::product_group::ProductGroupData::product_group)
+            .map(dpp_domain::product_group::ProductGroupData::product_group)
     })?;
     let gtin = req.product_group_data.as_ref()?.gtin()?.to_owned();
     Some(ProductIdentity {

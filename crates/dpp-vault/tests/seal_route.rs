@@ -14,11 +14,11 @@ use helpers::{TestClient, make_jwt, start_postgres, start_vault};
 
 use chrono::Utc;
 use dpp_dal::pg::{PgDal, PgPassportRepo};
-use dpp_domain::domain::passport::{ManufacturerInfo, Passport, PassportId};
-use dpp_domain::domain::product_group::ProductGroup;
-use dpp_domain::domain::status::PassportStatus;
+use dpp_domain::passport::{ManufacturerInfo, Passport, PassportId};
 use dpp_domain::ports::passport_repo::PassportRepository;
-use dpp_domain::ports::seal::{SealFormat, SealedEnvelope};
+use dpp_domain::product_group::ProductGroup;
+use dpp_domain::seal::{SealFormat, SealedEnvelope};
+use dpp_domain::status::PassportStatus;
 
 fn op() -> String {
     "00000000-0000-0000-0000-000000000001".to_owned()

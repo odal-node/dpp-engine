@@ -9,14 +9,13 @@ use chrono::NaiveDate;
 use dpp_common::plugin_admin::{InstalledPlugin, PluginAdmin, PluginInstallError};
 use dpp_domain::{
     InstrumentCatalog, PassthroughRegistry,
-    domain::product_group::{ProductGroup, ProductGroupData},
-    ports::{
-        compliance::{
-            ComplianceError, ComplianceErrorKind, ComplianceFinding, ComplianceRegistry,
-            ComplianceResult, ComplianceStatus, gate_determination,
-        },
-        plugin_host_port::PluginHost,
+    compliance::{
+        ComplianceError, ComplianceErrorKind, ComplianceFinding, ComplianceResult,
+        ComplianceStatus, gate_determination,
     },
+    ports::compliance::ComplianceRegistry,
+    ports::plugin_host::PluginHost,
+    product_group::{ProductGroup, ProductGroupData},
 };
 use ed25519_dalek::VerifyingKey;
 use serde_json::Value;

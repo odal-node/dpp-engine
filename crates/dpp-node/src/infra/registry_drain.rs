@@ -114,7 +114,7 @@ pub async fn drain_once(
 /// either way.
 async fn apply_outcome(
     outbox: &Arc<dyn RegistrySyncOutbox>,
-    pid: dpp_domain::domain::passport::PassportId,
+    pid: dpp_domain::passport::PassportId,
     outcome: Result<dpp_domain::ports::registry_sync::RegistryRecord, dpp_domain::DppError>,
     stats: &mut DrainStats,
 ) {

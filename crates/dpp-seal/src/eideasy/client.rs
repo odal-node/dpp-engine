@@ -20,7 +20,7 @@ use async_trait::async_trait;
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as BASE64;
 use chrono::Utc;
-use dpp_domain::ports::seal::{
+use dpp_domain::seal::{
     SealCapabilities, SealConformanceLevel, SealEnvelope, SealFormat, SealMode, SealRequest,
     SealedEnvelope,
 };

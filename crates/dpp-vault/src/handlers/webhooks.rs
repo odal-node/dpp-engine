@@ -14,7 +14,7 @@ use axum::{
 use serde::Serialize;
 use uuid::Uuid;
 
-use dpp_domain::domain::error::DppError;
+use dpp_domain::error::DppError;
 use dpp_types::{NewWebhookSubscription, WebhookSubscription};
 
 use crate::{middleware::auth::AuthContext, state::AppState};

@@ -18,15 +18,12 @@ use uuid::Uuid;
 
 use dpp_dal::in_memory_repo::InMemoryPassportRepo;
 use dpp_domain::{
-    DppError, GhostArchive, GhostRegistrySync,
-    compliance::passthrough_registry::PassthroughRegistry,
-    domain::{
-        eol::{DeactivationReason, EolEvent},
-        passport::{FacilitySnapshot, ManufacturerInfo, Passport, PassportId},
-        product_group::ProductGroup,
-        status::PassportStatus,
-        transfer::{OperatorRole, ResponsibleOperator, TransferChain, TransferReason},
-    },
+    DppError, GhostArchive, GhostRegistrySync, PassthroughRegistry,
+    eol::{DeactivationReason, EolEvent},
+    passport::{FacilitySnapshot, ManufacturerInfo, Passport, PassportId},
+    product_group::ProductGroup,
+    status::PassportStatus,
+    transfer::{OperatorRole, ResponsibleOperator, TransferChain, TransferReason},
 };
 use dpp_types::{
     api_key::ApiKeyScope,
