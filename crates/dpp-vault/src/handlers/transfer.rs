@@ -1,5 +1,6 @@
-//! Transfer of responsibility:
-//! `POST /api/v1/dpp/{dppId}/transfer/initiate` and `.../transfer/accept`.
+//! Transfer of responsibility — the four lifecycle routes under
+//! `POST /api/v1/dpp/{dppId}/transfer/`: `initiate`, `accept`, `reject` and
+//! `cancel`.
 
 use axum::{
     Json,
@@ -109,6 +110,61 @@ pub async fn transfer_accept_handler(
     }
 }
 
+/// `POST /api/v1/dpp/{dppId}/transfer/reject` — the incoming operator refuses
+/// the pending handover.
+///
+/// Terminal: the record can never complete afterwards, and the chain is free to
+/// carry a new transfer. Paired with `transfer_cancel_handler`, this is the only
+/// way out of a handover the counterparty never acted on — without it a pending
+/// record blocks every later transfer on the passport for good.
+pub async fn transfer_reject_handler(
+    State(state): State<AppState>,
+    Extension(auth): Extension<AuthContext>,
+    Path(dpp_id): Path<String>,
+) -> impl IntoResponse {
+    if let Some(resp) = require_write(&auth, "Rejecting a transfer") {
+        return resp;
+    }
+    let id = match parse_passport_id(&dpp_id) {
+        Ok(i) => i,
+        Err(e) => return e,
+    };
+    match state.service.reject_transfer(id, &auth).await {
+        Ok(r) => (StatusCode::OK, Json(r)).into_response(),
+        Err(dpp_domain::DppError::NotFound(_)) => {
+            not_found_error("No transfer to reject for this DPP.")
+        }
+        Err(e @ dpp_domain::DppError::Validation(_)) => validation_error(&e.to_string()),
+        Err(e) => internal_error(e),
+    }
+}
+
+/// `POST /api/v1/dpp/{dppId}/transfer/cancel` — the outgoing operator withdraws
+/// the pending handover before it completes.
+///
+/// Valid from one state more than reject: core permits a cancel after the
+/// acceptance step has run but before the record is completed.
+pub async fn transfer_cancel_handler(
+    State(state): State<AppState>,
+    Extension(auth): Extension<AuthContext>,
+    Path(dpp_id): Path<String>,
+) -> impl IntoResponse {
+    if let Some(resp) = require_write(&auth, "Cancelling a transfer") {
+        return resp;
+    }
+    let id = match parse_passport_id(&dpp_id) {
+        Ok(i) => i,
+        Err(e) => return e,
+    };
+    match state.service.cancel_transfer(id, &auth).await {
+        Ok(r) => (StatusCode::OK, Json(r)).into_response(),
+        Err(dpp_domain::DppError::NotFound(_)) => {
+            not_found_error("No transfer to cancel for this DPP.")
+        }
+        Err(e @ dpp_domain::DppError::Validation(_)) => validation_error(&e.to_string()),
+        Err(e) => internal_error(e),
+    }
+}
 /// A transfer counterparty's DID must be a `did:web` this node could actually
 /// resolve to a public document.
 ///

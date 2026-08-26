@@ -1,0 +1,40 @@
+post:
+  operationId: rejectDppTransfer
+  summary: Reject a pending transfer of responsibility
+  description: |
+    The incoming operator refuses the pending handover. The record becomes
+    terminal and can never complete, and the passport's transfer chain is
+    free to carry a new handover.
+
+    Paired with cancel, this is one of the two ways out of a handover the
+    counterparty never acted on. A chain refuses a new transfer while any
+    record is still pending, so without these routes a passport whose
+    counterparty went silent could never be transferred again.
+  tags:
+    - DPP Lifecycle
+  security:
+    - BearerApiKey: []
+    - BasicAuth: []
+  parameters:
+    - name: dppId
+      in: path
+      required: true
+      schema:
+        $ref: ../components/schemas/DppId.yaml
+  responses:
+    '200':
+      description: Transfer rejected.
+      content:
+        application/json:
+          schema:
+            $ref: ../components/schemas/TransferRecord.yaml
+    '401':
+      $ref: ../components/responses/Unauthorized.yaml
+    '404':
+      description: No pending transfer to reject for this DPP.
+      content:
+        application/problem+json:
+          schema:
+            $ref: ../components/schemas/Problem.yaml
+    '422':
+      $ref: ../components/responses/ValidationError.yaml
