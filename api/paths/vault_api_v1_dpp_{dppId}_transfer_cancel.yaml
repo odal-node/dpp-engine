@@ -1,0 +1,38 @@
+post:
+  operationId: cancelDppTransfer
+  summary: Cancel a pending transfer of responsibility
+  description: |
+    The outgoing operator withdraws the pending handover before it
+    completes. The record becomes terminal and the passport's transfer chain
+    is free to carry a new handover.
+
+    Valid from one state more than reject: a handover may be cancelled after
+    the acceptance step has run but before the record is completed.
+  tags:
+    - DPP Lifecycle
+  security:
+    - BearerApiKey: []
+    - BasicAuth: []
+  parameters:
+    - name: dppId
+      in: path
+      required: true
+      schema:
+        $ref: ../components/schemas/DppId.yaml
+  responses:
+    '200':
+      description: Transfer cancelled.
+      content:
+        application/json:
+          schema:
+            $ref: ../components/schemas/TransferRecord.yaml
+    '401':
+      $ref: ../components/responses/Unauthorized.yaml
+    '404':
+      description: No pending transfer to cancel for this DPP.
+      content:
+        application/problem+json:
+          schema:
+            $ref: ../components/schemas/Problem.yaml
+    '422':
+      $ref: ../components/responses/ValidationError.yaml

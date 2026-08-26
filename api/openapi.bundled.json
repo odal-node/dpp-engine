@@ -810,6 +810,118 @@
         }
       }
     },
+    "/vault/api/v1/dpp/{dppId}/transfer/reject": {
+      "post": {
+        "operationId": "rejectDppTransfer",
+        "summary": "Reject a pending transfer of responsibility",
+        "description": "The incoming operator refuses the pending handover. The record becomes\nterminal and can never complete, and the passport's transfer chain is\nfree to carry a new handover.\n\nPaired with cancel, this is one of the two ways out of a handover the\ncounterparty never acted on. A chain refuses a new transfer while any\nrecord is still pending, so without these routes a passport whose\ncounterparty went silent could never be transferred again.\n",
+        "tags": [
+          "DPP Lifecycle"
+        ],
+        "security": [
+          {
+            "BearerApiKey": []
+          },
+          {
+            "BasicAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "dppId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/DppId"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Transfer rejected.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TransferRecord"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "description": "No pending transfer to reject for this DPP.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationError"
+          }
+        }
+      }
+    },
+    "/vault/api/v1/dpp/{dppId}/transfer/cancel": {
+      "post": {
+        "operationId": "cancelDppTransfer",
+        "summary": "Cancel a pending transfer of responsibility",
+        "description": "The outgoing operator withdraws the pending handover before it\ncompletes. The record becomes terminal and the passport's transfer chain\nis free to carry a new handover.\n\nValid from one state more than reject: a handover may be cancelled after\nthe acceptance step has run but before the record is completed.\n",
+        "tags": [
+          "DPP Lifecycle"
+        ],
+        "security": [
+          {
+            "BearerApiKey": []
+          },
+          {
+            "BasicAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "dppId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/DppId"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Transfer cancelled.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TransferRecord"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "description": "No pending transfer to cancel for this DPP.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationError"
+          }
+        }
+      }
+    },
     "/vault/api/v1/dpp/{dppId}/history": {
       "get": {
         "operationId": "getDppHistory",

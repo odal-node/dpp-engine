@@ -1085,6 +1085,164 @@ async fn transfer_of_responsibility_dual_signed_then_eol() {
     assert_eq!(eol["status"], "deactivated");
 }
 
+// A pending handover blocks every later transfer until it is ended — and
+// before `reject`/`cancel` were routed, nothing could end one.
+//
+// `TransferChain::initiate_transfer` refuses a new handover while any record is
+// `Initiated` or `Accepted`. `Accepted` is transient (accept completes in the
+// same call), but `Initiated` is not: a counterparty that never acts leaves the
+// record pending forever. `TransferRecord` has always carried `reject` and
+// `cancel`; with no route reaching them, that passport could never be
+// transferred again by any means the API offered.
+//
+// This walks the whole shape: block, clear by rejecting, block again, clear by
+// cancelling.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_pending_transfer_blocks_until_rejected_or_cancelled() {
+    let (base, _container) = start_db_and_node().await;
+    let token = make_jwt("00000000-0000-0000-0000-000000000067");
+    let client = reqwest::Client::new();
+
+    let created: serde_json::Value = client
+        .post(format!("{base}/vault/api/v1/dpp"))
+        .bearer_auth(&token)
+        .json(&serde_json::json!({
+            "productName": "Stuck Transfer Battery",
+            "manufacturer": {"name": "SmokeTestCorp", "address": "Berlin, DE"},
+            "materials": [],
+        }))
+        .send()
+        .await
+        .expect("create request failed")
+        .json()
+        .await
+        .unwrap();
+    let id = created["id"].as_str().expect("id").to_owned();
+
+    assert_eq!(
+        client
+            .post(format!("{base}/vault/api/v1/dpp/{id}/publish"))
+            .bearer_auth(&token)
+            .json(&serde_json::json!({}))
+            .send()
+            .await
+            .expect("publish request failed")
+            .status(),
+        200
+    );
+
+    let initiate = |to_did: &'static str, to_name: &'static str| {
+        let client = client.clone();
+        let base = base.clone();
+        let id = id.clone();
+        let token = token.clone();
+        async move {
+            client
+                .post(format!("{base}/vault/api/v1/dpp/{id}/transfer/initiate"))
+                .bearer_auth(&token)
+                .json(&serde_json::json!({
+                    "fromOperator": {"did":"did:web:acme.example","name":"Acme GmbH","role":"manufacturer","euOperatorId":null,"country":"DE"},
+                    "toOperator": {"did":to_did,"name":to_name,"role":"recycler","euOperatorId":null,"country":"DE"},
+                    "reason": "preparationForReuse"
+                }))
+                .send()
+                .await
+                .expect("initiate request failed")
+        }
+    };
+
+    // A first handover goes pending, awaiting a counterparty that never acts.
+    assert_eq!(initiate("did:web:reco.example", "ReCo").await.status(), 200);
+
+    // The chain now refuses a second one. This is the trap: correct behaviour
+    // on its own, fatal when nothing can clear the first.
+    let blocked = initiate("did:web:other.example", "Other").await;
+    assert_eq!(
+        blocked.status(),
+        422,
+        "a pending handover must block a second one"
+    );
+
+    // Reject — the incoming operator refuses. Terminal.
+    let rejected: serde_json::Value = client
+        .post(format!("{base}/vault/api/v1/dpp/{id}/transfer/reject"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .expect("reject request failed")
+        .json()
+        .await
+        .unwrap();
+    assert!(
+        rejected["rejectedAt"].is_string(),
+        "reject must stamp rejectedAt: {rejected}"
+    );
+    assert!(
+        rejected["completedAt"].is_null(),
+        "a rejected handover never completes"
+    );
+
+    // The block is gone: a new handover is accepted onto the chain.
+    assert_eq!(
+        initiate("did:web:second.example", "Second").await.status(),
+        200,
+        "rejecting the pending handover must free the chain"
+    );
+
+    // That new one is pending in turn, so the chain blocks again.
+    assert_eq!(
+        initiate("did:web:third.example", "Third").await.status(),
+        422
+    );
+
+    // Cancel — the outgoing operator withdraws. Also terminal, and it clears
+    // the block by the same rule.
+    let cancelled: serde_json::Value = client
+        .post(format!("{base}/vault/api/v1/dpp/{id}/transfer/cancel"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .expect("cancel request failed")
+        .json()
+        .await
+        .unwrap();
+    assert!(
+        cancelled["cancelledAt"].is_string(),
+        "cancel must stamp cancelledAt: {cancelled}"
+    );
+
+    assert_eq!(
+        initiate("did:web:fourth.example", "Fourth").await.status(),
+        200,
+        "cancelling the pending handover must free the chain"
+    );
+
+    // With nothing pending, there is nothing left to end.
+    for verb in ["reject", "cancel"] {
+        // The fourth handover is still pending, so end it first, then confirm a
+        // second attempt is refused rather than silently accepted.
+        let first = client
+            .post(format!("{base}/vault/api/v1/dpp/{id}/transfer/{verb}"))
+            .bearer_auth(&token)
+            .send()
+            .await
+            .expect("terminate request failed");
+        if first.status() == 200 {
+            let again = client
+                .post(format!("{base}/vault/api/v1/dpp/{id}/transfer/{verb}"))
+                .bearer_auth(&token)
+                .send()
+                .await
+                .expect("second terminate request failed");
+            assert_eq!(
+                again.status(),
+                422,
+                "{verb} with nothing pending must be refused"
+            );
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Metrics acceptance test — passport_publish_total counter increments
 // ---------------------------------------------------------------------------
