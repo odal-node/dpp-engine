@@ -36,7 +36,7 @@ zeroize      = { workspace = true }
 # pulls it in, we sign with P-256, and `rsa` 0.9 carries RUSTSEC-2023-0071 (Marvin
 # timing sidechannel) with no fixed upgrade available.
 cms          = { version = "0.2", default-features = false }
-x509-cert    = "0.2"
+x509-cert    = "0.3"
 der          = "0.7"
 const-oid    = "0.9"
 p256         = { version = "0.13", features = ["ecdsa", "pkcs8"] }
