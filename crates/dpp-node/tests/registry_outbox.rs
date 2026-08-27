@@ -336,8 +336,14 @@ async fn insert_clobbered_row(
     registry_id: Option<&str>,
 ) -> uuid::Uuid {
     let id = uuid::Uuid::now_v7();
+    // `sector`, not `product_group`, and deliberately so: this helper writes
+    // against the schema as it stood before 0024, and the column is not renamed
+    // until 0032. A rename sweep "corrected" this once and the insert began
+    // failing with `column "product_group" does not exist` — the one place in
+    // the tree where the old name is the right one, because it is describing
+    // history rather than the current schema.
     sqlx::query(
-        r#"INSERT INTO odal.passport (id, product_group, status, schema_version, doc)
+        r#"INSERT INTO odal.passport (id, sector, status, schema_version, doc)
            VALUES ($1, 'battery', 'suspended', '2.0.0', '{}'::jsonb)"#,
     )
     .bind(id)
