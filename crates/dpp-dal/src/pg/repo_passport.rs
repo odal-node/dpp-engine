@@ -111,7 +111,7 @@ pub(crate) async fn update_passport_in_tx(
         .map_err(|e| DppError::Internal(format!("serialize: {e}")))?;
     let res = sqlx::query(
         r#"UPDATE odal.passport SET
-             product_group           = $2->>'product_group',
+             product_group           = $2->>'productGroup',
              status           = COALESCE($2->>'status', status),
              retention_locked = COALESCE(($2->>'retentionLocked')::boolean, retention_locked),
              schema_version   = COALESCE($2->>'schemaVersion', schema_version),
@@ -181,7 +181,7 @@ impl PassportRepository for PgPassportRepo {
                  (id, product_group, status, retention_locked, schema_version,
                   created_at, updated_at, published_at, doc)
                VALUES ($1,
-                       $2->>'product_group',
+                       $2->>'productGroup',
                        COALESCE($2->>'status','draft'),
                        COALESCE(($2->>'retentionLocked')::boolean, false),
                        COALESCE($2->>'schemaVersion','1.0.0'),
