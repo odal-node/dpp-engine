@@ -15,6 +15,26 @@ updates:
     labels:
       - dependencies
       - rust
+    # The RustCrypto formats crates move as one release train — der 0.8,
+    # spki 0.8, x509-cert 0.3, const-oid 0.10 — and `dpp-seal` cannot take any
+    # of them individually. Bumping x509-cert alone puts der 0.8 in the graph
+    # beside the der 0.7 that `cms 0.2` pins, and the two do not interoperate:
+    # `AlgorithmIdentifier<x509_cert::der::Any>` stops satisfying `der::DerOrd`.
+    # const-oid 0.10 fails on its own for the same reason.
+    #
+    # The only `cms` built on that train is 0.3.0-pre.2, which rides
+    # der 0.8.0-rc.10, x509-cert 0.3.0-rc.4 and rsa 0.10.0-rc.14. Release
+    # candidates do not belong under the eIDAS seal path, and `cms` is pinned
+    # `default-features = false` precisely to keep rsa and RUSTSEC-2023-0071
+    # out of the tree — an avoidance that would have to be re-derived against
+    # an rsa RC.
+    #
+    # RETURN WHEN `cms 0.3.0` IS PUBLISHED (not a pre-release). That implies
+    # der/spki/x509-cert/const-oid are all stable, and the whole stack is then
+    # bumped in ONE PR, with the rsa feature check redone rather than assumed.
+    ignore:
+      - dependency-name: "x509-cert"
+      - dependency-name: "const-oid"
     groups:
       aws:
         patterns:
