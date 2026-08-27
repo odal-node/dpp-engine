@@ -13,6 +13,13 @@
 //! carries everything an external validator needs and states plainly what has
 //! and has not been verified.
 //!
+//! It also names **who declared the content**, which is a different party from
+//! whoever sealed it. A seal says a document came from the certificate holder
+//! and nothing about scope, so serving one with no declarer beside it invites
+//! the reader to conclude the sealer authored what it covers. Since every
+//! audience view strips the seal, this is the only surface where that
+//! conclusion is reachable — see [`SealDeclarer`].
+//!
 //! It does answer one narrower question, because it can: **is this seal stale?**
 //! The envelope carries no preimage, but the outbox row that bought it does, and
 //! those rows are never deleted — so a passport re-published after sealing is
@@ -34,10 +41,50 @@ use crate::{middleware::auth::AuthContext, state::AppState};
 
 use super::error::{internal_error, not_found_error, parse_passport_id};
 
+/// Who declared the content a seal covers, which is not who sealed it.
+///
+/// A seal proves a document came from whoever holds the certificate. It carries
+/// no statement about *scope*: "we vouch for this content" and "we transmitted
+/// this intact" look identical. A response that serves a seal and names no
+/// declaring party invites the reader to collapse the two, whatever anyone
+/// intended.
+///
+/// Every audience view strips the seal, so this is the only surface where that
+/// collapse is reachable — and its readers being authenticated and technical
+/// makes them more likely to build on the assumption, not less.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SealDeclarer {
+    /// The manufacturer named in the sealed passport, frozen at publish.
+    pub manufacturer: String,
+    /// The Annex III(k) unique operator identifier recorded at publish, if one
+    /// was. `null` means none was recorded — never that none applies.
+    pub operator_identifier: Option<String>,
+    /// True when this passport's transfer chain records a completed handover, so
+    /// the party responsible **now** is not the one named above.
+    ///
+    /// The names above are frozen into the sealed bytes and cannot be rewritten:
+    /// a published passport's content is immutable, and the seal covers it. So
+    /// this flag is the only honest way to say that the answer above is a
+    /// historical fact rather than a current one.
+    pub responsibility_may_have_transferred: bool,
+    /// Stated rather than left to inference, in the same spirit as
+    /// [`SealResponse::verification`].
+    pub note: &'static str,
+}
+
+const DECLARER_NOTE: &str = "the seal attests that this document came from the holder of the sealing certificate; it makes \
+     no statement about who authored the content. `manufacturer` is the party that declared it, \
+     frozen at publish. Where `responsibilityMayHaveTransferred` is true, the operator responsible \
+     today is a different question — this node's transfer chain records what it was told, and the \
+     EU registry holds the authoritative record between verified actors.";
+
 /// The seal, plus what is needed to check it and what we did not check.
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SealResponse {
+    /// Who declared the content, as distinct from who sealed it.
+    pub declared_by: SealDeclarer,
     /// AdES format of `sealValue` — `CADES` for the eID Easy backend.
     pub format: String,
     /// Base64 detached CAdES (`.p7s`) as returned by the QTSP.
@@ -166,9 +213,29 @@ pub async fn seal_handler(
     };
     let coverage = coverage_of(sealed_payload_hash.as_deref(), &payload_hash);
 
+    // Has responsibility moved since this passport was sealed? Only a *completed*
+    // handover counts: an initiated one that nobody accepted has moved nothing,
+    // and reporting it would claim a transfer that may still be rejected. A node
+    // with no transfer store configured records no handovers, so the honest
+    // answer there is `false` rather than an error.
+    let responsibility_may_have_transferred = match state.service.transfer_store.as_ref() {
+        Some(store) => match store.get_chain(passport_id).await {
+            Ok(Some(chain)) => chain.transfer_count() > 0,
+            Ok(None) => false,
+            Err(e) => return internal_error(e),
+        },
+        None => false,
+    };
+
     (
         StatusCode::OK,
         Json(SealResponse {
+            declared_by: SealDeclarer {
+                manufacturer: passport.manufacturer.name.clone(),
+                operator_identifier: passport.operator_identifier.clone(),
+                responsibility_may_have_transferred,
+                note: DECLARER_NOTE,
+            },
             format: serde_json::to_value(&seal.format)
                 .ok()
                 .and_then(|v| v.as_str().map(ToOwned::to_owned))

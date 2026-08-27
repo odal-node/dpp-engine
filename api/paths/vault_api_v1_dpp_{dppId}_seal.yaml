@@ -46,6 +46,7 @@ get:
           schema:
             type: object
             required:
+              - declaredBy
               - format
               - sealValue
               - sealedAt
@@ -57,6 +58,45 @@ get:
               - coverage
               - verification
             properties:
+              declaredBy:
+                type: object
+                description: |
+                  Who declared the content this seal covers, which is not who
+                  sealed it. A seal proves a document came from whoever holds
+                  the certificate; it carries no statement about scope, so
+                  "we vouch for this content" and "we transmitted this intact"
+                  look identical. Every audience view strips the seal, making
+                  this the only surface where the two can be collapsed.
+                required:
+                  - manufacturer
+                  - operatorIdentifier
+                  - responsibilityMayHaveTransferred
+                  - note
+                properties:
+                  manufacturer:
+                    type: string
+                    description: >
+                      The manufacturer named in the sealed passport, frozen at
+                      publish.
+                  operatorIdentifier:
+                    type: [string, 'null']
+                    description: >
+                      The Annex III(k) unique operator identifier recorded at
+                      publish. `null` means none was recorded — never that none
+                      applies.
+                  responsibilityMayHaveTransferred:
+                    type: boolean
+                    description: |
+                      True when the passport's transfer chain records a
+                      completed handover, so the party responsible **now** is
+                      not the one named above. The names above are frozen into
+                      the sealed bytes and cannot be rewritten, so this flag is
+                      the only honest way to say the answer is historical.
+                  note:
+                    type: string
+                    description: >
+                      States the sealing/authorship distinction rather than
+                      leaving it to be inferred from field names.
               format:
                 type: string
                 description: AdES format of `sealValue`.

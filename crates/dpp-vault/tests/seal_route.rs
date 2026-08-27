@@ -238,3 +238,51 @@ async fn the_summary_route_requires_authentication() {
         .expect("request");
     assert_eq!(resp.status(), 401);
 }
+
+/// **A seal is never served without a legible declaring party.**
+///
+/// A seal proves a document came from whoever holds the certificate. It says
+/// nothing about *scope* — "we vouch for this content" and "we transmitted this
+/// intact" look identical — so a response carrying a seal and no declarer lets a
+/// reader conclude the sealer authored the content.
+///
+/// Every audience view strips the seal, which makes this route the only surface
+/// where that conclusion is reachable. Its readers being authenticated and
+/// technical is a reason to be more careful, not less: they are the ones who
+/// build systems on the assumption.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_served_seal_always_names_who_declared_the_content() {
+    let pg = start_postgres().await;
+    let base = start_vault(pg.dal.clone()).await;
+    let id = seed(&pg.dal, Some(envelope()), Some(JWS)).await;
+    let client = TestClient::new(&base, make_jwt(&op()));
+
+    let resp = client.get(&format!("/api/v1/dpp/{id}/seal")).await;
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = resp.json().await.unwrap();
+
+    // The property, asserted against the seal rather than on its own: if a seal
+    // is present, a declarer must be too.
+    assert!(
+        body.get("sealValue").is_some(),
+        "fixture must actually serve a seal, or this proves nothing"
+    );
+    let declared = &body["declaredBy"];
+    assert_eq!(
+        declared["manufacturer"], "TestCorp GmbH",
+        "the declaring party must be legible beside the seal: {body}"
+    );
+
+    // Nothing was transferred, so the response must not hint that it was.
+    assert_eq!(
+        declared["responsibilityMayHaveTransferred"], false,
+        "an untransferred passport must not suggest responsibility moved"
+    );
+
+    // And the distinction is stated, not left to be inferred from field names.
+    let note = declared["note"].as_str().expect("note present");
+    assert!(
+        note.contains("no statement about who authored"),
+        "the note must separate sealing from authorship: {note}"
+    );
+}
