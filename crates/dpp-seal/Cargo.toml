@@ -38,7 +38,7 @@ zeroize      = { workspace = true }
 cms          = { version = "0.2", default-features = false }
 x509-cert    = "0.2"
 der          = "0.7"
-const-oid    = "0.9"
+const-oid    = "0.10"
 p256         = { version = "0.13", features = ["ecdsa", "pkcs8"] }
 rcgen        = "0.14"
 
