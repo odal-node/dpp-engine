@@ -638,7 +638,7 @@ mod tests {
             to_operator: operator("did:web:to.example"),
             reason: TransferReason::Sale,
             from_signature: None,
-            to_signature: None,
+            node_acceptance_attestation: None,
             initiated_at: Utc::now(),
             completed_at: None,
             rejected_at: None,
@@ -647,7 +647,7 @@ mod tests {
         };
         let payload = record.signing_payload();
         record.from_signature = Some(sign(&from_key, &payload));
-        record.to_signature = Some(sign(&to_key, &payload));
+        record.node_acceptance_attestation = Some(sign(&to_key, &payload));
 
         dossier.transfer_chain = Some(TransferChain {
             passport_id: record.passport_id,
@@ -669,11 +669,17 @@ mod tests {
         let clean_report = verify_dossier(&dossier);
         assert!(clean_report.all_verified(), "{clean_report:?}");
 
-        // Tamper the to_signature, then re-sign the manifest so only the
-        // transfer-chain check (not content_integrity) is isolated.
+        // Tamper the outgoing operator's signature, then re-sign the manifest so
+        // only the transfer-chain check (not content_integrity) is isolated.
+        //
+        // This used to tamper `node_acceptance_attestation`, which no longer
+        // detects anything: that value is the hosting node's attestation, not a
+        // counterparty signature, and is checked for presence alone. The
+        // property under test — a broken transfer signature flips this check and
+        // no other — is unchanged, so it moves to the signature still verified.
         if let Some(chain) = &mut dossier.transfer_chain {
-            chain.transfers[0].to_signature = chain.transfers[0]
-                .to_signature
+            chain.transfers[0].from_signature = chain.transfers[0]
+                .from_signature
                 .clone()
                 .map(|s| format!("{s}x"));
         }
@@ -747,7 +753,7 @@ mod tests {
             to_operator: operator("did:web:to.example"),
             reason: TransferReason::Sale,
             from_signature: None,
-            to_signature: None,
+            node_acceptance_attestation: None,
             initiated_at: Utc::now(),
             completed_at: None,
             rejected_at: None,
