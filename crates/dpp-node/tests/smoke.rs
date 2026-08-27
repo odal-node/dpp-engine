@@ -1048,7 +1048,10 @@ async fn transfer_of_responsibility_dual_signed_then_eol() {
         init["fromSignature"].is_string(),
         "outgoing operator signed"
     );
-    assert!(init["toSignature"].is_null(), "not yet accepted");
+    assert!(
+        init["nodeAcceptanceAttestation"].is_null(),
+        "not yet accepted"
+    );
 
     // Incoming operator accepts — the node verifies the outgoing signature and
     // countersigns, completing the handover.
@@ -1062,7 +1065,7 @@ async fn transfer_of_responsibility_dual_signed_then_eol() {
         .await
         .unwrap();
     assert!(
-        accepted["toSignature"].is_string(),
+        accepted["nodeAcceptanceAttestation"].is_string(),
         "incoming countersigned"
     );
     assert!(accepted["completedAt"].is_string(), "transfer completed");

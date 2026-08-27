@@ -417,7 +417,7 @@ impl RegistrySyncPort for EuRegistrySync {
             // authorised the handover. They are collected on the transfer and
             // were previously dropped here.
             from_signature: record.from_signature.clone(),
-            to_signature: record.to_signature.clone(),
+            node_acceptance_attestation: record.node_acceptance_attestation.clone(),
         };
 
         // Fail closed, for the same reason `register` does: a transfer

@@ -688,7 +688,7 @@ fn completed_transfer() -> TransferRecord {
         to_operator: responsible("did:web:new.example", "New Operator SARL", "FR"),
         reason: TransferReason::Remanufacturing,
         from_signature: Some("jws-from".to_owned()),
-        to_signature: Some("jws-to".to_owned()),
+        node_acceptance_attestation: Some("jws-to".to_owned()),
         initiated_at: completed - chrono::Duration::hours(2),
         completed_at: Some(completed),
         rejected_at: None,
@@ -729,7 +729,7 @@ async fn transfer_notification_carries_both_operators_and_both_signatures() {
     assert_eq!(sent["toOperator"]["name"], "New Operator SARL");
     assert_eq!(sent["toOperator"]["country"], "FR");
     assert_eq!(sent["fromSignature"], "jws-from");
-    assert_eq!(sent["toSignature"], "jws-to");
+    assert_eq!(sent["nodeAcceptanceAttestation"], "jws-to");
     assert_eq!(
         sent["reason"], "remanufacturing",
         "the reason must travel as its stable wire form, not a hardcoded literal"
@@ -773,7 +773,7 @@ async fn a_pending_transfer_reports_its_initiation_time() {
 
     let mut transfer = completed_transfer();
     transfer.completed_at = None;
-    transfer.to_signature = None;
+    transfer.node_acceptance_attestation = None;
     let initiated = transfer.initiated_at;
 
     sync.notify_transfer(&transfer, "EU-REG-T")
@@ -791,7 +791,7 @@ async fn a_pending_transfer_reports_its_initiation_time() {
         "a transfer still awaiting acceptance reports when it was initiated"
     );
     assert!(
-        sent.get("toSignature").is_none(),
+        sent.get("nodeAcceptanceAttestation").is_none(),
         "an unsigned acceptance must be absent, not an empty string"
     );
 }

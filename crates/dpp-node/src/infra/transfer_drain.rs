@@ -162,7 +162,7 @@ mod tests {
             to_operator: operator("did:web:new.example", "New Operator GmbH"),
             reason: TransferReason::Sale,
             from_signature: Some("jws-from".to_owned()),
-            to_signature: Some("jws-to".to_owned()),
+            node_acceptance_attestation: Some("jws-to".to_owned()),
             initiated_at: Utc::now(),
             completed_at: Some(Utc::now()),
             rejected_at: None,
@@ -427,7 +427,7 @@ mod tests {
         assert_eq!(sent.from_operator.name, "Old Operator GmbH");
         assert_eq!(sent.to_operator.name, "New Operator GmbH");
         assert_eq!(sent.from_signature.as_deref(), Some("jws-from"));
-        assert_eq!(sent.to_signature.as_deref(), Some("jws-to"));
+        assert_eq!(sent.node_acceptance_attestation.as_deref(), Some("jws-to"));
         assert_eq!(
             registry_id, "EU-REG-1",
             "the notification must name the registry record it amends"

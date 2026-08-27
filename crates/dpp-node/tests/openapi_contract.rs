@@ -426,7 +426,7 @@ fn deactivation_reason_kinds() -> Vec<String> {
 /// Bump only after re-checking the enums listed below against the released
 /// crate. Bumping it to make a red build green is the one thing that breaks
 /// this gate.
-const CORE_VERSION_VERIFIED: &str = "0.18.0";
+const CORE_VERSION_VERIFIED: &str = "0.19.0";
 
 /// Enums whose variants this test cannot enumerate, and so cannot gate.
 ///
@@ -1305,7 +1305,7 @@ mod fixtures {
             to_operator: responsible_operator(),
             reason: TransferReason::Sale,
             from_signature: Some("eyJhbGciOiJFZERTQSJ9..aaa".into()),
-            to_signature: Some("eyJhbGciOiJFZERTQSJ9..bbb".into()),
+            node_acceptance_attestation: Some("eyJhbGciOiJFZERTQSJ9..bbb".into()),
             initiated_at: ts(),
             completed_at: Some(ts()),
             rejected_at: Some(ts()),

@@ -97,7 +97,7 @@ fn completed_record(passport_id: PassportId, from: &str, to: &str) -> TransferRe
         to_operator: operator(&format!("did:web:{to}.example"), to),
         reason: TransferReason::Sale,
         from_signature: Some(format!("jws-from-{from}")),
-        to_signature: Some(format!("jws-to-{to}")),
+        node_acceptance_attestation: Some(format!("jws-to-{to}")),
         initiated_at: Utc::now(),
         completed_at: Some(Utc::now()),
         rejected_at: None,
@@ -156,7 +156,10 @@ async fn accepting_a_transfer_enqueues_a_pending_notification() {
     let stored: TransferRecord =
         serde_json::from_value(due[0].payload.clone()).expect("payload is a TransferRecord");
     assert_eq!(stored.from_signature.as_deref(), Some("jws-from-Acme"));
-    assert_eq!(stored.to_signature.as_deref(), Some("jws-to-Beta"));
+    assert_eq!(
+        stored.node_acceptance_attestation.as_deref(),
+        Some("jws-to-Beta")
+    );
 
     // And the chain was written in the same transaction.
     let chain_rows: i64 =

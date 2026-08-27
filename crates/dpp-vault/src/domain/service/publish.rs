@@ -671,7 +671,7 @@ mod tests {
         // a >20-char serial would make this fail.
         let parsed = dpp_digital_link::DigitalLink::parse(&url)
             .expect("carrier URL must be a parseable GS1 Digital Link");
-        let serial = parsed.serial.expect("serial present");
+        let serial = parsed.serial().expect("serial present");
         assert!(
             serial.chars().count() <= 20,
             "AI 21 serial must be ≤20 chars"
