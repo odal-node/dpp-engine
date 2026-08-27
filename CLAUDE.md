@@ -437,6 +437,35 @@ The internal endpoints are mTLS-gated (`CN=odal-vault`).
 `just test` (unit, no Docker) and `just test-integration` (the Docker tiers). See
 Build and Development above for the full recipe set.
 
+### Answer "what actually happens here?" with a test you keep
+
+When you need to establish a fact about behaviour — does this reject that input,
+which layer enforces this rule, is this branch reachable — **write a `#[test]`
+and commit it.** Not a scratch binary, not a `python - <<EOF` probe, not a
+throwaway `main` you delete afterwards.
+
+The reason is not tidiness. A throwaway probe answers the question once, for the
+person running it, and then the answer lives only in their head — so the next
+person re-derives it, or worse, assumes the opposite. A committed test answers it
+permanently *and* fails when the answer changes.
+
+This is not hypothetical. A handler here re-validated a GTIN that
+`Gtin::Deserialize` had already validated, so the check could not fail; it read
+as the thing enforcing GTIN validity for one product group and no other, which
+was the reverse of the truth. Three small tests (`gtin_boundary` in
+`dpp-vault/src/handlers/create.rs`) now pin where the rejection actually happens,
+and the dead branch is gone.
+
+Name such a test for the fact it pins, not the function it calls:
+`a_bad_check_digit_is_refused_while_the_body_is_parsed`, not `test_gtin`.
+
+Two practical notes:
+- **Never run a foreground command that can wait on stdin** (`python - <<EOF`,
+  an interactive REPL). It hangs the session rather than failing.
+- **A probe that "passes" proves nothing until you have seen it fail.** Confirm
+  the assertion actually bites — change the input, watch it go red — before
+  trusting a green result.
+
 Test tiers:
 - **Tier 1 (no DB)**: route mounting, health endpoints, auth middleware, validators, parsers, and the pure-logic unit tests inside each crate.
 - **Tier 2 (testcontainers)**: the full lifecycle through real PostgreSQL. Gated behind the `integration-tests` feature, so `just test` never builds them — which is why `just check` also runs `check-integration` to prove they still *compile*.
