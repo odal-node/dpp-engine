@@ -90,7 +90,7 @@ impl AuthProvider for ApiKeyAuthProvider {
 mod tests {
     use super::*;
     use chrono::Utc;
-    use dpp_domain::domain::error::DppError;
+    use dpp_domain::error::DppError;
     use dpp_types::api_key::{ApiKey, ApiKeyRecord};
     use sha2::{Digest, Sha256};
     use uuid::Uuid;

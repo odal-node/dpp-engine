@@ -56,7 +56,7 @@ The engine ships as a **single binary** (`dpp-node`) that fuses all services und
 | `dpp-vault` | bin+lib | DPP write engine — create, versioned lifecycle (publish / suspend / archive / end-of-life), transfer-of-responsibility handshake, hash-chained audit, evidence-dossier generation + verification |
 | `dpp-identity` | bin+lib | `did:web` identity HTTP service — signing, key rotation |
 | `dpp-resolver` | bin+lib | Public QR / Digital Link resolver, JWS-verified fail-closed |
-| `dpp-integrator` | bin+lib | CSV/XLSX-to-DPP bulk import adapter with per-sector templates |
+| `dpp-integrator` | bin+lib | CSV/XLSX-to-DPP bulk import adapter with per-product group templates |
 | `dpp-common` | lib | Event bus trait + well-known subjects, telemetry, RFC 7807 HTTP errors |
 | `dpp-plugin-host` | lib | wasmtime sandbox — fuel metering, memory cap, deny-all WASI, signed-plugin policy |
 | `dpp-node` | bin | **The single binary — fuses all services**, boot trust-report, registry outbox drain, signed-ruleset loader |

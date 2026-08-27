@@ -24,8 +24,8 @@ async fn lint_findings_surface_and_never_block_publish() {
         "productName": "Lint Test Battery",
         "manufacturer": {"name": "Lint Inc", "address": "Test City"},
         "materials": [{"name": "Lithium", "weightKg": 1.2}],
-        "sectorData": {
-            "sector": "battery",
+        "productGroupData": {
+            "productGroup": "battery",
             "gtin": "09506000134352",
             "batteryChemistry": "LFP",
             "batteryType": "portable",
@@ -104,7 +104,7 @@ async fn lint_findings_surface_and_never_block_publish() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn clean_sector_data_produces_no_findings() {
+async fn clean_product_group_data_produces_no_findings() {
     let pg = start_postgres().await;
     let vault_url = start_vault(pg.dal.clone()).await;
     seed_complete_operator(&pg.dal).await;
@@ -115,8 +115,8 @@ async fn clean_sector_data_produces_no_findings() {
         "productName": "Clean Battery",
         "manufacturer": {"name": "Clean Inc", "address": "Test City"},
         "materials": [{"name": "Lithium", "weightKg": 1.2}],
-        "sectorData": {
-            "sector": "battery",
+        "productGroupData": {
+            "productGroup": "battery",
             "gtin": "09506000134352",
             "batteryChemistry": "LFP",
             "batteryType": "portable",

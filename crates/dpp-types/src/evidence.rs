@@ -11,10 +11,7 @@ use std::collections::BTreeMap;
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use dpp_domain::{
-    DppError,
-    domain::{passport::PassportId, transfer::TransferChain},
-};
+use dpp_domain::{DppError, passport::PassportId, transfer::TransferChain};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 

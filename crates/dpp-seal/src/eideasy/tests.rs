@@ -10,10 +10,13 @@ use std::sync::Arc;
 
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as BASE64;
-use dpp_domain::domain::error::DppError;
-use dpp_domain::ports::seal::{
-    SealConformanceLevel, SealCredentialRef, SealEnvelope, SealFormat, SealMode, SealPort,
-    SealRequest, SealedEnvelope,
+use dpp_domain::error::DppError;
+use dpp_domain::{
+    ports::seal::SealPort,
+    seal::{
+        SealConformanceLevel, SealCredentialRef, SealEnvelope, SealFormat, SealMode, SealRequest,
+        SealedEnvelope,
+    },
 };
 use hmac::{Hmac, KeyInit, Mac};
 use sha2::{Digest, Sha256};

@@ -5,11 +5,31 @@ use axum::{
     http::StatusCode,
     response::IntoResponse,
 };
-use serde_json::json;
+use serde::Serialize;
 
 use crate::{middleware::auth::AuthContext, state::AppState};
 
 use super::{create::CreateRequest, error::require_write};
+
+/// The dry-run verdict.
+///
+/// Two booleans rather than one, because create and publish deliberately differ:
+/// a body can be creatable as a draft and not yet publishable, and collapsing
+/// that into a single flag would hide the gap until the caller tried to publish.
+///
+/// A named type rather than a `json!` literal so the OpenAPI contract test can
+/// check `components/schemas/ValidateResponse` against it.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ValidateResponse {
+    /// Always `true` when this body is returned — a create-invalid body gets
+    /// the identical rejection `POST /api/v1/dpp` would have sent instead.
+    pub create_valid: bool,
+    /// Whether the stricter publish gate would also pass.
+    pub product_group_data_valid: bool,
+    /// Why publish would be blocked. `null` when nothing blocks it.
+    pub detail: Option<String>,
+}
 
 /// `POST /api/v1/dpp/validate` — dry-run a create body and report the verdict.
 ///
@@ -19,7 +39,7 @@ use super::{create::CreateRequest, error::require_write};
 /// rejection** create would have returned, rather than a paraphrase of it.
 ///
 /// **Two verdicts, because create and publish deliberately differ.** Create is
-/// lenient about a sector with no resolvable JSON Schema — a draft may stay
+/// lenient about a product group with no resolvable JSON Schema — a draft may stay
 /// incomplete — while publish fails closed on it, because a signed passport
 /// must have passed a real schema check. A body can therefore be creatable and
 /// not yet publishable, and collapsing that into one boolean would hide the gap
@@ -45,24 +65,24 @@ pub async fn validate_handler(
 
     // Create would accept it. Now the stricter publish gate, so the caller
     // learns now rather than at publish time.
-    let publish_blocker = match body.sector_data.as_ref() {
-        Some(sector_data) => state
+    let publish_blocker = match body.product_group_data.as_ref() {
+        Some(product_group_data) => state
             .service
-            .publish_readiness(sector_data)
+            .publish_readiness(product_group_data)
             .err()
             .map(|e| e.to_string()),
-        // Sector data is optional at create. Publish validates it only when
+        // ProductGroup data is optional at create. Publish validates it only when
         // present, so its absence is not a publish blocker here either.
         None => None,
     };
 
     (
         StatusCode::OK,
-        Json(json!({
-            "createValid": true,
-            "sectorDataValid": publish_blocker.is_none(),
-            "detail": publish_blocker,
-        })),
+        Json(ValidateResponse {
+            create_valid: true,
+            product_group_data_valid: publish_blocker.is_none(),
+            detail: publish_blocker,
+        }),
     )
         .into_response()
 }

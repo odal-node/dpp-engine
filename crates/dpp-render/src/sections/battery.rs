@@ -1,9 +1,9 @@
-//! Battery sector HTML section.
+//! Battery product group HTML section.
 
 use crate::fields::{f64_field, str_field, u64_field};
 
 pub(super) fn build_battery_section(p: &serde_json::Value) -> String {
-    let sd = match p.get("sectorData") {
+    let sd = match p.get("productGroupData") {
         Some(v) => v,
         None => return String::new(),
     };

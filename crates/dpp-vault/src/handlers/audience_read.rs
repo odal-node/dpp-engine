@@ -40,15 +40,15 @@
 //! # What this route still does not do
 //!
 //! Product-category scope is not *evaluated*, and a credential that claims one
-//! therefore unlocks nothing here. Sector scope is enforced; category has no
+//! therefore unlocks nothing here. ProductGroup scope is enforced; category has no
 //! counterpart to be enforced against, because a passport carries no product
-//! category — the field that once did was renamed `sector`, and category is now
-//! a per-sector concept with a different shape in each.
+//! category — the field that once did was renamed `product_group`, and category is now
+//! a per-product group concept with a different shape in each.
 //!
 //! Rather than reading an unevaluable restriction as no restriction, which
 //! granted a narrowed credential its full audience over every product in its
-//! sectors, such a credential is downgraded to `Audience::Public`. See
-//! [`crate::middleware::credential::VerifiedCredential::audience_for_sector`].
+//! product groups, such a credential is downgraded to `Audience::Public`. See
+//! [`crate::middleware::credential::VerifiedCredential::audience_for_product_group`].
 
 use axum::{
     extract::{Path, State},
@@ -58,7 +58,7 @@ use axum::{
 use serde_json::Value;
 
 use dpp_domain::Audience;
-use dpp_domain::domain::status::PassportStatus;
+use dpp_domain::status::PassportStatus;
 
 use dpp_types::audit::AuditEntry;
 
@@ -82,7 +82,7 @@ pub async fn audience_read_handler(
     // Authenticate the caller *before* touching the database: a rejected
     // credential gets the same answer whether or not the passport exists, so
     // this route cannot be used to probe for passport ids. The credential is
-    // only held here — what it *grants* depends on the passport's sector, which
+    // only held here — what it *grants* depends on the passport's product group, which
     // is not known until the row is loaded.
     let credential = match (&state.credential_directory, &state.trusted_issuers) {
         (Some(directory), Some(trust)) => {
@@ -101,11 +101,11 @@ pub async fn audience_read_handler(
 
     match state.service.find_by_id_any_status(passport_id).await {
         Ok(Some(p)) if p.status == PassportStatus::Published => {
-            // Scope the credential to *this* passport's sector. A credential
+            // Scope the credential to *this* passport's product group. A credential
             // issued for batteries grants nothing extra on a textile passport.
             let audience = match (&credential, &state.trusted_issuers) {
                 (Some(c), Some(trust)) => {
-                    c.audience_for_sector(p.sector.catalog_key(), trust.as_ref())
+                    c.audience_for_product_group(p.product_group.catalog_key(), trust.as_ref())
                 }
                 _ => Audience::Public,
             };
@@ -185,7 +185,7 @@ pub const CREDENTIALED_READ: &str = "credentialed_read";
 /// exactly the event an operator wants to be able to find later.
 async fn record_access(
     state: &AppState,
-    passport: &dpp_domain::domain::passport::Passport,
+    passport: &dpp_domain::passport::Passport,
     credential: &VerifiedCredential,
     granted: Audience,
 ) -> Result<(), dpp_domain::DppError> {
@@ -209,7 +209,7 @@ async fn record_access(
         "holderName": subject.name,
         "disclosureSet": granted.disclosure_key(),
         "disclosureClasses": classes,
-        "sector": passport.sector.catalog_key(),
+        "productGroup": passport.product_group.catalog_key(),
     }));
 
     state.service.audit.append(entry).await
@@ -218,8 +218,13 @@ async fn record_access(
 /// Strip the fields a given audience may not see. Exposed for tests and for the
 /// snapshot path; the route above is the only production caller.
 #[must_use]
-pub fn view_for(full: &Value, sector_key: &str, schema_version: &str, audience: Audience) -> Value {
-    audience_view(full, sector_key, schema_version, audience)
+pub fn view_for(
+    full: &Value,
+    product_group_key: &str,
+    schema_version: &str,
+    audience: Audience,
+) -> Value {
+    audience_view(full, product_group_key, schema_version, audience)
 }
 
 #[cfg(test)]
@@ -231,7 +236,7 @@ mod tests {
     ///
     /// A real version, not a placeholder: disclosure classes are now resolved
     /// from the passport's own schema version, so an invented one resolves to no
-    /// policy and the fail-closed path strips `sectorData` entirely — every
+    /// policy and the fail-closed path strips `productGroupData` entirely — every
     /// assertion below would then pass or fail for the wrong reason.
     const BATTERY_SCHEMA: &str = "2.6.0";
 
@@ -251,8 +256,8 @@ mod tests {
             "retentionLocked": true,
             "jwsSignature": "eyJ.signed.value",
             "publicJwsSignature": "eyJ.public.proof",
-            "sectorData": {
-                "sector": "battery",
+            "productGroupData": {
+                "productGroup": "battery",
                 "gtin": "09506000134352",
                 "stateOfHealthPct": 87.5,
                 "cathodeMaterial": "LFP"
@@ -260,10 +265,10 @@ mod tests {
         })
     }
 
-    fn sector_data(v: &Value) -> &serde_json::Map<String, Value> {
-        v.get("sectorData")
+    fn product_group_data(v: &Value) -> &serde_json::Map<String, Value> {
+        v.get("productGroupData")
             .and_then(Value::as_object)
-            .expect("sectorData")
+            .expect("productGroupData")
     }
 
     /// Art. 77(2)(c): individual-item data goes to legitimate-interest holders.
@@ -275,8 +280,8 @@ mod tests {
             BATTERY_SCHEMA,
             Audience::LegitimateInterest,
         );
-        assert!(sector_data(&v).contains_key("stateOfHealthPct"));
-        assert!(sector_data(&v).contains_key("cathodeMaterial"));
+        assert!(product_group_data(&v).contains_key("stateOfHealthPct"));
+        assert!(product_group_data(&v).contains_key("cathodeMaterial"));
     }
 
     /// Art. 77(2)(b) assigns authorities Annex XIII points 2 and 3 — **not**
@@ -286,11 +291,11 @@ mod tests {
     fn an_authority_does_not_see_individual_item_data() {
         let v = view_for(&battery(), "battery", BATTERY_SCHEMA, Audience::Authority);
         assert!(
-            !sector_data(&v).contains_key("stateOfHealthPct"),
+            !product_group_data(&v).contains_key("stateOfHealthPct"),
             "Art. 77(2)(b) withholds point 4 from authorities"
         );
         assert!(
-            sector_data(&v).contains_key("cathodeMaterial"),
+            product_group_data(&v).contains_key("cathodeMaterial"),
             "point 2 is shared"
         );
     }
@@ -340,28 +345,28 @@ mod tests {
     #[test]
     fn the_public_view_carries_neither() {
         let v = view_for(&battery(), "battery", BATTERY_SCHEMA, Audience::Public);
-        assert!(!sector_data(&v).contains_key("stateOfHealthPct"));
-        assert!(!sector_data(&v).contains_key("cathodeMaterial"));
+        assert!(!product_group_data(&v).contains_key("stateOfHealthPct"));
+        assert!(!product_group_data(&v).contains_key("cathodeMaterial"));
         assert!(v.get("jwsSignature").is_none());
     }
 
-    /// An unmodelled sector has no field policy for *any* audience, so a
+    /// An unmodelled product group has no field policy for *any* audience, so a
     /// credentialed reader must not get more from it than an anonymous one.
     #[test]
-    fn an_unknown_sector_fails_closed_for_every_audience() {
+    fn an_unknown_product_group_fails_closed_for_every_audience() {
         let unknown = json!({
             "id": "0190a9f0-1234-7abc-8def-0123456789ab",
-            "sectorData": { "sector": "not-a-sector", "secret": "value" }
+            "productGroupData": { "productGroup": "not-a-product_group", "secret": "value" }
         });
         for audience in [
             Audience::Public,
             Audience::LegitimateInterest,
             Audience::Authority,
         ] {
-            let v = view_for(&unknown, "not-a-sector", BATTERY_SCHEMA, audience);
+            let v = view_for(&unknown, "not-a-product_group", BATTERY_SCHEMA, audience);
             assert!(
-                !sector_data(&v).contains_key("secret"),
-                "{audience:?} must not receive unmodelled sector data"
+                !product_group_data(&v).contains_key("secret"),
+                "{audience:?} must not receive unmodelled product_group data"
             );
         }
     }

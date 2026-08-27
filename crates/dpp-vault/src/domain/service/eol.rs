@@ -2,7 +2,7 @@
 //! lost), transitioning a passport to the terminal `Deactivated` status.
 
 use dpp_common::{event, event_codes};
-use dpp_domain::domain::{
+use dpp_domain::{
     eol::EolEvent,
     error::DppError,
     passport::{Passport, PassportId},

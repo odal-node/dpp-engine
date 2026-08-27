@@ -11,7 +11,7 @@
 //! belongs with the recursive verify-tree that builds on this primitive, not in
 //! this single-hop check.
 
-use dpp_domain::domain::passport::PassportRef;
+use dpp_domain::passport::PassportRef;
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 

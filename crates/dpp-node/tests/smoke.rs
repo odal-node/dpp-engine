@@ -22,11 +22,8 @@ use dpp_dal::pg::{
     PgRegistryIdentityRepo, PgScanTelemetryRepo, PgTransferRepo, PgWebhookRepo,
 };
 use dpp_dal::test_harness::{TestPg, start_pg};
-use dpp_domain::domain::passport::PassportRef;
-use dpp_domain::{
-    DppError, GhostArchive, GhostRegistrySync,
-    compliance::passthrough_registry::PassthroughRegistry,
-};
+use dpp_domain::passport::PassportRef;
+use dpp_domain::{DppError, GhostArchive, GhostRegistrySync, PassthroughRegistry};
 use dpp_identity_service::state::AppState as IdentityState;
 use dpp_integrator::{infra::vault_client::VaultHttpClient, state::AppState as IntegratorState};
 use dpp_node::infra::pg_job_store::PgJobStore;
@@ -409,8 +406,8 @@ async fn route_inventory_matches_assembled_router() {
             "productName": "Route Inventory Battery",
             "manufacturer": {"name": "SmokeTestCorp", "address": "Berlin, DE"},
             "materials": [],
-            "sectorData": {
-                "sector": "battery",
+            "productGroupData": {
+                "productGroup": "battery",
                 "gtin": "09506000134352",
                 "batteryChemistry": "LFP",
                 "batteryType": "portable",
@@ -588,8 +585,8 @@ async fn publish_battery(
         "productName": product_name,
         "manufacturer": {"name": "SmokeTestCorp", "address": "Berlin, DE"},
         "materials": [],
-        "sectorData": {
-            "sector": "battery",
+        "productGroupData": {
+            "productGroup": "battery",
             "gtin": gtin,
             "batteryChemistry": "LFP",
             "batteryType": "portable",
@@ -1051,7 +1048,10 @@ async fn transfer_of_responsibility_dual_signed_then_eol() {
         init["fromSignature"].is_string(),
         "outgoing operator signed"
     );
-    assert!(init["toSignature"].is_null(), "not yet accepted");
+    assert!(
+        init["nodeAcceptanceAttestation"].is_null(),
+        "not yet accepted"
+    );
 
     // Incoming operator accepts — the node verifies the outgoing signature and
     // countersigns, completing the handover.
@@ -1065,7 +1065,7 @@ async fn transfer_of_responsibility_dual_signed_then_eol() {
         .await
         .unwrap();
     assert!(
-        accepted["toSignature"].is_string(),
+        accepted["nodeAcceptanceAttestation"].is_string(),
         "incoming countersigned"
     );
     assert!(accepted["completedAt"].is_string(), "transfer completed");
@@ -1167,12 +1167,12 @@ async fn unauthenticated_request_increments_auth_failures_total() {
     );
 }
 
-/// Phase-3 metric (RT2-1 surface): an import with an unknown sector must increment
-/// `import_rejections_total{reason="unknown_sector"}`. A valid multipart
+/// Phase-3 metric (RT2-1 surface): an import with an unknown product group must increment
+/// `import_rejections_total{reason="unknown_product_group"}`. A valid multipart
 /// content-type is sent so the `Multipart` extractor constructs; the handler's
-/// sector check returns 404 before the body is read.
+/// product group check returns 404 before the body is read.
 #[tokio::test(flavor = "multi_thread")]
-async fn unknown_sector_import_increments_import_rejections_total() {
+async fn unknown_product_group_import_increments_import_rejections_total() {
     let handle = prometheus_handle();
     let (base, _container) = start_db_and_node().await;
 
@@ -1192,7 +1192,7 @@ async fn unknown_sector_import_increments_import_rejections_total() {
         "import_rejections_total not found in Prometheus output:\n{output}"
     );
     assert!(
-        output.contains(r#"reason="unknown_sector""#),
-        "import_rejections_total unknown_sector-reason not found:\n{output}"
+        output.contains(r#"reason="unknown_product_group""#),
+        "import_rejections_total unknown_product_group-reason not found:\n{output}"
     );
 }

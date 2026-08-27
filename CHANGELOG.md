@@ -10,6 +10,125 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ## [Unreleased]
 
+### Fixed
+
+- **A restricted product-group field could have reached the public view.** The
+  resolver filters a passport in two passes — the envelope, then
+  `productGroupData` handed on as its own root document. The core filter now
+  scopes a product group's disclosure classes to that payload, which means the
+  second pass has to declare that its root is *already inside* the product group.
+  Filtering it as an envelope applies none of that product group's classes and
+  serves every restricted field in it.
+
+  That failure compiles, returns 200, and produces a body that looks right unless
+  you know which field should be missing, so nothing in the suite would have
+  caught it. There is now a test asserting an Annex XIII point 2 field is absent
+  from the public response bytes — confirmed to fail when the scope is wrong.
+
+### Added
+
+- **The create request is one type, not two kept in step by a comment.**
+  `dpp_types::CreatePassportRequest` is now the body both sides use: the vault
+  deserialises it, the bulk importer serialises it. They were separate structs in
+  separate crates, coupled by a doc comment reading *"Shape must match …"* — and
+  the importer's copy had drifted four fields short. A comment cannot fail a
+  build; a shared type makes the gap unrepresentable, because a field the vault
+  accepts is now a field the importer must decide about or it does not compile.
+
+  Two of the four are now importable: `placedOnMarketDate` (below) and
+  `commodityCode`, which is validated at import so the error names the offending
+  **row** — the vault rejects a bad code too, but cannot say which line of a
+  thousand-row spreadsheet carried it.
+
+  `parentPassportRef` and `componentRefs` stay absent on the import path, now
+  explicitly and with a test saying why: each carries a URI *and* a hash of the
+  referenced passport's public signature, and a hash cannot be authored in a
+  spreadsheet. An invented one produces a link that fails verification, so absent
+  is the only honest value a CSV can supply.
+
+- **Bulk import can set `placedOnMarketDate`.** The vault's own create route has
+  always accepted it; the import path had no field for it, so the same product
+  imported rather than posted got a passport that could not say which law
+  governed it.
+
+  That is not one field among many. Staged EU obligations attach at placing on
+  the market and do not move afterwards, so a determination computed without the
+  date is computed against the wrong date for every product not placed on the
+  market today — and the applicable-instrument set is frozen at that moment too,
+  which made the gap worse than when it was first noticed.
+
+  Every CSV template gains a `placedOnMarketDate [OPTIONAL]` column. A malformed
+  value is **refused**, not dropped: silently ignoring it would import a passport
+  whose governing law is unknown while looking exactly like one where the
+  operator deliberately left the column blank.
+
+- **`PassportResponse` is the API's own type.** Until now the JSON on the wire
+  *was* `dpp_domain::Passport` — a library's internal aggregate, serialised
+  straight out of the handler — so the published API was whatever core's struct
+  happened to be. The `sector` → `productGroup` rename demonstrated the cost:
+  it rewrote every response body, request body, database column and schema in one
+  step, with no point at which anyone had to agree the *API* should change.
+
+  The two shapes are identical today and a test proves it byte for byte, on a
+  minimal passport as well as a populated one, because `skip_serializing_if`
+  differences are invisible when every field is set. What changed is that they
+  are now allowed to differ, and that making them differ is an edit someone has
+  to write down. A second test checks the type against
+  `dpp_domain::PASSPORT_WIRE_KEYS`, so a field added to core is either served or
+  listed as deliberately withheld — otherwise a mirror would trade one silent
+  drift for a quieter one.
+
+  The OpenAPI contract gate now checks the spec against this type rather than
+  against the core aggregate, which is what it was always meant to check.
+
+### Breaking
+
+- **`sector` is `productGroup` everywhere the engine touches it.** *(Breaking:
+  the `sector` request and response field becomes `productGroup`, `sectorData`
+  becomes `productGroupData`, `sectorDataValid` becomes `productGroupDataValid`,
+  the four integrator routes take `{productGroup}` instead of `{sector}`, the
+  `SectorData` schema is renamed `ProductGroupData`, plugin artifacts are
+  `product-group-<key>.wasm` rather than `sector-<key>.wasm`, and the
+  `passport.sector` column becomes `passport.product_group`.)*
+
+  ESPR defines **product group**; "sector" is not a term of art anywhere in the
+  Regulation. The core library retired the word and this follows it. No
+  compatibility aliases: two spellings in circulation is the problem the rename
+  exists to end.
+
+  **Database:** migration `0032` renames the column, renames its index, and
+  drops and rebuilds the identity index — that one indexes an expression over
+  the document, and the JSON key inside it changed too, so a rename would have
+  left it matching a key no passport emits. Added as a new migration rather than
+  edited into `0004`/`0019`: `sqlx::migrate!` checksums every file, so editing an
+  applied one stops a node that already ran it from booting. No data moves; the
+  column's values are catalog keys like `battery`, which did not change.
+
+  **Stored documents do not survive this.** Every frozen fixture under
+  `crates/dpp-dal/tests/fixtures/passport_docs` is now listed in
+  `UNREADABLE_FIXTURES` — `productGroup` is required, so a document of the old
+  shape is refused loudly rather than read with the field silently missing. That
+  is defensible only because no such document exists in any deployment, which is
+  the condition the guard itself states. The consequence is that the guard is
+  currently vacuous, and it says so at the top of the file: it passes because
+  every failure is documented, not because the read path works.
+
+- **A passport records the acts it was issued under.** *(Breaking: two new
+  `PassportResponse` fields, `applicableInstruments` and `granularity`.)*
+
+  `applicableInstruments` names each applicable instrument and whether it was
+  resolved from the catalog or asserted by the operator. Recorded at creation and
+  never recomputed: the law that governs a product is the law at placing on the
+  market, and the set is not derivable from the product group, so re-deriving it
+  could only narrow it. `granularity` is the model/batch/item level the
+  applicable delegated act fixes, absent while no adopted act fixes one.
+
+  The determination gate moves with them. It asked "is this product group in
+  force", which is *yes* both for an act that imposes no passport at all and for
+  one whose information duty is discharged through another system — so it enforced
+  passport obligations that do not exist. It now requires an in-force act that
+  also requires a passport.
+
 ## [0.12.0] - 2026-08-23
 
 ### Breaking

@@ -6,13 +6,13 @@ use super::client::{EuRegistrySync, RetryableError};
 use async_trait::async_trait;
 use chrono::Utc;
 use dpp_domain::{
-    domain::error::DppError,
-    domain::passport::PassportId,
-    domain::transfer::{ResponsibleOperator, TransferRecord},
+    error::DppError,
+    passport::PassportId,
     ports::registry_sync::{
         RegistrationGranularity, RegistrationRequest, RegistryIdentifiers, RegistryRecord,
         RegistryStatus, RegistrySyncPort,
     },
+    transfer::{ResponsibleOperator, TransferRecord},
 };
 use dpp_registry::{
     EuRegistryEnvelope, EuRegistryResponse, FacilityIdentifier, Granularity, OperatorIdentifier,
@@ -226,7 +226,7 @@ impl RegistrySyncPort for EuRegistrySync {
                     did: (request.operator_identifier_scheme == "did")
                         .then(|| request.operator_identifier.clone()),
                 },
-                sector: request.product_category.clone(),
+                product_group: request.product_category.clone(),
                 schema_version: request.schema_version.clone(),
                 digital_link_url: request.data_carrier_uri.clone(),
                 published_at: request.published_at.unwrap_or_else(Utc::now),
@@ -417,7 +417,7 @@ impl RegistrySyncPort for EuRegistrySync {
             // authorised the handover. They are collected on the transfer and
             // were previously dropped here.
             from_signature: record.from_signature.clone(),
-            to_signature: record.to_signature.clone(),
+            node_acceptance_attestation: record.node_acceptance_attestation.clone(),
         };
 
         // Fail closed, for the same reason `register` does: a transfer

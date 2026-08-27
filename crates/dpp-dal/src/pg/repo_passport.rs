@@ -12,15 +12,13 @@ use sqlx::{Postgres, Row, Transaction};
 use uuid::Uuid;
 
 use dpp_domain::{
-    catalog::SectorCatalog,
-    domain::{
-        error::DppError,
-        passport::{Passport, PassportId},
-        product_identity::ProductIdentity,
-        status::PassportStatus,
-    },
+    catalog::ProductGroupCatalog,
+    error::DppError,
+    passport::{Passport, PassportId},
     ports::passport_repo::PassportRepository,
+    product::ProductIdentity,
     schemas::lens::LensRegistry,
+    status::PassportStatus,
 };
 
 use super::{PgDal, db_err};
@@ -34,52 +32,47 @@ use super::{PgDal, db_err};
 /// while the `retention_locked` column stays `false`). Serialized (camelCase)
 /// names.
 ///
-/// # Relationship to the `PassportRepository` default-impl guard in dpp-core
+/// # Derived from core, never restated
 ///
-/// This overrides that default, so it does not inherit it — a comment here used
-/// to claim it "mirrors" core's list while being **three entries short of it**.
-/// `operatorIdentifier`, `facility` and `parentPassportRef` are protected by
-/// core and were not protected here, which on PostgreSQL — the only backend that
-/// ships — meant they were writable through `PUT /dpp/{id}`. They are restored
-/// below.
+/// This backend overrides `patch_fields`, so it does not inherit core's default
+/// guard — but it still owes callers that guard's contract. It therefore reads
+/// `dpp_domain::PROTECTED_PATCH_FIELDS` and applies exactly the two divergences
+/// declared below, rather than keeping a second list.
 ///
-/// Two entries are **deliberately** different, and the divergence is the reason
-/// this list exists rather than being deleted in favour of core's:
+/// It used to keep one, and that list fell **three entries short** of core's:
+/// `operatorIdentifier`, `facility` and `parentPassportRef` were protected by
+/// core and not here, which on PostgreSQL — the only backend that ships — made
+/// them writable through `PUT /dpp/{id}` and carried them into the signed
+/// publish payload. A second list is a second thing to keep right, and nothing
+/// was keeping it right: the one test covering this path asserted two keys, both
+/// of which were in both lists the whole time.
 ///
-/// - `sector` is protected here and not in core, because it backs a real column
-///   this merge does not rewrite.
-/// - `componentRefs` is protected in core and **not** here. Core protects the
-///   lineage edges because patching them on a *published* passport would leave
-///   the served body no longer verifying against its own signature. This path
-///   accepts drafts only (`update` refuses any non-`Draft` status), and a draft
-///   has no signature to break — so a bill of materials is editable while it is
-///   still being assembled, which is the whole point of a draft. Its *downward*
-///   sibling `parentPassportRef` is not editable, because nothing applies it:
-///   it is stamped at create and read at verify.
+/// The two divergences, and why each is deliberate:
 ///
-/// `disclosureSignatures` is added for symmetry with the three proof fields
-/// beside it. It was the only one of the four `audience_view` strips as proofs
-/// that was missing — not exploitable today, because publish assigns the whole
-/// map, but a missing rung on a ladder is worth putting back.
-const PROTECTED_PATCH_FIELDS: [&str; 17] = [
-    "id",
-    "sector",
-    "status",
-    "retentionLocked",
-    "retentionUntil",
-    "jwsSignature",
-    "publicJwsSignature",
-    "disclosureSignatures",
-    "seal",
-    "version",
-    "publishedAt",
-    "createdAt",
-    "supersedesId",
-    "schemaVersion",
-    "operatorIdentifier",
-    "facility",
-    "parentPassportRef",
-];
+/// - **`product_group` is added here.** It backs a real scalar column that this JSONB
+///   merge does not rewrite, so patching it in the doc would desync the two.
+///   Core has no column to protect.
+/// - **`componentRefs` is removed here.** Core protects the lineage edges
+///   because patching them on a *published* passport would leave the served body
+///   no longer verifying against its own signature. This path accepts drafts
+///   only (`update` refuses any non-`Draft` status), and a draft has no
+///   signature to break — a bill of materials is editable while it is still
+///   being assembled, which is the point of a draft. Its *upward* sibling
+///   `parentPassportRef` stays protected, because nothing applies it: it is
+///   stamped at create and read at verify.
+///
+/// `protected_patch_derivation_tests` holds both halves honest — the guard must
+/// equal core's value plus/minus these entries, and an entry that no longer
+/// diverges from core must be deleted rather than left as a stale exception.
+const ADDED_HERE: [&str; 1] = ["productGroup"];
+const REMOVED_HERE: [&str; 1] = ["componentRefs"];
+
+fn is_protected_patch_field(key: &str) -> bool {
+    if REMOVED_HERE.contains(&key) {
+        return false;
+    }
+    ADDED_HERE.contains(&key) || dpp_domain::PROTECTED_PATCH_FIELDS.contains(&key)
+}
 
 /// Apply a passport update (scalar columns + `doc`) inside a caller-supplied
 /// transaction. Shared by [`PgPassportRepo::update`] and the transactional
@@ -100,7 +93,7 @@ const PROTECTED_PATCH_FIELDS: [&str; 17] = [
 ///
 /// `||` is a shallow merge at the top level: the struct wins on every key it
 /// models, and keys it does not model survive. That is exactly the
-/// envelope/`sectorData` split — `sectorData` is fully modelled and versioned
+/// envelope/`productGroupData` split — `productGroupData` is fully modelled and versioned
 /// through the lens chain, so replacing it wholesale is correct; the envelope is
 /// the axis with no such mechanism.
 ///
@@ -118,7 +111,7 @@ pub(crate) async fn update_passport_in_tx(
         .map_err(|e| DppError::Internal(format!("serialize: {e}")))?;
     let res = sqlx::query(
         r#"UPDATE odal.passport SET
-             sector           = $2->>'sector',
+             product_group           = $2->>'productGroup',
              status           = COALESCE($2->>'status', status),
              retention_locked = COALESCE(($2->>'retentionLocked')::boolean, retention_locked),
              schema_version   = COALESCE($2->>'schemaVersion', schema_version),
@@ -140,12 +133,12 @@ pub(crate) async fn update_passport_in_tx(
 /// PostgreSQL implementation of [`PassportRepository`].
 ///
 /// Each method serialises to/from the `doc JSONB` column. Scalar columns
-/// (`sector`, `status`, `retention_locked`, …) are extracted from the JSON
+/// (`product_group`, `status`, `retention_locked`, …) are extracted from the JSON
 /// and stored redundantly as real columns to support indexed queries.
 pub struct PgPassportRepo {
     dal: PgDal,
     lenses: LensRegistry,
-    catalog: SectorCatalog,
+    catalog: ProductGroupCatalog,
 }
 
 impl PgPassportRepo {
@@ -154,7 +147,7 @@ impl PgPassportRepo {
         Self {
             dal,
             lenses: LensRegistry::new(),
-            catalog: SectorCatalog::new(),
+            catalog: ProductGroupCatalog::new(),
         }
     }
 
@@ -162,11 +155,11 @@ impl PgPassportRepo {
         serde_json::to_value(passport).map_err(|e| DppError::Internal(format!("serialize: {e}")))
     }
 
-    /// Deserialize a stored document, upcasting `sectorData` through the
-    /// registered lens chain first if it predates the sector's current
+    /// Deserialize a stored document, upcasting `productGroupData` through the
+    /// registered lens chain first if it predates the product group's current
     /// schema version — see `Passport::from_stored` in dpp-domain. Every
     /// passport read goes through this, not raw `serde_json::from_value`, so
-    /// a non-additive dpp-domain change to a persisted sector-data shape
+    /// a non-additive dpp-domain change to a persisted product group-data shape
     /// fails a specific document instead of every one at once.
     fn read_doc(&self, doc: serde_json::Value) -> Result<Passport, DppError> {
         Passport::from_stored(doc, &self.lenses, &self.catalog)
@@ -185,10 +178,10 @@ impl PassportRepository for PgPassportRepo {
         let mut tx = self.dal.begin().await?;
         sqlx::query(
             r#"INSERT INTO odal.passport
-                 (id, sector, status, retention_locked, schema_version,
+                 (id, product_group, status, retention_locked, schema_version,
                   created_at, updated_at, published_at, doc)
                VALUES ($1,
-                       $2->>'sector',
+                       $2->>'productGroup',
                        COALESCE($2->>'status','draft'),
                        COALESCE(($2->>'retentionLocked')::boolean, false),
                        COALESCE($2->>'schemaVersion','1.0.0'),
@@ -256,29 +249,58 @@ impl PassportRepository for PgPassportRepo {
             .transpose()
     }
 
-    /// Find a passport by exact compound identity (sector, GTIN, batch),
+    /// Find a passport by the GTIN in its `qrCodeUrl`, regardless of status.
+    ///
+    /// The by-GTIN counterpart of `find_by_id_any_status`, and it exists for the
+    /// same reason: a public route must be able to tell "no such GTIN" from
+    /// "that GTIN resolves to a suspended passport", because only the second is
+    /// a recall and only the second warrants `410 Gone`. Returning the passport
+    /// and leaving the lifecycle decision to the caller is what makes that
+    /// possible — storage says what is stored, not what is publicly visible.
+    ///
+    /// Same numeric-only guard as `find_published_by_gtin`: a `%` or `_` in an
+    /// untrusted value would otherwise widen the LIKE pattern and match an
+    /// arbitrary passport.
+    async fn find_by_gtin_any_status(&self, gtin: &str) -> Result<Option<Passport>, DppError> {
+        if gtin.is_empty() || !gtin.bytes().all(|b| b.is_ascii_digit()) {
+            return Ok(None);
+        }
+        let row = sqlx::query(
+            "SELECT doc FROM odal.passport \
+             WHERE doc->>'qrCodeUrl' LIKE '%/01/' || $1 || '/%' \
+             LIMIT 1",
+        )
+        .bind(gtin)
+        .fetch_optional(self.dal.pool())
+        .await
+        .map_err(db_err)?;
+        row.map(|r| self.read_doc(r.get::<serde_json::Value, _>("doc")))
+            .transpose()
+    }
+
+    /// Find a passport by exact compound identity (product group, GTIN, batch),
     /// across `Draft` and `Published` — backs the import delta-matcher.
     /// Indexed by `0019_passport_identity_index.sql`. GTIN is read from
-    /// `doc->'sectorData'->>'gtin'`: present for every sector except
+    /// `doc->'productGroupData'->>'gtin'`: present for every product group except
     /// `UnsoldGoods`/`Other`, which carry no GTIN field and so never match
     /// here — a discard-event report and an untyped catch-all, not a query bug.
     async fn find_by_identity(
         &self,
         identity: &ProductIdentity,
     ) -> Result<Option<Passport>, DppError> {
-        let sector_str = serde_json::to_value(&identity.sector)
+        let product_group_str = serde_json::to_value(&identity.product_group)
             .ok()
             .and_then(|v| v.as_str().map(str::to_owned))
-            .ok_or_else(|| DppError::Internal("failed to serialise sector".into()))?;
+            .ok_or_else(|| DppError::Internal("failed to serialise product_group".into()))?;
         let row = sqlx::query(
             "SELECT doc FROM odal.passport \
              WHERE status IN ('draft','active') \
-               AND sector = $1 \
-               AND doc->'sectorData'->>'gtin' = $2 \
+               AND product_group = $1 \
+               AND doc->'productGroupData'->>'gtin' = $2 \
                AND doc->>'batchId' IS NOT DISTINCT FROM $3 \
              LIMIT 1",
         )
-        .bind(&sector_str)
+        .bind(&product_group_str)
         .bind(&identity.gtin)
         .bind(identity.batch_id.as_deref())
         .fetch_optional(self.dal.pool())
@@ -323,10 +345,10 @@ impl PassportRepository for PgPassportRepo {
         // does not rewrite, so patching them would bypass the state machine and
         // desync the doc from its enforcing column.
         if let Some(obj) = delta.as_object() {
-            let mut forbidden: Vec<&str> = PROTECTED_PATCH_FIELDS
-                .iter()
-                .copied()
-                .filter(|k| obj.contains_key(*k))
+            let mut forbidden: Vec<&str> = obj
+                .keys()
+                .map(String::as_str)
+                .filter(|k| is_protected_patch_field(k))
                 .collect();
             if !forbidden.is_empty() {
                 forbidden.sort_unstable();
@@ -445,5 +467,53 @@ impl PassportRepository for PgPassportRepo {
         .map_err(db_err)?;
         tx.commit().await.map_err(db_err)?;
         Ok(total.max(0) as u64)
+    }
+}
+
+#[cfg(test)]
+mod protected_patch_derivation_tests {
+    use super::{ADDED_HERE, REMOVED_HERE, is_protected_patch_field};
+
+    /// The backend's guard must equal core's, plus/minus exactly the declared
+    /// divergences — and it is checked against core's live value, not a copy.
+    ///
+    /// This is the test the hand-typed list never had. Its predecessor asserted
+    /// two keys (`retentionLocked`, `status`), both of which were present in
+    /// both lists the whole time, so the three entries that actually drifted
+    /// were covered by nothing.
+    #[test]
+    fn guard_equals_core_plus_declared_divergences() {
+        for key in dpp_domain::PROTECTED_PATCH_FIELDS {
+            let expected = !REMOVED_HERE.contains(key);
+            assert_eq!(
+                is_protected_patch_field(key),
+                expected,
+                "core protects `{key}`; this backend must too unless it is in REMOVED_HERE"
+            );
+        }
+        for key in ADDED_HERE {
+            assert!(
+                is_protected_patch_field(key),
+                "`{key}` is declared as added here but is not protected"
+            );
+        }
+    }
+
+    /// A divergence that no longer diverges is a stale exception — it reads as a
+    /// deliberate difference while being none, and hides the next real one.
+    #[test]
+    fn declared_divergences_are_real() {
+        for key in ADDED_HERE {
+            assert!(
+                !dpp_domain::PROTECTED_PATCH_FIELDS.contains(&key),
+                "`{key}` is in ADDED_HERE but core already protects it — drop the entry"
+            );
+        }
+        for key in REMOVED_HERE {
+            assert!(
+                dpp_domain::PROTECTED_PATCH_FIELDS.contains(&key),
+                "`{key}` is in REMOVED_HERE but core does not protect it — drop the entry"
+            );
+        }
     }
 }

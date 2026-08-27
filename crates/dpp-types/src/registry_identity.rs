@@ -35,7 +35,7 @@ pub struct Facility {
 }
 
 /// Request body for `POST /api/v1/facilities`.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CreateFacilityRequest {
     pub name: String,
@@ -69,7 +69,7 @@ pub struct OperatorIdentifier {
 }
 
 /// Request body for `POST /api/v1/operator-identifiers`.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CreateOperatorIdentifierRequest {
     pub scheme: String,

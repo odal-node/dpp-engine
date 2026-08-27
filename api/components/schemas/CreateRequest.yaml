@@ -11,11 +11,11 @@ properties:
     type: string
     description: Human-readable product name. Must not be blank.
     example: EcoCell Pro 48V
-  sector:
+  productGroup:
     type: string
     description: |
-      EU ESPR sector (the dispatch key), e.g. `battery`, `textile`,
-      `electronics`. Optional — derived from `sectorData` when omitted.
+      EU ESPR product group (the dispatch key), e.g. `battery`, `textile`,
+      `electronics`. Optional — derived from `productGroupData` when omitted.
     example: battery
   manufacturer:
     $ref: ./ManufacturerInfo.yaml
@@ -25,17 +25,36 @@ properties:
       $ref: ./MaterialEntry.yaml
   co2ePerUnit:
     type: number
-    description: CO₂ equivalent per unit in kg
+    minimum: 0
+    description: >-
+      CO₂ equivalent per unit, in kg. Must be finite and non-negative;
+      anything else is rejected with `422`.
+
+      Supplied here as a scalar and stored as a `CarbonFootprint` object, so the
+      value echoed back on `PassportResponse` is `{ "valueKg": … }` rather than
+      the bare number sent. The lifecycle stage and system boundary that make
+      two figures comparable cannot be set through this route.
     example: 4.2
   repairabilityScore:
     type: number
     minimum: 0
-    maximum: 100
+    maximum: 10
     description: >-
-      Non-regulatory repairability indicator (0–100). NOT the EU 2023/1669
-      repairability class. Optional.
-  sectorData:
-    $ref: ./SectorData.yaml
+      Non-regulatory repairability heuristic, **0–10**. Not EN 45554 or EU
+      2023/1669 — those have prescribed methodologies this does not implement.
+      Anything outside 0–10 is rejected with `422`.
+
+      Supplied here as a scalar and stored as a `RepairabilityScore` object, so
+      the value echoed back on `PassportResponse` is `{ "overall": … }` rather
+      than the bare number sent.
+    example: 7.5
+  productGroupData:
+    description: >-
+      Optional at create; an explicit `null` is accepted and equivalent to
+      omitting it. Publish validates it only when present.
+    anyOf:
+      - $ref: ./ProductGroupData.yaml
+      - type: 'null'
   batchId:
     type: string
     description: Optional batch or lot identifier
@@ -57,8 +76,8 @@ properties:
   schemaVersion:
     type: string
     description: |
-      Sector schema version. Optional, and the only accepted value is the
-      sector's **current** version — omitting it is equivalent. Any other
+      Product group schema version. Optional, and the only accepted value is the
+      product group's **current** version — omitting it is equivalent. Any other
       value is rejected with `422`.
 
       It is not the caller's to choose: the stored version selects the
@@ -78,3 +97,10 @@ properties:
       Cross-operator references to this product's constituent passports (its
       bill of materials). Local cycles / over-depth are refused at
       create/update; immutable after publish.
+  commodityCode:
+    type: string
+    description: >-
+      Customs tariff classification — HS-6, CN-8 or TARIC-10 (6, 8 or 10 digits,
+      no separators). Registration data the EU registry verifies against the
+      ranges its product group permits.
+    example: '85076000'

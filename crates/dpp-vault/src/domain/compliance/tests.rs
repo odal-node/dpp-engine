@@ -8,10 +8,13 @@
 use chrono::NaiveDate;
 
 use dpp_domain::Gtin;
-use dpp_domain::domain::sector::{
-    BatteryChemistry, BatteryData, BatteryType, SectorData, TextileData,
+use dpp_domain::product_group::{
+    BatteryChemistry, BatteryData, BatteryType, ProductGroupData, TextileData,
 };
-use dpp_domain::ports::compliance::{ComplianceErrorKind, ComplianceStatus, ComplianceStrategy};
+use dpp_domain::{
+    compliance::{ComplianceErrorKind, ComplianceStatus},
+    ports::compliance::ComplianceStrategy,
+};
 
 use super::CalcBatteryStrategy;
 
@@ -20,8 +23,8 @@ fn day(y: i32, m: u32, d: u32) -> NaiveDate {
 }
 
 /// An EV battery whose declared shares clear Art. 8(2) and fail Art. 8(3).
-fn ev_battery() -> SectorData {
-    SectorData::Battery(Box::new(BatteryData {
+fn ev_battery() -> ProductGroupData {
+    ProductGroupData::Battery(Box::new(BatteryData {
         gtin: Gtin::parse("09506000134352").expect("valid gtin"),
         battery_chemistry: BatteryChemistry::Nmc,
         battery_type: BatteryType::Ev,
@@ -49,7 +52,7 @@ fn battery_defaults() -> BatteryData {
     .expect("a minimal battery deserialises")
 }
 
-fn shortfall_codes(r: &dpp_domain::ports::compliance::ComplianceResult) -> Vec<&str> {
+fn shortfall_codes(r: &dpp_domain::compliance::ComplianceResult) -> Vec<&str> {
     r.warnings.iter().map(|w| w.code.as_str()).collect()
 }
 
@@ -154,7 +157,7 @@ fn a_missing_market_date_is_reported_rather_than_guessed() {
 /// not measured against a minimum it cannot have.
 #[test]
 fn shares_are_scoped_to_the_metals_the_chemistry_contains() {
-    let SectorData::Battery(mut b) = ev_battery() else {
+    let ProductGroupData::Battery(mut b) = ev_battery() else {
         unreachable!()
     };
     b.battery_chemistry = BatteryChemistry::Lfp;
@@ -164,7 +167,7 @@ fn shares_are_scoped_to_the_metals_the_chemistry_contains() {
     b.recycled_content_lithium_pct = Some(12.0);
 
     let result = CalcBatteryStrategy
-        .compute(&SectorData::Battery(b), Some(day(2036, 8, 18)))
+        .compute(&ProductGroupData::Battery(b), Some(day(2036, 8, 18)))
         .expect("battery data");
 
     let codes = shortfall_codes(&result);
@@ -178,13 +181,13 @@ fn shares_are_scoped_to_the_metals_the_chemistry_contains() {
 /// Portable batteries are outside Art. 8 entirely — no finding, no receipt.
 #[test]
 fn a_portable_battery_is_outside_art8() {
-    let SectorData::Battery(mut b) = ev_battery() else {
+    let ProductGroupData::Battery(mut b) = ev_battery() else {
         unreachable!()
     };
     b.battery_type = BatteryType::Portable;
 
     let result = CalcBatteryStrategy
-        .compute(&SectorData::Battery(b), Some(day(2036, 8, 18)))
+        .compute(&ProductGroupData::Battery(b), Some(day(2036, 8, 18)))
         .expect("battery data");
 
     assert!(shortfall_codes(&result).is_empty(), "{result:?}");
@@ -207,8 +210,8 @@ fn the_declared_metrics_are_still_lifted() {
 
 /// A routing mistake is reportable, not fatal.
 #[test]
-fn another_sectors_data_is_refused() {
-    let textile = SectorData::Textile(Box::new(
+fn another_product_groups_data_is_refused() {
+    let textile = ProductGroupData::Textile(Box::new(
         serde_json::from_value::<TextileData>(serde_json::json!({
             "gtin": "09506000134352",
             "fibreComposition": [{"fibre": "cotton", "pct": 100.0}],

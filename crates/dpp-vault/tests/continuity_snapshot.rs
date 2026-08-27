@@ -17,14 +17,11 @@ use chrono::Utc;
 
 use dpp_dal::in_memory_repo::InMemoryPassportRepo;
 use dpp_domain::{
-    DppError, GhostArchive, GhostRegistrySync,
-    compliance::passthrough_registry::PassthroughRegistry,
-    domain::{
-        eol::{DeactivationReason, EolEvent},
-        passport::{FacilitySnapshot, ManufacturerInfo, Passport, PassportId},
-        sector::Sector,
-        status::PassportStatus,
-    },
+    DppError, GhostArchive, GhostRegistrySync, PassthroughRegistry,
+    eol::{DeactivationReason, EolEvent},
+    passport::{FacilitySnapshot, ManufacturerInfo, Passport, PassportId},
+    product_group::ProductGroup,
+    status::PassportStatus,
 };
 use dpp_types::{
     api_key::ApiKeyScope,
@@ -190,7 +187,9 @@ fn draft_passport() -> Passport {
         id: PassportId::new(),
         batch_id: None,
         product_name: "Continuity Snapshot Widget".into(),
-        sector: Sector::Textile,
+        product_group: ProductGroup::Textile,
+        applicable_instruments: Vec::new(),
+        granularity: None,
         manufacturer: ManufacturerInfo {
             name: "Snapshot Test GmbH".into(),
             address: "Berlin, DE".into(),
@@ -201,7 +200,7 @@ fn draft_passport() -> Passport {
         repairability_score: None,
         compliance_result: None,
         lint_result: None,
-        sector_data: None,
+        product_group_data: None,
         status: PassportStatus::Draft,
         qr_code_url: None,
         jws_signature: None,

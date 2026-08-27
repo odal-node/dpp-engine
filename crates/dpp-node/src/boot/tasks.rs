@@ -314,8 +314,8 @@ fn set_seal_gauges(c: &SealOutboxCounts) {
 pub async fn spawn_seal_drain(
     outbox: Arc<dyn SealOutbox>,
     seal: Arc<dyn SealPort>,
-    key_ref: dpp_domain::ports::seal::SealCredentialRef,
-    conformance_level: dpp_domain::ports::seal::SealConformanceLevel,
+    key_ref: dpp_domain::seal::SealCredentialRef,
+    conformance_level: dpp_domain::seal::SealConformanceLevel,
 ) {
     match outbox.status_counts().await {
         Ok(c) => {

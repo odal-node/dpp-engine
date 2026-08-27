@@ -25,15 +25,11 @@ use uuid::Uuid;
 use dpp_dal::pg::{PgDal, PgPassportRepo, PgRegistryTransferRepo, sqlx};
 use dpp_dal::test_harness::start_pg;
 use dpp_domain::{
-    domain::{
-        passport::{ManufacturerInfo, Passport, PassportId},
-        sector::Sector,
-        status::PassportStatus,
-        transfer::{
-            OperatorRole, ResponsibleOperator, TransferChain, TransferReason, TransferRecord,
-        },
-    },
+    passport::{ManufacturerInfo, Passport, PassportId},
     ports::passport_repo::PassportRepository,
+    product_group::ProductGroup,
+    status::PassportStatus,
+    transfer::{OperatorRole, ResponsibleOperator, TransferChain, TransferReason, TransferRecord},
 };
 use dpp_types::{RegistryTransferOutbox, RegistryTransferStatus};
 
@@ -44,7 +40,9 @@ fn published_passport() -> Passport {
         id: PassportId::new(),
         batch_id: None,
         product_name: "Transferred Battery".into(),
-        sector: Sector::Battery,
+        product_group: ProductGroup::Battery,
+        applicable_instruments: Vec::new(),
+        granularity: None,
         manufacturer: ManufacturerInfo {
             name: "TestCorp GmbH".into(),
             address: "Berlin, DE".into(),
@@ -55,7 +53,7 @@ fn published_passport() -> Passport {
         repairability_score: None,
         compliance_result: None,
         lint_result: None,
-        sector_data: None,
+        product_group_data: None,
         status: PassportStatus::Published,
         qr_code_url: None,
         jws_signature: None,
@@ -99,7 +97,7 @@ fn completed_record(passport_id: PassportId, from: &str, to: &str) -> TransferRe
         to_operator: operator(&format!("did:web:{to}.example"), to),
         reason: TransferReason::Sale,
         from_signature: Some(format!("jws-from-{from}")),
-        to_signature: Some(format!("jws-to-{to}")),
+        node_acceptance_attestation: Some(format!("jws-to-{to}")),
         initiated_at: Utc::now(),
         completed_at: Some(Utc::now()),
         rejected_at: None,
@@ -158,7 +156,10 @@ async fn accepting_a_transfer_enqueues_a_pending_notification() {
     let stored: TransferRecord =
         serde_json::from_value(due[0].payload.clone()).expect("payload is a TransferRecord");
     assert_eq!(stored.from_signature.as_deref(), Some("jws-from-Acme"));
-    assert_eq!(stored.to_signature.as_deref(), Some("jws-to-Beta"));
+    assert_eq!(
+        stored.node_acceptance_attestation.as_deref(),
+        Some("jws-to-Beta")
+    );
 
     // And the chain was written in the same transaction.
     let chain_rows: i64 =

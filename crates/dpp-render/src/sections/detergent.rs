@@ -1,9 +1,9 @@
-//! Detergent sector HTML section.
+//! Detergent product group HTML section.
 
 use crate::fields::{array_len_field, bool_field, str_field};
 
 pub(super) fn build_detergent_section(p: &serde_json::Value) -> String {
-    let sd = match p.get("sectorData") {
+    let sd = match p.get("productGroupData") {
         Some(v) => v,
         None => return String::new(),
     };
@@ -37,7 +37,7 @@ mod tests {
     #[test]
     fn full_data_populates_all_fields() {
         let p = crate::sections::typed_fixture(serde_json::json!({
-            "sector": "detergent",
+            "productGroup": "detergent",
             "gtin": "09506000134352",
             "productType": "Laundry Detergent",
             "format": "Liquid",
@@ -58,21 +58,21 @@ mod tests {
 
     #[test]
     fn not_biodegradable_renders_the_negative_message() {
-        let p = serde_json::json!({"sectorData": {"biodegradable": false}});
+        let p = serde_json::json!({"productGroupData": {"biodegradable": false}});
         let html = build_detergent_section(&p);
         assert!(html.contains("Not fully biodegradable"));
     }
 
     #[test]
     fn missing_fields_fall_back_to_dashes() {
-        let p = serde_json::json!({"sectorData": {}});
+        let p = serde_json::json!({"productGroupData": {}});
         let html = build_detergent_section(&p);
         assert!(html.contains("Detergent Information"));
         assert!(html.contains(">-<"));
     }
 
     #[test]
-    fn absent_sector_data_returns_empty_string() {
+    fn absent_product_group_data_returns_empty_string() {
         let p = serde_json::json!({});
         assert_eq!(build_detergent_section(&p), "");
     }

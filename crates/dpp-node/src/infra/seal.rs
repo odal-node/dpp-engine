@@ -21,7 +21,10 @@
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
-use dpp_domain::ports::seal::{SealConformanceLevel, SealCredentialRef, SealPort};
+use dpp_domain::{
+    ports::seal::SealPort,
+    seal::{SealConformanceLevel, SealCredentialRef},
+};
 use dpp_types::trust::TrustMode;
 
 /// A selected seal backend, and the three facts about it the node needs.

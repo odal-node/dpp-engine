@@ -71,7 +71,7 @@ dpp-engine/
     dpp-resolver/          # Public QR resolver (4 endpoints)
     dpp-integrator/        # CSV/XLSX bulk import (4 endpoints)
     dpp-common/            # Event bus trait, telemetry, RFC 7807
-    dpp-plugin-host/       # Wasmtime sandbox for sector Wasm plugins
+    dpp-plugin-host/       # Wasmtime sandbox for product group Wasm plugins
     dpp-node/              # MVP single binary
     dpp-seal/              # eIDAS qualified seal adapter stub (NOT YET WIRED)
     dpp-factor-data/       # Licensed LCI factor data store stub (NOT YET WIRED)

@@ -33,10 +33,11 @@ mod transfer;
 use std::sync::Arc;
 
 use dpp_common::event::{DppEvent, EventBus};
-use dpp_domain::domain::passport::PassportId;
-use dpp_domain::ports::{
-    archive::ArchivePort, compliance::ComplianceRegistry, identity_port::IdentityPort,
-    passport_repo::PassportRepository, registry_sync::RegistrySyncPort,
+use dpp_domain::passport::PassportId;
+use dpp_domain::{
+    ports::archive::ArchivePort, ports::compliance::ComplianceRegistry,
+    ports::identity::IdentityPort, ports::passport_repo::PassportRepository,
+    ports::registry_sync::RegistrySyncPort,
 };
 use dpp_types::{
     STANDALONE_OPERATOR_ID, audit::AuditRepository, evidence::EvidenceDossierRepository,
@@ -319,32 +320,67 @@ impl PassportService {
     }
 }
 
-/// Process-wide sector catalog (manifests parsed once). Shared across the
+/// Process-wide product group catalog (manifests parsed once). Shared across the
 /// split lifecycle files — `super::catalog()` from any of them.
-fn catalog() -> &'static dpp_domain::SectorCatalog {
-    static CATALOG: std::sync::OnceLock<dpp_domain::SectorCatalog> = std::sync::OnceLock::new();
-    CATALOG.get_or_init(dpp_domain::SectorCatalog::new)
+fn catalog() -> &'static dpp_domain::ProductGroupCatalog {
+    static CATALOG: std::sync::OnceLock<dpp_domain::ProductGroupCatalog> =
+        std::sync::OnceLock::new();
+    CATALOG.get_or_init(dpp_domain::ProductGroupCatalog::new)
 }
 
-/// The retention floor applied when the catalog has no entry for a sector.
+/// Process-wide instrument catalog (manifests parsed once). The product group
+/// catalog no longer carries any law — status, dates and retention are properties
+/// of an act reaching a group, and a group may be reached by several.
+pub(crate) fn instruments() -> &'static dpp_domain::InstrumentCatalog {
+    static CATALOG: std::sync::OnceLock<dpp_domain::InstrumentCatalog> = std::sync::OnceLock::new();
+    CATALOG.get_or_init(dpp_domain::InstrumentCatalog::new)
+}
+
+/// Whether a **binding passport obligation** is live for `product_group_key` —
+/// some act reaching it is in force *and* requires a passport.
 ///
-/// Not an invented number: every sector the catalog does describe declares ten
+/// Both halves are needed and neither implies the other, which is the whole
+/// reason this is a function rather than a flag on the product group:
+///
+/// - ESPR Arts. 24-25 bind today and impose no passport at all; and
+/// - the ecodesign and energy-labelling pair for mobile devices binds today
+///   while its information duty is discharged through EPREL instead of a
+///   passport, under ESPR Art. 9(4)(b).
+///
+/// Asking only "is it in force" answers *yes* for both, which is how passport
+/// obligations that do not exist came to be enforced at publish.
+pub(crate) fn passport_obligation_live(product_group_key: &str) -> bool {
+    let catalog = instruments();
+    !catalog.determinable_for(product_group_key).is_empty()
+        && catalog.passport_required_for(product_group_key)
+}
+
+/// The retention floor applied when the catalog has no entry for a product group.
+///
+/// Not an invented number: every product group the catalog does describe declares ten
 /// years, and `docs/legal/DPP-RETENTION.md` records ">= 10 years" as the floor
 /// across all of them, pending delegated acts included.
 ///
-/// A sector with no catalog entry is reachable — a passport carrying no sector
-/// data at all resolves to `Sector::Other`, and the open sector axis means a
+/// A product group with no catalog entry is reachable — a passport carrying no product group
+/// data at all resolves to `ProductGroup::Other`, and the open product group axis means a
 /// passport can name a product group this build has never seen. Refusing to
 /// publish those would be a larger behaviour change than sourcing retention
 /// warrants, so the floor applies and the data is kept at least as long as any
 /// known obligation requires.
 pub(crate) const RETENTION_FLOOR_YEARS: u32 = 10;
 
-/// Years of retention for a sector: the catalog's value, else the floor.
-pub(crate) fn retention_years_for(sector: &dpp_domain::Sector) -> u32 {
-    catalog()
-        .retention_years(sector.catalog_key())
-        .unwrap_or(RETENTION_FLOOR_YEARS)
+/// Years of retention for a product group: the longest any applicable act
+/// imposes, else the floor.
+///
+/// The **maximum** across acts, not a single figure, because retention periods
+/// are floors: a record kept long enough for the longest satisfies all of them,
+/// and a product group reached by two acts owes both. The fold and its
+/// provenance marker live in the instrument catalog; only the number is needed
+/// here, since a passport is either kept long enough or it is not.
+pub(crate) fn retention_years_for(product_group: &dpp_domain::ProductGroup) -> u32 {
+    instruments()
+        .retention_for(product_group.catalog_key())
+        .map_or(RETENTION_FLOOR_YEARS, |(years, _basis)| years)
 }
 
 /// Process-wide versioned JSON Schema registry (parsed once).
@@ -358,9 +394,9 @@ fn schema_registry() -> &'static dpp_domain::schemas::VersionedSchemaRegistry {
 mod snapshot_render_tests {
     use base64::Engine;
     use chrono::Utc;
-    use dpp_domain::domain::{
+    use dpp_domain::{
         passport::{ManufacturerInfo, Passport, PassportId},
-        sector::Sector,
+        product_group::ProductGroup,
         status::PassportStatus,
     };
 
@@ -380,7 +416,9 @@ mod snapshot_render_tests {
             id: PassportId::new(),
             batch_id: None,
             product_name: "Snapshot Test".into(),
-            sector: Sector::Battery,
+            product_group: ProductGroup::Battery,
+            applicable_instruments: Vec::new(),
+            granularity: None,
             manufacturer: ManufacturerInfo {
                 name: "ACME".into(),
                 address: "1 Street".into(),
@@ -391,7 +429,7 @@ mod snapshot_render_tests {
             repairability_score: None,
             compliance_result: None,
             lint_result: None,
-            sector_data: None,
+            product_group_data: None,
             status: PassportStatus::Published,
             qr_code_url: Some("https://id.example/01/09506000134352".into()),
             jws_signature: Some("full.jws.signature".into()),

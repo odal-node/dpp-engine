@@ -17,8 +17,8 @@ async fn test_passthrough_battery_stores_result() {
         "productName": "Compliance Battery",
         "manufacturer": {"name": "Compliance Inc", "address": "Test City"},
         "materials": [{"name": "Lithium", "weightKg": 1.2}],
-        "sectorData": {
-            "sector": "battery",
+        "productGroupData": {
+            "productGroup": "battery",
             "gtin": "09506000134352",
             "batteryChemistry": "NMC",
             "batteryType": "portable",
@@ -60,8 +60,8 @@ async fn test_passthrough_textile_stores_result() {
         "productName": "Compliance Textile",
         "manufacturer": {"name": "Textile Compliance Ltd", "address": "UK"},
         "materials": [{"name": "Cotton", "weightKg": 0.15}],
-        "sectorData": {
-            "sector": "textile",
+        "productGroupData": {
+            "productGroup": "textile",
             "gtin": "09506000134352",
             "fibreComposition": [
                 {"fibre": "wool", "pct": 100.0}

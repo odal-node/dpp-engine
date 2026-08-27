@@ -16,7 +16,7 @@ use super::error::{
 
 /// `POST /api/v1/dpp/{dppId}/archive` — permanently archive a published or suspended passport.
 ///
-/// Blocked by the ESPR retention guard until the sector's minimum retention
+/// Blocked by the ESPR retention guard until the product group's minimum retention
 /// period has elapsed from `published_at`. Returns `422` on a policy violation.
 pub async fn archive_handler(
     State(state): State<AppState>,
@@ -32,7 +32,7 @@ pub async fn archive_handler(
     };
 
     match state.service.archive(passport_id, &auth).await {
-        Ok(p) => (StatusCode::OK, Json(p)).into_response(),
+        Ok(p) => (StatusCode::OK, Json(crate::api::PassportResponse::from(&p))).into_response(),
         Err(dpp_domain::DppError::NotFound(_)) => not_found_error("DPP not found."),
         Err(dpp_domain::DppError::InvalidTransition { .. }) => {
             conflict_error("DPP cannot be archived from its current state.")

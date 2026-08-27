@@ -11,8 +11,8 @@
 
 use std::sync::Arc;
 
-use dpp_domain::domain::transfer::TransferRecord;
 use dpp_domain::ports::registry_sync::{RegistryStatus, RegistrySyncPort};
+use dpp_domain::transfer::TransferRecord;
 use dpp_types::{RegistrySyncOutbox, RegistryTransferOutbox};
 
 /// Outcome tallies for one drain pass — surfaced to metrics and asserted in tests.
@@ -132,13 +132,11 @@ mod tests {
     use async_trait::async_trait;
     use chrono::Utc;
     use dpp_domain::DppError;
-    use dpp_domain::domain::passport::PassportId;
-    use dpp_domain::domain::transfer::{
-        OperatorRole, ResponsibleOperator, TransferChain, TransferReason,
-    };
+    use dpp_domain::passport::PassportId;
     use dpp_domain::ports::registry_sync::{
         RegistrationRequest, RegistryIdentifiers, RegistryRecord,
     };
+    use dpp_domain::transfer::{OperatorRole, ResponsibleOperator, TransferChain, TransferReason};
     use dpp_types::{
         RegistryStatusIntent, RegistrySyncCounts, RegistrySyncRow, RegistrySyncStatus,
         RegistryTransferCounts, RegistryTransferRow, RegistryTransferStatus,
@@ -164,7 +162,7 @@ mod tests {
             to_operator: operator("did:web:new.example", "New Operator GmbH"),
             reason: TransferReason::Sale,
             from_signature: Some("jws-from".to_owned()),
-            to_signature: Some("jws-to".to_owned()),
+            node_acceptance_attestation: Some("jws-to".to_owned()),
             initiated_at: Utc::now(),
             completed_at: Some(Utc::now()),
             rejected_at: None,
@@ -243,7 +241,7 @@ mod tests {
     impl RegistrySyncOutbox for FakeRegistrations {
         async fn commit_publish(
             &self,
-            _passport: &dpp_domain::domain::passport::Passport,
+            _passport: &dpp_domain::passport::Passport,
             _payload: serde_json::Value,
         ) -> Result<(), DppError> {
             unreachable!("the transfer drain never registers")
@@ -429,7 +427,7 @@ mod tests {
         assert_eq!(sent.from_operator.name, "Old Operator GmbH");
         assert_eq!(sent.to_operator.name, "New Operator GmbH");
         assert_eq!(sent.from_signature.as_deref(), Some("jws-from"));
-        assert_eq!(sent.to_signature.as_deref(), Some("jws-to"));
+        assert_eq!(sent.node_acceptance_attestation.as_deref(), Some("jws-to"));
         assert_eq!(
             registry_id, "EU-REG-1",
             "the notification must name the registry record it amends"

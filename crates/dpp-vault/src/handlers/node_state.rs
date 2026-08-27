@@ -14,22 +14,30 @@ use super::error::internal_error;
 
 /// Setup/readiness state for a node, used by the CLI to keep `odal bootstrap`
 /// idempotent.
+/// Public so the OpenAPI contract test can serialise it and check the shape
+/// against `components/schemas/NodeState`. A response type only the handler can
+/// name is a response type nothing can gate.
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
-struct NodeState {
+pub struct NodeState {
     /// True once the node has been claimed — i.e. at least one active API key
     /// has been minted. Re-running bootstrap on a claimed node is refused.
-    bootstrapped: bool,
+    pub bootstrapped: bool,
     /// True once the operator's responsible-economic-operator identity is
     /// complete enough to publish passports.
-    operator_complete: bool,
+    pub operator_complete: bool,
     /// Deployment profile and per-port trust modes — the ghost-honesty signal.
     /// Absent on a standalone vault, which resolves no trust ports.
+    ///
+    /// Untyped and flattened, so the keys it contributes (`profile`,
+    /// `trustMode`) are **not** covered by the OpenAPI contract test the way
+    /// the typed fields are — a `serde_json::Value` has no field list to check
+    /// a schema against. Giving this a real type is the way to close that.
     #[serde(skip_serializing_if = "Option::is_none", flatten)]
-    trust: Option<serde_json::Value>,
+    pub trust: Option<serde_json::Value>,
     /// Active Compliance Current ruleset version.
     #[serde(skip_serializing_if = "Option::is_none")]
-    ruleset_version: Option<String>,
+    pub ruleset_version: Option<String>,
 }
 
 /// `GET /api/v1/node/state` — report whether the node is claimed, whether the

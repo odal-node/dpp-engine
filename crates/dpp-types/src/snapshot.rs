@@ -23,7 +23,7 @@
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
-use dpp_domain::{DppError, domain::passport::PassportId};
+use dpp_domain::{DppError, passport::PassportId};
 
 /// Object-storage sink for pre-rendered public passport snapshots, keyed by
 /// passport id.

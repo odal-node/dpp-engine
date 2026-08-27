@@ -6,7 +6,7 @@
 //!
 //! The fixture below is shaped like a genuine **Public**-tier view, i.e. what
 //! `dpp-vault::public_view` would actually hand this crate — it deliberately
-//! omits `batchId` (and `lintResult`), which `SectorAccessPolicy::passport_default`
+//! omits `batchId` (and `lintResult`), which `ProductGroupAccessPolicy::passport_default`
 //! (dpp-core/crates/dpp-crypto/src/access/policy.rs) tiers as Professional, not
 //! Public, because both are mutable after publish and can't sit inside the
 //! signed public payload. This crate itself does no filtering — it renders
@@ -23,8 +23,8 @@ fn main() {
         "productName": "Organic Cotton T-Shirt",
         "manufacturer": { "name": "Sample Textiles Co." },
         "status": "active",
-        "sectorData": {
-            "sector": "textile",
+        "productGroupData": {
+            "productGroup": "textile",
             "gtin": "09506000134352",
             "countryOfOrigin": "Germany",
             "careInstructions": "Machine wash cold, tumble dry low",

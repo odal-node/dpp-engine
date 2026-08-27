@@ -23,7 +23,7 @@ pub async fn read_handler(
     };
 
     match state.service.find_by_id(passport_id).await {
-        Ok(p) => (StatusCode::OK, Json(p)).into_response(),
+        Ok(p) => (StatusCode::OK, Json(crate::api::PassportResponse::from(&p))).into_response(),
         Err(dpp_domain::DppError::NotFound(_)) => not_found_error("DPP not found."),
         Err(e) => internal_error(e),
     }

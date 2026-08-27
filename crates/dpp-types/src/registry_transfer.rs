@@ -37,10 +37,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use dpp_domain::{
-    DppError,
-    domain::{passport::PassportId, transfer::TransferChain},
-};
+use dpp_domain::{DppError, passport::PassportId, transfer::TransferChain};
 
 /// Queue state of one transfer notification.
 ///

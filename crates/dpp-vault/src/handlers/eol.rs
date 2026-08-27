@@ -6,8 +6,8 @@ use axum::{
     http::StatusCode,
     response::IntoResponse,
 };
-use dpp_domain::domain::eol::{DeactivationReason, EolEvent};
-use serde::Deserialize;
+use dpp_domain::eol::{DeactivationReason, EolEvent};
+use serde::{Deserialize, Serialize};
 
 use crate::{middleware::auth::AuthContext, state::AppState};
 
@@ -17,7 +17,7 @@ use super::error::{
 
 /// EOL request body: the typed reason plus optional circularity data. The
 /// passport id comes from the path; `declaredAt` is server-stamped.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct EolRequest {
     /// Why the passport is being deactivated (recycled / destroyed / exported / lost).
@@ -56,7 +56,7 @@ pub async fn eol_handler(
     eol.notes = body.notes;
 
     match state.service.declare_eol(passport_id, eol, &auth).await {
-        Ok(p) => (StatusCode::OK, Json(p)).into_response(),
+        Ok(p) => (StatusCode::OK, Json(crate::api::PassportResponse::from(&p))).into_response(),
         Err(dpp_domain::DppError::NotFound(_)) => not_found_error("DPP not found."),
         Err(dpp_domain::DppError::InvalidTransition { .. }) => {
             conflict_error("DPP cannot be deactivated from its current state.")

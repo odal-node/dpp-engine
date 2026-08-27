@@ -1,0 +1,25 @@
+type: object
+description: |
+  Product group-specific data, **internally tagged** by a `productGroup` discriminator
+  (`#[serde(tag = "product group")]`) — e.g.
+  `{ "product group": "battery", "gtin": "…", "batteryChemistry": "LFP", … }`.
+  The remaining fields are product group-specific and validated against the
+  product group's versioned JSON schema. Sectors include `battery`, `textile`,
+  `steel`, `aluminium`, `tyre`, `electronics`, and others.
+required:
+  - productGroup
+discriminator:
+  propertyName: product group
+properties:
+  productGroup:
+    type: string
+    example: battery
+additionalProperties: true
+example:
+  productGroup: battery
+  gtin: '09506000134352'
+  batteryChemistry: LFP
+  nominalVoltageV: 48
+  nominalCapacityAh: 100
+  expectedLifetimeCycles: 3000
+  co2ePerUnitKg: 45.2

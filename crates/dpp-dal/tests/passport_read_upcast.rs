@@ -10,15 +10,15 @@
 //! Docker/Postgres required.
 
 use dpp_domain::Passport;
-use dpp_domain::catalog::SectorCatalog;
-use dpp_domain::domain::error::DppError;
+use dpp_domain::catalog::ProductGroupCatalog;
+use dpp_domain::error::DppError;
 use dpp_domain::schemas::lens::LensRegistry;
 use serde_json::json;
 
 fn old_textile_doc() -> serde_json::Value {
     json!({
         "id": "019f3aa5-579d-73c1-a3e6-a8002df5e06b",
-        "sector": "textile",
+        "productGroup": "textile",
         "status": "draft",
         "batchId": null,
         "version": 1,
@@ -26,8 +26,8 @@ fn old_textile_doc() -> serde_json::Value {
         "updatedAt": "2026-07-01T00:00:00Z",
         "materials": [],
         "qrCodeUrl": null,
-        "sectorData": {
-            "sector": "textile",
+        "productGroupData": {
+            "productGroup": "textile",
             "gtin": "09506000134352",
             "careInstructions": "Hand wash cold.",
             "fibreComposition": [{ "pct": 100.0, "fibre": "linen" }],
@@ -47,29 +47,35 @@ fn old_textile_doc() -> serde_json::Value {
 #[test]
 fn a_document_written_under_the_old_country_key_reads_successfully() {
     let lenses = LensRegistry::new();
-    let catalog = SectorCatalog::new();
+    let catalog = ProductGroupCatalog::new();
 
     let passport = Passport::from_stored(old_textile_doc(), &lenses, &catalog)
         .expect("the registered textile 1.1.0 -> 1.2.0 lens must bridge this document");
 
-    let Some(dpp_domain::domain::sector::SectorData::Textile(textile)) = passport.sector_data
+    let Some(dpp_domain::product_group::ProductGroupData::Textile(textile)) =
+        passport.product_group_data
     else {
-        panic!("expected textile sector data");
+        panic!("expected textile product_group data");
     };
     assert_eq!(textile.country_of_origin, "BD");
 }
 
 #[test]
 fn a_document_no_lens_can_bridge_fails_typed_not_panicked() {
-    // Same document, but recorded at 1.0.0 — today's registry has no lens
-    // leaving textile 1.0.0 at all, so this cannot be upgraded. Must come
-    // back as a distinguishable, typed refusal, not a raw serde panic and not
-    // a silent pass-through.
+    // Same document, recorded at a version the registry has no lens leaving.
+    // Must come back as a distinguishable, typed refusal — not a raw serde
+    // panic, and not a silent pass-through.
+    //
+    // This used to use 1.0.0, which dpp-core has since bridged: it added a
+    // textile 1.0.0 -> 1.1.0 lens precisely so a v1.0.0 document has a path to
+    // the current schema. The behaviour under test is the refusal, not that one
+    // particular version is unreachable, so it now names a version that has
+    // never existed rather than one core has since rescued.
     let mut doc = old_textile_doc();
-    doc["schemaVersion"] = json!("1.0.0");
+    doc["schemaVersion"] = json!("0.9.0");
 
     let lenses = LensRegistry::new();
-    let catalog = SectorCatalog::new();
+    let catalog = ProductGroupCatalog::new();
     let err = Passport::from_stored(doc, &lenses, &catalog)
         .expect_err("no lens chain reaches the current textile schema from 1.0.0");
 

@@ -8,6 +8,7 @@ required:
   - issuerDid
   - createdAt
   - nodeVersion
+  - coreVersion
   - contentHashes
 properties:
   formatVersion:
@@ -32,3 +33,12 @@ properties:
     description: member name -> hex SHA-256 of that member's JCS-canonical bytes.
     additionalProperties:
       type: string
+  coreVersion:
+    type: string
+    description: >-
+      The `dpp-core` version this node was built against. Recorded alongside
+      `nodeVersion` because the two move independently — the regulatory logic,
+      schemas and disclosure policy behind a determination live in core, so a
+      dossier naming only the node version cannot be traced back to the code
+      that produced its verdict.
+    example: 0.18.0

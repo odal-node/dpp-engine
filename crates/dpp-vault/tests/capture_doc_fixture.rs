@@ -1,6 +1,6 @@
 //! Capture a frozen stored-document fixture, for `dpp-dal`'s compatibility guard.
 //!
-//! `passport_doc_compat.rs` freezes one real stored `doc` per shipped sector
+//! `passport_doc_compat.rs` freezes one real stored `doc` per shipped product group
 //! schema version and asserts it still reads under the `dpp-domain` this
 //! workspace builds against. Its convention is that a fixture is **captured
 //! from a real document**, and this is what does the capturing.
@@ -13,7 +13,7 @@
 //! evidence is that the system produced it: the body below is a *request*, and
 //! everything the guard actually inspects (`schemaVersion`, `publishedAt`,
 //! `retentionLocked`, `version`, the stamped facility and operator identifiers,
-//! the serde shape of `sectorData`) is written by the create and publish paths,
+//! the serde shape of `productGroupData`) is written by the create and publish paths,
 //! not by this file.
 //!
 //! # What these fixtures are not
@@ -21,7 +21,7 @@
 //! The harness signs with `MockIdentity`, so `jwsSignature` and every entry in
 //! `disclosureSignatures` carry `test-header` / `test-sig` around a real
 //! payload, and `complianceResult` reports `PASSTHROUGH_NO_VALIDATION` because
-//! no sector plugin is loaded. Immaterial to the guard — it asks whether a
+//! no product group plugin is loaded. Immaterial to the guard — it asks whether a
 //! stored document still deserialises, and those are a `String` and a struct
 //! either way — but a captured document should not be mistaken for a
 //! cryptographically meaningful one. If a future check needs a real signature,
@@ -40,7 +40,7 @@
 //!
 //! # When to run it
 //!
-//! When a sector's `schema_version` moves, **before** bumping `dpp-domain`. A
+//! When a product group's `schema_version` moves, **before** bumping `dpp-domain`. A
 //! fixture captured after the bump freezes the new shape and can only catch the
 //! bump after next; that is still worth having, but it is not the guard the
 //! convention asks for.
@@ -57,10 +57,10 @@ use helpers::{TestClient, make_jwt, seed_complete_operator, start_postgres, star
 use serde_json::{Value, json};
 
 /// Where `passport_doc_compat.rs` looks: `{catalog_key}/v{version}.json`.
-fn fixture_path(sector: &str, version: &str) -> std::path::PathBuf {
+fn fixture_path(product_group: &str, version: &str) -> std::path::PathBuf {
     std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../dpp-dal/tests/fixtures/passport_docs")
-        .join(sector)
+        .join(product_group)
         .join(format!("v{version}.json"))
 }
 
@@ -71,10 +71,10 @@ fn fixture_path(sector: &str, version: &str) -> std::path::PathBuf {
 /// response, because the column is what a node actually reads on the next boot
 /// and is therefore what the guard is about. A response body has already been
 /// through a serialisation the stored row does not share.
-async fn capture(sector: &str, body: Value) {
+async fn capture(product_group: &str, body: Value) {
     let pg = start_postgres().await;
     let base = start_vault(pg.dal.clone()).await;
-    // Publishing an in-force sector requires a complete operator (Annex III
+    // Publishing an in-force product group requires a complete operator (Annex III
     // facility + Art. 13 identifier), and those get stamped onto the passport —
     // so a fixture captured without them would be missing fields every real
     // published document carries.
@@ -103,7 +103,7 @@ async fn capture(sector: &str, body: Value) {
     let version = doc["schemaVersion"]
         .as_str()
         .expect("a stored passport always carries its schema version");
-    let path = fixture_path(sector, version);
+    let path = fixture_path(product_group, version);
 
     // Refuse to overwrite. A frozen document is evidence about the release that
     // produced it; replacing one silently would destroy that, and the guard's
@@ -115,7 +115,7 @@ async fn capture(sector: &str, body: Value) {
         path.display()
     );
     std::fs::create_dir_all(path.parent().expect("fixture path has a parent"))
-        .expect("create the sector's fixture directory");
+        .expect("create the product_group's fixture directory");
     std::fs::write(
         &path,
         format!(
@@ -125,7 +125,7 @@ async fn capture(sector: &str, body: Value) {
     )
     .expect("write the fixture");
 
-    println!("captured {} -> {}", sector, path.display());
+    println!("captured {} -> {}", product_group, path.display());
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -135,7 +135,7 @@ async fn capture_battery() {
     // industrial battery, not the minimum that validates. A fixture is more
     // useful the more fields it exercises — every field present is one a future
     // non-additive change can be caught on — and a passport missing mandatory
-    // content is not a document this sector should be freezing as typical.
+    // content is not a document this product group should be freezing as typical.
     capture(
         "battery",
         json!({
@@ -156,8 +156,8 @@ async fn capture_battery() {
             ],
             "batchId": "LOT-2026-08",
             "commodityCode": "85076000",
-            "sectorData": {
-                "sector": "battery",
+            "productGroupData": {
+                "productGroup": "battery",
                 "gtin": "09506000134352",
                 "batteryType": "industrial",
                 "batteryChemistry": "NMC",
@@ -224,8 +224,8 @@ async fn capture_textile() {
                 "address": "Via Roma 12, 20121 Milano, IT"
             },
             "materials": [{"name": "Cotton", "weightKg": 0.22}],
-            "sectorData": {
-                "sector": "textile",
+            "productGroupData": {
+                "productGroup": "textile",
                 "gtin": "09506000134369",
                 "fibreComposition": [
                     {"fibre": "cotton", "pct": 95.0},
@@ -263,8 +263,8 @@ async fn capture_electronics() {
                 "address": "Keizersgracht 100, 1015 Amsterdam, NL"
             },
             "materials": [{"name": "Aluminium", "weightKg": 0.06, "recycledPct": 80.0}],
-            "sectorData": {
-                "sector": "electronics",
+            "productGroupData": {
+                "productGroup": "electronics",
                 "gtin": "09506000134376",
                 // Closed to Regulation (EU) 2023/1670 Art. 1(1)'s four device
                 // types as of electronics v1.2.0.

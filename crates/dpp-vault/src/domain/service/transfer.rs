@@ -3,7 +3,7 @@
 
 use chrono::Utc;
 use dpp_common::{event, event_codes};
-use dpp_domain::domain::{
+use dpp_domain::{
     error::DppError,
     passport::PassportId,
     status::PassportStatus,
@@ -57,7 +57,7 @@ impl PassportService {
             to_operator,
             reason,
             from_signature: None,
-            to_signature: None,
+            node_acceptance_attestation: None,
             initiated_at: Utc::now(),
             completed_at: None,
             rejected_at: None,
@@ -137,7 +137,7 @@ impl PassportService {
             ));
         }
 
-        chain.transfers[idx].to_signature =
+        chain.transfers[idx].node_acceptance_attestation =
             Some(self.identity.sign_passport(id, &payload).await?.jws);
         chain.transfers[idx]
             .complete()

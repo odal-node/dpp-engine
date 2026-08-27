@@ -142,7 +142,7 @@ impl OdalClient {
 
     /// Upload a file as `multipart/form-data` (field name `file`) to `url` with
     /// the client's credential — the shape the integrator's
-    /// `POST /api/v1/import/{sector}` expects. The filename is preserved so the
+    /// `POST /api/v1/import/{product group}` expects. The filename is preserved so the
     /// server can detect CSV vs XLSX.
     pub async fn upload_file(
         &self,
@@ -165,7 +165,7 @@ impl OdalClient {
     }
 
     /// Upload a signed plugin as `multipart/form-data` — a `wasm` file part
-    /// (filename preserved so the node can derive the sector) plus a `sig` part
+    /// (filename preserved so the node can derive the product group) plus a `sig` part
     /// carrying the detached Ed25519 signature. Mirrors `POST /api/v1/plugins`.
     pub async fn install_plugin(
         &self,

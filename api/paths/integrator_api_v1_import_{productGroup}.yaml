@@ -2,7 +2,7 @@ post:
   operationId: importFile
   summary: Bulk-import passports from a file
   description: |
-    Upload a CSV or XLSX file to create draft passports for a sector
+    Upload a CSV or XLSX file to create draft passports for a product group
     (`battery`, `textile`, `steel`, `aluminium`, `tyre`). The caller's
     `Authorization: Bearer` token is validated and forwarded to the vault.
 
@@ -18,7 +18,7 @@ post:
   security:
     - BearerApiKey: []
   parameters:
-    - name: sector
+    - name: productGroup
       in: path
       required: true
       schema:
@@ -58,6 +58,6 @@ post:
     '401':
       $ref: ../components/responses/Unauthorized.yaml
     '404':
-      description: Unknown sector.
+      description: Unknown product group.
     '422':
       $ref: ../components/responses/ValidationError.yaml

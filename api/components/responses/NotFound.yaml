@@ -1,8 +1,10 @@
 description: Resource not found within the operator's scope.
 content:
-  application/json:
+  application/problem+json:
     schema:
-      $ref: ../schemas/ApiError.yaml
+      $ref: ../schemas/Problem.yaml
     example:
-      error: NOT_FOUND
-      message: DPP not found.
+      type: https://problems.odal-node.io/not-found
+      title: Not Found
+      status: 404
+      detail: DPP not found.

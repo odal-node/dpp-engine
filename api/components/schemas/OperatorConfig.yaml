@@ -78,3 +78,11 @@ properties:
       - string
       - 'null'
     format: date-time
+  registryVerifiedAt:
+    type:
+      - string
+      - 'null'
+    format: date-time
+    description: >-
+      When this operator's identity was last verified against the EU registry.
+      Null when no verification has succeeded — never treat absence as verified.

@@ -22,9 +22,9 @@ delete:
     '400':
       description: Invalid subscription id.
       content:
-        application/json:
+        application/problem+json:
           schema:
-            $ref: ../components/schemas/ApiError.yaml
+            $ref: ../components/schemas/Problem.yaml
     '401':
       $ref: ../components/responses/Unauthorized.yaml
     '404':

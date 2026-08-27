@@ -1,0 +1,27 @@
+type: object
+description: >-
+  An eIDAS electronic seal over the passport's full-payload signature. Check
+  `placeholder` before treating it as evidence — a placeholder envelope is
+  produced when no QTSP is configured and carries no legal validity.
+required:
+  - format
+  - sealValue
+  - sealedAt
+  - placeholder
+properties:
+  format:
+    $ref: ./SealFormat.yaml
+  sealValue:
+    type: string
+    description: Base64-encoded seal value as returned by the QTSP.
+  signingCertRef:
+    type: string
+    description: Reference to the signing certificate chain.
+  sealedAt:
+    type: string
+    format: date-time
+  placeholder:
+    type: boolean
+    description: >-
+      `true` when this envelope has **no** legal validity. Consumers must check
+      this flag rather than inferring validity from the envelope's presence.

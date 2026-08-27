@@ -124,7 +124,7 @@ lint-integration:
 # root instead would report every problem against a `paths/*.yaml` file and
 # force the baseline to be regenerated.
 openapi-check: openapi-bundle
-    git diff --exit-code -- api/openapi.bundled.yaml
+    git diff --exit-code -- api/openapi.bundled.yaml api/openapi.bundled.json
     npx --yes @redocly/cli@{{ REDOCLY_VERSION }} lint api/openapi.bundled.yaml
 
 # Regenerate the single-file bundle from the multi-file tree.
@@ -134,8 +134,18 @@ openapi-check: openapi-bundle
 # history and so cannot see a file that only exists after a build step.
 # `redocly bundle` is byte-deterministic, so `openapi-check` can prove the
 # committed bundle still matches the tree with a plain diff.
+#
+# The JSON bundle is the same document, emitted a second time for the OpenAPI
+# contract test (crates/dpp-node/tests/openapi_contract.rs), which reads the
+# spec with `serde_json` and checks it against the types that implement it.
+# Reading the YAML instead would mean adding a YAML parser to the workspace,
+# and the only established one is unmaintained — a `cargo audit` cost paid so a
+# test could read a file the build already knows how to emit as JSON. Both
+# bundles are committed and both are diffed by `openapi-check`, so neither can
+# drift from the tree or from each other.
 openapi-bundle:
     npx --yes @redocly/cli@{{ REDOCLY_VERSION }} bundle api/openapi.yaml -o api/openapi.bundled.yaml
+    npx --yes @redocly/cli@{{ REDOCLY_VERSION }} bundle api/openapi.yaml -o api/openapi.bundled.json
 
 # Regenerate the browsable spec (api/openapi.html, git-ignored build artifact).
 openapi-html:
@@ -239,7 +249,7 @@ doc:
     cargo doc --workspace --no-deps
 
 # Fast gate (no Docker) — mirrors CI jobs: fmt, clippy, debug-prints, test-unit, audit
-check: fmt-check lint debug-check subjects-check mod-rs-check harness-check spec-version-check outbound-check grants-check migrations-check check-plugins test check-integration audit
+check: fmt-check lint debug-check subjects-check mod-rs-check harness-check contract-fixture-check contract-fixture-check-self-test spec-version-check outbound-check grants-check migrations-check check-plugins test check-integration audit
 
 # Full local CI mirror — adds integration-feature clippy + the Docker tiers (needs Docker running)
 ci: check lint-integration test-integration test-pg
@@ -451,6 +461,23 @@ clean:
 # `test-harness` feature; this is the signal that was missing.
 harness-check:
     bash scripts/harness-check.sh
+
+# Keep the OpenAPI contract test's fixtures exhaustive.
+#
+# That test is what stops api/ drifting from the code, and its first line of
+# defence is a compile error: a new field on a checked struct fails to build
+# until the fixture sets it, and then fails the schema check until the spec
+# documents it. `..Default::default()` deletes that first stage in one keystroke
+# — it is the natural way to silence the very E0063 error that is the gate
+# working. Nothing in the test suite can detect it afterwards, because a fixture
+# omitting a field is indistinguishable from a field that does not exist.
+contract-fixture-check:
+    bash scripts/contract-fixture-check.sh
+
+# Prove the gate above still rejects what it claims to reject. A grep gate with
+# a broken anchor exits 0 forever and looks exactly like a passing one.
+contract-fixture-check-self-test:
+    bash scripts/contract-fixture-check.test.sh
 
 # Run only the tests a change can affect.
 #

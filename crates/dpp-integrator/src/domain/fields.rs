@@ -1,19 +1,19 @@
-//! Field extraction helpers shared by every sector's row validator.
+//! Field extraction helpers shared by every product group's row validator.
 
 use std::collections::HashMap;
 
-use dpp_domain::domain::gtin::Gtin;
-use dpp_domain::domain::passport::MaterialEntry;
+use dpp_domain::identifier::gtin::Gtin;
+use dpp_domain::passport::MaterialEntry;
 
 use super::request::RowError;
 
 /// Parse `gtin` (when present) into the validated [`Gtin`] newtype, pushing a
 /// `RowError` instead if it is not a structurally valid GS1 GTIN-14 (14 digits +
-/// mod-10 check digit). Shared by the sector importers so steel/aluminium/tyre
+/// mod-10 check digit). Shared by the product group importers so steel/aluminium/tyre
 /// validate the checksum the same way the battery importer already does — a bad
 /// checksum must not pass through the pipeline unchecked.
 ///
-/// Returns the parsed value rather than validating and discarding it: the sector
+/// Returns the parsed value rather than validating and discarding it: the product group
 /// structs now hold `Gtin`, and parsing once here means a call site cannot end up
 /// re-parsing a string it has already proven valid.
 pub(super) fn parse_gtin(
@@ -46,7 +46,7 @@ fn normalize_key(key: &str) -> String {
 }
 
 /// Look up a field tolerantly: exact key first, then a case/separator-insensitive
-/// match. This lets **every** sector validator accept both camelCase and
+/// match. This lets **every** product group validator accept both camelCase and
 /// snake_case headers (`manufacturerName` ≡ `manufacturer_name`) with no per-field
 /// alias lists. Semantically-different headers (e.g. `manufacturerCountry` vs a
 /// full `manufacturer_address`) still need explicit aliases via [`aliased`].
@@ -159,6 +159,63 @@ pub(super) fn optional_str(row: &HashMap<String, String>, field: &str) -> Option
     get_field(row, field)
         .filter(|v| !v.trim().is_empty())
         .cloned()
+}
+
+/// An optional customs tariff classification column (HS-6, CN-8 or TARIC-10).
+///
+/// Validated here, against the domain type, rather than left for the vault to
+/// reject. Both refuse the same values, but only this one can say *which row* —
+/// a bulk import that fails with "invalid commodity code" and no row number
+/// leaves the operator to find it across a spreadsheet by hand.
+///
+/// The value is sent on as a string, because that is what the request carries;
+/// parsing it is a check, not a conversion.
+pub(super) fn optional_commodity_code(
+    row: &HashMap<String, String>,
+    field: &str,
+    row_num: usize,
+    errors: &mut Vec<RowError>,
+) -> Option<String> {
+    let raw = get_field(row, field).filter(|v| !v.trim().is_empty())?;
+    let trimmed = raw.trim();
+    match dpp_domain::identifier::commodity_code::CommodityCode::parse(trimmed) {
+        Ok(_) => Some(trimmed.to_owned()),
+        Err(e) => {
+            errors.push(RowError {
+                row: row_num,
+                field: field.to_owned(),
+                message: format!("Invalid commodity code '{raw}': {e}"),
+            });
+            None
+        }
+    }
+}
+
+/// An optional ISO-8601 (`YYYY-MM-DD`) date column.
+///
+/// Rejects rather than ignores a malformed value. An unparseable date here is
+/// not a cosmetic problem: `placedOnMarketDate` is the regulated event that
+/// fixes **which law governs the product**, and dropping it silently would
+/// import a passport whose governing law is simply unknown — indistinguishable
+/// from one where the operator deliberately left the column blank.
+pub(super) fn optional_date(
+    row: &HashMap<String, String>,
+    field: &str,
+    row_num: usize,
+    errors: &mut Vec<RowError>,
+) -> Option<chrono::NaiveDate> {
+    let raw = get_field(row, field).filter(|v| !v.trim().is_empty())?;
+    match chrono::NaiveDate::parse_from_str(raw.trim(), "%Y-%m-%d") {
+        Ok(date) => Some(date),
+        Err(_) => {
+            errors.push(RowError {
+                row: row_num,
+                field: field.to_owned(),
+                message: format!("Expected an ISO-8601 date (YYYY-MM-DD), got '{raw}'"),
+            });
+            None
+        }
+    }
 }
 
 /// First present, non-empty value among header `aliases`. Each alias is matched

@@ -1,5 +1,5 @@
 //! Integration test for `GET /api/v1/dpp/by-identity` — the exact compound
-//! identity lookup (sector, GTIN, batch) the import delta-matcher relies on.
+//! identity lookup (product group, GTIN, batch) the import delta-matcher relies on.
 //!
 //! Regression coverage for a real bug: the handler existed but was never
 //! mounted in `dpp-vault`'s router. `dpp-dal`'s `pg_integration` suite tests
@@ -26,8 +26,8 @@ fn battery_passport(gtin: &str) -> serde_json::Value {
         "materials": [
             {"name": "Lithium Iron Phosphate", "weightKg": 1.2}
         ],
-        "sectorData": {
-            "sector": "battery",
+        "productGroupData": {
+            "productGroup": "battery",
             "gtin": gtin,
             "batteryChemistry": "LFP",
             "batteryType": "portable",
@@ -53,7 +53,7 @@ async fn by_identity_finds_the_matching_draft() {
     let id = created["id"].as_str().expect("id missing").to_owned();
 
     let resp = client
-        .get("/api/v1/dpp/by-identity?sector=battery&gtin=09506000134352")
+        .get("/api/v1/dpp/by-identity?productGroup=battery&gtin=09506000134352")
         .await;
     assert_eq!(resp.status(), 200, "the route must be reachable, not 404");
     let found: serde_json::Value = resp.json().await.expect("parse by-identity response");
@@ -73,9 +73,9 @@ async fn by_identity_returns_404_when_nothing_matches() {
         .post_json("/api/v1/dpp", battery_passport("09506000134352"))
         .await;
 
-    // Same sector, a GTIN that was never created.
+    // Same product group, a GTIN that was never created.
     let resp = client
-        .get("/api/v1/dpp/by-identity?sector=battery&gtin=00000000000000")
+        .get("/api/v1/dpp/by-identity?productGroup=battery&gtin=00000000000000")
         .await;
     assert_eq!(resp.status(), 404, "no passport matches this identity");
 }

@@ -2,6 +2,11 @@ description: |
   State conflict — e.g. attempting to publish an already-published DPP
   or updating an archived DPP.
 content:
-  application/json:
+  application/problem+json:
     schema:
-      $ref: ../schemas/ApiError.yaml
+      $ref: ../schemas/Problem.yaml
+    example:
+      type: https://problems.odal-node.io/conflict
+      title: Conflict
+      status: 409
+      detail: DPP is already published.

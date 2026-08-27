@@ -16,7 +16,7 @@ get:
       in: query
       required: false
       description: >-
-        Request a read-time schema-upcast view. Set to a newer sector schema
+        Request a read-time schema-upcast view. Set to a newer product group schema
         version (e.g. `2.0.0`); the response becomes `{ passport, schemaView }`
         — the canonical signed passport plus the derived view with lens
         provenance. The original is never re-signed.
@@ -35,20 +35,20 @@ get:
     '404':
       description: Not found or not published.
       content:
-        application/json:
+        application/problem+json:
           schema:
-            $ref: ../components/schemas/ApiError.yaml
+            $ref: ../components/schemas/Problem.yaml
     '410':
       description: Passport has been suspended.
       content:
-        application/json:
+        application/problem+json:
           schema:
-            $ref: ../components/schemas/ApiError.yaml
+            $ref: ../components/schemas/Problem.yaml
     '422':
       description: >-
         The requested `schema_view` is unavailable (no lens path, a downcast, or
-        the passport has no sector data).
+        the passport has no product group data).
       content:
-        application/json:
+        application/problem+json:
           schema:
-            $ref: ../components/schemas/ApiError.yaml
+            $ref: ../components/schemas/Problem.yaml

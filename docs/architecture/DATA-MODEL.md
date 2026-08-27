@@ -13,7 +13,7 @@ PostgreSQL organises the platform into two schemas:
 | `odal` | All platform tables (passports, config, keys, facilities, audit, import jobs, registry outbox) |
 | `identity` | DID documents and key pairs for the identity service |
 
-Storage model is **document-style**: the full serde JSON of a passport lives in a `doc JSONB` column; query/constraint-bearing fields (operator, sector, status, retention lock, version-chain columns) are real columns. The node is **single-tenant**, so there is **no Row-Level Security**: the app connects as the least-privilege `odal_app` role (no DDL, no DELETE bar one sanctioned exception), and `operator_id` columns persist only as the node's constant identity for provenance. Two database-level invariants back the domain rules: a **retention trigger** (locked passports reject content changes outside the mutable-field whitelist shared with the resolver) and an **append-only trigger** on the audit table.
+Storage model is **document-style**: the full serde JSON of a passport lives in a `doc JSONB` column; query/constraint-bearing fields (operator, product group, status, retention lock, version-chain columns) are real columns. The node is **single-tenant**, so there is **no Row-Level Security**: the app connects as the least-privilege `odal_app` role (no DDL, no DELETE bar one sanctioned exception), and `operator_id` columns persist only as the node's constant identity for provenance. Two database-level invariants back the domain rules: a **retention trigger** (locked passports reject content changes outside the mutable-field whitelist shared with the resolver) and an **append-only trigger** on the audit table.
 
 ---
 
@@ -59,7 +59,7 @@ Operator profile and branding. One record per deployment (single-operator MVP).
 | `country` | string | ISO 3166-1 alpha-2 |
 | `contactEmail` | string | Operator contact email |
 | `didWebUrl` | string | did:web identifier |
-| `productCategories` | array | Supported sectors (BATTERY, TEXTILE, etc.) |
+| `productCategories` | array | Supported product groups (BATTERY, TEXTILE, etc.) |
 | `brandPrimary` | string | Primary brand colour (hex) |
 | `brandSecondary` | string | Secondary brand colour (hex) |
 | `brandLogoUrl` | string | Logo URL |
@@ -140,7 +140,7 @@ No operator scoping on this table — the node is single-tenant; isolation is an
 
 ### 3.5 passport
 
-The core DPP record. Contains all product data, sector-specific extensions, and lifecycle state.
+The core DPP record. Contains all product data, product-group-specific extensions, and lifecycle state.
 
 | Field | Type | Notes |
 |---|---|---|
@@ -153,7 +153,7 @@ The core DPP record. Contains all product data, sector-specific extensions, and 
 | `materials` | array | Material composition entries |
 | `co2ePerUnit` | float | nullable |
 | `repairabilityScore` | float | nullable |
-| `sectorData` | object | Sector-specific extension data |
+| `productGroupData` | object | Product group-specific extension data |
 | `batchId` | string | nullable |
 | `facility` | object | nullable, a self-contained **snapshot** `{ scheme, value, name, country, address }` of the Annex III facility, copied by value from the `isDefault` facility on create — **not** a row FK. The passport carries the full descriptor permanently, so a published DPP stays complete even if the source facility row is later retired. The `facilityId` list/count filter matches `facility.value`. |
 | `digitalLinkUrl` | string | nullable, GS1 Digital Link |
@@ -209,7 +209,7 @@ Async bulk import job tracking for CSV/XLSX uploads.
 |---|---|---|
 | `operatorId` | string | |
 | `status` | string | queued, processing, completed, failed |
-| `sector` | string | Target sector |
+| `product group` | string | Target product group |
 | `totalRows` | int | |
 | `processed` | int | |
 | `succeeded` | int | |

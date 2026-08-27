@@ -22,7 +22,7 @@ pub fn build_and_enforce(
         NodeProfile::from_env(),
         vec![
             // Required, and the one whose absence is hardest to notice from
-            // outside: a node with no sector plugins evaluates nothing, returns
+            // outside: a node with no product group plugins evaluates nothing, returns
             // a passthrough determination that carries no violations, and so
             // sails through the publish gate that exists to stop a
             // non-compliant in-force passport being signed. The passport records

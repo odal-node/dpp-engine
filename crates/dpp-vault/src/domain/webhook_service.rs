@@ -13,7 +13,7 @@ use uuid::Uuid;
 
 use dpp_common::event::DppEvent;
 use dpp_common::url_guard::validate_webhook_url;
-use dpp_domain::domain::error::DppError;
+use dpp_domain::error::DppError;
 use dpp_types::{
     NewWebhookSubscription, STANDALONE_OPERATOR_ID, WebhookOutbox, WebhookSubscription,
     WebhookSubscriptionStore,

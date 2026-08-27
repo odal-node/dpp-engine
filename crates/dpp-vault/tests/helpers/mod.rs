@@ -18,13 +18,10 @@ use dpp_dal::pg::{
     PgSealOutboxRepo, PgWebhookRepo,
 };
 use dpp_domain::{
-    DppError, GhostArchive, GhostRegistrySync,
-    compliance::passthrough_registry::PassthroughRegistry,
-    domain::{
-        identity::{PassportCredential, PassportCredentialSubject, SignedCredential},
-        passport::PassportId,
-    },
-    ports::identity_port::IdentityPort,
+    DppError, GhostArchive, GhostRegistrySync, PassthroughRegistry,
+    credential::{PassportCredential, PassportCredentialSubject, SignedCredential},
+    passport::PassportId,
+    ports::identity::IdentityPort,
 };
 use dpp_types::auth::{AuthContext, AuthError, AuthProvider};
 use dpp_vault::{
@@ -374,7 +371,7 @@ pub async fn seed_operator_config(dal: &PgDal) {
 
 /// Seed a *complete, publishable* operator: the config plus the Annex III default
 /// facility (point (i)) and primary operator identifier (point (k)) that
-/// `publish` now requires for in-force sectors. Use in publish-flow tests.
+/// `publish` now requires for in-force product groups. Use in publish-flow tests.
 pub async fn seed_complete_operator(dal: &PgDal) {
     use dpp_types::operator::STANDALONE_OPERATOR_ID;
     use dpp_types::registry_identity::{Facility, OperatorIdentifier, RegistryIdentityRepository};

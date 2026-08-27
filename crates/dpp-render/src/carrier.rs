@@ -5,9 +5,9 @@ use serde_json::Value;
 /// Build the GS1 Digital Link URI a carrier (QR/Data Matrix) for this
 /// passport should encode.
 ///
-/// `gtin` lives in the sector-specific payload (`SectorData` is internally
-/// tagged on `sector`, e.g. `{"sector":"battery","gtin":"...",...}`), not on
-/// the passport itself. `None` when the passport's sector data carries no
+/// `gtin` lives in the product group-specific payload (`ProductGroupData` is internally
+/// tagged on `product_group`, e.g. `{"product group":"battery","gtin":"...",...}`), not on
+/// the passport itself. `None` when the passport's product group data carries no
 /// GTIN (e.g. an unsold-goods report) or `dpp_id` is not a UUID — there is
 /// nothing valid to encode.
 ///
@@ -16,7 +16,7 @@ use serde_json::Value;
 /// carrier URL the vault stores at publish.
 pub fn carrier_uri(passport: &Value, resolver_base_url: &str, dpp_id: &str) -> Option<String> {
     let gtin = passport
-        .get("sectorData")
+        .get("productGroupData")
         .and_then(|sd| sd.get("gtin"))
         .and_then(Value::as_str)?;
     let batch_id = passport.get("batchId").and_then(Value::as_str);
@@ -50,7 +50,7 @@ mod tests {
         let passport = serde_json::json!({
             "id": DPP_ID,
             "batchId": "BATCH-42",
-            "sectorData": { "sector": "battery", "gtin": "09506000134352" }
+            "productGroupData": { "productGroup": "battery", "gtin": "09506000134352" }
         });
         let uri = carrier_uri(&passport, "https://id.odal-node.io", DPP_ID)
             .expect("gtin present, must build a URI");
@@ -65,7 +65,7 @@ mod tests {
     fn carrier_uri_omits_batch_segment_when_absent() {
         let passport = serde_json::json!({
             "id": DPP_ID,
-            "sectorData": { "sector": "battery", "gtin": "09506000134352" }
+            "productGroupData": { "productGroup": "battery", "gtin": "09506000134352" }
         });
         let uri = carrier_uri(&passport, "https://id.odal-node.io", DPP_ID).unwrap();
         assert_eq!(
@@ -79,13 +79,13 @@ mod tests {
         // e.g. an unsold-goods report — no per-unit GTIN to encode.
         let passport = serde_json::json!({
             "id": DPP_ID,
-            "sectorData": { "sector": "unsoldGoods" }
+            "productGroupData": { "productGroup": "unsoldGoods" }
         });
         assert!(carrier_uri(&passport, "https://id.odal-node.io", DPP_ID).is_none());
     }
 
     #[test]
-    fn carrier_uri_is_none_without_sector_data() {
+    fn carrier_uri_is_none_without_product_group_data() {
         let passport = serde_json::json!({ "id": DPP_ID });
         assert!(carrier_uri(&passport, "https://id.odal-node.io", DPP_ID).is_none());
     }
@@ -94,7 +94,7 @@ mod tests {
     fn carrier_uri_is_none_for_non_uuid_id() {
         let passport = serde_json::json!({
             "id": "not-a-uuid",
-            "sectorData": { "sector": "battery", "gtin": "09506000134352" }
+            "productGroupData": { "productGroup": "battery", "gtin": "09506000134352" }
         });
         assert!(carrier_uri(&passport, "https://id.odal-node.io", "not-a-uuid").is_none());
     }

@@ -8,7 +8,7 @@ use axum::{
     response::IntoResponse,
 };
 
-use dpp_domain::domain::graph::DEFAULT_DEPTH_CAP;
+use dpp_domain::graph::DEFAULT_DEPTH_CAP;
 
 use crate::domain::verify::{DEFAULT_NODE_CAP, fetch_public_json, verify_tree};
 use crate::{middleware::auth::AuthContext, state::AppState};

@@ -13,10 +13,7 @@ use chrono::{DateTime, Utc};
 use sqlx::Row;
 use uuid::Uuid;
 
-use dpp_domain::{
-    DppError,
-    domain::{passport::PassportId, transfer::TransferChain},
-};
+use dpp_domain::{DppError, passport::PassportId, transfer::TransferChain};
 use dpp_types::{
     RegistryTransferCounts, RegistryTransferOutbox, RegistryTransferRow, RegistryTransferStatus,
 };

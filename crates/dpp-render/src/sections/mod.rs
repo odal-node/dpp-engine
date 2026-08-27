@@ -1,4 +1,4 @@
-//! Per-sector HTML section dispatch — one file per EU DPP sector.
+//! Per-product group HTML section dispatch — one file per EU DPP product group.
 
 mod aluminium;
 mod battery;
@@ -11,7 +11,7 @@ mod textile;
 mod toy;
 mod tyre;
 
-/// Build the sector-specific HTML for a passport: the curated summary section,
+/// Build the product group-specific HTML for a passport: the curated summary section,
 /// followed by a table of every public field the summary did not show.
 ///
 /// The second half is not decoration. Each curated section is a hand-written
@@ -19,14 +19,14 @@ mod tyre;
 /// `x-disclosure: public`. Those 46 others were in the signed public payload and
 /// in the JSON-LD representation, and absent from the page a phone camera
 /// reaches by scanning the carrier. See [`crate::remainder`].
-pub(crate) fn build_sector_section(p: &serde_json::Value) -> String {
-    let sector = p
-        .get("sectorData")
-        .and_then(|s| s.get("sector"))
+pub(crate) fn build_product_group_section(p: &serde_json::Value) -> String {
+    let product_group = p
+        .get("productGroupData")
+        .and_then(|s| s.get("productGroup"))
         .and_then(|v| v.as_str())
         .unwrap_or("");
 
-    let curated = match sector {
+    let curated = match product_group {
         "battery" => battery::build_battery_section(p),
         "textile" | "unsoldGoods" => textile::build_textile_section(p),
         "electronics" => electronics::build_electronics_section(p),
@@ -37,17 +37,17 @@ pub(crate) fn build_sector_section(p: &serde_json::Value) -> String {
         "aluminium" => aluminium::build_aluminium_section(p),
         "furniture" => furniture::build_furniture_section(p),
         "detergent" => detergent::build_detergent_section(p),
-        // An unmodelled sector gets no curated section, and the remainder below
+        // An unmodelled product group gets no curated section, and the remainder below
         // still shows everything `public_view` let through — so an unknown
-        // sector degrades to "all of it, plainly" rather than to nothing.
+        // product group degrades to "all of it, plainly" rather than to nothing.
         _ => String::new(),
     };
 
-    let remainder = crate::remainder::build_remainder_section(p, rendered_keys(sector));
+    let remainder = crate::remainder::build_remainder_section(p, rendered_keys(product_group));
     format!("{curated}\n{remainder}")
 }
 
-/// The `sectorData` keys each curated section already displays.
+/// The `productGroupData` keys each curated section already displays.
 ///
 /// Kept beside the dispatch rather than in each section file so the whole
 /// picture is on one screen, and pinned by `curated_keys_are_actually_rendered`
@@ -56,8 +56,8 @@ pub(crate) fn build_sector_section(p: &serde_json::Value) -> String {
 /// the remainder table, an extra one hides it from there while the curated
 /// section still shows it — but a duplicate reads as a bug, so the test keeps it
 /// honest.
-pub(crate) fn rendered_keys(sector: &str) -> &'static [&'static str] {
-    match sector {
+pub(crate) fn rendered_keys(product_group: &str) -> &'static [&'static str] {
+    match product_group {
         "battery" => &[
             "batteryChemistry",
             "nominalVoltageV",
@@ -131,7 +131,7 @@ pub(crate) fn rendered_keys(sector: &str) -> &'static [&'static str] {
     }
 }
 
-/// Round-trip a section fixture through `dpp_domain::SectorData`.
+/// Round-trip a section fixture through `dpp_domain::ProductGroupData`.
 ///
 /// Every section renderer reads its fields by **string key** out of a
 /// `serde_json::Value` with a `"-"` fallback, so a field renamed in `dpp-core`
@@ -147,10 +147,11 @@ pub(crate) fn rendered_keys(sector: &str) -> &'static [&'static str] {
 /// one comes back absent, and either way the section's assertion fails instead of
 /// the value quietly disappearing from the public page.
 #[cfg(test)]
-pub(super) fn typed_fixture(sector_data: serde_json::Value) -> serde_json::Value {
-    let typed: dpp_domain::domain::sector::SectorData = serde_json::from_value(sector_data)
-        .expect("section fixture must satisfy dpp-domain's SectorData contract");
-    serde_json::json!({ "sectorData": serde_json::to_value(typed).expect("serialize") })
+pub(super) fn typed_fixture(product_group_data: serde_json::Value) -> serde_json::Value {
+    let typed: dpp_domain::product_group::ProductGroupData =
+        serde_json::from_value(product_group_data)
+            .expect("section fixture must satisfy dpp-domain's ProductGroupData contract");
+    serde_json::json!({ "productGroupData": serde_json::to_value(typed).expect("serialize") })
 }
 
 #[cfg(test)]
@@ -164,14 +165,14 @@ mod completeness {
     //! cannot catch an omission; these tests close that.
     //!
     //! They resolve the public field set through
-    //! `SectorAccessPolicy::for_schema_version` — the exact entry point
+    //! `ProductGroupAccessPolicy::for_schema_version` — the exact entry point
     //! `public_view` uses to decide what the public payload contains — rather
     //! than restating a field list or re-reading the schema JSON. Same reason
-    //! `typed_fixture` imports `SectorData`: a test carrying its own copy of the
+    //! `typed_fixture` imports `ProductGroupData`: a test carrying its own copy of the
     //! authority agrees with itself forever.
 
-    use dpp_domain::access::SectorAccessPolicy;
-    use dpp_domain::{Disclosure, Sector, SectorCatalog};
+    use dpp_domain::access::ProductGroupAccessPolicy;
+    use dpp_domain::{Disclosure, ProductGroup, ProductGroupCatalog};
 
     /// Every field the disclosure policy classifies `Public` must reach the page
     /// — through the curated section or through the remainder table.
@@ -182,7 +183,7 @@ mod completeness {
     /// policy's 53.
     #[test]
     fn every_public_field_reaches_the_page() {
-        let catalog = SectorCatalog::new();
+        let catalog = ProductGroupCatalog::new();
         let mut checked = 0usize;
 
         for descriptor in catalog.all() {
@@ -190,7 +191,7 @@ mod completeness {
             let Some(version) = catalog.current_schema_version(key) else {
                 continue;
             };
-            let Some(policy) = SectorAccessPolicy::for_schema_version(key, version) else {
+            let Some(policy) = ProductGroupAccessPolicy::for_schema_version(key, version) else {
                 continue;
             };
 
@@ -205,12 +206,12 @@ mod completeness {
             }
 
             // A passport carrying every public field with a placeholder value.
-            let mut sector_data = serde_json::Map::new();
-            sector_data.insert("sector".into(), serde_json::json!(key));
+            let mut product_group_data = serde_json::Map::new();
+            product_group_data.insert("productGroup".into(), serde_json::json!(key));
             for name in &public {
-                sector_data.insert((*name).clone(), serde_json::json!("PLACEHOLDER-VALUE"));
+                product_group_data.insert((*name).clone(), serde_json::json!("PLACEHOLDER-VALUE"));
             }
-            let p = serde_json::json!({ "sectorData": sector_data });
+            let p = serde_json::json!({ "productGroupData": product_group_data });
             let curated = super::rendered_keys(key);
             let remainder = crate::remainder::build_remainder_section(&p, curated);
 
@@ -238,7 +239,7 @@ mod completeness {
 
         assert!(
             checked > 0,
-            "no sector was actually checked — the catalog/policy lookup skipped \
+            "no product_group was actually checked — the catalog/policy lookup skipped \
              everything, which would make this test vacuous"
         );
     }
@@ -249,8 +250,8 @@ mod completeness {
     /// this design could still drop a field.
     #[test]
     fn curated_keys_are_actually_rendered() {
-        for sector in [
-            Sector::Battery.catalog_key(),
+        for product_group in [
+            ProductGroup::Battery.catalog_key(),
             "textile",
             "electronics",
             "steel",
@@ -261,23 +262,23 @@ mod completeness {
             "furniture",
             "detergent",
         ] {
-            let claimed = super::rendered_keys(sector);
+            let claimed = super::rendered_keys(product_group);
             if claimed.is_empty() {
                 continue;
             }
-            let mut sector_data = serde_json::Map::new();
-            sector_data.insert("sector".into(), serde_json::json!(sector));
+            let mut product_group_data = serde_json::Map::new();
+            product_group_data.insert("productGroup".into(), serde_json::json!(product_group));
             for k in claimed {
-                sector_data.insert((*k).to_owned(), serde_json::json!("CURATED-MARKER"));
+                product_group_data.insert((*k).to_owned(), serde_json::json!("CURATED-MARKER"));
             }
-            let p = serde_json::json!({ "sectorData": sector_data });
+            let p = serde_json::json!({ "productGroupData": product_group_data });
             // With only the curated keys present, the remainder must be empty —
             // which is exactly the assertion that every claimed key was consumed
             // by the curated section.
             let remainder = crate::remainder::build_remainder_section(&p, claimed);
             assert_eq!(
                 remainder, "",
-                "{sector}: rendered_keys claims keys the curated section does not consume"
+                "{product_group}: rendered_keys claims keys the curated section does not consume"
             );
         }
     }

@@ -1,9 +1,9 @@
-//! Construction products sector HTML section.
+//! Construction products product group HTML section.
 
 use crate::fields::{bool_field, f64_field, str_field};
 
 pub(super) fn build_construction_section(p: &serde_json::Value) -> String {
-    let sd = match p.get("sectorData") {
+    let sd = match p.get("productGroupData") {
         Some(v) => v,
         None => return String::new(),
     };
@@ -32,7 +32,7 @@ mod tests {
     #[test]
     fn full_data_populates_all_fields() {
         let p = crate::sections::typed_fixture(serde_json::json!({
-            "sector": "construction",
+            "productGroup": "construction",
             "gtin": "09506000134352",
             "productFamily": "Insulation Board",
             "countryOfOrigin": "FR",
@@ -49,21 +49,21 @@ mod tests {
 
     #[test]
     fn ce_marking_false_renders_no() {
-        let p = serde_json::json!({"sectorData": {"ceMarking": false}});
+        let p = serde_json::json!({"productGroupData": {"ceMarking": false}});
         let html = build_construction_section(&p);
         assert!(html.contains(">No<"));
     }
 
     #[test]
     fn missing_fields_fall_back_to_dashes_and_default_unit() {
-        let p = serde_json::json!({"sectorData": {}});
+        let p = serde_json::json!({"productGroupData": {}});
         let html = build_construction_section(&p);
         assert!(html.contains("Construction Product Information"));
         assert!(html.contains(">-<"));
     }
 
     #[test]
-    fn absent_sector_data_returns_empty_string() {
+    fn absent_product_group_data_returns_empty_string() {
         let p = serde_json::json!({});
         assert_eq!(build_construction_section(&p), "");
     }

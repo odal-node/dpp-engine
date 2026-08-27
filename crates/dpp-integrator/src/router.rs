@@ -33,15 +33,21 @@ const IMPORT_BODY_LIMIT: usize = 5 * 1024 * 1024;
 pub fn build(state: AppState) -> Router {
     Router::new()
         .route("/health", get(health::health_handler))
-        .route("/api/v1/templates/{sector}", get(templates::get_template))
-        .route("/api/v1/schemas", get(schemas::list_schemas))
-        .route("/api/v1/schemas/{sector}", get(schemas::get_current_schema))
         .route(
-            "/api/v1/schemas/{sector}/{version}",
+            "/api/v1/templates/{productGroup}",
+            get(templates::get_template),
+        )
+        .route("/api/v1/schemas", get(schemas::list_schemas))
+        .route(
+            "/api/v1/schemas/{productGroup}",
+            get(schemas::get_current_schema),
+        )
+        .route(
+            "/api/v1/schemas/{productGroup}/{version}",
             get(schemas::get_pinned_schema),
         )
         .route(
-            "/api/v1/import/{sector}",
+            "/api/v1/import/{productGroup}",
             post(import::import_file).layer(DefaultBodyLimit::max(IMPORT_BODY_LIMIT)),
         )
         .route("/api/v1/imports/{job_id}", get(job_status::get_job_status))
@@ -126,12 +132,12 @@ mod tests {
         }
     }
 
-    /// An unknown sector and an unknown version are told apart, and both name
+    /// An unknown product group and an unknown version are told apart, and both name
     /// what is available rather than only refusing.
     #[tokio::test]
     async fn schema_routes_refuse_helpfully() {
         for (uri, status) in [
-            ("/api/v1/schemas/nosuchsector", StatusCode::NOT_FOUND),
+            ("/api/v1/schemas/nosuchproduct_group", StatusCode::NOT_FOUND),
             ("/api/v1/schemas/battery/9.9.9", StatusCode::NOT_FOUND),
             (
                 "/api/v1/schemas/battery/not-semver",

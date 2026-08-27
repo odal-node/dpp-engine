@@ -35,7 +35,7 @@ use cms::signed_data::{
 };
 use const_oid::db::rfc5911::ID_DATA;
 use der::{Any, Decode as _, Encode};
-use dpp_domain::ports::seal::{
+use dpp_domain::seal::{
     SealCapabilities, SealChecks, SealConformanceLevel, SealEnvelope, SealFormat, SealMode,
     SealRequest, SealVerification, SealedEnvelope,
 };
@@ -360,7 +360,7 @@ fn io_err(what: &'static str) -> impl Fn(std::io::Error) -> SealError {
 mod tests {
     use super::*;
     use cms::content_info::ContentInfo;
-    use dpp_domain::ports::seal::SealIndication;
+    use dpp_domain::seal::SealIndication;
 
     fn identity() -> (LocalIdentity, tempfile::TempDir) {
         let dir = tempfile::tempdir().expect("tempdir");
@@ -523,7 +523,7 @@ mod tests {
         SealRequest {
             payload_hash: payload_hash.to_owned(),
             mode: SealMode::OperatorSeal,
-            key_ref: dpp_domain::ports::seal::SealCredentialRef {
+            key_ref: dpp_domain::seal::SealCredentialRef {
                 qtsp_id: "local".into(),
                 credential_id: "dev".into(),
             },

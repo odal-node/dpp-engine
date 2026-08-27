@@ -123,7 +123,7 @@ Infrastructure dependencies that are optional use a NoOp implementation:
 | Dependency | Real Implementation | Fallback |
 |---|---|---|
 | Event bus | `NatsEventBus` | `NoOpEventBus` (discards events) |
-| Compliance | Wasm sector plugin | `PassthroughRegistry` (accepts all) |
+| Compliance | Wasm product group plugin | `PassthroughRegistry` (accepts all) |
 | EU Registry | `EuRegistrySync` (HTTP, when the Commission publishes) | `GhostRegistrySync` — but registration intent is **never lost**: it lives in the durable outbox regardless of adapter tier |
 | Qualified seal | A `SealBackend` selected by `SEAL_PROVIDER` (`dpp-seal`): a hosted QTSP, or a local dev sealer that is real CMS and no legal weight | `GhostSeal` — clearly marked placeholder |
 
@@ -157,7 +157,7 @@ let signed = identity_client.sign(passport_payload).await?;
 Bulk imports use a two-phase pattern: synchronous validation + asynchronous processing.
 
 ```
-1. POST /import/{sector} — validate file, create job (queued), return job_id
+1. POST /import/{productGroup} — validate file, create job (queued), return job_id
 2. Background task processes rows (queued -> processing -> completed/failed)
 3. GET /imports/{job_id} — poll for status and progress
 ```

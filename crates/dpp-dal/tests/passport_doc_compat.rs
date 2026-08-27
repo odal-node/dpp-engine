@@ -8,11 +8,11 @@
 //! field, a rename with no lens for it) can still make an already-stored
 //! document unreadable, forever, for every node that upgrades over old data.
 //!
-//! This test freezes one real, valid `doc` per shipped sector schema version
+//! This test freezes one real, valid `doc` per shipped product group schema version
 //! and asserts it still reads through that same path under the `dpp-domain`
 //! version this workspace currently builds against. It will not catch a bump
 //! that is already in `Cargo.lock` when the fixture is added — it only
-//! catches the *next* one. Add a fixture here whenever a sector's
+//! catches the *next* one. Add a fixture here whenever a product group's
 //! `schema_version` moves, captured from a real document, before bumping
 //! `dpp-domain`.
 //!
@@ -30,14 +30,27 @@
 //! Pure filesystem + in-memory check — no Docker/Postgres required, runs in
 //! the fast `cargo nextest run --workspace` gate.
 //!
+//! # ⚠️ This guard is currently vacuous, and that is not a quiet state
+//!
+//! Every frozen document predates the `sector` → `productGroup` envelope rename
+//! and is now listed in [`UNREADABLE_FIXTURES`]. Nothing here reads, so nothing
+//! here is being checked: the test passes because each failure is documented,
+//! not because the read path works.
+//!
+//! It regains its teeth the moment one current-shape document is captured — from
+//! a real create, not hand-authored, or it is only evidence that the current code
+//! agrees with itself. Capture one per shipped product-group schema version and
+//! delete the corresponding row from [`UNREADABLE_FIXTURES`]; the old files stay
+//! on disk as the record of what the break was.
+//!
 //! # Layout
 //!
-//! One directory per sector, one file per frozen schema version —
+//! One directory per product group, one file per frozen schema version —
 //! `{catalog_key}/v{version}.json`, mirroring
-//! `dpp-core/crates/dpp-domain/schemas/{sector}/v{version}.json` exactly, so
+//! `dpp-core/crates/dpp-domain/schemas/{product group}/v{version}.json` exactly, so
 //! a reader who knows one convention already knows the other. A flat
-//! `{sector}_{version}.json` naming was tried first and abandoned: it does not
-//! scale past a handful of sectors before every sector's versions interleave
+//! `{product group}_{version}.json` naming was tried first and abandoned: it does not
+//! scale past a handful of product groups before every product group's versions interleave
 //! in one listing.
 
 use std::collections::BTreeSet;
@@ -45,7 +58,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use dpp_domain::Passport;
-use dpp_domain::catalog::SectorCatalog;
+use dpp_domain::catalog::ProductGroupCatalog;
 use dpp_domain::schemas::lens::LensRegistry;
 
 /// Every frozen fixture, paired with the catalog key its parent directory
@@ -57,18 +70,18 @@ fn collect_fixtures() -> Vec<(String, PathBuf)> {
         .filter_map(|e| e.ok())
         .map(|e| e.path())
         .filter(|p| p.is_dir())
-        .flat_map(|sector_dir| {
-            let sector = sector_dir
+        .flat_map(|product_group_dir| {
+            let product_group = product_group_dir
                 .file_name()
                 .and_then(|n| n.to_str())
-                .expect("sector directory name is valid UTF-8")
+                .expect("product_group directory name is valid UTF-8")
                 .to_owned();
-            fs::read_dir(&sector_dir)
-                .unwrap_or_else(|e| panic!("read {sector_dir:?}: {e}"))
+            fs::read_dir(&product_group_dir)
+                .unwrap_or_else(|e| panic!("read {product_group_dir:?}: {e}"))
                 .filter_map(|e| e.ok())
                 .map(|e| e.path())
                 .filter(|p| p.extension().is_some_and(|ext| ext == "json"))
-                .map(move |path| (sector.clone(), path))
+                .map(move |path| (product_group.clone(), path))
                 .collect::<Vec<_>>()
         })
         .collect();
@@ -147,26 +160,78 @@ const UNREADABLE_FIXTURES: &[(&str, &str)] = &[
          upgrading would mean inventing a regulatory classification the operator never \
          stated.",
     ),
+    (
+        "aluminium/v1.1.0.json",
+        "The envelope keys `sector` and `sectorData` were renamed to `productGroup` \n         and `productGroupData`. `productGroup` is required, so a document of this \n         shape is refused loudly rather than read with the field silently missing. \n         Deliberate and permanent: the term the Regulation defines is product \n         group, and a read-only alias would have kept both spellings alive in a \n         codebase whose whole problem was two names for one concept. No lens \n         bridges it, and none is wanted.",
+    ),
+    (
+        "battery/v2.6.0.json",
+        "The envelope keys `sector` and `sectorData` were renamed to `productGroup` \n         and `productGroupData`. `productGroup` is required, so a document of this \n         shape is refused loudly rather than read with the field silently missing. \n         Deliberate and permanent: the term the Regulation defines is product \n         group, and a read-only alias would have kept both spellings alive in a \n         codebase whose whole problem was two names for one concept. No lens \n         bridges it, and none is wanted.",
+    ),
+    (
+        "construction/v1.1.0.json",
+        "The envelope keys `sector` and `sectorData` were renamed to `productGroup` \n         and `productGroupData`. `productGroup` is required, so a document of this \n         shape is refused loudly rather than read with the field silently missing. \n         Deliberate and permanent: the term the Regulation defines is product \n         group, and a read-only alias would have kept both spellings alive in a \n         codebase whose whole problem was two names for one concept. No lens \n         bridges it, and none is wanted.",
+    ),
+    (
+        "detergent/v1.1.0.json",
+        "The envelope keys `sector` and `sectorData` were renamed to `productGroup` \n         and `productGroupData`. `productGroup` is required, so a document of this \n         shape is refused loudly rather than read with the field silently missing. \n         Deliberate and permanent: the term the Regulation defines is product \n         group, and a read-only alias would have kept both spellings alive in a \n         codebase whose whole problem was two names for one concept. No lens \n         bridges it, and none is wanted.",
+    ),
+    (
+        "electronics/v1.1.0.json",
+        "The envelope keys `sector` and `sectorData` were renamed to `productGroup` \n         and `productGroupData`. `productGroup` is required, so a document of this \n         shape is refused loudly rather than read with the field silently missing. \n         Deliberate and permanent: the term the Regulation defines is product \n         group, and a read-only alias would have kept both spellings alive in a \n         codebase whose whole problem was two names for one concept. No lens \n         bridges it, and none is wanted.",
+    ),
+    (
+        "electronics/v1.2.0.json",
+        "The envelope keys `sector` and `sectorData` were renamed to `productGroup` \n         and `productGroupData`. `productGroup` is required, so a document of this \n         shape is refused loudly rather than read with the field silently missing. \n         Deliberate and permanent: the term the Regulation defines is product \n         group, and a read-only alias would have kept both spellings alive in a \n         codebase whose whole problem was two names for one concept. No lens \n         bridges it, and none is wanted.",
+    ),
+    (
+        "furniture/v1.1.0.json",
+        "The envelope keys `sector` and `sectorData` were renamed to `productGroup` \n         and `productGroupData`. `productGroup` is required, so a document of this \n         shape is refused loudly rather than read with the field silently missing. \n         Deliberate and permanent: the term the Regulation defines is product \n         group, and a read-only alias would have kept both spellings alive in a \n         codebase whose whole problem was two names for one concept. No lens \n         bridges it, and none is wanted.",
+    ),
+    (
+        "steel/v1.1.0.json",
+        "The envelope keys `sector` and `sectorData` were renamed to `productGroup` \n         and `productGroupData`. `productGroup` is required, so a document of this \n         shape is refused loudly rather than read with the field silently missing. \n         Deliberate and permanent: the term the Regulation defines is product \n         group, and a read-only alias would have kept both spellings alive in a \n         codebase whose whole problem was two names for one concept. No lens \n         bridges it, and none is wanted.",
+    ),
+    (
+        "textile/v1.1.0.json",
+        "The envelope keys `sector` and `sectorData` were renamed to `productGroup` \n         and `productGroupData`. `productGroup` is required, so a document of this \n         shape is refused loudly rather than read with the field silently missing. \n         Deliberate and permanent: the term the Regulation defines is product \n         group, and a read-only alias would have kept both spellings alive in a \n         codebase whose whole problem was two names for one concept. No lens \n         bridges it, and none is wanted.",
+    ),
+    (
+        "textile/v1.2.0.json",
+        "The envelope keys `sector` and `sectorData` were renamed to `productGroup` \n         and `productGroupData`. `productGroup` is required, so a document of this \n         shape is refused loudly rather than read with the field silently missing. \n         Deliberate and permanent: the term the Regulation defines is product \n         group, and a read-only alias would have kept both spellings alive in a \n         codebase whose whole problem was two names for one concept. No lens \n         bridges it, and none is wanted.",
+    ),
+    (
+        "toy/v1.1.0.json",
+        "The envelope keys `sector` and `sectorData` were renamed to `productGroup` \n         and `productGroupData`. `productGroup` is required, so a document of this \n         shape is refused loudly rather than read with the field silently missing. \n         Deliberate and permanent: the term the Regulation defines is product \n         group, and a read-only alias would have kept both spellings alive in a \n         codebase whose whole problem was two names for one concept. No lens \n         bridges it, and none is wanted.",
+    ),
+    (
+        "tyre/v1.0.0.json",
+        "The envelope keys `sector` and `sectorData` were renamed to `productGroup` \n         and `productGroupData`. `productGroup` is required, so a document of this \n         shape is refused loudly rather than read with the field silently missing. \n         Deliberate and permanent: the term the Regulation defines is product \n         group, and a read-only alias would have kept both spellings alive in a \n         codebase whose whole problem was two names for one concept. No lens \n         bridges it, and none is wanted.",
+    ),
+    (
+        "unsold-goods/v1.0.0.json",
+        "The envelope keys `sector` and `sectorData` were renamed to `productGroup` \n         and `productGroupData`. `productGroup` is required, so a document of this \n         shape is refused loudly rather than read with the field silently missing. \n         Deliberate and permanent: the term the Regulation defines is product \n         group, and a read-only alias would have kept both spellings alive in a \n         codebase whose whole problem was two names for one concept. No lens \n         bridges it, and none is wanted.",
+    ),
 ];
 
-/// The documented-unreadable list, as `sector/file.json` keys.
+/// The documented-unreadable list, as `product_group/file.json` keys.
 fn unreadable_key(path: &Path) -> String {
     let file = path
         .file_name()
         .and_then(|n| n.to_str())
         .unwrap_or_default();
-    let sector = path
+    let product_group = path
         .parent()
         .and_then(|p| p.file_name())
         .and_then(|n| n.to_str())
         .unwrap_or_default();
-    format!("{sector}/{file}")
+    format!("{product_group}/{file}")
 }
 
 #[test]
 fn every_frozen_passport_doc_still_reads() {
     let lenses = LensRegistry::new();
-    let catalog = SectorCatalog::new();
+    let catalog = ProductGroupCatalog::new();
     let fixtures = collect_fixtures();
     assert!(
         !fixtures.is_empty(),
@@ -178,7 +243,7 @@ fn every_frozen_passport_doc_still_reads() {
     // lens later bridges one of these, this is what says so.
     let mut unexpectedly_readable = Vec::new();
 
-    for (sector, path) in &fixtures {
+    for (product_group, path) in &fixtures {
         let raw = fs::read_to_string(path).unwrap_or_else(|e| panic!("read {path:?}: {e}"));
         let value: serde_json::Value =
             serde_json::from_str(&raw).unwrap_or_else(|e| panic!("{path:?} is not JSON: {e}"));
@@ -198,11 +263,11 @@ fn every_frozen_passport_doc_still_reads() {
             Ok(passport) => {
                 // A fixture that parses into the wrong document (e.g. an
                 // empty object matching every field's default) would pass
-                // silently — pin it to the sector its directory claims.
-                let actual = passport.sector.catalog_key();
-                if actual != sector {
+                // silently — pin it to the product group its directory claims.
+                let actual = passport.product_group.catalog_key();
+                if actual != product_group {
                     failures.push(format!(
-                        "{}: expected sector `{sector}` from its directory, deserialised as `{actual}`",
+                        "{}: expected product_group `{product_group}` from its directory, deserialised as `{actual}`",
                         path.display()
                     ));
                 }
@@ -249,12 +314,12 @@ fn every_frozen_passport_doc_still_reads() {
 #[test]
 fn no_frozen_doc_loses_an_envelope_key_unrecorded() {
     let lenses = LensRegistry::new();
-    let catalog = SectorCatalog::new();
+    let catalog = ProductGroupCatalog::new();
     let retired: BTreeSet<&str> = RETIRED_ENVELOPE_KEYS.iter().map(|(k, _)| *k).collect();
     let fixtures = collect_fixtures();
 
     let mut failures = Vec::new();
-    for (_sector, path) in &fixtures {
+    for (_product_group, path) in &fixtures {
         let raw = fs::read_to_string(path).unwrap_or_else(|e| panic!("read {path:?}: {e}"));
         let stored: serde_json::Value =
             serde_json::from_str(&raw).unwrap_or_else(|e| panic!("{path:?} is not JSON: {e}"));

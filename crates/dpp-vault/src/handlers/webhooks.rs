@@ -14,7 +14,7 @@ use axum::{
 use serde::Serialize;
 use uuid::Uuid;
 
-use dpp_domain::domain::error::DppError;
+use dpp_domain::error::DppError;
 use dpp_types::{NewWebhookSubscription, WebhookSubscription};
 
 use crate::{middleware::auth::AuthContext, state::AppState};
@@ -24,11 +24,11 @@ use super::error::{api_error, internal_error, not_found_error, require_admin, va
 /// Create response — the redacted subscription plus the signing secret, shown once.
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
-struct CreatedWebhookResponse {
+pub struct CreatedWebhookResponse {
     #[serde(flatten)]
-    subscription: WebhookSubscription,
+    pub subscription: WebhookSubscription,
     /// Signing secret. Store it now — it is never shown again.
-    secret: String,
+    pub secret: String,
 }
 
 /// `GET /api/v1/webhooks` — list subscriptions (secrets redacted).

@@ -1,6 +1,6 @@
 //! `relint` — on-demand plausibility-lint re-check (`POST /dpp/{dppId}/lint`).
 
-use dpp_domain::domain::{
+use dpp_domain::{
     error::DppError,
     passport::{Passport, PassportId},
 };
@@ -8,9 +8,9 @@ use dpp_domain::domain::{
 use super::PassportService;
 
 impl PassportService {
-    /// Re-run the plausibility lint pack against a passport's current sector
+    /// Re-run the plausibility lint pack against a passport's current product group
     /// data and persist the refreshed result. A no-op (returns the passport
-    /// unchanged) when it carries no sector data.
+    /// unchanged) when it carries no product group data.
     ///
     /// Unlike every other mutating method in this module, this does **not**
     /// append an audit entry or emit an event: lint findings are advisory
@@ -31,10 +31,10 @@ impl PassportService {
     pub async fn relint(&self, id: PassportId) -> Result<Passport, DppError> {
         let passport = self.find_by_id(id).await?;
 
-        let Some(sector_data) = passport.sector_data.as_ref() else {
+        let Some(product_group_data) = passport.product_group_data.as_ref() else {
             return Ok(passport);
         };
-        let lint_result = dpp_domain::LintResult::compute(sector_data);
+        let lint_result = dpp_domain::LintResult::compute(product_group_data);
 
         self.repo
             .patch_fields(id, serde_json::json!({ "lintResult": lint_result }))
