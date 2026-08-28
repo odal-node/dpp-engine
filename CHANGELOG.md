@@ -12,6 +12,26 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ### Fixed
 
+- **`ProductGroupData` declared a discriminator on a property that does not
+  exist.** `discriminator.propertyName` read `product group`, with a space, while
+  the schema's own `required` and `properties` both say `productGroup` — so the
+  description pointed generated clients at a field it never documents. The
+  surrounding prose repeated the error twice more, including a worked example
+  object keyed `"product group"`. This is the same find-and-replace residue that
+  produced the `product group` query parameter; the gate added below catches the
+  parameter spelling, and nothing reads `discriminator.propertyName`.
+
+  The prose also attributed the shape to `#[serde(tag = …)]`, which the server
+  deliberately does **not** derive: the tag is open, so a product group this
+  build does not model round-trips its tag and payload rather than failing to
+  parse. Stated now, since it is the part a client actually needs.
+
+- **The documented plugin filename convention could not work.** The upload route
+  described the artifact name as `product group-<key>.wasm`. The code derives the
+  key with `trim_start_matches("product-group-")`, so a file named the documented
+  way has nothing stripped, and the derived key is the whole stem — the install is
+  refused. Same residue, third instance.
+
 - **A GTIN check on the create path could not fail, and read as though it were
   the only thing checking.** `POST /api/v1/dpp` re-validated the GS1 check digit
   of `ProductGroupData::Battery`'s GTIN — a value that had already been through
