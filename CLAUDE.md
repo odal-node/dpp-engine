@@ -337,6 +337,8 @@ Background cleanup task runs every 6 hours, deleting completed/failed jobs older
 | POST | `/vault/api/v1/dpp/{dppId}/eol` | Bearer (write) | Declare end of life |
 | POST | `/vault/api/v1/dpp/{dppId}/transfer/initiate` | Bearer (write) | Sign a pending transfer of responsibility |
 | POST | `/vault/api/v1/dpp/{dppId}/transfer/accept` | Bearer (write) | Countersign and complete it |
+| POST | `/vault/api/v1/dpp/{dppId}/transfer/reject` | Bearer (write) | End the pending handover as refused — terminal, frees the chain |
+| POST | `/vault/api/v1/dpp/{dppId}/transfer/cancel` | Bearer (write) | End the pending handover as withdrawn — terminal, frees the chain |
 | GET | `/vault/api/v1/dpp/by-identity` | Bearer | Find by (product group, GTIN, batch) — backs the import delta-matcher |
 | GET | `/vault/api/v1/dpp/{dppId}/verify-tree` | Bearer | Walk and verify the component (BOM) graph |
 | GET | `/vault/api/v1/dpp/{dppId}/registry` | Bearer | EU-registry sync status for one passport |
