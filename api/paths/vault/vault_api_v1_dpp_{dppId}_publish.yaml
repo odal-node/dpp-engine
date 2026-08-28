@@ -1,0 +1,47 @@
+post:
+  operationId: publishDpp
+  summary: Publish a DPP
+  description: |
+    Transition a DPP from `draft` to `active`.
+
+    On success:
+    1. `qrCodeUrl` is set to the passport's GS1 Digital Link carrier —
+       `{resolverBase}/01/{gtin}/21/{serial}` for a trade item, else
+       `{resolverBase}/dpp/{id}`
+    2. The identity service signs the VC payload with Ed25519 (best-effort;
+       signing failure does not block publish — `jwsSignature` may be null)
+    3. `retentionLocked` is set to `true` permanently
+    4. `status` = `active`, `publishedAt` = now
+    5. A `dpp.published` NATS event is emitted (fire-after-commit)
+
+    No request body is required.
+  tags:
+    - DPP Lifecycle
+  security:
+    - BearerApiKey: []
+    - BasicAuth: []
+  parameters:
+    - name: dppId
+      in: path
+      required: true
+      schema:
+        $ref: ../../components/schemas/passport/DppId.yaml
+  responses:
+    '200':
+      description: DPP published successfully. Returns the full passport record.
+      content:
+        application/json:
+          schema:
+            $ref: ../../components/schemas/passport/PassportResponse.yaml
+    '401':
+      $ref: ../../components/responses/Unauthorized.yaml
+    '404':
+      $ref: ../../components/responses/NotFound.yaml
+    '409':
+      $ref: ../../components/responses/Conflict.yaml
+    '400':
+      $ref: ../../components/responses/BadRequest.yaml
+    '403':
+      $ref: ../../components/responses/Forbidden.yaml
+    '422':
+      $ref: ../../components/responses/ValidationError.yaml

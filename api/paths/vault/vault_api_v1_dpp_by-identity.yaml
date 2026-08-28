@@ -1,0 +1,41 @@
+get:
+  operationId: findDppByIdentity
+  summary: Find a DPP by exact compound identity
+  description: |
+    Look up a passport by exact (product group, GTIN, batch) match, across
+    `draft` and `active` statuses. Backs the import delta-matcher —
+    not intended as a general-purpose search (use `GET /dpps` for that).
+    `batchId` omitted matches only passports with no batch set.
+  tags:
+    - DPP Management
+  security:
+    - BearerApiKey: []
+    - BasicAuth: []
+  parameters:
+    - name: productGroup
+      in: query
+      required: true
+      schema:
+        type: string
+        example: battery
+    - name: gtin
+      in: query
+      required: true
+      schema:
+        type: string
+    - name: batchId
+      in: query
+      required: false
+      schema:
+        type: string
+  responses:
+    '200':
+      description: The matching DPP record.
+      content:
+        application/json:
+          schema:
+            $ref: ../../components/schemas/passport/PassportResponse.yaml
+    '401':
+      $ref: ../../components/responses/Unauthorized.yaml
+    '404':
+      $ref: ../../components/responses/NotFound.yaml

@@ -1,0 +1,38 @@
+get:
+  operationId: getDppRegistryStatus
+  summary: EU-registry state for one passport
+  description: |
+    What the EU registry knows about this passport: its queued registration,
+    any handover notifications, and who is responsible for it now.
+
+    Registration is the legal obligation the rest of the system exists to
+    discharge, and this is where an operator sees whether it has been —
+    the state otherwise lives only in outbox tables, metrics and log lines.
+
+    **Absent is not zero.** A deployment without the registry queues reports
+    `configured: false` and omits the detail, rather than a row of zeros that
+    would read as "everything is registered".
+  tags:
+    - Registry
+  security:
+    - BearerApiKey: []
+    - BasicAuth: []
+  parameters:
+    - name: dppId
+      in: path
+      required: true
+      schema:
+        $ref: ../../components/schemas/passport/DppId.yaml
+  responses:
+    '200':
+      description: Registry state for the passport.
+      content:
+        application/json:
+          schema:
+            $ref: ../../components/schemas/registry/PassportRegistryView.yaml
+    '401':
+      $ref: ../../components/responses/Unauthorized.yaml
+    '404':
+      $ref: ../../components/responses/NotFound.yaml
+    '400':
+      $ref: ../../components/responses/BadRequest.yaml

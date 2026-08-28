@@ -1,0 +1,36 @@
+get:
+  operationId: getCurrentSectorSchema
+  summary: Fetch a product group's current JSON Schema
+  description: |
+    The schema a passport created today is validated against, resolved through
+    the same registry the publish gate uses — never a copy, which would drift in
+    the direction where a body passes here and fails at publish. Unauthenticated.
+
+    Every `description` is omitted from the served document. Those fields make
+    regulatory assertions that have not been verified against primary text, and
+    serving them would turn developer-facing comments into a product surface.
+    Everything that decides accept or reject — types, `enum`, `required`,
+    `pattern`, bounds, `additionalProperties` — is served in full, so a client
+    can pre-validate a body and get the verdict the create route would give.
+  tags:
+    - Integrator
+  parameters:
+    - name: productGroup
+      in: path
+      required: true
+      schema:
+        type: string
+        example: battery
+  responses:
+    '200':
+      description: The product group's current JSON Schema.
+      content:
+        application/json:
+          schema:
+            type: object
+    '404':
+      description: No schema for this product group; the body names the known product groups.
+      content:
+        application/problem+json:
+          schema:
+            $ref: ../../components/schemas/errors/Problem.yaml

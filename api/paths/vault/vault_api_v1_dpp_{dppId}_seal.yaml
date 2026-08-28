@@ -1,0 +1,53 @@
+get:
+  operationId: getDppSeal
+  summary: Fetch the passport's eIDAS qualified electronic seal
+  description: |
+    Returns the qualified seal a QTSP applied to this passport, together with
+    the compact JWS it was taken over and that JWS's SHA-256 digest.
+
+    The seal has its own route because it is stripped from every audience
+    view, public included: it covers the **full**-payload `jwsSignature`, so
+    attaching it to a redacted body would hand the reader a proof that
+    verifies against nothing they received.
+
+    **This node does not validate the seal.** A detached CAdES must be
+    checked by an independent AdES validator against the EU Trusted List. A
+    verdict from the node that bought the seal would attest nothing, so none
+    is offered.
+
+    `coverage` answers a narrower question that the node *can* answer, from
+    its own records: `sealedPayloadHash` is the digest it asked the backend
+    to seal, so a passport re-published after sealing shows as `superseded`
+    without any AdES tooling. That is a record of what was requested, not
+    proof of what the CAdES covers — the validator's extracted message
+    digest is the cross-check. A `superseded` seal remains valid for the
+    signature it does cover; a seal over the new signature has not landed
+    yet.
+
+    `404` when the passport has no seal — it may be unpublished, its seal may
+    still be queued, or the node may have no QTSP configured. An unsealed
+    passport has no seal resource rather than an empty one.
+  tags:
+    - DPP Management
+  security:
+    - BearerApiKey: []
+    - BasicAuth: []
+  parameters:
+    - name: dppId
+      in: path
+      required: true
+      schema:
+        $ref: ../../components/schemas/passport/DppId.yaml
+  responses:
+    '200':
+      description: The qualified seal and the signature it attests to.
+      content:
+        application/json:
+          schema:
+            $ref: ../../components/schemas/seals/SealResponse.yaml
+    '401':
+      $ref: ../../components/responses/Unauthorized.yaml
+    '404':
+      $ref: ../../components/responses/NotFound.yaml
+    '400':
+      $ref: ../../components/responses/BadRequest.yaml

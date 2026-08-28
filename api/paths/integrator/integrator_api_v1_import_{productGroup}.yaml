@@ -1,0 +1,65 @@
+post:
+  operationId: importFile
+  summary: Bulk-import passports from a file
+  description: |
+    Upload a CSV or XLSX file to create draft passports for a product group
+    (`battery`, `textile`, `steel`, `aluminium`, `tyre`). The caller's
+    `Authorization: Bearer` token is validated and forwarded to the vault.
+
+    - ≤ 100 valid rows → processed synchronously, `200` with results.
+    - `> 100` valid rows → an async job is queued, `202` with a `jobId`.
+    - `mode=dry_run` → validate only, `200` with the would-be results.
+
+    Every import — dry-run or apply, sync or async — mints a job id and
+    persists a row-addressed report retrievable via the job-status
+    endpoint, even when this endpoint's own response is synchronous.
+  tags:
+    - Integrator
+  security:
+    - BearerApiKey: []
+  parameters:
+    - name: productGroup
+      in: path
+      required: true
+      schema:
+        type: string
+        example: battery
+  requestBody:
+    required: true
+    content:
+      multipart/form-data:
+        schema:
+          type: object
+          required:
+            - file
+          properties:
+            file:
+              type: string
+              format: binary
+              description: CSV or XLSX file.
+            mode:
+              type: string
+              description: >-
+                "dry_run" to validate without creating records; any other value
+                (or omitted) means apply.
+  responses:
+    '200':
+      description: Synchronous import (or dry-run) results.
+      content:
+        application/json:
+          schema:
+            $ref: ../../components/schemas/import/ImportSyncResponse.yaml
+    '202':
+      description: Async import job accepted — poll the job-status endpoint.
+      content:
+        application/json:
+          schema:
+            $ref: ../../components/schemas/import/ImportAsyncResponse.yaml
+    '401':
+      $ref: ../../components/responses/Unauthorized.yaml
+    '404':
+      description: Unknown product group.
+    '422':
+      $ref: ../../components/responses/ValidationError.yaml
+    '400':
+      $ref: ../../components/responses/BadRequest.yaml

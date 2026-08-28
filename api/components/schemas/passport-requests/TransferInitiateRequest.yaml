@@ -1,0 +1,20 @@
+type: object
+required:
+  - fromOperator
+  - toOperator
+  - reason
+properties:
+  fromOperator:
+    allOf:
+      - $ref: ../transfer/ResponsibleOperator.yaml
+    description: The current (outgoing) responsible operator — must match the chain head.
+  toOperator:
+    allOf:
+      - $ref: ../transfer/ResponsibleOperator.yaml
+    description: The incoming responsible operator taking over the DPP.
+  reason:
+    $ref: ./TransferReason.yaml
+  notes:
+    type:
+      - string
+      - 'null'

@@ -1,0 +1,59 @@
+post:
+  operationId: validateDpp
+  summary: Dry-run a passport body without creating it
+  description: |
+    Runs exactly the validation `POST /vault/api/v1/dpp` runs, and persists
+    nothing. The same code path serves both, so a preview and the real create
+    cannot disagree.
+
+    **Two verdicts, because create and publish deliberately differ.** Create is
+    lenient about a product group with no resolvable JSON Schema — a draft is allowed
+    to be incomplete — while publish fails closed on it, since a signed
+    passport must have passed a real schema check. A body can therefore be
+    creatable but not yet clear the publish-time schema gate, and that gap is
+    reported rather than hidden until publish is attempted.
+
+    A body that create **would reject** gets back the identical `422` create
+    would have returned, not a paraphrase of it. A body create would accept
+    returns `200` with the two verdicts.
+
+    **`productGroupDataValid` is not a publish verdict.** It reports one of publish's
+    preconditions — the product group-data gates — and publish applies others this
+    route does not run:
+
+    - the **registry identity** requirement (a default facility and a primary
+      operator identifier), which needs operator state this route never reads;
+    - the **category-mandatory content** gate, which is reachable only by
+      attempting the lifecycle transition, so it cannot be previewed;
+    - the **compliance** gate, which needs a `placedOnMarketDate` and a stored
+      passport.
+
+    A `productGroupDataValid: true` therefore means "this body clears the schema
+    gate", never "publish will succeed". The field was called `publishValid`
+    and was renamed because that name promised the latter.
+  tags:
+    - DPP Management
+  security:
+    - BearerApiKey: []
+    - BasicAuth: []
+  requestBody:
+    required: true
+    content:
+      application/json:
+        schema:
+          $ref: ../../components/schemas/passport-requests/CreateRequest.yaml
+  responses:
+    '200':
+      description: |
+        The body is creatable. `productGroupDataValid` says whether its product group data
+        would also clear the publish-time schema gate.
+      content:
+        application/json:
+          schema:
+            $ref: ../../components/schemas/passport-reports/ValidateResponse.yaml
+    '401':
+      $ref: ../../components/responses/Unauthorized.yaml
+    '403':
+      $ref: ../../components/responses/Forbidden.yaml
+    '422':
+      $ref: ../../components/responses/ValidationError.yaml

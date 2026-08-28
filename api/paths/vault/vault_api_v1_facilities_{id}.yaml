@@ -1,0 +1,32 @@
+delete:
+  operationId: removeFacility
+  summary: Remove a facility
+  description: >-
+    Retires the facility (soft-delete): the row is kept as Annex III provenance
+    for passports that already stamped its identifier — never hard-deleted.
+    Requires an admin-scoped key.
+  tags:
+    - Facilities
+  security:
+    - BearerApiKey: []
+    - BasicAuth: []
+  parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  responses:
+    '204':
+      description: Facility removed.
+    '401':
+      $ref: ../../components/responses/Unauthorized.yaml
+    '403':
+      $ref: ../../components/responses/Forbidden.yaml
+    '404':
+      $ref: ../../components/responses/NotFound.yaml
+    '400':
+      $ref: ../../components/responses/BadRequest.yaml
+    '422':
+      $ref: ../../components/responses/ValidationError.yaml

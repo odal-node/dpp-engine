@@ -2,7 +2,7 @@ description: Resource not found within the operator's scope.
 content:
   application/problem+json:
     schema:
-      $ref: ../schemas/Problem.yaml
+      $ref: ../schemas/errors/Problem.yaml
     example:
       type: https://problems.odal-node.io/not-found
       title: Not Found

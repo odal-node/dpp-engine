@@ -1,0 +1,27 @@
+get:
+  operationId: getRegistryRollup
+  summary: Operator-wide EU-registry rollup
+  description: |
+    Registration and handover queue totals for this operator, plus its
+    verified-registry standing.
+
+    Verification is reported whether or not the queues are configured: verified
+    status lapses at the latest three years after verification (sooner if the
+    electronic identification means expire), and a lapsed operator cannot
+    register or amend anything until it verifies again.
+
+    **Absent is not zero** — see the per-passport route.
+  tags:
+    - Registry
+  security:
+    - BearerApiKey: []
+    - BasicAuth: []
+  responses:
+    '200':
+      description: Registry rollup for the operator.
+      content:
+        application/json:
+          schema:
+            $ref: ../../components/schemas/registry/RegistryRollupView.yaml
+    '401':
+      $ref: ../../components/responses/Unauthorized.yaml

@@ -1,0 +1,33 @@
+get:
+  operationId: getFacilityAudit
+  summary: Facility audit trail
+  description: |
+    Append-only mutation history for one facility (added, retired,
+    set-default), oldest first. Requires an admin-scoped key.
+  tags:
+    - Facilities
+  security:
+    - BearerApiKey: []
+    - BasicAuth: []
+  parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  responses:
+    '200':
+      description: List of audit entries for this facility.
+      content:
+        application/json:
+          schema:
+            type: array
+            items:
+              $ref: ../../components/schemas/operator/RegistryIdentityAudit.yaml
+    '401':
+      $ref: ../../components/responses/Unauthorized.yaml
+    '403':
+      $ref: ../../components/responses/Forbidden.yaml
+    '400':
+      $ref: ../../components/responses/BadRequest.yaml

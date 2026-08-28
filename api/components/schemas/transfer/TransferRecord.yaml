@@ -1,0 +1,60 @@
+type: object
+required:
+  - transferId
+  - passportId
+  - fromOperator
+  - toOperator
+  - reason
+  - initiatedAt
+description: >-
+  A single transfer-of-responsibility event, dual-signed by the outgoing and
+  incoming operators.
+properties:
+  transferId:
+    type: string
+    format: uuid
+  passportId:
+    type: string
+    format: uuid
+  fromOperator:
+    $ref: ./ResponsibleOperator.yaml
+  toOperator:
+    $ref: ./ResponsibleOperator.yaml
+  reason:
+    $ref: ../passport-requests/TransferReason.yaml
+  fromSignature:
+    type:
+      - string
+      - 'null'
+    description: Compact JWS from the outgoing operator, authorising the handover.
+  nodeAcceptanceAttestation:
+    type:
+      - string
+      - 'null'
+    description: >-
+      Attestation by the hosting node that the acceptance step ran. Not the
+      incoming operator's own signature - a node cannot sign for a counterparty
+      whose key it does not hold. The authoritative record of who holds the
+      obligations is the EU registry under Impl. Reg. (EU) 2026/1778 Art. 6a.
+  initiatedAt:
+    type: string
+    format: date-time
+  completedAt:
+    type:
+      - string
+      - 'null'
+    format: date-time
+  rejectedAt:
+    type:
+      - string
+      - 'null'
+    format: date-time
+  cancelledAt:
+    type:
+      - string
+      - 'null'
+    format: date-time
+  notes:
+    type:
+      - string
+      - 'null'

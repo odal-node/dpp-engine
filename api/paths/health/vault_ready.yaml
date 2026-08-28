@@ -1,0 +1,10 @@
+get:
+  operationId: vaultReady
+  summary: Vault readiness check
+  tags:
+    - Health
+  responses:
+    '200':
+      description: Service is ready (DB connection verified).
+    '503':
+      $ref: ../../components/responses/ServiceUnavailable.yaml

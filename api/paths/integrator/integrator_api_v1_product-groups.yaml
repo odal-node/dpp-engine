@@ -1,0 +1,43 @@
+get:
+  operationId: listProductGroups
+  summary: List product groups and their passport obligations
+  description: |
+    Whether a digital product passport is required for each product group this
+    node knows of, from what date, under which acts, and whether this build can
+    actually make a binding determination. Unauthenticated.
+
+    "Knows of" is wider than "has a schema for". A product group reached by an
+    act while carrying no catalog descriptor is listed too, with a `null`
+    `title` — that group has no schema, plugin or template to be discovered from,
+    so this is the only place it can be asked about.
+
+    **Every date is served with its `basis`.** Most of the catalog is undated,
+    and of the dates that exist some trace to an adopted text (`sourced`) and
+    some are a reading (`assumed`). A date without its basis would present a
+    qualified reading as an unqualified claim, so `basis` is always present
+    wherever a date or a retention period is.
+
+    `required` and `determinable` are different questions and are reported
+    separately. An obligation can exist while the implementing acts that define
+    the technical requirements do not, in which case nothing is bindingly
+    determinable yet however clearly the duty is written.
+
+    Schema versions are not restated here — see `/integrator/api/v1/schemas`,
+    which is their one home.
+  tags:
+    - Integrator
+  # An explicit empty list, not an omitted key. The description has no root
+  # `security`, so an operation without one says nothing at all about auth and
+  # `security: []` is the only way to state "no credential is required" — which
+  # is what this route does. Written here rather than baselined in
+  # `.redocly.lint-ignore.yaml`: that file records problems inherited from
+  # before the gate existed and is only ever shrunk, and a public route is not
+  # a problem to be tolerated but a fact to be published.
+  security: []
+  responses:
+    '200':
+      description: Every product group this build knows of.
+      content:
+        application/json:
+          schema:
+            $ref: '../../components/schemas/regulatory/ProductGroupObligationList.yaml'

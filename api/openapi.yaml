@@ -77,151 +77,151 @@ components:
         `dpp-node` never exposes these over the network — it signs in-process.
 paths:
   /vault/api/v1/dpp:
-    $ref: paths/vault_api_v1_dpp.yaml
+    $ref: paths/vault/vault_api_v1_dpp.yaml
   /vault/api/v1/dpp/validate:
-    $ref: paths/vault_api_v1_dpp_validate.yaml
+    $ref: paths/vault/vault_api_v1_dpp_validate.yaml
   /vault/api/v1/dpps:
-    $ref: paths/vault_api_v1_dpps.yaml
+    $ref: paths/vault/vault_api_v1_dpps.yaml
   /vault/api/v1/dpp/by-identity:
-    $ref: paths/vault_api_v1_dpp_by-identity.yaml
+    $ref: paths/vault/vault_api_v1_dpp_by-identity.yaml
   /vault/api/v1/dpp/{dppId}:
-    $ref: paths/vault_api_v1_dpp_{dppId}.yaml
+    $ref: paths/vault/vault_api_v1_dpp_{dppId}.yaml
   /vault/api/v1/dpp/{dppId}/publish:
-    $ref: paths/vault_api_v1_dpp_{dppId}_publish.yaml
+    $ref: paths/vault/vault_api_v1_dpp_{dppId}_publish.yaml
   /vault/api/v1/dpp/{dppId}/suspend:
-    $ref: paths/vault_api_v1_dpp_{dppId}_suspend.yaml
+    $ref: paths/vault/vault_api_v1_dpp_{dppId}_suspend.yaml
   /vault/api/v1/dpp/{dppId}/archive:
-    $ref: paths/vault_api_v1_dpp_{dppId}_archive.yaml
+    $ref: paths/vault/vault_api_v1_dpp_{dppId}_archive.yaml
   /vault/api/v1/dpp/{dppId}/eol:
-    $ref: paths/vault_api_v1_dpp_{dppId}_eol.yaml
+    $ref: paths/vault/vault_api_v1_dpp_{dppId}_eol.yaml
   /vault/api/v1/dpp/{dppId}/transfer/initiate:
-    $ref: paths/vault_api_v1_dpp_{dppId}_transfer_initiate.yaml
+    $ref: paths/vault/vault_api_v1_dpp_{dppId}_transfer_initiate.yaml
   /vault/api/v1/dpp/{dppId}/transfer/accept:
-    $ref: paths/vault_api_v1_dpp_{dppId}_transfer_accept.yaml
+    $ref: paths/vault/vault_api_v1_dpp_{dppId}_transfer_accept.yaml
   /vault/api/v1/dpp/{dppId}/transfer/reject:
-    $ref: paths/vault_api_v1_dpp_{dppId}_transfer_reject.yaml
+    $ref: paths/vault/vault_api_v1_dpp_{dppId}_transfer_reject.yaml
   /vault/api/v1/dpp/{dppId}/transfer/cancel:
-    $ref: paths/vault_api_v1_dpp_{dppId}_transfer_cancel.yaml
+    $ref: paths/vault/vault_api_v1_dpp_{dppId}_transfer_cancel.yaml
   /vault/api/v1/dpp/{dppId}/history:
-    $ref: paths/vault_api_v1_dpp_{dppId}_history.yaml
+    $ref: paths/vault/vault_api_v1_dpp_{dppId}_history.yaml
   /vault/api/v1/dpp/{dppId}/stats:
-    $ref: paths/vault_api_v1_dpp_{dppId}_stats.yaml
+    $ref: paths/vault/vault_api_v1_dpp_{dppId}_stats.yaml
   /vault/api/v1/stats:
-    $ref: paths/vault_api_v1_stats.yaml
+    $ref: paths/vault/vault_api_v1_stats.yaml
   /vault/api/v1/dpp/{dppId}/registry:
-    $ref: paths/vault_api_v1_dpp_{dppId}_registry.yaml
+    $ref: paths/vault/vault_api_v1_dpp_{dppId}_registry.yaml
   /vault/api/v1/registry:
-    $ref: paths/vault_api_v1_registry.yaml
+    $ref: paths/vault/vault_api_v1_registry.yaml
   /vault/api/v1/dpp/{dppId}/verify-tree:
-    $ref: paths/vault_api_v1_dpp_{dppId}_verify-tree.yaml
+    $ref: paths/vault/vault_api_v1_dpp_{dppId}_verify-tree.yaml
   /vault/api/v1/seal:
-    $ref: paths/vault_api_v1_seal.yaml
+    $ref: paths/vault/vault_api_v1_seal.yaml
   /vault/api/v1/dpp/{dppId}/seal:
-    $ref: paths/vault_api_v1_dpp_{dppId}_seal.yaml
+    $ref: paths/vault/vault_api_v1_dpp_{dppId}_seal.yaml
   /vault/api/v1/dpp/{dppId}/lint:
-    $ref: paths/vault_api_v1_dpp_{dppId}_lint.yaml
+    $ref: paths/vault/vault_api_v1_dpp_{dppId}_lint.yaml
   /vault/api/v1/dpp/{dppId}/evidence:
-    $ref: paths/vault_api_v1_dpp_{dppId}_evidence.yaml
+    $ref: paths/vault/vault_api_v1_dpp_{dppId}_evidence.yaml
   /vault/api/v1/evidence/{id}:
-    $ref: paths/vault_api_v1_evidence_{id}.yaml
+    $ref: paths/vault/vault_api_v1_evidence_{id}.yaml
   /vault/api/v1/evidence/{id}/verify:
-    $ref: paths/vault_api_v1_evidence_{id}_verify.yaml
+    $ref: paths/vault/vault_api_v1_evidence_{id}_verify.yaml
   /vault/api/v1/evidence/verify:
-    $ref: paths/vault_api_v1_evidence_verify.yaml
+    $ref: paths/vault/vault_api_v1_evidence_verify.yaml
   /vault/api/v1/operator:
-    $ref: paths/vault_api_v1_operator.yaml
+    $ref: paths/vault/vault_api_v1_operator.yaml
   /vault/api/v1/api-keys:
-    $ref: paths/vault_api_v1_api-keys.yaml
+    $ref: paths/vault/vault_api_v1_api-keys.yaml
   /vault/api/v1/api-keys/{id}:
-    $ref: paths/vault_api_v1_api-keys_{id}.yaml
+    $ref: paths/vault/vault_api_v1_api-keys_{id}.yaml
   /vault/api/v1/plugins:
-    $ref: paths/vault_api_v1_plugins.yaml
+    $ref: paths/vault/vault_api_v1_plugins.yaml
   /vault/api/v1/webhooks:
-    $ref: paths/vault_api_v1_webhooks.yaml
+    $ref: paths/vault/vault_api_v1_webhooks.yaml
   /vault/api/v1/webhooks/{id}:
-    $ref: paths/vault_api_v1_webhooks_{id}.yaml
+    $ref: paths/vault/vault_api_v1_webhooks_{id}.yaml
   /vault/api/v1/webhooks/{id}/test:
-    $ref: paths/vault_api_v1_webhooks_{id}_test.yaml
+    $ref: paths/vault/vault_api_v1_webhooks_{id}_test.yaml
   /vault/api/v1/node/state:
-    $ref: paths/vault_api_v1_node_state.yaml
+    $ref: paths/vault/vault_api_v1_node_state.yaml
   /vault/api/v1/whoami:
-    $ref: paths/vault_api_v1_whoami.yaml
+    $ref: paths/vault/vault_api_v1_whoami.yaml
   /vault/api/v1/facilities:
-    $ref: paths/vault_api_v1_facilities.yaml
+    $ref: paths/vault/vault_api_v1_facilities.yaml
   /vault/api/v1/facilities/{id}:
-    $ref: paths/vault_api_v1_facilities_{id}.yaml
+    $ref: paths/vault/vault_api_v1_facilities_{id}.yaml
   /vault/api/v1/facilities/{id}/audit:
-    $ref: paths/vault_api_v1_facilities_{id}_audit.yaml
+    $ref: paths/vault/vault_api_v1_facilities_{id}_audit.yaml
   /vault/api/v1/facilities/{id}/default:
-    $ref: paths/vault_api_v1_facilities_{id}_default.yaml
+    $ref: paths/vault/vault_api_v1_facilities_{id}_default.yaml
   /vault/api/v1/operator-identifiers:
-    $ref: paths/vault_api_v1_operator-identifiers.yaml
+    $ref: paths/vault/vault_api_v1_operator-identifiers.yaml
   /vault/api/v1/operator-identifiers/{id}:
-    $ref: paths/vault_api_v1_operator-identifiers_{id}.yaml
+    $ref: paths/vault/vault_api_v1_operator-identifiers_{id}.yaml
   /vault/api/v1/operator-identifiers/{id}/audit:
-    $ref: paths/vault_api_v1_operator-identifiers_{id}_audit.yaml
+    $ref: paths/vault/vault_api_v1_operator-identifiers_{id}_audit.yaml
   /vault/api/v1/operator-identifiers/{id}/primary:
-    $ref: paths/vault_api_v1_operator-identifiers_{id}_primary.yaml
+    $ref: paths/vault/vault_api_v1_operator-identifiers_{id}_primary.yaml
   /vault/public/dpp/{dppId}:
-    $ref: paths/vault_public_dpp_{dppId}.yaml
+    $ref: paths/vault/vault_public_dpp_{dppId}.yaml
   /vault/public/dpp/by-gtin/{gtin}:
-    $ref: paths/vault_public_dpp_by-gtin_{gtin}.yaml
+    $ref: paths/vault/vault_public_dpp_by-gtin_{gtin}.yaml
   /vault/credential/dpp/{dppId}:
-    $ref: paths/vault_credential_dpp_{dppId}.yaml
+    $ref: paths/vault/vault_credential_dpp_{dppId}.yaml
   /vault/internal/scan-batch:
-    $ref: paths/vault_internal_scan-batch.yaml
+    $ref: paths/vault/vault_internal_scan-batch.yaml
   /vault/health:
-    $ref: paths/vault_health.yaml
+    $ref: paths/health/vault_health.yaml
   /vault/ready:
-    $ref: paths/vault_ready.yaml
+    $ref: paths/health/vault_ready.yaml
   /vault/api/v1/info:
-    $ref: paths/vault_api_v1_info.yaml
+    $ref: paths/health/vault_api_v1_info.yaml
   /identity/.well-known/did.json:
-    $ref: paths/identity_.well-known_did.json.yaml
+    $ref: paths/identity/identity_.well-known_did.json.yaml
   /identity/health:
-    $ref: paths/identity_health.yaml
+    $ref: paths/health/identity_health.yaml
   /identity/ready:
-    $ref: paths/identity_ready.yaml
+    $ref: paths/health/identity_ready.yaml
   /internal/sign:
-    $ref: paths/internal_sign.yaml
+    $ref: paths/identity/internal_sign.yaml
   /internal/verify:
-    $ref: paths/internal_verify.yaml
+    $ref: paths/identity/internal_verify.yaml
   /internal/keys/rotate:
-    $ref: paths/internal_keys_rotate.yaml
+    $ref: paths/identity/internal_keys_rotate.yaml
   /integrator/health:
-    $ref: paths/integrator_health.yaml
+    $ref: paths/health/integrator_health.yaml
   /integrator/api/v1/templates/{productGroup}:
-    $ref: paths/integrator_api_v1_templates_{productGroup}.yaml
+    $ref: paths/integrator/integrator_api_v1_templates_{productGroup}.yaml
   /integrator/api/v1/product-groups:
-    $ref: paths/integrator_api_v1_product-groups.yaml
+    $ref: paths/integrator/integrator_api_v1_product-groups.yaml
   /integrator/api/v1/product-groups/{productGroup}:
-    $ref: paths/integrator_api_v1_product-groups_{productGroup}.yaml
+    $ref: paths/integrator/integrator_api_v1_product-groups_{productGroup}.yaml
   /integrator/api/v1/schemas:
-    $ref: paths/integrator_api_v1_schemas.yaml
+    $ref: paths/integrator/integrator_api_v1_schemas.yaml
   /integrator/api/v1/schemas/{productGroup}:
-    $ref: paths/integrator_api_v1_schemas_{productGroup}.yaml
+    $ref: paths/integrator/integrator_api_v1_schemas_{productGroup}.yaml
   /integrator/api/v1/schemas/{productGroup}/{version}:
-    $ref: paths/integrator_api_v1_schemas_{productGroup}_{version}.yaml
+    $ref: paths/integrator/integrator_api_v1_schemas_{productGroup}_{version}.yaml
   /integrator/api/v1/import/{productGroup}:
-    $ref: paths/integrator_api_v1_import_{productGroup}.yaml
+    $ref: paths/integrator/integrator_api_v1_import_{productGroup}.yaml
   /integrator/api/v1/imports/{job_id}:
-    $ref: paths/integrator_api_v1_imports_{job_id}.yaml
+    $ref: paths/integrator/integrator_api_v1_imports_{job_id}.yaml
   /dpp/{dppId}:
-    $ref: paths/dpp_{dppId}.yaml
+    $ref: paths/resolver/dpp_{dppId}.yaml
   /dpp/{dppId}/qr:
-    $ref: paths/dpp_{dppId}_qr.yaml
+    $ref: paths/resolver/dpp_{dppId}_qr.yaml
   /01/{gtin}:
-    $ref: paths/01_{gtin}.yaml
+    $ref: paths/resolver/01_{gtin}.yaml
   /01/{gtin}/21/{serial}:
-    $ref: paths/01_{gtin}_21_{serial}.yaml
+    $ref: paths/resolver/01_{gtin}_21_{serial}.yaml
   /01/{gtin}/10/{batch}:
-    $ref: paths/01_{gtin}_10_{batch}.yaml
+    $ref: paths/resolver/01_{gtin}_10_{batch}.yaml
   /01/{gtin}/10/{batch}/21/{serial}:
-    $ref: paths/01_{gtin}_10_{batch}_21_{serial}.yaml
+    $ref: paths/resolver/01_{gtin}_10_{batch}_21_{serial}.yaml
   /health:
-    $ref: paths/health.yaml
+    $ref: paths/health/health.yaml
   /ready:
-    $ref: paths/ready.yaml
+    $ref: paths/health/ready.yaml
 tags:
   - name: DPP Management
     description: Create, read, update, list, and audit Digital Product Passports.

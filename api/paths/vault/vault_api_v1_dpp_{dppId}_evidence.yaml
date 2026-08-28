@@ -1,0 +1,72 @@
+post:
+  operationId: generateDppEvidence
+  summary: Generate and store a signed evidence dossier
+  description: |
+    Assembles a self-contained, signed dossier proving a passport's full
+    proof chain — both JWS signatures, DID document snapshots, the
+    hash-chained audit trail, and (when present) the transfer chain and
+    end-of-life record — and persists it. See
+    `docs/architecture/EVIDENCE-DOSSIER.md` for the complete format
+    specification.
+
+    Authenticated tier only — the dossier's `fullView` member carries
+    full-view (non-redacted) passport data. Requires the passport to have
+    been published at least once; a draft has no signature to export.
+  tags:
+    - Evidence Dossiers
+  security:
+    - BearerApiKey: []
+    - BasicAuth: []
+  parameters:
+    - name: dppId
+      in: path
+      required: true
+      schema:
+        $ref: ../../components/schemas/passport/DppId.yaml
+  responses:
+    '201':
+      description: The stored dossier record.
+      content:
+        application/json:
+          schema:
+            $ref: ../../components/schemas/evidence/EvidenceDossierRecord.yaml
+    '401':
+      $ref: ../../components/responses/Unauthorized.yaml
+    '404':
+      $ref: ../../components/responses/NotFound.yaml
+    '409':
+      $ref: ../../components/responses/Conflict.yaml
+    '400':
+      $ref: ../../components/responses/BadRequest.yaml
+    '403':
+      $ref: ../../components/responses/Forbidden.yaml
+get:
+  operationId: listDppEvidence
+  summary: List stored evidence dossiers for a passport
+  description: Summaries only (no document body), newest first.
+  tags:
+    - Evidence Dossiers
+  security:
+    - BearerApiKey: []
+    - BasicAuth: []
+  parameters:
+    - name: dppId
+      in: path
+      required: true
+      schema:
+        $ref: ../../components/schemas/passport/DppId.yaml
+  responses:
+    '200':
+      description: Stored dossier summaries.
+      content:
+        application/json:
+          schema:
+            type: array
+            items:
+              $ref: ../../components/schemas/evidence/EvidenceDossierSummary.yaml
+    '401':
+      $ref: ../../components/responses/Unauthorized.yaml
+    '404':
+      $ref: ../../components/responses/NotFound.yaml
+    '400':
+      $ref: ../../components/responses/BadRequest.yaml

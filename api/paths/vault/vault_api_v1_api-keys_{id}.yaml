@@ -1,0 +1,33 @@
+delete:
+  operationId: revokeApiKey
+  summary: Revoke an API key
+  description: |
+    Soft-revokes a key. The record remains for audit but `isActive`
+    is set to false. Subsequent auth attempts with this key will fail.
+  tags:
+    - API Keys
+  security:
+    - BearerApiKey: []
+    - BasicAuth: []
+  parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  responses:
+    '204':
+      description: Key revoked.
+    '400':
+      description: Invalid key ID format.
+      content:
+        application/problem+json:
+          schema:
+            $ref: ../../components/schemas/errors/Problem.yaml
+    '401':
+      $ref: ../../components/responses/Unauthorized.yaml
+    '404':
+      $ref: ../../components/responses/NotFound.yaml
+    '403':
+      $ref: ../../components/responses/Forbidden.yaml

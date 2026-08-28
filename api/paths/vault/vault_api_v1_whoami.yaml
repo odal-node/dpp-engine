@@ -1,0 +1,27 @@
+get:
+  operationId: whoami
+  summary: Identity and scope of the presented credential
+  description: |
+    Echoes back what the caller's own credential is. A client cannot otherwise
+    discover what it is allowed to do — a `read` key learns it is read-only by
+    having a write rejected, which cannot be checked ahead of time.
+
+    Reports only what the caller already presented; it reveals nothing about
+    any other key. `keyId` is the key's row id, never the token, and is absent
+    for local Basic auth, which has no key row.
+
+    Available to every scope, including `read`.
+  tags:
+    - Node
+  security:
+    - BearerApiKey: []
+    - BasicAuth: []
+  responses:
+    '200':
+      description: The caller's identity and scope.
+      content:
+        application/json:
+          schema:
+            $ref: ../../components/schemas/access/WhoamiResponse.yaml
+    '401':
+      $ref: ../../components/responses/Unauthorized.yaml

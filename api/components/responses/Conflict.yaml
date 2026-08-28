@@ -4,7 +4,7 @@ description: |
 content:
   application/problem+json:
     schema:
-      $ref: ../schemas/Problem.yaml
+      $ref: ../schemas/errors/Problem.yaml
     example:
       type: https://problems.odal-node.io/conflict
       title: Conflict
