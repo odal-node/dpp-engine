@@ -27,10 +27,19 @@ post:
     '401':
       $ref: ../components/responses/Unauthorized.yaml
     '404':
-      description: No pending transfer to accept for this DPP.
+      description: |
+        This DPP has no transfer chain at all — no handover has ever been
+        initiated for it. A chain that exists but carries nothing pending is a
+        `422`, not this.
       content:
         application/problem+json:
           schema:
             $ref: ../components/schemas/Problem.yaml
     '422':
-      $ref: ../components/responses/ValidationError.yaml
+      description: |
+        There is no pending handover to accept, the pending record carries no
+        outgoing signature, or that signature failed verification.
+      content:
+        application/problem+json:
+          schema:
+            $ref: ../components/schemas/Problem.yaml

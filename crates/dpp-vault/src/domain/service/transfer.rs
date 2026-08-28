@@ -183,10 +183,15 @@ impl PassportService {
         Ok(record)
     }
 
-    /// Reject a pending transfer: the incoming operator refuses the handover.
+    /// End a pending transfer as **refused**.
     ///
     /// Terminal — the record can never complete afterwards, and the chain is
     /// free to carry a new transfer.
+    ///
+    /// The name records the outcome, not the caller. A node serves one operator
+    /// and accepts only that operator's credentials, so the incoming operator
+    /// cannot reach this route; both terminations are made by this node's
+    /// operator. See [`Self::terminate_pending_transfer`].
     pub async fn reject_transfer(
         &self,
         id: PassportId,
@@ -196,12 +201,16 @@ impl PassportService {
             .await
     }
 
-    /// Cancel a pending transfer: the outgoing operator withdraws the handover
-    /// before it completes.
+    /// End a pending transfer as **withdrawn**, before it completes.
     ///
-    /// Terminal, like [`Self::reject_transfer`], and valid from one state more:
-    /// core allows a cancel after the acceptance step has run but before the
-    /// record is completed.
+    /// Terminal, like [`Self::reject_transfer`], and the same caller — the two
+    /// differ in the outcome written to the record, not in who writes it.
+    ///
+    /// Core permits a cancel from `Accepted` as well as `Initiated`, one state
+    /// more than a reject. That breadth is unreachable here: `accept_transfer`
+    /// sets the attestation and calls `complete()` before any save, so no
+    /// *stored* record is ever in `Accepted`. The wider rule is core's; this
+    /// method does not depend on it.
     pub async fn cancel_transfer(
         &self,
         id: PassportId,
@@ -231,6 +240,22 @@ impl PassportService {
     /// is not decided here: the record's own state machine refuses a `reject`
     /// from anything but `Initiated`, and a `cancel` from anything terminal, so
     /// this selects a candidate and lets core reject it.
+    ///
+    /// The `Accepted` arm is defensive rather than reachable. `accept_transfer`
+    /// sets the attestation and calls `complete()` before any save, so no stored
+    /// record is ever in that state. It is matched anyway because the predicate
+    /// is the `has_pending` one: should acceptance ever become a separate step,
+    /// what blocks a new transfer must remain exactly what these clear, and a
+    /// predicate that had drifted narrower would silently strand the record.
+    ///
+    /// # Who calls this
+    ///
+    /// Both terminations come from this node's operator. A node serves one
+    /// operator and accepts only that operator's credentials, so the incoming
+    /// counterparty cannot reach either route. `Rejected` and `Cancelled` record
+    /// **what happened to the handover**, not which party ended it — nothing
+    /// here establishes that, and the audit metadata below should not be read as
+    /// if it did.
     ///
     /// # Why no registry notification is enqueued
     ///
@@ -296,14 +321,16 @@ impl PassportService {
 
 /// How a pending handover was ended.
 ///
-/// Both outcomes are terminal and both free the chain for a new transfer; they
-/// differ in who ended it and from which states core permits it.
+/// Both outcomes are terminal, both free the chain for a new transfer, and both
+/// are written by this node's operator. They differ in the outcome recorded and
+/// in the states core permits them from — not in who ended it.
 #[derive(Clone, Copy)]
 enum Termination {
-    /// The incoming operator refused. Core permits this only from `Initiated`.
+    /// The counterparty declined. Core permits this only from `Initiated`.
     Rejected,
-    /// The outgoing operator withdrew. Core permits this from `Initiated` or
-    /// `Accepted`.
+    /// The handover was withdrawn. Core permits this from `Initiated` or
+    /// `Accepted`, though no stored record reaches `Accepted` — see
+    /// [`PassportService::cancel_transfer`].
     Cancelled,
 }
 

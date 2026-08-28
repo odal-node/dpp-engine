@@ -578,26 +578,42 @@ paths:
         '401':
           $ref: '#/components/responses/Unauthorized'
         '404':
-          description: No pending transfer to accept for this DPP.
+          description: |
+            This DPP has no transfer chain at all — no handover has ever been
+            initiated for it. A chain that exists but carries nothing pending is a
+            `422`, not this.
           content:
             application/problem+json:
               schema:
                 $ref: '#/components/schemas/Problem'
         '422':
-          $ref: '#/components/responses/ValidationError'
+          description: |
+            There is no pending handover to accept, the pending record carries no
+            outgoing signature, or that signature failed verification.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
   /vault/api/v1/dpp/{dppId}/transfer/reject:
     post:
       operationId: rejectDppTransfer
       summary: Reject a pending transfer of responsibility
       description: |
-        The incoming operator refuses the pending handover. The record becomes
-        terminal and can never complete, and the passport's transfer chain is
-        free to carry a new handover.
+        End the pending handover as **refused**. The record becomes terminal and can
+        never complete, and the passport's transfer chain is free to carry a new
+        handover.
 
         Paired with cancel, this is one of the two ways out of a handover the
         counterparty never acted on. A chain refuses a new transfer while any
         record is still pending, so without these routes a passport whose
         counterparty went silent could never be transferred again.
+
+        **This records an outcome, not who caused it.** A node serves one operator,
+        and the only credentials it accepts are that operator's — the incoming
+        operator holds no key here and cannot call this route. So reject and cancel
+        are both initiated by *this* node's operator; they differ in the outcome
+        written to the record and in the states core permits them from, not in who
+        made the call. Choose reject to record that the counterparty declined.
       tags:
         - DPP Lifecycle
       security:
@@ -619,24 +635,40 @@ paths:
         '401':
           $ref: '#/components/responses/Unauthorized'
         '404':
-          description: No pending transfer to reject for this DPP.
+          description: |
+            This DPP has no transfer chain at all — no handover has ever been
+            initiated for it. A chain that exists but carries nothing pending is a
+            `422`, not this.
           content:
             application/problem+json:
               schema:
                 $ref: '#/components/schemas/Problem'
         '422':
-          $ref: '#/components/responses/ValidationError'
+          description: |
+            There is no pending handover to reject, or the record's state does not
+            permit it. Core allows a reject only from `Initiated`.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
   /vault/api/v1/dpp/{dppId}/transfer/cancel:
     post:
       operationId: cancelDppTransfer
       summary: Cancel a pending transfer of responsibility
       description: |
-        The outgoing operator withdraws the pending handover before it
-        completes. The record becomes terminal and the passport's transfer chain
-        is free to carry a new handover.
+        End the pending handover as **withdrawn**, before it completes. The record
+        becomes terminal and the passport's transfer chain is free to carry a new
+        handover.
 
-        Valid from one state more than reject: a handover may be cancelled after
-        the acceptance step has run but before the record is completed.
+        **This records an outcome, not who caused it** — see reject, which is the
+        same call with a different outcome written to the record.
+
+        Core permits a cancel from one state more than a reject: `Accepted` as well
+        as `Initiated`. That is not reachable over this API today, because accepting
+        completes the record in the same call, so no stored record is ever left in
+        `Accepted`. Cancel is nonetheless the right call for a handover this
+        operator is withdrawing, and the broader rule is core's, not a promise this
+        route makes.
       tags:
         - DPP Lifecycle
       security:
@@ -658,13 +690,22 @@ paths:
         '401':
           $ref: '#/components/responses/Unauthorized'
         '404':
-          description: No pending transfer to cancel for this DPP.
+          description: |
+            This DPP has no transfer chain at all — no handover has ever been
+            initiated for it. A chain that exists but carries nothing pending is a
+            `422`, not this.
           content:
             application/problem+json:
               schema:
                 $ref: '#/components/schemas/Problem'
         '422':
-          $ref: '#/components/responses/ValidationError'
+          description: |
+            There is no pending handover to cancel, or the record's state does not
+            permit it. Core allows a cancel from `Initiated` or `Accepted`.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
   /vault/api/v1/dpp/{dppId}/history:
     get:
       operationId: getDppHistory

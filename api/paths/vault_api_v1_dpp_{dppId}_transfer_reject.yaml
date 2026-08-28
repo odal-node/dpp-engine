@@ -2,14 +2,21 @@ post:
   operationId: rejectDppTransfer
   summary: Reject a pending transfer of responsibility
   description: |
-    The incoming operator refuses the pending handover. The record becomes
-    terminal and can never complete, and the passport's transfer chain is
-    free to carry a new handover.
+    End the pending handover as **refused**. The record becomes terminal and can
+    never complete, and the passport's transfer chain is free to carry a new
+    handover.
 
     Paired with cancel, this is one of the two ways out of a handover the
     counterparty never acted on. A chain refuses a new transfer while any
     record is still pending, so without these routes a passport whose
     counterparty went silent could never be transferred again.
+
+    **This records an outcome, not who caused it.** A node serves one operator,
+    and the only credentials it accepts are that operator's — the incoming
+    operator holds no key here and cannot call this route. So reject and cancel
+    are both initiated by *this* node's operator; they differ in the outcome
+    written to the record and in the states core permits them from, not in who
+    made the call. Choose reject to record that the counterparty declined.
   tags:
     - DPP Lifecycle
   security:
@@ -31,10 +38,19 @@ post:
     '401':
       $ref: ../components/responses/Unauthorized.yaml
     '404':
-      description: No pending transfer to reject for this DPP.
+      description: |
+        This DPP has no transfer chain at all — no handover has ever been
+        initiated for it. A chain that exists but carries nothing pending is a
+        `422`, not this.
       content:
         application/problem+json:
           schema:
             $ref: ../components/schemas/Problem.yaml
     '422':
-      $ref: ../components/responses/ValidationError.yaml
+      description: |
+        There is no pending handover to reject, or the record's state does not
+        permit it. Core allows a reject only from `Initiated`.
+      content:
+        application/problem+json:
+          schema:
+            $ref: ../components/schemas/Problem.yaml

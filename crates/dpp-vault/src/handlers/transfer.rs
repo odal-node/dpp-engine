@@ -110,13 +110,17 @@ pub async fn transfer_accept_handler(
     }
 }
 
-/// `POST /api/v1/dpp/{dppId}/transfer/reject` — the incoming operator refuses
-/// the pending handover.
+/// `POST /api/v1/dpp/{dppId}/transfer/reject` — end the pending handover as
+/// refused.
 ///
 /// Terminal: the record can never complete afterwards, and the chain is free to
 /// carry a new transfer. Paired with `transfer_cancel_handler`, this is the only
 /// way out of a handover the counterparty never acted on — without it a pending
 /// record blocks every later transfer on the passport for good.
+///
+/// The caller is this node's operator, not the incoming one, which holds no
+/// credentials here. The name records the outcome; see
+/// `PassportService::terminate_pending_transfer`.
 pub async fn transfer_reject_handler(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthContext>,
@@ -139,11 +143,12 @@ pub async fn transfer_reject_handler(
     }
 }
 
-/// `POST /api/v1/dpp/{dppId}/transfer/cancel` — the outgoing operator withdraws
-/// the pending handover before it completes.
+/// `POST /api/v1/dpp/{dppId}/transfer/cancel` — end the pending handover as
+/// withdrawn, before it completes.
 ///
-/// Valid from one state more than reject: core permits a cancel after the
-/// acceptance step has run but before the record is completed.
+/// The same caller as reject, recording a different outcome. Core permits a
+/// cancel from one state more (`Accepted`), which no stored record reaches
+/// today — see `PassportService::cancel_transfer`.
 pub async fn transfer_cancel_handler(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthContext>,
@@ -165,6 +170,7 @@ pub async fn transfer_cancel_handler(
         Err(e) => internal_error(e),
     }
 }
+
 /// A transfer counterparty's DID must be a `did:web` this node could actually
 /// resolve to a public document.
 ///

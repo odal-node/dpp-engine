@@ -1217,29 +1217,51 @@ async fn a_pending_transfer_blocks_until_rejected_or_cancelled() {
         "cancelling the pending handover must free the chain"
     );
 
-    // With nothing pending, there is nothing left to end.
-    for verb in ["reject", "cancel"] {
-        // The fourth handover is still pending, so end it first, then confirm a
-        // second attempt is refused rather than silently accepted.
-        let first = client
-            .post(format!("{base}/vault/api/v1/dpp/{id}/transfer/{verb}"))
-            .bearer_auth(&token)
-            .send()
-            .await
-            .expect("terminate request failed");
-        if first.status() == 200 {
-            let again = client
+    let terminate = |verb: &'static str| {
+        let client = client.clone();
+        let base = base.clone();
+        let id = id.clone();
+        let token = token.clone();
+        async move {
+            client
                 .post(format!("{base}/vault/api/v1/dpp/{id}/transfer/{verb}"))
                 .bearer_auth(&token)
                 .send()
                 .await
-                .expect("second terminate request failed");
-            assert_eq!(
-                again.status(),
-                422,
-                "{verb} with nothing pending must be refused"
-            );
+                .expect("terminate request failed")
         }
+    };
+
+    // Clear the fourth handover so both verbs below start from the same state.
+    assert_eq!(terminate("reject").await.status(), 200);
+
+    // With nothing pending, there is nothing left to end — checked for **both**
+    // verbs, each against its own handover.
+    //
+    // This loop previously guarded its assertion behind `if first.status() ==
+    // 200`. Entering it, one handover was pending: `reject` ended it and
+    // asserted, then `cancel` found the chain already clear, took the false
+    // branch, and asserted nothing at all. Half the loop was dead while reading
+    // as though it covered both — so the refusal is now asserted first,
+    // unconditionally, and a fresh handover is initiated to prove the route
+    // still works when there *is* something to end.
+    for verb in ["reject", "cancel"] {
+        assert_eq!(
+            terminate(verb).await.status(),
+            422,
+            "{verb} with nothing pending must be refused"
+        );
+
+        assert_eq!(
+            initiate("did:web:fifth.example", "Fifth").await.status(),
+            200,
+            "the chain must be free after the previous handover was ended"
+        );
+        assert_eq!(
+            terminate(verb).await.status(),
+            200,
+            "{verb} must end a handover that is actually pending"
+        );
     }
 }
 

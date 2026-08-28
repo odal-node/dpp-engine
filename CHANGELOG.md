@@ -10,7 +10,48 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ## [Unreleased]
 
+### Added
+
+- **The two ways out of a pending transfer are routed.**
+  `POST /api/v1/dpp/{dppId}/transfer/reject` and `.../transfer/cancel` end a
+  handover the counterparty never acted on.
+
+  `TransferRecord::reject()` and `::cancel()` have existed in core since the
+  handshake landed, and nothing in the engine called either. That combined badly
+  with the chain's own guard: `initiate_transfer` refuses a new handover while
+  any record is `Initiated` or `Accepted`, and `Initiated` is not transient — a
+  counterparty that never acts left the record pending forever, so **every later
+  transfer on that passport was refused with `TransferAlreadyPending`, with no
+  route able to clear it.** Core built the escape hatch; the vault never opened
+  it.
+
+  Both go through one `terminate_pending_transfer`, whose selection predicate
+  mirrors `initiate_transfer`'s own `has_pending` check — whatever blocks a new
+  transfer is exactly what these clear. Legality is not re-decided in the vault:
+  the record's state machine refuses a `reject` from anything but `Initiated`, so
+  this selects a candidate and lets core say no. No registry notification is
+  enqueued, because one is queued when a handover *completes* and a transfer
+  ending here never did.
+
+  **`rejected` and `cancelled` record an outcome, not a party.** A node serves
+  one operator and accepts only that operator's credentials, so the incoming
+  counterparty cannot reach either route — both are called by this node's
+  operator. The earlier wording ("the incoming operator refuses", "the outgoing
+  operator withdraws") described an attribution nothing establishes, on an audit
+  trail that is compliance evidence. The two differ in the outcome written and in
+  the states core permits them from.
+
 ### Fixed
+
+- **Three transfer routes documented a `404` for a condition that returns
+  `422`.** `initiate`, `accept`, `reject` and `cancel` answer `404` only when a
+  passport has no transfer chain at all; a chain that exists while nothing is
+  pending is a `422`. The description attached to `404` said "No pending transfer
+  to accept for this DPP", which is the `422` case — so a client branching on the
+  status code was told the wrong one. Both codes now describe what they actually
+  mean on all three routes. Nothing catches this class yet: the contract gate
+  checks 2xx schemas, routes, query parameters and request bodies, but never
+  compares a documented error code against the code a handler returns.
 
 - **`ProductGroupData` declared a discriminator on a property that does not
   exist.** `discriminator.propertyName` read `product group`, with a space, while
