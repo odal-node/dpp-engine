@@ -5,7 +5,7 @@ use axum::{
     http::{HeaderMap, StatusCode, header},
     response::{IntoResponse, Response},
 };
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 // Templates are embedded at compile time — zero runtime I/O on the hot path.
 const BATTERY_TEMPLATE: &str = include_str!("../../templates/battery-v1.csv");
@@ -15,7 +15,7 @@ const ALUMINIUM_TEMPLATE: &str = include_str!("../../templates/aluminium-v1.csv"
 const TYRE_TEMPLATE: &str = include_str!("../../templates/tyre-v1.csv");
 
 /// Query parameters for the template download endpoint.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct TemplateQuery {
     /// Requested format. Accepts `"csv"` (default) or `"xlsx"` (returns 501).
     pub format: Option<String>,

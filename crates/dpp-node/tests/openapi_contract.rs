@@ -7,7 +7,7 @@
 //! never made the spec fail. Drift was not a risk being managed; it was
 //! guaranteed, and it accumulated (see `docs/` for the audit that found it).
 //!
-//! Three things are checked, and every one of them fails loudly rather than
+//! Five things are checked, and every one of them fails loudly rather than
 //! skipping:
 //!
 //! 1. **Object schemas** — the property set of each schema equals the key set
@@ -18,7 +18,15 @@
 //! 2. **Enum schemas** — the `enum` list equals the wire strings the Rust enum
 //!    serialises to. A status the server can return and the spec does not list
 //!    breaks every generated client that models it as a closed enum.
-//! 3. **Route coverage** — the paths in the spec equal the routes actually
+//! 3. **Query parameters** — the documented parameter names for each operation
+//!    equal the names the struct that deserialises them actually reads. Both
+//!    directions fail: a documented parameter no handler reads is silently
+//!    ignored, and one the handler reads and the spec omits is undiscoverable.
+//! 4. **Reachability** — every published shape has a name the checks above can
+//!    look up. A shape written inline — in a schema's properties, in a JSON
+//!    response, or in a JSON request body — is not skipped, it is invisible, so
+//!    each of those three is failed rather than tolerated.
+//! 5. **Route coverage** — the paths in the spec equal the routes actually
 //!    registered by every deployable `openapi.yaml` names in `servers`: the
 //!    assembled node, the standalone resolver, and the standalone identity
 //!    service's mTLS signing surface. No exception list — see
@@ -161,6 +169,47 @@ fn joined(set: &BTreeSet<String>) -> String {
     set.iter().cloned().collect::<Vec<_>>().join(", ")
 }
 
+/// Query parameter names an operation declares, in spec order.
+///
+/// Path parameters are excluded: they are part of the path template, which
+/// `every_route_is_documented_and_every_documented_path_exists` already checks,
+/// and they never appear in the query struct.
+fn spec_query_params(spec: &Value, method: &str, path: &str) -> Option<BTreeSet<String>> {
+    let operation = spec["paths"].get(path)?.get(method)?;
+    Some(
+        operation
+            .get("parameters")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter(|p| p.get("in").and_then(Value::as_str) == Some("query"))
+            .filter_map(|p| p.get("name").and_then(Value::as_str))
+            .map(str::to_owned)
+            .collect(),
+    )
+}
+
+/// Every `(method, path)` in the spec that declares at least one query
+/// parameter.
+fn operations_with_query_params(spec: &Value) -> BTreeSet<(String, String)> {
+    let mut out = BTreeSet::new();
+    for (path, item) in spec["paths"].as_object().expect("paths is not an object") {
+        for (method, operation) in item.as_object().expect("path item is not an object") {
+            let declares_query = operation
+                .get("parameters")
+                .and_then(Value::as_array)
+                .is_some_and(|ps| {
+                    ps.iter()
+                        .any(|p| p.get("in").and_then(Value::as_str) == Some("query"))
+                });
+            if declares_query {
+                out.insert((method.clone(), path.clone()));
+            }
+        }
+    }
+    out
+}
+
 // ── Timestamps ─────────────────────────────────────────────────────────────
 //
 // Fixed rather than `Utc::now()` so a failure message is stable and diffable.
@@ -184,6 +233,19 @@ struct ObjectCase {
     /// Schema name in `components/schemas`.
     name: &'static str,
     /// A maximally-populated instance, serialised.
+    value: Value,
+}
+
+/// A documented operation's query parameters, checked against the struct that
+/// deserialises them.
+struct QueryCase {
+    /// Lowercase HTTP method, as the spec spells it.
+    method: &'static str,
+    /// Path template, as the spec spells it.
+    path: &'static str,
+    /// A maximally-populated instance of the handler's query struct,
+    /// serialised. Same ground truth as `ObjectCase`: what serde emits, not
+    /// what the field list looks like.
     value: Value,
 }
 
@@ -211,9 +273,18 @@ const UNCHECKED: &[(&str, &str)] = &[
          did not author",
     ),
     (
+        "QualifiedSealMember",
+        "the dossier holds this member as untyped JSON (`serde_json::Value`), so \
+         no Rust type declares `seal`/`signedOverJws`/`payloadHash` and there is \
+         nothing to compare the property list against. Naming the schema at \
+         least makes that gap visible instead of hiding it inside \
+         `EvidenceDossier`; giving the dossier a real type for the member is \
+         the only thing that would actually close it",
+    ),
+    (
         "ProductGroupData",
         "deliberately open (`additionalProperties: true`, discriminated by \
-         `product_group`). The per-product-group payloads are described by the versioned JSON \
+         `productGroup`). The per-product-group payloads are described by the versioned JSON \
          Schemas served from `/integrator/api/v1/schemas/{productGroup}`, which is the \
          authoritative description; duplicating them into OpenAPI would create a \
          second copy to drift",
@@ -246,6 +317,7 @@ fn object_cases() -> Vec<ObjectCase> {
         "PassportResponse",
         dpp_vault::api::PassportResponse::from(&fixtures::passport())
     );
+    case!("InstrumentRef", fixtures::instrument_ref());
     case!("ManufacturerInfo", fixtures::manufacturer());
     case!("MaterialEntry", fixtures::material());
     case!("PassportRef", fixtures::passport_ref());
@@ -257,6 +329,28 @@ fn object_cases() -> Vec<ObjectCase> {
     case!("ComplianceResult", fixtures::compliance_result());
     case!("ComplianceFinding", fixtures::compliance_finding());
     case!("LintResult", fixtures::lint_result());
+
+    // The obligation endpoint. Served as declared types rather than assembled
+    // JSON, so this gate has something to check the published shape against.
+    //
+    // Every nested shape is registered too, not just the two outer ones. This
+    // gate compares the top-level keys of a *named* schema; a shape written
+    // inline inside another has no name to look up and is checked by nothing.
+    // Declaring the Rust types while inlining their schemas bought exactly
+    // nothing — the three below were unverified until they were given names.
+    case!(
+        "ProductGroupObligation",
+        fixtures::product_group_obligation()
+    );
+    case!(
+        "ProductGroupObligationList",
+        fixtures::product_group_obligation_list()
+    );
+    case!("PassportObligation", fixtures::passport_obligation());
+    case!("ObligationDate", fixtures::obligation_date());
+    case!("RetentionPeriod", fixtures::retention_period());
+    case!("ReachingInstrument", fixtures::reaching_instrument());
+    case!("JobProgress", fixtures::job_progress());
     case!("LintFinding", fixtures::lint_finding());
     case!("SealedEnvelope", fixtures::sealed_envelope());
     case!("ResponsibleOperator", fixtures::responsible_operator());
@@ -314,6 +408,7 @@ fn object_cases() -> Vec<ObjectCase> {
         fixtures::created_webhook_response()
     );
     case!("EolRequest", fixtures::eol_request());
+    case!("SuspendRequest", fixtures::suspend_request());
     case!("NodeState", fixtures::node_state());
     case!("VaultInfo", fixtures::vault_info());
     case!(
@@ -401,7 +496,110 @@ fn enum_cases() -> Vec<EnumCase> {
             name: "Coverage",
             variants: wire(&fixtures::all_coverages()),
         },
+        // `DateBasis` and `RetentionBasis` match variant for variant today and
+        // are checked separately on purpose. They are two enumerations in core
+        // answering two questions; one spec schema for both would let either
+        // drift silently behind the other, and the drift would be invisible
+        // precisely because they currently agree.
+        EnumCase {
+            name: "DateBasis",
+            variants: wire(&fixtures::all_date_bases()),
+        },
+        EnumCase {
+            name: "RetentionBasis",
+            variants: wire(&fixtures::all_retention_bases()),
+        },
+        // Both were written out inline twice — once on the passport, once on the
+        // obligation — and so were checked nowhere: an `enum` list only reachable
+        // through a property is not a schema this gate can name. One shared
+        // schema each, and now a core variant that neither copy knew about fails
+        // here instead of shipping.
+        EnumCase {
+            name: "Granularity",
+            variants: wire(&fixtures::all_granularities()),
+        },
+        EnumCase {
+            name: "RecordedBasis",
+            variants: wire(&fixtures::all_recorded_bases()),
+        },
+        // The two statuses that qualify a served passport obligation. A variant
+        // core adds here changes what the endpoint can say about how firm a
+        // requirement is, so it must not reach the wire undocumented.
+        EnumCase {
+            name: "InstrumentStatus",
+            variants: wire(&fixtures::all_instrument_statuses()),
+        },
+        EnumCase {
+            name: "RegulatoryStatus",
+            variants: wire(&fixtures::all_regulatory_statuses()),
+        },
     ]
+}
+
+/// Every documented operation that takes query parameters, paired with the
+/// struct the handler deserialises them into.
+///
+/// Several operations share one struct — `days` is `StatsQuery` on both stats
+/// routes, `linkType` is `ByGtinQuery` on all four Digital Link routes — so each
+/// route is registered separately rather than the struct being registered once.
+/// A parameter documented on one route and not its sibling is exactly the kind
+/// of drift this is for, and registering per struct would hide it.
+fn query_cases() -> Vec<QueryCase> {
+    let mut cases = Vec::new();
+
+    macro_rules! case {
+        ($method:literal, $path:literal, $value:expr) => {
+            cases.push(QueryCase {
+                method: $method,
+                path: $path,
+                value: serde_json::to_value(&$value).expect(concat!(
+                    "query fixture for ",
+                    $method,
+                    " ",
+                    $path,
+                    " failed to serialise"
+                )),
+            });
+        };
+    }
+
+    case!("get", "/vault/api/v1/dpps", fixtures::list_query());
+    case!(
+        "get",
+        "/vault/api/v1/dpp/by-identity",
+        fixtures::identity_query()
+    );
+    case!(
+        "get",
+        "/vault/api/v1/dpp/{dppId}/stats",
+        fixtures::stats_query()
+    );
+    case!("get", "/vault/api/v1/stats", fixtures::stats_query());
+    case!(
+        "get",
+        "/vault/public/dpp/{dppId}",
+        fixtures::public_read_query()
+    );
+    case!(
+        "get",
+        "/vault/public/dpp/by-gtin/{gtin}",
+        fixtures::public_read_query()
+    );
+    case!(
+        "get",
+        "/integrator/api/v1/templates/{productGroup}",
+        fixtures::template_query()
+    );
+    case!("get", "/01/{gtin}", fixtures::by_gtin_query());
+    case!("get", "/01/{gtin}/21/{serial}", fixtures::by_gtin_query());
+    case!("get", "/01/{gtin}/10/{batch}", fixtures::by_gtin_query());
+    case!(
+        "get",
+        "/01/{gtin}/10/{batch}/21/{serial}",
+        fixtures::by_gtin_query()
+    );
+
+    cases
 }
 
 /// `DeactivationReason` is an internally-tagged enum whose spec is a `oneOf` of
@@ -440,6 +638,12 @@ const UNENUMERABLE_CORE_ENUMS: &[&str] = &[
     "ComplianceStatus",
     "LifecycleStage",
     "SystemBoundary",
+    "DateBasis",
+    "RetentionBasis",
+    "Granularity",
+    "RecordedBasis",
+    "InstrumentStatus",
+    "RegulatoryStatus",
 ];
 
 /// A `dpp-core` repin must not pass silently.
@@ -975,6 +1179,299 @@ fn every_json_success_response_names_a_schema() {
     );
 }
 
+// ── Request-body coverage ──────────────────────────────────────────────────
+
+/// `application/json` request bodies that legitimately name no schema, with the
+/// reason. Keyed by `(method, path)`, because one path can take a body on more
+/// than one method and only one of them may be exempt.
+const INLINE_JSON_REQUEST_ALLOWED: &[(&str, &str, &str)] = &[(
+    "put",
+    "/vault/api/v1/dpp/{dppId}",
+    "a free-form merge-patch: the caller supplies only the fields being changed, \
+     so the body is an open bag of passport fields rather than a fixed shape. \
+     There is no Rust struct behind it to compare a property list against — the \
+     handler takes the object and applies it field by field. Naming it would \
+     require enumerating every patchable field, which is `PassportResponse`'s \
+     job and would be a second copy to drift",
+)];
+
+/// Every `application/json` request body names a schema.
+///
+/// The sibling of `every_json_success_response_names_a_schema`, and the half
+/// that was missing. `every_published_object_shape_has_a_name` walks the
+/// properties of *named schemas*, and the response check walks responses — so a
+/// body shape written inline under `requestBody` fell between them and was
+/// checked by nothing at all.
+///
+/// That was not hypothetical either: the suspend endpoint declared its
+/// `{ reason }` body inline while a real `SuspendRequest` struct sat behind it,
+/// so renaming that field would have changed what the server accepts and failed
+/// nothing. A request body is the side of the contract a *client* has to get
+/// right, which makes an unverified one the more expensive of the two.
+///
+/// Non-JSON bodies are out of scope by construction: `multipart/form-data`
+/// uploads describe file parts, not a serialised Rust type, and there is no
+/// struct whose serde output could be compared to them.
+#[test]
+fn every_json_request_body_names_a_schema() {
+    let spec = spec();
+    let allowed: BTreeSet<(&str, &str)> = INLINE_JSON_REQUEST_ALLOWED
+        .iter()
+        .map(|(m, p, _)| (*m, *p))
+        .collect();
+
+    let mut failures = Vec::new();
+    let mut allowlist_used: BTreeSet<(&str, &str)> = BTreeSet::new();
+
+    let paths = spec["paths"].as_object().expect("paths is not an object");
+    for (path, item) in paths {
+        let Some(ops) = item.as_object() else {
+            continue;
+        };
+        for (method, op) in ops {
+            let Some(schema) = op
+                .get("requestBody")
+                .and_then(|b| b.get("content"))
+                .and_then(|c| c.get("application/json"))
+                .and_then(|j| j.get("schema"))
+            else {
+                continue;
+            };
+
+            // A named schema, an array of one, or a composition over one — the
+            // same three shapes the response check accepts.
+            let named = schema.get("$ref").is_some()
+                || schema.get("items").is_some_and(|i| i.get("$ref").is_some())
+                || schema
+                    .get("allOf")
+                    .and_then(Value::as_array)
+                    .is_some_and(|b| b.iter().any(|x| x.get("$ref").is_some()));
+
+            if named {
+                continue;
+            }
+
+            let key = (method.as_str(), path.as_str());
+            if allowed.contains(&key) {
+                allowlist_used.insert(key);
+                continue;
+            }
+            failures.push(format!(
+                "{} {path} describes its JSON request body inline — nothing checks that \
+                 shape against the code",
+                method.to_uppercase()
+            ));
+        }
+    }
+
+    // A stale excuse covers whatever drifts into its place next; delete it
+    // rather than leaving it to do that.
+    let stale: Vec<String> = allowed
+        .difference(&allowlist_used)
+        .map(|(m, p)| format!("{} {p}", m.to_uppercase()))
+        .collect();
+    if !stale.is_empty() {
+        failures.push(format!(
+            "INLINE_JSON_REQUEST_ALLOWED names operations that no longer have an inline \
+             JSON request body: {}",
+            stale.join(", ")
+        ));
+    }
+
+    assert!(
+        failures.is_empty(),
+        "JSON request bodies that name no schema:\n  {}\n\n\
+         Give the handler's body a named type, add a schema for it under \
+         api/components/schemas/, `$ref` it here, and register it in `object_cases` \
+         — that is what puts the body under the contract test.",
+        failures.join("\n  ")
+    );
+}
+
+// ── No unnamed shapes ──────────────────────────────────────────────────────
+
+/// Whether a property node declares an object shape inline rather than naming
+/// one, looking through arrays and composition but **not** through `$ref`.
+///
+/// A `$ref` is the whole point: it resolves to a named schema, which is what
+/// makes the shape reachable by every other check in this file.
+fn declares_inline_object(node: &Value) -> bool {
+    if node.get("$ref").is_some() {
+        return false;
+    }
+    if node.get("properties").is_some() {
+        return true;
+    }
+    if let Some(items) = node.get("items")
+        && declares_inline_object(items)
+    {
+        return true;
+    }
+    ["allOf", "anyOf", "oneOf"].iter().any(|key| {
+        node.get(key)
+            .and_then(Value::as_array)
+            .is_some_and(|branches| branches.iter().any(declares_inline_object))
+    })
+}
+
+/// Every published object shape has a name of its own.
+///
+/// This closes the hole the rest of this file was built around but could not
+/// see. `every_schema_is_covered` guarantees that no *named* schema goes
+/// unchecked — but a shape written inline inside another schema never becomes a
+/// named schema, so it is not skipped, it is invisible. Nothing compares it to
+/// code, and nothing ever reports that as a gap.
+///
+/// That is not theoretical. The product-group obligation endpoint declared four
+/// Rust types **specifically so this gate could check them**, then wrote all
+/// four inline — so renaming a field in any of them failed nothing at all. The
+/// stated reason for declaring them was not being delivered, and no test said
+/// so.
+///
+/// There is no exception list on purpose. An allowlist here would refill with
+/// exactly the shapes this exists to prevent, one justified entry at a time.
+///
+/// Scoped to *properties*. A named schema that is itself a `oneOf` of object
+/// variants — `DeactivationReason` — is a tagged union, is named, and has its
+/// own check.
+#[test]
+fn every_published_object_shape_has_a_name() {
+    let spec = spec();
+    let mut unnamed: Vec<String> = Vec::new();
+
+    for (name, schema) in schemas(&spec) {
+        let Some(properties) = schema.get("properties").and_then(Value::as_object) else {
+            continue;
+        };
+        for (property, node) in properties {
+            if declares_inline_object(node) {
+                unnamed.push(format!("{name}.{property}"));
+            }
+        }
+    }
+
+    unnamed.sort();
+    assert!(
+        unnamed.is_empty(),
+        "these properties hold an object shape written inline, so no test can \
+         reach it:\n  {}\n\n\
+         Give each one its own file under api/components/schemas/, `$ref` it \
+         here, and register it in `object_cases` (or in `UNCHECKED` with the \
+         reason it cannot be checked). An inline shape is not covered by \
+         `every_schema_is_covered` — it never becomes a schema at all.",
+        unnamed.join("\n  ")
+    );
+}
+
+// ── Query parameters ───────────────────────────────────────────────────────
+
+/// Documented query parameter names equal the names the handler's struct
+/// actually reads.
+///
+/// This gate shipped a parameter no client could send. Until the product group
+/// rename, `/vault/api/v1/dpp/by-identity` documented a parameter named
+/// `product group` — a space, in an identifier position, the residue of a
+/// find-and-replace that ran over a `name:` field. The handler reads
+/// `productGroup`; an integration test was sending `product_group`. Three
+/// spellings of one parameter, and every existing check passed: the schemas
+/// matched, the bounds matched, the route was documented.
+///
+/// It survived because the old name was a single word, spelled identically in
+/// snake_case and camelCase, so the description, the test and the handler had
+/// agreed **by coincidence** rather than because anything compared them.
+/// Renaming to two words broke the coincidence in all three places at once.
+///
+/// Both directions fail. A documented parameter the handler never reads is
+/// dead — a client that sends it is silently ignored. A parameter the handler
+/// reads and the spec omits is undiscoverable.
+#[test]
+fn documented_query_parameters_are_the_ones_the_handler_reads() {
+    let spec = spec();
+    let mut failures: Vec<String> = Vec::new();
+
+    for case in query_cases() {
+        let Some(documented) = spec_query_params(&spec, case.method, case.path) else {
+            failures.push(format!(
+                "{} {}: registered here but absent from the spec",
+                case.method.to_uppercase(),
+                case.path
+            ));
+            continue;
+        };
+
+        let read = wire_keys(&case.value);
+
+        let undocumented: BTreeSet<String> = read.difference(&documented).cloned().collect();
+        let dead: BTreeSet<String> = documented.difference(&read).cloned().collect();
+
+        if !undocumented.is_empty() {
+            failures.push(format!(
+                "{} {}: the handler reads parameters the spec does not document: {}",
+                case.method.to_uppercase(),
+                case.path,
+                joined(&undocumented)
+            ));
+        }
+        if !dead.is_empty() {
+            failures.push(format!(
+                "{} {}: the spec documents parameters the handler never reads: {} \
+                 (a client sending them is silently ignored)",
+                case.method.to_uppercase(),
+                case.path,
+                joined(&dead)
+            ));
+        }
+    }
+
+    assert!(
+        failures.is_empty(),
+        "OpenAPI query parameters disagree with the structs that read them:\n  {}\n\n\
+         Fix the `name:` under api/paths/ (then `just openapi-bundle`), or fix the \
+         handler's query struct. The wire name is the field name after the struct's \
+         serde rename rule — not the Rust field name.",
+        failures.join("\n  ")
+    );
+}
+
+/// No operation takes query parameters without something checking them.
+///
+/// Without this, the check above is only as good as whoever remembered to
+/// register a case, and a new route with a new parameter is exactly when nobody
+/// does.
+#[test]
+fn every_operation_with_query_parameters_is_covered() {
+    let spec = spec();
+
+    let documented = operations_with_query_params(&spec);
+    let registered: BTreeSet<(String, String)> = query_cases()
+        .into_iter()
+        .map(|c| (c.method.to_owned(), c.path.to_owned()))
+        .collect();
+
+    let uncovered: Vec<String> = documented
+        .difference(&registered)
+        .map(|(m, p)| format!("{} {p}", m.to_uppercase()))
+        .collect();
+    assert!(
+        uncovered.is_empty(),
+        "these operations declare query parameters but nothing checks them against \
+         a handler struct: {}\n\n\
+         Add a case to `query_cases`.",
+        uncovered.join(", ")
+    );
+
+    let stale: Vec<String> = registered
+        .difference(&documented)
+        .map(|(m, p)| format!("{} {p}", m.to_uppercase()))
+        .collect();
+    assert!(
+        stale.is_empty(),
+        "these operations are registered in `query_cases` but no longer declare query \
+         parameters in the spec: {}",
+        stale.join(", ")
+    );
+}
+
 // ── Route coverage ─────────────────────────────────────────────────────────
 
 /// Router sources, embedded at compile time so they cannot go stale relative to
@@ -1186,6 +1683,10 @@ mod fixtures {
             OperatorRole, ResponsibleOperator, TransferChain, TransferReason, TransferRecord,
         },
     };
+    use dpp_integrator::handlers::product_groups::{
+        InstrumentRefView, ObligationDateView, PassportObligationView, ProductGroupObligation,
+        ProductGroupObligationList, RetentionView,
+    };
     use dpp_types::{
         api_key::{ApiKey, ApiKeyScope, CreateApiKeyRequest, NewApiKey},
         audit::AuditEntry,
@@ -1225,6 +1726,7 @@ mod fixtures {
                 RegistryRollupView, TransferCounts, TransferView, VerificationView,
             },
             seal::{Coverage, SealResponse, SealSummaryResponse},
+            suspend::SuspendRequest,
             transfer::TransferInitiateRequest,
             validate::ValidateResponse,
             webhooks::CreatedWebhookResponse,
@@ -1832,6 +2334,15 @@ mod fixtures {
         VaultInfo::current()
     }
 
+    /// `reason` is the only field, and it is `Some` here for the reason every
+    /// fixture is maximal: an `Option` left `None` emits nothing and the schema
+    /// check would pass by not looking.
+    pub fn suspend_request() -> SuspendRequest {
+        SuspendRequest {
+            reason: Some("Product recall — safety investigation pending".into()),
+        }
+    }
+
     pub fn transfer_initiate_request() -> TransferInitiateRequest {
         TransferInitiateRequest {
             from_operator: responsible_operator(),
@@ -2010,6 +2521,169 @@ mod fixtures {
 
     pub fn all_coverages() -> Vec<Coverage> {
         vec![Coverage::Current, Coverage::Superseded, Coverage::Unknown]
+    }
+
+    pub fn all_date_bases() -> Vec<dpp_domain::instrument::DateBasis> {
+        use dpp_domain::instrument::DateBasis;
+        vec![DateBasis::Sourced, DateBasis::Assumed]
+    }
+
+    pub fn all_retention_bases() -> Vec<dpp_domain::catalog::RetentionBasis> {
+        use dpp_domain::catalog::RetentionBasis;
+        vec![RetentionBasis::Sourced, RetentionBasis::Assumed]
+    }
+
+    pub fn all_granularities() -> Vec<dpp_domain::catalog::Granularity> {
+        use dpp_domain::catalog::Granularity;
+        vec![Granularity::Model, Granularity::Batch, Granularity::Item]
+    }
+
+    pub fn all_recorded_bases() -> Vec<dpp_domain::instrument::RecordedBasis> {
+        use dpp_domain::instrument::RecordedBasis;
+        vec![RecordedBasis::Catalog, RecordedBasis::Operator]
+    }
+
+    // ── Query structs ──────────────────────────────────────────────────────
+    //
+    // Every `Option` is `Some` for the same reason the object fixtures populate
+    // theirs: a `None` under `skip_serializing_if` emits no key, and the check
+    // would pass by not looking. None of these carry that attribute today, so a
+    // new field appears in the wire keys either way — but that is a property of
+    // the structs as they happen to be written, not a guarantee, and these
+    // literals are exhaustive so a new field fails to compile here first.
+
+    pub fn list_query() -> dpp_vault::handlers::list::ListQuery {
+        use dpp_domain::PassportStatus;
+        dpp_vault::handlers::list::ListQuery {
+            status: Some(PassportStatus::Published),
+            q: Some("kettle".into()),
+            facility_id: Some("4012345000009".into()),
+            limit: Some(20),
+            skip: Some(0),
+        }
+    }
+
+    pub fn identity_query() -> dpp_vault::handlers::find_by_identity::IdentityQuery {
+        use dpp_domain::product_group::ProductGroup;
+        dpp_vault::handlers::find_by_identity::IdentityQuery {
+            product_group: ProductGroup::Battery,
+            gtin: "04012345000009".into(),
+            batch_id: Some("BATCH-2026-04-001".into()),
+        }
+    }
+
+    pub fn stats_query() -> dpp_vault::handlers::stats::StatsQuery {
+        dpp_vault::handlers::stats::StatsQuery { days: Some(30) }
+    }
+
+    pub fn public_read_query() -> dpp_vault::handlers::public_read::PublicReadQuery {
+        dpp_vault::handlers::public_read::PublicReadQuery {
+            schema_view: Some("battery".into()),
+        }
+    }
+
+    pub fn template_query() -> dpp_integrator::handlers::templates::TemplateQuery {
+        dpp_integrator::handlers::templates::TemplateQuery {
+            format: Some("csv".into()),
+        }
+    }
+
+    pub fn by_gtin_query() -> dpp_resolver::handlers::resolve_by_gtin::ByGtinQuery {
+        dpp_resolver::handlers::resolve_by_gtin::ByGtinQuery {
+            link_type: Some("linkset".into()),
+        }
+    }
+
+    pub fn all_instrument_statuses() -> Vec<dpp_domain::instrument::InstrumentStatus> {
+        use dpp_domain::instrument::InstrumentStatus;
+        vec![
+            InstrumentStatus::Adopted,
+            InstrumentStatus::Proposed,
+            InstrumentStatus::Anticipated,
+        ]
+    }
+
+    pub fn all_regulatory_statuses() -> Vec<dpp_domain::catalog::RegulatoryStatus> {
+        use dpp_domain::catalog::RegulatoryStatus;
+        vec![
+            RegulatoryStatus::InForce,
+            RegulatoryStatus::Provisional,
+            RegulatoryStatus::Watch,
+        ]
+    }
+
+    /// A fully populated obligation — every optional field present, so the
+    /// contract gate sees the whole key set. A fixture that left `from`,
+    /// `granularity` or `retention` as `None` would still serialise the keys
+    /// (they are not `skip_serializing_if`), but populating them keeps the
+    /// fixture honest about what the endpoint can return.
+    pub fn instrument_ref() -> dpp_domain::instrument::InstrumentRef {
+        use dpp_domain::instrument::{InstrumentRef, RecordedBasis};
+        InstrumentRef {
+            instrument: "battery-reg-2023-1542".into(),
+            recorded: RecordedBasis::Catalog,
+        }
+    }
+
+    pub fn job_progress() -> dpp_integrator::handlers::job_status::JobProgress {
+        dpp_integrator::handlers::job_status::JobProgress {
+            processed: 120,
+            total: 500,
+        }
+    }
+
+    pub fn obligation_date() -> ObligationDateView {
+        use dpp_domain::instrument::DateBasis;
+        ObligationDateView {
+            date: "2030-08-01".into(),
+            basis: DateBasis::Sourced,
+        }
+    }
+
+    pub fn passport_obligation() -> PassportObligationView {
+        PassportObligationView {
+            required: true,
+            from: Some(obligation_date()),
+        }
+    }
+
+    pub fn retention_period() -> RetentionView {
+        use dpp_domain::catalog::RetentionBasis;
+        RetentionView {
+            years: 10,
+            basis: RetentionBasis::Sourced,
+        }
+    }
+
+    pub fn reaching_instrument() -> InstrumentRefView {
+        use dpp_domain::catalog::RegulatoryStatus;
+        use dpp_domain::instrument::{InstrumentStatus, RecordedBasis};
+        InstrumentRefView {
+            instrument: "toy-safety-2025-2509".into(),
+            recorded: RecordedBasis::Catalog,
+            instrument_status: InstrumentStatus::Adopted,
+            binding_status: RegulatoryStatus::Provisional,
+        }
+    }
+
+    pub fn product_group_obligation() -> ProductGroupObligation {
+        use dpp_domain::catalog::Granularity;
+
+        ProductGroupObligation {
+            product_group: "toy".into(),
+            title: Some("Toys".into()),
+            passport: passport_obligation(),
+            determinable: false,
+            granularity: Some(Granularity::Model),
+            retention: Some(retention_period()),
+            instruments: vec![reaching_instrument()],
+        }
+    }
+
+    pub fn product_group_obligation_list() -> ProductGroupObligationList {
+        ProductGroupObligationList {
+            product_groups: vec![product_group_obligation()],
+        }
     }
 
     pub fn installed_plugin() -> InstalledPlugin {

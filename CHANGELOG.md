@@ -12,6 +12,37 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ### Fixed
 
+- **`ProductGroupData` declared a discriminator on a property that does not
+  exist.** `discriminator.propertyName` read `product group`, with a space, while
+  the schema's own `required` and `properties` both say `productGroup` — so the
+  description pointed generated clients at a field it never documents. The
+  surrounding prose repeated the error twice more, including a worked example
+  object keyed `"product group"`. This is the same find-and-replace residue that
+  produced the `product group` query parameter; the gate added below catches the
+  parameter spelling, and nothing reads `discriminator.propertyName`.
+
+  The prose also attributed the shape to `#[serde(tag = …)]`, which the server
+  deliberately does **not** derive: the tag is open, so a product group this
+  build does not model round-trips its tag and payload rather than failing to
+  parse. Stated now, since it is the part a client actually needs.
+
+- **The documented plugin filename convention could not work.** The upload route
+  described the artifact name as `product group-<key>.wasm`. The code derives the
+  key with `trim_start_matches("product-group-")`, so a file named the documented
+  way has nothing stripped, and the derived key is the whole stem — the install is
+  refused. Same residue, third instance.
+
+- **The suspend endpoint's request body was described by nothing.** It declared
+  its `{ reason }` shape inline while a real `SuspendRequest` struct sat behind
+  it, so renaming that field would have changed what the server accepts and
+  failed no test. It is now a named schema checked against the type, and
+  `every_json_request_body_names_a_schema` fails the build on any other
+  `application/json` body that names no schema — the sibling of the response
+  check, and the half that was missing. Request bodies are the side of the
+  contract a client has to get right, which makes an unverified one the more
+  expensive of the two. One allowlist entry, with its reason: the `PUT` merge-
+  patch is a free-form bag of passport fields with no struct behind it.
+
 - **A GTIN check on the create path could not fail, and read as though it were
   the only thing checking.** `POST /api/v1/dpp` re-validated the GS1 check digit
   of `ProductGroupData::Battery`'s GTIN — a value that had already been through
@@ -43,6 +74,116 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   from the public response bytes — confirmed to fail when the scope is wrong.
 
 ### Added
+
+- **The contract gate now checks query parameter names.** It gated schemas,
+  numeric bounds, enum variants and route coverage — every axis except the one
+  that had actually shipped a defect. `/vault/api/v1/dpp/by-identity` documented
+  a parameter named `product group`, with a space, in an identifier position: the
+  residue of a find-and-replace that ran over a `name:` field. The handler reads
+  `productGroup` and an integration test was sending `product_group` — three
+  spellings of one parameter, and every existing check passed.
+
+  It survived because the previous name was a single word, spelled identically in
+  snake_case and camelCase, so the description, the test and the handler agreed
+  **by coincidence** rather than because anything compared them. Renaming to two
+  words broke the coincidence in all three places at once.
+
+  Each of the eleven operations that take query parameters is now checked against
+  the struct that deserialises them, both directions: a documented parameter the
+  handler never reads is dead (a client sending it is silently ignored), and a
+  parameter the handler reads and the spec omits is undiscoverable. A companion
+  check fails if any operation declares query parameters with no case registered,
+  so a new route cannot opt out by omission. Verified by reintroducing
+  `product group` and watching it fail.
+
+  The six query structs gained `Serialize` so the gate can read their wire names
+  from serde rather than from the field list — the same ground truth the object
+  schema check uses. Note it reads the *serialisation* rename rule, so a
+  `#[serde(alias)]`, which affects only deserialisation, would not be seen.
+
+- **The node can be asked whether a product needs a passport.**
+  `GET /integrator/api/v1/product-groups` and `/{productGroup}` serve, per
+  product group, whether a digital product passport is required, from what date,
+  at what granularity, for how long records must be kept, and under which acts.
+  Both are unauthenticated, like the neighbouring `/schemas` routes.
+
+  The instrument catalog has been able to answer this all along. Nothing served
+  it — every call site used it only to decide whether to load a plugin — so the
+  first question an operator asks had no endpoint behind it. Schema versions are
+  deliberately not restated here; `/integrator/api/v1/schemas` remains their one
+  home.
+
+  **Every date is served with its basis.** Some of the catalog's dates trace to
+  an adopted text and some are a reading, and `retention` carries the same
+  distinction. Serving either number bare would present a qualified reading as an
+  unqualified claim, so the date and its `basis` are one object in the response
+  shape and neither can be emitted without the other. `required` and
+  `determinable` are reported separately for the same reason: an obligation can
+  exist while the implementing acts that would make it determinable do not.
+
+  The key set is the **union** of the product group and instrument catalogs. An
+  act can reach a product group that has no descriptor, schema or plugin — the
+  horizontal case — and that group is the one an operator has no other way to ask
+  about. It is listed with a `null` title, and answered rather than `404`ed.
+
+  **The obligation travels with its status, for the same reason the date travels
+  with its basis.** `required` folds across every act reaching the group, so it
+  reports that an act imposes a passport — not that any act binds the group
+  today. Each entry in `instruments` therefore carries `instrumentStatus`
+  (whether the act exists) and `bindingStatus` (whether it binds *this* group),
+  which are independent in both directions: ESPR has been adopted since 2024
+  while every product group under it is still provisional. Without them, an
+  obligation resting on an anticipated act whose only source is a preparatory
+  study that is explicitly not law is served byte-identically to one resting on
+  an adopted regulation with a firm date.
+
+### Changed
+
+- **Every published object shape must now have a name, and the build enforces
+  it.** `every_schema_is_covered` already guaranteed that no *named* schema goes
+  unchecked. A shape written inline inside another schema never becomes a named
+  schema, so it was not skipped — it was invisible, and nothing reported that as
+  a gap.
+
+  `every_published_object_shape_has_a_name` closes the category rather than the
+  instances: an inline object shape now fails the build and names itself. It
+  ships with **no exception list**, because an allowlist here would refill with
+  exactly what it exists to prevent. The three pre-existing offenders were fixed
+  to get there — `InstrumentRef`, `JobProgress` and `QualifiedSealMember` are
+  now components.
+
+  `QualifiedSealMember` is registered as explicitly unchecked, with the reason:
+  the dossier holds it as untyped JSON, so no Rust type declares its three
+  members and nothing can compare them. Naming it does not close that gap, but
+  it makes it visible instead of hiding it inside `EvidenceDossier`.
+
+- **The obligation response's nested shapes are named schemas, so the contract
+  gate can actually see them.** The endpoint declares Rust types for its nested
+  shapes specifically so the gate can check the published shape against the
+  code — but the gate compares the top-level keys of a *named* schema, and all
+  three were written inline, where they have no name to look up. Renaming a
+  field in any of them failed nothing. The stated reason for declaring them was
+  not being delivered.
+
+  `PassportObligation`, `ObligationDate`, `RetentionPeriod` and
+  `ReachingInstrument` are now components with contract cases of their own.
+  Verified by renaming a nested field and watching the gate fail on it, which it
+  previously would not have. Across the whole description this halves the
+  properties holding an unverifiable inline shape, from six to three; the
+  remaining three are older and untouched here.
+
+- **`granularity` and `recorded` are one schema each, and are now gated against
+  the code.** Both were written out inline twice — once on `PassportResponse`,
+  once on the new obligation shape — which made them two things to drift, and
+  left them checked nowhere: the OpenAPI contract test can only name a schema in
+  `components`, so an `enum` list reachable only through a property was invisible
+  to it. A variant added in core would have shipped undocumented in both copies.
+
+  They are now `Granularity` and `RecordedBasis` components, referenced from
+  both sites (the obligation wraps the first in `anyOf: [$ref, null]`, since it
+  reports `null` where a passport simply omits the field), with contract cases
+  and entries in the core-repin tripwire. Verified by removing a variant and
+  watching the gate fail.
 
 - **The create request is one type, not two kept in step by a comment.**
   `dpp_types::CreatePassportRequest` is now the body both sides use: the vault

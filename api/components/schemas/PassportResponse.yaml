@@ -52,35 +52,12 @@ properties:
       which `recorded` distinguishes. Read it as who asserted the entry, not as
       how much to trust it.
     items:
-      type: object
-      required:
-        - instrument
-        - recorded
-      properties:
-        instrument:
-          type: string
-          description: The instrument's catalog id.
-          example: battery-reg-2023-1542
-        recorded:
-          type: string
-          enum: [catalog, operator]
-          description: >-
-            `catalog` — resolved from the instrument catalog at issuance.
-            `operator` — asserted by the economic operator placing the product on
-            the market.
-          example: catalog
-      additionalProperties: false
+      $ref: ./InstrumentRef.yaml
   granularity:
-    type: string
-    enum: [model, batch, item]
+    $ref: ./Granularity.yaml
     description: >-
-      The level this passport describes. Set by the applicable delegated act
-      (ESPR Art. 9(2)(d)), so it is a property of the law rather than a choice
-      made here, and absent while no adopted act has fixed one — which is every
-      product group today. Absent is not `item`: the EU registry registers
-      batteries per item, but that is the registry's operational position, not a
-      level any act has set.
-    example: item
+      The level this passport describes. Omitted entirely while no adopted act
+      has fixed one — see `Granularity` for why omitted is not `item`.
   manufacturer:
     $ref: ./ManufacturerInfo.yaml
   materials:

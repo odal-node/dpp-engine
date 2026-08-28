@@ -2392,6 +2392,7 @@ dependencies = [
  "dpp-plugin-host",
  "dpp-registry",
  "dpp-render",
+ "dpp-resolver",
  "dpp-rules",
  "dpp-seal",
  "dpp-types",

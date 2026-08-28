@@ -192,6 +192,10 @@ paths:
     $ref: paths/integrator_health.yaml
   /integrator/api/v1/templates/{productGroup}:
     $ref: paths/integrator_api_v1_templates_{productGroup}.yaml
+  /integrator/api/v1/product-groups:
+    $ref: paths/integrator_api_v1_product-groups.yaml
+  /integrator/api/v1/product-groups/{productGroup}:
+    $ref: paths/integrator_api_v1_product-groups_{productGroup}.yaml
   /integrator/api/v1/schemas:
     $ref: paths/integrator_api_v1_schemas.yaml
   /integrator/api/v1/schemas/{productGroup}:

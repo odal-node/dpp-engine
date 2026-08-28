@@ -421,11 +421,7 @@ paths:
         content:
           application/json:
             schema:
-              type: object
-              properties:
-                reason:
-                  type: string
-                  example: Product recall — safety investigation pending
+              $ref: '#/components/schemas/SuspendRequest'
       responses:
         '200':
           description: DPP suspended. Returns the full passport record.
@@ -1319,7 +1315,7 @@ paths:
                   type: string
                   format: binary
                   description: |
-                    The `.wasm` or precompiled `.cwasm` plugin artifact. Its filename determines the product group when `productGroup` is omitted (`product group-<key>.wasm`) and whether it is treated as precompiled (`.cwasm`).
+                    The `.wasm` or precompiled `.cwasm` plugin artifact. Its filename determines the product group when `productGroup` is omitted (`product-group-<key>.wasm`) and whether it is treated as precompiled (`.cwasm`).
                 sig:
                   type: string
                   format: binary
@@ -2153,6 +2149,79 @@ paths:
           description: No template for this product group.
         '501':
           description: XLSX export not yet implemented.
+  /integrator/api/v1/product-groups:
+    get:
+      operationId: listProductGroups
+      summary: List product groups and their passport obligations
+      description: |
+        Whether a digital product passport is required for each product group this
+        node knows of, from what date, under which acts, and whether this build can
+        actually make a binding determination. Unauthenticated.
+
+        "Knows of" is wider than "has a schema for". A product group reached by an
+        act while carrying no catalog descriptor is listed too, with a `null`
+        `title` — that group has no schema, plugin or template to be discovered from,
+        so this is the only place it can be asked about.
+
+        **Every date is served with its `basis`.** Most of the catalog is undated,
+        and of the dates that exist some trace to an adopted text (`sourced`) and
+        some are a reading (`assumed`). A date without its basis would present a
+        qualified reading as an unqualified claim, so `basis` is always present
+        wherever a date or a retention period is.
+
+        `required` and `determinable` are different questions and are reported
+        separately. An obligation can exist while the implementing acts that define
+        the technical requirements do not, in which case nothing is bindingly
+        determinable yet however clearly the duty is written.
+
+        Schema versions are not restated here — see `/integrator/api/v1/schemas`,
+        which is their one home.
+      tags:
+        - Integrator
+      security: []
+      responses:
+        '200':
+          description: Every product group this build knows of.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProductGroupObligationList'
+  /integrator/api/v1/product-groups/{productGroup}:
+    get:
+      operationId: getProductGroupObligation
+      summary: One product group's passport obligation
+      description: |
+        The passport obligation for a single product group. Unauthenticated.
+
+        A key neither catalog knows is a `404` rather than an entry with an empty
+        obligation — "this node knows nothing about it" and "no passport is
+        required" are different answers, and the second would be a compliance claim
+        the node is not entitled to make.
+
+        A key an act reaches while no product group descriptor exists for it is
+        **not** a `404`. The node holds a recorded binding for such a group, and
+        refusing it would deny knowledge the node has. It is served with a `null`
+        `title` and its obligation in full.
+      tags:
+        - Integrator
+      security: []
+      parameters:
+        - name: productGroup
+          in: path
+          required: true
+          description: The product group catalog key.
+          schema:
+            type: string
+          example: toy
+      responses:
+        '200':
+          description: The product group's obligation.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProductGroupObligation'
+        '404':
+          $ref: '#/components/responses/NotFound'
   /integrator/api/v1/schemas:
     get:
       operationId: listSectorSchemas
@@ -2761,16 +2830,22 @@ components:
     ProductGroupData:
       type: object
       description: |
-        Product group-specific data, **internally tagged** by a `productGroup` discriminator
-        (`#[serde(tag = "product group")]`) — e.g.
-        `{ "product group": "battery", "gtin": "…", "batteryChemistry": "LFP", … }`.
+        Product group-specific data, **internally tagged** by a `productGroup`
+        discriminator — e.g.
+        `{ "productGroup": "battery", "gtin": "…", "batteryChemistry": "LFP", … }`.
         The remaining fields are product group-specific and validated against the
         product group's versioned JSON schema. Sectors include `battery`, `textile`,
         `steel`, `aluminium`, `tyre`, `electronics`, and others.
+
+        The tag is **open**. A product group this build does not model round-trips its
+        tag and payload verbatim instead of failing to parse, so a group added to the
+        catalog does not require a client release. That is why the server does not
+        derive this shape with `#[serde(tag = …)]`, which would close the set at
+        compile time.
       required:
         - productGroup
       discriminator:
-        propertyName: product group
+        propertyName: productGroup
       properties:
         productGroup:
           type: string
@@ -2894,6 +2969,68 @@ components:
       format: uuid
       description: UUID v7 identifier assigned on creation. Embedded in QR codes and public URLs.
       example: 019723f4-1a2b-7c3d-8e4f-5a6b7c8d9e0f
+    RecordedBasis:
+      type: string
+      enum:
+        - catalog
+        - operator
+      description: |
+        Who asserted that an act applies. Read it as provenance, not as how much to
+        trust the entry.
+
+        `catalog` — resolved from the instrument catalog.
+
+        `operator` — asserted by the economic operator placing the product on the
+        market. **Not a fallback.** The catalog cannot be exhaustive: horizontal
+        ecodesign requirements cover sets of products that were never shortlisted as
+        product groups, so an act may apply to a product while reaching no product
+        group the catalog models. An operator who knows an act applies must be able to
+        say so.
+      example: catalog
+    InstrumentRef:
+      type: object
+      description: |
+        One legal instrument recorded on a passport as applicable to it, and who
+        asserted that it applies.
+
+        Fixed when the product was placed on the market and never recomputed. Carries
+        no status, deliberately: a passport freezes its applicable set at issuance, and
+        re-deriving how far along an act is would misstate what governed the product at
+        that moment. The obligation endpoint's `ReachingInstrument` answers the live
+        question and does carry status.
+      properties:
+        instrument:
+          type: string
+          description: The instrument's catalog id.
+          example: battery-reg-2023-1542
+        recorded:
+          $ref: '#/components/schemas/RecordedBasis'
+          description: Who asserted this entry, fixed at issuance along with the rest of the applicable set.
+      required:
+        - instrument
+        - recorded
+      additionalProperties: false
+    Granularity:
+      type: string
+      enum:
+        - model
+        - batch
+        - item
+      description: |
+        The level a passport is issued at.
+
+        Set by the applicable delegated act (ESPR Art. 9(2)(d)), so it is a property
+        of the law rather than a choice made here, and unset while no adopted act has
+        fixed one — which is every product group today.
+
+        Unset is not `item`: the EU registry registers batteries per item, but that is
+        the registry's operational position, not a level any act has set.
+
+        One schema serves both the level a passport records and the level an act
+        fixes, because those are the same enumeration in the code. They were written
+        out twice, which made them two things to drift and left neither checked
+        against the code that emits them.
+      example: item
     CarbonFootprint:
       type: object
       description: A CO₂-equivalent figure with the LCA context needed to read it. A bare number is not comparable across products — the lifecycle stage and system boundary are what make two figures mean the same thing.
@@ -3194,31 +3331,10 @@ components:
 
             Not derivable from `productGroup`. A horizontal act can reach a product whose product group is not one the catalog models, so an entry may be asserted by the economic operator rather than resolved from the catalog — which `recorded` distinguishes. Read it as who asserted the entry, not as how much to trust it.
           items:
-            type: object
-            required:
-              - instrument
-              - recorded
-            properties:
-              instrument:
-                type: string
-                description: The instrument's catalog id.
-                example: battery-reg-2023-1542
-              recorded:
-                type: string
-                enum:
-                  - catalog
-                  - operator
-                description: '`catalog` — resolved from the instrument catalog at issuance. `operator` — asserted by the economic operator placing the product on the market.'
-                example: catalog
-            additionalProperties: false
+            $ref: '#/components/schemas/InstrumentRef'
         granularity:
-          type: string
-          enum:
-            - model
-            - batch
-            - item
-          description: 'The level this passport describes. Set by the applicable delegated act (ESPR Art. 9(2)(d)), so it is a property of the law rather than a choice made here, and absent while no adopted act has fixed one — which is every product group today. Absent is not `item`: the EU registry registers batteries per item, but that is the registry''s operational position, not a level any act has set.'
-          example: item
+          $ref: '#/components/schemas/Granularity'
+          description: The level this passport describes. Omitted entirely while no adopted act has fixed one — see `Granularity` for why omitted is not `item`.
         manufacturer:
           $ref: '#/components/schemas/ManufacturerInfo'
         materials:
@@ -3425,6 +3541,19 @@ components:
         skip:
           type: integer
           description: The offset this page starts at.
+    SuspendRequest:
+      type: object
+      description: |
+        Optional body for suspending a published passport.
+
+        The body itself is optional — `POST` with no body suspends without a recorded
+        reason. Where a reason is supplied it is appended to the audit entry, not
+        stored on the passport, so it is not part of the signed document.
+      properties:
+        reason:
+          type: string
+          description: Human-readable reason for the suspension, appended to the audit trail.
+          example: Product recall — safety investigation pending
     DerogationRef:
       type: object
       required:
@@ -4105,6 +4234,37 @@ components:
         jws:
           type: string
           description: Compact EdDSA JWS.
+    QualifiedSealMember:
+      type: object
+      description: |
+        The passport's eIDAS qualified seal as carried inside an evidence dossier:
+        the seal envelope plus the JWS it was computed over and that payload's hash,
+        so a verifier holding only the dossier has both the CAdES and the preimage to
+        check it against.
+
+        Included because a dossier is what an authority is handed, and the seal is its
+        one member carrying an Art. 35(2) presumption — and because it is unreachable
+        otherwise: the seal is stripped from `fullView` and `publicView` alike, since
+        it covers the full-payload signature rather than any redaction. Bound into
+        `contentHashes` like every other member.
+
+        ⚠️ **This shape is described here but not enforced anywhere.** The field is
+        held as untyped JSON on the dossier record, so no Rust type declares these
+        three members and the OpenAPI contract test has nothing to compare them
+        against. Treat the property list as documentation of intent, not as a
+        guarantee. Giving the dossier a real type for this member would close that,
+        and is the only thing that would.
+      properties:
+        seal:
+          type: object
+          description: The `SealedEnvelope` as persisted on the passport.
+        signedOverJws:
+          type: string
+          description: The JWS the seal was computed over.
+        payloadHash:
+          type: string
+          pattern: ^[0-9a-f]{64}$
+          description: SHA-256 of the sealed payload, lowercase hex.
     EvidenceDossier:
       type: object
       description: |
@@ -4178,30 +4338,10 @@ components:
             it proves each node's signed public view is unchanged against its
             pinned hash, not the cryptographic validity of that node's signature.
         qualifiedSeal:
-          type:
-            - object
-            - 'null'
-          description: |
-            The passport's eIDAS qualified seal, present iff one has been
-            applied. Carries the seal envelope plus `signedOverJws` and
-            `payloadHash`, so a verifier holding only this dossier has both the
-            CAdES and the preimage to check it against.
-
-            Included because a dossier is what an authority is handed and the
-            seal is its one member carrying an Art. 35(2) presumption — and
-            because it is unreachable otherwise: the seal is stripped from
-            `fullView` and `publicView` alike, since it covers the full-payload
-            signature rather than any redaction. Bound into `contentHashes` like
-            every other member. `null` when the seal is still queued.
-          properties:
-            seal:
-              type: object
-              description: The `SealedEnvelope` as persisted on the passport.
-            signedOverJws:
-              type: string
-            payloadHash:
-              type: string
-              pattern: ^[0-9a-f]{64}$
+          anyOf:
+            - $ref: '#/components/schemas/QualifiedSealMember'
+            - type: 'null'
+          description: The passport's eIDAS qualified seal, present iff one has been applied. `null` when the seal is still queued.
     EvidenceDossierRecord:
       type: object
       description: A stored dossier snapshot — the dossier plus its persistence envelope.
@@ -4966,6 +5106,269 @@ components:
           type: boolean
         did_document:
           $ref: '#/components/schemas/DidDocument'
+    DateBasis:
+      type: string
+      enum:
+        - sourced
+        - assumed
+      description: |
+        Whether an obligation date traces to an adopted text (`sourced`) or is a
+        reading that has not been confirmed against one (`assumed`).
+
+        Always served with the date it qualifies. A date without its basis presents a
+        qualified reading as an unqualified claim, which on a public endpoint from a
+        compliance vendor is a materially different statement.
+
+        Deliberately a separate schema from `RetentionBasis`, which it currently
+        matches variant for variant. They are two enumerations in the code answering
+        two questions, and collapsing them here would let one drift silently behind
+        the other.
+      example: sourced
+    ObligationDate:
+      type: object
+      description: |
+        The date a passport obligation applies from, with the provenance of that date.
+
+        One object rather than two loose fields so a date cannot be served without its
+        basis. Most of the catalog is undated, and of the dates that exist some trace
+        to an adopted text and some are a reading — a date presented bare turns a
+        qualified reading into an unqualified claim.
+      properties:
+        date:
+          type: string
+          format: date
+          description: ISO-8601 date the obligation applies from.
+          example: '2030-08-01'
+        basis:
+          $ref: '#/components/schemas/DateBasis'
+          description: Whether this date traces to an adopted text.
+      required:
+        - date
+        - basis
+    PassportObligation:
+      type: object
+      description: |
+        Whether a passport is required for a product group, and from when.
+
+        The obligation is split from its date so `required` can be answered where
+        nothing fixes a date — which is most of the catalog.
+      properties:
+        required:
+          type: boolean
+          description: |
+            Whether an instrument recorded against this product group imposes a
+            passport obligation. Says nothing about whether one can be produced today
+            — see `determinable` on the enclosing object.
+
+            **Read with `instruments[].bindingStatus`.** This is a fold across every
+            reaching act, so `true` means an act imposes a passport, not that any act
+            binds this group today.
+          example: true
+        from:
+          anyOf:
+            - $ref: '#/components/schemas/ObligationDate'
+            - type: 'null'
+          description: |
+            The date the obligation applies from, or `null` where no instrument fixes
+            one. An obligation with no date is not one starting today.
+      required:
+        - required
+        - from
+    RetentionBasis:
+      type: string
+      enum:
+        - sourced
+        - assumed
+      description: |
+        Whether a retention period traces to an adopted text (`sourced`) or is a
+        reading that has not been confirmed against one (`assumed`).
+
+        See `DateBasis` for why these are two schemas rather than one.
+      example: sourced
+    RetentionPeriod:
+      type: object
+      description: |
+        How long records must be kept, with the provenance of that figure.
+
+        The figure is the maximum across every act reaching the product group, because
+        retention periods are floors and a record kept long enough for the longest
+        satisfies them all. The basis is `sourced` only when every contributing figure
+        is sourced — one assumption anywhere makes the compound figure an assumption,
+        whichever act supplied the maximum.
+      properties:
+        years:
+          type: integer
+          minimum: 0
+          description: Years the record must be kept.
+          example: 10
+        basis:
+          $ref: '#/components/schemas/RetentionBasis'
+          description: Whether this figure traces to an adopted text.
+      required:
+        - years
+        - basis
+    InstrumentStatus:
+      type: string
+      enum:
+        - adopted
+        - proposed
+        - anticipated
+      description: |
+        How far through the legislative process an act is — whether the **act
+        exists**, not whether it binds anything.
+
+        `adopted` — adopted and published in the Official Journal, citable by CELEX.
+
+        `proposed` — formally proposed but not adopted. Its text can be read and cited
+        as a *proposal*, never as law.
+
+        `anticipated` — announced in a working plan or otherwise expected, with no
+        text to read. Such an act has no CELEX, and nothing derived from it may be
+        presented as sourced.
+
+        Distinct from `RegulatoryStatus`, and the distinction is easy to lose: an
+        adopted act binds nothing until its own dates arrive, and routinely binds one
+        product group while another waits. The practical case is that ESPR has been
+        `adopted` since 2024 while every product group under it is still `provisional`
+        — both statements are true and neither implies the other.
+      example: adopted
+    RegulatoryStatus:
+      type: string
+      enum:
+        - in_force
+        - provisional
+        - watch
+      description: |
+        Whether an act's obligations bind **a given product group** — a different
+        question from whether the act exists, which is `InstrumentStatus`.
+
+        `in_force` — the act creates binding obligations for this product group that
+        can be determined now. A future applicability date is *not* this status.
+
+        `provisional` — the act exists or is anticipated, but nothing is bindingly
+        determinable for this product group yet. Any obligation reported alongside
+        this status is a reading, not a determination.
+
+        `watch` — tracked, but this act imposes nothing on this product group. A
+        watching brief rather than a duty, and never determinable.
+
+        **Read this before acting on `passport.required`.** The obligation is a fold
+        across every act reaching the product group, so `required: true` says an act
+        imposes a passport — not that the act binds this group today. Where every
+        reaching act is `provisional` or `watch`, the requirement is a reading of
+        instruments that have not yet bound anything.
+      example: provisional
+    ReachingInstrument:
+      type: object
+      description: |
+        One act the catalog records as reaching a product group, with how far along
+        the act itself is and whether it binds *this* group.
+
+        Distinct from the entries recorded on a passport, which carry no status: a
+        passport freezes its applicable set at issuance and re-deriving status later
+        would misstate what governed the product when it was placed on the market.
+        Here nothing is frozen — the question is what the catalog holds now — so the
+        statuses are what let a caller tell an adopted duty from a reading.
+      properties:
+        instrument:
+          type: string
+          description: The instrument's catalog id.
+          example: toy-safety-2025-2509
+        instrumentStatus:
+          $ref: '#/components/schemas/InstrumentStatus'
+          description: Whether the act itself exists.
+        bindingStatus:
+          $ref: '#/components/schemas/RegulatoryStatus'
+          description: Whether that act's obligations bind this product group. Independent of `instrumentStatus` in both directions.
+        recorded:
+          $ref: '#/components/schemas/RecordedBasis'
+          description: Always `catalog` here — this reports what the embedded catalog holds, and an operator assertion is recorded on a passport, not against the catalog. Shared with the passport's own instrument entries so the two stay one shape.
+      required:
+        - instrument
+        - recorded
+        - instrumentStatus
+        - bindingStatus
+    ProductGroupObligation:
+      type: object
+      description: |
+        What this node knows about one product group's digital product passport
+        obligation, drawn from the embedded instrument catalog.
+      properties:
+        productGroup:
+          type: string
+          description: The catalog key.
+          example: toy
+        title:
+          type:
+            - string
+            - 'null'
+          description: |
+            Human-readable name from the product group catalog.
+
+            `null` where an act reaches this key but no product group descriptor
+            exists for it — a real case, and the one this endpoint is most needed for:
+            no schema, plugin or template names such a group, so nothing else in the
+            API can be asked about it. A `null` title is not an error and says nothing
+            about the obligation, which is reported in full beside it.
+          example: Toys
+        passport:
+          $ref: '#/components/schemas/PassportObligation'
+          description: Whether a passport is required for this product group, and from when.
+        determinable:
+          type: boolean
+          description: |
+            Whether this build can make a binding compliance determination for this
+            product group. False where the duty exists but the implementing acts that
+            define its technical requirements are unpublished.
+          example: false
+        granularity:
+          anyOf:
+            - $ref: '#/components/schemas/Granularity'
+            - type: 'null'
+          description: |
+            The level a passport is issued at for this product group, where a
+            delegated act fixes one. `null` where none does — which is every product
+            group today.
+
+            Nullable here rather than omitted, unlike the same field on a passport:
+            this endpoint answers a question about every product group it lists, and a
+            missing key would read as "not asked" rather than "no act has fixed one".
+        retention:
+          anyOf:
+            - $ref: '#/components/schemas/RetentionPeriod'
+            - type: 'null'
+          description: How long records must be kept, with the basis of that figure. `null` where no reaching act fixes one.
+        instruments:
+          type: array
+          description: |
+            The acts the catalog knows reach this product group, each with how far
+            along the act itself is and whether it binds *this* group.
+
+            **These statuses qualify `passport.required`.** That field folds across
+            every act here, so it reports that an act imposes a passport — not that
+            any act binds this group today. Where every entry is `provisional` or
+            `watch`, a `required: true` is a reading of instruments that have not yet
+            bound anything, and must not be presented as a determination.
+          items:
+            $ref: '#/components/schemas/ReachingInstrument'
+      required:
+        - productGroup
+        - title
+        - passport
+        - determinable
+        - granularity
+        - retention
+        - instruments
+    ProductGroupObligationList:
+      type: object
+      description: Every product group this build models, with its passport obligation.
+      properties:
+        productGroups:
+          type: array
+          items:
+            $ref: '#/components/schemas/ProductGroupObligation'
+      required:
+        - productGroups
     ImportCreatedEntry:
       type: object
       required:
@@ -5062,6 +5465,23 @@ components:
           example: queued
         totalRows:
           type: integer
+    JobProgress:
+      type: object
+      description: How far through its rows an import job has got.
+      properties:
+        processed:
+          type: integer
+          minimum: 0
+          description: Rows handled so far.
+          example: 120
+        total:
+          type: integer
+          minimum: 0
+          description: Rows the job was created with.
+          example: 500
+      required:
+        - processed
+        - total
     JobStatusResponse:
       type: object
       required:
@@ -5080,12 +5500,7 @@ components:
             - completed
             - failed
         progress:
-          type: object
-          properties:
-            processed:
-              type: integer
-            total:
-              type: integer
+          $ref: '#/components/schemas/JobProgress'
         result:
           type:
             - object

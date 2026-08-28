@@ -308,6 +308,68 @@ mod tests {
     }
 
     #[test]
+    fn a_completed_record_missing_only_the_attestation_fails_closed() {
+        // The outgoing signature is present and valid, so verification reaches
+        // the acceptance check rather than returning on the one before it.
+        //
+        // `completed_record_without_signatures_fails_closed` leaves both absent
+        // and therefore stops at `From`, so it never exercised this branch —
+        // which meant the acceptance check had no test at all.
+        let from_key = SigningKey::from_bytes(&[7u8; 32]);
+        let to_key = SigningKey::from_bytes(&[8u8; 32]);
+        let mut record = record_with_signatures(
+            &from_key,
+            &to_key,
+            "did:web:from.example",
+            "did:web:to.example",
+        );
+        record.completed_at = Some(Utc::now());
+        record.node_acceptance_attestation = None;
+
+        let chain = TransferChain {
+            passport_id: record.passport_id,
+            original_operator: operator("did:web:from.example"),
+            transfers: vec![record],
+        };
+        let mut docs = BTreeMap::new();
+        docs.insert("did:web:from.example".to_string(), did_doc_for(&from_key));
+
+        let brk = verify_transfer_chain(&chain, &docs)
+            .expect_err("a completed transfer must carry the node's acceptance attestation");
+        assert_eq!(brk.index, 0);
+        assert!(
+            matches!(brk.issue, TransferSignatureIssue::Acceptance(_)),
+            "must fail on the acceptance step, not an earlier one; got: {:?}",
+            brk.issue
+        );
+    }
+
+    #[test]
+    fn an_initiated_record_may_lack_the_attestation() {
+        // The mirror of the above, and the reason the check is conditioned on
+        // completion: a transfer awaiting acceptance legitimately has none.
+        let from_key = SigningKey::from_bytes(&[7u8; 32]);
+        let to_key = SigningKey::from_bytes(&[8u8; 32]);
+        let mut record = record_with_signatures(
+            &from_key,
+            &to_key,
+            "did:web:from.example",
+            "did:web:to.example",
+        );
+        record.node_acceptance_attestation = None;
+
+        let chain = TransferChain {
+            passport_id: record.passport_id,
+            original_operator: operator("did:web:from.example"),
+            transfers: vec![record],
+        };
+        let mut docs = BTreeMap::new();
+        docs.insert("did:web:from.example".to_string(), did_doc_for(&from_key));
+
+        assert!(verify_transfer_chain(&chain, &docs).is_ok());
+    }
+
+    #[test]
     fn completed_record_without_signatures_fails_closed() {
         // A record marked completed but carrying no signatures (a producing-node
         // workflow bug) must fail closed, not pass with zero cryptographic checks.

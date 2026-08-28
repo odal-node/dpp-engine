@@ -23,11 +23,7 @@ post:
     content:
       application/json:
         schema:
-          type: object
-          properties:
-            reason:
-              type: string
-              example: Product recall — safety investigation pending
+          $ref: '../components/schemas/SuspendRequest.yaml'
   responses:
     '200':
       description: DPP suspended. Returns the full passport record.

@@ -18,13 +18,13 @@ use axum::{
 };
 use dpp_common::http_problem;
 use dpp_digital_link::Gs1LinkType;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::{infra::did, state::AppState};
 
 /// Query parameters for the GS1 Digital Link resolver endpoint (`/01/{gtin}`).
-#[derive(Deserialize)]
+#[derive(Deserialize, Serialize)]
 pub struct ByGtinQuery {
     /// GS1 link type qualifier. `"linkset"` returns an RFC 9264 linkset;
     /// `"gs1:pip"` / `"gs1:dpp"` redirect to the DPP page. Omit for the
