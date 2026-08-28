@@ -1265,6 +1265,99 @@ async fn a_pending_transfer_blocks_until_rejected_or_cancelled() {
     }
 }
 
+// `404` and `422` mean different things on the transfer routes, and the spec now
+// says which is which. This is what makes that description true rather than
+// merely plausible.
+//
+// The distinction shipped wrong: all four routes documented `404` as "no pending
+// transfer for this DPP", which is the `422` case. `404` means the passport has
+// no transfer chain at all — nothing was ever initiated. Both codes were
+// documented, so nothing mechanical objected; the contract gate compares codes,
+// and both were reachable. Only exercising the two conditions separates them.
+//
+// Written for `accept` because reject and cancel are covered above and `accept`
+// is where the wording was copied from.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_missing_transfer_chain_and_an_empty_one_are_told_apart() {
+    let (base, _container) = start_db_and_node().await;
+    let token = make_jwt("00000000-0000-0000-0000-000000000068");
+    let client = reqwest::Client::new();
+
+    let created: serde_json::Value = client
+        .post(format!("{base}/vault/api/v1/dpp"))
+        .bearer_auth(&token)
+        .json(&serde_json::json!({
+            "productName": "Chainless Battery",
+            "manufacturer": {"name": "SmokeTestCorp", "address": "Berlin, DE"},
+            "materials": [],
+        }))
+        .send()
+        .await
+        .expect("create request failed")
+        .json()
+        .await
+        .unwrap();
+    let id = created["id"].as_str().expect("id").to_owned();
+
+    assert_eq!(
+        client
+            .post(format!("{base}/vault/api/v1/dpp/{id}/publish"))
+            .bearer_auth(&token)
+            .json(&serde_json::json!({}))
+            .send()
+            .await
+            .expect("publish request failed")
+            .status(),
+        200
+    );
+
+    let post = |verb: &'static str| {
+        let (client, base, id, token) = (client.clone(), base.clone(), id.clone(), token.clone());
+        async move {
+            client
+                .post(format!("{base}/vault/api/v1/dpp/{id}/transfer/{verb}"))
+                .bearer_auth(&token)
+                .send()
+                .await
+                .expect("transfer request failed")
+                .status()
+                .as_u16()
+        }
+    };
+
+    // Nothing has ever been initiated, so there is no chain — `404`.
+    assert_eq!(
+        post("accept").await,
+        404,
+        "a passport with no transfer chain must be 404, not 422"
+    );
+
+    // Give it a chain, then empty it. The chain now exists and carries nothing
+    // pending, which is the other condition — `422`.
+    assert_eq!(
+        client
+            .post(format!("{base}/vault/api/v1/dpp/{id}/transfer/initiate"))
+            .bearer_auth(&token)
+            .json(&serde_json::json!({
+                "fromOperator": {"did":"did:web:acme.example","name":"Acme GmbH","role":"manufacturer","euOperatorId":null,"country":"DE"},
+                "toOperator": {"did":"did:web:reco.example","name":"ReCo","role":"recycler","euOperatorId":null,"country":"DE"},
+                "reason": "preparationForReuse"
+            }))
+            .send()
+            .await
+            .expect("initiate request failed")
+            .status(),
+        200
+    );
+    assert_eq!(post("reject").await, 200, "reject must clear the handover");
+
+    assert_eq!(
+        post("accept").await,
+        422,
+        "a chain that exists but carries nothing pending must be 422, not 404"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Metrics acceptance test — passport_publish_total counter increments
 // ---------------------------------------------------------------------------
