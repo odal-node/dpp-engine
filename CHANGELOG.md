@@ -96,6 +96,21 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ### Fixed
 
+- **Every push to a branch with an open PR ran the whole suite twice.**
+  `push: ["**"]` and `pull_request` both fired, on two runners, for the same
+  commit. Beyond the double spend, it took two independent samples of every
+  timing-sensitive gate — so the slow-test budget had two chances to trip per
+  push, and repeatedly did on commits whose sibling run was green. A red X on a
+  pull request for reasons unrelated to the change under review teaches people to
+  re-run rather than read, which is the opposite of what a gate is for.
+
+  `push` is now `main` only (the post-merge run) and `pull_request` covers
+  pre-merge, so exactly one fires per change. `workflow_dispatch` replaces what
+  the old trigger was really serving — running the full suite on a branch before
+  opening a PR — with the same job set, since a run that skips tiers cannot tell
+  you the branch is mergeable. `pull_request` stays because the branch ruleset's
+  required checks report from it and nothing else.
+
 - **Three transfer routes documented a `404` for a condition that returns
   `422`.** `initiate`, `accept`, `reject` and `cancel` answer `404` only when a
   passport has no transfer chain at all; a chain that exists while nothing is
