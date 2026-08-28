@@ -12,6 +12,36 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ### Added
 
+- **The contract gate now checks documented error codes.** It compared schemas,
+  numeric bounds, enum variants, query parameters, request bodies and route
+  coverage — everything except what a route says goes *wrong*. A status code has
+  no serde output to read, so it was the one axis with no ground truth; this
+  reads the handler's own `match` arms instead, via the error helpers
+  (`not_found_error`, `conflict_error`, `http_problem::unprocessable`, …) and
+  direct `StatusCode` construction.
+
+  **One direction, deliberately.** A token in a handler body proves a code is
+  reachable; the absence of one proves nothing, because handlers delegate — the
+  resolver's content-negotiation entry point dispatches to three others, and
+  `validate_handler` returns whatever the create path returns. Checking the
+  reverse falsely accused five routes. A gate that cries wolf gets deleted.
+
+  It found **39 operations returning a code the description never mentioned**:
+  `400` from a malformed path parameter on 29 of them, `403` from a scope check
+  on 20, `422` on six, and one each of `410` (a suspended passport on the public
+  GTIN route) and `503` (the readiness probe when the datastore does not answer).
+  All are now documented, via shared response components so each is one line.
+  `BadRequest`, `Gone` and `ServiceUnavailable` join the existing set.
+
+  `every_registered_handler_is_readable` guards the gate itself: handler modules
+  are listed by hand, and a handler a router registers but that list cannot reach
+  fails the build by name. Without it, forgetting a module would silently
+  un-gate its routes — an allowlist by omission, the shape
+  `every_published_object_shape_has_a_name` exists to prevent one level up.
+
+  Verified by breaking both: a removed `'422'` was named on the operation that
+  returns it, and a removed handler module named the two handlers it stranded.
+
 - **The two ways out of a pending transfer are routed.**
   `POST /api/v1/dpp/{dppId}/transfer/reject` and `.../transfer/cancel` end a
   handover the counterparty never acted on.

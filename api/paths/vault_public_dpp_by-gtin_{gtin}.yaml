@@ -40,3 +40,5 @@ get:
         application/problem+json:
           schema:
             $ref: ../components/schemas/Problem.yaml
+    '410':
+      $ref: ../components/responses/Gone.yaml

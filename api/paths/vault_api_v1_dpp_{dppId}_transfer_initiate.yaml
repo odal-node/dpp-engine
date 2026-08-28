@@ -38,3 +38,7 @@ post:
       $ref: ../components/responses/Conflict.yaml
     '422':
       $ref: ../components/responses/ValidationError.yaml
+    '400':
+      $ref: ../components/responses/BadRequest.yaml
+    '403':
+      $ref: ../components/responses/Forbidden.yaml

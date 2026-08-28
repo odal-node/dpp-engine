@@ -36,6 +36,10 @@ post:
       $ref: ../components/responses/NotFound.yaml
     '409':
       $ref: ../components/responses/Conflict.yaml
+    '400':
+      $ref: ../components/responses/BadRequest.yaml
+    '403':
+      $ref: ../components/responses/Forbidden.yaml
 get:
   operationId: listDppEvidence
   summary: List stored evidence dossiers for a passport
@@ -64,3 +68,5 @@ get:
       $ref: ../components/responses/Unauthorized.yaml
     '404':
       $ref: ../components/responses/NotFound.yaml
+    '400':
+      $ref: ../components/responses/BadRequest.yaml

@@ -128,6 +128,8 @@ paths:
                 $ref: '#/components/schemas/PassportResponse'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '422':
           $ref: '#/components/responses/ValidationError'
   /vault/api/v1/dpp/validate:
@@ -310,6 +312,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/PassportResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '404':
@@ -347,12 +351,18 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/PassportResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
         '409':
           $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
   /vault/api/v1/dpp/{dppId}/publish:
     post:
       operationId: publishDpp
@@ -389,12 +399,18 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/PassportResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
         '409':
           $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
   /vault/api/v1/dpp/{dppId}/suspend:
     post:
       operationId: suspendDpp
@@ -429,8 +445,12 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/PassportResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
         '409':
@@ -461,12 +481,18 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/PassportResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
         '409':
           $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
   /vault/api/v1/dpp/{dppId}/eol:
     post:
       operationId: declareDppEol
@@ -501,8 +527,12 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/PassportResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
         '409':
@@ -540,8 +570,12 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/TransferRecord'
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
         '409':
@@ -575,8 +609,12 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/TransferRecord'
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '404':
           description: |
             This DPP has no transfer chain at all — no handover has ever been
@@ -632,8 +670,12 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/TransferRecord'
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '404':
           description: |
             This DPP has no transfer chain at all — no handover has ever been
@@ -687,8 +729,12 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/TransferRecord'
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '404':
           description: |
             This DPP has no transfer chain at all — no handover has ever been
@@ -734,6 +780,8 @@ paths:
                 type: array
                 items:
                   $ref: '#/components/schemas/AuditEntry'
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '404':
@@ -776,6 +824,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/PassportScanStats'
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
   /vault/api/v1/stats:
@@ -844,6 +894,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/PassportRegistryView'
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '404':
@@ -906,6 +958,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/TreeReport'
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '404':
@@ -997,6 +1051,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/SealResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '404':
@@ -1034,8 +1090,12 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/PassportResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
   /vault/api/v1/dpp/{dppId}/evidence:
@@ -1071,8 +1131,12 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/EvidenceDossierRecord'
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
         '409':
@@ -1101,6 +1165,8 @@ paths:
                 type: array
                 items:
                   $ref: '#/components/schemas/EvidenceDossierSummary'
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '404':
@@ -1237,8 +1303,12 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/OperatorConfig'
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
   /vault/api/v1/api-keys:
     get:
       operationId: listApiKeys
@@ -1262,6 +1332,8 @@ paths:
                   $ref: '#/components/schemas/ApiKey'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
     post:
       operationId: createApiKey
       summary: Create a new API key
@@ -1288,6 +1360,8 @@ paths:
                 $ref: '#/components/schemas/NewApiKey'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '422':
           $ref: '#/components/responses/ValidationError'
   /vault/api/v1/api-keys/{id}:
@@ -1320,6 +1394,8 @@ paths:
                 $ref: '#/components/schemas/Problem'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
   /vault/api/v1/plugins:
@@ -1405,6 +1481,8 @@ paths:
                   $ref: '#/components/schemas/WebhookSubscription'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
     post:
       operationId: createWebhook
       summary: Create a webhook subscription
@@ -1433,6 +1511,8 @@ paths:
                 $ref: '#/components/schemas/CreatedWebhookResponse'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '422':
           $ref: '#/components/responses/ValidationError'
   /vault/api/v1/webhooks/{id}:
@@ -1465,6 +1545,8 @@ paths:
                 $ref: '#/components/schemas/Problem'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
   /vault/api/v1/webhooks/{id}/test:
@@ -1489,8 +1571,12 @@ paths:
       responses:
         '202':
           description: Test delivery enqueued.
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
   /vault/api/v1/node/state:
@@ -1618,12 +1704,16 @@ paths:
       responses:
         '204':
           description: Facility removed.
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/ValidationError'
   /vault/api/v1/facilities/{id}/audit:
     get:
       operationId: getFacilityAudit
@@ -1652,6 +1742,8 @@ paths:
                 type: array
                 items:
                   $ref: '#/components/schemas/RegistryIdentityAudit'
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -1676,6 +1768,8 @@ paths:
       responses:
         '204':
           description: Default facility set.
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -1758,12 +1852,16 @@ paths:
       responses:
         '204':
           description: Operator identifier removed.
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/ValidationError'
   /vault/api/v1/operator-identifiers/{id}/audit:
     get:
       operationId: getOperatorIdentifierAudit
@@ -1792,6 +1890,8 @@ paths:
                 type: array
                 items:
                   $ref: '#/components/schemas/RegistryIdentityAudit'
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -1816,6 +1916,8 @@ paths:
       responses:
         '204':
           description: Primary operator identifier set.
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -1851,6 +1953,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/PassportResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '404':
           description: Not found or not published.
           content:
@@ -1902,6 +2006,8 @@ paths:
                 $ref: '#/components/schemas/PassportResponse'
         '404':
           $ref: '#/components/responses/NotFound'
+        '410':
+          $ref: '#/components/responses/Gone'
         '422':
           description: The requested `schema_view` is unavailable.
           content:
@@ -1943,6 +2049,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/PassportResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '401':
           description: The presented credential failed verification.
           content:
@@ -2004,6 +2112,8 @@ paths:
       responses:
         '200':
           description: Service is ready (DB connection verified).
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
   /vault/api/v1/info:
     get:
       operationId: vaultInfo
@@ -2438,6 +2548,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ImportAsyncResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '404':
@@ -2605,6 +2717,8 @@ paths:
                 format: binary
         '404':
           $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/ValidationError'
   /01/{gtin}:
     get:
       operationId: resolveByGtin
@@ -5564,17 +5678,6 @@ components:
             title: Unauthorized
             status: 401
             detail: Missing or invalid Authorization header.
-    ValidationError:
-      description: One or more fields failed validation.
-      content:
-        application/problem+json:
-          schema:
-            $ref: '#/components/schemas/Problem'
-          example:
-            type: https://problems.odal-node.io/unprocessable-entity
-            title: Unprocessable Entity
-            status: 422
-            detail: productName must not be empty.
     Forbidden:
       description: |
         The credential is authenticated but lacks the required scope — e.g. a
@@ -5588,6 +5691,17 @@ components:
             title: Forbidden
             status: 403
             detail: Registry-identity management requires an admin-scoped credential.
+    ValidationError:
+      description: One or more fields failed validation.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+          example:
+            type: https://problems.odal-node.io/unprocessable-entity
+            title: Unprocessable Entity
+            status: 422
+            detail: productName must not be empty.
     NotFound:
       description: Resource not found within the operator's scope.
       content:
@@ -5599,6 +5713,20 @@ components:
             title: Not Found
             status: 404
             detail: DPP not found.
+    BadRequest:
+      description: |
+        A path parameter is malformed — most often a `{dppId}` or `{id}` that is not a
+        UUID. The request never reaches the resource, so this is distinct from `404`,
+        which means the identifier was well-formed and nothing matched it.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+          example:
+            type: https://problems.odal-node.io/bad-request
+            title: Bad Request
+            status: 400
+            detail: not-a-uuid is not a valid DPP id.
     Conflict:
       description: |
         State conflict — e.g. attempting to publish an already-published DPP
@@ -5612,6 +5740,34 @@ components:
             title: Conflict
             status: 409
             detail: DPP is already published.
+    Gone:
+      description: |
+        The passport exists but has been withdrawn from public view — it is suspended.
+        Distinct from `404`: the node is confirming the identifier is real and
+        declining to serve it, rather than denying knowledge of it.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+          example:
+            type: https://problems.odal-node.io/gone
+            title: Gone
+            status: 410
+            detail: This passport is suspended and is not publicly available.
+    ServiceUnavailable:
+      description: |
+        A dependency the node needs is not reachable — the readiness probe pings the
+        primary datastore, and reports this when that ping fails. The node is running;
+        it is not ready to serve.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+          example:
+            type: https://problems.odal-node.io/service-unavailable
+            title: Service Unavailable
+            status: 503
+            detail: The primary datastore did not respond.
     NotAcceptable:
       description: |
         No representation matches the request's `Accept` header. The response

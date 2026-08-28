@@ -468,6 +468,28 @@ Two practical notes:
   the assertion actually bites — change the input, watch it go red — before
   trusting a green result.
 
+### Documenting an error condition means writing the test that produces it
+
+When you add a `'404':` or `'422':` to `api/paths/`, the *description* beside it
+is a claim about behaviour, and nothing mechanical can check it.
+`documented_error_codes_are_the_ones_handlers_return` compares the **codes** a
+handler can emit against the codes the spec lists — that direction is sound and
+gated. It cannot compare a sentence to a branch.
+
+That gap shipped. Four transfer routes documented `404` as "no pending transfer
+for this DPP" while that condition returns `422`; `404` means the passport has no
+transfer chain at all. Both codes were reachable, so the gate was satisfied and
+the description was still wrong — the wording was then copied onto two new routes
+before anyone read it next to the handler.
+
+So: **if you document an error condition, construct it in a test and assert the
+status.** One test per genuinely ambiguous pair is enough — `404` vs `422` where
+one means "no such resource" and the other "the resource is in the wrong state".
+Do not write one for every documented code; the uniform ones (`401` from the auth
+middleware, `400` from a malformed path parameter, `403` from a scope check) are
+structural and the same everywhere. `a_missing_transfer_chain_and_an_empty_one_are_told_apart`
+in `dpp-node/tests/smoke.rs` is the shape to copy.
+
 Test tiers:
 - **Tier 1 (no DB)**: route mounting, health endpoints, auth middleware, validators, parsers, and the pure-logic unit tests inside each crate.
 - **Tier 2 (testcontainers)**: the full lifecycle through real PostgreSQL. Gated behind the `integration-tests` feature, so `just test` never builds them — which is why `just check` also runs `check-integration` to prove they still *compile*.

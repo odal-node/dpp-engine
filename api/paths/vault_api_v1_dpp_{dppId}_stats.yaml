@@ -37,3 +37,5 @@ get:
             $ref: ../components/schemas/PassportScanStats.yaml
     '401':
       $ref: ../components/responses/Unauthorized.yaml
+    '400':
+      $ref: ../components/responses/BadRequest.yaml

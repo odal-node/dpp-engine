@@ -20,6 +20,8 @@ get:
               $ref: ../components/schemas/ApiKey.yaml
     '401':
       $ref: ../components/responses/Unauthorized.yaml
+    '403':
+      $ref: ../components/responses/Forbidden.yaml
 post:
   operationId: createApiKey
   summary: Create a new API key
@@ -48,3 +50,5 @@ post:
       $ref: ../components/responses/Unauthorized.yaml
     '422':
       $ref: ../components/responses/ValidationError.yaml
+    '403':
+      $ref: ../components/responses/Forbidden.yaml

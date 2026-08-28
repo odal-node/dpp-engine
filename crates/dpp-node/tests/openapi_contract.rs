@@ -1651,6 +1651,447 @@ fn every_route_is_documented_and_every_documented_path_exists() {
     );
 }
 
+// ── Documented error codes ─────────────────────────────────────────────────
+//
+// Handler sources, embedded like the routers above so they cannot go stale
+// against the code that is actually built.
+//
+// Listing files by hand would normally be a hole — a new handler module nobody
+// adds here would simply not be scanned, and the gate would pass by not
+// looking. `every_registered_handler_is_readable` closes it: a handler a router
+// registers and this list cannot reach fails the build by name.
+mod handler_sources {
+    pub const VAULT: &[&str] = &[
+        include_str!("../../dpp-vault/src/handlers/api_keys.rs"),
+        include_str!("../../dpp-vault/src/handlers/archive.rs"),
+        include_str!("../../dpp-vault/src/handlers/audience_read.rs"),
+        include_str!("../../dpp-vault/src/handlers/create.rs"),
+        include_str!("../../dpp-vault/src/handlers/eol.rs"),
+        include_str!("../../dpp-vault/src/handlers/evidence.rs"),
+        include_str!("../../dpp-vault/src/handlers/find_by_identity.rs"),
+        include_str!("../../dpp-vault/src/handlers/health.rs"),
+        include_str!("../../dpp-vault/src/handlers/history.rs"),
+        include_str!("../../dpp-vault/src/handlers/info.rs"),
+        include_str!("../../dpp-vault/src/handlers/lint.rs"),
+        include_str!("../../dpp-vault/src/handlers/list.rs"),
+        include_str!("../../dpp-vault/src/handlers/node_state.rs"),
+        include_str!("../../dpp-vault/src/handlers/operator.rs"),
+        include_str!("../../dpp-vault/src/handlers/plugins.rs"),
+        include_str!("../../dpp-vault/src/handlers/public_read.rs"),
+        include_str!("../../dpp-vault/src/handlers/public_read_by_gtin.rs"),
+        include_str!("../../dpp-vault/src/handlers/publish.rs"),
+        include_str!("../../dpp-vault/src/handlers/read.rs"),
+        include_str!("../../dpp-vault/src/handlers/registry_identity.rs"),
+        include_str!("../../dpp-vault/src/handlers/registry_status.rs"),
+        include_str!("../../dpp-vault/src/handlers/scan_ingest.rs"),
+        include_str!("../../dpp-vault/src/handlers/seal.rs"),
+        include_str!("../../dpp-vault/src/handlers/stats.rs"),
+        include_str!("../../dpp-vault/src/handlers/suspend.rs"),
+        include_str!("../../dpp-vault/src/handlers/transfer.rs"),
+        include_str!("../../dpp-vault/src/handlers/update.rs"),
+        include_str!("../../dpp-vault/src/handlers/validate.rs"),
+        include_str!("../../dpp-vault/src/handlers/verify_tree.rs"),
+        include_str!("../../dpp-vault/src/handlers/webhooks.rs"),
+        include_str!("../../dpp-vault/src/handlers/whoami.rs"),
+    ];
+    pub const INTEGRATOR: &[&str] = &[
+        include_str!("../../dpp-integrator/src/handlers/health.rs"),
+        include_str!("../../dpp-integrator/src/handlers/import.rs"),
+        include_str!("../../dpp-integrator/src/handlers/job_status.rs"),
+        include_str!("../../dpp-integrator/src/handlers/product_groups.rs"),
+        include_str!("../../dpp-integrator/src/handlers/schemas.rs"),
+        include_str!("../../dpp-integrator/src/handlers/templates.rs"),
+    ];
+    pub const IDENTITY: &[&str] = &[
+        include_str!("../../dpp-identity/src/handlers/did_document.rs"),
+        include_str!("../../dpp-identity/src/handlers/health.rs"),
+        include_str!("../../dpp-identity/src/handlers/rotate_key.rs"),
+        include_str!("../../dpp-identity/src/handlers/sign.rs"),
+        include_str!("../../dpp-identity/src/handlers/verify.rs"),
+    ];
+    pub const RESOLVER: &[&str] = &[
+        include_str!("../../dpp-resolver/src/handlers/resolve_aas.rs"),
+        include_str!("../../dpp-resolver/src/handlers/resolve_by_gtin.rs"),
+        include_str!("../../dpp-resolver/src/handlers/resolve_json.rs"),
+        include_str!("../../dpp-resolver/src/handlers/resolve_qr.rs"),
+        include_str!("../../dpp-resolver/src/handlers/health.rs"),
+    ];
+}
+
+/// Every way a handler in this workspace names a status code, and the code it
+/// means.
+///
+/// Two vocabularies, because the crates genuinely differ: `dpp-vault` routes
+/// almost everything through the named helpers in `handlers/error.rs`, while the
+/// resolver and integrator construct `StatusCode` directly. Both are exact
+/// tokens, so reading them is not a heuristic — a handler body containing
+/// `conflict_error(` can return `409`, and one that does not, cannot.
+const CODE_TOKENS: &[(&str, u64)] = &[
+    // dpp-vault's named helpers — crates/dpp-vault/src/handlers/error.rs.
+    ("not_found_error(", 404),
+    ("conflict_error(", 409),
+    ("validation_error(", 422),
+    ("require_write(", 403),
+    ("require_admin(", 403),
+    ("parse_passport_id(", 400),
+    // `dpp-common::http_problem`, the RFC 7807 constructors the integrator and
+    // resolver reach for directly.
+    ("http_problem::not_found(", 404),
+    ("http_problem::bad_request(", 400),
+    ("http_problem::unprocessable(", 422),
+    // Direct construction.
+    ("StatusCode::BAD_REQUEST", 400),
+    ("StatusCode::FORBIDDEN", 403),
+    ("StatusCode::NOT_FOUND", 404),
+    ("StatusCode::NOT_ACCEPTABLE", 406),
+    ("StatusCode::CONFLICT", 409),
+    ("StatusCode::GONE", 410),
+    ("StatusCode::UNPROCESSABLE_ENTITY", 422),
+    ("StatusCode::NOT_IMPLEMENTED", 501),
+    ("StatusCode::BAD_GATEWAY", 502),
+    ("StatusCode::SERVICE_UNAVAILABLE", 503),
+];
+
+/// Codes deliberately outside this gate, each because the handler body is not
+/// where they are decided.
+///
+/// - **401** is `auth_middleware`'s, applied to a whole route group. No handler
+///   body mentions it, so requiring one to would fail every authenticated route,
+///   and requiring the spec to omit it would be worse — it is the truest thing
+///   documented on those 54 operations.
+/// - **500** is the `Err(e) => internal_error(e)` arm nearly every handler ends
+///   with. Documenting it everywhere would add noise to 60-odd operations to say
+///   the same thing; leaving it undocumented is the existing convention.
+const CODES_NOT_GATED: &[u64] = &[401, 500];
+
+/// `(method, path, handler)` for every `.route("…", method(handler))` in `src`.
+///
+/// Extends `routes_in`'s exactness to the rest of the registration: between one
+/// `.route(` and the next, the only `get(`/`post(`/… calls are that route's own
+/// method handlers. Matching the HTTP method names specifically rather than any
+/// `ident(` keeps `.layer(DefaultBodyLimit::max(…))` from reading as one.
+fn route_handlers_in(src: &str) -> BTreeSet<(String, String, String)> {
+    const METHODS: &[&str] = &["get", "post", "put", "delete", "patch"];
+    let mut out = BTreeSet::new();
+    let body = without_tests(src);
+
+    for (start, _) in body.match_indices(".route(") {
+        let after_paren = &body[start + ".route(".len()..];
+
+        let Some(open) = after_paren.find('"') else {
+            continue;
+        };
+        if !after_paren[..open].trim().is_empty() {
+            continue;
+        }
+        let after = &after_paren[open + 1..];
+        let Some(close) = after.find('"') else {
+            continue;
+        };
+        let path = after[..close].to_owned();
+
+        // Bound the window at the `.route(` call's own closing paren. Taking
+        // everything up to the next `.route(` instead made the *last* route in a
+        // file swallow the rest of it, which picked up an `axum::` path from an
+        // unrelated line and reported it as a handler.
+        let tail = &after[close + 1..];
+        let mut depth = 1usize;
+        let mut end = tail.len();
+        for (i, c) in tail.char_indices() {
+            match c {
+                '(' => depth += 1,
+                ')' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        end = i;
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+        let window = &tail[..end];
+
+        for method in METHODS {
+            let token = format!("{method}(");
+            let mut rest = window;
+            let mut consumed = 0usize;
+            while let Some(at) = rest.find(&token) {
+                // A method call, not the tail of a longer identifier — and not a
+                // path segment like `routing::get(`.
+                let before = window[..consumed + at].chars().next_back();
+                let preceded_by_ident =
+                    before.is_some_and(|c| c.is_alphanumeric() || c == '_' || c == ':');
+                let arg = &rest[at + token.len()..];
+                consumed += at + token.len();
+                rest = arg;
+                if preceded_by_ident {
+                    continue;
+                }
+                // `get(crate::handlers::audience_read::audience_read_handler)`
+                // names a path, not a bare identifier. The handler is its last
+                // segment; taking the first reported the *module* as the
+                // handler and made it unfindable.
+                let path_expr: String = arg
+                    .chars()
+                    .take_while(|c| c.is_alphanumeric() || *c == '_' || *c == ':')
+                    .collect();
+                if let Some(ident) = path_expr.rsplit("::").next()
+                    && !ident.is_empty()
+                {
+                    out.insert(((*method).to_owned(), path.clone(), ident.to_owned()));
+                }
+            }
+        }
+    }
+    out
+}
+
+/// The body of `pub async fn <name>`, and nothing after it.
+///
+/// The end marker is the closing brace in **column 0**, which `rustfmt`
+/// guarantees for a top-level item and never emits inside one. Cheaper than
+/// brace matching, which would have to understand braces in string literals and
+/// comments to be correct.
+///
+/// Getting this boundary wrong is not a small error. Scanning to the next
+/// `pub`/`async` item instead let `api_keys_delete_handler` — the last item in
+/// its file — run to EOF and swallow the `#[cfg(test)]` module below it, whose
+/// `assert_eq!(resp.status(), StatusCode::CONFLICT)` was then reported as the
+/// handler returning `409`. Test sources are stripped as well, belt and braces.
+fn handler_body<'a>(sources: &[&'a str], name: &str) -> Option<&'a str> {
+    // `async fn` as well as `pub async fn`: the resolver defines
+    // `content_negotiation_handler` privately inside its own router, so
+    // requiring `pub` reported a registered handler as unreadable.
+    for needle in [format!("pub async fn {name}("), format!("async fn {name}(")] {
+        for src in sources {
+            let src = without_tests(src);
+            let Some(at) = src.find(&needle) else {
+                continue;
+            };
+            let rest = &src[at..];
+            let end = rest.find("\n}").map_or(rest.len(), |e| e + 2);
+            return Some(&rest[..end]);
+        }
+    }
+    None
+}
+
+/// The status codes a handler body can actually produce.
+fn codes_emitted_by(body: &str) -> BTreeSet<u64> {
+    CODE_TOKENS
+        .iter()
+        .filter(|(token, _)| body.contains(token))
+        .map(|(_, code)| *code)
+        .filter(|c| !CODES_NOT_GATED.contains(c))
+        .collect()
+}
+
+/// The 4xx/5xx codes an operation documents.
+fn documented_error_codes(spec: &Value, method: &str, path: &str) -> BTreeSet<u64> {
+    spec["paths"][path][method]["responses"]
+        .as_object()
+        .map(|r| {
+            r.keys()
+                .filter_map(|c| c.parse::<u64>().ok())
+                .filter(|c| (400..600).contains(c))
+                .filter(|c| !CODES_NOT_GATED.contains(c))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Every `(method, path, handler)` the described deployables serve.
+///
+/// Mirrors `node_surface`/`resolver_surface`/`identity_standalone_surface`
+/// exactly, so the two views of the router cannot disagree about what is served.
+fn surface_handlers() -> BTreeSet<(String, String, String, &'static str)> {
+    fn tag(
+        prefix: &str,
+        src: &str,
+        which: &'static str,
+        out: &mut BTreeSet<(String, String, String, &'static str)>,
+    ) {
+        for (method, path, handler) in route_handlers_in(src) {
+            out.insert((method, format!("{prefix}{path}"), handler, which));
+        }
+    }
+
+    let mut out = BTreeSet::new();
+    tag(
+        "/vault/api/v1",
+        section(
+            routers::VAULT,
+            "let authenticated =",
+            Some("let internal ="),
+        ),
+        "vault",
+        &mut out,
+    );
+    tag(
+        "/vault/internal",
+        section(routers::VAULT, "let internal =", Some("let cors_layer =")),
+        "vault",
+        &mut out,
+    );
+    tag(
+        "/vault",
+        section(routers::VAULT, "let cors_layer =", None),
+        "vault",
+        &mut out,
+    );
+    tag(
+        "/identity",
+        section(routers::IDENTITY, "pub fn build_public", None),
+        "identity",
+        &mut out,
+    );
+    tag(
+        "",
+        section(
+            routers::IDENTITY,
+            "pub fn build",
+            Some("pub fn build_public"),
+        ),
+        "identity",
+        &mut out,
+    );
+    tag("/integrator", routers::INTEGRATOR, "integrator", &mut out);
+    tag("", routers::RESOLVER, "resolver", &mut out);
+    tag("", routers::NODE, "node", &mut out);
+    out
+}
+
+/// A crate's handler modules **and** its router, because a router may define a
+/// handler inline — `dpp-resolver`'s content-negotiation entry point is a
+/// private `async fn` in `router.rs`.
+fn sources_for(which: &str) -> Vec<&'static str> {
+    let (handlers, router) = match which {
+        "vault" => (handler_sources::VAULT, routers::VAULT),
+        "integrator" => (handler_sources::INTEGRATOR, routers::INTEGRATOR),
+        "identity" => (handler_sources::IDENTITY, routers::IDENTITY),
+        "resolver" => (handler_sources::RESOLVER, routers::RESOLVER),
+        _ => return Vec::new(),
+    };
+    let mut out = handlers.to_vec();
+    out.push(router);
+    out
+}
+
+/// Every handler a router registers can be read by this gate.
+///
+/// Without this, `handler_sources` would be an allowlist by omission: forget to
+/// add a new module and its routes are silently unchecked, which is the exact
+/// shape of hole `every_published_object_shape_has_a_name` exists to prevent one
+/// level up.
+#[test]
+fn every_registered_handler_is_readable() {
+    let mut unreadable: Vec<String> = Vec::new();
+    for (method, path, handler, which) in surface_handlers() {
+        // The node's own router re-mounts sub-routers; its handlers live in the
+        // crates already covered, and its two local ones are health checks.
+        if which == "node" {
+            continue;
+        }
+        if handler_body(&sources_for(which), &handler).is_none() {
+            unreadable.push(format!(
+                "{} {path} → {handler}() [{which}]",
+                method.to_uppercase()
+            ));
+        }
+    }
+    unreadable.sort();
+    assert!(
+        unreadable.is_empty(),
+        "these handlers are registered by a router but their source is not reachable \
+         from `handler_sources`:\n  {}\n\n\
+         Add the module holding each one to `handler_sources`. Until then nothing \
+         checks the status codes those routes document.",
+        unreadable.join("\n  ")
+    );
+}
+
+/// The error codes an operation documents are the ones its handler can return.
+///
+/// # Why this is a separate check from everything above
+///
+/// The other gates compare the spec to what `serde` emits, which is ground truth
+/// a machine can derive. A status code has no such source: it is chosen by a
+/// `match` arm in the handler. This reads those arms.
+///
+/// # What it does and does not catch
+///
+/// It catches a code a handler demonstrably produces that the spec never
+/// mentions. That direction is sound: the token `conflict_error(` in a body
+/// means `409` is reachable, full stop.
+///
+/// It deliberately does **not** check the reverse — a documented code no handler
+/// appears to produce. That reading requires proving absence, and a handler can
+/// delegate: the resolver's content-negotiation entry point dispatches to three
+/// others, and `validate_handler` returns whatever the create path returns.
+/// Scanning one body cannot see through a call, so the reverse direction
+/// reported four resolver routes and `POST /dpp/validate` as documenting codes
+/// they in fact return. A gate that cries wolf gets deleted, and following calls
+/// to fix it would mean writing a call-graph analysis this test has no business
+/// containing.
+///
+/// It does **not** catch a code documented with the wrong *meaning*, which is a
+/// different defect and the one that actually shipped: three transfer routes
+/// documented `404` as "no pending transfer", while that condition returns `422`
+/// and `404` means "no transfer chain at all". The code was right; the sentence
+/// beside it described the other branch. Nothing mechanical can check prose
+/// against behaviour — only a test that constructs the condition and asserts the
+/// status, which is what the smoke tests now do for the routes where the
+/// distinction carries weight.
+///
+/// So this closes the adjacent class, and the convention in CLAUDE.md covers the
+/// one it cannot reach. Neither alone is enough.
+#[test]
+fn documented_error_codes_are_the_ones_handlers_return() {
+    let spec = spec();
+    let mut failures: Vec<String> = Vec::new();
+
+    for (method, path, handler, which) in surface_handlers() {
+        if which == "node" {
+            continue;
+        }
+        // Only operations the description actually carries; route coverage is
+        // `every_route_is_documented_and_every_documented_path_exists`'s job.
+        if spec["paths"][&path][&method].is_null() {
+            continue;
+        }
+        let Some(body) = handler_body(&sources_for(which), &handler) else {
+            continue; // reported by `every_registered_handler_is_readable`
+        };
+
+        let emitted = codes_emitted_by(body);
+        let documented = documented_error_codes(&spec, &method, &path);
+        let op = format!("{} {path}", method.to_uppercase());
+
+        let undocumented: Vec<String> = emitted
+            .difference(&documented)
+            .map(u64::to_string)
+            .collect();
+
+        if !undocumented.is_empty() {
+            failures.push(format!(
+                "{op}: {handler}() returns {}, which the spec does not document",
+                undocumented.join(", ")
+            ));
+        }
+    }
+
+    failures.sort();
+    assert!(
+        failures.is_empty(),
+        "documented error codes disagree with the handlers that serve them:\n  {}\n\n\
+         Fix the `responses:` block under api/paths/ (then `just openapi-bundle`), or \
+         the handler. `401` and `500` are deliberately not gated — see \
+         `CODES_NOT_GATED`.",
+        failures.join("\n  ")
+    );
+}
+
 // ── Fixtures ───────────────────────────────────────────────────────────────
 //
 // Every struct literal here is exhaustive on purpose — see the module docs. Do

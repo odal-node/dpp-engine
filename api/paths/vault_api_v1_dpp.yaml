@@ -46,3 +46,5 @@ post:
       $ref: ../components/responses/Unauthorized.yaml
     '422':
       $ref: ../components/responses/ValidationError.yaml
+    '403':
+      $ref: ../components/responses/Forbidden.yaml

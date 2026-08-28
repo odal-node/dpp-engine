@@ -1,0 +1,13 @@
+description: |
+  A path parameter is malformed — most often a `{dppId}` or `{id}` that is not a
+  UUID. The request never reaches the resource, so this is distinct from `404`,
+  which means the identifier was well-formed and nothing matched it.
+content:
+  application/problem+json:
+    schema:
+      $ref: ../schemas/Problem.yaml
+    example:
+      type: https://problems.odal-node.io/bad-request
+      title: Bad Request
+      status: 400
+      detail: 'not-a-uuid is not a valid DPP id.'

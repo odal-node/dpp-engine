@@ -61,3 +61,5 @@ post:
       description: Unknown product group.
     '422':
       $ref: ../components/responses/ValidationError.yaml
+    '400':
+      $ref: ../components/responses/BadRequest.yaml
