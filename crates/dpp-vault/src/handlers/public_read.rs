@@ -6,11 +6,11 @@ use axum::{
     http::StatusCode,
     response::IntoResponse,
 };
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use dpp_domain::domain::status::PassportStatus;
 use dpp_domain::schemas::{LensRegistry, UpcastError};
+use dpp_domain::status::PassportStatus;
 
 use crate::public_view::signed_public_view;
 use crate::state::AppState;
@@ -18,12 +18,12 @@ use crate::state::AppState;
 use super::error::{api_error, internal_error, not_found_error, parse_passport_id};
 
 /// Query params for the public read. `schema_view` requests a read-time upcast
-/// of the sector data to a newer schema version, served *alongside* the
+/// of the product group data to a newer schema version, served *alongside* the
 /// canonical (signed) passport — never re-signed as if original.
-#[derive(Deserialize)]
+#[derive(Deserialize, Serialize)]
 pub struct PublicReadQuery {
     #[serde(rename = "schema_view")]
-    pub(crate) schema_view: Option<String>,
+    pub schema_view: Option<String>,
 }
 
 /// Shared upcast-lens registry, built once.
@@ -40,7 +40,7 @@ fn lens_registry() -> &'static LensRegistry {
 /// never served on this unauthenticated route.
 ///
 /// With `?schema_view=<version>`, the response also carries a `schemaView`: the
-/// sector data upcast to that version via read-time lenses, with honest lens
+/// product group data upcast to that version via read-time lenses, with honest lens
 /// provenance. The canonical `passport` (and its signature) is unchanged.
 pub async fn public_read_handler(
     State(state): State<AppState>,
@@ -65,7 +65,7 @@ pub async fn public_read_handler(
             };
             respond_public_view(
                 view,
-                p.sector.catalog_key(),
+                p.product_group.catalog_key(),
                 &p.schema_version,
                 query.schema_view.as_deref(),
             )
@@ -86,19 +86,19 @@ pub async fn public_read_handler(
 /// public reads so both expose `?schema_view` identically.
 pub(crate) fn respond_public_view(
     view: Value,
-    sector_key: &str,
+    product_group_key: &str,
     from: &str,
     target: Option<&str>,
 ) -> axum::response::Response {
     let Some(target) = target else {
         return (StatusCode::OK, Json(view)).into_response();
     };
-    match build_schema_view(&view, sector_key, from, target) {
+    match build_schema_view(&view, product_group_key, from, target) {
         Ok(body) => (StatusCode::OK, Json(body)).into_response(),
-        Err(SchemaViewError::NoSectorData) => api_error(
+        Err(SchemaViewError::NoProductGroupData) => api_error(
             StatusCode::UNPROCESSABLE_ENTITY,
             "NO_SECTOR_DATA",
-            "This passport has no sector data to re-view.",
+            "This passport has no product_group data to re-view.",
         ),
         Err(SchemaViewError::Upcast(UpcastError::Transform(e))) => {
             internal_error(dpp_domain::DppError::Internal(e.to_string()))
@@ -113,24 +113,24 @@ pub(crate) fn respond_public_view(
 
 #[derive(Debug)]
 enum SchemaViewError {
-    NoSectorData,
+    NoProductGroupData,
     Upcast(UpcastError),
 }
 
 /// Build the alongside body: the canonical public `view` plus a `schemaView`
-/// derived by upcasting its sector data from `from` to `target`. The canonical
+/// derived by upcasting its product group data from `from` to `target`. The canonical
 /// view is passed through untouched.
 fn build_schema_view(
     view: &Value,
-    sector_key: &str,
+    product_group_key: &str,
     from: &str,
     target: &str,
 ) -> Result<Value, SchemaViewError> {
-    let sector_data = view
-        .get("sectorData")
-        .ok_or(SchemaViewError::NoSectorData)?;
+    let product_group_data = view
+        .get("productGroupData")
+        .ok_or(SchemaViewError::NoProductGroupData)?;
     let derived = lens_registry()
-        .upcast_str(sector_key, sector_data, from, target)
+        .upcast_str(product_group_key, product_group_data, from, target)
         .map_err(SchemaViewError::Upcast)?;
     Ok(serde_json::json!({ "passport": view, "schemaView": derived }))
 }
@@ -142,8 +142,8 @@ mod tests {
     fn battery_view() -> Value {
         serde_json::json!({
             "productName": "Test Pack",
-            "sectorData": {
-                "sector": "battery",
+            "productGroupData": {
+                "productGroup": "battery",
                 "gtin": "09506000134352",
                 "batteryChemistry": "LFP",
                 "nominalVoltageV": 48.0,
@@ -167,7 +167,7 @@ mod tests {
             Some(4800.0)
         );
         // Canonical passport is untouched — no derived field leaks into it.
-        assert!(out["passport"]["sectorData"]["ratedEnergyWh"].is_null());
+        assert!(out["passport"]["productGroupData"]["ratedEnergyWh"].is_null());
     }
 
     #[test]

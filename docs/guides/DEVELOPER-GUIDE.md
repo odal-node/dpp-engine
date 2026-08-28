@@ -45,7 +45,7 @@ dpp-node (:8001)
   /vault/*       passport write engine (create, version, sign, audit)
   /identity/*    did:web identity (DID document, in-process signing)
   /integrator/*  CSV/XLSX bulk import (async jobs)
-  └── dpp-plugin-host (wasmtime)   sector compliance plugins
+  └── dpp-plugin-host (wasmtime)   product group compliance plugins
   └── dpp-dal (PostgreSQL/sqlx)    persistence, implements core port traits
 dpp-resolver (:8003)   public QR/Digital-Link resolver (standalone, JWS-verifying)
 ```
@@ -103,7 +103,7 @@ compiles with no live connection); only *running* the node needs the database.
 | `NATS_URL` | *(none)* | NATS JetStream URL. Omit → NoOp event bus |
 | `CORS_ALLOWED_ORIGINS` | *(none)* | Comma-separated origin list |
 | `BATCH_CONCURRENCY` | `20` | Concurrent rows during bulk import |
-| `PLUGINS_DIR` | `./plugins` | `.wasm` sector plugins; empty/missing → passthrough compliance |
+| `PLUGINS_DIR` | `./plugins` | `.wasm` product group plugins; empty/missing → passthrough compliance |
 | `METRICS_ADDR` | `127.0.0.1:9100` | Private Prometheus listener — **off** the public API port (set empty to disable) |
 
 ## 6. Test it
@@ -193,8 +193,8 @@ Phase-0 golden set — every series that has an alert rule attached:
 | `passport_publish_total` | `outcome` (success/error) | — |
 | `signing_failures_total` | — | Any increment in 5 min → page |
 | `jws_verify_total` | `outcome` (ok/tampered/disabled) | Tampered spike → page |
-| `plugin_invocations_total` | `sector`, `outcome` | — |
-| `plugin_fuel_exhausted_total` | `sector` | Any increment → review |
+| `plugin_invocations_total` | `product group`, `outcome` | — |
+| `plugin_fuel_exhausted_total` | `product group` | Any increment → review |
 | `db_ping_duration_seconds` | — | `/ready` failing 3× → page |
 | `cache_requests_total` | `result` | — |
 
@@ -206,9 +206,9 @@ Phase-0 golden set — every series that has an alert rule attached:
   `run_<name>`, register it in `commands/mod.rs`, add the variant + match arm in
   `main.rs`. Talk to the node via `OdalClient` (`get`/`post_json`/`patch_json`/
   `delete`); never hit the database directly from the CLI.
-- **Add a sector:** add `schemas/<sector>/vX.Y.Z.json` in `dpp-core`, the
-  `SectorData` variant + validation, and (optionally) a Wasm plugin. The graph
-  backbone is **sector-agnostic** — don't parameterise it per sector.
+- **Add a product group:** add `schemas/<product-group>/vX.Y.Z.json` in `dpp-core`, the
+  `ProductGroupData` variant + validation, and (optionally) a Wasm plugin. The graph
+  backbone is **product-group-agnostic** — don't parameterise it per product group.
 - **Add a calculator:** it computes EU methodology → it belongs in `dpp-core`'s
   `dpp-calc` (Apache-2.0), not here.
 

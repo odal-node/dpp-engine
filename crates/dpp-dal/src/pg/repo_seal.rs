@@ -19,7 +19,7 @@ use async_trait::async_trait;
 use sqlx::Row;
 use uuid::Uuid;
 
-use dpp_domain::{DppError, domain::passport::PassportId, ports::seal::SealedEnvelope};
+use dpp_domain::{DppError, passport::PassportId, seal::SealedEnvelope};
 use dpp_types::{SealOutbox, SealOutboxCounts, SealRow};
 
 use super::{PgDal, db_err, require_updated};

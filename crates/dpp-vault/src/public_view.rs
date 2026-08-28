@@ -16,12 +16,12 @@
 use base64::Engine;
 use serde_json::Value;
 
-use dpp_domain::access::{SectorAccessPolicy, filter_by_audience};
-use dpp_domain::domain::passport::Passport;
+use dpp_domain::access::{ProductGroupAccessPolicy, filter_by_audience};
+use dpp_domain::passport::Passport;
 use dpp_domain::{Audience, DppError};
 
-/// Build the public-read redaction policy for a sector **at the schema version
-/// the passport was validated against**: the sector-agnostic passport defaults
+/// Build the public-read redaction policy for a product group **at the schema version
+/// the passport was validated against**: the product group-agnostic passport defaults
 /// plus that version's own per-field tiers.
 ///
 /// The version is not optional and not "current". A passport's signatures are
@@ -32,15 +32,19 @@ use dpp_domain::{Audience, DppError};
 /// published passport filtered by the classes in force when it was signed, for
 /// the life of the passport.
 ///
-/// `None` when the sector or version is unknown, so an unrecognised pair fails
-/// closed. Callers must treat that as "serve no sector data", never as "serve it
+/// `None` when the product group or version is unknown, so an unrecognised pair fails
+/// closed. Callers must treat that as "serve no product group data", never as "serve it
 /// unfiltered" — see [`audience_view`].
-pub fn public_policy(sector_key: &str, schema_version: &str) -> Option<SectorAccessPolicy> {
-    let sector_policy = SectorAccessPolicy::for_schema_version(sector_key, schema_version)?;
-    let mut policy = SectorAccessPolicy::passport_default();
+pub fn public_policy(
+    product_group_key: &str,
+    schema_version: &str,
+) -> Option<ProductGroupAccessPolicy> {
+    let product_group_policy =
+        ProductGroupAccessPolicy::for_schema_version(product_group_key, schema_version)?;
+    let mut policy = ProductGroupAccessPolicy::passport_default();
     policy
         .field_disclosure
-        .extend(sector_policy.field_disclosure);
+        .extend(product_group_policy.field_disclosure);
     Some(policy)
 }
 
@@ -48,17 +52,17 @@ pub fn public_policy(sector_key: &str, schema_version: &str) -> Option<SectorAcc
 /// the public endpoint serves *and* what `publicJwsSignature` is signed over.
 /// `publicJwsSignature` itself is absent at signing time (the field is `None` and
 /// skips serialisation), so the proof never signs over itself.
-pub fn public_view(full: &Value, sector_key: &str, schema_version: &str) -> Value {
-    audience_view(full, sector_key, schema_version, Audience::Public)
+pub fn public_view(full: &Value, product_group_key: &str, schema_version: &str) -> Value {
+    audience_view(full, product_group_key, schema_version, Audience::Public)
 }
 
 /// Redact a full passport to the view a given [`Audience`] may see.
 ///
 /// [`public_view`] is this with [`Audience::Public`]; the fail-closed
-/// unknown-sector backstop below is shared deliberately, because an
-/// unrecognised sector has no field policy for *any* audience, not just the
+/// unknown-product group backstop below is shared deliberately, because an
+/// unrecognised product group has no field policy for *any* audience, not just the
 /// public one — a credentialed reader must not receive more from an unmodelled
-/// sector than an anonymous one would.
+/// product group than an anonymous one would.
 ///
 /// # A view is a payload, never a payload plus someone else's proof
 ///
@@ -84,18 +88,18 @@ pub fn public_view(full: &Value, sector_key: &str, schema_version: &str) -> Valu
 /// view, [`signed_audience_view`] for the rest.
 pub fn audience_view(
     full: &Value,
-    sector_key: &str,
+    product_group_key: &str,
     schema_version: &str,
     audience: Audience,
 ) -> Value {
-    let resolved = public_policy(sector_key, schema_version);
-    // Unresolved means no sector field tiers are known, so the pass below would
-    // treat every `sectorData` field as public by default. That output is
-    // discarded for `sectorData` by the fail-closed step at the end; the passport
+    let resolved = public_policy(product_group_key, schema_version);
+    // Unresolved means no product group field tiers are known, so the pass below would
+    // treat every `productGroupData` field as public by default. That output is
+    // discarded for `productGroupData` by the fail-closed step at the end; the passport
     // defaults still apply to the top-level fields, which are version-independent.
     let policy = resolved
         .clone()
-        .unwrap_or_else(SectorAccessPolicy::passport_default);
+        .unwrap_or_else(ProductGroupAccessPolicy::passport_default);
     let mut view = filter_by_audience(full, &policy, audience).filtered_data;
 
     if let Some(obj) = view.as_object_mut() {
@@ -110,26 +114,29 @@ pub fn audience_view(
     }
 
     // Fail closed whenever the policy could not be resolved: with no field-tier
-    // table for its `sectorData`, the default-Public pass above would leak
-    // potentially professional/confidential fields. Keep only the `sector` tag.
+    // table for its `productGroupData`, the default-Public pass above would leak
+    // potentially professional/confidential fields. Keep only the `product_group` tag.
     // Parity with the resolver's backstop, so the signed-and-served view is
     // identical whether reached directly or via the resolver.
     //
-    // Keyed on the *policy*, not on whether the catalog knows the sector. Those
+    // Keyed on the *policy*, not on whether the catalog knows the product group. Those
     // were the same condition while the policy was unversioned; they are not
-    // any more. A known sector at an unknown schema version resolves to no
-    // policy, and a sector-only check would have waved it through with every
+    // any more. A known product group at an unknown schema version resolves to no
+    // policy, and a product group-only check would have waved it through with every
     // field public.
     if resolved.is_none()
         && let Some(obj) = view.as_object_mut()
-        && let Some(sd) = obj.get("sectorData")
+        && let Some(sd) = obj.get("productGroupData")
         && sd
-            .get("sector")
+            .get("productGroup")
             .and_then(Value::as_str)
             .is_some_and(|s| !s.is_empty())
     {
-        let tag = sd.get("sector").cloned().unwrap_or(Value::Null);
-        obj.insert("sectorData".into(), serde_json::json!({ "sector": tag }));
+        let tag = sd.get("productGroup").cloned().unwrap_or(Value::Null);
+        obj.insert(
+            "productGroupData".into(),
+            serde_json::json!({ "productGroup": tag }),
+        );
     }
     view
 }
@@ -289,10 +296,10 @@ pub fn signed_audience_view(passport: &Passport, audience: Audience) -> Result<V
 /// reached `Published` without a proof for every audience it will serve is
 /// exactly the half-signed state this function exists to prevent.
 pub async fn sign_disclosure_views(
-    identity: &dyn dpp_domain::ports::identity_port::IdentityPort,
+    identity: &dyn dpp_domain::ports::identity::IdentityPort,
     passport_id: dpp_domain::PassportId,
     payload: &Value,
-    sector_key: &str,
+    product_group_key: &str,
     schema_version: &str,
 ) -> Result<std::collections::BTreeMap<String, String>, DppError> {
     let mut signatures = std::collections::BTreeMap::new();
@@ -301,7 +308,7 @@ pub async fn sign_disclosure_views(
         if signatures.contains_key(&key) {
             continue;
         }
-        let view = audience_view(payload, sector_key, schema_version, audience);
+        let view = audience_view(payload, product_group_key, schema_version, audience);
         let signed = identity.sign_passport(passport_id, &view).await?;
         signatures.insert(key, signed.jws);
     }
@@ -433,7 +440,7 @@ pub(crate) mod tests {
     /// stored `schemaVersion` must never be a value the caller chose.
     ///
     /// A version's disclosure table only classifies the fields that version
-    /// annotates, and `SectorAccessPolicy` defaults everything else to `Public`.
+    /// annotates, and `ProductGroupAccessPolicy` defaults everything else to `Public`.
     /// Battery v1.0.0 annotates 11 fields; v2.6.0 annotates 68. So a passport
     /// filtered at v1.0.0 serves publicly every field the newer table holds
     /// back — `stateOfHealth` among them, the field of a past disclosure defect.
@@ -447,23 +454,25 @@ pub(crate) mod tests {
     #[test]
     fn an_older_schema_version_widens_the_public_view() {
         let full = json!({
-            "id": dpp_domain::domain::passport::PassportId::new().to_string(),
+            "id": dpp_domain::passport::PassportId::new().to_string(),
             "productName": "Cell",
-            "sectorData": {
-                "sector": "battery",
+            "productGroupData": {
+                "productGroup": "battery",
                 "stateOfHealth": { "remainingCapacityPct": 98.2 },
             },
         });
 
         let current = public_view(&full, "battery", "2.6.0");
         assert!(
-            current["sectorData"].get("stateOfHealth").is_none(),
+            current["productGroupData"].get("stateOfHealth").is_none(),
             "stateOfHealth is Individual at v2.6.0 and must not be public"
         );
 
         let downgraded = public_view(&full, "battery", "1.0.0");
         assert!(
-            downgraded["sectorData"].get("stateOfHealth").is_some(),
+            downgraded["productGroupData"]
+                .get("stateOfHealth")
+                .is_some(),
             "expected the older table to expose it — if this now fails, core has \
              backfilled v1.0.0's annotations and the create-side check that \
              depends on this hazard should be re-read, not deleted"
@@ -474,15 +483,17 @@ pub(crate) mod tests {
     /// tests need the same fixture and duplicating it would let the two drift.
     pub(crate) fn stub_passport() -> Passport {
         use chrono::Utc;
-        use dpp_domain::domain::passport::{ManufacturerInfo, PassportId};
-        use dpp_domain::domain::sector::Sector;
-        use dpp_domain::domain::status::PassportStatus;
+        use dpp_domain::passport::{ManufacturerInfo, PassportId};
+        use dpp_domain::product_group::ProductGroup;
+        use dpp_domain::status::PassportStatus;
 
         Passport {
             id: PassportId::new(),
             batch_id: None,
             product_name: "Widget".into(),
-            sector: Sector::Battery,
+            product_group: ProductGroup::Battery,
+            applicable_instruments: Vec::new(),
+            granularity: None,
             manufacturer: ManufacturerInfo {
                 name: "ACME".into(),
                 address: "1 Street".into(),
@@ -493,7 +504,7 @@ pub(crate) mod tests {
             repairability_score: None,
             compliance_result: None,
             lint_result: None,
-            sector_data: None,
+            product_group_data: None,
             status: PassportStatus::Published,
             qr_code_url: None,
             jws_signature: None,
@@ -532,7 +543,7 @@ pub(crate) mod tests {
         let signed_payload = json!({
             "id": passport.id.to_string(),
             "productName": "Widget",
-            "sectorData": { "sector": "battery", "stateOfHealthPct": 87.5 },
+            "productGroupData": { "productGroup": "battery", "stateOfHealthPct": 87.5 },
         });
         let key = Audience::LegitimateInterest.disclosure_key();
         passport
@@ -600,38 +611,38 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn unknown_sector_fails_closed_keeping_only_the_tag() {
-        // A sector the catalog does not know: with no field-tier policy we must
-        // not pass its sectorData through at Public tier (parity with resolver RT2-5).
+    fn unknown_product_group_fails_closed_keeping_only_the_tag() {
+        // A product group the catalog does not know: with no field-tier policy we must
+        // not pass its productGroupData through at Public tier (parity with resolver RT2-5).
         let full = json!({
             "id": "x",
             "productName": "Widget",
             "facility": { "value": "4012345000009", "name": "Plant" },
-            "sectorData": {
-                "sector": "totallyMadeUpSector",
+            "productGroupData": {
+                "productGroup": "totallyMadeUpProductGroup",
                 "supplierCostEur": 12.50,
                 "internalNotes": "trade secret"
             }
         });
-        let view = public_view(&full, "totallyMadeUpSector", "2.6.0");
-        let sd = &view["sectorData"];
-        assert_eq!(sd["sector"], json!("totallyMadeUpSector"));
+        let view = public_view(&full, "totallyMadeUpProductGroup", "2.6.0");
+        let sd = &view["productGroupData"];
+        assert_eq!(sd["productGroup"], json!("totallyMadeUpProductGroup"));
         assert!(sd.get("supplierCostEur").is_none(), "leaked: {sd}");
         assert!(sd.get("internalNotes").is_none(), "leaked: {sd}");
-        // Non-sector public fields (Annex III facility) are unaffected.
+        // Non-product group public fields (Annex III facility) are unaffected.
         assert_eq!(view["facility"]["value"], json!("4012345000009"));
     }
 
     #[test]
-    fn known_sector_keeps_public_fields() {
+    fn known_product_group_keeps_public_fields() {
         let full = json!({
             "id": "x",
             "productName": "EcoBattery",
-            "sectorData": { "sector": "battery", "gtin": "09506000134352" }
+            "productGroupData": { "productGroup": "battery", "gtin": "09506000134352" }
         });
         let view = public_view(&full, "battery", "2.6.0");
-        // A known sector is filtered by its policy, not blanket-redacted.
-        assert_eq!(view["sectorData"]["gtin"], json!("09506000134352"));
-        assert_eq!(view["sectorData"]["sector"], json!("battery"));
+        // A known product group is filtered by its policy, not blanket-redacted.
+        assert_eq!(view["productGroupData"]["gtin"], json!("09506000134352"));
+        assert_eq!(view["productGroupData"]["productGroup"], json!("battery"));
     }
 }

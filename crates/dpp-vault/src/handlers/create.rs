@@ -5,18 +5,16 @@ use axum::{
     http::StatusCode,
     response::IntoResponse,
 };
-use serde::Deserialize;
 
 use chrono::Utc;
 use dpp_common::url_guard::validate_public_https_url;
-use dpp_digital_link::validate_gtin;
 use dpp_domain::{
-    SectorCatalog,
-    domain::passport::{ManufacturerInfo, MaterialEntry, Passport, PassportId, PassportRef},
-    domain::sector::{CarbonFootprint, RepairabilityScore, Sector, SectorData},
-    domain::status::PassportStatus,
-    domain::validation::validate_sector_data,
+    ProductGroupCatalog,
+    passport::{Passport, PassportId, PassportRef},
+    product_group::{CarbonFootprint, ProductGroup, ProductGroupData, RepairabilityScore},
     schemas::VersionedSchemaRegistry,
+    status::PassportStatus,
+    validation::validate_product_group_data,
 };
 use std::sync::OnceLock;
 use uuid::Uuid;
@@ -26,46 +24,21 @@ use crate::{middleware::auth::AuthContext, state::AppState};
 use super::error::{api_error, internal_error, require_write};
 
 /// Request body for passport creation.
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct CreateRequest {
-    pub product_name: String,
-    /// EU ESPR sector (dispatch key). Optional — derived from `sectorData` when omitted.
-    pub sector: Option<Sector>,
-    pub manufacturer: ManufacturerInfo,
-    pub materials: Option<Vec<MaterialEntry>>,
-    pub co2e_per_unit: Option<f64>,
-    pub repairability_score: Option<f64>,
-    pub sector_data: Option<SectorData>,
-    pub batch_id: Option<String>,
-    /// The date this product was placed on the EU market — the regulated
-    /// triggering event that fixes which law governs it.
-    ///
-    /// Optional, and omitting it is not neutral: a determination that depends
-    /// on a phase date has no answer without it, and the node will not
-    /// substitute today's date to produce one.
-    pub placed_on_market_date: Option<chrono::NaiveDate>,
-    pub schema_version: Option<String>,
-    /// Customs tariff classification — HS-6, CN-8 or TARIC-10 digits.
-    /// Registration data the EU registry stores and range-checks per product
-    /// group. Optional: the regulation qualifies it "where relevant".
-    pub commodity_code: Option<String>,
-    /// Cross-operator predecessor this passport derives from (second-life
-    /// successor linkage). Shape-validated here; the hash is checked against the
-    /// fetched parent at verify time.
-    pub parent_passport_ref: Option<PassportRef>,
-    /// Cross-operator references to this product's constituent passports (its
-    /// bill of materials). Shape-validated here; local cycles/over-depth are
-    /// refused by the service.
-    #[serde(default)]
-    pub component_refs: Vec<PassportRef>,
-}
+///
+/// Re-exported rather than declared: the bulk importer builds the same body, and
+/// the two used to be separate structs kept in step by a comment. See the type
+/// for what that cost.
+pub use dpp_types::CreatePassportRequest as CreateRequest;
 
 /// `POST /api/v1/dpp` — validate fields and create a new passport in `Draft` status.
 ///
 /// Rejects blank required fields, unsafe Unicode characters (null bytes, bidi
-/// overrides), out-of-range numeric values, invalid sector data, and malformed
-/// GTINs before touching the database.
+/// overrides), out-of-range numeric values and invalid product group data before
+/// touching the database.
+///
+/// A malformed GTIN never reaches here: every typed payload declares
+/// `gtin: Gtin`, whose `Deserialize` validates the GS1 check digit, so the body
+/// fails to parse. See the `gtin_boundary` tests.
 pub async fn create_handler(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthContext>,
@@ -81,14 +54,14 @@ pub async fn create_handler(
         return resp;
     }
 
-    // Sector is the dispatch key: explicit if supplied, else derived from the
-    // typed sector data, else Other.
-    let sector = body
-        .sector
-        .or_else(|| body.sector_data.as_ref().map(|d| d.sector()))
-        .unwrap_or_else(|| Sector::Other("other".to_owned()));
+    // ProductGroup is the dispatch key: explicit if supplied, else derived from the
+    // typed product group data, else Other.
+    let product_group = body
+        .product_group
+        .or_else(|| body.product_group_data.as_ref().map(|d| d.product_group()))
+        .unwrap_or_else(|| ProductGroup::Other("other".to_owned()));
 
-    // A new passport is written at the sector's current schema version, and only
+    // A new passport is written at the product group's current schema version, and only
     // that one. Never silently down-version to a hardcoded "1.0.0".
     //
     // `PassportService::create` already overwrites this from the catalog on
@@ -107,17 +80,17 @@ pub async fn create_handler(
     // server could honour anyway; it is a claim about the body that is already
     // false.
     let schema_version = catalog()
-        .resolve_schema_version(sector.catalog_key(), None)
+        .resolve_schema_version(product_group.catalog_key(), None)
         .unwrap_or_else(|| "1.0.0".into());
 
     // If co2e_per_unit not supplied at the top level, derive it from the
-    // typed sector data so callers don't have to duplicate the value.
+    // typed product group data so callers don't have to duplicate the value.
     let co2e_per_unit = body
         .co2e_per_unit
         .or_else(|| {
-            body.sector_data.as_ref().and_then(|sd| match sd {
-                SectorData::Battery(b) => Some(b.co2e_per_unit_kg),
-                SectorData::Textile(t) => t.carbon_footprint_kg_co2e,
+            body.product_group_data.as_ref().and_then(|sd| match sd {
+                ProductGroupData::Battery(b) => Some(b.co2e_per_unit_kg),
+                ProductGroupData::Textile(t) => t.carbon_footprint_kg_co2e,
                 _ => None,
             })
         })
@@ -143,7 +116,17 @@ pub async fn create_handler(
     let passport = Passport {
         id: PassportId(Uuid::now_v7()),
         product_name: body.product_name,
-        sector,
+        // Recorded once, here, from the acts the catalog knows reach this
+        // product group — and never recomputed afterwards. The law that governs
+        // a product is the law at placing on the market, and the set is not
+        // derivable from the product group alone, so a later refresh could only
+        // narrow it.
+        applicable_instruments: dpp_domain::InstrumentCatalog::new()
+            .instrument_refs_for(product_group.catalog_key()),
+        // Set by the applicable delegated act, and no adopted act fixes one for
+        // any product group yet.
+        granularity: None,
+        product_group,
         manufacturer: body.manufacturer,
         materials: body.materials.unwrap_or_default(),
         co2e_per_unit,
@@ -153,7 +136,7 @@ pub async fn create_handler(
         // Populated by the service's `apply_compliance`/`apply_lint` after creation.
         compliance_result: None,
         lint_result: None,
-        sector_data: body.sector_data,
+        product_group_data: body.product_group_data,
         status: PassportStatus::Draft,
         qr_code_url: None,
         jws_signature: None,
@@ -179,7 +162,11 @@ pub async fn create_handler(
     };
 
     match state.service.create(passport, &auth).await {
-        Ok(p) => (StatusCode::CREATED, Json(p)).into_response(),
+        Ok(p) => (
+            StatusCode::CREATED,
+            Json(crate::api::PassportResponse::from(&p)),
+        )
+            .into_response(),
         Err(e) => internal_error(e),
     }
 }
@@ -190,27 +177,27 @@ fn schema_registry() -> &'static VersionedSchemaRegistry {
     REGISTRY.get_or_init(VersionedSchemaRegistry::new)
 }
 
-/// Sector catalog — single source of truth for the current schema version, built once.
-fn catalog() -> &'static SectorCatalog {
-    static CATALOG: OnceLock<SectorCatalog> = OnceLock::new();
-    CATALOG.get_or_init(SectorCatalog::new)
+/// ProductGroup catalog — single source of truth for the current schema version, built once.
+fn catalog() -> &'static ProductGroupCatalog {
+    static CATALOG: OnceLock<ProductGroupCatalog> = OnceLock::new();
+    CATALOG.get_or_init(ProductGroupCatalog::new)
 }
 
-/// Validate typed sector data against its versioned JSON schema. New passports
-/// validate against the sector's current schema version (matching what the
-/// service persists); sectors with no embedded schema are skipped. Returns the
+/// Validate typed product group data against its versioned JSON schema. New passports
+/// validate against the product group's current schema version (matching what the
+/// service persists); product groups with no embedded schema are skipped. Returns the
 /// human-readable error string on failure.
-fn validate_against_schema(sd: &SectorData) -> Result<(), String> {
-    let sector = sd.sector();
-    let key = sector.catalog_key();
+fn validate_against_schema(sd: &ProductGroupData) -> Result<(), String> {
+    let product_group = sd.product_group();
+    let key = product_group.catalog_key();
     let Some(version) = catalog().resolve_schema_version(key, None) else {
         return Ok(());
     };
     let mut json = serde_json::to_value(sd).map_err(|e| e.to_string())?;
-    // `SectorData` is internally tagged (`#[serde(tag = "sector")]`); the schemas
+    // `ProductGroupData` is internally tagged (`#[serde(tag = "product group")]`); the schemas
     // validate the inner object with `additionalProperties: false`, so strip the tag.
     if let Some(obj) = json.as_object_mut() {
-        obj.remove("sector");
+        obj.remove("productGroup");
     }
     schema_registry()
         .validate_strict(key, &version, &json)
@@ -302,14 +289,14 @@ mod security_regression {
 
 #[cfg(test)]
 mod schema_validation {
-    //! M-1: typed sector data is also validated against its versioned JSON schema
+    //! M-1: typed product group data is also validated against its versioned JSON schema
     //! on the write path, catching schema-only constraints the Rust types miss.
     use super::*;
     use dpp_domain::Gtin;
-    use dpp_domain::domain::sector::{BatteryChemistry, BatteryData, BatteryType};
+    use dpp_domain::product_group::{BatteryChemistry, BatteryData, BatteryType};
 
-    fn valid_battery() -> SectorData {
-        SectorData::Battery(Box::new(BatteryData {
+    fn valid_battery() -> ProductGroupData {
+        ProductGroupData::Battery(Box::new(BatteryData {
             gtin: Gtin::parse("09506000134352").unwrap(),
             battery_chemistry: BatteryChemistry::Lfp,
             nominal_voltage_v: 3.2,
@@ -385,16 +372,16 @@ mod schema_validation {
     }
 
     #[test]
-    fn sector_data_carries_internal_tag() {
+    fn product_group_data_carries_internal_tag() {
         // Documents the assumption that `validate_against_schema` strips: the
-        // internally-tagged enum emits a `sector` field the schema forbids.
+        // internally-tagged enum emits a `product_group` field the schema forbids.
         let json = serde_json::to_value(valid_battery()).unwrap();
-        assert_eq!(json["sector"], "battery");
+        assert_eq!(json["productGroup"], "battery");
     }
 
     #[test]
     fn valid_battery_passes_versioned_schema() {
-        // Resolves to battery v2.0.0; passes only because the `sector` tag is
+        // Resolves to battery v2.0.0; passes only because the `product_group` tag is
         // stripped (the schema uses additionalProperties: false).
         assert!(validate_against_schema(&valid_battery()).is_ok());
     }
@@ -404,7 +391,7 @@ mod schema_validation {
         // A GTIN of the wrong length is rejected by the schema's `^[0-9]{14}$`
         // pattern — a constraint the Rust types don't carry on the wire shape.
         let mut json = serde_json::to_value(valid_battery()).unwrap();
-        json.as_object_mut().unwrap().remove("sector");
+        json.as_object_mut().unwrap().remove("productGroup");
         json["gtin"] = serde_json::json!("123"); // too short for ^[0-9]{14}$
         assert!(
             schema_registry()
@@ -415,6 +402,65 @@ mod schema_validation {
     }
 }
 
+#[cfg(test)]
+mod gtin_boundary {
+    //! Where a malformed GTIN is actually refused.
+    //!
+    //! Every typed payload declares `gtin: Gtin`, and `Gtin`'s `Deserialize`
+    //! calls `Gtin::parse`. So a bad check digit is rejected while the request
+    //! body is being parsed, for every product group at once, before any handler
+    //! validation runs. These tests pin that, because the handler's own GTIN
+    //! check reads as if it were the thing enforcing it.
+    use super::*;
+
+    fn tyre_body(gtin: &str) -> serde_json::Value {
+        serde_json::json!({
+            "productName": "All-season 205/55R16",
+            "manufacturer": { "name": "M", "address": "A" },
+            "productGroupData": {
+                "productGroup": "tyre",
+                "gtin": gtin,
+                "tyreClass": "C1",
+                "fuelEfficiencyClass": "A",
+                "wetGripClass": "A",
+                "externalRollingNoiseDb": 70.0
+            }
+        })
+    }
+
+    #[test]
+    fn a_bad_check_digit_is_refused_while_the_body_is_parsed() {
+        // Valid 14-digit shape, wrong GS1 mod-10 check digit.
+        let err = serde_json::from_value::<CreateRequest>(tyre_body("09506000134353"))
+            .expect_err("a bad check digit must not deserialize");
+        assert!(
+            err.to_string().to_lowercase().contains("check digit"),
+            "the rejection should name the check digit, got: {err}"
+        );
+    }
+
+    #[test]
+    fn a_valid_gtin_parses_and_the_request_is_accepted() {
+        let body = serde_json::from_value::<CreateRequest>(tyre_body("09506000134352"))
+            .expect("a valid GTIN must deserialize");
+        assert!(
+            validate_create_request(&body).is_none(),
+            "a well-formed tyre body must pass every create validation"
+        );
+    }
+
+    #[test]
+    fn the_handler_reads_the_gtin_generically_not_battery_only() {
+        // The handler asks the payload rather than matching on the variant. If
+        // this ever returns `None` for a product group that declares a `gtin`,
+        // the check silently stops covering it — which is how it came to cover
+        // battery alone.
+        let body = serde_json::from_value::<CreateRequest>(tyre_body("09506000134352")).unwrap();
+        let data = body.product_group_data.expect("payload present");
+        assert_eq!(data.gtin(), Some("09506000134352"));
+    }
+}
+
 /// Every validation `POST /api/v1/dpp` applies to a request body, with no side
 /// effects. Returns the rejection response, or `None` when the body would be
 /// accepted.
@@ -422,7 +468,7 @@ mod schema_validation {
 /// Extracted so the dry-run endpoint runs *this* rather than a second copy — a
 /// preview that disagreed with the real thing would be worse than none, because
 /// the direction it disagrees is the direction bad data gets through.
-pub(crate) fn validate_create_request(body: &CreateRequest) -> Option<axum::response::Response> {
+pub fn validate_create_request(body: &CreateRequest) -> Option<axum::response::Response> {
     // Shadows the module-level helper so every check below keeps the exact
     // form it had inside `create_handler` — the extraction is a move, not a
     // rewrite, and the compiler enforces that.
@@ -480,8 +526,8 @@ pub(crate) fn validate_create_request(body: &CreateRequest) -> Option<axum::resp
         );
     }
 
-    if let Some(ref sd) = body.sector_data {
-        if let Err(errs) = validate_sector_data(sd) {
+    if let Some(ref sd) = body.product_group_data {
+        if let Err(errs) = validate_product_group_data(sd) {
             return api_error(
                 StatusCode::UNPROCESSABLE_ENTITY,
                 "VALIDATION_ERROR",
@@ -489,18 +535,19 @@ pub(crate) fn validate_create_request(body: &CreateRequest) -> Option<axum::resp
             );
         }
 
-        // GS1 GTIN check-digit validation for Battery passports.
-        if let SectorData::Battery(battery) = sd
-            && let Err(e) = validate_gtin(battery.gtin.as_str())
-        {
-            return api_error(
-                StatusCode::UNPROCESSABLE_ENTITY,
-                "VALIDATION_ERROR",
-                &format!("sectorData.gtin: {e}"),
-            );
-        }
+        // No GTIN check here, deliberately. Every typed payload declares
+        // `gtin: Gtin`, and `Gtin`'s `Deserialize` calls `Gtin::parse`, so a bad
+        // check digit is refused while this body is being parsed — for all
+        // eleven product groups that carry one, before this function is
+        // reached. `Gtin`'s inner field is private and `parse` is the only
+        // constructor, so a `Gtin` that has not been validated cannot exist.
+        //
+        // What stood here re-validated `ProductGroupData::Battery`'s already-parsed
+        // GTIN and could not fail. It read as the thing enforcing GTIN validity
+        // for battery and no other product group, which is the opposite of what
+        // was true. See the `gtin_boundary` tests.
 
-        // JSON-Schema validation against the sector's current versioned schema —
+        // JSON-Schema validation against the product group's current versioned schema —
         // catches schema-only constraints (string patterns, enum sets, numeric
         // ranges) that the Rust types don't express.
         if let Err(msg) = validate_against_schema(sd) {
@@ -523,17 +570,17 @@ pub(crate) fn validate_create_request(body: &CreateRequest) -> Option<axum::resp
         }
     }
 
-    // Sector is the dispatch key: explicit if supplied, else derived from the
-    // typed sector data, else Other. Derived again here rather than passed in —
+    // ProductGroup is the dispatch key: explicit if supplied, else derived from the
+    // typed product group data, else Other. Derived again here rather than passed in —
     // it is pure, and computing it locally keeps this function callable on a
     // bare request body with nothing else in hand.
-    let sector = body
-        .sector
+    let product_group = body
+        .product_group
         .clone()
-        .or_else(|| body.sector_data.as_ref().map(|d| d.sector()))
-        .unwrap_or_else(|| Sector::Other("other".to_owned()));
+        .or_else(|| body.product_group_data.as_ref().map(|d| d.product_group()))
+        .unwrap_or_else(|| ProductGroup::Other("other".to_owned()));
     let schema_version = catalog()
-        .resolve_schema_version(sector.catalog_key(), None)
+        .resolve_schema_version(product_group.catalog_key(), None)
         .unwrap_or_else(|| "1.0.0".into());
 
     if let Some(requested) = body.schema_version.as_deref()
@@ -543,12 +590,12 @@ pub(crate) fn validate_create_request(body: &CreateRequest) -> Option<axum::resp
             StatusCode::UNPROCESSABLE_ENTITY,
             "VALIDATION_ERROR",
             &format!(
-                "schemaVersion must be `{schema_version}` for sector `{}` (or omitted); \
+                "schemaVersion must be `{schema_version}` for product_group `{}` (or omitted); \
                  `{requested}` was requested. A new passport is always written at the \
-                 sector's current schema version — the stored version selects the \
+                 product_group's current schema version — the stored version selects the \
                  disclosure table its public view is signed under, so it is not the \
                  caller's to choose.",
-                sector.catalog_key()
+                product_group.catalog_key()
             ),
         );
     }

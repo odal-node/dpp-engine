@@ -7,9 +7,36 @@ use axum::{
     response::IntoResponse,
 };
 use dpp_common::http_problem;
+use serde::Serialize;
 use uuid::Uuid;
 
 use crate::{handlers::import::extract_bearer_token, infra::job_store::JobStatus, state::AppState};
+
+/// How far an async import job has progressed.
+#[derive(Debug, Serialize)]
+pub struct JobProgress {
+    pub processed: usize,
+    pub total: usize,
+}
+
+/// Response body for the job-status endpoint.
+///
+/// A named type rather than a `json!` literal so the OpenAPI contract test can
+/// check `components/schemas/JobStatusResponse` against it.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct JobStatusResponse {
+    pub job_id: Uuid,
+    /// `queued`, `processing`, `completed`, or `failed`.
+    pub status: String,
+    pub progress: JobProgress,
+    /// Populated on completion (created/errors) or failure (reason); `null`
+    /// while the job is still queued or processing.
+    pub result: serde_json::Value,
+    /// The row-addressed findings report — populated for every job, dry-run or
+    /// apply, independent of `result`.
+    pub report: serde_json::Value,
+}
 
 /// `GET /api/v1/imports/{job_id}`
 ///
@@ -58,16 +85,16 @@ pub async fn get_job_status(
             let report_json = serde_json::to_value(&job.report).unwrap_or(serde_json::Value::Null);
             (
                 StatusCode::OK,
-                Json(serde_json::json!({
-                    "jobId": job.id,
-                    "status": status_str,
-                    "progress": {
-                        "processed": job.processed,
-                        "total": job.total_rows
+                Json(JobStatusResponse {
+                    job_id: job.id,
+                    status: status_str.to_owned(),
+                    progress: JobProgress {
+                        processed: job.processed,
+                        total: job.total_rows,
                     },
-                    "result": result_json,
-                    "report": report_json
-                })),
+                    result: result_json,
+                    report: report_json,
+                }),
             )
                 .into_response()
         }

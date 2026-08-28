@@ -1,0 +1,13 @@
+description: |
+  A dependency the node needs is not reachable — the readiness probe pings the
+  primary datastore, and reports this when that ping fails. The node is running;
+  it is not ready to serve.
+content:
+  application/problem+json:
+    schema:
+      $ref: ../schemas/Problem.yaml
+    example:
+      type: https://problems.odal-node.io/service-unavailable
+      title: Service Unavailable
+      status: 503
+      detail: The primary datastore did not respond.

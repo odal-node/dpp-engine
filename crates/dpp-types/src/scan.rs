@@ -23,7 +23,7 @@ use async_trait::async_trait;
 use chrono::NaiveDate;
 use serde::Serialize;
 
-use dpp_domain::{DppError, domain::passport::PassportId};
+use dpp_domain::{DppError, passport::PassportId};
 
 /// One daily scan increment to fold into the running total, parsed and validated
 /// from the resolver's flush batch. `variant` is already constrained to a known

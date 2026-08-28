@@ -71,7 +71,7 @@ RESOLVER_PORT=8003
 > with *"ADMIN_USERNAME is still a dev default"*. Pick a real username.
 
 > The node applies all database migrations at startup — there is no manual
-> migration step. First boot takes about 90 seconds: it loads each Wasm sector
+> migration step. First boot takes about 90 seconds: it loads each Wasm product group
 > plugin in turn before it starts listening.
 
 ### Step 3 — Onboard
@@ -164,7 +164,7 @@ From the Console you can:
 - **Operator** — view or update your operator profile
 - **API keys** — create, list, revoke
 - **Registry identity** — facilities (ESPR Annex III) and operator identifiers (ESPR Art. 13)
-- **Schema** — check for sector-schema updates
+- **Schema** — check for product-group schema updates
 
 ---
 
@@ -289,23 +289,23 @@ The importer names the digit it expected, so a rejected row tells you the answer
 ✗ Row 1 [gtin]: GTIN check digit invalid for '03801234567890': expected 8, got 0
 ```
 
-Sector templates with the current required columns live in
+Product group templates with the current required columns live in
 `crates/dpp-integrator/templates/` (`textile-v1.csv`, `battery-v1.csv`, …), and
 worked examples in `ops/demo/datasets/`.
 
-**One file, one sector.** The sector is read from the first data row and applied
-to the whole file, so a file mixing sectors is validated entirely against
-whichever sector came first. Split them.
+**One file, one product group.** The product group is read from the first data row and applied
+to the whole file, so a file mixing product groups is validated entirely against
+whichever product group came first. Split them.
 
 **Check a file before you commit to it.** `odal passport validate <file>`
 dry-runs a single passport body against the node and writes nothing:
 
 ```
 ✓ create   would be accepted
-✓ publish  passes the sector-data schema gate
+✓ publish  passes the product-group-data schema gate
 ```
 
-Read that second line precisely. It is the sector-data schema gate alone —
+Read that second line precisely. It is the product-group-data schema gate alone —
 publish additionally requires the registry identity above, and category-mandatory
 content for some product categories, neither of which the preview runs.
 

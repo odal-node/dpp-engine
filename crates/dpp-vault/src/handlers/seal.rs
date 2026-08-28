@@ -218,6 +218,12 @@ pub async fn seal_handler(
     // and reporting it would claim a transfer that may still be rejected. A node
     // with no transfer store configured records no handovers, so the honest
     // answer there is `false` rather than an error.
+    //
+    // A store that *errors*, though, fails the whole read. `false` is not a safe
+    // default here — it is a positive claim that responsibility has not moved,
+    // and serving it beside a seal on the strength of a failed query is the one
+    // outcome worse than serving nothing. So the seal becomes unreadable while
+    // the transfer store is down, deliberately.
     let responsibility_may_have_transferred = match state.service.transfer_store.as_ref() {
         Some(store) => match store.get_chain(passport_id).await {
             Ok(Some(chain)) => chain.transfer_count() > 0,

@@ -1,9 +1,27 @@
 //! `GET /api/v1/whoami` — what the presented credential actually is.
 
 use axum::{Json, extract::Extension, http::StatusCode, response::IntoResponse};
-use serde_json::json;
+use dpp_types::api_key::ApiKeyScope;
+use serde::Serialize;
 
 use crate::middleware::auth::AuthContext;
+
+/// What the presented credential is.
+///
+/// A named type rather than a `json!` literal so the OpenAPI contract test can
+/// check `components/schemas/WhoamiResponse` against it.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WhoamiResponse {
+    /// The caller's own identity, as authenticated.
+    pub user_id: String,
+    /// What this credential is allowed to do.
+    pub scope: ApiKeyScope,
+    /// The key's row id — never the token. Absent for local-admin Basic auth,
+    /// which has no key row.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub key_id: Option<uuid::Uuid>,
+}
 
 /// `GET /api/v1/whoami` — echo the caller's own identity and scope.
 ///
@@ -19,12 +37,11 @@ use crate::middleware::auth::AuthContext;
 pub async fn whoami_handler(Extension(auth): Extension<AuthContext>) -> impl IntoResponse {
     (
         StatusCode::OK,
-        Json(json!({
-            "userId": auth.user_id,
-            "scope": auth.scope,
-            // Absent for local-admin Basic auth, which has no key row.
-            "keyId": auth.key_id,
-        })),
+        Json(WhoamiResponse {
+            user_id: auth.user_id,
+            scope: auth.scope,
+            key_id: auth.key_id,
+        }),
     )
 }
 

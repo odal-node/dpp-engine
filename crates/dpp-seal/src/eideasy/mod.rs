@@ -39,7 +39,7 @@
 //! `credentials/info`, and an adapter for one should — the port models
 //! capability precisely so the two can differ.
 //!
-//! [`SealCapabilities`]: dpp_domain::domain::seal::SealCapabilities
+//! [`SealCapabilities`]: dpp_domain::seal::SealCapabilities
 //!
 //! - [`types`] — request/response wire types.
 //! - [`client`] — the HMAC-signed POST, the sign-the-exact-bytes invariant, and

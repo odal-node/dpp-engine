@@ -12,7 +12,7 @@ use crate::{middleware::auth::AuthContext, state::AppState};
 use super::error::{internal_error, not_found_error, parse_passport_id, require_write};
 
 /// `POST /api/v1/dpp/{dppId}/lint` — recompute and persist the plausibility
-/// lint pack's findings against the passport's current sector data.
+/// lint pack's findings against the passport's current product group data.
 ///
 /// Non-binding: findings never block publish and this endpoint never fails
 /// on their account. Works regardless of passport status (Draft or
@@ -39,7 +39,7 @@ pub async fn lint_handler(
     };
 
     match state.service.relint(passport_id).await {
-        Ok(p) => (StatusCode::OK, Json(p)).into_response(),
+        Ok(p) => (StatusCode::OK, Json(crate::api::PassportResponse::from(&p))).into_response(),
         Err(dpp_domain::DppError::NotFound(_)) => not_found_error("DPP not found."),
         Err(e) => internal_error(e),
     }

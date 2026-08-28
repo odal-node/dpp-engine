@@ -1,4 +1,4 @@
-//! `GET /api/v1/schemas[/{sector}[/{version}]]` — serve the sector JSON Schemas
+//! `GET /api/v1/schemas[/{product group}[/{version}]]` — serve the product group JSON Schemas
 //! an SDK needs to build a passport body before it posts one.
 //!
 //! # Why this exists
@@ -33,7 +33,7 @@
 //! `required`, patterns, bounds — and no unaudited regulatory claim leaves the
 //! node.
 //!
-//! `title` is kept: they are short labels ("Odal Node — Battery Sector Data
+//! `title` is kept: they are short labels ("Odal Node — Battery ProductGroup Data
 //! (v2.6.0)"), not assertions.
 
 use axum::{
@@ -43,34 +43,34 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use dpp_common::http_problem;
-use dpp_domain::catalog::SectorCatalog;
+use dpp_domain::catalog::ProductGroupCatalog;
 use dpp_domain::schemas::VersionedSchemaRegistry;
 use serde_json::{Value, json};
 
 /// `GET /api/v1/schemas`
 ///
-/// Every sector with a schema, and the versions it serves. `current` is the
+/// Every product group with a schema, and the versions it serves. `current` is the
 /// version a new passport is written against; `versions` is everything a stored
 /// passport may legitimately record.
 pub async fn list_schemas() -> Response {
     let registry = VersionedSchemaRegistry::new();
-    let catalog = SectorCatalog::new();
+    let catalog = ProductGroupCatalog::new();
 
-    let mut sectors: Vec<&str> = registry.sectors();
-    sectors.sort_unstable();
+    let mut product_groups: Vec<&str> = registry.product_groups();
+    product_groups.sort_unstable();
 
-    let entries: Vec<Value> = sectors
+    let entries: Vec<Value> = product_groups
         .into_iter()
-        .map(|sector| {
+        .map(|product_group| {
             let mut versions: Vec<String> = registry
-                .versions_for(sector)
+                .versions_for(product_group)
                 .into_iter()
                 .map(ToString::to_string)
                 .collect();
             versions.sort();
             json!({
-                "sector": sector,
-                "current": catalog.current_schema_version(sector),
+                "productGroup": product_group,
+                "current": catalog.current_schema_version(product_group),
                 "versions": versions,
             })
         })
@@ -79,29 +79,29 @@ pub async fn list_schemas() -> Response {
     (StatusCode::OK, Json(json!({ "schemas": entries }))).into_response()
 }
 
-/// `GET /api/v1/schemas/{sector}`
+/// `GET /api/v1/schemas/{product group}`
 ///
-/// The sector's current schema — the one a passport created today is validated
+/// The product group's current schema — the one a passport created today is validated
 /// against.
-pub async fn get_current_schema(Path(sector): Path<String>) -> Response {
-    let catalog = SectorCatalog::new();
-    let Some(version) = catalog.current_schema_version(&sector) else {
-        return unknown_sector(&sector);
+pub async fn get_current_schema(Path(product_group): Path<String>) -> Response {
+    let catalog = ProductGroupCatalog::new();
+    let Some(version) = catalog.current_schema_version(&product_group) else {
+        return unknown_product_group(&product_group);
     };
-    serve(&sector, version)
+    serve(&product_group, version)
 }
 
-/// `GET /api/v1/schemas/{sector}/{version}`
+/// `GET /api/v1/schemas/{product group}/{version}`
 ///
 /// A pinned version. A stored passport records the `schemaVersion` it was
 /// written under, so an SDK holding one needs to keep fetching that exact
 /// schema rather than whatever is current.
-pub async fn get_pinned_schema(Path((sector, version)): Path<(String, String)>) -> Response {
-    serve(&sector, version.trim_start_matches('v'))
+pub async fn get_pinned_schema(Path((product_group, version)): Path<(String, String)>) -> Response {
+    serve(&product_group, version.trim_start_matches('v'))
 }
 
-/// Resolve one `(sector, version)` from the registry and serve it, prose removed.
-fn serve(sector: &str, version: &str) -> Response {
+/// Resolve one `(product group, version)` from the registry and serve it, prose removed.
+fn serve(product_group: &str, version: &str) -> Response {
     let registry = VersionedSchemaRegistry::new();
     let Ok(parsed) = version.parse() else {
         return http_problem::bad_request(format!(
@@ -109,15 +109,15 @@ fn serve(sector: &str, version: &str) -> Response {
         ))
         .into_response();
     };
-    let Some(raw) = registry.get(sector, &parsed) else {
-        return unknown_version(sector, version);
+    let Some(raw) = registry.get(product_group, &parsed) else {
+        return unknown_version(product_group, version);
     };
 
     // An embedded schema parsed at boot in the registry, so this cannot fail in
     // practice; a 500 is still the honest answer if it ever does.
     let Ok(mut schema) = serde_json::from_str::<Value>(raw) else {
         return http_problem::internal_error(format!(
-            "the schema for {sector} v{version} could not be read"
+            "the schema for {product_group} v{version} could not be read"
         ))
         .into_response();
     };
@@ -126,30 +126,30 @@ fn serve(sector: &str, version: &str) -> Response {
     (StatusCode::OK, Json(schema)).into_response()
 }
 
-fn unknown_sector(sector: &str) -> Response {
-    let catalog = SectorCatalog::new();
+fn unknown_product_group(product_group: &str) -> Response {
+    let catalog = ProductGroupCatalog::new();
     let mut known: Vec<&str> = catalog.keys();
     known.sort_unstable();
     http_problem::not_found(format!(
-        "No schema for sector '{sector}'. Known sectors: {}.",
+        "No schema for product_group '{product_group}'. Known product_groups: {}.",
         known.join(", ")
     ))
     .into_response()
 }
 
-fn unknown_version(sector: &str, version: &str) -> Response {
+fn unknown_version(product_group: &str, version: &str) -> Response {
     let registry = VersionedSchemaRegistry::new();
     let mut versions: Vec<String> = registry
-        .versions_for(sector)
+        .versions_for(product_group)
         .into_iter()
         .map(ToString::to_string)
         .collect();
     versions.sort();
     if versions.is_empty() {
-        return unknown_sector(sector);
+        return unknown_product_group(product_group);
     }
     http_problem::not_found(format!(
-        "No schema for sector '{sector}' at version '{version}'. Available: {}.",
+        "No schema for product_group '{product_group}' at version '{version}'. Available: {}.",
         versions.join(", ")
     ))
     .into_response()
@@ -163,12 +163,16 @@ fn unknown_version(sector: &str, version: &str) -> Response {
 /// a naive walk — taking a real field out of the contract an SDK validates
 /// against. No schema declares one today; this costs nothing and stops that
 /// being a latent trap for whoever adds the first.
-fn strip_descriptions(node: &mut Value) {
-    /// Keywords whose object values are keyed by author-chosen names, not by
-    /// schema keywords — descend into the values, never treat the keys as
-    /// keywords.
-    const NAME_KEYED: [&str; 4] = ["properties", "$defs", "definitions", "patternProperties"];
+/// Keywords whose object values are keyed by author-chosen names, not by
+/// schema keywords — descend into the values, never treat the keys as
+/// keywords.
+///
+/// Module-level rather than local so the test that checks the result walks by
+/// the same list. Two copies of this would drift, and the direction they drift
+/// is a check that quietly stops looking.
+const NAME_KEYED: [&str; 4] = ["properties", "$defs", "definitions", "patternProperties"];
 
+fn strip_descriptions(node: &mut Value) {
     match node {
         Value::Object(map) => {
             map.remove("description");
@@ -268,19 +272,87 @@ mod tests {
         );
     }
 
+    /// Collect the paths of any surviving `description` **keyword**, walking the
+    /// tree the way `strip_descriptions` does.
+    ///
+    /// A substring search over the serialised schema cannot answer this, because
+    /// a property may legitimately be *named* `description` — unsold-goods
+    /// v2.0.0 has one, the line description of Impl. Reg. (EU) 2026/2 Annex I
+    /// note (e). Its name has to survive stripping; its own description keyword
+    /// must not. Only a structural walk can tell those apart.
+    fn surviving_description_keywords(node: &Value, path: &str, out: &mut Vec<String>) {
+        match node {
+            Value::Object(map) => {
+                if map.contains_key("description") {
+                    out.push(path.to_owned());
+                }
+                for (key, value) in map {
+                    if NAME_KEYED.contains(&key.as_str()) {
+                        if let Value::Object(named) = value {
+                            for (name, schema) in named {
+                                surviving_description_keywords(
+                                    schema,
+                                    &format!("{path}/{key}/{name}"),
+                                    out,
+                                );
+                            }
+                        }
+                    } else {
+                        surviving_description_keywords(value, &format!("{path}/{key}"), out);
+                    }
+                }
+            }
+            Value::Array(items) => {
+                for (i, item) in items.iter().enumerate() {
+                    surviving_description_keywords(item, &format!("{path}/{i}"), out);
+                }
+            }
+            _ => {}
+        }
+    }
+
     #[test]
     fn no_embedded_schema_keeps_a_description_after_stripping() {
         let registry = VersionedSchemaRegistry::new();
-        for (sector, version) in registry.list() {
-            let raw = registry.get(sector, version).expect("just listed");
+        for (product_group, version) in registry.list() {
+            let raw = registry.get(product_group, version).expect("just listed");
             let mut schema: Value = serde_json::from_str(raw).unwrap();
             strip_descriptions(&mut schema);
+
+            let mut surviving = Vec::new();
+            surviving_description_keywords(&schema, "", &mut surviving);
             assert!(
-                !serde_json::to_string(&schema)
-                    .unwrap()
-                    .contains("\"description\""),
-                "{sector} v{version} still carries a description keyword after stripping"
+                surviving.is_empty(),
+                "{product_group} v{version} still carries a description keyword at: {}",
+                surviving.join(", ")
             );
         }
+    }
+
+    #[test]
+    fn the_detector_reports_keywords_and_ignores_a_property_of_that_name() {
+        // A green check proves nothing until it has been seen to fail, and this
+        // one replaced an assertion that could not distinguish these two cases
+        // at all. So: one schema, un-stripped, holding both.
+        let schema: Value = json!({
+            "description": "root prose",
+            "properties": {
+                // A field named `description` — a contract, not prose. Its own
+                // description keyword *is* prose and must be reported.
+                "description": { "type": "string", "description": "Note (e)" },
+                // No description keyword anywhere: must not be reported.
+                "unitsDiscarded": { "type": "integer" }
+            }
+        });
+
+        let mut found = Vec::new();
+        surviving_description_keywords(&schema, "", &mut found);
+        found.sort();
+
+        assert_eq!(
+            found,
+            vec!["".to_owned(), "/properties/description".to_owned()],
+            "the root keyword and the one on the `description` field, and nothing else"
+        );
     }
 }

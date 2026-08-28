@@ -153,7 +153,7 @@ dpp-render                      — the ONE renderer for the public passport pag
                                   snapshot, so the two cannot drift
 dpp-integrator                  — CSV/XLSX bulk import
 dpp-common                      — event bus trait, telemetry, config helpers, RFC 7807 errors
-dpp-plugin-host                 — wasmtime sandbox for sector Wasm plugins
+dpp-plugin-host                 — wasmtime sandbox for product group Wasm plugins
 dpp-node                        — MVP single binary fusing vault + identity + integrator
 dpp-seal                        — eIDAS qualified seal adapter: one `SealBackend` behind the
                                   `SealPort`, selected by SEAL_PROVIDER (hosted QTSP / local dev
@@ -189,7 +189,7 @@ development, copy `.cargo/config.toml.example` to `.cargo/config.toml` (or run
 `just core-local`) to add a `[patch.crates-io]` override that points each core crate
 at the sibling `../dpp-core` working tree. That file is git-ignored, so it never
 reaches CI; `just core-published` removes it to build against the registry again.
-- `dpp-domain` — domain types (`Passport`, `SectorData`), port traits (`PassportRepository`, `IdentityPort`, `ComplianceRegistry`), schema validation, per-field disclosure policy (`access`)
+- `dpp-domain` — domain types (`Passport`, `ProductGroupData`), port traits (`PassportRepository`, `IdentityPort`, `ComplianceRegistry`), schema validation, per-field disclosure policy (`access`)
 - `dpp-crypto` — Ed25519, JWS compact serialisation, encrypted key store
 - `dpp-vc` — W3C Verifiable Credentials, `did:web` document builder, status lists, `LocalIdentityService`, JSON-LD context
 - `dpp-digital-link` — GS1 Digital Link parser and link-type negotiation
@@ -299,7 +299,7 @@ Background cleanup task runs every 6 hours, deleting completed/failed jobs older
 
 ### Wasm Plugin Host
 
-`dpp-plugin-host` loads `*.wasm` sector plugins from `PLUGINS_DIR`. Implements `ComplianceRegistry` from `dpp-domain::ports`. Sandbox: 10M fuel, 64 MiB memory, deny-all WASI. Falls back to `PassthroughRegistry` when no plugin is available for a sector.
+`dpp-plugin-host` loads `*.wasm` product group plugins from `PLUGINS_DIR`. Implements `ComplianceRegistry` from `dpp-domain::ports`. Sandbox: 10M fuel, 64 MiB memory, deny-all WASI. Falls back to `PassthroughRegistry` when no plugin is available for a product group.
 
 ## All HTTP Routes
 
@@ -326,7 +326,7 @@ Background cleanup task runs every 6 hours, deleting completed/failed jobs older
 | GET | `/vault/public/dpp/by-gtin/{gtin}` | None | Public passport read by GTIN |
 | GET | `/vault/credential/dpp/{dppId}` | **None** — `X-DPP-Credential` only | Audience-scoped read. Deliberately outside both `/public` (a public URL whose body varies by caller breaks caching and the meaning of `publicJwsSignature`) and `/api/v1` (a repairer or authority holds a credential and no API key). **Unauthenticated and network-touching**: it resolves the credential issuer's `did:web` over the guarded outbound path before anything is verified, and a verified read appends to the passport's audit trail. No credential ⇒ the public view, byte-identical to `/public/dpp/{dppId}` |
 | POST | `/vault/api/v1/dpp` | Bearer | Create passport |
-| POST | `/vault/api/v1/dpp/validate` | Bearer **(write)** | Dry-run a create body, persisting nothing. Runs the same `validate_create_request` the create route runs, so the preview cannot disagree with it, and returns the identical `422` on rejection. Reports `createValid` **and** `publishValid` separately — create is lenient about an unresolvable sector schema, publish fails closed on it |
+| POST | `/vault/api/v1/dpp/validate` | Bearer **(write)** | Dry-run a create body, persisting nothing. Runs the same `validate_create_request` the create route runs, so the preview cannot disagree with it, and returns the identical `422` on rejection. Reports `createValid` **and** `publishValid` separately — create is lenient about an unresolvable product group schema, publish fails closed on it |
 | GET | `/vault/api/v1/dpps` | Bearer | List passports |
 | GET | `/vault/api/v1/dpp/{dppId}` | Bearer | Read passport |
 | PUT | `/vault/api/v1/dpp/{dppId}` | Bearer | Update passport (draft only) |
@@ -337,7 +337,9 @@ Background cleanup task runs every 6 hours, deleting completed/failed jobs older
 | POST | `/vault/api/v1/dpp/{dppId}/eol` | Bearer (write) | Declare end of life |
 | POST | `/vault/api/v1/dpp/{dppId}/transfer/initiate` | Bearer (write) | Sign a pending transfer of responsibility |
 | POST | `/vault/api/v1/dpp/{dppId}/transfer/accept` | Bearer (write) | Countersign and complete it |
-| GET | `/vault/api/v1/dpp/by-identity` | Bearer | Find by (sector, GTIN, batch) — backs the import delta-matcher |
+| POST | `/vault/api/v1/dpp/{dppId}/transfer/reject` | Bearer (write) | End the pending handover as refused — terminal, frees the chain |
+| POST | `/vault/api/v1/dpp/{dppId}/transfer/cancel` | Bearer (write) | End the pending handover as withdrawn — terminal, frees the chain |
+| GET | `/vault/api/v1/dpp/by-identity` | Bearer | Find by (product group, GTIN, batch) — backs the import delta-matcher |
 | GET | `/vault/api/v1/dpp/{dppId}/verify-tree` | Bearer | Walk and verify the component (BOM) graph |
 | GET | `/vault/api/v1/dpp/{dppId}/registry` | Bearer | EU-registry sync status for one passport |
 | GET | `/vault/api/v1/registry` | Bearer | EU-registry sync rollup |
@@ -359,7 +361,7 @@ Background cleanup task runs every 6 hours, deleting completed/failed jobs older
 | GET | `/vault/api/v1/api-keys` | Bearer (admin) | List API keys |
 | POST | `/vault/api/v1/api-keys` | Bearer (admin) | Create API key |
 | DELETE | `/vault/api/v1/api-keys/{id}` | Bearer (admin) | Revoke API key |
-| POST | `/vault/api/v1/plugins` | Bearer (admin) | Install a **signed** sector plugin and hot-swap it |
+| POST | `/vault/api/v1/plugins` | Bearer (admin) | Install a **signed** product group plugin and hot-swap it |
 | GET | `/vault/api/v1/webhooks` | Bearer (admin) | List webhook subscriptions |
 | POST | `/vault/api/v1/webhooks` | Bearer (admin) | Create one (SSRF-guarded URL) |
 | DELETE | `/vault/api/v1/webhooks/{id}` | Bearer (admin) | Remove one |
@@ -378,8 +380,8 @@ Background cleanup task runs every 6 hours, deleting completed/failed jobs older
 | GET | `/identity/ready` | None | Identity ready |
 | GET | `/identity/.well-known/did.json` | None | DID document |
 | GET | `/integrator/health` | None | Integrator health |
-| GET | `/integrator/api/v1/templates/{sector}` | None | CSV template download |
-| POST | `/integrator/api/v1/import/{sector}` | Bearer (forwarded) | File upload import |
+| GET | `/integrator/api/v1/templates/{productGroup}` | None | CSV template download |
+| POST | `/integrator/api/v1/import/{productGroup}` | Bearer (forwarded) | File upload import |
 | GET | `/integrator/api/v1/imports/{job_id}` | Bearer | Poll job status |
 
 > The node mounts identity via `build_public` — only the public `/identity/*`
@@ -436,6 +438,57 @@ The internal endpoints are mTLS-gated (`CN=odal-vault`).
 
 `just test` (unit, no Docker) and `just test-integration` (the Docker tiers). See
 Build and Development above for the full recipe set.
+
+### Answer "what actually happens here?" with a test you keep
+
+When you need to establish a fact about behaviour — does this reject that input,
+which layer enforces this rule, is this branch reachable — **write a `#[test]`
+and commit it.** Not a scratch binary, not a `python - <<EOF` probe, not a
+throwaway `main` you delete afterwards.
+
+The reason is not tidiness. A throwaway probe answers the question once, for the
+person running it, and then the answer lives only in their head — so the next
+person re-derives it, or worse, assumes the opposite. A committed test answers it
+permanently *and* fails when the answer changes.
+
+This is not hypothetical. A handler here re-validated a GTIN that
+`Gtin::Deserialize` had already validated, so the check could not fail; it read
+as the thing enforcing GTIN validity for one product group and no other, which
+was the reverse of the truth. Three small tests (`gtin_boundary` in
+`dpp-vault/src/handlers/create.rs`) now pin where the rejection actually happens,
+and the dead branch is gone.
+
+Name such a test for the fact it pins, not the function it calls:
+`a_bad_check_digit_is_refused_while_the_body_is_parsed`, not `test_gtin`.
+
+Two practical notes:
+- **Never run a foreground command that can wait on stdin** (`python - <<EOF`,
+  an interactive REPL). It hangs the session rather than failing.
+- **A probe that "passes" proves nothing until you have seen it fail.** Confirm
+  the assertion actually bites — change the input, watch it go red — before
+  trusting a green result.
+
+### Documenting an error condition means writing the test that produces it
+
+When you add a `'404':` or `'422':` to `api/paths/`, the *description* beside it
+is a claim about behaviour, and nothing mechanical can check it.
+`documented_error_codes_are_the_ones_handlers_return` compares the **codes** a
+handler can emit against the codes the spec lists — that direction is sound and
+gated. It cannot compare a sentence to a branch.
+
+That gap shipped. Four transfer routes documented `404` as "no pending transfer
+for this DPP" while that condition returns `422`; `404` means the passport has no
+transfer chain at all. Both codes were reachable, so the gate was satisfied and
+the description was still wrong — the wording was then copied onto two new routes
+before anyone read it next to the handler.
+
+So: **if you document an error condition, construct it in a test and assert the
+status.** One test per genuinely ambiguous pair is enough — `404` vs `422` where
+one means "no such resource" and the other "the resource is in the wrong state".
+Do not write one for every documented code; the uniform ones (`401` from the auth
+middleware, `400` from a malformed path parameter, `403` from a scope check) are
+structural and the same everywhere. `a_missing_transfer_chain_and_an_empty_one_are_told_apart`
+in `dpp-node/tests/smoke.rs` is the shape to copy.
 
 Test tiers:
 - **Tier 1 (no DB)**: route mounting, health endpoints, auth middleware, validators, parsers, and the pure-logic unit tests inside each crate.

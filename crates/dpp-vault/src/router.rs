@@ -51,7 +51,10 @@ use crate::{
         seal::{seal_handler, seal_summary_handler},
         stats::{operator_stats_handler, passport_stats_handler},
         suspend::suspend_handler,
-        transfer::{transfer_accept_handler, transfer_initiate_handler},
+        transfer::{
+            transfer_accept_handler, transfer_cancel_handler, transfer_initiate_handler,
+            transfer_reject_handler,
+        },
         update::update_handler,
         validate::validate_handler,
         verify_tree::verify_tree_handler,
@@ -95,6 +98,19 @@ pub fn build(state: AppState) -> Router {
             "/dpp/{dppId}/transfer/accept",
             post(transfer_accept_handler),
         )
+        // The two ways out of a pending handover. Without them a transfer the
+        // counterparty never acted on blocks every later transfer on the
+        // passport permanently — the chain refuses a new one while any record
+        // is still pending, and nothing else can move a record out of that
+        // state.
+        .route(
+            "/dpp/{dppId}/transfer/reject",
+            post(transfer_reject_handler),
+        )
+        .route(
+            "/dpp/{dppId}/transfer/cancel",
+            post(transfer_cancel_handler),
+        )
         .route("/dpp/{dppId}/history", get(history_handler))
         .route("/dpp/{dppId}/verify-tree", get(verify_tree_handler))
         // The qualified seal has its own route because it is stripped from
@@ -133,7 +149,7 @@ pub fn build(state: AppState) -> Router {
             get(api_keys_list_handler).post(api_keys_create_handler),
         )
         .route("/api-keys/{id}", delete(api_keys_delete_handler))
-        // ── Plugins (signed sector-plugin hot-install) ────────────────
+        // ── Plugins (signed product group-plugin hot-install) ────────────────
         .route("/plugins", post(install_plugin_handler))
         // ── Webhooks (signed outbound delivery) ───────────────────────
         .route(

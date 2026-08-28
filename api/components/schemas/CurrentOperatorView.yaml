@@ -1,0 +1,22 @@
+type: object
+description: >-
+  The operator responsible for a passport **today**, derived from its transfer
+  chain. Reported separately from the passport's own `operatorIdentifier`, which
+  is the operator that *published* it — frozen at publish and covered by the
+  signature, so a transfer does not rewrite it. For a passport that has changed
+  hands the two differ, and that difference is a fact about the product.
+required:
+  - did
+  - name
+  - country
+  - transferCount
+properties:
+  did:
+    type: string
+  name:
+    type: string
+  country:
+    type: string
+  transferCount:
+    type: integer
+    description: Completed handovers this passport has been through.

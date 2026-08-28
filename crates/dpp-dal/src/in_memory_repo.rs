@@ -26,10 +26,10 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use dpp_domain::domain::error::DppError;
-use dpp_domain::domain::passport::{Passport, PassportId};
-use dpp_domain::domain::status::PassportStatus;
+use dpp_domain::error::DppError;
+use dpp_domain::passport::{Passport, PassportId};
 use dpp_domain::ports::passport_repo::PassportRepository;
+use dpp_domain::status::PassportStatus;
 
 /// A [`PassportRepository`] backed by a `HashMap`.
 ///
@@ -77,6 +77,14 @@ impl PassportRepository for InMemoryPassportRepo {
     /// pass against behaviour the database does not have, so this answers
     /// nothing rather than answering wrongly.
     async fn find_published_by_gtin(&self, _gtin: &str) -> Result<Option<Passport>, DppError> {
+        Ok(None)
+    }
+
+    /// Answers nothing, for the same reason as `find_published_by_gtin` above:
+    /// the real lookup is a `LIKE` over `qrCodeUrl` with a numeric-only guard,
+    /// and approximating that here would make a test pass against behaviour the
+    /// database does not have.
+    async fn find_by_gtin_any_status(&self, _gtin: &str) -> Result<Option<Passport>, DppError> {
         Ok(None)
     }
 

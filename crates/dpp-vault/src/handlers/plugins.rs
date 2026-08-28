@@ -1,4 +1,4 @@
-//! `POST /api/v1/plugins` — admin-only runtime install of a signed sector plugin.
+//! `POST /api/v1/plugins` — admin-only runtime install of a signed product group plugin.
 //!
 //! Delegates to the node's [`PluginAdmin`] port (the Wasm plugin host), which
 //! verifies the signature against the pinned publisher key, gates the ABI,
@@ -17,15 +17,15 @@ use crate::{middleware::auth::AuthContext, state::AppState};
 
 use super::error::{api_error, require_admin};
 
-/// `POST /api/v1/plugins` — verify, persist, and hot-swap a signed sector plugin.
+/// `POST /api/v1/plugins` — verify, persist, and hot-swap a signed product group plugin.
 ///
 /// `multipart/form-data` with:
 /// - `wasm` (required, file) — the `.wasm` (or precompiled `.cwasm`) artifact. A
 ///   `.cwasm` filename selects the AOT path (loaded only if it matches this
 ///   node's engine).
 /// - `sig` (required) — its detached Ed25519 signature over `SHA-256(artifact)`.
-/// - `sector` (optional, text) — the sector key; if omitted it is derived from
-///   the `wasm` part's filename (`sector-<key>.wasm`).
+/// - `product_group` (optional, text) — the product group key; if omitted it is derived from
+///   the `wasm` part's filename (`product-group-<key>.wasm`).
 pub async fn install_plugin_handler(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthContext>,
@@ -45,7 +45,7 @@ pub async fn install_plugin_handler(
 
     let mut wasm: Option<Vec<u8>> = None;
     let mut sig: Option<Vec<u8>> = None;
-    let mut sector: Option<String> = None;
+    let mut product_group: Option<String> = None;
     let mut wasm_filename: Option<String> = None;
 
     loop {
@@ -64,7 +64,9 @@ pub async fn install_plugin_handler(
                         Ok(b) => sig = Some(b.to_vec()),
                         Err(e) => return bad(format!("could not read 'sig' field: {e}")),
                     },
-                    "sector" => sector = field.text().await.ok().filter(|s| !s.is_empty()),
+                    "productGroup" => {
+                        product_group = field.text().await.ok().filter(|s| !s.is_empty())
+                    }
                     _ => {
                         // Drain and ignore unknown parts.
                         let _ = field.bytes().await;
@@ -79,10 +81,12 @@ pub async fn install_plugin_handler(
     let (Some(wasm), Some(sig)) = (wasm, sig) else {
         return bad("multipart body must include both a 'wasm' and a 'sig' field.".to_owned());
     };
-    let Some(sector) = sector.or_else(|| wasm_filename.as_deref().and_then(derive_sector)) else {
+    let Some(product_group) =
+        product_group.or_else(|| wasm_filename.as_deref().and_then(derive_product_group))
+    else {
         return bad(
-            "sector could not be determined — pass a 'sector' field or name the file \
-             'sector-<key>.wasm'."
+            "product_group could not be determined — pass a 'product_group' field or name the file \
+             'product-group-<key>.wasm'."
                 .to_owned(),
         );
     };
@@ -93,7 +97,8 @@ pub async fn install_plugin_handler(
         .is_some_and(|f| f.ends_with(".cwasm"));
 
     // Install is blocking (wasm compile + disk IO); keep it off the async worker.
-    match tokio::task::spawn_blocking(move || admin.install(&sector, wasm, sig, precompiled)).await
+    match tokio::task::spawn_blocking(move || admin.install(&product_group, wasm, sig, precompiled))
+        .await
     {
         Ok(Ok(report)) => (StatusCode::CREATED, Json(report)).into_response(),
         Ok(Err(e)) => install_error(e),
@@ -105,10 +110,10 @@ pub async fn install_plugin_handler(
     }
 }
 
-/// Derive a sector key from an uploaded filename: `sector-battery.wasm` → `battery`.
-fn derive_sector(filename: &str) -> Option<String> {
+/// Derive a product group key from an uploaded filename: `product-group-battery.wasm` → `battery`.
+fn derive_product_group(filename: &str) -> Option<String> {
     let stem = std::path::Path::new(filename).file_stem()?.to_str()?;
-    let key = stem.trim_start_matches("sector-");
+    let key = stem.trim_start_matches("product-group-");
     (!key.is_empty()).then(|| key.to_owned())
 }
 
@@ -141,12 +146,15 @@ mod tests {
     use super::*;
 
     #[test]
-    fn derive_sector_strips_prefix_and_extension() {
+    fn derive_product_group_strips_prefix_and_extension() {
         assert_eq!(
-            derive_sector("sector-battery.wasm").as_deref(),
+            derive_product_group("product-group-battery.wasm").as_deref(),
             Some("battery")
         );
-        assert_eq!(derive_sector("textile.wasm").as_deref(), Some("textile"));
-        assert_eq!(derive_sector("sector-.wasm"), None);
+        assert_eq!(
+            derive_product_group("textile.wasm").as_deref(),
+            Some("textile")
+        );
+        assert_eq!(derive_product_group("product-group-.wasm"), None);
     }
 }

@@ -26,3 +26,7 @@ delete:
       $ref: ../components/responses/Forbidden.yaml
     '404':
       $ref: ../components/responses/NotFound.yaml
+    '400':
+      $ref: ../components/responses/BadRequest.yaml
+    '422':
+      $ref: ../components/responses/ValidationError.yaml

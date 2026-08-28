@@ -3,7 +3,7 @@
 //! Covers functionality not exercised by the inline unit tests in `lib.rs`:
 //! - QR PNG generation and cacheability
 //! - Content negotiation edge cases (no Accept, wildcard Accept)
-//! - HTML rendering with battery and textile sector data
+//! - HTML rendering with battery and textile product group data
 //! - Health and readiness probes
 //!
 //! JWS verification itself (valid/tampered/missing signatures, DID
@@ -67,11 +67,11 @@ fn sample_passport() -> serde_json::Value {
     })
 }
 
-/// `sample_passport()` plus sector data carrying a GTIN — what a real
+/// `sample_passport()` plus product group data carrying a GTIN — what a real
 /// carrier-bearing product passport looks like, for the QR tests.
 fn sample_passport_with_gtin() -> serde_json::Value {
     let mut p = sample_passport();
-    p["sectorData"] = json!({ "sector": "electronics", "gtin": "09506000134352" });
+    p["productGroupData"] = json!({ "productGroup": "electronics", "gtin": "09506000134352" });
     p
 }
 
@@ -81,8 +81,8 @@ fn sample_battery_passport() -> serde_json::Value {
         "productName": "EcoCell 48V",
         "status": "active",
         "manufacturer": {"name": "GreenCell GmbH", "address": "Munich, DE"},
-        "sectorData": {
-            "sector": "battery",
+        "productGroupData": {
+            "productGroup": "battery",
             "batteryChemistry": "LFP",
             "nominalVoltageV": 48.0,
             "nominalCapacityAh": 100.0,
@@ -100,8 +100,8 @@ fn sample_textile_passport() -> serde_json::Value {
         "productName": "Eco Jacket",
         "status": "active",
         "manufacturer": {"name": "FabriqGreen", "address": "Milan, IT"},
-        "sectorData": {
-            "sector": "textile",
+        "productGroupData": {
+            "productGroup": "textile",
             "countryOfOrigin": "IT",
             "careInstructions": "Machine wash cold",
             "chemicalComplianceStandard": "OEKO-TEX 100",
@@ -191,8 +191,8 @@ async fn qr_endpoint_returns_png() {
     assert!(body.len() > 100, "PNG must not be empty");
 }
 
-/// A passport whose sector data carries no GTIN (e.g. an unsold-goods report,
-/// or here simply no `sectorData` at all) has no valid GS1 Digital Link
+/// A passport whose product group data carries no GTIN (e.g. an unsold-goods report,
+/// or here simply no `productGroupData` at all) has no valid GS1 Digital Link
 /// carrier to print — the endpoint must fail closed, not encode a broken or
 /// misleading code.
 #[tokio::test]
@@ -294,11 +294,11 @@ async fn wildcard_accept_returns_json_ld() {
 }
 
 // ---------------------------------------------------------------------------
-// HTML rendering with sector data
+// HTML rendering with product group data
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-async fn html_includes_battery_sector_data() {
+async fn html_includes_battery_product_group_data() {
     let passport = sample_battery_passport();
     let vault = {
         let p = passport.clone();
@@ -584,7 +584,7 @@ async fn gtin_resolution_verifies_a_valid_signature() {
     let passport = json!({
         "id": passport_id,
         "productName": "Signed GTIN Widget",
-        "sectorData": { "sector": "electronics", "gtin": gtin },
+        "productGroupData": { "productGroup": "electronics", "gtin": gtin },
         "publicJwsSignature": valid_jws
     });
     let vault = Router::new().route(
@@ -739,4 +739,61 @@ async fn scan_telemetry_counts_terminal_views_and_qr_separately() {
     assert_eq!(batch.qr_renders.len(), 1, "qr render tracked separately");
     assert_eq!(batch.qr_renders[0].count, 1);
     assert_eq!(batch.qr_renders[0].dpp_id, id);
+}
+
+/// A restricted product-group field must not reach the public JSON view.
+///
+/// The resolver filters a passport in two passes: the envelope with the
+/// passport-level policy, then `productGroupData` — removed from the envelope and
+/// handed on as its own root document — with the product group's policy. The
+/// second pass has to say that its root is *already inside* the product group,
+/// because a payload filtered as an envelope has none of that product group's
+/// classes applied and every restricted field in it is served.
+///
+/// Nothing caught that before this test: the wrong scope compiles, returns 200,
+/// and produces a body that looks right unless you know which field should be
+/// missing. `cathodeMaterial` is Annex XIII point 2 — withheld from the public —
+/// so its presence here is the leak, in the response bytes.
+#[tokio::test]
+async fn a_restricted_product_group_field_is_absent_from_the_public_view() {
+    let mut passport = sample_battery_passport();
+    passport["schemaVersion"] = json!("2.6.0");
+    passport["productGroupData"]["cathodeMaterial"] = json!("LiFePO4 cathode, 12 kg");
+
+    let vault = {
+        let p = passport.clone();
+        Router::new().route(
+            "/public/dpp/{id}",
+            get(move || {
+                let pp = p.clone();
+                async move { axum::Json(pp) }
+            }),
+        )
+    };
+    let port = start_mock_vault(vault).await;
+    let app = router::build(test_state(format!("http://127.0.0.1:{port}")));
+
+    let req = Request::builder()
+        .uri("/dpp/00000000-0000-4000-9000-000000000002")
+        .header("accept", "application/ld+json")
+        .body(Body::empty())
+        .unwrap();
+    let resp = app.oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+        .await
+        .expect("read body");
+    let body = String::from_utf8(body.to_vec()).expect("utf-8");
+
+    assert!(
+        !body.contains("cathodeMaterial"),
+        "Annex XIII point 2 content reached the public view: {body}"
+    );
+    // The public half of the same payload is still served — this is a scoping
+    // test, not an argument for redacting everything.
+    assert!(
+        body.contains("batteryChemistry"),
+        "point 1 content must survive: {body}"
+    );
 }

@@ -46,6 +46,8 @@ tags:
     description: Lifecycle transitions — publish, suspend, archive.
   - name: Scan Telemetry
     description: Aggregate, privacy-safe resolution counts — per-passport and operator-wide rollups.
+  - name: Registry
+    description: EU-registry registration state — per-passport and operator-wide, plus the operator's verified-registry standing.
   - name: Evidence Dossiers
     description: Signed, self-contained evidence dossiers — generate, fetch, and verify (stored or uploaded) offline, with zero trust in the issuing node.
   - name: Operator
@@ -53,7 +55,7 @@ tags:
   - name: API Keys
     description: API key management — create, list, revoke.
   - name: Plugins
-    description: Signed sector-plugin hot-install — verify, persist, hot-swap (admin-only).
+    description: Signed product group-plugin hot-install — verify, persist, hot-swap (admin-only).
   - name: Webhooks
     description: Signed outbound event delivery — subscribe, list, remove, test.
   - name: Facilities
@@ -103,14 +105,14 @@ paths:
               $ref: '#/components/schemas/CreateRequest'
             example:
               productName: EcoCell Pro 48V
-              sector: battery
+              productGroup: battery
               manufacturer:
                 name: EcoTech GmbH
                 address: Hauptstraße 1, 10115 Berlin
               co2ePerUnit: 4.2
               batchId: BATCH-2026-04-001
-              sectorData:
-                sector: battery
+              productGroupData:
+                productGroup: battery
                 gtin: '09506000134352'
                 batteryChemistry: LFP
                 nominalVoltageV: 48
@@ -126,6 +128,8 @@ paths:
                 $ref: '#/components/schemas/PassportResponse'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '422':
           $ref: '#/components/responses/ValidationError'
   /vault/api/v1/dpp/validate:
@@ -138,7 +142,7 @@ paths:
         cannot disagree.
 
         **Two verdicts, because create and publish deliberately differ.** Create is
-        lenient about a sector with no resolvable JSON Schema — a draft is allowed
+        lenient about a product group with no resolvable JSON Schema — a draft is allowed
         to be incomplete — while publish fails closed on it, since a signed
         passport must have passed a real schema check. A body can therefore be
         creatable but not yet clear the publish-time schema gate, and that gap is
@@ -148,8 +152,8 @@ paths:
         would have returned, not a paraphrase of it. A body create would accept
         returns `200` with the two verdicts.
 
-        **`sectorDataValid` is not a publish verdict.** It reports one of publish's
-        preconditions — the sector-data gates — and publish applies others this
+        **`productGroupDataValid` is not a publish verdict.** It reports one of publish's
+        preconditions — the product group-data gates — and publish applies others this
         route does not run:
 
         - the **registry identity** requirement (a default facility and a primary
@@ -159,7 +163,7 @@ paths:
         - the **compliance** gate, which needs a `placedOnMarketDate` and a stored
           passport.
 
-        A `sectorDataValid: true` therefore means "this body clears the schema
+        A `productGroupDataValid: true` therefore means "this body clears the schema
         gate", never "publish will succeed". The field was called `publishValid`
         and was renamed because that name promised the latter.
       tags:
@@ -176,36 +180,12 @@ paths:
       responses:
         '200':
           description: |
-            The body is creatable. `sectorDataValid` says whether its sector data
+            The body is creatable. `productGroupDataValid` says whether its product group data
             would also clear the publish-time schema gate.
           content:
             application/json:
               schema:
-                type: object
-                required:
-                  - createValid
-                  - sectorDataValid
-                properties:
-                  createValid:
-                    type: boolean
-                    description: Always `true` on a 200 — a rejected body returns 422.
-                    example: true
-                  sectorDataValid:
-                    type: boolean
-                    description: |
-                      Whether the sector data would clear the publish-time schema
-                      gate. `true` when no sector data is supplied, since publish
-                      only validates it when present. Not a publish verdict — see
-                      the endpoint description for the gates this does not run.
-                    example: false
-                  detail:
-                    type:
-                      - string
-                      - 'null'
-                    description: |
-                      Why the sector data would be refused. `null` when
-                      `sectorDataValid` is `true`.
-                    example: 'cannot publish: no registered JSON Schema for sector ''furniture'' — publish requires a resolvable schema when sector data is present'
+                $ref: '#/components/schemas/ValidateResponse'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -261,24 +241,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                required:
-                  - dpps
-                  - total
-                  - limit
-                  - skip
-                properties:
-                  dpps:
-                    type: array
-                    items:
-                      $ref: '#/components/schemas/PassportResponse'
-                  total:
-                    type: integer
-                    description: Total count (optionally filtered by status and/or facilityId)
-                  limit:
-                    type: integer
-                  skip:
-                    type: integer
+                $ref: '#/components/schemas/PassportListResponse'
         '401':
           $ref: '#/components/responses/Unauthorized'
   /vault/api/v1/dpp/by-identity:
@@ -286,7 +249,7 @@ paths:
       operationId: findDppByIdentity
       summary: Find a DPP by exact compound identity
       description: |
-        Look up a passport by exact (sector, GTIN, batch) match, across
+        Look up a passport by exact (product group, GTIN, batch) match, across
         `draft` and `active` statuses. Backs the import delta-matcher —
         not intended as a general-purpose search (use `GET /dpps` for that).
         `batchId` omitted matches only passports with no batch set.
@@ -296,7 +259,7 @@ paths:
         - BearerApiKey: []
         - BasicAuth: []
       parameters:
-        - name: sector
+        - name: productGroup
           in: query
           required: true
           schema:
@@ -349,6 +312,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/PassportResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '404':
@@ -386,12 +351,18 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/PassportResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
         '409':
           $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
   /vault/api/v1/dpp/{dppId}/publish:
     post:
       operationId: publishDpp
@@ -428,12 +399,18 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/PassportResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
         '409':
           $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
   /vault/api/v1/dpp/{dppId}/suspend:
     post:
       operationId: suspendDpp
@@ -460,11 +437,7 @@ paths:
         content:
           application/json:
             schema:
-              type: object
-              properties:
-                reason:
-                  type: string
-                  example: Product recall — safety investigation pending
+              $ref: '#/components/schemas/SuspendRequest'
       responses:
         '200':
           description: DPP suspended. Returns the full passport record.
@@ -472,8 +445,12 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/PassportResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
         '409':
@@ -504,12 +481,18 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/PassportResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
         '409':
           $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
   /vault/api/v1/dpp/{dppId}/eol:
     post:
       operationId: declareDppEol
@@ -544,8 +527,12 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/PassportResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
         '409':
@@ -583,8 +570,12 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/TransferRecord'
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
         '409':
@@ -618,16 +609,149 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/TransferRecord'
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '404':
-          description: No pending transfer to accept for this DPP.
+          description: |
+            This DPP has no transfer chain at all — no handover has ever been
+            initiated for it. A chain that exists but carries nothing pending is a
+            `422`, not this.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '422':
+          description: |
+            There is no pending handover to accept, the pending record carries no
+            outgoing signature, or that signature failed verification.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+  /vault/api/v1/dpp/{dppId}/transfer/reject:
+    post:
+      operationId: rejectDppTransfer
+      summary: Reject a pending transfer of responsibility
+      description: |
+        End the pending handover as **refused**. The record becomes terminal and can
+        never complete, and the passport's transfer chain is free to carry a new
+        handover.
+
+        Paired with cancel, this is one of the two ways out of a handover the
+        counterparty never acted on. A chain refuses a new transfer while any
+        record is still pending, so without these routes a passport whose
+        counterparty went silent could never be transferred again.
+
+        **This records an outcome, not who caused it.** A node serves one operator,
+        and the only credentials it accepts are that operator's — the incoming
+        operator holds no key here and cannot call this route. So reject and cancel
+        are both initiated by *this* node's operator; they differ in the outcome
+        written to the record and in the states core permits them from, not in who
+        made the call. Choose reject to record that the counterparty declined.
+      tags:
+        - DPP Lifecycle
+      security:
+        - BearerApiKey: []
+        - BasicAuth: []
+      parameters:
+        - name: dppId
+          in: path
+          required: true
+          schema:
+            $ref: '#/components/schemas/DppId'
+      responses:
+        '200':
+          description: Transfer rejected.
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ApiError'
+                $ref: '#/components/schemas/TransferRecord'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          description: |
+            This DPP has no transfer chain at all — no handover has ever been
+            initiated for it. A chain that exists but carries nothing pending is a
+            `422`, not this.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
         '422':
-          $ref: '#/components/responses/ValidationError'
+          description: |
+            There is no pending handover to reject, or the record's state does not
+            permit it. Core allows a reject only from `Initiated`.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+  /vault/api/v1/dpp/{dppId}/transfer/cancel:
+    post:
+      operationId: cancelDppTransfer
+      summary: Cancel a pending transfer of responsibility
+      description: |
+        End the pending handover as **withdrawn**, before it completes. The record
+        becomes terminal and the passport's transfer chain is free to carry a new
+        handover.
+
+        **This records an outcome, not who caused it** — see reject, which is the
+        same call with a different outcome written to the record.
+
+        Core permits a cancel from one state more than a reject: `Accepted` as well
+        as `Initiated`. That is not reachable over this API today, because accepting
+        completes the record in the same call, so no stored record is ever left in
+        `Accepted`. Cancel is nonetheless the right call for a handover this
+        operator is withdrawing, and the broader rule is core's, not a promise this
+        route makes.
+      tags:
+        - DPP Lifecycle
+      security:
+        - BearerApiKey: []
+        - BasicAuth: []
+      parameters:
+        - name: dppId
+          in: path
+          required: true
+          schema:
+            $ref: '#/components/schemas/DppId'
+      responses:
+        '200':
+          description: Transfer cancelled.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TransferRecord'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          description: |
+            This DPP has no transfer chain at all — no handover has ever been
+            initiated for it. A chain that exists but carries nothing pending is a
+            `422`, not this.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '422':
+          description: |
+            There is no pending handover to cancel, or the record's state does not
+            permit it. Core allows a cancel from `Initiated` or `Accepted`.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
   /vault/api/v1/dpp/{dppId}/history:
     get:
       operationId: getDppHistory
@@ -656,6 +780,8 @@ paths:
                 type: array
                 items:
                   $ref: '#/components/schemas/AuditEntry'
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '404':
@@ -697,33 +823,9 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  windowDays:
-                    type: integer
-                    example: 30
-                  totalScans:
-                    type: integer
-                    example: 128
-                  scansHtml:
-                    type: integer
-                    example: 96
-                  scansJson:
-                    type: integer
-                    example: 32
-                  qrRenders:
-                    type: integer
-                    example: 4
-                  daily:
-                    type: array
-                    items:
-                      type: object
-                      properties:
-                        day:
-                          type: string
-                          format: date
-                        count:
-                          type: integer
+                $ref: '#/components/schemas/PassportScanStats'
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
   /vault/api/v1/stats:
@@ -756,20 +858,74 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  windowDays:
-                    type: integer
-                    example: 30
-                  totalScans:
-                    type: integer
-                    example: 4213
-                  totalQrRenders:
-                    type: integer
-                    example: 57
-                  distinctPassportsScanned:
-                    type: integer
-                    example: 312
+                $ref: '#/components/schemas/OperatorScanStats'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /vault/api/v1/dpp/{dppId}/registry:
+    get:
+      operationId: getDppRegistryStatus
+      summary: EU-registry state for one passport
+      description: |
+        What the EU registry knows about this passport: its queued registration,
+        any handover notifications, and who is responsible for it now.
+
+        Registration is the legal obligation the rest of the system exists to
+        discharge, and this is where an operator sees whether it has been —
+        the state otherwise lives only in outbox tables, metrics and log lines.
+
+        **Absent is not zero.** A deployment without the registry queues reports
+        `configured: false` and omits the detail, rather than a row of zeros that
+        would read as "everything is registered".
+      tags:
+        - Registry
+      security:
+        - BearerApiKey: []
+        - BasicAuth: []
+      parameters:
+        - name: dppId
+          in: path
+          required: true
+          schema:
+            $ref: '#/components/schemas/DppId'
+      responses:
+        '200':
+          description: Registry state for the passport.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PassportRegistryView'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /vault/api/v1/registry:
+    get:
+      operationId: getRegistryRollup
+      summary: Operator-wide EU-registry rollup
+      description: |
+        Registration and handover queue totals for this operator, plus its
+        verified-registry standing.
+
+        Verification is reported whether or not the queues are configured: verified
+        status lapses at the latest three years after verification (sooner if the
+        electronic identification means expire), and a lapsed operator cannot
+        register or amend anything until it verifies again.
+
+        **Absent is not zero** — see the per-passport route.
+      tags:
+        - Registry
+      security:
+        - BearerApiKey: []
+        - BasicAuth: []
+      responses:
+        '200':
+          description: Registry rollup for the operator.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RegistryRollupView'
         '401':
           $ref: '#/components/responses/Unauthorized'
   /vault/api/v1/dpp/{dppId}/verify-tree:
@@ -802,6 +958,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/TreeReport'
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '404':
@@ -842,34 +1000,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                required:
-                  - unsealedPublished
-                  - pending
-                  - sealed
-                  - exhausted
-                  - sealingConfigured
-                properties:
-                  unsealedPublished:
-                    type: integer
-                    format: int64
-                    description: Published passports carrying no seal at all. `0` is the healthy state.
-                    example: 0
-                  pending:
-                    type: integer
-                    format: int64
-                    description: Outbox rows awaiting a sealing attempt.
-                  sealed:
-                    type: integer
-                    format: int64
-                    description: Outbox rows whose seal is on the passport.
-                  exhausted:
-                    type: integer
-                    format: int64
-                    description: Outbox rows that gave up after exhausting retries.
-                  sealingConfigured:
-                    type: boolean
-                    description: False when no seal provider is configured, in which case every count above is `0` for that reason alone.
+                $ref: '#/components/schemas/SealSummaryResponse'
         '401':
           $ref: '#/components/responses/Unauthorized'
   /vault/api/v1/dpp/{dppId}/seal:
@@ -919,123 +1050,9 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                required:
-                  - declaredBy
-                  - format
-                  - sealValue
-                  - sealedAt
-                  - signingCertRef
-                  - placeholder
-                  - currentJws
-                  - currentPayloadHash
-                  - sealedPayloadHash
-                  - coverage
-                  - verification
-                properties:
-                  declaredBy:
-                    type: object
-                    description: |
-                      Who declared the content this seal covers, which is not who
-                      sealed it. A seal proves a document came from whoever holds
-                      the certificate; it carries no statement about scope, so
-                      "we vouch for this content" and "we transmitted this intact"
-                      look identical. Every audience view strips the seal, making
-                      this the only surface where the two can be collapsed.
-                    required:
-                      - manufacturer
-                      - operatorIdentifier
-                      - responsibilityMayHaveTransferred
-                      - note
-                    properties:
-                      manufacturer:
-                        type: string
-                        description: |
-                          The manufacturer named in the sealed passport, frozen at publish.
-                      operatorIdentifier:
-                        type:
-                          - string
-                          - 'null'
-                        description: |
-                          The Annex III(k) unique operator identifier recorded at publish. `null` means none was recorded — never that none applies.
-                      responsibilityMayHaveTransferred:
-                        type: boolean
-                        description: |
-                          True when the passport's transfer chain records a
-                          completed handover, so the party responsible **now** is
-                          not the one named above. The names above are frozen into
-                          the sealed bytes and cannot be rewritten, so this flag is
-                          the only honest way to say the answer is historical.
-                      note:
-                        type: string
-                        description: |
-                          States the sealing/authorship distinction rather than leaving it to be inferred from field names.
-                  format:
-                    type: string
-                    description: AdES format of `sealValue`.
-                    example: CADES
-                  sealValue:
-                    type: string
-                    description: Base64 detached CAdES (`.p7s`) as returned by the QTSP.
-                  sealedAt:
-                    type: string
-                    format: date-time
-                  signingCertRef:
-                    type:
-                      - string
-                      - 'null'
-                    description: |
-                      Hex SHA-256 of the certificate the seal names as its
-                      signer, **as reported by the seal** — read out of the CAdES
-                      structure, never verified.
-
-                      It answers *which* certificate to ask about, not whether
-                      that certificate was qualified or on the EU Trusted List
-                      when the seal was made; both are the independent
-                      validator's question. `null` when the seal predates
-                      extraction or could not be parsed.
-                    pattern: ^[0-9a-f]{64}$
-                  placeholder:
-                    type: boolean
-                    description: |
-                      `true` when this is a development placeholder with no legal
-                      validity. A production node refuses to boot in that state.
-                  currentJws:
-                    type: string
-                    description: The passport's current compact JWS.
-                  currentPayloadHash:
-                    type: string
-                    description: |
-                      Hex SHA-256 of `currentJws` — the digest a seal over this
-                      passport's present signature would be taken over.
-                    pattern: ^[0-9a-f]{64}$
-                  sealedPayloadHash:
-                    type:
-                      - string
-                      - 'null'
-                    description: |
-                      Hex SHA-256 this node asked the backend to seal, from the
-                      outbox row that bought `sealValue`. `null` when the node
-                      holds no such row — a seal restored from a backup or
-                      produced elsewhere.
-                    pattern: ^[0-9a-f]{64}$
-                  coverage:
-                    type: string
-                    enum:
-                      - current
-                      - superseded
-                      - unknown
-                    description: |
-                      Whether the stored seal covers the passport's current
-                      signature, per this node's own records.
-
-                      `current` — the requested digest is the passport's current
-                      one. `superseded` — the passport was re-published after
-                      this seal was bought. `unknown` — no record; only the
-                      external validator can answer.
-                  verification:
-                    type: string
-                    description: What was and was not checked by this node.
+                $ref: '#/components/schemas/SealResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '404':
@@ -1046,7 +1063,7 @@ paths:
       summary: Re-check plausibility-lint findings
       description: |
         Recomputes the `dpp-rules` plausibility lint pack against the DPP's
-        current sector data and persists the refreshed `lintResult` (pack
+        current product group data and persists the refreshed `lintResult` (pack
         version, findings, assessed-at timestamp). Findings are non-binding —
         arithmetic and physical-plausibility checks distinct from binding
         compliance rules — and never gate publish or any other transition.
@@ -1073,8 +1090,12 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/PassportResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
   /vault/api/v1/dpp/{dppId}/evidence:
@@ -1110,8 +1131,12 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/EvidenceDossierRecord'
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
         '409':
@@ -1140,6 +1165,8 @@ paths:
                 type: array
                 items:
                   $ref: '#/components/schemas/EvidenceDossierSummary'
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '404':
@@ -1276,8 +1303,12 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/OperatorConfig'
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
   /vault/api/v1/api-keys:
     get:
       operationId: listApiKeys
@@ -1301,6 +1332,8 @@ paths:
                   $ref: '#/components/schemas/ApiKey'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
     post:
       operationId: createApiKey
       summary: Create a new API key
@@ -1327,6 +1360,8 @@ paths:
                 $ref: '#/components/schemas/NewApiKey'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '422':
           $ref: '#/components/responses/ValidationError'
   /vault/api/v1/api-keys/{id}:
@@ -1354,19 +1389,21 @@ paths:
         '400':
           description: Invalid key ID format.
           content:
-            application/json:
+            application/problem+json:
               schema:
-                $ref: '#/components/schemas/ApiError'
+                $ref: '#/components/schemas/Problem'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
   /vault/api/v1/plugins:
     post:
       operationId: installPlugin
-      summary: Install a signed sector plugin
+      summary: Install a signed product group plugin
       description: |
-        Verify, persist, and hot-swap a signed sector plugin — no node restart.
+        Verify, persist, and hot-swap a signed product group plugin — no node restart.
 
         The node verifies the uploaded artifact's detached signature against its
         pinned publisher key, gates the plugin's declared ABI, instantiate-smokes
@@ -1395,14 +1432,14 @@ paths:
                   type: string
                   format: binary
                   description: |
-                    The `.wasm` or precompiled `.cwasm` plugin artifact. Its filename determines the sector when `sector` is omitted (`sector-<key>.wasm`) and whether it is treated as precompiled (`.cwasm`).
+                    The `.wasm` or precompiled `.cwasm` plugin artifact. Its filename determines the product group when `productGroup` is omitted (`product-group-<key>.wasm`) and whether it is treated as precompiled (`.cwasm`).
                 sig:
                   type: string
                   format: binary
                   description: Detached Ed25519 signature over SHA-256 of the artifact bytes.
-                sector:
+                productGroup:
                   type: string
-                  description: Sector key; derived from the filename if omitted.
+                  description: Product group key; derived from the filename if omitted.
                   example: battery
       responses:
         '201':
@@ -1410,16 +1447,9 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  sector:
-                    type: string
-                    example: battery
-                  abiVersion:
-                    type: string
-                    example: '1.1'
+                $ref: '#/components/schemas/InstalledPlugin'
         '400':
-          description: Malformed multipart body (missing `wasm`/`sig`, or the sector could not be determined).
+          description: Malformed multipart body (missing `wasm`/`sig`, or the product group could not be determined).
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -1448,31 +1478,11 @@ paths:
               schema:
                 type: array
                 items:
-                  type: object
-                  properties:
-                    id:
-                      type: string
-                      format: uuid
-                    url:
-                      type: string
-                    events:
-                      type: array
-                      items:
-                        type: string
-                    active:
-                      type: boolean
-                    description:
-                      type:
-                        - string
-                        - 'null'
-                    createdAt:
-                      type: string
-                      format: date-time
-                    updatedAt:
-                      type: string
-                      format: date-time
+                  $ref: '#/components/schemas/WebhookSubscription'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
     post:
       operationId: createWebhook
       summary: Create a webhook subscription
@@ -1491,58 +1501,18 @@ paths:
         content:
           application/json:
             schema:
-              type: object
-              required:
-                - url
-              properties:
-                url:
-                  type: string
-                  format: uri
-                  example: https://hooks.example.com/odal
-                events:
-                  type: array
-                  items:
-                    type: string
-                  description: Event subjects to receive, or ["*"] for all. Defaults to all.
-                  example:
-                    - dpp.passport.published
-                    - dpp.passport.transferred
-                description:
-                  type: string
+              $ref: '#/components/schemas/NewWebhookSubscription'
       responses:
         '201':
           description: Subscription created. The `secret` field is shown ONCE.
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  id:
-                    type: string
-                    format: uuid
-                  url:
-                    type: string
-                  events:
-                    type: array
-                    items:
-                      type: string
-                  active:
-                    type: boolean
-                  description:
-                    type:
-                      - string
-                      - 'null'
-                  createdAt:
-                    type: string
-                    format: date-time
-                  updatedAt:
-                    type: string
-                    format: date-time
-                  secret:
-                    type: string
-                    description: Signing secret — shown once, store it securely.
+                $ref: '#/components/schemas/CreatedWebhookResponse'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '422':
           $ref: '#/components/responses/ValidationError'
   /vault/api/v1/webhooks/{id}:
@@ -1570,11 +1540,13 @@ paths:
         '400':
           description: Invalid subscription id.
           content:
-            application/json:
+            application/problem+json:
               schema:
-                $ref: '#/components/schemas/ApiError'
+                $ref: '#/components/schemas/Problem'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
   /vault/api/v1/webhooks/{id}/test:
@@ -1599,8 +1571,12 @@ paths:
       responses:
         '202':
           description: Test delivery enqueued.
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
   /vault/api/v1/node/state:
@@ -1650,37 +1626,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                required:
-                  - userId
-                  - scope
-                properties:
-                  userId:
-                    type: string
-                    description: |
-                      Caller identity — the API key's label, or the admin username
-                      for local Basic auth.
-                    example: svc-dashboard
-                  scope:
-                    type: string
-                    enum:
-                      - read
-                      - write
-                      - admin
-                    description: |
-                      What this credential authorises. `write` covers passport
-                      create/update/lifecycle; `admin` additionally covers API-key
-                      management and operator config.
-                    example: read
-                  keyId:
-                    type:
-                      - string
-                      - 'null'
-                    format: uuid
-                    description: |
-                      Id of the API key row that authenticated this request.
-                      `null` for local Basic auth, which has no key row.
-                    example: 0198f3a1-4c2e-7b3d-9f10-2a5c8e7d1b40
+                $ref: '#/components/schemas/WhoamiResponse'
         '401':
           $ref: '#/components/responses/Unauthorized'
   /vault/api/v1/facilities:
@@ -1758,12 +1704,16 @@ paths:
       responses:
         '204':
           description: Facility removed.
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/ValidationError'
   /vault/api/v1/facilities/{id}/audit:
     get:
       operationId: getFacilityAudit
@@ -1792,6 +1742,8 @@ paths:
                 type: array
                 items:
                   $ref: '#/components/schemas/RegistryIdentityAudit'
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -1816,6 +1768,8 @@ paths:
       responses:
         '204':
           description: Default facility set.
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -1898,12 +1852,16 @@ paths:
       responses:
         '204':
           description: Operator identifier removed.
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/ValidationError'
   /vault/api/v1/operator-identifiers/{id}/audit:
     get:
       operationId: getOperatorIdentifierAudit
@@ -1932,6 +1890,8 @@ paths:
                 type: array
                 items:
                   $ref: '#/components/schemas/RegistryIdentityAudit'
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -1956,6 +1916,8 @@ paths:
       responses:
         '204':
           description: Primary operator identifier set.
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -1980,7 +1942,7 @@ paths:
         - name: schema_view
           in: query
           required: false
-          description: Request a read-time schema-upcast view. Set to a newer sector schema version (e.g. `2.0.0`); the response becomes `{ passport, schemaView }` — the canonical signed passport plus the derived view with lens provenance. The original is never re-signed.
+          description: Request a read-time schema-upcast view. Set to a newer product group schema version (e.g. `2.0.0`); the response becomes `{ passport, schemaView }` — the canonical signed passport plus the derived view with lens provenance. The original is never re-signed.
           schema:
             type: string
           example: 2.0.0
@@ -1991,24 +1953,26 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/PassportResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '404':
           description: Not found or not published.
           content:
-            application/json:
+            application/problem+json:
               schema:
-                $ref: '#/components/schemas/ApiError'
+                $ref: '#/components/schemas/Problem'
         '410':
           description: Passport has been suspended.
           content:
-            application/json:
+            application/problem+json:
               schema:
-                $ref: '#/components/schemas/ApiError'
+                $ref: '#/components/schemas/Problem'
         '422':
-          description: The requested `schema_view` is unavailable (no lens path, a downcast, or the passport has no sector data).
+          description: The requested `schema_view` is unavailable (no lens path, a downcast, or the passport has no product group data).
           content:
-            application/json:
+            application/problem+json:
               schema:
-                $ref: '#/components/schemas/ApiError'
+                $ref: '#/components/schemas/Problem'
   /vault/public/dpp/by-gtin/{gtin}:
     get:
       operationId: publicGetDppByGtin
@@ -2042,12 +2006,14 @@ paths:
                 $ref: '#/components/schemas/PassportResponse'
         '404':
           $ref: '#/components/responses/NotFound'
+        '410':
+          $ref: '#/components/responses/Gone'
         '422':
           description: The requested `schema_view` is unavailable.
           content:
-            application/json:
+            application/problem+json:
               schema:
-                $ref: '#/components/schemas/ApiError'
+                $ref: '#/components/schemas/Problem'
   /vault/credential/dpp/{dppId}:
     get:
       operationId: readDppByCredential
@@ -2083,24 +2049,26 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/PassportResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '401':
           description: The presented credential failed verification.
           content:
-            application/json:
+            application/problem+json:
               schema:
-                $ref: '#/components/schemas/ApiError'
+                $ref: '#/components/schemas/Problem'
         '404':
           description: Not found or not published.
           content:
-            application/json:
+            application/problem+json:
               schema:
-                $ref: '#/components/schemas/ApiError'
+                $ref: '#/components/schemas/Problem'
         '410':
           description: This passport has been suspended.
           content:
-            application/json:
+            application/problem+json:
               schema:
-                $ref: '#/components/schemas/ApiError'
+                $ref: '#/components/schemas/Problem'
   /vault/internal/scan-batch:
     post:
       operationId: ingestScanBatch
@@ -2144,6 +2112,8 @@ paths:
       responses:
         '200':
           description: Service is ready (DB connection verified).
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
   /vault/api/v1/info:
     get:
       operationId: vaultInfo
@@ -2294,18 +2264,18 @@ paths:
       responses:
         '200':
           description: Service is up.
-  /integrator/api/v1/templates/{sector}:
+  /integrator/api/v1/templates/{productGroup}:
     get:
       operationId: getImportTemplate
       summary: Download a CSV import template
       description: |
-        Returns the canonical CSV import template for a sector (`battery`,
+        Returns the canonical CSV import template for a product group (`battery`,
         `textile`). `?format=xlsx` returns 501 (download the CSV and open it in
         a spreadsheet app). Unauthenticated.
       tags:
         - Integrator
       parameters:
-        - name: sector
+        - name: productGroup
           in: path
           required: true
           schema:
@@ -2327,22 +2297,95 @@ paths:
               schema:
                 type: string
         '404':
-          description: No template for this sector.
+          description: No template for this product group.
         '501':
           description: XLSX export not yet implemented.
+  /integrator/api/v1/product-groups:
+    get:
+      operationId: listProductGroups
+      summary: List product groups and their passport obligations
+      description: |
+        Whether a digital product passport is required for each product group this
+        node knows of, from what date, under which acts, and whether this build can
+        actually make a binding determination. Unauthenticated.
+
+        "Knows of" is wider than "has a schema for". A product group reached by an
+        act while carrying no catalog descriptor is listed too, with a `null`
+        `title` — that group has no schema, plugin or template to be discovered from,
+        so this is the only place it can be asked about.
+
+        **Every date is served with its `basis`.** Most of the catalog is undated,
+        and of the dates that exist some trace to an adopted text (`sourced`) and
+        some are a reading (`assumed`). A date without its basis would present a
+        qualified reading as an unqualified claim, so `basis` is always present
+        wherever a date or a retention period is.
+
+        `required` and `determinable` are different questions and are reported
+        separately. An obligation can exist while the implementing acts that define
+        the technical requirements do not, in which case nothing is bindingly
+        determinable yet however clearly the duty is written.
+
+        Schema versions are not restated here — see `/integrator/api/v1/schemas`,
+        which is their one home.
+      tags:
+        - Integrator
+      security: []
+      responses:
+        '200':
+          description: Every product group this build knows of.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProductGroupObligationList'
+  /integrator/api/v1/product-groups/{productGroup}:
+    get:
+      operationId: getProductGroupObligation
+      summary: One product group's passport obligation
+      description: |
+        The passport obligation for a single product group. Unauthenticated.
+
+        A key neither catalog knows is a `404` rather than an entry with an empty
+        obligation — "this node knows nothing about it" and "no passport is
+        required" are different answers, and the second would be a compliance claim
+        the node is not entitled to make.
+
+        A key an act reaches while no product group descriptor exists for it is
+        **not** a `404`. The node holds a recorded binding for such a group, and
+        refusing it would deny knowledge the node has. It is served with a `null`
+        `title` and its obligation in full.
+      tags:
+        - Integrator
+      security: []
+      parameters:
+        - name: productGroup
+          in: path
+          required: true
+          description: The product group catalog key.
+          schema:
+            type: string
+          example: toy
+      responses:
+        '200':
+          description: The product group's obligation.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProductGroupObligation'
+        '404':
+          $ref: '#/components/responses/NotFound'
   /integrator/api/v1/schemas:
     get:
       operationId: listSectorSchemas
-      summary: List sector schemas and their versions
+      summary: List product group schemas and their versions
       description: |
-        Every sector with a JSON Schema, the version a new passport is validated
+        Every product group with a JSON Schema, the version a new passport is validated
         against (`current`), and every version a stored passport may legitimately
         record (`versions`). Unauthenticated.
       tags:
         - Integrator
       responses:
         '200':
-          description: The available sector schemas.
+          description: The available product group schemas.
           content:
             application/json:
               schema:
@@ -2353,7 +2396,7 @@ paths:
                     items:
                       type: object
                       properties:
-                        sector:
+                        productGroup:
                           type: string
                           example: battery
                         current:
@@ -2368,10 +2411,10 @@ paths:
                           example:
                             - 1.0.0
                             - 2.6.0
-  /integrator/api/v1/schemas/{sector}:
+  /integrator/api/v1/schemas/{productGroup}:
     get:
       operationId: getCurrentSectorSchema
-      summary: Fetch a sector's current JSON Schema
+      summary: Fetch a product group's current JSON Schema
       description: |
         The schema a passport created today is validated against, resolved through
         the same registry the publish gate uses — never a copy, which would drift in
@@ -2386,7 +2429,7 @@ paths:
       tags:
         - Integrator
       parameters:
-        - name: sector
+        - name: productGroup
           in: path
           required: true
           schema:
@@ -2394,21 +2437,21 @@ paths:
             example: battery
       responses:
         '200':
-          description: The sector's current JSON Schema.
+          description: The product group's current JSON Schema.
           content:
             application/json:
               schema:
                 type: object
         '404':
-          description: No schema for this sector; the body names the known sectors.
+          description: No schema for this product group; the body names the known product groups.
           content:
             application/problem+json:
               schema:
                 $ref: '#/components/schemas/Problem'
-  /integrator/api/v1/schemas/{sector}/{version}:
+  /integrator/api/v1/schemas/{productGroup}/{version}:
     get:
       operationId: getPinnedSectorSchema
-      summary: Fetch a pinned version of a sector's JSON Schema
+      summary: Fetch a pinned version of a product group's JSON Schema
       description: |
         A stored passport records the `schemaVersion` it was written under, so a
         client holding one needs that exact schema rather than whatever is current.
@@ -2418,7 +2461,7 @@ paths:
       tags:
         - Integrator
       parameters:
-        - name: sector
+        - name: productGroup
           in: path
           required: true
           schema:
@@ -2432,7 +2475,7 @@ paths:
             example: 2.6.0
       responses:
         '200':
-          description: The sector's JSON Schema at that version.
+          description: The product group's JSON Schema at that version.
           content:
             application/json:
               schema:
@@ -2449,12 +2492,12 @@ paths:
             application/problem+json:
               schema:
                 $ref: '#/components/schemas/Problem'
-  /integrator/api/v1/import/{sector}:
+  /integrator/api/v1/import/{productGroup}:
     post:
       operationId: importFile
       summary: Bulk-import passports from a file
       description: |
-        Upload a CSV or XLSX file to create draft passports for a sector
+        Upload a CSV or XLSX file to create draft passports for a product group
         (`battery`, `textile`, `steel`, `aluminium`, `tyre`). The caller's
         `Authorization: Bearer` token is validated and forwarded to the vault.
 
@@ -2470,7 +2513,7 @@ paths:
       security:
         - BearerApiKey: []
       parameters:
-        - name: sector
+        - name: productGroup
           in: path
           required: true
           schema:
@@ -2505,10 +2548,12 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ImportAsyncResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '404':
-          description: Unknown sector.
+          description: Unknown product group.
         '422':
           $ref: '#/components/responses/ValidationError'
   /integrator/api/v1/imports/{job_id}:
@@ -2672,6 +2717,8 @@ paths:
                 format: binary
         '404':
           $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/ValidationError'
   /01/{gtin}:
     get:
       operationId: resolveByGtin
@@ -2929,32 +2976,38 @@ components:
           maximum: 100
           description: Percentage of recycled content (0.0–100.0)
           example: 35
-        originCountry:
+        countryOfOrigin:
           type: string
           minLength: 2
           maxLength: 2
           description: ISO 3166-1 alpha-2 country code
           example: DE
-    SectorData:
+    ProductGroupData:
       type: object
       description: |
-        Sector-specific data, **internally tagged** by a `sector` discriminator
-        (`#[serde(tag = "sector")]`) — e.g.
-        `{ "sector": "battery", "gtin": "…", "batteryChemistry": "LFP", … }`.
-        The remaining fields are sector-specific and validated against the
-        sector's versioned JSON schema. Sectors include `battery`, `textile`,
+        Product group-specific data, **internally tagged** by a `productGroup`
+        discriminator — e.g.
+        `{ "productGroup": "battery", "gtin": "…", "batteryChemistry": "LFP", … }`.
+        The remaining fields are product group-specific and validated against the
+        product group's versioned JSON schema. Sectors include `battery`, `textile`,
         `steel`, `aluminium`, `tyre`, `electronics`, and others.
+
+        The tag is **open**. A product group this build does not model round-trips its
+        tag and payload verbatim instead of failing to parse, so a group added to the
+        catalog does not require a client release. That is why the server does not
+        derive this shape with `#[serde(tag = …)]`, which would close the set at
+        compile time.
       required:
-        - sector
+        - productGroup
       discriminator:
-        propertyName: sector
+        propertyName: productGroup
       properties:
-        sector:
+        productGroup:
           type: string
           example: battery
       additionalProperties: true
       example:
-        sector: battery
+        productGroup: battery
         gtin: '09506000134352'
         batteryChemistry: LFP
         nominalVoltageV: 48
@@ -2991,11 +3044,11 @@ components:
           type: string
           description: Human-readable product name. Must not be blank.
           example: EcoCell Pro 48V
-        sector:
+        productGroup:
           type: string
           description: |
-            EU ESPR sector (the dispatch key), e.g. `battery`, `textile`,
-            `electronics`. Optional — derived from `sectorData` when omitted.
+            EU ESPR product group (the dispatch key), e.g. `battery`, `textile`,
+            `electronics`. Optional — derived from `productGroupData` when omitted.
           example: battery
         manufacturer:
           $ref: '#/components/schemas/ManufacturerInfo'
@@ -3005,15 +3058,24 @@ components:
             $ref: '#/components/schemas/MaterialEntry'
         co2ePerUnit:
           type: number
-          description: CO₂ equivalent per unit in kg
+          minimum: 0
+          description: |-
+            CO₂ equivalent per unit, in kg. Must be finite and non-negative; anything else is rejected with `422`.
+            Supplied here as a scalar and stored as a `CarbonFootprint` object, so the value echoed back on `PassportResponse` is `{ "valueKg": … }` rather than the bare number sent. The lifecycle stage and system boundary that make two figures comparable cannot be set through this route.
           example: 4.2
         repairabilityScore:
           type: number
           minimum: 0
-          maximum: 100
-          description: Non-regulatory repairability indicator (0–100). NOT the EU 2023/1669 repairability class. Optional.
-        sectorData:
-          $ref: '#/components/schemas/SectorData'
+          maximum: 10
+          description: |-
+            Non-regulatory repairability heuristic, **0–10**. Not EN 45554 or EU 2023/1669 — those have prescribed methodologies this does not implement. Anything outside 0–10 is rejected with `422`.
+            Supplied here as a scalar and stored as a `RepairabilityScore` object, so the value echoed back on `PassportResponse` is `{ "overall": … }` rather than the bare number sent.
+          example: 7.5
+        productGroupData:
+          description: Optional at create; an explicit `null` is accepted and equivalent to omitting it. Publish validates it only when present.
+          anyOf:
+            - $ref: '#/components/schemas/ProductGroupData'
+            - type: 'null'
         batchId:
           type: string
           description: Optional batch or lot identifier
@@ -3035,8 +3097,8 @@ components:
         schemaVersion:
           type: string
           description: |
-            Sector schema version. Optional, and the only accepted value is the
-            sector's **current** version — omitting it is equivalent. Any other
+            Product group schema version. Optional, and the only accepted value is the
+            product group's **current** version — omitting it is equivalent. Any other
             value is rejected with `422`.
 
             It is not the caller's to choose: the stored version selects the
@@ -3053,11 +3115,256 @@ components:
           items:
             $ref: '#/components/schemas/PassportRef'
           description: Cross-operator references to this product's constituent passports (its bill of materials). Local cycles / over-depth are refused at create/update; immutable after publish.
+        commodityCode:
+          type: string
+          description: Customs tariff classification — HS-6, CN-8 or TARIC-10 (6, 8 or 10 digits, no separators). Registration data the EU registry verifies against the ranges its product group permits.
+          example: '85076000'
     DppId:
       type: string
       format: uuid
       description: UUID v7 identifier assigned on creation. Embedded in QR codes and public URLs.
       example: 019723f4-1a2b-7c3d-8e4f-5a6b7c8d9e0f
+    RecordedBasis:
+      type: string
+      enum:
+        - catalog
+        - operator
+      description: |
+        Who asserted that an act applies. Read it as provenance, not as how much to
+        trust the entry.
+
+        `catalog` — resolved from the instrument catalog.
+
+        `operator` — asserted by the economic operator placing the product on the
+        market. **Not a fallback.** The catalog cannot be exhaustive: horizontal
+        ecodesign requirements cover sets of products that were never shortlisted as
+        product groups, so an act may apply to a product while reaching no product
+        group the catalog models. An operator who knows an act applies must be able to
+        say so.
+      example: catalog
+    InstrumentRef:
+      type: object
+      description: |
+        One legal instrument recorded on a passport as applicable to it, and who
+        asserted that it applies.
+
+        Fixed when the product was placed on the market and never recomputed. Carries
+        no status, deliberately: a passport freezes its applicable set at issuance, and
+        re-deriving how far along an act is would misstate what governed the product at
+        that moment. The obligation endpoint's `ReachingInstrument` answers the live
+        question and does carry status.
+      properties:
+        instrument:
+          type: string
+          description: The instrument's catalog id.
+          example: battery-reg-2023-1542
+        recorded:
+          $ref: '#/components/schemas/RecordedBasis'
+          description: Who asserted this entry, fixed at issuance along with the rest of the applicable set.
+      required:
+        - instrument
+        - recorded
+      additionalProperties: false
+    Granularity:
+      type: string
+      enum:
+        - model
+        - batch
+        - item
+      description: |
+        The level a passport is issued at.
+
+        Set by the applicable delegated act (ESPR Art. 9(2)(d)), so it is a property
+        of the law rather than a choice made here, and unset while no adopted act has
+        fixed one — which is every product group today.
+
+        Unset is not `item`: the EU registry registers batteries per item, but that is
+        the registry's operational position, not a level any act has set.
+
+        One schema serves both the level a passport records and the level an act
+        fixes, because those are the same enumeration in the code. They were written
+        out twice, which made them two things to drift and left neither checked
+        against the code that emits them.
+      example: item
+    CarbonFootprint:
+      type: object
+      description: A CO₂-equivalent figure with the LCA context needed to read it. A bare number is not comparable across products — the lifecycle stage and system boundary are what make two figures mean the same thing.
+      required:
+        - valueKg
+      properties:
+        valueKg:
+          type: number
+          description: CO₂-equivalent value in kg per functional unit.
+          example: 45.2
+        lifecycleStage:
+          type: string
+          description: LCA lifecycle stage this figure covers.
+          enum:
+            - cradle-to-gate
+            - cradle-to-grave
+            - cradle-to-cradle
+            - gate-to-grave
+            - other
+        systemBoundary:
+          type: string
+          description: LCA system-boundary standard used.
+          enum:
+            - EN-15804
+            - ISO-14044
+            - GHG-protocol
+            - other
+        methodologyRef:
+          type: string
+          description: Citation for the methodology behind the figure.
+        performanceClass:
+          type: string
+          maxLength: 8
+          description: Performance class label as defined by the applicable delegated act (e.g. an A–G band). Free text because the banding is per product group.
+          example: B
+    RepairCriterion:
+      type: object
+      description: One weighted criterion contributing to a repairability score.
+      required:
+        - name
+        - score
+        - weight
+      properties:
+        name:
+          type: string
+          example: disassembly_depth
+        score:
+          type: number
+        weight:
+          type: number
+    RepairabilityScore:
+      type: object
+      description: Repairability as a **non-regulatory heuristic**. Deliberately not an EN 45554 or Regulation (EU) 2023/1669 index — those have prescribed methodologies this does not implement, and presenting a heuristic as either would misstate it.
+      required:
+        - overall
+      properties:
+        overall:
+          type: number
+          minimum: 0
+          maximum: 10
+          example: 7.5
+        criteria:
+          type: array
+          description: Per-criterion breakdown. Empty when only the overall score is known.
+          items:
+            $ref: '#/components/schemas/RepairCriterion'
+    ComplianceStatus:
+      type: string
+      description: Overall compliance determination. `PASSTHROUGH_NO_VALIDATION` means no product group plugin was loaded and nothing was assessed — it is not a pass.
+      enum:
+        - PASSTHROUGH_NO_VALIDATION
+        - COMPLIANT
+        - NON_COMPLIANT
+        - NOT_ASSESSED
+        - NOT_IMPLEMENTED
+    ComplianceFinding:
+      type: object
+      description: A single compliance finding. Severity is encoded by which array it lands in on `ComplianceResult` — `violations` bind, `warnings` advise — so there is no separate severity field.
+      required:
+        - code
+        - message
+      properties:
+        code:
+          type: string
+          description: Stable machine-readable code.
+          example: battery.recycled_content.cobalt_below_2031
+        field:
+          type: string
+          description: JSON-pointer-style locator, or absent when the finding is not tied to a single field.
+          example: /recycledContentCobaltPct
+        message:
+          type: string
+    ComplianceResult:
+      type: object
+      description: The computed compliance determination. Part of the signed passport payload and immutable after retention lock. Absent until a determination has been computed — for example on a product group with no plugin loaded.
+      required:
+        - co2eScore
+        - repairabilityIndex
+        - recycledContentPct
+        - complianceStatus
+      properties:
+        co2eScore:
+          type:
+            - number
+            - 'null'
+          description: Calculated or manufacturer-supplied CO₂e score in kg.
+        repairabilityIndex:
+          type:
+            - number
+            - 'null'
+          description: Calculated or manufacturer-supplied repairability index (0.0–10.0).
+        recycledContentPct:
+          type:
+            - number
+            - 'null'
+        complianceStatus:
+          $ref: '#/components/schemas/ComplianceStatus'
+        violations:
+          type: array
+          description: Binding findings — these block publish when the product group is in force. Empty for passthrough or not-assessed determinations.
+          items:
+            $ref: '#/components/schemas/ComplianceFinding'
+        warnings:
+          type: array
+          description: Advisory findings — surfaced but never blocking (e.g. thresholds not yet in force).
+          items:
+            $ref: '#/components/schemas/ComplianceFinding'
+        rulesetVersion:
+          type: string
+          description: Version of the resolved calculation ruleset, when one ran.
+        assessedAt:
+          type: string
+          format: date-time
+        receipt:
+          type: object
+          additionalProperties: true
+          description: Calculation receipt (input hash, ruleset id and version, factor dataset version and table hash) for notified-body audit. Present only when a calculation actually ran.
+    LintSeverity:
+      type: string
+      description: Severity of a plausibility finding. Neither value blocks publish — lint is advisory by construction, unlike a compliance violation.
+      enum:
+        - WARNING
+        - NOTICE
+    LintFinding:
+      type: object
+      required:
+        - code
+        - field
+        - severity
+        - message
+      properties:
+        code:
+          type: string
+          example: mass.balance
+        field:
+          type: string
+          example: /materials
+        severity:
+          $ref: '#/components/schemas/LintSeverity'
+        message:
+          type: string
+    LintResult:
+      type: object
+      description: Non-binding plausibility findings — arithmetic and physical-plausibility checks, distinct from binding compliance rules. Never gates publish, and may be recomputed at any time after publish via `POST /dpp/{dppId}/lint` (unlike `complianceResult`, which is frozen into the signed payload).
+      required:
+        - packVersion
+        - assessedAt
+      properties:
+        packVersion:
+          type: string
+          description: Version of the lint pack that produced these findings.
+          example: 1.0.0
+        findings:
+          type: array
+          items:
+            $ref: '#/components/schemas/LintFinding'
+        assessedAt:
+          type: string
+          format: date-time
     PassportStatus:
       type: string
       enum:
@@ -3065,6 +3372,8 @@ components:
         - active
         - suspended
         - archived
+        - superseded
+        - deactivated
       description: |
         DPP lifecycle state. The domain model uses `Published` internally;
         the wire format uses `active`. Deserialization accepts both.
@@ -3072,16 +3381,80 @@ components:
         - `active`: published and signed; publicly resolvable via QR
         - `suspended`: temporarily hidden (recall, dispute); JWS preserved
         - `archived`: end-of-life; immutable; retained for regulatory record-keeping
+        - `superseded`: replaced by a newer passport version; terminal
+        - `deactivated`: end-of-life declared (recycled, destroyed under a
+          derogation, exported, or lost); terminal. The typed reason is carried by
+          the EOL event, not this field
 
         Valid transitions:
         draft → active, draft → archived,
-        active → suspended, active → archived,
-        suspended → active, suspended → archived.
+        active → suspended, active → archived, active → superseded,
+        active → deactivated,
+        suspended → active, suspended → archived, suspended → deactivated.
+
+        `archived`, `superseded` and `deactivated` are terminal.
+    FacilitySnapshot:
+      type: object
+      description: 'Annex III facility details copied by value into the passport at create time. Self-contained on purpose: the signed passport stays a complete record even after the operator retires the facility from their mutable registry.'
+      required:
+        - scheme
+        - value
+        - name
+        - country
+      properties:
+        scheme:
+          type: string
+          example: gln
+        value:
+          type: string
+          example: '4012345000009'
+        name:
+          type: string
+        country:
+          type: string
+          minLength: 2
+          maxLength: 2
+          description: ISO 3166-1 alpha-2 country code.
+        address:
+          type: string
+    SealFormat:
+      type: string
+      description: AdES format of a seal value.
+      enum:
+        - JADES
+        - PADES
+        - CADES
+        - XADES
+    SealedEnvelope:
+      type: object
+      description: An eIDAS electronic seal over the passport's full-payload signature. Check `placeholder` before treating it as evidence — a placeholder envelope is produced when no QTSP is configured and carries no legal validity.
+      required:
+        - format
+        - sealValue
+        - sealedAt
+        - placeholder
+      properties:
+        format:
+          $ref: '#/components/schemas/SealFormat'
+        sealValue:
+          type: string
+          description: Base64-encoded seal value as returned by the QTSP.
+        signingCertRef:
+          type: string
+          description: Reference to the signing certificate chain.
+        sealedAt:
+          type: string
+          format: date-time
+        placeholder:
+          type: boolean
+          description: '`true` when this envelope has **no** legal validity. Consumers must check this flag rather than inferring validity from the envelope''s presence.'
     PassportResponse:
       type: object
+      description: The canonical Digital Product Passport record. Fields marked required are emitted on every read; the rest are omitted when unset rather than sent as null, so a consumer must treat absence and null as the same thing.
       required:
         - id
         - productName
+        - productGroup
         - manufacturer
         - materials
         - status
@@ -3089,6 +3462,7 @@ components:
         - createdAt
         - updatedAt
         - retentionLocked
+        - version
       properties:
         id:
           $ref: '#/components/schemas/DppId'
@@ -3099,6 +3473,23 @@ components:
         productName:
           type: string
           example: EcoCell Pro 48V
+        productGroup:
+          type: string
+          description: 'EU ESPR product group — the delegated-act bucket selecting the applicable schema and plugin. Deliberately an open string, not a closed enum: adding a product group is a catalog manifest plus a schema, not a release, and a product group this build does not know still round-trips its wire tag verbatim.'
+          example: battery
+        applicableInstruments:
+          type: array
+          description: |-
+            The legal instruments this passport was issued under, fixed when the product was placed on the market and never recomputed afterwards.
+
+            A set rather than a single value because acts accumulate: ESPR Art. 5(7) lets a group-specific delegated act supplement a horizontal one and the Regulation states no precedence rule, so the governing law is the union of the members' requirements.
+
+            Not derivable from `productGroup`. A horizontal act can reach a product whose product group is not one the catalog models, so an entry may be asserted by the economic operator rather than resolved from the catalog — which `recorded` distinguishes. Read it as who asserted the entry, not as how much to trust it.
+          items:
+            $ref: '#/components/schemas/InstrumentRef'
+        granularity:
+          $ref: '#/components/schemas/Granularity'
+          description: The level this passport describes. Omitted entirely while no adopted act has fixed one — see `Granularity` for why omitted is not `item`.
         manufacturer:
           $ref: '#/components/schemas/ManufacturerInfo'
         materials:
@@ -3106,15 +3497,28 @@ components:
           items:
             $ref: '#/components/schemas/MaterialEntry'
         co2ePerUnit:
-          type:
-            - number
-            - 'null'
+          description: 'CO₂e per unit — manufacturer-supplied or engine-calculated. An object, not a bare number: a figure without its lifecycle stage and system boundary is not comparable to another product''s.'
+          anyOf:
+            - $ref: '#/components/schemas/CarbonFootprint'
+            - type: 'null'
         repairabilityScore:
-          type:
-            - number
-            - 'null'
-        sectorData:
-          $ref: '#/components/schemas/SectorData'
+          description: Non-regulatory repairability heuristic — see the schema's own note.
+          anyOf:
+            - $ref: '#/components/schemas/RepairabilityScore'
+            - type: 'null'
+        complianceResult:
+          allOf:
+            - $ref: '#/components/schemas/ComplianceResult'
+          description: The computed compliance determination, attached at create/update. Part of the signed payload and immutable after retention lock. Absent until a determination has been computed.
+        lintResult:
+          allOf:
+            - $ref: '#/components/schemas/LintResult'
+          description: Advisory plausibility findings. Absent until a lint pass has run, and recomputable after publish — unlike `complianceResult`.
+        productGroupData:
+          description: Explicitly `null` — not omitted — for a passport whose product group data has not been supplied yet, which is every draft created without it. The field has no `skip_serializing_if`, so it is always present on the wire.
+          anyOf:
+            - $ref: '#/components/schemas/ProductGroupData'
+            - type: 'null'
         status:
           $ref: '#/components/schemas/PassportStatus'
         qrCodeUrl:
@@ -3127,7 +3531,15 @@ components:
           type:
             - string
             - 'null'
-          description: JWS compact serialisation (Ed25519). Null until published.
+          description: Compact JWS (Ed25519) over the **full** canonical payload. Null until published.
+        publicJwsSignature:
+          type: string
+          description: Compact JWS over the **public (redacted) view**, so anyone can verify the public passport independently — the resolver checks this on the unauthenticated public route. Set at publish; absent for drafts.
+        disclosureSignatures:
+          type: object
+          additionalProperties:
+            type: string
+          description: 'Compact JWS signatures over the **non-public** redacted views, keyed by disclosure set (e.g. `public+restricted+individual`), never by audience name. Every audience receiving more than the public view needs a proof over *its* view: `publicJwsSignature` covers only the public payload and `jwsSignature` only the full one, so a reader handed a filtered body and either of those holds a signature that cannot verify against the bytes it received. Empty for drafts.'
         createdAt:
           type: string
           format: date-time
@@ -3139,26 +3551,164 @@ components:
             - string
             - 'null'
           format: date-time
+        placedOnMarketDate:
+          type: string
+          format: date
+          description: The date the product was placed on the EU market — the regulated triggering event fixing **which law governs it**, distinct from the three lifecycle dates above, none of which selects a rule. Staged EU obligations attach at placing on the market and do not move afterwards. Absence means the date was not declared; it is **not** licence to substitute the current date, and a determination depending on it has no answer.
         schemaVersion:
           type: string
+          description: Semantic version of the **product group** schema `productGroupData` was validated against. Scoped to `productGroupData` only — the envelope fields have no equivalent version and never will, because they are shared by every product group's stored documents. The envelope's compatibility rule is additive only, permanently.
           example: 1.0.0
         retentionLocked:
           type: boolean
           description: |
             Set to `true` permanently on first publish. Retention-locked
             passports must remain accessible for the EU ESPR retention period.
-    ApiError:
+        version:
+          type: integer
+          minimum: 1
+          description: Monotonic version counter. `1` on first publish; incremented on the successor each time a new version supersedes this record.
+        supersedesId:
+          allOf:
+            - $ref: '#/components/schemas/DppId'
+          description: The passport this record supersedes. Absent for first versions.
+        parentPassportRef:
+          allOf:
+            - $ref: '#/components/schemas/PassportRef'
+          description: Cross-operator reference to the predecessor this passport derives from (second-life successor linkage).
+        componentRefs:
+          type: array
+          description: 'Cross-operator references to the constituent passports this product is assembled from — its bill of materials. The inverse edge of `parentPassportRef`: these point down to many constituents, that points up to one predecessor.'
+          items:
+            $ref: '#/components/schemas/PassportRef'
+        retentionUntil:
+          type: string
+          format: date-time
+          description: Deadline by which this record must remain accessible, computed at publish from the product group's retention period. Regulation (EU) 2024/1781 Art. 9(2)(i) requires the delegated act to specify a period corresponding to at least the product's expected lifetime; Art. 11(e) restates it as an essential requirement, available including after the responsible operator's insolvency, liquidation or cessation of activity.
+        productId:
+          type: string
+          format: uuid
+          description: Opaque link to an internal product-template record. Not a legal identifier.
+        commodityCode:
+          type: string
+          description: Customs tariff classification — HS-6, CN-8 or TARIC-10. Absent where the product group does not call for one; this node will not invent a classification it cannot derive.
+          example: '85076000'
+        operatorIdentifier:
+          type: string
+          description: 'EORI or national economic-operator identifier for the responsible party (Regulation (EU) 2024/1781 Annex III(k); issuance mechanics in Art. 12). **Frozen at publish — this is the operator that published the passport, not necessarily the one responsible for it now.** A transfer of responsibility does not rewrite it and cannot: published content is immutable and covered by the signature over it. For current responsibility, read the transfer chain.'
+          example: DE123456789
+        facility:
+          allOf:
+            - $ref: '#/components/schemas/FacilitySnapshot'
+          description: Snapshot of the Annex III facility where this product was manufactured or processed, copied by value at create time.
+        seal:
+          allOf:
+            - $ref: '#/components/schemas/SealedEnvelope'
+          description: The eIDAS electronic seal applied to this passport. Absent until a seal has been applied; check its `placeholder` flag rather than inferring validity from presence.
+    Problem:
       type: object
+      description: |
+        RFC 7807 / RFC 9457 problem details. The shape
+        `dpp-common::http_problem::Problem` produces, served as
+        `application/problem+json`.
+
+        `type` is derived from `title`, so each distinct `title` used across the
+        codebase is a stable catalogue key that clients may depend on.
       required:
-        - error
-        - message
+        - type
+        - title
+        - status
       properties:
-        error:
+        type:
           type: string
-          example: VALIDATION_ERROR
-        message:
+          format: uri
+          description: Absolute URI identifying the problem type.
+          example: https://problems.odal-node.io/not-found
+        title:
           type: string
-          example: productName is required
+          description: Short human-readable summary of the problem type.
+          example: Not Found
+        status:
+          type: integer
+          description: The HTTP status code, mirroring the status line.
+          example: 404
+        detail:
+          type: string
+          description: Human-readable explanation for this specific occurrence.
+          example: 'No schema for product group ''nosuchsector''. Known product groups: aluminium, battery.'
+        instance:
+          type: string
+          format: uri-reference
+          description: URI reference identifying this specific occurrence.
+    ValidateResponse:
+      type: object
+      description: 'The dry-run verdict. Two booleans rather than one, because create and publish deliberately differ: a body can be creatable as a draft and not yet publishable, and collapsing that into a single flag would hide the gap until the caller tried to publish.'
+      required:
+        - createValid
+        - productGroupDataValid
+      properties:
+        createValid:
+          type: boolean
+          description: Always `true` on a 200 — a body create would reject gets back the identical 422 create would have returned, not a paraphrase of it.
+          example: true
+        productGroupDataValid:
+          type: boolean
+          description: |
+            Whether the product group data would clear the publish-time schema gate. `true`
+            when no product group data is supplied, since publish only validates it when
+            present.
+
+            **Not a publish verdict.** It reports one of publish's preconditions, and
+            publish applies others this route does not run: the registry-identity
+            requirement (a default facility and a primary operator identifier), which
+            needs operator state this route never reads; the category-mandatory
+            content gate, reachable only by attempting the lifecycle transition; and
+            the compliance gate, which needs a `placedOnMarketDate` and a stored
+            passport. `true` means "this body clears the schema gate", never "publish
+            will succeed" — the field was called `publishValid` and was renamed
+            because that name promised the latter.
+          example: false
+        detail:
+          type:
+            - string
+            - 'null'
+          description: Why the product group data would be refused. Null when `productGroupDataValid` is true.
+          example: 'cannot publish: no registered JSON Schema for product group ''furniture'' — publish requires a resolvable schema when product group data is present'
+    PassportListResponse:
+      type: object
+      description: One page of passports, with the totals needed to page through them.
+      required:
+        - dpps
+        - total
+        - limit
+        - skip
+      properties:
+        dpps:
+          type: array
+          items:
+            $ref: '#/components/schemas/PassportResponse'
+        total:
+          type: integer
+          description: Total matching the filter across every page — deliberately not the length of `dpps`.
+        limit:
+          type: integer
+          description: The page size actually applied, after clamping.
+        skip:
+          type: integer
+          description: The offset this page starts at.
+    SuspendRequest:
+      type: object
+      description: |
+        Optional body for suspending a published passport.
+
+        The body itself is optional — `POST` with no body suspends without a recorded
+        reason. Where a reason is supplied it is appended to the audit entry, not
+        stored on the passport, so it is not part of the signed document.
+      properties:
+        reason:
+          type: string
+          description: Human-readable reason for the suspension, appended to the audit trail.
+          example: Product recall — safety investigation pending
     DerogationRef:
       type: object
       required:
@@ -3340,11 +3890,11 @@ components:
             - string
             - 'null'
           description: Compact JWS from the outgoing operator, authorising the handover.
-        toSignature:
+        nodeAcceptanceAttestation:
           type:
             - string
             - 'null'
-          description: Compact JWS from the incoming operator, accepting responsibility.
+          description: Attestation by the hosting node that the acceptance step ran. Not the incoming operator's own signature - a node cannot sign for a counterparty whose key it does not hold. The authoritative record of who holds the obligations is the EU registry under Impl. Reg. (EU) 2026/1778 Art. 6a.
         initiatedAt:
           type: string
           format: date-time
@@ -3372,7 +3922,6 @@ components:
       required:
         - id
         - passportId
-        - operatorId
         - actor
         - action
         - timestamp
@@ -3381,8 +3930,6 @@ components:
           type: string
           format: uuid
         passportId:
-          type: string
-        operatorId:
           type: string
         actor:
           type: string
@@ -3405,6 +3952,250 @@ components:
         timestamp:
           type: string
           format: date-time
+        prevHash:
+          type:
+            - string
+            - 'null'
+          description: 'Hex SHA-256 of the previous entry''s `entryHash`, or null for the first entry in a passport''s chain. Together with `entryHash` this makes the trail append-only and tamper-evident: recomputing the chain detects any inserted, removed or edited entry.'
+        entryHash:
+          type:
+            - string
+            - 'null'
+          description: Hex SHA-256 over this entry's canonical (RFC 8785) bytes including `prevHash`. Null only for entries written before the chain was introduced.
+    DailyScanCount:
+      type: object
+      required:
+        - day
+        - count
+      properties:
+        day:
+          type: string
+          format: date
+        count:
+          type: integer
+    PassportScanStats:
+      type: object
+      description: Per-passport scan aggregates over a trailing window. `totalScans` and `qrRenders` sit side by side and are never combined — a QR render is label production, not a resolution. Nothing about the scanner (IP, agent, session) is collected or returned; the counters carry no such fields.
+      required:
+        - windowDays
+        - totalScans
+        - scansHtml
+        - scansJson
+        - daily
+        - qrRenders
+      properties:
+        windowDays:
+          type: integer
+        totalScans:
+          type: integer
+        scansHtml:
+          type: integer
+        scansJson:
+          type: integer
+        daily:
+          type: array
+          description: Per-day scan totals, oldest first.
+          items:
+            $ref: '#/components/schemas/DailyScanCount'
+        qrRenders:
+          type: integer
+    OperatorScanStats:
+      type: object
+      description: Operator-wide scan rollup over a trailing window.
+      required:
+        - windowDays
+        - totalScans
+        - totalQrRenders
+        - distinctPassportsScanned
+      properties:
+        windowDays:
+          type: integer
+        totalScans:
+          type: integer
+        totalQrRenders:
+          type: integer
+        distinctPassportsScanned:
+          type: integer
+    RegistrationView:
+      type: object
+      description: One passport's registration, as the EU-registry queue holds it.
+      required:
+        - status
+        - attempts
+        - stalled
+      properties:
+        status:
+          type: string
+          enum:
+            - pending
+            - submitted
+            - registered
+            - rejected
+            - deactivated
+        registryId:
+          type: string
+          description: The registry's own record id, once it has issued one.
+        message:
+          type: string
+          description: The last thing the registry (or the drain) said about it.
+        attempts:
+          type: integer
+        stalled:
+          type: boolean
+          description: True once `attempts` reaches the drain threshold — the row is not going to succeed without someone looking at it.
+        statusIntent:
+          type: string
+          description: 'A status change owed to the registry, independent of the queue state. Nothing drains these: the registry publishes no status-push API, so they are held durably and reported rather than accumulating out of sight.'
+    TransferView:
+      type: object
+      description: One transfer-of-responsibility notification owed to the registry.
+      required:
+        - transferId
+        - status
+        - attempts
+        - stalled
+      properties:
+        transferId:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum:
+            - pending
+            - notified
+            - rejected
+        registryId:
+          type: string
+        message:
+          type: string
+        attempts:
+          type: integer
+        stalled:
+          type: boolean
+    CurrentOperatorView:
+      type: object
+      description: The operator responsible for a passport **today**, derived from its transfer chain. Reported separately from the passport's own `operatorIdentifier`, which is the operator that *published* it — frozen at publish and covered by the signature, so a transfer does not rewrite it. For a passport that has changed hands the two differ, and that difference is a fact about the product.
+      required:
+        - did
+        - name
+        - country
+        - transferCount
+      properties:
+        did:
+          type: string
+        name:
+          type: string
+        country:
+          type: string
+        transferCount:
+          type: integer
+          description: Completed handovers this passport has been through.
+    PassportRegistryView:
+      type: object
+      description: 'EU-registry state for one passport. `configured: false` means this deployment has no registry queues at all — reported instead of a row of zeros, which would read as "everything is registered".'
+      required:
+        - passportId
+        - configured
+      properties:
+        passportId:
+          type: string
+        configured:
+          type: boolean
+        registration:
+          allOf:
+            - $ref: '#/components/schemas/RegistrationView'
+          description: 'Absent when the passport has never been published: it owes no registration, which is different from owing one that has not happened.'
+        transfers:
+          type: array
+          description: Handover notifications recorded for this passport, newest first.
+          items:
+            $ref: '#/components/schemas/TransferView'
+        currentOperator:
+          allOf:
+            - $ref: '#/components/schemas/CurrentOperatorView'
+          description: Absent when the passport has never been transferred, in which case its own `operatorIdentifier` is current.
+    VerificationView:
+      type: object
+      description: The operator's verified-registry standing. Verified status ends when the electronic identification means used expire, and at the latest three years after verification; an operator that lets it lapse cannot register or amend anything until it verifies again. Reported whether or not the queues are configured.
+      required:
+        - current
+      properties:
+        current:
+          type: boolean
+          description: False both when never verified and when lapsed — the registry refuses either way, though they are different situations to act on.
+        verifiedAt:
+          type: string
+          format: date-time
+          description: Absent when never verified.
+        expiresAt:
+          type: string
+          format: date-time
+          description: The three-year cap. The eID means may expire sooner, which this cannot see, so it is an upper bound rather than a promise.
+        daysRemaining:
+          type: integer
+          description: Negative once lapsed. Absent when never verified.
+    RegistrationCounts:
+      type: object
+      required:
+        - pending
+        - submitted
+        - registered
+        - rejected
+        - deactivated
+        - statusIntents
+        - stalled
+        - unregisteredPublished
+      properties:
+        pending:
+          type: integer
+        submitted:
+          type: integer
+        registered:
+          type: integer
+        rejected:
+          type: integer
+        deactivated:
+          type: integer
+        statusIntents:
+          type: integer
+          description: Status changes owed to the registry that nothing drains.
+        stalled:
+          type: integer
+          description: Rows that have retried past the point of self-recovery.
+        unregisteredPublished:
+          type: integer
+          description: 'Published passports with **no** outbox row at all — they owe a registration nobody is tracking (published before the outbox existed, or lost to an older write path). Reported, not repaired: the queued payload is what a drain replays and there is none to rebuild, so fabricating a row would create an entry that can never drain.'
+    TransferCounts:
+      type: object
+      required:
+        - pending
+        - notified
+        - rejected
+        - stalled
+      properties:
+        pending:
+          type: integer
+        notified:
+          type: integer
+        rejected:
+          type: integer
+        stalled:
+          type: integer
+    RegistryRollupView:
+      type: object
+      description: 'Operator-wide EU-registry state. `configured: false` means this deployment has no registry queues; the counts are then omitted rather than reported as zero.'
+      required:
+        - configured
+        - verification
+      properties:
+        configured:
+          type: boolean
+        verification:
+          $ref: '#/components/schemas/VerificationView'
+        registrations:
+          $ref: '#/components/schemas/RegistrationCounts'
+        transfers:
+          $ref: '#/components/schemas/TransferCounts'
     TreeNodeReport:
       type: object
       required:
@@ -3445,6 +4236,127 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/TreeNodeReport'
+    SealSummaryResponse:
+      type: object
+      description: 'Operator-wide sealing state. Read `sealingConfigured` first: when it is false every count is `0` because this node has no outbox, **not** because nothing is outstanding.'
+      required:
+        - unsealedPublished
+        - pending
+        - sealed
+        - exhausted
+        - sealingConfigured
+      properties:
+        unsealedPublished:
+          type: integer
+          description: Published passports carrying no seal at all. `0` is the healthy state.
+        pending:
+          type: integer
+        sealed:
+          type: integer
+        exhausted:
+          type: integer
+          description: Rows that gave up after exhausting their retries.
+        sealingConfigured:
+          type: boolean
+    SealDeclarer:
+      type: object
+      description: |
+        Who declared the content a seal covers, which is not who sealed it.
+
+        A seal proves a document came from whoever holds the certificate. It carries no
+        statement about *scope*: "we vouch for this content" and "we transmitted this
+        intact" look identical. A response that serves a seal and names no declaring
+        party invites the reader to collapse the two, whatever anyone intended.
+
+        Every audience view strips the seal, so this is the only surface where that
+        collapse is reachable — and its readers being authenticated and technical makes
+        them more likely to build on the assumption, not less.
+      required:
+        - manufacturer
+        - operatorIdentifier
+        - responsibilityMayHaveTransferred
+        - note
+      properties:
+        manufacturer:
+          type: string
+          description: The manufacturer named in the sealed passport, frozen at publish.
+          example: TestCorp GmbH
+        operatorIdentifier:
+          type:
+            - string
+            - 'null'
+          description: The Annex III(k) unique operator identifier recorded at publish. `null` means none was recorded — never that none applies.
+        responsibilityMayHaveTransferred:
+          type: boolean
+          description: |
+            True when the passport's transfer chain records a **completed** handover,
+            so the party responsible now is not the one named above. An initiated
+            handover nobody accepted has moved nothing and does not set this.
+
+            The names above are frozen into the sealed bytes and cannot be rewritten —
+            a published passport's content is immutable and the seal covers it — so
+            this flag is the only honest way to say the answer above is historical
+            rather than current.
+        note:
+          type: string
+          description: States the sealing/authorship distinction outright rather than leaving it to be inferred from field names, in the same spirit as `verification`.
+    Coverage:
+      type: string
+      description: 'Whether the stored seal covers the passport''s current signature. Answered from this node''s record of what it *asked* to be sealed — weaker than a validator''s verdict, stronger than nothing: it cannot confirm the CAdES, but a passport re-published after sealing is knowable without any AdES tooling.'
+      enum:
+        - current
+        - superseded
+        - unknown
+    SealResponse:
+      type: object
+      description: The eIDAS seal, plus what is needed to check it — and an explicit statement of what this node did **not** check.
+      required:
+        - declaredBy
+        - format
+        - sealValue
+        - sealedAt
+        - placeholder
+        - currentJws
+        - currentPayloadHash
+        - coverage
+        - verification
+      properties:
+        declaredBy:
+          $ref: '#/components/schemas/SealDeclarer'
+        format:
+          type: string
+          description: AdES format of `sealValue`.
+          example: CADES
+        sealValue:
+          type: string
+          description: Base64 detached CAdES (`.p7s`) as returned by the QTSP.
+        sealedAt:
+          type: string
+          format: date-time
+        signingCertRef:
+          type:
+            - string
+            - 'null'
+          description: Hex SHA-256 of the certificate the seal names as its signer, **as reported by the seal** — read out of the CAdES, never verified. It answers *which* certificate to ask about, not whether that certificate was qualified or on the EU Trusted List. Null when the seal predates extraction or could not be parsed.
+        placeholder:
+          type: boolean
+          description: True when this is a placeholder with no legal validity.
+        currentJws:
+          type: string
+          description: The passport's **current** compact JWS.
+        currentPayloadHash:
+          type: string
+          description: Hex SHA-256 of `currentJws`.
+        sealedPayloadHash:
+          type:
+            - string
+            - 'null'
+          description: 'Hex SHA-256 this node **asked** the backend to seal. A record, not proof: it says what was requested, while the validator''s extracted message digest says what the CAdES actually covers. The two agreeing is the cross-check. Null for a seal restored from a backup or produced elsewhere.'
+        coverage:
+          $ref: '#/components/schemas/Coverage'
+        verification:
+          type: string
+          description: 'Stated, not implied: this node did not cryptographically validate the CAdES. A detached CAdES must be checked by an independent AdES validator against the EU Trusted List.'
     EvidenceDossierSummary:
       type: object
       description: Listing projection of a stored dossier — everything but the document.
@@ -3479,6 +4391,7 @@ components:
         - issuerDid
         - createdAt
         - nodeVersion
+        - coreVersion
         - contentHashes
       properties:
         formatVersion:
@@ -3503,6 +4416,10 @@ components:
           description: member name -> hex SHA-256 of that member's JCS-canonical bytes.
           additionalProperties:
             type: string
+        coreVersion:
+          type: string
+          description: The `dpp-core` version this node was built against. Recorded alongside `nodeVersion` because the two move independently — the regulatory logic, schemas and disclosure policy behind a determination live in core, so a dossier naming only the node version cannot be traced back to the code that produced its verdict.
+          example: 0.18.0
     SignedLayer:
       type: object
       description: |
@@ -3517,6 +4434,37 @@ components:
         jws:
           type: string
           description: Compact EdDSA JWS.
+    QualifiedSealMember:
+      type: object
+      description: |
+        The passport's eIDAS qualified seal as carried inside an evidence dossier:
+        the seal envelope plus the JWS it was computed over and that payload's hash,
+        so a verifier holding only the dossier has both the CAdES and the preimage to
+        check it against.
+
+        Included because a dossier is what an authority is handed, and the seal is its
+        one member carrying an Art. 35(2) presumption — and because it is unreachable
+        otherwise: the seal is stripped from `fullView` and `publicView` alike, since
+        it covers the full-payload signature rather than any redaction. Bound into
+        `contentHashes` like every other member.
+
+        ⚠️ **This shape is described here but not enforced anywhere.** The field is
+        held as untyped JSON on the dossier record, so no Rust type declares these
+        three members and the OpenAPI contract test has nothing to compare them
+        against. Treat the property list as documentation of intent, not as a
+        guarantee. Giving the dossier a real type for this member would close that,
+        and is the only thing that would.
+      properties:
+        seal:
+          type: object
+          description: The `SealedEnvelope` as persisted on the passport.
+        signedOverJws:
+          type: string
+          description: The JWS the seal was computed over.
+        payloadHash:
+          type: string
+          pattern: ^[0-9a-f]{64}$
+          description: SHA-256 of the sealed payload, lowercase hex.
     EvidenceDossier:
       type: object
       description: |
@@ -3590,30 +4538,10 @@ components:
             it proves each node's signed public view is unchanged against its
             pinned hash, not the cryptographic validity of that node's signature.
         qualifiedSeal:
-          type:
-            - object
-            - 'null'
-          description: |
-            The passport's eIDAS qualified seal, present iff one has been
-            applied. Carries the seal envelope plus `signedOverJws` and
-            `payloadHash`, so a verifier holding only this dossier has both the
-            CAdES and the preimage to check it against.
-
-            Included because a dossier is what an authority is handed and the
-            seal is its one member carrying an Art. 35(2) presumption — and
-            because it is unreachable otherwise: the seal is stripped from
-            `fullView` and `publicView` alike, since it covers the full-payload
-            signature rather than any redaction. Bound into `contentHashes` like
-            every other member. `null` when the seal is still queued.
-          properties:
-            seal:
-              type: object
-              description: The `SealedEnvelope` as persisted on the passport.
-            signedOverJws:
-              type: string
-            payloadHash:
-              type: string
-              pattern: ^[0-9a-f]{64}$
+          anyOf:
+            - $ref: '#/components/schemas/QualifiedSealMember'
+            - type: 'null'
+          description: The passport's eIDAS qualified seal, present iff one has been applied. `null` when the seal is still queued.
     EvidenceDossierRecord:
       type: object
       description: A stored dossier snapshot — the dossier plus its persistence envelope.
@@ -3755,6 +4683,12 @@ components:
             - string
             - 'null'
           format: date-time
+        registryVerifiedAt:
+          type:
+            - string
+            - 'null'
+          format: date-time
+          description: When this operator's identity was last verified against the EU registry. Null when no verification has succeeded — never treat absence as verified.
     UpdateOperatorConfig:
       type: object
       description: Merge-patch update — only supply fields being changed.
@@ -3789,6 +4723,19 @@ components:
           type: integer
         featureFlags:
           type: object
+        registryVerifiedAt:
+          type:
+            - string
+            - 'null'
+          format: date-time
+          description: When this operator's identity was last verified against the EU registry. Null when no verification has succeeded — never treat absence as verified.
+    ApiKeyScope:
+      type: string
+      description: What an API key authorises. `admin` is the default when a key is minted without an explicit scope, so a key issued to an integration should name `read` or `write` deliberately.
+      enum:
+        - read
+        - write
+        - admin
     ApiKey:
       type: object
       required:
@@ -3796,6 +4743,7 @@ components:
         - name
         - keyPrefix
         - isActive
+        - scope
         - createdAt
       properties:
         id:
@@ -3823,6 +4771,8 @@ components:
             - string
             - 'null'
           format: date-time
+        scope:
+          $ref: '#/components/schemas/ApiKeyScope'
     CreateApiKeyRequest:
       type: object
       required:
@@ -3838,6 +4788,10 @@ components:
             - 'null'
           format: date-time
           description: Optional expiration. Null = never expires.
+        scope:
+          allOf:
+            - $ref: '#/components/schemas/ApiKeyScope'
+          description: Defaults to `admin` when omitted. Name `read` or `write` explicitly for a key issued to an integration.
     NewApiKey:
       type: object
       required:
@@ -3852,6 +4806,85 @@ components:
             The full plain-text API key. Shown ONCE at creation time.
             Store securely — it cannot be retrieved again.
           example: odal_sk_abc123def456ghi789jkl012mno345pqr678
+    InstalledPlugin:
+      type: object
+      description: What the node installed, reported back after a successful hot-swap.
+      required:
+        - productGroup
+        - abiVersion
+      properties:
+        productGroup:
+          type: string
+          description: Product group catalog key the plugin is bound to.
+          example: battery
+        abiVersion:
+          type: string
+          description: ABI version the plugin declared, formatted `major.minor`.
+          example: '1.0'
+    WebhookSubscription:
+      type: object
+      description: A receiver subscription, redacted. The signing secret is never carried here — it is returned exactly once from the create call and otherwise stays server-side.
+      required:
+        - id
+        - url
+        - events
+        - active
+        - createdAt
+        - updatedAt
+      properties:
+        id:
+          type: string
+          format: uuid
+        url:
+          type: string
+          format: uri
+          description: Receiver URL — validated `https`, non-private host at creation.
+        events:
+          type: array
+          description: Subject filter — event type strings, or a single `*` for all events.
+          items:
+            type: string
+        active:
+          type: boolean
+          description: Removal is a soft `active = false`, never a hard delete.
+        description:
+          type:
+            - string
+            - 'null'
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    NewWebhookSubscription:
+      type: object
+      description: Input for creating a subscription. The signing secret is generated server-side and is never client-supplied, so it is not part of this body.
+      required:
+        - url
+        - events
+      properties:
+        url:
+          type: string
+          format: uri
+          description: Receiver URL. SSRF-validated before it is persisted.
+        events:
+          type: array
+          items:
+            type: string
+        description:
+          type: string
+    CreatedWebhookResponse:
+      description: The created subscription's fields, inlined, plus the signing secret. The secret is shown **once** — it is not recoverable from any later read.
+      allOf:
+        - $ref: '#/components/schemas/WebhookSubscription'
+        - type: object
+          required:
+            - secret
+          properties:
+            secret:
+              type: string
+              description: Signing secret. Store it now; it is never shown again.
     NodeState:
       type: object
       required:
@@ -3902,6 +4935,22 @@ components:
             the rules a passport was checked under are observable. Absent on a
             standalone vault.
           example: baseline
+    WhoamiResponse:
+      type: object
+      description: What the presented credential is. Reports only what the caller already sent — it reveals nothing about any other key, and the key's secret is never stored in a recoverable form.
+      required:
+        - userId
+        - scope
+      properties:
+        userId:
+          type: string
+          description: The caller's identity, as authenticated.
+        scope:
+          $ref: '#/components/schemas/ApiKeyScope'
+        keyId:
+          type: string
+          format: uuid
+          description: The key's row id — never the token. Absent for local-admin Basic auth, which has no key row.
     Facility:
       type: object
       required:
@@ -4257,41 +5306,269 @@ components:
           type: boolean
         did_document:
           $ref: '#/components/schemas/DidDocument'
-    Problem:
+    DateBasis:
+      type: string
+      enum:
+        - sourced
+        - assumed
+      description: |
+        Whether an obligation date traces to an adopted text (`sourced`) or is a
+        reading that has not been confirmed against one (`assumed`).
+
+        Always served with the date it qualifies. A date without its basis presents a
+        qualified reading as an unqualified claim, which on a public endpoint from a
+        compliance vendor is a materially different statement.
+
+        Deliberately a separate schema from `RetentionBasis`, which it currently
+        matches variant for variant. They are two enumerations in the code answering
+        two questions, and collapsing them here would let one drift silently behind
+        the other.
+      example: sourced
+    ObligationDate:
       type: object
       description: |
-        RFC 7807 / RFC 9457 problem details. The shape
-        `dpp-common::http_problem::Problem` produces, served as
-        `application/problem+json`.
+        The date a passport obligation applies from, with the provenance of that date.
 
-        `type` is derived from `title`, so each distinct `title` used across the
-        codebase is a stable catalogue key that clients may depend on.
-      required:
-        - type
-        - title
-        - status
+        One object rather than two loose fields so a date cannot be served without its
+        basis. Most of the catalog is undated, and of the dates that exist some trace
+        to an adopted text and some are a reading — a date presented bare turns a
+        qualified reading into an unqualified claim.
       properties:
-        type:
+        date:
           type: string
-          format: uri
-          description: Absolute URI identifying the problem type.
-          example: https://problems.odal-node.io/not-found
-        title:
-          type: string
-          description: Short human-readable summary of the problem type.
-          example: Not Found
-        status:
+          format: date
+          description: ISO-8601 date the obligation applies from.
+          example: '2030-08-01'
+        basis:
+          $ref: '#/components/schemas/DateBasis'
+          description: Whether this date traces to an adopted text.
+      required:
+        - date
+        - basis
+    PassportObligation:
+      type: object
+      description: |
+        Whether a passport is required for a product group, and from when.
+
+        The obligation is split from its date so `required` can be answered where
+        nothing fixes a date — which is most of the catalog.
+      properties:
+        required:
+          type: boolean
+          description: |
+            Whether an instrument recorded against this product group imposes a
+            passport obligation. Says nothing about whether one can be produced today
+            — see `determinable` on the enclosing object.
+
+            **Read with `instruments[].bindingStatus`.** This is a fold across every
+            reaching act, so `true` means an act imposes a passport, not that any act
+            binds this group today.
+          example: true
+        from:
+          anyOf:
+            - $ref: '#/components/schemas/ObligationDate'
+            - type: 'null'
+          description: |
+            The date the obligation applies from, or `null` where no instrument fixes
+            one. An obligation with no date is not one starting today.
+      required:
+        - required
+        - from
+    RetentionBasis:
+      type: string
+      enum:
+        - sourced
+        - assumed
+      description: |
+        Whether a retention period traces to an adopted text (`sourced`) or is a
+        reading that has not been confirmed against one (`assumed`).
+
+        See `DateBasis` for why these are two schemas rather than one.
+      example: sourced
+    RetentionPeriod:
+      type: object
+      description: |
+        How long records must be kept, with the provenance of that figure.
+
+        The figure is the maximum across every act reaching the product group, because
+        retention periods are floors and a record kept long enough for the longest
+        satisfies them all. The basis is `sourced` only when every contributing figure
+        is sourced — one assumption anywhere makes the compound figure an assumption,
+        whichever act supplied the maximum.
+      properties:
+        years:
           type: integer
-          description: The HTTP status code, mirroring the status line.
-          example: 404
-        detail:
+          minimum: 0
+          description: Years the record must be kept.
+          example: 10
+        basis:
+          $ref: '#/components/schemas/RetentionBasis'
+          description: Whether this figure traces to an adopted text.
+      required:
+        - years
+        - basis
+    InstrumentStatus:
+      type: string
+      enum:
+        - adopted
+        - proposed
+        - anticipated
+      description: |
+        How far through the legislative process an act is — whether the **act
+        exists**, not whether it binds anything.
+
+        `adopted` — adopted and published in the Official Journal, citable by CELEX.
+
+        `proposed` — formally proposed but not adopted. Its text can be read and cited
+        as a *proposal*, never as law.
+
+        `anticipated` — announced in a working plan or otherwise expected, with no
+        text to read. Such an act has no CELEX, and nothing derived from it may be
+        presented as sourced.
+
+        Distinct from `RegulatoryStatus`, and the distinction is easy to lose: an
+        adopted act binds nothing until its own dates arrive, and routinely binds one
+        product group while another waits. The practical case is that ESPR has been
+        `adopted` since 2024 while every product group under it is still `provisional`
+        — both statements are true and neither implies the other.
+      example: adopted
+    RegulatoryStatus:
+      type: string
+      enum:
+        - in_force
+        - provisional
+        - watch
+      description: |
+        Whether an act's obligations bind **a given product group** — a different
+        question from whether the act exists, which is `InstrumentStatus`.
+
+        `in_force` — the act creates binding obligations for this product group that
+        can be determined now. A future applicability date is *not* this status.
+
+        `provisional` — the act exists or is anticipated, but nothing is bindingly
+        determinable for this product group yet. Any obligation reported alongside
+        this status is a reading, not a determination.
+
+        `watch` — tracked, but this act imposes nothing on this product group. A
+        watching brief rather than a duty, and never determinable.
+
+        **Read this before acting on `passport.required`.** The obligation is a fold
+        across every act reaching the product group, so `required: true` says an act
+        imposes a passport — not that the act binds this group today. Where every
+        reaching act is `provisional` or `watch`, the requirement is a reading of
+        instruments that have not yet bound anything.
+      example: provisional
+    ReachingInstrument:
+      type: object
+      description: |
+        One act the catalog records as reaching a product group, with how far along
+        the act itself is and whether it binds *this* group.
+
+        Distinct from the entries recorded on a passport, which carry no status: a
+        passport freezes its applicable set at issuance and re-deriving status later
+        would misstate what governed the product when it was placed on the market.
+        Here nothing is frozen — the question is what the catalog holds now — so the
+        statuses are what let a caller tell an adopted duty from a reading.
+      properties:
+        instrument:
           type: string
-          description: Human-readable explanation for this specific occurrence.
-          example: 'No schema for sector ''nosuchsector''. Known sectors: aluminium, battery.'
-        instance:
+          description: The instrument's catalog id.
+          example: toy-safety-2025-2509
+        instrumentStatus:
+          $ref: '#/components/schemas/InstrumentStatus'
+          description: Whether the act itself exists.
+        bindingStatus:
+          $ref: '#/components/schemas/RegulatoryStatus'
+          description: Whether that act's obligations bind this product group. Independent of `instrumentStatus` in both directions.
+        recorded:
+          $ref: '#/components/schemas/RecordedBasis'
+          description: Always `catalog` here — this reports what the embedded catalog holds, and an operator assertion is recorded on a passport, not against the catalog. Shared with the passport's own instrument entries so the two stay one shape.
+      required:
+        - instrument
+        - recorded
+        - instrumentStatus
+        - bindingStatus
+    ProductGroupObligation:
+      type: object
+      description: |
+        What this node knows about one product group's digital product passport
+        obligation, drawn from the embedded instrument catalog.
+      properties:
+        productGroup:
           type: string
-          format: uri-reference
-          description: URI reference identifying this specific occurrence.
+          description: The catalog key.
+          example: toy
+        title:
+          type:
+            - string
+            - 'null'
+          description: |
+            Human-readable name from the product group catalog.
+
+            `null` where an act reaches this key but no product group descriptor
+            exists for it — a real case, and the one this endpoint is most needed for:
+            no schema, plugin or template names such a group, so nothing else in the
+            API can be asked about it. A `null` title is not an error and says nothing
+            about the obligation, which is reported in full beside it.
+          example: Toys
+        passport:
+          $ref: '#/components/schemas/PassportObligation'
+          description: Whether a passport is required for this product group, and from when.
+        determinable:
+          type: boolean
+          description: |
+            Whether this build can make a binding compliance determination for this
+            product group. False where the duty exists but the implementing acts that
+            define its technical requirements are unpublished.
+          example: false
+        granularity:
+          anyOf:
+            - $ref: '#/components/schemas/Granularity'
+            - type: 'null'
+          description: |
+            The level a passport is issued at for this product group, where a
+            delegated act fixes one. `null` where none does — which is every product
+            group today.
+
+            Nullable here rather than omitted, unlike the same field on a passport:
+            this endpoint answers a question about every product group it lists, and a
+            missing key would read as "not asked" rather than "no act has fixed one".
+        retention:
+          anyOf:
+            - $ref: '#/components/schemas/RetentionPeriod'
+            - type: 'null'
+          description: How long records must be kept, with the basis of that figure. `null` where no reaching act fixes one.
+        instruments:
+          type: array
+          description: |
+            The acts the catalog knows reach this product group, each with how far
+            along the act itself is and whether it binds *this* group.
+
+            **These statuses qualify `passport.required`.** That field folds across
+            every act here, so it reports that an act imposes a passport — not that
+            any act binds this group today. Where every entry is `provisional` or
+            `watch`, a `required: true` is a reading of instruments that have not yet
+            bound anything, and must not be presented as a determination.
+          items:
+            $ref: '#/components/schemas/ReachingInstrument'
+      required:
+        - productGroup
+        - title
+        - passport
+        - determinable
+        - granularity
+        - retention
+        - instruments
+    ProductGroupObligationList:
+      type: object
+      description: Every product group this build models, with its passport obligation.
+      properties:
+        productGroups:
+          type: array
+          items:
+            $ref: '#/components/schemas/ProductGroupObligation'
+      required:
+        - productGroups
     ImportCreatedEntry:
       type: object
       required:
@@ -4321,6 +5598,19 @@ components:
           description: Column name, or "vault" / "auth" / "internal".
         message:
           type: string
+    ImportUpdatedEntry:
+      type: object
+      description: One row that matched an existing passport and updated it.
+      required:
+        - row
+        - passportId
+      properties:
+        row:
+          type: integer
+          description: 1-based row number in the uploaded file, excluding the header.
+        passportId:
+          type: string
+          format: uuid
     ImportSyncResponse:
       type: object
       required:
@@ -4329,6 +5619,7 @@ components:
         - successCount
         - errorCount
         - created
+        - updated
         - errors
       description: Returned for synchronous imports (≤ 100 valid rows) and dry runs.
       properties:
@@ -4353,6 +5644,11 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/ImportErrorEntry'
+        updated:
+          type: array
+          description: Rows that matched an existing passport and updated it. Counted in `successCount`, which is deliberately not `created.length + updated.length` — see that field.
+          items:
+            $ref: '#/components/schemas/ImportUpdatedEntry'
     ImportAsyncResponse:
       type: object
       required:
@@ -4369,6 +5665,23 @@ components:
           example: queued
         totalRows:
           type: integer
+    JobProgress:
+      type: object
+      description: How far through its rows an import job has got.
+      properties:
+        processed:
+          type: integer
+          minimum: 0
+          description: Rows handled so far.
+          example: 120
+        total:
+          type: integer
+          minimum: 0
+          description: Rows the job was created with.
+          example: 500
+      required:
+        - processed
+        - total
     JobStatusResponse:
       type: object
       required:
@@ -4387,12 +5700,7 @@ components:
             - completed
             - failed
         progress:
-          type: object
-          properties:
-            processed:
-              type: integer
-            total:
-              type: integer
+          $ref: '#/components/schemas/JobProgress'
         result:
           type:
             - object
@@ -4407,59 +5715,119 @@ components:
     Unauthorized:
       description: Missing or invalid authentication credentials.
       content:
-        application/json:
+        application/problem+json:
           schema:
-            $ref: '#/components/schemas/ApiError'
+            $ref: '#/components/schemas/Problem'
           example:
-            error: UNAUTHORIZED
-            message: Missing or invalid Authorization header.
-    ValidationError:
-      description: One or more fields failed validation.
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/ApiError'
+            type: https://problems.odal-node.io/unauthorized
+            title: Unauthorized
+            status: 401
+            detail: Missing or invalid Authorization header.
     Forbidden:
       description: |
         The credential is authenticated but lacks the required scope — e.g. a
         `write`/`read` key attempting an admin-only action (registry identity).
       content:
-        application/json:
+        application/problem+json:
           schema:
-            $ref: '#/components/schemas/ApiError'
+            $ref: '#/components/schemas/Problem'
           example:
-            error: FORBIDDEN
-            message: Registry-identity management requires an admin-scoped credential.
+            type: https://problems.odal-node.io/forbidden
+            title: Forbidden
+            status: 403
+            detail: Registry-identity management requires an admin-scoped credential.
+    ValidationError:
+      description: One or more fields failed validation.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+          example:
+            type: https://problems.odal-node.io/unprocessable-entity
+            title: Unprocessable Entity
+            status: 422
+            detail: productName must not be empty.
     NotFound:
       description: Resource not found within the operator's scope.
       content:
-        application/json:
+        application/problem+json:
           schema:
-            $ref: '#/components/schemas/ApiError'
+            $ref: '#/components/schemas/Problem'
           example:
-            error: NOT_FOUND
-            message: DPP not found.
+            type: https://problems.odal-node.io/not-found
+            title: Not Found
+            status: 404
+            detail: DPP not found.
+    BadRequest:
+      description: |
+        A path parameter is malformed — most often a `{dppId}` or `{id}` that is not a
+        UUID. The request never reaches the resource, so this is distinct from `404`,
+        which means the identifier was well-formed and nothing matched it.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+          example:
+            type: https://problems.odal-node.io/bad-request
+            title: Bad Request
+            status: 400
+            detail: not-a-uuid is not a valid DPP id.
     Conflict:
       description: |
         State conflict — e.g. attempting to publish an already-published DPP
         or updating an archived DPP.
       content:
-        application/json:
+        application/problem+json:
           schema:
-            $ref: '#/components/schemas/ApiError'
+            $ref: '#/components/schemas/Problem'
+          example:
+            type: https://problems.odal-node.io/conflict
+            title: Conflict
+            status: 409
+            detail: DPP is already published.
+    Gone:
+      description: |
+        The passport exists but has been withdrawn from public view — it is suspended.
+        Distinct from `404`: the node is confirming the identifier is real and
+        declining to serve it, rather than denying knowledge of it.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+          example:
+            type: https://problems.odal-node.io/gone
+            title: Gone
+            status: 410
+            detail: This passport is suspended and is not publicly available.
+    ServiceUnavailable:
+      description: |
+        A dependency the node needs is not reachable — the readiness probe pings the
+        primary datastore, and reports this when that ping fails. The node is running;
+        it is not ready to serve.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+          example:
+            type: https://problems.odal-node.io/service-unavailable
+            title: Service Unavailable
+            status: 503
+            detail: The primary datastore did not respond.
     NotAcceptable:
       description: |
         No representation matches the request's `Accept` header. The response
         body names the media types this resource can produce.
 
         A passport carrying no GTIN — an unsold-goods report, or an untyped
-        sector — also gets this for `application/aas+json`: it identifies no
+        product group — also gets this for `application/aas+json`: it identifies no
         trade item, so it has no AAS asset identity and therefore no AAS
         representation.
       content:
         application/problem+json:
           schema:
-            $ref: '#/components/schemas/ApiError'
+            $ref: '#/components/schemas/Problem'
           example:
-            error: NOT_ACCEPTABLE
-            message: No representation matches 'application/pdf'. This resource is available as text/html, application/ld+json, or application/aas+json.
+            type: https://problems.odal-node.io/not-acceptable
+            title: Not Acceptable
+            status: 406
+            detail: No representation matches 'application/pdf'. This resource is available as text/html, application/ld+json, or application/aas+json.

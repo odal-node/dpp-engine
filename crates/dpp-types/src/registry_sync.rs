@@ -44,7 +44,7 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-use dpp_domain::{DppError, domain::passport::PassportId};
+use dpp_domain::{DppError, passport::PassportId};
 
 /// Queue state of a passport's registry registration.
 ///
@@ -215,7 +215,7 @@ pub trait RegistrySyncOutbox: Send + Sync {
     /// suspension for a passport that is live again.
     async fn commit_publish(
         &self,
-        passport: &dpp_domain::domain::passport::Passport,
+        passport: &dpp_domain::passport::Passport,
         payload: serde_json::Value,
     ) -> Result<(), DppError>;
 

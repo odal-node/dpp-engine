@@ -11,7 +11,7 @@ pub const DEFAULT_FUEL: u64 = 10_000_000;
 /// Default memory cap per plugin instance (64 MiB).
 pub const DEFAULT_MEMORY_CAP_BYTES: usize = 64 * 1024 * 1024;
 
-/// Build a sandboxed wasmtime `Engine` for loading sector plugins.
+/// Build a sandboxed wasmtime `Engine` for loading product group plugins.
 ///
 /// - Cranelift ahead-of-time compilation for predictable latency.
 /// - Fuel metering enabled — guests are killed after `DEFAULT_FUEL` instructions.
@@ -71,7 +71,7 @@ impl ResourceLimiter for HostState {
         // with a huge element count forces a large host-side allocation that
         // fuel counts as only one instruction — a resource-limit bypass distinct
         // from the (capped) linear-memory path. Ok(false) makes `table.grow`
-        // return -1 (the Wasm denial signal). Sector plugins use tiny indirect
+        // return -1 (the Wasm denial signal). ProductGroup plugins use tiny indirect
         // tables, so this ceiling is generous.
         Ok(desired <= MAX_TABLE_ELEMENTS)
     }

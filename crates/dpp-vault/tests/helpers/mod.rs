@@ -15,16 +15,13 @@ use base64::Engine;
 use dpp_dal::pg::{
     PgApiKeyRepo, PgAuditRepo, PgDal, PgEvidenceDossierRepo, PgOperatorConfigRepo, PgPassportRepo,
     PgRegistryIdentityRepo, PgRegistrySyncRepo, PgRegistryTransferRepo, PgScanTelemetryRepo,
-    PgSealOutboxRepo, PgWebhookRepo,
+    PgSealOutboxRepo, PgTransferRepo, PgWebhookRepo,
 };
 use dpp_domain::{
-    DppError, GhostArchive, GhostRegistrySync,
-    compliance::passthrough_registry::PassthroughRegistry,
-    domain::{
-        identity::{PassportCredential, PassportCredentialSubject, SignedCredential},
-        passport::PassportId,
-    },
-    ports::identity_port::IdentityPort,
+    DppError, GhostArchive, GhostRegistrySync, PassthroughRegistry,
+    credential::{PassportCredential, PassportCredentialSubject, SignedCredential},
+    passport::PassportId,
+    ports::identity::IdentityPort,
 };
 use dpp_types::auth::{AuthContext, AuthError, AuthProvider};
 use dpp_vault::{
@@ -294,6 +291,12 @@ async fn start_vault_with_identity(
         // selected wires this, so a harness without it reports the sealing
         // surface as unconfigured and cannot exercise it at all.
         .with_seal_outbox(Arc::new(PgSealOutboxRepo::new(dal.clone())))
+        // Same reasoning again, and it had already cost something: without a
+        // transfer store the seal route's `responsibilityMayHaveTransferred`
+        // took its `None => false` branch, so a test asserting the flag was
+        // `false` passed because nothing *could* be recorded rather than
+        // because nothing was.
+        .with_transfer_store(Arc::new(PgTransferRepo::new(dal.clone())))
         .with_evidence_store(Arc::new(PgEvidenceDossierRepo::new(dal.clone()))),
     );
     let operator_service = Arc::new(OperatorService::new(operator_repo));
@@ -374,7 +377,7 @@ pub async fn seed_operator_config(dal: &PgDal) {
 
 /// Seed a *complete, publishable* operator: the config plus the Annex III default
 /// facility (point (i)) and primary operator identifier (point (k)) that
-/// `publish` now requires for in-force sectors. Use in publish-flow tests.
+/// `publish` now requires for in-force product groups. Use in publish-flow tests.
 pub async fn seed_complete_operator(dal: &PgDal) {
     use dpp_types::operator::STANDALONE_OPERATOR_ID;
     use dpp_types::registry_identity::{Facility, OperatorIdentifier, RegistryIdentityRepository};

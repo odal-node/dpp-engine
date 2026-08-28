@@ -1,4 +1,4 @@
-//! Integration tests for battery sector DPP lifecycle.
+//! Integration tests for battery product group DPP lifecycle.
 
 #![cfg(feature = "integration-tests")]
 // A complete industrial battery is 38 mandatory fields, and `serde_json::json!`
@@ -18,7 +18,7 @@ async fn test_battery_create_publish_resolve() {
     let token = make_jwt("00000000-0000-0000-0000-000000000001");
     let client = TestClient::new(&vault_url, &token);
 
-    // 1. POST /api/v1/dpp — battery sector with all 12 mandatory fields
+    // 1. POST /api/v1/dpp — battery product group with all 12 mandatory fields
     let create_body = serde_json::json!({
         "productName": "EcoBattery LFP 3000",
         "manufacturer": {
@@ -38,8 +38,8 @@ async fn test_battery_create_publish_resolve() {
         // here, and core refuses a positive declaration for a metal the
         // chemistry does not contain. An LFP industrial battery cannot satisfy
         // both rules at once.
-        "sectorData": {
-            "sector": "battery",
+        "productGroupData": {
+            "productGroup": "battery",
             "gtin": "09506000134352",
             "batteryType": "industrial",
             "batteryChemistry": "NMC",
@@ -122,7 +122,7 @@ async fn test_battery_create_publish_resolve() {
 
     let public: serde_json::Value = resp.json().await.unwrap();
     assert_eq!(
-        public["sectorData"]["gtin"], "09506000134352",
+        public["productGroupData"]["gtin"], "09506000134352",
         "GTIN mismatch"
     );
 }
@@ -154,8 +154,8 @@ async fn an_incomplete_industrial_battery_cannot_be_published() {
                 "productName": "Incomplete Industrial Cell",
                 "manufacturer": {"name": "GreenCell GmbH", "address": "Berlin, DE"},
                 "materials": [{"name": "Lithium", "weightKg": 0.8}],
-                "sectorData": {
-                    "sector": "battery",
+                "productGroupData": {
+                    "productGroup": "battery",
                     "gtin": "09506000134352",
                     "batteryType": "industrial",
                     "batteryChemistry": "NMC",
@@ -236,8 +236,8 @@ async fn a_portable_battery_is_outside_the_mandatory_content_scope() {
                 "productName": "Portable Cell",
                 "manufacturer": {"name": "GreenCell GmbH", "address": "Berlin, DE"},
                 "materials": [{"name": "Lithium", "weightKg": 0.02}],
-                "sectorData": {
-                    "sector": "battery",
+                "productGroupData": {
+                    "productGroup": "battery",
                     "gtin": "09506000134352",
                     "batteryType": "portable",
                     "batteryChemistry": "LFP",

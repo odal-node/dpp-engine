@@ -16,7 +16,7 @@ properties:
     maximum: 100
     description: Percentage of recycled content (0.0–100.0)
     example: 35
-  originCountry:
+  countryOfOrigin:
     type: string
     minLength: 2
     maxLength: 2

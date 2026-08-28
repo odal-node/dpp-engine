@@ -1,9 +1,9 @@
-//! Toy safety sector HTML section.
+//! Toy safety product group HTML section.
 
 use crate::fields::{bool_field, str_field};
 
 pub(super) fn build_toy_section(p: &serde_json::Value) -> String {
-    let sd = match p.get("sectorData") {
+    let sd = match p.get("productGroupData") {
         Some(v) => v,
         None => return String::new(),
     };
@@ -29,7 +29,7 @@ mod tests {
     #[test]
     fn full_data_populates_all_fields() {
         let p = crate::sections::typed_fixture(serde_json::json!({
-            "sector": "toy",
+            "productGroup": "toy",
             "gtin": "09506000134352",
             "ageGroup": "3+",
             "primaryMaterial": "ABS Plastic",
@@ -45,21 +45,21 @@ mod tests {
 
     #[test]
     fn ce_marking_false_renders_no() {
-        let p = serde_json::json!({"sectorData": {"ceMarking": false}});
+        let p = serde_json::json!({"productGroupData": {"ceMarking": false}});
         let html = build_toy_section(&p);
         assert!(html.contains(">No<"));
     }
 
     #[test]
     fn missing_fields_fall_back_to_dashes() {
-        let p = serde_json::json!({"sectorData": {}});
+        let p = serde_json::json!({"productGroupData": {}});
         let html = build_toy_section(&p);
         assert!(html.contains("Toy Safety Information"));
         assert!(html.contains(">-<"));
     }
 
     #[test]
-    fn absent_sector_data_returns_empty_string() {
+    fn absent_product_group_data_returns_empty_string() {
         let p = serde_json::json!({});
         assert_eq!(build_toy_section(&p), "");
     }

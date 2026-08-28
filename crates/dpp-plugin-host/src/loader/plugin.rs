@@ -1,4 +1,4 @@
-//! `LoadedPlugin`: a compiled, signature-verified sector plugin ready to be
+//! `LoadedPlugin`: a compiled, signature-verified product group plugin ready to be
 //! instantiated per-request, plus the raw ABI call plumbing it needs.
 
 use std::path::Path;
@@ -8,7 +8,7 @@ use dpp_common::event_codes;
 use ed25519_dalek::VerifyingKey;
 use wasmtime::{Engine, Instance, Linker, Module, Store};
 
-use dpp_domain::ports::compliance::ComplianceResult;
+use dpp_domain::compliance::ComplianceResult;
 use dpp_plugin_traits::{AbiResult, PluginCapabilities, PluginResult, check_compatibility};
 
 use super::signing::verify_plugin_signature;
@@ -38,7 +38,7 @@ fn map_call_error(e: wasmtime::Error) -> anyhow::Error {
     }
 }
 
-/// A compiled, in-memory sector plugin ready to be instantiated per-request.
+/// A compiled, in-memory product group plugin ready to be instantiated per-request.
 pub struct LoadedPlugin {
     engine: Engine,
     module: Module,
@@ -49,7 +49,7 @@ pub struct LoadedPlugin {
     /// dominant per-invocation cost. `instantiate` takes `&self`, so one
     /// linker safely serves any number of concurrent instantiations.
     linker: Linker<HostState>,
-    pub sector_key: String,
+    pub product_group_key: String,
     /// Capability declaration cached from `describe()` at load time.
     /// Used to configure per-invocation resource limits without an extra
     /// Wasm round-trip.
@@ -69,7 +69,7 @@ impl LoadedPlugin {
     pub fn from_file(
         engine: &Engine,
         path: &Path,
-        sector_key: &str,
+        product_group_key: &str,
         trusted_key: Option<&VerifyingKey>,
     ) -> Result<Self> {
         if let Some(key) = trusted_key {
@@ -77,7 +77,7 @@ impl LoadedPlugin {
                 tracing::warn!(
                     code = event_codes::PLUGIN_REFUSED,
                     path = %path.display(),
-                    sector = sector_key,
+                    product_group = product_group_key,
                     error = %e,
                     "Wasm plugin refused — signature verification failed"
                 );
@@ -134,7 +134,7 @@ impl LoadedPlugin {
         }
 
         let module = if is_precompiled {
-            tracing::info!(path = %path.display(), sector = sector_key, "loading precompiled plugin (.cwasm)");
+            tracing::info!(path = %path.display(), product_group = product_group_key, "loading precompiled plugin (.cwasm)");
             // Read the bytes and deserialize from memory rather than
             // `deserialize_file` (which mmaps and would keep the file open — on
             // Windows that blocks the install's promote-by-rename step).
@@ -155,7 +155,7 @@ impl LoadedPlugin {
                 })?
             }
         } else {
-            tracing::info!(path = %path.display(), sector = sector_key, "compiling Wasm plugin");
+            tracing::info!(path = %path.display(), product_group = product_group_key, "compiling Wasm plugin");
             Module::from_file(engine, path)
                 .map_err(|e| anyhow::anyhow!("failed to compile {}: {e}", path.display()))?
         };
@@ -178,7 +178,7 @@ impl LoadedPlugin {
                 Ok(caps) => caps,
                 Err(e) => {
                     tracing::warn!(
-                        sector = sector_key,
+                        product_group = product_group_key,
                         error = %e,
                         "plugin missing describe() — using host defaults for resource limits"
                     );
@@ -195,7 +195,7 @@ impl LoadedPlugin {
         };
 
         tracing::debug!(
-            sector = sector_key,
+            product_group = product_group_key,
             abi_major = capabilities.abi_version.major,
             abi_minor = capabilities.abi_version.minor,
             "plugin describe() cached"
@@ -214,12 +214,12 @@ impl LoadedPlugin {
             tracing::warn!(
                 code = event_codes::PLUGIN_REFUSED,
                 path = %path.display(),
-                sector = sector_key,
+                product_group = product_group_key,
                 report = ?compat,
                 "Wasm plugin refused — ABI incompatible with host"
             );
             return Err(anyhow::anyhow!(
-                "plugin '{sector_key}' refused — ABI incompatible with host: {compat:?}"
+                "plugin '{product_group_key}' refused — ABI incompatible with host: {compat:?}"
             ));
         }
 
@@ -227,7 +227,7 @@ impl LoadedPlugin {
             engine: engine.clone(),
             module,
             linker,
-            sector_key: sector_key.to_owned(),
+            product_group_key: product_group_key.to_owned(),
             capabilities,
         })
     }
@@ -481,7 +481,7 @@ fn call_calculate(
 mod tests {
     use super::*;
     use crate::runtime::build_engine;
-    use dpp_domain::ports::compliance::ComplianceStatus;
+    use dpp_domain::compliance::ComplianceStatus;
     use dpp_plugin_traits::PluginCapability;
     use ed25519_dalek::SigningKey;
     use tempfile::TempDir;
@@ -572,10 +572,10 @@ mod tests {
 
     /// Load a plugin without a trusted key — the development path. Opts into
     /// unsigned loading explicitly, mirroring what a real dev/CI deploy must do.
-    fn load_unsigned(engine: &Engine, path: &Path, sector: &str) -> Result<LoadedPlugin> {
+    fn load_unsigned(engine: &Engine, path: &Path, product_group: &str) -> Result<LoadedPlugin> {
         // Safe: every caller sets the same value, so concurrent sets are benign.
         unsafe { std::env::set_var("ALLOW_UNSIGNED_PLUGINS", "true") };
-        LoadedPlugin::from_file(engine, path, sector, None)
+        LoadedPlugin::from_file(engine, path, product_group, None)
     }
 
     #[test]

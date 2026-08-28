@@ -22,11 +22,8 @@ use dpp_dal::pg::{
     PgRegistryIdentityRepo, PgScanTelemetryRepo, PgTransferRepo, PgWebhookRepo,
 };
 use dpp_dal::test_harness::{TestPg, start_pg};
-use dpp_domain::domain::passport::PassportRef;
-use dpp_domain::{
-    DppError, GhostArchive, GhostRegistrySync,
-    compliance::passthrough_registry::PassthroughRegistry,
-};
+use dpp_domain::passport::PassportRef;
+use dpp_domain::{DppError, GhostArchive, GhostRegistrySync, PassthroughRegistry};
 use dpp_identity_service::state::AppState as IdentityState;
 use dpp_integrator::{infra::vault_client::VaultHttpClient, state::AppState as IntegratorState};
 use dpp_node::infra::pg_job_store::PgJobStore;
@@ -409,8 +406,8 @@ async fn route_inventory_matches_assembled_router() {
             "productName": "Route Inventory Battery",
             "manufacturer": {"name": "SmokeTestCorp", "address": "Berlin, DE"},
             "materials": [],
-            "sectorData": {
-                "sector": "battery",
+            "productGroupData": {
+                "productGroup": "battery",
                 "gtin": "09506000134352",
                 "batteryChemistry": "LFP",
                 "batteryType": "portable",
@@ -588,8 +585,8 @@ async fn publish_battery(
         "productName": product_name,
         "manufacturer": {"name": "SmokeTestCorp", "address": "Berlin, DE"},
         "materials": [],
-        "sectorData": {
-            "sector": "battery",
+        "productGroupData": {
+            "productGroup": "battery",
             "gtin": gtin,
             "batteryChemistry": "LFP",
             "batteryType": "portable",
@@ -1051,7 +1048,10 @@ async fn transfer_of_responsibility_dual_signed_then_eol() {
         init["fromSignature"].is_string(),
         "outgoing operator signed"
     );
-    assert!(init["toSignature"].is_null(), "not yet accepted");
+    assert!(
+        init["nodeAcceptanceAttestation"].is_null(),
+        "not yet accepted"
+    );
 
     // Incoming operator accepts — the node verifies the outgoing signature and
     // countersigns, completing the handover.
@@ -1065,7 +1065,7 @@ async fn transfer_of_responsibility_dual_signed_then_eol() {
         .await
         .unwrap();
     assert!(
-        accepted["toSignature"].is_string(),
+        accepted["nodeAcceptanceAttestation"].is_string(),
         "incoming countersigned"
     );
     assert!(accepted["completedAt"].is_string(), "transfer completed");
@@ -1083,6 +1083,279 @@ async fn transfer_of_responsibility_dual_signed_then_eol() {
         .await
         .unwrap();
     assert_eq!(eol["status"], "deactivated");
+}
+
+// A pending handover blocks every later transfer until it is ended — and
+// before `reject`/`cancel` were routed, nothing could end one.
+//
+// `TransferChain::initiate_transfer` refuses a new handover while any record is
+// `Initiated` or `Accepted`. `Accepted` is transient (accept completes in the
+// same call), but `Initiated` is not: a counterparty that never acts leaves the
+// record pending forever. `TransferRecord` has always carried `reject` and
+// `cancel`; with no route reaching them, that passport could never be
+// transferred again by any means the API offered.
+//
+// This walks the whole shape: block, clear by rejecting, block again, clear by
+// cancelling.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_pending_transfer_blocks_until_rejected_or_cancelled() {
+    let (base, _container) = start_db_and_node().await;
+    let token = make_jwt("00000000-0000-0000-0000-000000000067");
+    let client = reqwest::Client::new();
+
+    let created: serde_json::Value = client
+        .post(format!("{base}/vault/api/v1/dpp"))
+        .bearer_auth(&token)
+        .json(&serde_json::json!({
+            "productName": "Stuck Transfer Battery",
+            "manufacturer": {"name": "SmokeTestCorp", "address": "Berlin, DE"},
+            "materials": [],
+        }))
+        .send()
+        .await
+        .expect("create request failed")
+        .json()
+        .await
+        .unwrap();
+    let id = created["id"].as_str().expect("id").to_owned();
+
+    assert_eq!(
+        client
+            .post(format!("{base}/vault/api/v1/dpp/{id}/publish"))
+            .bearer_auth(&token)
+            .json(&serde_json::json!({}))
+            .send()
+            .await
+            .expect("publish request failed")
+            .status(),
+        200
+    );
+
+    let initiate = |to_did: &'static str, to_name: &'static str| {
+        let client = client.clone();
+        let base = base.clone();
+        let id = id.clone();
+        let token = token.clone();
+        async move {
+            client
+                .post(format!("{base}/vault/api/v1/dpp/{id}/transfer/initiate"))
+                .bearer_auth(&token)
+                .json(&serde_json::json!({
+                    "fromOperator": {"did":"did:web:acme.example","name":"Acme GmbH","role":"manufacturer","euOperatorId":null,"country":"DE"},
+                    "toOperator": {"did":to_did,"name":to_name,"role":"recycler","euOperatorId":null,"country":"DE"},
+                    "reason": "preparationForReuse"
+                }))
+                .send()
+                .await
+                .expect("initiate request failed")
+        }
+    };
+
+    // A first handover goes pending, awaiting a counterparty that never acts.
+    assert_eq!(initiate("did:web:reco.example", "ReCo").await.status(), 200);
+
+    // The chain now refuses a second one. This is the trap: correct behaviour
+    // on its own, fatal when nothing can clear the first.
+    let blocked = initiate("did:web:other.example", "Other").await;
+    assert_eq!(
+        blocked.status(),
+        422,
+        "a pending handover must block a second one"
+    );
+
+    // Reject — the incoming operator refuses. Terminal.
+    let rejected: serde_json::Value = client
+        .post(format!("{base}/vault/api/v1/dpp/{id}/transfer/reject"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .expect("reject request failed")
+        .json()
+        .await
+        .unwrap();
+    assert!(
+        rejected["rejectedAt"].is_string(),
+        "reject must stamp rejectedAt: {rejected}"
+    );
+    assert!(
+        rejected["completedAt"].is_null(),
+        "a rejected handover never completes"
+    );
+
+    // The block is gone: a new handover is accepted onto the chain.
+    assert_eq!(
+        initiate("did:web:second.example", "Second").await.status(),
+        200,
+        "rejecting the pending handover must free the chain"
+    );
+
+    // That new one is pending in turn, so the chain blocks again.
+    assert_eq!(
+        initiate("did:web:third.example", "Third").await.status(),
+        422
+    );
+
+    // Cancel — the outgoing operator withdraws. Also terminal, and it clears
+    // the block by the same rule.
+    let cancelled: serde_json::Value = client
+        .post(format!("{base}/vault/api/v1/dpp/{id}/transfer/cancel"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .expect("cancel request failed")
+        .json()
+        .await
+        .unwrap();
+    assert!(
+        cancelled["cancelledAt"].is_string(),
+        "cancel must stamp cancelledAt: {cancelled}"
+    );
+
+    assert_eq!(
+        initiate("did:web:fourth.example", "Fourth").await.status(),
+        200,
+        "cancelling the pending handover must free the chain"
+    );
+
+    let terminate = |verb: &'static str| {
+        let client = client.clone();
+        let base = base.clone();
+        let id = id.clone();
+        let token = token.clone();
+        async move {
+            client
+                .post(format!("{base}/vault/api/v1/dpp/{id}/transfer/{verb}"))
+                .bearer_auth(&token)
+                .send()
+                .await
+                .expect("terminate request failed")
+        }
+    };
+
+    // Clear the fourth handover so both verbs below start from the same state.
+    assert_eq!(terminate("reject").await.status(), 200);
+
+    // With nothing pending, there is nothing left to end — checked for **both**
+    // verbs, each against its own handover.
+    //
+    // This loop previously guarded its assertion behind `if first.status() ==
+    // 200`. Entering it, one handover was pending: `reject` ended it and
+    // asserted, then `cancel` found the chain already clear, took the false
+    // branch, and asserted nothing at all. Half the loop was dead while reading
+    // as though it covered both — so the refusal is now asserted first,
+    // unconditionally, and a fresh handover is initiated to prove the route
+    // still works when there *is* something to end.
+    for verb in ["reject", "cancel"] {
+        assert_eq!(
+            terminate(verb).await.status(),
+            422,
+            "{verb} with nothing pending must be refused"
+        );
+
+        assert_eq!(
+            initiate("did:web:fifth.example", "Fifth").await.status(),
+            200,
+            "the chain must be free after the previous handover was ended"
+        );
+        assert_eq!(
+            terminate(verb).await.status(),
+            200,
+            "{verb} must end a handover that is actually pending"
+        );
+    }
+}
+
+// `404` and `422` mean different things on the transfer routes, and the spec now
+// says which is which. This is what makes that description true rather than
+// merely plausible.
+//
+// The distinction shipped wrong: all four routes documented `404` as "no pending
+// transfer for this DPP", which is the `422` case. `404` means the passport has
+// no transfer chain at all — nothing was ever initiated. Both codes were
+// documented, so nothing mechanical objected; the contract gate compares codes,
+// and both were reachable. Only exercising the two conditions separates them.
+//
+// Written for `accept` because reject and cancel are covered above and `accept`
+// is where the wording was copied from.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_missing_transfer_chain_and_an_empty_one_are_told_apart() {
+    let (base, _container) = start_db_and_node().await;
+    let token = make_jwt("00000000-0000-0000-0000-000000000068");
+    let client = reqwest::Client::new();
+
+    let created: serde_json::Value = client
+        .post(format!("{base}/vault/api/v1/dpp"))
+        .bearer_auth(&token)
+        .json(&serde_json::json!({
+            "productName": "Chainless Battery",
+            "manufacturer": {"name": "SmokeTestCorp", "address": "Berlin, DE"},
+            "materials": [],
+        }))
+        .send()
+        .await
+        .expect("create request failed")
+        .json()
+        .await
+        .unwrap();
+    let id = created["id"].as_str().expect("id").to_owned();
+
+    assert_eq!(
+        client
+            .post(format!("{base}/vault/api/v1/dpp/{id}/publish"))
+            .bearer_auth(&token)
+            .json(&serde_json::json!({}))
+            .send()
+            .await
+            .expect("publish request failed")
+            .status(),
+        200
+    );
+
+    let post = |verb: &'static str| {
+        let (client, base, id, token) = (client.clone(), base.clone(), id.clone(), token.clone());
+        async move {
+            client
+                .post(format!("{base}/vault/api/v1/dpp/{id}/transfer/{verb}"))
+                .bearer_auth(&token)
+                .send()
+                .await
+                .expect("transfer request failed")
+                .status()
+                .as_u16()
+        }
+    };
+
+    // Nothing has ever been initiated, so there is no chain — `404`.
+    assert_eq!(
+        post("accept").await,
+        404,
+        "a passport with no transfer chain must be 404, not 422"
+    );
+
+    // Give it a chain, then empty it. The chain now exists and carries nothing
+    // pending, which is the other condition — `422`.
+    assert_eq!(
+        client
+            .post(format!("{base}/vault/api/v1/dpp/{id}/transfer/initiate"))
+            .bearer_auth(&token)
+            .json(&serde_json::json!({
+                "fromOperator": {"did":"did:web:acme.example","name":"Acme GmbH","role":"manufacturer","euOperatorId":null,"country":"DE"},
+                "toOperator": {"did":"did:web:reco.example","name":"ReCo","role":"recycler","euOperatorId":null,"country":"DE"},
+                "reason": "preparationForReuse"
+            }))
+            .send()
+            .await
+            .expect("initiate request failed")
+            .status(),
+        200
+    );
+    assert_eq!(post("reject").await, 200, "reject must clear the handover");
+
+    assert_eq!(
+        post("accept").await,
+        422,
+        "a chain that exists but carries nothing pending must be 422, not 404"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -1167,12 +1440,12 @@ async fn unauthenticated_request_increments_auth_failures_total() {
     );
 }
 
-/// Phase-3 metric (RT2-1 surface): an import with an unknown sector must increment
-/// `import_rejections_total{reason="unknown_sector"}`. A valid multipart
+/// Phase-3 metric (RT2-1 surface): an import with an unknown product group must increment
+/// `import_rejections_total{reason="unknown_product_group"}`. A valid multipart
 /// content-type is sent so the `Multipart` extractor constructs; the handler's
-/// sector check returns 404 before the body is read.
+/// product group check returns 404 before the body is read.
 #[tokio::test(flavor = "multi_thread")]
-async fn unknown_sector_import_increments_import_rejections_total() {
+async fn unknown_product_group_import_increments_import_rejections_total() {
     let handle = prometheus_handle();
     let (base, _container) = start_db_and_node().await;
 
@@ -1192,7 +1465,7 @@ async fn unknown_sector_import_increments_import_rejections_total() {
         "import_rejections_total not found in Prometheus output:\n{output}"
     );
     assert!(
-        output.contains(r#"reason="unknown_sector""#),
-        "import_rejections_total unknown_sector-reason not found:\n{output}"
+        output.contains(r#"reason="unknown_product_group""#),
+        "import_rejections_total unknown_product_group-reason not found:\n{output}"
     );
 }

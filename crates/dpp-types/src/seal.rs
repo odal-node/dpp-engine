@@ -31,7 +31,7 @@
 use async_trait::async_trait;
 use sha2::{Digest, Sha256};
 
-use dpp_domain::{DppError, domain::passport::PassportId, ports::seal::SealedEnvelope};
+use dpp_domain::{DppError, passport::PassportId, seal::SealedEnvelope};
 
 /// The digest a qualified seal is applied over: hex SHA-256 of a passport's
 /// compact JWS.

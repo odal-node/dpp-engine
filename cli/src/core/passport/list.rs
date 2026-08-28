@@ -101,7 +101,7 @@ fn summary_from_doc(doc: &serde_json::Value) -> PassportSummary {
     PassportSummary {
         id: s("id"),
         product_name,
-        sector: s("sector"),
+        product_group: s("productGroup"),
         status: s("status"),
         batch,
         updated,
@@ -132,7 +132,7 @@ mod tests {
         let doc = json!({
             "id": "019ee576-ca26-7532-8d21-730f17e65ce8",
             "productName": "Example Linen Blouse",
-            "sector": "textile",
+            "productGroup": "textile",
             "status": "active",
             "batchId": "BATCH-SS26-004",
             "updatedAt": "2026-06-20T14:41:01.688Z"
@@ -140,7 +140,7 @@ mod tests {
         let s = summary_from_doc(&doc);
         assert_eq!(s.id, "019ee576-ca26-7532-8d21-730f17e65ce8");
         assert_eq!(s.product_name, "Example Linen Blouse");
-        assert_eq!(s.sector, "textile");
+        assert_eq!(s.product_group, "textile");
         assert_eq!(s.status, "active");
         assert_eq!(s.batch.as_deref(), Some("BATCH-SS26-004"));
         assert_eq!(s.updated, "2026-06-20 14:41");
@@ -151,7 +151,7 @@ mod tests {
         let s = summary_from_doc(&json!({ "id": "x", "status": "draft" }));
         assert_eq!(s.product_name, "(unnamed)");
         assert!(s.batch.is_none());
-        assert_eq!(s.sector, "");
+        assert_eq!(s.product_group, "");
     }
 
     #[test]

@@ -1,4 +1,4 @@
-//! Sector plugin loader — compile, verify signature, and cache a `LoadedPlugin`.
+//! ProductGroup plugin loader — compile, verify signature, and cache a `LoadedPlugin`.
 
 mod discover;
 mod plugin;

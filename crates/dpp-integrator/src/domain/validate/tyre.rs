@@ -2,12 +2,15 @@
 
 use std::collections::HashMap;
 
-use dpp_domain::domain::{
+use dpp_domain::{
     passport::ManufacturerInfo,
-    sector::{Sector, SectorData, TyreData},
+    product_group::{ProductGroup, ProductGroupData, TyreData},
 };
 
-use crate::domain::fields::{optional_f64, optional_str, parse_gtin, require_f64, require_str};
+use crate::domain::fields::{
+    optional_commodity_code, optional_date, optional_f64, optional_str, parse_gtin, require_f64,
+    require_str,
+};
 use crate::domain::request::{CreatePassportRequest, RowError};
 
 /// Validate a single tyre row and convert it to a vault `CreatePassportRequest`.
@@ -38,6 +41,10 @@ pub fn validate_tyre_row(
     let recycled_rubber = optional_f64(row, "recycledRubberPct", row_num, &mut errors);
     let co2e = optional_f64(row, "co2ePerTyreKg", row_num, &mut errors);
 
+    // Envelope-level, so every product group reads them from the same columns.
+    let placed_on_market_date = optional_date(row, "placedOnMarketDate", row_num, &mut errors);
+    let commodity_code = optional_commodity_code(row, "commodityCode", row_num, &mut errors);
+
     if !errors.is_empty() {
         return Err(errors);
     }
@@ -45,7 +52,7 @@ pub fn validate_tyre_row(
     Ok(CreatePassportRequest {
         product_name: product_name
             .expect("field verified present by errors.is_empty() guard above"),
-        sector: Some(Sector::Tyre),
+        product_group: Some(ProductGroup::Tyre),
         manufacturer: ManufacturerInfo {
             name: manufacturer_name
                 .expect("field verified present by errors.is_empty() guard above"),
@@ -56,7 +63,7 @@ pub fn validate_tyre_row(
         materials: None,
         co2e_per_unit: co2e,
         repairability_score: None,
-        sector_data: Some(SectorData::Tyre(TyreData {
+        product_group_data: Some(ProductGroupData::Tyre(TyreData {
             gtin: gtin.expect("field verified present by errors.is_empty() guard above"),
             tyre_class: tyre_class
                 .expect("field verified present by errors.is_empty() guard above"),
@@ -73,6 +80,14 @@ pub fn validate_tyre_row(
         })),
         batch_id,
         schema_version: None,
+        placed_on_market_date,
+        commodity_code,
+        // A CSV cannot express these: each carries a URI *and* a hash of the
+        // referenced passport's public signature, and a hash cannot be authored
+        // by hand — an invented one produces a link that fails verification.
+        // Absent because the format cannot carry them, not by oversight.
+        parent_passport_ref: None,
+        component_refs: Vec::new(),
     })
 }
 
@@ -102,13 +117,13 @@ mod tests {
     fn valid_tyre_row_produces_request() {
         let row = tyre_row();
         let req = validate_tyre_row(&row, 1).expect("valid tyre row");
-        assert_eq!(req.sector, Some(Sector::Tyre));
-        match req.sector_data.unwrap() {
-            SectorData::Tyre(d) => {
+        assert_eq!(req.product_group, Some(ProductGroup::Tyre));
+        match req.product_group_data.unwrap() {
+            ProductGroupData::Tyre(d) => {
                 assert_eq!(d.tyre_class, "C1");
                 assert_eq!(d.external_rolling_noise_db, 68.0);
             }
-            _ => panic!("expected tyre sector data"),
+            _ => panic!("expected tyre product_group data"),
         }
     }
 }

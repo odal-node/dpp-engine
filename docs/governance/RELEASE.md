@@ -89,7 +89,7 @@ For critical bugs in a released version:
 
 ## Wasm Plugins
 
-Sector plugins are distributed as `.wasm` files attached to GitHub Releases.
+Product group plugins are distributed as `.wasm` files attached to GitHub Releases.
 Their versions track independently from the platform version.
 
 ## References

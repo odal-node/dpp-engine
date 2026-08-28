@@ -9,7 +9,9 @@ use dpp_common::http_problem;
 use serde_json::Value;
 
 use dpp_domain::Audience;
-use dpp_domain::access::{SectorAccessPolicy, filter_by_audience};
+use dpp_domain::access::{
+    DocumentScope, ProductGroupAccessPolicy, filter_by_audience, filter_by_audience_in_scope,
+};
 
 use crate::{infra::did, state::AppState};
 
@@ -114,7 +116,7 @@ fn parse_access_tier(_headers: &HeaderMap) -> Audience {
 
 /// Apply two-level access tier filtering:
 /// 1. Top-level passport fields (jws, batchId, retentionLocked).
-/// 2. Sector-specific fields within `sectorData` (e.g. battery supply chain data).
+/// 2. ProductGroup-specific fields within `productGroupData` (e.g. battery supply chain data).
 fn apply_access_tier_filter(passport: Value, tier: Audience) -> Value {
     // Read before filtering: the version that governs this passport's disclosure
     // is the one it was validated against, and it must be taken from the document
@@ -126,70 +128,81 @@ fn apply_access_tier_filter(passport: Value, tier: Audience) -> Value {
         .unwrap_or_default()
         .to_owned();
 
-    let passport_policy = SectorAccessPolicy::passport_default();
+    let passport_policy = ProductGroupAccessPolicy::passport_default();
     let decision = filter_by_audience(&passport, &passport_policy, tier);
     let mut doc = decision.filtered_data;
 
-    // Also filter sector data sub-object if present.
+    // Also filter product group data sub-object if present.
     if let Some(obj) = doc.as_object_mut()
-        && let Some(sd) = obj.remove("sectorData")
+        && let Some(sd) = obj.remove("productGroupData")
     {
-        let sector_policy = detect_sector_policy(&sd, &schema_version);
-        if let Some(policy) = sector_policy {
-            let inner = filter_by_audience(&sd, &policy, tier);
-            obj.insert("sectorData".into(), inner.filtered_data);
-        } else if is_tagged_unknown_sector(&sd) {
-            // Fail closed (RT2-1 / RT2-5): the sub-object carries a `sector`
+        let product_group_policy = detect_product_group_policy(&sd, &schema_version);
+        if let Some(policy) = product_group_policy {
+            // The sub-object was removed from the envelope above, so it is now
+            // its own root document — and its root is already inside the
+            // product group. Filtering it as an envelope would apply none of
+            // this product group's classes and serve every restricted field.
+            let inner =
+                filter_by_audience_in_scope(&sd, &policy, tier, DocumentScope::ProductGroupData);
+            obj.insert("productGroupData".into(), inner.filtered_data);
+        } else if is_tagged_unknown_product_group(&sd) {
+            // Fail closed (RT2-1 / RT2-5): the sub-object carries a `product_group`
             // tag the catalog doesn't recognise, so we have no policy telling
             // us which fields are public. Rather than leak professional /
-            // confidential fields, drop everything except the sector
+            // confidential fields, drop everything except the product group
             // identifier at non-elevated tiers.
             if tier == Audience::Public {
-                obj.insert("sectorData".into(), redacted_unknown_sector(&sd));
+                obj.insert(
+                    "productGroupData".into(),
+                    redacted_unknown_product_group(&sd),
+                );
             } else {
-                obj.insert("sectorData".into(), sd);
+                obj.insert("productGroupData".into(), sd);
             }
         } else {
-            // Genuinely untagged/legacy record: no sector tag and no shape
+            // Genuinely untagged/legacy record: no product group tag and no shape
             // match. Preserve existing passthrough behaviour.
-            obj.insert("sectorData".into(), sd);
+            obj.insert("productGroupData".into(), sd);
         }
     }
 
     doc
 }
 
-/// True when `sectorData` carries a non-empty `sector` tag (i.e. it is a tagged
+/// True when `productGroupData` carries a non-empty `product_group` tag (i.e. it is a tagged
 /// record, as opposed to a legacy untagged one). Used to decide whether an
-/// unrecognised sector should fail closed.
-fn is_tagged_unknown_sector(sector_data: &Value) -> bool {
-    sector_data
+/// unrecognised product group should fail closed.
+fn is_tagged_unknown_product_group(product_group_data: &Value) -> bool {
+    product_group_data
         .as_object()
-        .and_then(|o| o.get("sector"))
+        .and_then(|o| o.get("productGroup"))
         .and_then(Value::as_str)
         .is_some_and(|s| !s.is_empty())
 }
 
-/// Minimal, fail-closed `sectorData` for an unrecognised sector at the Public
-/// tier: keep only the `sector` identifier, drop every other (potentially
+/// Minimal, fail-closed `productGroupData` for an unrecognised product group at the Public
+/// tier: keep only the `product_group` identifier, drop every other (potentially
 /// professional/confidential) field.
-fn redacted_unknown_sector(sector_data: &Value) -> Value {
+fn redacted_unknown_product_group(product_group_data: &Value) -> Value {
     let mut out = serde_json::Map::new();
-    if let Some(tag) = sector_data.get("sector") {
-        out.insert("sector".into(), tag.clone());
+    if let Some(tag) = product_group_data.get("productGroup") {
+        out.insert("productGroup".into(), tag.clone());
     }
     Value::Object(out)
 }
 
-/// Select the sector-specific access policy from the catalog.
+/// Select the product group-specific access policy from the catalog.
 ///
-/// The stored `sectorData` carries a `"sector"` discriminant; the policy and its
-/// field tiers come from the catalog, so this covers every sector — not just
+/// The stored `productGroupData` carries a `"product group"` discriminant; the policy and its
+/// field tiers come from the catalog, so this covers every product group — not just
 /// battery/textile. Falls back to field-shape detection for legacy records that
-/// predate the tagged `sectorData` format.
-fn detect_sector_policy(sector_data: &Value, schema_version: &str) -> Option<SectorAccessPolicy> {
-    let obj = sector_data.as_object()?;
-    let key = match obj.get("sector").and_then(Value::as_str) {
+/// predate the tagged `productGroupData` format.
+fn detect_product_group_policy(
+    product_group_data: &Value,
+    schema_version: &str,
+) -> Option<ProductGroupAccessPolicy> {
+    let obj = product_group_data.as_object()?;
+    let key = match obj.get("productGroup").and_then(Value::as_str) {
         Some("unsoldGoods") => "unsold-goods",
         Some(tag) => tag,
         None if obj.contains_key("batteryChemistry") || obj.contains_key("battery_chemistry") => {
@@ -202,10 +215,10 @@ fn detect_sector_policy(sector_data: &Value, schema_version: &str) -> Option<Sec
     };
     // Versioned deliberately: a published passport must be filtered by the
     // disclosure classes in force when its signature was frozen, not by whatever
-    // the catalog says today. `None` here — unknown sector *or* unknown version —
-    // lands on the fail-closed branch above, which only needs a `sector` tag to
-    // redact, so a known sector at an unrecognised version is covered too.
-    SectorAccessPolicy::for_schema_version(key, schema_version)
+    // the catalog says today. `None` here — unknown product group *or* unknown version —
+    // lands on the fail-closed branch above, which only needs a `product_group` tag to
+    // redact, so a known product group at an unrecognised version is covered too.
+    ProductGroupAccessPolicy::for_schema_version(key, schema_version)
 }
 
 pub(crate) async fn fetch_passport(state: &AppState, dpp_id: &str) -> Result<Value, StatusCode> {
@@ -269,42 +282,42 @@ pub(crate) fn fetch_problem(status: StatusCode) -> axum::response::Response {
 #[cfg(test)]
 mod security_regression {
     //! **RT2-5**: access-tier redaction must fail *closed* for an unrecognised
-    //! sector tag — it must not pass professional/confidential `sectorData`
+    //! product group tag — it must not pass professional/confidential `productGroupData`
     //! fields through verbatim at the Public tier.
     use super::*;
     use serde_json::json;
 
     #[test]
-    fn unknown_sector_tag_fails_closed_at_public_tier() {
+    fn unknown_product_group_tag_fails_closed_at_public_tier() {
         let passport = json!({
             "id": "x",
             "productName": "Widget",
-            "sectorData": {
-                "sector": "totallyMadeUpSector",
+            "productGroupData": {
+                "productGroup": "totallyMadeUpProductGroup",
                 "supplierCostEur": 12.50,
                 "internalNotes": "trade secret"
             }
         });
         let out = apply_access_tier_filter(passport, Audience::Public);
-        let sd = out.get("sectorData").expect("sectorData kept");
-        // Only the sector identifier survives; the unknown sensitive fields drop.
+        let sd = out.get("productGroupData").expect("productGroupData kept");
+        // Only the product group identifier survives; the unknown sensitive fields drop.
         assert_eq!(
-            sd.get("sector").and_then(Value::as_str),
-            Some("totallyMadeUpSector")
+            sd.get("productGroup").and_then(Value::as_str),
+            Some("totallyMadeUpProductGroup")
         );
         assert!(sd.get("supplierCostEur").is_none(), "leaked: {sd}");
         assert!(sd.get("internalNotes").is_none(), "leaked: {sd}");
     }
 
     #[test]
-    fn untagged_legacy_sector_data_passes_through() {
-        // No `sector` tag and no recognised shape → legacy passthrough preserved.
+    fn untagged_legacy_product_group_data_passes_through() {
+        // No `product_group` tag and no recognised shape → legacy passthrough preserved.
         let passport = json!({
             "id": "x",
-            "sectorData": { "someLegacyField": "value" }
+            "productGroupData": { "someLegacyField": "value" }
         });
         let out = apply_access_tier_filter(passport, Audience::Public);
-        let sd = out.get("sectorData").expect("sectorData kept");
+        let sd = out.get("productGroupData").expect("productGroupData kept");
         assert_eq!(
             sd.get("someLegacyField").and_then(Value::as_str),
             Some("value")

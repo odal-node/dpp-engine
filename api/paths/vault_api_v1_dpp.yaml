@@ -21,14 +21,14 @@ post:
           $ref: ../components/schemas/CreateRequest.yaml
         example:
           productName: EcoCell Pro 48V
-          sector: battery
+          productGroup: battery
           manufacturer:
             name: EcoTech GmbH
             address: Hauptstraße 1, 10115 Berlin
           co2ePerUnit: 4.2
           batchId: BATCH-2026-04-001
-          sectorData:
-            sector: battery
+          productGroupData:
+            productGroup: battery
             gtin: '09506000134352'
             batteryChemistry: LFP
             nominalVoltageV: 48
@@ -46,3 +46,5 @@ post:
       $ref: ../components/responses/Unauthorized.yaml
     '422':
       $ref: ../components/responses/ValidationError.yaml
+    '403':
+      $ref: ../components/responses/Forbidden.yaml

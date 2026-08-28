@@ -9,7 +9,7 @@
 
 use dpp_plugin_sdk::export_plugin;
 use dpp_plugin_sdk::traits::{
-    AbiVersion, DppSectorPlugin, METRIC_CO2E_SCORE, PluginCapabilities, PluginCapability,
+    AbiVersion, DppProductGroupPlugin, METRIC_CO2E_SCORE, PluginCapabilities, PluginCapability,
     PluginComplianceStatus, PluginError, PluginInput, PluginMeta, PluginResult, SchemaVersionRange,
 };
 use serde_json::Value;
@@ -17,10 +17,10 @@ use serde_json::Value;
 #[derive(Default)]
 struct EchoPlugin;
 
-impl DppSectorPlugin for EchoPlugin {
+impl DppProductGroupPlugin for EchoPlugin {
     fn meta(&self) -> PluginMeta {
         PluginMeta {
-            sector: "abi-echo".into(),
+            product_group: "abi-echo".into(),
             name: "ABI Echo Fixture".into(),
             version: env!("CARGO_PKG_VERSION").into(),
             license: "BSL-1.1".into(),

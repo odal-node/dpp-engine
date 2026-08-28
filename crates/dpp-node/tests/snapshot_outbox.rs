@@ -19,12 +19,10 @@ use chrono::Utc;
 use dpp_dal::in_memory_repo::InMemoryPassportRepo;
 use dpp_domain::{
     DppError,
-    domain::{
-        passport::{ManufacturerInfo, Passport, PassportId},
-        sector::Sector,
-        status::PassportStatus,
-    },
+    passport::{ManufacturerInfo, Passport, PassportId},
     ports::passport_repo::PassportRepository,
+    product_group::ProductGroup,
+    status::PassportStatus,
 };
 use dpp_types::snapshot::{
     SnapshotOutbox, SnapshotOutboxCounts, SnapshotReconcileRow, SnapshotStore,
@@ -189,7 +187,9 @@ fn passport(status: PassportStatus) -> Passport {
         id,
         batch_id: None,
         product_name: product_name.into(),
-        sector: Sector::Textile,
+        product_group: ProductGroup::Textile,
+        applicable_instruments: Vec::new(),
+        granularity: None,
         manufacturer: ManufacturerInfo {
             name: "Drain Test GmbH".into(),
             address: "Berlin, DE".into(),
@@ -200,7 +200,7 @@ fn passport(status: PassportStatus) -> Passport {
         repairability_score: None,
         compliance_result: None,
         lint_result: None,
-        sector_data: None,
+        product_group_data: None,
         status,
         qr_code_url: None,
         jws_signature: Some("full.jws.signature".into()),

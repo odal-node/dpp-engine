@@ -1,0 +1,29 @@
+type: object
+description: >-
+  Per-passport scan aggregates over a trailing window. `totalScans` and
+  `qrRenders` sit side by side and are never combined — a QR render is label
+  production, not a resolution. Nothing about the scanner (IP, agent, session)
+  is collected or returned; the counters carry no such fields.
+required:
+  - windowDays
+  - totalScans
+  - scansHtml
+  - scansJson
+  - daily
+  - qrRenders
+properties:
+  windowDays:
+    type: integer
+  totalScans:
+    type: integer
+  scansHtml:
+    type: integer
+  scansJson:
+    type: integer
+  daily:
+    type: array
+    description: Per-day scan totals, oldest first.
+    items:
+      $ref: ./DailyScanCount.yaml
+  qrRenders:
+    type: integer

@@ -2,7 +2,7 @@
 //!
 //! # Why this exists
 //!
-//! Each sector section in [`super::sections`] is a hand-written table of named
+//! Each product group section in [`super::sections`] is a hand-written table of named
 //! fields, chosen for a readable summary. Battery renders seven. Battery v2.6.0
 //! declares **53** fields `x-disclosure: public`, each citing an Annex XIII basis
 //! in its own schema `description` — so 46 fields that `public_view` deliberately
@@ -30,13 +30,13 @@
 //! # The drift property this buys
 //!
 //! The remainder is computed from the *data*, not from a list. A field added to
-//! a sector in `dpp-core` appears on the public page with no change here — which
+//! a product group in `dpp-core` appears on the public page with no change here — which
 //! is the failure mode that produced the original gap, since a hand-written
 //! table has no way to notice a field it was never told about.
 //!
 //! # What it does not do
 //!
-//! It performs no filtering. Its input is `sectorData` from the already-redacted
+//! It performs no filtering. Its input is `productGroupData` from the already-redacted
 //! public view, so a key present here is a key `public_view` decided was public,
 //! at the schema version the passport's signature was frozen under. Re-deciding
 //! that here would be a second disclosure policy, which is the defect
@@ -47,14 +47,14 @@ use serde_json::Value;
 use crate::esc::esc;
 
 /// Keys that are structural rather than data, and belong on no table.
-const SKIP: &[&str] = &["sector"];
+const SKIP: &[&str] = &["productGroup"];
 
-/// Render every `sectorData` key not already shown by the curated section.
+/// Render every `productGroupData` key not already shown by the curated section.
 ///
-/// Returns an empty string when nothing remains, so a sector whose section
+/// Returns an empty string when nothing remains, so a product group whose section
 /// happens to cover everything gets no empty table.
 pub(crate) fn build_remainder_section(p: &Value, already_rendered: &[&str]) -> String {
-    let Some(obj) = p.get("sectorData").and_then(Value::as_object) else {
+    let Some(obj) = p.get("productGroupData").and_then(Value::as_object) else {
         return String::new();
     };
 
@@ -154,8 +154,8 @@ mod tests {
 
     #[test]
     fn renders_only_what_the_curated_section_did_not() {
-        let p = json!({ "sectorData": {
-            "sector": "battery",
+        let p = json!({ "productGroupData": {
+            "productGroup": "battery",
             "batteryChemistry": "LFP",
             "hazardSymbol": "GHS07",
         }});
@@ -166,17 +166,18 @@ mod tests {
             !html.contains("Battery Chemistry"),
             "the curated section already showed it: {html}"
         );
-        assert!(!html.contains(">sector<"), "the tag is not data");
+        assert!(!html.contains(">product_group<"), "the tag is not data");
     }
 
     #[test]
     fn nothing_left_renders_nothing() {
-        let p = json!({ "sectorData": { "sector": "battery", "batteryChemistry": "LFP" }});
+        let p =
+            json!({ "productGroupData": { "productGroup": "battery", "batteryChemistry": "LFP" }});
         assert_eq!(build_remainder_section(&p, &["batteryChemistry"]), "");
     }
 
     #[test]
-    fn absent_sector_data_renders_nothing() {
+    fn absent_product_group_data_renders_nothing() {
         assert_eq!(build_remainder_section(&json!({}), &[]), "");
     }
 
@@ -184,7 +185,7 @@ mod tests {
     /// absent, but a stored document can carry an explicit null.
     #[test]
     fn null_values_are_omitted() {
-        let p = json!({ "sectorData": { "sector": "x", "a": serde_json::Value::Null }});
+        let p = json!({ "productGroupData": { "productGroup": "x", "a": serde_json::Value::Null }});
         assert_eq!(build_remainder_section(&p, &[]), "");
     }
 
@@ -194,8 +195,8 @@ mod tests {
     /// stored document.
     #[test]
     fn values_and_labels_are_escaped() {
-        let p = json!({ "sectorData": {
-            "sector": "x",
+        let p = json!({ "productGroupData": {
+            "productGroup": "x",
             "note": "<script>alert(1)</script>",
         }});
         let html = build_remainder_section(&p, &[]);

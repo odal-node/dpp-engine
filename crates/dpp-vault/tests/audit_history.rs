@@ -30,8 +30,8 @@ async fn lifecycle_actions_are_recorded_in_audit_history() {
         "productName": "Audit Trail Widget",
         "manufacturer": {"name": "Audit Inc", "address": "Berlin, DE"},
         "materials": [{"name": "Nickel", "weightKg": 0.5}],
-        "sectorData": {
-            "sector": "battery",
+        "productGroupData": {
+            "productGroup": "battery",
             "gtin": "09506000134352",
             "batteryChemistry": "NiMH",
             "batteryType": "portable",

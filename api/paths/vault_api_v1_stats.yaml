@@ -27,19 +27,6 @@ get:
       content:
         application/json:
           schema:
-            type: object
-            properties:
-              windowDays:
-                type: integer
-                example: 30
-              totalScans:
-                type: integer
-                example: 4213
-              totalQrRenders:
-                type: integer
-                example: 57
-              distinctPassportsScanned:
-                type: integer
-                example: 312
+            $ref: ../components/schemas/OperatorScanStats.yaml
     '401':
       $ref: ../components/responses/Unauthorized.yaml

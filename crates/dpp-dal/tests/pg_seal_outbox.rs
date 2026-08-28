@@ -26,11 +26,11 @@
 use chrono::Utc;
 use dpp_dal::pg::{PgPassportRepo, PgSealOutboxRepo};
 use dpp_dal::test_harness::start_pg;
-use dpp_domain::domain::passport::{ManufacturerInfo, Passport, PassportId};
-use dpp_domain::domain::sector::Sector;
-use dpp_domain::domain::status::PassportStatus;
+use dpp_domain::passport::{ManufacturerInfo, Passport, PassportId};
 use dpp_domain::ports::passport_repo::PassportRepository;
-use dpp_domain::ports::seal::{SealFormat, SealedEnvelope};
+use dpp_domain::product_group::ProductGroup;
+use dpp_domain::seal::{SealFormat, SealedEnvelope};
+use dpp_domain::status::PassportStatus;
 use dpp_types::SealOutbox;
 
 /// A passport in the state the drain actually finds one in: published, signed,
@@ -41,7 +41,9 @@ fn published_passport(jws: &str) -> Passport {
         id: PassportId::new(),
         batch_id: None,
         product_name: "Seal Test Battery".into(),
-        sector: Sector::Battery,
+        product_group: ProductGroup::Battery,
+        applicable_instruments: Vec::new(),
+        granularity: None,
         manufacturer: ManufacturerInfo {
             name: "TestCorp GmbH".into(),
             address: "Berlin, DE".into(),
@@ -52,7 +54,7 @@ fn published_passport(jws: &str) -> Passport {
         repairability_score: None,
         compliance_result: None,
         lint_result: None,
-        sector_data: None,
+        product_group_data: None,
         status: PassportStatus::Published,
         qr_code_url: None,
         jws_signature: Some(jws.to_owned()),

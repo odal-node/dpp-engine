@@ -55,8 +55,8 @@ async fn api_created_facility_and_operator_id_are_stamped_on_create() {
     let create_body = serde_json::json!({
         "productName": "EcoBattery LFP 3000",
         "manufacturer": { "name": "GreenCell GmbH", "address": "Berlin, DE" },
-        "sectorData": {
-            "sector": "battery",
+        "productGroupData": {
+            "productGroup": "battery",
             "gtin": "09506000134352",
             "batteryChemistry": "LFP",
             "batteryType": "portable",

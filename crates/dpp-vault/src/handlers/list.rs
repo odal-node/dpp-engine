@@ -6,17 +6,33 @@ use axum::{
     http::StatusCode,
     response::IntoResponse,
 };
-use serde::Deserialize;
-use serde_json::json;
+use serde::{Deserialize, Serialize};
 
-use dpp_domain::domain::status::PassportStatus;
+use dpp_domain::status::PassportStatus;
 
 use crate::{middleware::auth::AuthContext, state::AppState};
 
 use super::error::internal_error;
 
+/// One page of passports, with the totals a caller needs to page through them.
+///
+/// A named type rather than a `json!` literal so the OpenAPI contract test can
+/// check `components/schemas/PassportListResponse` against it.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PassportListResponse {
+    /// This page of passports, in the repository's order.
+    pub dpps: Vec<crate::api::PassportResponse>,
+    /// Total matching the filter, across every page — not the length of `dpps`.
+    pub total: u64,
+    /// The page size actually applied, after clamping.
+    pub limit: u32,
+    /// The offset this page starts at.
+    pub skip: u32,
+}
+
 /// Query parameters for the passport list endpoint.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ListQuery {
     /// Filter by passport status. Omit to return all statuses.
@@ -59,12 +75,15 @@ pub async fn list_handler(
 
     (
         StatusCode::OK,
-        Json(json!({
-            "dpps": passports,
-            "total": total,
-            "limit": limit,
-            "skip": offset,
-        })),
+        Json(PassportListResponse {
+            dpps: passports
+                .iter()
+                .map(crate::api::PassportResponse::from)
+                .collect(),
+            total,
+            limit,
+            skip: offset,
+        }),
     )
         .into_response()
 }

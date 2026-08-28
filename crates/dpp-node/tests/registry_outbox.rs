@@ -35,18 +35,14 @@ use dpp_dal::pg::{PgDal, PgPassportRepo, PgRegistrySyncRepo, sqlx};
 use dpp_dal::test_harness::{start_pg, start_pg_before};
 use dpp_domain::{
     DppError,
-    domain::{
-        passport::{ManufacturerInfo, Passport, PassportId},
-        sector::Sector,
-        status::PassportStatus,
+    passport::{ManufacturerInfo, Passport, PassportId},
+    ports::passport_repo::PassportRepository,
+    ports::registry_sync::{
+        RegisteringOperator, RegistrationGranularity, RegistrationRequest, RegistryIdentifiers,
+        RegistryRecord, RegistryStatus, RegistrySyncPort,
     },
-    ports::{
-        passport_repo::PassportRepository,
-        registry_sync::{
-            RegisteringOperator, RegistrationGranularity, RegistrationRequest, RegistryIdentifiers,
-            RegistryRecord, RegistryStatus, RegistrySyncPort,
-        },
-    },
+    product_group::ProductGroup,
+    status::PassportStatus,
 };
 use dpp_node::infra::registry_drain::drain_once;
 
@@ -68,7 +64,9 @@ fn draft_passport() -> Passport {
         id: PassportId::new(),
         batch_id: Some("LOT-OUTBOX-1".into()),
         product_name: "Outbox Battery".into(),
-        sector: Sector::Battery,
+        product_group: ProductGroup::Battery,
+        applicable_instruments: Vec::new(),
+        granularity: None,
         manufacturer: ManufacturerInfo {
             name: "TestCorp GmbH".into(),
             address: "Berlin, DE".into(),
@@ -79,7 +77,7 @@ fn draft_passport() -> Passport {
         repairability_score: None,
         compliance_result: None,
         lint_result: None,
-        sector_data: None,
+        product_group_data: None,
         status: PassportStatus::Draft,
         qr_code_url: None,
         jws_signature: None,
@@ -187,7 +185,7 @@ impl RegistrySyncPort for MockPort {
 
     async fn notify_transfer(
         &self,
-        _record: &dpp_domain::domain::transfer::TransferRecord,
+        _record: &dpp_domain::transfer::TransferRecord,
         _registry_id: &str,
     ) -> Result<RegistryRecord, DppError> {
         unimplemented!("not exercised")
@@ -338,6 +336,12 @@ async fn insert_clobbered_row(
     registry_id: Option<&str>,
 ) -> uuid::Uuid {
     let id = uuid::Uuid::now_v7();
+    // `sector`, not `product_group`, and deliberately so: this helper writes
+    // against the schema as it stood before 0024, and the column is not renamed
+    // until 0032. A rename sweep "corrected" this once and the insert began
+    // failing with `column "product_group" does not exist` — the one place in
+    // the tree where the old name is the right one, because it is describing
+    // history rather than the current schema.
     sqlx::query(
         r#"INSERT INTO odal.passport (id, sector, status, schema_version, doc)
            VALUES ($1, 'battery', 'suspended', '2.0.0', '{}'::jsonb)"#,

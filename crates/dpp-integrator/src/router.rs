@@ -17,7 +17,7 @@ use dpp_common::{
 };
 
 use crate::{
-    handlers::{health, import, job_status, schemas, templates},
+    handlers::{health, import, job_status, product_groups, schemas, templates},
     state::AppState,
 };
 
@@ -33,15 +33,29 @@ const IMPORT_BODY_LIMIT: usize = 5 * 1024 * 1024;
 pub fn build(state: AppState) -> Router {
     Router::new()
         .route("/health", get(health::health_handler))
-        .route("/api/v1/templates/{sector}", get(templates::get_template))
-        .route("/api/v1/schemas", get(schemas::list_schemas))
-        .route("/api/v1/schemas/{sector}", get(schemas::get_current_schema))
         .route(
-            "/api/v1/schemas/{sector}/{version}",
+            "/api/v1/templates/{productGroup}",
+            get(templates::get_template),
+        )
+        .route(
+            "/api/v1/product-groups",
+            get(product_groups::list_product_groups),
+        )
+        .route(
+            "/api/v1/product-groups/{productGroup}",
+            get(product_groups::get_product_group),
+        )
+        .route("/api/v1/schemas", get(schemas::list_schemas))
+        .route(
+            "/api/v1/schemas/{productGroup}",
+            get(schemas::get_current_schema),
+        )
+        .route(
+            "/api/v1/schemas/{productGroup}/{version}",
             get(schemas::get_pinned_schema),
         )
         .route(
-            "/api/v1/import/{sector}",
+            "/api/v1/import/{productGroup}",
             post(import::import_file).layer(DefaultBodyLimit::max(IMPORT_BODY_LIMIT)),
         )
         .route("/api/v1/imports/{job_id}", get(job_status::get_job_status))
@@ -126,12 +140,225 @@ mod tests {
         }
     }
 
-    /// An unknown sector and an unknown version are told apart, and both name
+    async fn get_json(uri: &str) -> (StatusCode, serde_json::Value) {
+        let app = super::build(test_state());
+        let req = Request::builder().uri(uri).body(Body::empty()).unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        let status = resp.status();
+        let bytes = axum::body::to_bytes(resp.into_body(), 4 * 1024 * 1024)
+            .await
+            .unwrap();
+        let value = serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Null);
+        (status, value)
+    }
+
+    /// Every key either catalog knows is served — discovered from the catalogs
+    /// rather than compared against a list here, so adding a product group or an
+    /// act that reaches a new one cannot leave it silently unserved.
+    ///
+    /// The union, not the product-group catalog alone. An act can reach a key
+    /// that has no product-group descriptor, and that key is exactly the one an
+    /// operator most needs an answer about — there is no schema, no plugin and
+    /// no template to discover it from anywhere else.
+    #[tokio::test]
+    async fn every_key_either_catalog_knows_is_served() {
+        let (status, body) = get_json("/api/v1/product-groups").await;
+        assert_eq!(status, StatusCode::OK);
+
+        let served: std::collections::BTreeSet<String> = body["productGroups"]
+            .as_array()
+            .expect("productGroups is an array")
+            .iter()
+            .map(|e| e["productGroup"].as_str().unwrap().to_owned())
+            .collect();
+
+        let known: std::collections::BTreeSet<String> =
+            dpp_domain::catalog::ProductGroupCatalog::new()
+                .keys()
+                .into_iter()
+                .chain(dpp_domain::instrument::InstrumentCatalog::new().product_group_keys())
+                .map(ToOwned::to_owned)
+                .collect();
+
+        assert_eq!(served, known);
+    }
+
+    /// A product group an act reaches while no product-group descriptor exists
+    /// for it is served, with a `null` title.
+    ///
+    /// This is the case the instrument catalog was built to represent, and the
+    /// one an operator has no other way to ask about: no schema, no plugin and
+    /// no template mentions it. Reading the key set off the product-group
+    /// catalog alone dropped it from the list and answered `404` for it — a
+    /// node that holds a recorded binding replying "no such product group".
+    ///
+    /// Pinned on the real key rather than discovered, so this stays a worked
+    /// case. Should a descriptor for it ever be authored, this test failing is
+    /// the correct outcome: pick another key that has none, or delete the test
+    /// once no key does.
+    #[tokio::test]
+    async fn a_group_only_an_act_reaches_is_served_not_a_404() {
+        let (status, body) = get_json("/api/v1/product-groups/lmt").await;
+
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "a key an act reaches must not be refused as unmodelled"
+        );
+        assert_eq!(
+            body["title"],
+            serde_json::Value::Null,
+            "no product-group descriptor exists for this key, so the title is null"
+        );
+        assert_eq!(
+            body["passport"]["required"],
+            serde_json::json!(true),
+            "the reaching act carries a passport obligation"
+        );
+
+        // And this is why `required: true` here must never travel alone. The one
+        // act behind it does not exist yet and binds nothing — its manifest
+        // records the source as a preparatory study that is explicitly not law,
+        // with an empty legal basis. Serving the bare `true` would publish that
+        // as an unqualified requirement.
+        let act = &body["instruments"][0];
+        assert_eq!(act["instrumentStatus"], "anticipated");
+        assert_eq!(act["bindingStatus"], "provisional");
+
+        assert!(
+            dpp_domain::catalog::ProductGroupCatalog::new()
+                .get("lmt")
+                .is_none(),
+            "this test is only meaningful while no descriptor exists for the key"
+        );
+    }
+
+    /// **No `required` is ever served without the status of the acts behind it.**
+    ///
+    /// `passport.required` folds across every reaching act, so it says an act
+    /// imposes a passport — not that any act binds the group today. Bare, an
+    /// obligation resting on an anticipated act with a provisional binding is
+    /// byte-identical to one resting on an adopted regulation with a firm date.
+    ///
+    /// This is the same rule as `no_date_is_ever_served_without_its_basis`,
+    /// applied to the obligation instead of the date.
+    #[tokio::test]
+    async fn no_obligation_is_ever_served_without_its_instruments_statuses() {
+        let (_, body) = get_json("/api/v1/product-groups").await;
+        let mut required_and_unbound = 0usize;
+
+        for entry in body["productGroups"].as_array().unwrap() {
+            let key = entry["productGroup"].as_str().unwrap();
+            let acts = entry["instruments"].as_array().unwrap();
+
+            for act in acts {
+                for field in ["instrumentStatus", "bindingStatus"] {
+                    assert!(
+                        act.get(field).is_some_and(|v| v.is_string()),
+                        "{key}: an act was served without its {field}"
+                    );
+                }
+            }
+
+            // A group whose passport is required while nothing binds it yet is
+            // the case the statuses exist for. Count them so this cannot pass by
+            // never meeting one.
+            let required = entry["passport"]["required"] == serde_json::json!(true);
+            let none_bind = !acts.is_empty()
+                && acts
+                    .iter()
+                    .all(|a| a["bindingStatus"].as_str() != Some("in_force"));
+            if required && none_bind {
+                required_and_unbound += 1;
+            }
+        }
+
+        assert!(
+            required_and_unbound > 0,
+            "no product group required a passport on acts that bind nothing yet — \
+             the qualifier this test guards was never exercised, so it passed \
+             vacuously"
+        );
+    }
+
+    /// **The rule this endpoint exists to keep.** Most of the catalog is undated,
+    /// and of the dates that exist some trace to an adopted text and some are a
+    /// reading. A date served without its basis turns a qualified reading into an
+    /// unqualified claim, which is the failure the schema endpoint strips its
+    /// prose to avoid.
+    #[tokio::test]
+    async fn no_date_is_ever_served_without_its_basis() {
+        let (_, body) = get_json("/api/v1/product-groups").await;
+        let mut checked = 0usize;
+
+        for entry in body["productGroups"].as_array().unwrap() {
+            let key = entry["productGroup"].as_str().unwrap();
+
+            if let Some(from) = entry["passport"]["from"].as_object() {
+                assert!(
+                    from.get("date").is_some_and(|d| d.is_string()),
+                    "{key}: an obligation date must be a string"
+                );
+                assert!(
+                    from.get("basis").is_some_and(|b| b.is_string()),
+                    "{key}: served an obligation date with no basis"
+                );
+                checked += 1;
+            }
+            if let Some(retention) = entry["retention"].as_object() {
+                assert!(
+                    retention.get("basis").is_some_and(|b| b.is_string()),
+                    "{key}: served a retention period with no basis"
+                );
+                checked += 1;
+            }
+        }
+
+        // Most of the catalog is undated, so this loop could inspect nothing and
+        // still pass. A test that cannot fail is not enforcing the rule it was
+        // written for.
+        assert!(
+            checked > 0,
+            "no dated or retained product group was inspected — this assertion \
+             passed vacuously and is enforcing nothing"
+        );
+    }
+
+    /// A worked case from the catalog, so the wiring is checked against a real
+    /// answer rather than only against its shape. The Toy Safety Regulation is
+    /// adopted with a firm passport date, and its implementing acts are not
+    /// published — so the duty is `required` and nothing is determinable yet.
+    /// Those two being different is the reason `determinable` is reported at all.
+    #[tokio::test]
+    async fn an_adopted_act_can_require_a_passport_that_is_not_yet_determinable() {
+        let (status, body) = get_json("/api/v1/product-groups/toy").await;
+        assert_eq!(status, StatusCode::OK);
+
+        assert_eq!(body["passport"]["required"], serde_json::json!(true));
+        assert_eq!(body["passport"]["from"]["date"], "2030-08-01");
+        assert_eq!(body["passport"]["from"]["basis"], "sourced");
+        assert_eq!(
+            body["determinable"],
+            serde_json::json!(false),
+            "the implementing acts are unpublished, so nothing is bindingly determinable"
+        );
+    }
+
+    /// An unmodelled key is a 404 rather than an entry with an empty obligation,
+    /// which would read as "no passport required" — the opposite of "this node
+    /// does not know".
+    #[tokio::test]
+    async fn an_unmodelled_product_group_is_not_an_empty_obligation() {
+        let (status, _) = get_json("/api/v1/product-groups/nosuchgroup").await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+    }
+
+    /// An unknown product group and an unknown version are told apart, and both name
     /// what is available rather than only refusing.
     #[tokio::test]
     async fn schema_routes_refuse_helpfully() {
         for (uri, status) in [
-            ("/api/v1/schemas/nosuchsector", StatusCode::NOT_FOUND),
+            ("/api/v1/schemas/nosuchproduct_group", StatusCode::NOT_FOUND),
             ("/api/v1/schemas/battery/9.9.9", StatusCode::NOT_FOUND),
             (
                 "/api/v1/schemas/battery/not-semver",

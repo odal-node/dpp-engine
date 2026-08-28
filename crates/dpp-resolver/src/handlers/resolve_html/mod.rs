@@ -1,5 +1,5 @@
 //! Handler for `GET /dpp/{dppId}` when `Accept: text/html` — renders a self-contained
-//! HTML passport page with sector-specific tables and an inline SVG QR code.
+//! HTML passport page with product group-specific tables and an inline SVG QR code.
 
 use axum::{
     extract::{Path, State},

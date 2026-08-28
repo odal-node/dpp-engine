@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use dpp_domain::domain::error::DppError;
+use dpp_domain::error::DppError;
 use dpp_types::operator::{OperatorConfig, OperatorConfigRepository, UpdateOperatorConfig};
 
 /// Application service for operator configuration.

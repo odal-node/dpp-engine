@@ -98,12 +98,20 @@ paths:
     $ref: paths/vault_api_v1_dpp_{dppId}_transfer_initiate.yaml
   /vault/api/v1/dpp/{dppId}/transfer/accept:
     $ref: paths/vault_api_v1_dpp_{dppId}_transfer_accept.yaml
+  /vault/api/v1/dpp/{dppId}/transfer/reject:
+    $ref: paths/vault_api_v1_dpp_{dppId}_transfer_reject.yaml
+  /vault/api/v1/dpp/{dppId}/transfer/cancel:
+    $ref: paths/vault_api_v1_dpp_{dppId}_transfer_cancel.yaml
   /vault/api/v1/dpp/{dppId}/history:
     $ref: paths/vault_api_v1_dpp_{dppId}_history.yaml
   /vault/api/v1/dpp/{dppId}/stats:
     $ref: paths/vault_api_v1_dpp_{dppId}_stats.yaml
   /vault/api/v1/stats:
     $ref: paths/vault_api_v1_stats.yaml
+  /vault/api/v1/dpp/{dppId}/registry:
+    $ref: paths/vault_api_v1_dpp_{dppId}_registry.yaml
+  /vault/api/v1/registry:
+    $ref: paths/vault_api_v1_registry.yaml
   /vault/api/v1/dpp/{dppId}/verify-tree:
     $ref: paths/vault_api_v1_dpp_{dppId}_verify-tree.yaml
   /vault/api/v1/seal:
@@ -182,16 +190,20 @@ paths:
     $ref: paths/internal_keys_rotate.yaml
   /integrator/health:
     $ref: paths/integrator_health.yaml
-  /integrator/api/v1/templates/{sector}:
-    $ref: paths/integrator_api_v1_templates_{sector}.yaml
+  /integrator/api/v1/templates/{productGroup}:
+    $ref: paths/integrator_api_v1_templates_{productGroup}.yaml
+  /integrator/api/v1/product-groups:
+    $ref: paths/integrator_api_v1_product-groups.yaml
+  /integrator/api/v1/product-groups/{productGroup}:
+    $ref: paths/integrator_api_v1_product-groups_{productGroup}.yaml
   /integrator/api/v1/schemas:
     $ref: paths/integrator_api_v1_schemas.yaml
-  /integrator/api/v1/schemas/{sector}:
-    $ref: paths/integrator_api_v1_schemas_{sector}.yaml
-  /integrator/api/v1/schemas/{sector}/{version}:
-    $ref: paths/integrator_api_v1_schemas_{sector}_{version}.yaml
-  /integrator/api/v1/import/{sector}:
-    $ref: paths/integrator_api_v1_import_{sector}.yaml
+  /integrator/api/v1/schemas/{productGroup}:
+    $ref: paths/integrator_api_v1_schemas_{productGroup}.yaml
+  /integrator/api/v1/schemas/{productGroup}/{version}:
+    $ref: paths/integrator_api_v1_schemas_{productGroup}_{version}.yaml
+  /integrator/api/v1/import/{productGroup}:
+    $ref: paths/integrator_api_v1_import_{productGroup}.yaml
   /integrator/api/v1/imports/{job_id}:
     $ref: paths/integrator_api_v1_imports_{job_id}.yaml
   /dpp/{dppId}:
@@ -219,6 +231,10 @@ tags:
     description: >-
       Aggregate, privacy-safe resolution counts — per-passport and operator-wide
       rollups.
+  - name: Registry
+    description: >-
+      EU-registry registration state — per-passport and operator-wide, plus the
+      operator's verified-registry standing.
   - name: Evidence Dossiers
     description: >-
       Signed, self-contained evidence dossiers — generate, fetch, and verify
@@ -228,7 +244,7 @@ tags:
   - name: API Keys
     description: API key management — create, list, revoke.
   - name: Plugins
-    description: Signed sector-plugin hot-install — verify, persist, hot-swap (admin-only).
+    description: Signed product group-plugin hot-install — verify, persist, hot-swap (admin-only).
   - name: Webhooks
     description: Signed outbound event delivery — subscribe, list, remove, test.
   - name: Facilities

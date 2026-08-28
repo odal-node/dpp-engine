@@ -1,0 +1,58 @@
+post:
+  operationId: cancelDppTransfer
+  summary: Cancel a pending transfer of responsibility
+  description: |
+    End the pending handover as **withdrawn**, before it completes. The record
+    becomes terminal and the passport's transfer chain is free to carry a new
+    handover.
+
+    **This records an outcome, not who caused it** — see reject, which is the
+    same call with a different outcome written to the record.
+
+    Core permits a cancel from one state more than a reject: `Accepted` as well
+    as `Initiated`. That is not reachable over this API today, because accepting
+    completes the record in the same call, so no stored record is ever left in
+    `Accepted`. Cancel is nonetheless the right call for a handover this
+    operator is withdrawing, and the broader rule is core's, not a promise this
+    route makes.
+  tags:
+    - DPP Lifecycle
+  security:
+    - BearerApiKey: []
+    - BasicAuth: []
+  parameters:
+    - name: dppId
+      in: path
+      required: true
+      schema:
+        $ref: ../components/schemas/DppId.yaml
+  responses:
+    '200':
+      description: Transfer cancelled.
+      content:
+        application/json:
+          schema:
+            $ref: ../components/schemas/TransferRecord.yaml
+    '401':
+      $ref: ../components/responses/Unauthorized.yaml
+    '404':
+      description: |
+        This DPP has no transfer chain at all — no handover has ever been
+        initiated for it. A chain that exists but carries nothing pending is a
+        `422`, not this.
+      content:
+        application/problem+json:
+          schema:
+            $ref: ../components/schemas/Problem.yaml
+    '422':
+      description: |
+        There is no pending handover to cancel, or the record's state does not
+        permit it. Core allows a cancel from `Initiated` or `Accepted`.
+      content:
+        application/problem+json:
+          schema:
+            $ref: ../components/schemas/Problem.yaml
+    '400':
+      $ref: ../components/responses/BadRequest.yaml
+    '403':
+      $ref: ../components/responses/Forbidden.yaml

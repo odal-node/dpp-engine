@@ -1,8 +1,8 @@
-//! Wasmtime-based Wasm plugin host — loads sector plugins and dispatches compliance work.
+//! Wasmtime-based Wasm plugin host — loads product group plugins and dispatches compliance work.
 //!
-//! `WasmPluginHost` implements both `PluginHost` (for dispatch-by-sector) and
+//! `WasmPluginHost` implements both `PluginHost` (for dispatch-by-product group) and
 //! `ComplianceRegistry` (the port wired into `PassportService`). When no plugin
-//! is loaded for a sector it falls back to `PassthroughRegistry` behaviour.
+//! is loaded for a product group it falls back to `PassthroughRegistry` behaviour.
 //!
 //! # Sandbox guarantees
 //!

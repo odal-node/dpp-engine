@@ -1,0 +1,24 @@
+type: object
+description: |
+  One legal instrument recorded on a passport as applicable to it, and who
+  asserted that it applies.
+
+  Fixed when the product was placed on the market and never recomputed. Carries
+  no status, deliberately: a passport freezes its applicable set at issuance, and
+  re-deriving how far along an act is would misstate what governed the product at
+  that moment. The obligation endpoint's `ReachingInstrument` answers the live
+  question and does carry status.
+properties:
+  instrument:
+    type: string
+    description: The instrument's catalog id.
+    example: battery-reg-2023-1542
+  recorded:
+    $ref: ./RecordedBasis.yaml
+    description: >-
+      Who asserted this entry, fixed at issuance along with the rest of the
+      applicable set.
+required:
+  - instrument
+  - recorded
+additionalProperties: false

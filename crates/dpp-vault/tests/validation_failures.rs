@@ -1,7 +1,7 @@
 //! Integration tests for validation failure scenarios.
 //!
-//! Each payload deserialises into the core `SectorData` (so the request reaches
-//! the handler's `validate_sector_data`) but violates a schema / cross-field
+//! Each payload deserialises into the core `ProductGroupData` (so the request reaches
+//! the handler's `validate_product_group_data`) but violates a schema / cross-field
 //! rule, so the vault must reject it with HTTP 422. Bodies are read as text
 //! because the rejection may come from the JSON extractor (plain text) or the
 //! handler's RFC-style error (JSON) depending on the failure.
@@ -24,8 +24,8 @@ async fn test_battery_invalid_gtin() {
         "productName": "Battery with bad GTIN",
         "manufacturer": {"name": "Test Inc", "address": "Test City"},
         "materials": [{"name": "Lithium", "weightKg": 1.0}],
-        "sectorData": {
-            "sector": "battery",
+        "productGroupData": {
+            "productGroup": "battery",
             "gtin": "123",
             "batteryChemistry": "Li-ion",
             "batteryType": "industrial",
@@ -57,8 +57,8 @@ async fn test_textile_fibre_sum_invalid() {
         "productName": "Invalid Fibre Textile",
         "manufacturer": {"name": "BadTextile Inc", "address": "Test"},
         "materials": [{"name": "Cotton", "weightKg": 0.1}],
-        "sectorData": {
-            "sector": "textile",
+        "productGroupData": {
+            "productGroup": "textile",
             "gtin": "09506000134352",
             "fibreComposition": [
                 {"fibre": "cotton", "pct": 50.0},
@@ -140,8 +140,8 @@ async fn test_textile_empty_care_instructions() {
         "productName": "Textile No Care",
         "manufacturer": {"name": "Textile Co", "address": "Test"},
         "materials": [{"name": "Cotton", "weightKg": 0.2}],
-        "sectorData": {
-            "sector": "textile",
+        "productGroupData": {
+            "productGroup": "textile",
             "gtin": "09506000134352",
             "fibreComposition": [
                 {"fibre": "cotton", "pct": 100.0}
@@ -189,8 +189,8 @@ async fn test_battery_rejects_a_caller_chosen_schema_version() {
         "manufacturer": {"name": "Test Inc", "address": "Test City"},
         "materials": [{"name": "Lithium", "weightKg": 1.0}],
         "schemaVersion": "1.0.0",
-        "sectorData": {
-            "sector": "battery",
+        "productGroupData": {
+            "productGroup": "battery",
             "gtin": "09506000134352",
             "batteryChemistry": "LFP",
             "batteryType": "industrial",
@@ -231,9 +231,9 @@ async fn test_battery_accepts_the_current_schema_version() {
     // Read the version from the catalog rather than pinning a literal: this test
     // is about the check's *rule*, and hardcoding would turn every future battery
     // schema bump into a failure here that says nothing about the rule.
-    let current = dpp_domain::catalog::SectorCatalog::new()
+    let current = dpp_domain::catalog::ProductGroupCatalog::new()
         .current_schema_version("battery")
-        .expect("battery is a catalog sector")
+        .expect("battery is a catalog product_group")
         .to_owned();
 
     let body = serde_json::json!({
@@ -241,8 +241,8 @@ async fn test_battery_accepts_the_current_schema_version() {
         "manufacturer": {"name": "Test Inc", "address": "Test City"},
         "materials": [{"name": "Lithium", "weightKg": 1.0}],
         "schemaVersion": current,
-        "sectorData": {
-            "sector": "battery",
+        "productGroupData": {
+            "productGroup": "battery",
             "gtin": "09506000134352",
             "batteryChemistry": "LFP",
             "batteryType": "industrial",
@@ -256,7 +256,7 @@ async fn test_battery_accepts_the_current_schema_version() {
     assert_eq!(
         resp.status(),
         201,
-        "the sector's current version is not a disagreement: {}",
+        "the product_group's current version is not a disagreement: {}",
         resp.text().await.unwrap_or_default()
     );
 }

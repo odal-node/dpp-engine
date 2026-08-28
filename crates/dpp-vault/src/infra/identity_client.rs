@@ -6,12 +6,10 @@ use reqwest::Client;
 use sha2::{Digest, Sha256};
 
 use dpp_domain::{
-    domain::{
-        error::DppError,
-        identity::{PassportCredential, PassportCredentialSubject, SignedCredential},
-        passport::PassportId,
-    },
-    ports::identity_port::IdentityPort,
+    credential::{PassportCredential, PassportCredentialSubject, SignedCredential},
+    error::DppError,
+    passport::PassportId,
+    ports::identity::IdentityPort,
 };
 
 /// The issuer key id whose key the node's did:web document publishes at

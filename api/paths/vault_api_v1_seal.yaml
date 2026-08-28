@@ -33,37 +33,6 @@ get:
       content:
         application/json:
           schema:
-            type: object
-            required:
-              - unsealedPublished
-              - pending
-              - sealed
-              - exhausted
-              - sealingConfigured
-            properties:
-              unsealedPublished:
-                type: integer
-                format: int64
-                description: >-
-                  Published passports carrying no seal at all. `0` is the
-                  healthy state.
-                example: 0
-              pending:
-                type: integer
-                format: int64
-                description: Outbox rows awaiting a sealing attempt.
-              sealed:
-                type: integer
-                format: int64
-                description: Outbox rows whose seal is on the passport.
-              exhausted:
-                type: integer
-                format: int64
-                description: Outbox rows that gave up after exhausting retries.
-              sealingConfigured:
-                type: boolean
-                description: >-
-                  False when no seal provider is configured, in which case every
-                  count above is `0` for that reason alone.
+            $ref: ../components/schemas/SealSummaryResponse.yaml
     '401':
       $ref: ../components/responses/Unauthorized.yaml

@@ -22,7 +22,7 @@
 
 use std::sync::Arc;
 
-use dpp_domain::{domain::status::PassportStatus, ports::passport_repo::PassportRepository};
+use dpp_domain::{ports::passport_repo::PassportRepository, status::PassportStatus};
 use dpp_types::SnapshotOutbox;
 use dpp_types::snapshot::SnapshotStore;
 
@@ -152,7 +152,7 @@ pub async fn drain_once(
 async fn store_published(
     store: &Arc<dyn SnapshotStore>,
     dpp_id: &str,
-    passport: &dpp_domain::domain::passport::Passport,
+    passport: &dpp_domain::passport::Passport,
     resolver_base_url: &str,
 ) -> Result<(), dpp_domain::DppError> {
     let json = dpp_vault::public_view::render_public_snapshot(passport)?;

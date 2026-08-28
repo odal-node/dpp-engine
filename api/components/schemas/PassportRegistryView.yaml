@@ -1,0 +1,30 @@
+type: object
+description: >-
+  EU-registry state for one passport. `configured: false` means this deployment
+  has no registry queues at all — reported instead of a row of zeros, which
+  would read as "everything is registered".
+required:
+  - passportId
+  - configured
+properties:
+  passportId:
+    type: string
+  configured:
+    type: boolean
+  registration:
+    allOf:
+      - $ref: ./RegistrationView.yaml
+    description: >-
+      Absent when the passport has never been published: it owes no
+      registration, which is different from owing one that has not happened.
+  transfers:
+    type: array
+    description: Handover notifications recorded for this passport, newest first.
+    items:
+      $ref: ./TransferView.yaml
+  currentOperator:
+    allOf:
+      - $ref: ./CurrentOperatorView.yaml
+    description: >-
+      Absent when the passport has never been transferred, in which case its own
+      `operatorIdentifier` is current.

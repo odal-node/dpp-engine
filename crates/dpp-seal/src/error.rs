@@ -10,7 +10,7 @@
 //! [`SealError::Backend`]. What stays here is only what any backend can hit:
 //! configuration, transport, and an operation nobody implements.
 
-use dpp_domain::domain::error::DppError;
+use dpp_domain::error::DppError;
 
 #[derive(Debug, thiserror::Error)]
 pub enum SealError {

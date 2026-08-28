@@ -16,7 +16,7 @@ use async_trait::async_trait;
 use sqlx::Row;
 use uuid::Uuid;
 
-use dpp_domain::{DppError, domain::passport::PassportId};
+use dpp_domain::{DppError, passport::PassportId};
 use dpp_types::{SnapshotOutbox, SnapshotOutboxCounts, SnapshotReconcileRow};
 
 use super::{PgDal, db_err, require_updated};

@@ -16,7 +16,7 @@ use super::error::{
 
 /// `POST /api/v1/dpp/{dppId}/publish` — Ed25519-sign and publish a draft passport.
 ///
-/// Validates sector data, calls the identity service to sign, then atomically
+/// Validates product group data, calls the identity service to sign, then atomically
 /// writes the JWS, QR URL, and `Published` status. Returns `409` if the passport
 /// is not in a publishable state.
 pub async fn publish_handler(
@@ -56,13 +56,13 @@ pub async fn publish_handler(
     }
 
     match state.service.publish(passport_id, &auth).await {
-        Ok(p) => (StatusCode::OK, Json(p)).into_response(),
+        Ok(p) => (StatusCode::OK, Json(crate::api::PassportResponse::from(&p))).into_response(),
         Err(dpp_domain::DppError::NotFound(_)) => not_found_error("DPP not found."),
         Err(dpp_domain::DppError::InvalidTransition { .. }) => {
             conflict_error("DPP cannot be published from its current state.")
         }
         // Publish-time gates (Annex III completeness, binding compliance
-        // violations, sector-data validation) surface as client errors, not 500s.
+        // violations, product group-data validation) surface as client errors, not 500s.
         Err(dpp_domain::DppError::Validation(msg)) => validation_error(&msg.to_string()),
         Err(e) => internal_error(e),
     }

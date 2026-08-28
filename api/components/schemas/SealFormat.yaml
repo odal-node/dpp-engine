@@ -1,0 +1,7 @@
+type: string
+description: AdES format of a seal value.
+enum:
+  - JADES
+  - PADES
+  - CADES
+  - XADES

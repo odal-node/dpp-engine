@@ -76,28 +76,28 @@ fn wasm_benchmarks(c: &mut Criterion) {
     });
 }
 
-/// Build the real `sector-battery` plugin to wasm32-wasip1 and return its path.
+/// Build the real `product-group-battery` plugin to wasm32-wasip1 and return its path.
 ///
 /// Returns `None` (after a warning) if the build fails — e.g. the wasm32-wasip1
 /// target is not installed — so the WAT floor benches still run. Now that the
 /// host wires sandboxed WASI, this real plugin actually instantiates; the WAT
 /// benches measure the host round-trip floor, these measure battery logic.
 fn build_battery_wasm() -> Option<PathBuf> {
-    // dpp-engine/crates/dpp-plugin-host → Odal-Node → dpp-core/plugins/sector-battery
-    let plugin_dir =
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../dpp-core/plugins/sector-battery");
+    // dpp-engine/crates/dpp-plugin-host → Odal-Node → dpp-core/plugins/product-group-battery
+    let plugin_dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../../dpp-core/plugins/product-group-battery");
     match Command::new(env!("CARGO"))
         .current_dir(&plugin_dir)
         .args(["build", "--release", "--target", "wasm32-wasip1"])
         .status()
     {
         Ok(s) if s.success() => {
-            let wasm = plugin_dir.join("target/wasm32-wasip1/release/sector_battery.wasm");
+            let wasm = plugin_dir.join("target/wasm32-wasip1/release/product_group_battery.wasm");
             wasm.is_file().then_some(wasm)
         }
         _ => {
             eprintln!(
-                "skipping battery_* benches: failed to build sector-battery.wasm \
+                "skipping battery_* benches: failed to build product-group-battery.wasm \
                  (is the wasm32-wasip1 target installed? `rustup target add wasm32-wasip1`)"
             );
             None
@@ -105,7 +105,7 @@ fn build_battery_wasm() -> Option<PathBuf> {
     }
 }
 
-/// Benchmarks against the real `sector-battery` plugin (EU Battery Regulation
+/// Benchmarks against the real `product-group-battery` plugin (EU Battery Regulation
 /// logic), so §1.3 can be quoted as a battery figure rather than the WAT floor.
 fn battery_benchmarks(c: &mut Criterion) {
     let Some(wasm) = build_battery_wasm() else {

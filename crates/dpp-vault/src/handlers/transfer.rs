@@ -1,5 +1,6 @@
-//! Transfer of responsibility:
-//! `POST /api/v1/dpp/{dppId}/transfer/initiate` and `.../transfer/accept`.
+//! Transfer of responsibility — the four lifecycle routes under
+//! `POST /api/v1/dpp/{dppId}/transfer/`: `initiate`, `accept`, `reject` and
+//! `cancel`.
 
 use axum::{
     Json,
@@ -7,8 +8,8 @@ use axum::{
     http::StatusCode,
     response::IntoResponse,
 };
-use dpp_domain::domain::transfer::{ResponsibleOperator, TransferReason};
-use serde::Deserialize;
+use dpp_domain::transfer::{ResponsibleOperator, TransferReason};
+use serde::{Deserialize, Serialize};
 
 use crate::{middleware::auth::AuthContext, state::AppState};
 
@@ -19,7 +20,7 @@ use super::error::{
 
 /// Body for initiating a transfer: the outgoing and incoming operators and the
 /// reason. In the managed single-node model the caller supplies both parties.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TransferInitiateRequest {
     /// The current (outgoing) responsible operator — must match the chain head.
@@ -103,6 +104,67 @@ pub async fn transfer_accept_handler(
         Ok(r) => (StatusCode::OK, Json(r)).into_response(),
         Err(dpp_domain::DppError::NotFound(_)) => {
             not_found_error("No transfer to accept for this DPP.")
+        }
+        Err(e @ dpp_domain::DppError::Validation(_)) => validation_error(&e.to_string()),
+        Err(e) => internal_error(e),
+    }
+}
+
+/// `POST /api/v1/dpp/{dppId}/transfer/reject` — end the pending handover as
+/// refused.
+///
+/// Terminal: the record can never complete afterwards, and the chain is free to
+/// carry a new transfer. Paired with `transfer_cancel_handler`, this is the only
+/// way out of a handover the counterparty never acted on — without it a pending
+/// record blocks every later transfer on the passport for good.
+///
+/// The caller is this node's operator, not the incoming one, which holds no
+/// credentials here. The name records the outcome; see
+/// `PassportService::terminate_pending_transfer`.
+pub async fn transfer_reject_handler(
+    State(state): State<AppState>,
+    Extension(auth): Extension<AuthContext>,
+    Path(dpp_id): Path<String>,
+) -> impl IntoResponse {
+    if let Some(resp) = require_write(&auth, "Rejecting a transfer") {
+        return resp;
+    }
+    let id = match parse_passport_id(&dpp_id) {
+        Ok(i) => i,
+        Err(e) => return e,
+    };
+    match state.service.reject_transfer(id, &auth).await {
+        Ok(r) => (StatusCode::OK, Json(r)).into_response(),
+        Err(dpp_domain::DppError::NotFound(_)) => {
+            not_found_error("No transfer to reject for this DPP.")
+        }
+        Err(e @ dpp_domain::DppError::Validation(_)) => validation_error(&e.to_string()),
+        Err(e) => internal_error(e),
+    }
+}
+
+/// `POST /api/v1/dpp/{dppId}/transfer/cancel` — end the pending handover as
+/// withdrawn, before it completes.
+///
+/// The same caller as reject, recording a different outcome. Core permits a
+/// cancel from one state more (`Accepted`), which no stored record reaches
+/// today — see `PassportService::cancel_transfer`.
+pub async fn transfer_cancel_handler(
+    State(state): State<AppState>,
+    Extension(auth): Extension<AuthContext>,
+    Path(dpp_id): Path<String>,
+) -> impl IntoResponse {
+    if let Some(resp) = require_write(&auth, "Cancelling a transfer") {
+        return resp;
+    }
+    let id = match parse_passport_id(&dpp_id) {
+        Ok(i) => i,
+        Err(e) => return e,
+    };
+    match state.service.cancel_transfer(id, &auth).await {
+        Ok(r) => (StatusCode::OK, Json(r)).into_response(),
+        Err(dpp_domain::DppError::NotFound(_)) => {
+            not_found_error("No transfer to cancel for this DPP.")
         }
         Err(e @ dpp_domain::DppError::Validation(_)) => validation_error(&e.to_string()),
         Err(e) => internal_error(e),

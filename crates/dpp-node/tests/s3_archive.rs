@@ -12,12 +12,10 @@ use testcontainers::{
 
 use chrono::Utc;
 use dpp_domain::{
-    domain::{
-        passport::{ManufacturerInfo, Passport, PassportId},
-        sector::Sector,
-        status::PassportStatus,
-    },
+    passport::{ManufacturerInfo, Passport, PassportId},
     ports::archive::ArchivePort,
+    product_group::ProductGroup,
+    status::PassportStatus,
 };
 use dpp_node::infra::s3_archive::{S3ArchiveAdapter, S3ArchiveConfig};
 
@@ -57,7 +55,9 @@ fn make_passport() -> Passport {
         id: PassportId::new(),
         batch_id: None,
         product_name: "Test Battery".into(),
-        sector: Sector::Battery,
+        product_group: ProductGroup::Battery,
+        applicable_instruments: Vec::new(),
+        granularity: None,
         manufacturer: ManufacturerInfo {
             name: "Test Co".into(),
             address: "Berlin, DE".into(),
@@ -68,7 +68,7 @@ fn make_passport() -> Passport {
         repairability_score: None,
         compliance_result: None,
         lint_result: None,
-        sector_data: None,
+        product_group_data: None,
         status: PassportStatus::Published,
         qr_code_url: None,
         jws_signature: Some("test.jws.sig".into()),

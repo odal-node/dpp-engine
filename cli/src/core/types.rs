@@ -152,7 +152,7 @@ pub struct ListParams {
 pub struct PassportSummary {
     pub id: String,
     pub product_name: String,
-    pub sector: String,
+    pub product_group: String,
     pub status: String,
     pub batch: Option<String>,
     pub updated: String,
@@ -235,12 +235,12 @@ pub struct WhoAmI {
 pub struct DryRunVerdict {
     /// Would `POST /api/v1/dpp` accept it?
     pub create_valid: bool,
-    /// Would the sector data clear the publish-time schema gates?
+    /// Would the product group data clear the publish-time schema gates?
     ///
     /// Deliberately not named for publish: it is one of publish's
     /// preconditions, not all of them. Registry identity and
     /// category-mandatory content also gate publish and are not checked here.
-    pub sector_data_valid: bool,
+    pub product_group_data_valid: bool,
     /// Why not, when either verdict is false.
     pub detail: Option<String>,
 }

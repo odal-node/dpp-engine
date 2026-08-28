@@ -3,7 +3,7 @@ post:
   summary: Re-check plausibility-lint findings
   description: |
     Recomputes the `dpp-rules` plausibility lint pack against the DPP's
-    current sector data and persists the refreshed `lintResult` (pack
+    current product group data and persists the refreshed `lintResult` (pack
     version, findings, assessed-at timestamp). Findings are non-binding —
     arithmetic and physical-plausibility checks distinct from binding
     compliance rules — and never gate publish or any other transition.
@@ -34,3 +34,7 @@ post:
       $ref: ../components/responses/Unauthorized.yaml
     '404':
       $ref: ../components/responses/NotFound.yaml
+    '400':
+      $ref: ../components/responses/BadRequest.yaml
+    '403':
+      $ref: ../components/responses/Forbidden.yaml

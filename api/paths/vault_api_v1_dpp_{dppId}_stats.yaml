@@ -34,32 +34,8 @@ get:
       content:
         application/json:
           schema:
-            type: object
-            properties:
-              windowDays:
-                type: integer
-                example: 30
-              totalScans:
-                type: integer
-                example: 128
-              scansHtml:
-                type: integer
-                example: 96
-              scansJson:
-                type: integer
-                example: 32
-              qrRenders:
-                type: integer
-                example: 4
-              daily:
-                type: array
-                items:
-                  type: object
-                  properties:
-                    day:
-                      type: string
-                      format: date
-                    count:
-                      type: integer
+            $ref: ../components/schemas/PassportScanStats.yaml
     '401':
       $ref: ../components/responses/Unauthorized.yaml
+    '400':
+      $ref: ../components/responses/BadRequest.yaml

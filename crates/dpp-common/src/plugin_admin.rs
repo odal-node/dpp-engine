@@ -13,8 +13,8 @@ use serde::Serialize;
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct InstalledPlugin {
-    /// Sector catalog key the plugin is bound to (e.g. `"battery"`).
-    pub sector: String,
+    /// ProductGroup catalog key the plugin is bound to (e.g. `"battery"`).
+    pub product_group: String,
     /// ABI version the plugin declared, formatted `"major.minor"`.
     pub abi_version: String,
 }
@@ -44,7 +44,7 @@ pub enum PluginInstallError {
 /// leaving the previous plugin serving on any rejection.
 pub trait PluginAdmin: Send + Sync {
     /// Install `artifact` (with detached signature `sig`, the raw 64-byte or
-    /// base64 Ed25519 signature over `SHA-256(artifact)`) for `sector`.
+    /// base64 Ed25519 signature over `SHA-256(artifact)`) for `product_group`.
     ///
     /// `precompiled` selects the artifact kind: `false` for a portable `.wasm`
     /// module (compiled on the node), `true` for a precompiled `.cwasm` (loaded
@@ -56,7 +56,7 @@ pub trait PluginAdmin: Send + Sync {
     /// hot-swapped into service. On any failure the prior state is unchanged.
     fn install(
         &self,
-        sector: &str,
+        product_group: &str,
         artifact: Vec<u8>,
         sig: Vec<u8>,
         precompiled: bool,

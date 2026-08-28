@@ -1,0 +1,31 @@
+type: object
+description: |
+  Product group-specific data, **internally tagged** by a `productGroup`
+  discriminator — e.g.
+  `{ "productGroup": "battery", "gtin": "…", "batteryChemistry": "LFP", … }`.
+  The remaining fields are product group-specific and validated against the
+  product group's versioned JSON schema. Sectors include `battery`, `textile`,
+  `steel`, `aluminium`, `tyre`, `electronics`, and others.
+
+  The tag is **open**. A product group this build does not model round-trips its
+  tag and payload verbatim instead of failing to parse, so a group added to the
+  catalog does not require a client release. That is why the server does not
+  derive this shape with `#[serde(tag = …)]`, which would close the set at
+  compile time.
+required:
+  - productGroup
+discriminator:
+  propertyName: productGroup
+properties:
+  productGroup:
+    type: string
+    example: battery
+additionalProperties: true
+example:
+  productGroup: battery
+  gtin: '09506000134352'
+  batteryChemistry: LFP
+  nominalVoltageV: 48
+  nominalCapacityAh: 100
+  expectedLifetimeCycles: 3000
+  co2ePerUnitKg: 45.2

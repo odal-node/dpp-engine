@@ -17,31 +17,11 @@ get:
           schema:
             type: array
             items:
-              type: object
-              properties:
-                id:
-                  type: string
-                  format: uuid
-                url:
-                  type: string
-                events:
-                  type: array
-                  items:
-                    type: string
-                active:
-                  type: boolean
-                description:
-                  type:
-                    - string
-                    - 'null'
-                createdAt:
-                  type: string
-                  format: date-time
-                updatedAt:
-                  type: string
-                  format: date-time
+              $ref: ../components/schemas/WebhookSubscription.yaml
     '401':
       $ref: ../components/responses/Unauthorized.yaml
+    '403':
+      $ref: ../components/responses/Forbidden.yaml
 post:
   operationId: createWebhook
   summary: Create a webhook subscription
@@ -60,57 +40,17 @@ post:
     content:
       application/json:
         schema:
-          type: object
-          required:
-            - url
-          properties:
-            url:
-              type: string
-              format: uri
-              example: https://hooks.example.com/odal
-            events:
-              type: array
-              items:
-                type: string
-              description: Event subjects to receive, or ["*"] for all. Defaults to all.
-              example:
-                - dpp.passport.published
-                - dpp.passport.transferred
-            description:
-              type: string
+          $ref: ../components/schemas/NewWebhookSubscription.yaml
   responses:
     '201':
       description: Subscription created. The `secret` field is shown ONCE.
       content:
         application/json:
           schema:
-            type: object
-            properties:
-              id:
-                type: string
-                format: uuid
-              url:
-                type: string
-              events:
-                type: array
-                items:
-                  type: string
-              active:
-                type: boolean
-              description:
-                type:
-                  - string
-                  - 'null'
-              createdAt:
-                type: string
-                format: date-time
-              updatedAt:
-                type: string
-                format: date-time
-              secret:
-                type: string
-                description: Signing secret — shown once, store it securely.
+            $ref: ../components/schemas/CreatedWebhookResponse.yaml
     '401':
       $ref: ../components/responses/Unauthorized.yaml
     '422':
       $ref: ../components/responses/ValidationError.yaml
+    '403':
+      $ref: ../components/responses/Forbidden.yaml

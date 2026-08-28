@@ -1,6 +1,6 @@
 get:
   operationId: getPinnedSectorSchema
-  summary: Fetch a pinned version of a sector's JSON Schema
+  summary: Fetch a pinned version of a product group's JSON Schema
   description: |
     A stored passport records the `schemaVersion` it was written under, so a
     client holding one needs that exact schema rather than whatever is current.
@@ -10,7 +10,7 @@ get:
   tags:
     - Integrator
   parameters:
-    - name: sector
+    - name: productGroup
       in: path
       required: true
       schema:
@@ -24,7 +24,7 @@ get:
         example: 2.6.0
   responses:
     '200':
-      description: The sector's JSON Schema at that version.
+      description: The product group's JSON Schema at that version.
       content:
         application/json:
           schema:

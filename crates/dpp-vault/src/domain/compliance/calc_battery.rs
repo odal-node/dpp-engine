@@ -32,10 +32,11 @@ use dpp_calc::assessability::Assessability;
 use dpp_calc::clock::AssessmentClock;
 use dpp_calc::recycled_content::{RecycledContentInputs, calculate};
 use dpp_calc::ruleset_registry::resolve_recycled_content;
-use dpp_domain::compliance::PassthroughBatteryStrategy;
-use dpp_domain::domain::sector::{BatteryData, SectorData};
-use dpp_domain::ports::compliance::{
-    ComplianceError, ComplianceErrorKind, ComplianceFinding, ComplianceResult, ComplianceStrategy,
+use dpp_domain::passthrough::PassthroughBatteryStrategy;
+use dpp_domain::product_group::{BatteryData, ProductGroupData};
+use dpp_domain::{
+    compliance::{ComplianceError, ComplianceErrorKind, ComplianceFinding, ComplianceResult},
+    ports::compliance::ComplianceStrategy,
 };
 use dpp_rules::batteries::recycled_content::{
     Art8Category, art8_category_for, chemistry_regulated_metals,
@@ -46,21 +47,21 @@ use dpp_rules::batteries::recycled_content::{
 pub struct CalcBatteryStrategy;
 
 impl ComplianceStrategy for CalcBatteryStrategy {
-    fn sector_key(&self) -> &str {
+    fn product_group_key(&self) -> &str {
         "battery"
     }
 
     fn compute(
         &self,
-        data: &SectorData,
+        data: &ProductGroupData,
         law_in_force_on: Option<NaiveDate>,
     ) -> Result<ComplianceResult, ComplianceError> {
-        let SectorData::Battery(battery) = data else {
+        let ProductGroupData::Battery(battery) = data else {
             return Err(ComplianceError {
                 kind: ComplianceErrorKind::InvalidInput,
                 message: format!(
                     "battery strategy received {} data",
-                    data.sector().catalog_key()
+                    data.product_group().catalog_key()
                 ),
             });
         };

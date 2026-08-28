@@ -37,7 +37,7 @@ jobs:
         with:
           toolchain: stable
           components: clippy
-      - uses: Swatinem/rust-cache@258712b0b7b1ddf8bddc9fc3b0faca682b2736c3 # v2
+      - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
         with:
           workspaces: dpp-engine
       # Linted with the `integration-tests` features ON, which folds in what a
@@ -75,13 +75,27 @@ jobs:
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
         with:
           toolchain: stable
-      - uses: Swatinem/rust-cache@258712b0b7b1ddf8bddc9fc3b0faca682b2736c3 # v2
+      - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
         with:
           workspaces: dpp-engine
       - name: Install cargo-nextest
-        uses: taiki-e/install-action@82cd3e7658a6f96c86c0234aeeda1748937cb0a1 # v2.85.13
+        uses: taiki-e/install-action@b6ff580856c41316412a0b9b60540fbc6f8c82cc # v2.86.7
         with:
           tool: nextest
+      # Run first, and as its own step, so "the API description no longer
+      # matches the code" is a named CI failure rather than one line inside a
+      # check called "Unit tests". It is cheap here (the toolchain and cache are
+      # already warm) and the `--workspace` run below re-runs it for free.
+      #
+      # This is only half the enforcement: the test reads
+      # `api/openapi.bundled.json`, embedded at compile time, so a *stale*
+      # bundle would let it pass against an outdated spec. The `openapi-lint`
+      # job regenerates both bundles and diffs them, which is what closes that.
+      # Both jobs must be required checks — either one alone can be satisfied
+      # while the API and the code disagree.
+      - name: OpenAPI contract — spec vs. the types and routes
+        working-directory: dpp-engine
+        run: cargo nextest run -p dpp-node --test openapi_contract --no-tests=fail
       # `--workspace` (no integration feature) runs every non-Docker test:
       # lib tests, the `odal` CLI binary tests, and the resolver e2e / JWS
       # verification + security-regression tests. The feature-gated
@@ -130,11 +144,11 @@ jobs:
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
         with:
           toolchain: stable
-      - uses: Swatinem/rust-cache@258712b0b7b1ddf8bddc9fc3b0faca682b2736c3 # v2
+      - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
         with:
           workspaces: dpp-engine
       - name: Install cargo-nextest
-        uses: taiki-e/install-action@82cd3e7658a6f96c86c0234aeeda1748937cb0a1 # v2.85.13
+        uses: taiki-e/install-action@b6ff580856c41316412a0b9b60540fbc6f8c82cc # v2.86.7
         with:
           tool: nextest
       - name: Create results dir
@@ -256,6 +270,26 @@ jobs:
             exit 1
           fi
 
+  contract-fixture-check:
+    name: OpenAPI contract fixtures stay exhaustive
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          path: dpp-engine
+      # Shell only — no Rust toolchain, so this reports in seconds and is
+      # independent of whether the workspace builds. Its own job rather than a
+      # step inside another, so "someone disabled the API drift gate" is a
+      # distinct red check.
+      - name: Fixtures use no struct-update syntax
+        working-directory: dpp-engine
+        run: bash scripts/contract-fixture-check.sh
+      # A grep gate with a broken anchor exits 0 forever and is
+      # indistinguishable from a passing one, so the gate is itself tested.
+      - name: Gate self-test
+        working-directory: dpp-engine
+        run: bash scripts/contract-fixture-check.test.sh
+
   mod-rs-check:
     name: No public items in mod.rs (index files only)
     runs-on: ubuntu-latest
@@ -306,15 +340,20 @@ jobs:
       - name: Check the spec version matches the crate version
         working-directory: dpp-engine
         run: bash scripts/spec-version-check.sh
-      # The bundle is a committed build artifact. `redocly bundle` is
-      # byte-deterministic, so regenerating it and diffing proves the shipped
-      # single file still matches the multi-file tree it came from.
-      - name: Check the bundle is current
+      # The bundles are committed build artifacts. `redocly bundle` is
+      # byte-deterministic, so regenerating them and diffing proves the shipped
+      # single files still match the multi-file tree they came from.
+      #
+      # The JSON bundle is the same document in the form the OpenAPI contract
+      # test reads (crates/dpp-node/tests/openapi_contract.rs). A stale one
+      # would let that test check the types against an outdated spec and pass.
+      - name: Check the bundles are current
         working-directory: dpp-engine
         run: |
           npx --yes @redocly/cli@2.46.2 bundle api/openapi.yaml -o api/openapi.bundled.yaml
-          git diff --exit-code -- api/openapi.bundled.yaml \
-            || { echo "ERROR: api/openapi.bundled.yaml is stale — run 'just openapi-bundle' and commit it"; exit 1; }
+          npx --yes @redocly/cli@2.46.2 bundle api/openapi.yaml -o api/openapi.bundled.json
+          git diff --exit-code -- api/openapi.bundled.yaml api/openapi.bundled.json \
+            || { echo "ERROR: an api/openapi.bundled.* file is stale — run 'just openapi-bundle' and commit both"; exit 1; }
       # The version is pinned and must stay equal to the one in the `just
       # openapi-check` recipe. With `@latest` the two disagree about what is
       # valid the moment Redocly publishes, and a spec that did not change
@@ -339,7 +378,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
         with:
           toolchain: stable
-      - uses: Swatinem/rust-cache@258712b0b7b1ddf8bddc9fc3b0faca682b2736c3 # v2
+      - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
         with:
           workspaces: dpp-engine
       - name: Install cargo-audit
@@ -354,7 +393,7 @@ jobs:
         working-directory: dpp-engine
         run: bash scripts/check-audit-register.test.sh
       - name: Install cargo-deny
-        uses: taiki-e/install-action@82cd3e7658a6f96c86c0234aeeda1748937cb0a1 # v2.85.13
+        uses: taiki-e/install-action@b6ff580856c41316412a0b9b60540fbc6f8c82cc # v2.86.7
         with:
           tool: cargo-deny
       - name: cargo deny (bans, licenses, sources)
@@ -373,11 +412,11 @@ jobs:
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
         with:
           toolchain: stable
-      - uses: Swatinem/rust-cache@258712b0b7b1ddf8bddc9fc3b0faca682b2736c3 # v2
+      - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
         with:
           workspaces: dpp-engine
       - name: Install cargo-nextest
-        uses: taiki-e/install-action@82cd3e7658a6f96c86c0234aeeda1748937cb0a1 # v2.85.13
+        uses: taiki-e/install-action@b6ff580856c41316412a0b9b60540fbc6f8c82cc # v2.86.7
         with:
           tool: nextest
       - name: PostgreSQL integration tests (check + clippy + pg_integration)

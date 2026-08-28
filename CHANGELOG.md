@@ -10,6 +10,377 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ## [Unreleased]
 
+### Added
+
+- **The seal route names who declared the content it covers.**
+  `GET /api/v1/dpp/{dppId}/seal` gains `declaredBy`, carrying the manufacturer
+  and Annex III(k) operator identifier frozen at publish, a
+  `responsibilityMayHaveTransferred` flag, and a note stating the distinction
+  outright.
+
+  A seal proves a document came from whoever holds the certificate and says
+  nothing about *scope*, so "we vouch for this content" and "we transmitted this
+  intact" look identical. Every audience view strips the seal, which makes this
+  the one surface where the two can be collapsed — and its readers being
+  authenticated and technical is a reason to be more careful, not less.
+
+  **Only a completed handover sets the flag.** An initiated transfer nobody
+  accepted has moved nothing, and reporting it would claim a transfer that may
+  still be rejected. The names cannot simply be updated instead: they are frozen
+  into the sealed bytes and the seal covers them, so a "current operator" field
+  would be an unverifiable claim sitting beside a verifiable document. The flag
+  says the answer is historical and points at where the current one lives.
+
+  A transfer-store failure now fails the read rather than defaulting the flag to
+  `false` — that default is a positive claim that responsibility has not moved,
+  which is worse than serving nothing.
+
+- **The contract gate now checks documented error codes.** It compared schemas,
+  numeric bounds, enum variants, query parameters, request bodies and route
+  coverage — everything except what a route says goes *wrong*. A status code has
+  no serde output to read, so it was the one axis with no ground truth; this
+  reads the handler's own `match` arms instead, via the error helpers
+  (`not_found_error`, `conflict_error`, `http_problem::unprocessable`, …) and
+  direct `StatusCode` construction.
+
+  **One direction, deliberately.** A token in a handler body proves a code is
+  reachable; the absence of one proves nothing, because handlers delegate — the
+  resolver's content-negotiation entry point dispatches to three others, and
+  `validate_handler` returns whatever the create path returns. Checking the
+  reverse falsely accused five routes. A gate that cries wolf gets deleted.
+
+  It found **39 operations returning a code the description never mentioned**:
+  `400` from a malformed path parameter on 29 of them, `403` from a scope check
+  on 20, `422` on six, and one each of `410` (a suspended passport on the public
+  GTIN route) and `503` (the readiness probe when the datastore does not answer).
+  All are now documented, via shared response components so each is one line.
+  `BadRequest`, `Gone` and `ServiceUnavailable` join the existing set.
+
+  `every_registered_handler_is_readable` guards the gate itself: handler modules
+  are listed by hand, and a handler a router registers but that list cannot reach
+  fails the build by name. Without it, forgetting a module would silently
+  un-gate its routes — an allowlist by omission, the shape
+  `every_published_object_shape_has_a_name` exists to prevent one level up.
+
+  Verified by breaking both: a removed `'422'` was named on the operation that
+  returns it, and a removed handler module named the two handlers it stranded.
+
+- **The two ways out of a pending transfer are routed.**
+  `POST /api/v1/dpp/{dppId}/transfer/reject` and `.../transfer/cancel` end a
+  handover the counterparty never acted on.
+
+  `TransferRecord::reject()` and `::cancel()` have existed in core since the
+  handshake landed, and nothing in the engine called either. That combined badly
+  with the chain's own guard: `initiate_transfer` refuses a new handover while
+  any record is `Initiated` or `Accepted`, and `Initiated` is not transient — a
+  counterparty that never acts left the record pending forever, so **every later
+  transfer on that passport was refused with `TransferAlreadyPending`, with no
+  route able to clear it.** Core built the escape hatch; the vault never opened
+  it.
+
+  Both go through one `terminate_pending_transfer`, whose selection predicate
+  mirrors `initiate_transfer`'s own `has_pending` check — whatever blocks a new
+  transfer is exactly what these clear. Legality is not re-decided in the vault:
+  the record's state machine refuses a `reject` from anything but `Initiated`, so
+  this selects a candidate and lets core say no. No registry notification is
+  enqueued, because one is queued when a handover *completes* and a transfer
+  ending here never did.
+
+  **`rejected` and `cancelled` record an outcome, not a party.** A node serves
+  one operator and accepts only that operator's credentials, so the incoming
+  counterparty cannot reach either route — both are called by this node's
+  operator. The earlier wording ("the incoming operator refuses", "the outgoing
+  operator withdraws") described an attribution nothing establishes, on an audit
+  trail that is compliance evidence. The two differ in the outcome written and in
+  the states core permits them from.
+
+### Fixed
+
+- **Three transfer routes documented a `404` for a condition that returns
+  `422`.** `initiate`, `accept`, `reject` and `cancel` answer `404` only when a
+  passport has no transfer chain at all; a chain that exists while nothing is
+  pending is a `422`. The description attached to `404` said "No pending transfer
+  to accept for this DPP", which is the `422` case — so a client branching on the
+  status code was told the wrong one. Both codes now describe what they actually
+  mean on all three routes. Nothing catches this class yet: the contract gate
+  checks 2xx schemas, routes, query parameters and request bodies, but never
+  compares a documented error code against the code a handler returns.
+
+- **`ProductGroupData` declared a discriminator on a property that does not
+  exist.** `discriminator.propertyName` read `product group`, with a space, while
+  the schema's own `required` and `properties` both say `productGroup` — so the
+  description pointed generated clients at a field it never documents. The
+  surrounding prose repeated the error twice more, including a worked example
+  object keyed `"product group"`. This is the same find-and-replace residue that
+  produced the `product group` query parameter; the gate added below catches the
+  parameter spelling, and nothing reads `discriminator.propertyName`.
+
+  The prose also attributed the shape to `#[serde(tag = …)]`, which the server
+  deliberately does **not** derive: the tag is open, so a product group this
+  build does not model round-trips its tag and payload rather than failing to
+  parse. Stated now, since it is the part a client actually needs.
+
+- **The documented plugin filename convention could not work.** The upload route
+  described the artifact name as `product group-<key>.wasm`. The code derives the
+  key with `trim_start_matches("product-group-")`, so a file named the documented
+  way has nothing stripped, and the derived key is the whole stem — the install is
+  refused. Same residue, third instance.
+
+- **The suspend endpoint's request body was described by nothing.** It declared
+  its `{ reason }` shape inline while a real `SuspendRequest` struct sat behind
+  it, so renaming that field would have changed what the server accepts and
+  failed no test. It is now a named schema checked against the type, and
+  `every_json_request_body_names_a_schema` fails the build on any other
+  `application/json` body that names no schema — the sibling of the response
+  check, and the half that was missing. Request bodies are the side of the
+  contract a client has to get right, which makes an unverified one the more
+  expensive of the two. One allowlist entry, with its reason: the `PUT` merge-
+  patch is a free-form bag of passport fields with no struct behind it.
+
+- **A GTIN check on the create path could not fail, and read as though it were
+  the only thing checking.** `POST /api/v1/dpp` re-validated the GS1 check digit
+  of `ProductGroupData::Battery`'s GTIN — a value that had already been through
+  `Gtin::parse`, so the second check could only ever succeed.
+
+  The branch matched on the battery variant alone, which made it look like ten
+  other product groups carrying a `gtin` were going unchecked. They are not.
+  Every typed payload declares `gtin: Gtin`, `Gtin`'s `Deserialize` calls
+  `Gtin::parse`, and `Gtin`'s inner field is private with `parse` as its only
+  constructor — so an invalid GTIN cannot be deserialised, cannot be constructed,
+  and never reaches a handler, for all eleven product groups at once.
+
+  The dead branch is removed and three tests (`gtin_boundary`) pin where the
+  rejection actually happens, so the next reader does not have to re-derive it.
+  **No behaviour change**: a malformed GTIN was refused before this change and is
+  refused after it, at the same point in the request.
+
+- **A restricted product-group field could have reached the public view.** The
+  resolver filters a passport in two passes — the envelope, then
+  `productGroupData` handed on as its own root document. The core filter now
+  scopes a product group's disclosure classes to that payload, which means the
+  second pass has to declare that its root is *already inside* the product group.
+  Filtering it as an envelope applies none of that product group's classes and
+  serves every restricted field in it.
+
+  That failure compiles, returns 200, and produces a body that looks right unless
+  you know which field should be missing, so nothing in the suite would have
+  caught it. There is now a test asserting an Annex XIII point 2 field is absent
+  from the public response bytes — confirmed to fail when the scope is wrong.
+
+### Added
+
+- **The contract gate now checks query parameter names.** It gated schemas,
+  numeric bounds, enum variants and route coverage — every axis except the one
+  that had actually shipped a defect. `/vault/api/v1/dpp/by-identity` documented
+  a parameter named `product group`, with a space, in an identifier position: the
+  residue of a find-and-replace that ran over a `name:` field. The handler reads
+  `productGroup` and an integration test was sending `product_group` — three
+  spellings of one parameter, and every existing check passed.
+
+  It survived because the previous name was a single word, spelled identically in
+  snake_case and camelCase, so the description, the test and the handler agreed
+  **by coincidence** rather than because anything compared them. Renaming to two
+  words broke the coincidence in all three places at once.
+
+  Each of the eleven operations that take query parameters is now checked against
+  the struct that deserialises them, both directions: a documented parameter the
+  handler never reads is dead (a client sending it is silently ignored), and a
+  parameter the handler reads and the spec omits is undiscoverable. A companion
+  check fails if any operation declares query parameters with no case registered,
+  so a new route cannot opt out by omission. Verified by reintroducing
+  `product group` and watching it fail.
+
+  The six query structs gained `Serialize` so the gate can read their wire names
+  from serde rather than from the field list — the same ground truth the object
+  schema check uses. Note it reads the *serialisation* rename rule, so a
+  `#[serde(alias)]`, which affects only deserialisation, would not be seen.
+
+- **The node can be asked whether a product needs a passport.**
+  `GET /integrator/api/v1/product-groups` and `/{productGroup}` serve, per
+  product group, whether a digital product passport is required, from what date,
+  at what granularity, for how long records must be kept, and under which acts.
+  Both are unauthenticated, like the neighbouring `/schemas` routes.
+
+  The instrument catalog has been able to answer this all along. Nothing served
+  it — every call site used it only to decide whether to load a plugin — so the
+  first question an operator asks had no endpoint behind it. Schema versions are
+  deliberately not restated here; `/integrator/api/v1/schemas` remains their one
+  home.
+
+  **Every date is served with its basis.** Some of the catalog's dates trace to
+  an adopted text and some are a reading, and `retention` carries the same
+  distinction. Serving either number bare would present a qualified reading as an
+  unqualified claim, so the date and its `basis` are one object in the response
+  shape and neither can be emitted without the other. `required` and
+  `determinable` are reported separately for the same reason: an obligation can
+  exist while the implementing acts that would make it determinable do not.
+
+  The key set is the **union** of the product group and instrument catalogs. An
+  act can reach a product group that has no descriptor, schema or plugin — the
+  horizontal case — and that group is the one an operator has no other way to ask
+  about. It is listed with a `null` title, and answered rather than `404`ed.
+
+  **The obligation travels with its status, for the same reason the date travels
+  with its basis.** `required` folds across every act reaching the group, so it
+  reports that an act imposes a passport — not that any act binds the group
+  today. Each entry in `instruments` therefore carries `instrumentStatus`
+  (whether the act exists) and `bindingStatus` (whether it binds *this* group),
+  which are independent in both directions: ESPR has been adopted since 2024
+  while every product group under it is still provisional. Without them, an
+  obligation resting on an anticipated act whose only source is a preparatory
+  study that is explicitly not law is served byte-identically to one resting on
+  an adopted regulation with a firm date.
+
+### Changed
+
+- **Every published object shape must now have a name, and the build enforces
+  it.** `every_schema_is_covered` already guaranteed that no *named* schema goes
+  unchecked. A shape written inline inside another schema never becomes a named
+  schema, so it was not skipped — it was invisible, and nothing reported that as
+  a gap.
+
+  `every_published_object_shape_has_a_name` closes the category rather than the
+  instances: an inline object shape now fails the build and names itself. It
+  ships with **no exception list**, because an allowlist here would refill with
+  exactly what it exists to prevent. The three pre-existing offenders were fixed
+  to get there — `InstrumentRef`, `JobProgress` and `QualifiedSealMember` are
+  now components.
+
+  `QualifiedSealMember` is registered as explicitly unchecked, with the reason:
+  the dossier holds it as untyped JSON, so no Rust type declares its three
+  members and nothing can compare them. Naming it does not close that gap, but
+  it makes it visible instead of hiding it inside `EvidenceDossier`.
+
+- **The obligation response's nested shapes are named schemas, so the contract
+  gate can actually see them.** The endpoint declares Rust types for its nested
+  shapes specifically so the gate can check the published shape against the
+  code — but the gate compares the top-level keys of a *named* schema, and all
+  three were written inline, where they have no name to look up. Renaming a
+  field in any of them failed nothing. The stated reason for declaring them was
+  not being delivered.
+
+  `PassportObligation`, `ObligationDate`, `RetentionPeriod` and
+  `ReachingInstrument` are now components with contract cases of their own.
+  Verified by renaming a nested field and watching the gate fail on it, which it
+  previously would not have. Across the whole description this halves the
+  properties holding an unverifiable inline shape, from six to three; the
+  remaining three are older and untouched here.
+
+- **`granularity` and `recorded` are one schema each, and are now gated against
+  the code.** Both were written out inline twice — once on `PassportResponse`,
+  once on the new obligation shape — which made them two things to drift, and
+  left them checked nowhere: the OpenAPI contract test can only name a schema in
+  `components`, so an `enum` list reachable only through a property was invisible
+  to it. A variant added in core would have shipped undocumented in both copies.
+
+  They are now `Granularity` and `RecordedBasis` components, referenced from
+  both sites (the obligation wraps the first in `anyOf: [$ref, null]`, since it
+  reports `null` where a passport simply omits the field), with contract cases
+  and entries in the core-repin tripwire. Verified by removing a variant and
+  watching the gate fail.
+
+- **The create request is one type, not two kept in step by a comment.**
+  `dpp_types::CreatePassportRequest` is now the body both sides use: the vault
+  deserialises it, the bulk importer serialises it. They were separate structs in
+  separate crates, coupled by a doc comment reading *"Shape must match …"* — and
+  the importer's copy had drifted four fields short. A comment cannot fail a
+  build; a shared type makes the gap unrepresentable, because a field the vault
+  accepts is now a field the importer must decide about or it does not compile.
+
+  Two of the four are now importable: `placedOnMarketDate` (below) and
+  `commodityCode`, which is validated at import so the error names the offending
+  **row** — the vault rejects a bad code too, but cannot say which line of a
+  thousand-row spreadsheet carried it.
+
+  `parentPassportRef` and `componentRefs` stay absent on the import path, now
+  explicitly and with a test saying why: each carries a URI *and* a hash of the
+  referenced passport's public signature, and a hash cannot be authored in a
+  spreadsheet. An invented one produces a link that fails verification, so absent
+  is the only honest value a CSV can supply.
+
+- **Bulk import can set `placedOnMarketDate`.** The vault's own create route has
+  always accepted it; the import path had no field for it, so the same product
+  imported rather than posted got a passport that could not say which law
+  governed it.
+
+  That is not one field among many. Staged EU obligations attach at placing on
+  the market and do not move afterwards, so a determination computed without the
+  date is computed against the wrong date for every product not placed on the
+  market today — and the applicable-instrument set is frozen at that moment too,
+  which made the gap worse than when it was first noticed.
+
+  Every CSV template gains a `placedOnMarketDate [OPTIONAL]` column. A malformed
+  value is **refused**, not dropped: silently ignoring it would import a passport
+  whose governing law is unknown while looking exactly like one where the
+  operator deliberately left the column blank.
+
+- **`PassportResponse` is the API's own type.** Until now the JSON on the wire
+  *was* `dpp_domain::Passport` — a library's internal aggregate, serialised
+  straight out of the handler — so the published API was whatever core's struct
+  happened to be. The `sector` → `productGroup` rename demonstrated the cost:
+  it rewrote every response body, request body, database column and schema in one
+  step, with no point at which anyone had to agree the *API* should change.
+
+  The two shapes are identical today and a test proves it byte for byte, on a
+  minimal passport as well as a populated one, because `skip_serializing_if`
+  differences are invisible when every field is set. What changed is that they
+  are now allowed to differ, and that making them differ is an edit someone has
+  to write down. A second test checks the type against
+  `dpp_domain::PASSPORT_WIRE_KEYS`, so a field added to core is either served or
+  listed as deliberately withheld — otherwise a mirror would trade one silent
+  drift for a quieter one.
+
+  The OpenAPI contract gate now checks the spec against this type rather than
+  against the core aggregate, which is what it was always meant to check.
+
+### Breaking
+
+- **`sector` is `productGroup` everywhere the engine touches it.** *(Breaking:
+  the `sector` request and response field becomes `productGroup`, `sectorData`
+  becomes `productGroupData`, `sectorDataValid` becomes `productGroupDataValid`,
+  the four integrator routes take `{productGroup}` instead of `{sector}`, the
+  `SectorData` schema is renamed `ProductGroupData`, plugin artifacts are
+  `product-group-<key>.wasm` rather than `sector-<key>.wasm`, and the
+  `passport.sector` column becomes `passport.product_group`.)*
+
+  ESPR defines **product group**; "sector" is not a term of art anywhere in the
+  Regulation. The core library retired the word and this follows it. No
+  compatibility aliases: two spellings in circulation is the problem the rename
+  exists to end.
+
+  **Database:** migration `0032` renames the column, renames its index, and
+  drops and rebuilds the identity index — that one indexes an expression over
+  the document, and the JSON key inside it changed too, so a rename would have
+  left it matching a key no passport emits. Added as a new migration rather than
+  edited into `0004`/`0019`: `sqlx::migrate!` checksums every file, so editing an
+  applied one stops a node that already ran it from booting. No data moves; the
+  column's values are catalog keys like `battery`, which did not change.
+
+  **Stored documents do not survive this.** Every frozen fixture under
+  `crates/dpp-dal/tests/fixtures/passport_docs` is now listed in
+  `UNREADABLE_FIXTURES` — `productGroup` is required, so a document of the old
+  shape is refused loudly rather than read with the field silently missing. That
+  is defensible only because no such document exists in any deployment, which is
+  the condition the guard itself states. The consequence is that the guard is
+  currently vacuous, and it says so at the top of the file: it passes because
+  every failure is documented, not because the read path works.
+
+- **A passport records the acts it was issued under.** *(Breaking: two new
+  `PassportResponse` fields, `applicableInstruments` and `granularity`.)*
+
+  `applicableInstruments` names each applicable instrument and whether it was
+  resolved from the catalog or asserted by the operator. Recorded at creation and
+  never recomputed: the law that governs a product is the law at placing on the
+  market, and the set is not derivable from the product group, so re-deriving it
+  could only narrow it. `granularity` is the model/batch/item level the
+  applicable delegated act fixes, absent while no adopted act fixes one.
+
+  The determination gate moves with them. It asked "is this product group in
+  force", which is *yes* both for an act that imposes no passport at all and for
+  one whose information duty is discharged through another system — so it enforced
+  passport obligations that do not exist. It now requires an in-force act that
+  also requires a passport.
+
 ## [0.12.0] - 2026-08-23
 
 ### Breaking

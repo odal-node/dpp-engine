@@ -72,7 +72,7 @@ Auto-HTTPS, zero certificate ops. (Traefik equivalent if preferred; Caddy is les
 | `CORS_ALLOWED_ORIGINS` | opt | The dashboard origin only, when it exists |
 | `NATS_URL` | opt | Compose provides it; unset ⇒ NoOp bus (acceptable for pilot if you drop the service) |
 | `METRICS_ADDR` | opt | `127.0.0.1:9464` — never public (RT2-7) |
-| `PLUGINS_DIR` | ✔ (compose: `/plugins`) | Mount the sector `.wasm` files into the `node-plugins` volume |
+| `PLUGINS_DIR` | ✔ (compose: `/plugins`) | Mount the product group `.wasm` files into the `node-plugins` volume |
 | `RULESET_BUNDLE_PATH` + `RULESET_PUBLISHER_PUBKEY` | opt | Wire when the first Compliance Current bundle ships; bad bundle ⇒ last-good + alarm |
 | `NODE_PROFILE` | opt | **Leave unset** (T1). Set `production` only at T2 — it will refuse ghosts, correctly |
 | `DATABASE_MIGRATE_URL` | opt | Keep for pilot (idempotent sqlx migrations at boot); the least-privilege upgrade (external `just migrate`, app role only at runtime) is a later hardening |
