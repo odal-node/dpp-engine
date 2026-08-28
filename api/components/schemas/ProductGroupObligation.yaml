@@ -1,0 +1,105 @@
+type: object
+description: |
+  What this node knows about one product group's digital product passport
+  obligation, drawn from the embedded instrument catalog.
+properties:
+  productGroup:
+    type: string
+    description: The catalog key.
+    example: toy
+  title:
+    type:
+      - string
+      - 'null'
+    description: Human-readable name from the product group catalog.
+    example: Toys
+  passport:
+    type: object
+    description: Whether a passport is required, and from when.
+    properties:
+      required:
+        type: boolean
+        description: |
+          Whether an adopted instrument imposes a passport obligation on this
+          product group. Says nothing about whether one can be produced today —
+          see `determinable`.
+        example: true
+      from:
+        type:
+          - object
+          - 'null'
+        description: |
+          The date the obligation applies from, or `null` where no instrument
+          fixes one. Most of the catalog is undated, and an obligation with no
+          date is not the same as one starting today.
+        properties:
+          date:
+            type: string
+            format: date
+            example: '2030-08-01'
+          basis:
+            $ref: ./DateBasis.yaml
+        required:
+          - date
+          - basis
+    required:
+      - required
+      - from
+  determinable:
+    type: boolean
+    description: |
+      Whether this build can make a binding compliance determination for this
+      product group. False where the duty exists but the implementing acts that
+      define its technical requirements are unpublished.
+    example: false
+  granularity:
+    type:
+      - string
+      - 'null'
+    enum:
+      - model
+      - batch
+      - item
+      - null
+    description: |
+      The level a passport is issued at, where a delegated act fixes one. `null`
+      where none does.
+  retention:
+    type:
+      - object
+      - 'null'
+    description: How long records must be kept, with the basis of that figure.
+    properties:
+      years:
+        type: integer
+        example: 10
+      basis:
+        $ref: ./RetentionBasis.yaml
+    required:
+      - years
+      - basis
+  instruments:
+    type: array
+    description: The acts the catalog knows reach this product group.
+    items:
+      type: object
+      properties:
+        instrument:
+          type: string
+          description: The instrument's catalog id.
+          example: toy-safety-2025-2509
+        recorded:
+          type: string
+          enum:
+            - catalog
+            - operator
+          description: Who asserted that this act applies.
+          example: catalog
+      required:
+        - instrument
+        - recorded
+required:
+  - productGroup
+  - passport
+  - determinable
+  - instruments

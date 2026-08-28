@@ -257,6 +257,17 @@ fn object_cases() -> Vec<ObjectCase> {
     case!("ComplianceResult", fixtures::compliance_result());
     case!("ComplianceFinding", fixtures::compliance_finding());
     case!("LintResult", fixtures::lint_result());
+
+    // The obligation endpoint. Served as declared types rather than assembled
+    // JSON, so this gate has something to check the published shape against.
+    case!(
+        "ProductGroupObligation",
+        fixtures::product_group_obligation()
+    );
+    case!(
+        "ProductGroupObligationList",
+        fixtures::product_group_obligation_list()
+    );
     case!("LintFinding", fixtures::lint_finding());
     case!("SealedEnvelope", fixtures::sealed_envelope());
     case!("ResponsibleOperator", fixtures::responsible_operator());
@@ -400,6 +411,19 @@ fn enum_cases() -> Vec<EnumCase> {
         EnumCase {
             name: "Coverage",
             variants: wire(&fixtures::all_coverages()),
+        },
+        // `DateBasis` and `RetentionBasis` match variant for variant today and
+        // are checked separately on purpose. They are two enumerations in core
+        // answering two questions; one spec schema for both would let either
+        // drift silently behind the other, and the drift would be invisible
+        // precisely because they currently agree.
+        EnumCase {
+            name: "DateBasis",
+            variants: wire(&fixtures::all_date_bases()),
+        },
+        EnumCase {
+            name: "RetentionBasis",
+            variants: wire(&fixtures::all_retention_bases()),
         },
     ]
 }
@@ -1185,6 +1209,10 @@ mod fixtures {
         transfer::{
             OperatorRole, ResponsibleOperator, TransferChain, TransferReason, TransferRecord,
         },
+    };
+    use dpp_integrator::handlers::product_groups::{
+        InstrumentRefView, ObligationDateView, PassportObligationView, ProductGroupObligation,
+        ProductGroupObligationList, RetentionView,
     };
     use dpp_types::{
         api_key::{ApiKey, ApiKeyScope, CreateApiKeyRequest, NewApiKey},
@@ -2010,6 +2038,54 @@ mod fixtures {
 
     pub fn all_coverages() -> Vec<Coverage> {
         vec![Coverage::Current, Coverage::Superseded, Coverage::Unknown]
+    }
+
+    pub fn all_date_bases() -> Vec<dpp_domain::instrument::DateBasis> {
+        use dpp_domain::instrument::DateBasis;
+        vec![DateBasis::Sourced, DateBasis::Assumed]
+    }
+
+    pub fn all_retention_bases() -> Vec<dpp_domain::catalog::RetentionBasis> {
+        use dpp_domain::catalog::RetentionBasis;
+        vec![RetentionBasis::Sourced, RetentionBasis::Assumed]
+    }
+
+    /// A fully populated obligation — every optional field present, so the
+    /// contract gate sees the whole key set. A fixture that left `from`,
+    /// `granularity` or `retention` as `None` would still serialise the keys
+    /// (they are not `skip_serializing_if`), but populating them keeps the
+    /// fixture honest about what the endpoint can return.
+    pub fn product_group_obligation() -> ProductGroupObligation {
+        use dpp_domain::catalog::{Granularity, RetentionBasis};
+        use dpp_domain::instrument::{DateBasis, RecordedBasis};
+
+        ProductGroupObligation {
+            product_group: "toy".into(),
+            title: Some("Toys".into()),
+            passport: PassportObligationView {
+                required: true,
+                from: Some(ObligationDateView {
+                    date: "2030-08-01".into(),
+                    basis: DateBasis::Sourced,
+                }),
+            },
+            determinable: false,
+            granularity: Some(Granularity::Model),
+            retention: Some(RetentionView {
+                years: 10,
+                basis: RetentionBasis::Sourced,
+            }),
+            instruments: vec![InstrumentRefView {
+                instrument: "toy-safety-2025-2509".into(),
+                recorded: RecordedBasis::Catalog,
+            }],
+        }
+    }
+
+    pub fn product_group_obligation_list() -> ProductGroupObligationList {
+        ProductGroupObligationList {
+            product_groups: vec![product_group_obligation()],
+        }
     }
 
     pub fn installed_plugin() -> InstalledPlugin {

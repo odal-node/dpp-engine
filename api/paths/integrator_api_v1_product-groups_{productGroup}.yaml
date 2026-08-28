@@ -1,0 +1,29 @@
+get:
+  operationId: getProductGroupObligation
+  summary: One product group's passport obligation
+  description: |
+    The passport obligation for a single product group. Unauthenticated.
+
+    A key this node carries no catalog entry for is a `404` rather than an entry
+    with an empty obligation — "this node does not model it" and "no passport is
+    required" are different answers, and the second would be a compliance claim
+    the node is not entitled to make.
+  tags:
+    - Integrator
+  parameters:
+    - name: productGroup
+      in: path
+      required: true
+      description: The product group catalog key.
+      schema:
+        type: string
+      example: toy
+  responses:
+    '200':
+      description: The product group's obligation.
+      content:
+        application/json:
+          schema:
+            $ref: '../components/schemas/ProductGroupObligation.yaml'
+    '404':
+      $ref: ../components/responses/NotFound.yaml

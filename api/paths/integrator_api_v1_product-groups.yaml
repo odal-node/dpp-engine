@@ -1,0 +1,30 @@
+get:
+  operationId: listProductGroups
+  summary: List product groups and their passport obligations
+  description: |
+    Whether a digital product passport is required for each product group this
+    node models, from what date, under which acts, and whether this build can
+    actually make a binding determination. Unauthenticated.
+
+    **Every date is served with its `basis`.** Most of the catalog is undated,
+    and of the dates that exist some trace to an adopted text (`sourced`) and
+    some are a reading (`assumed`). A date without its basis would present a
+    qualified reading as an unqualified claim, so `basis` is always present
+    wherever a date or a retention period is.
+
+    `required` and `determinable` are different questions and are reported
+    separately. An obligation can exist while the implementing acts that define
+    the technical requirements do not, in which case nothing is bindingly
+    determinable yet however clearly the duty is written.
+
+    Schema versions are not restated here — see `/integrator/api/v1/schemas`,
+    which is their one home.
+  tags:
+    - Integrator
+  responses:
+    '200':
+      description: Every product group this build models.
+      content:
+        application/json:
+          schema:
+            $ref: '../components/schemas/ProductGroupObligationList.yaml'

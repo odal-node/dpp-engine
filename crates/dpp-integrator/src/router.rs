@@ -17,7 +17,7 @@ use dpp_common::{
 };
 
 use crate::{
-    handlers::{health, import, job_status, schemas, templates},
+    handlers::{health, import, job_status, product_groups, schemas, templates},
     state::AppState,
 };
 
@@ -36,6 +36,14 @@ pub fn build(state: AppState) -> Router {
         .route(
             "/api/v1/templates/{productGroup}",
             get(templates::get_template),
+        )
+        .route(
+            "/api/v1/product-groups",
+            get(product_groups::list_product_groups),
+        )
+        .route(
+            "/api/v1/product-groups/{productGroup}",
+            get(product_groups::get_product_group),
         )
         .route("/api/v1/schemas", get(schemas::list_schemas))
         .route(
@@ -130,6 +138,115 @@ mod tests {
                 "{uri} leaked an unaudited regulatory description"
             );
         }
+    }
+
+    async fn get_json(uri: &str) -> (StatusCode, serde_json::Value) {
+        let app = super::build(test_state());
+        let req = Request::builder().uri(uri).body(Body::empty()).unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        let status = resp.status();
+        let bytes = axum::body::to_bytes(resp.into_body(), 4 * 1024 * 1024)
+            .await
+            .unwrap();
+        let value = serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Null);
+        (status, value)
+    }
+
+    /// The obligation endpoint covers every product group the catalog models —
+    /// discovered from the catalog rather than compared against a list here, so
+    /// adding a product group cannot leave it silently unserved.
+    #[tokio::test]
+    async fn every_catalogued_product_group_is_served() {
+        let (status, body) = get_json("/api/v1/product-groups").await;
+        assert_eq!(status, StatusCode::OK);
+
+        let served: std::collections::BTreeSet<String> = body["productGroups"]
+            .as_array()
+            .expect("productGroups is an array")
+            .iter()
+            .map(|e| e["productGroup"].as_str().unwrap().to_owned())
+            .collect();
+
+        let catalogued: std::collections::BTreeSet<String> =
+            dpp_domain::catalog::ProductGroupCatalog::new()
+                .keys()
+                .into_iter()
+                .map(ToOwned::to_owned)
+                .collect();
+
+        assert_eq!(served, catalogued);
+    }
+
+    /// **The rule this endpoint exists to keep.** Most of the catalog is undated,
+    /// and of the dates that exist some trace to an adopted text and some are a
+    /// reading. A date served without its basis turns a qualified reading into an
+    /// unqualified claim, which is the failure the schema endpoint strips its
+    /// prose to avoid.
+    #[tokio::test]
+    async fn no_date_is_ever_served_without_its_basis() {
+        let (_, body) = get_json("/api/v1/product-groups").await;
+        let mut checked = 0usize;
+
+        for entry in body["productGroups"].as_array().unwrap() {
+            let key = entry["productGroup"].as_str().unwrap();
+
+            if let Some(from) = entry["passport"]["from"].as_object() {
+                assert!(
+                    from.get("date").is_some_and(|d| d.is_string()),
+                    "{key}: an obligation date must be a string"
+                );
+                assert!(
+                    from.get("basis").is_some_and(|b| b.is_string()),
+                    "{key}: served an obligation date with no basis"
+                );
+                checked += 1;
+            }
+            if let Some(retention) = entry["retention"].as_object() {
+                assert!(
+                    retention.get("basis").is_some_and(|b| b.is_string()),
+                    "{key}: served a retention period with no basis"
+                );
+                checked += 1;
+            }
+        }
+
+        // Most of the catalog is undated, so this loop could inspect nothing and
+        // still pass. A test that cannot fail is not enforcing the rule it was
+        // written for.
+        assert!(
+            checked > 0,
+            "no dated or retained product group was inspected — this assertion \
+             passed vacuously and is enforcing nothing"
+        );
+    }
+
+    /// A worked case from the catalog, so the wiring is checked against a real
+    /// answer rather than only against its shape. The Toy Safety Regulation is
+    /// adopted with a firm passport date, and its implementing acts are not
+    /// published — so the duty is `required` and nothing is determinable yet.
+    /// Those two being different is the reason `determinable` is reported at all.
+    #[tokio::test]
+    async fn an_adopted_act_can_require_a_passport_that_is_not_yet_determinable() {
+        let (status, body) = get_json("/api/v1/product-groups/toy").await;
+        assert_eq!(status, StatusCode::OK);
+
+        assert_eq!(body["passport"]["required"], serde_json::json!(true));
+        assert_eq!(body["passport"]["from"]["date"], "2030-08-01");
+        assert_eq!(body["passport"]["from"]["basis"], "sourced");
+        assert_eq!(
+            body["determinable"],
+            serde_json::json!(false),
+            "the implementing acts are unpublished, so nothing is bindingly determinable"
+        );
+    }
+
+    /// An unmodelled key is a 404 rather than an entry with an empty obligation,
+    /// which would read as "no passport required" — the opposite of "this node
+    /// does not know".
+    #[tokio::test]
+    async fn an_unmodelled_product_group_is_not_an_empty_obligation() {
+        let (status, _) = get_json("/api/v1/product-groups/nosuchgroup").await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
     }
 
     /// An unknown product group and an unknown version are told apart, and both name
