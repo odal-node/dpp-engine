@@ -396,6 +396,7 @@ fn object_cases() -> Vec<ObjectCase> {
     case!("OperatorScanStats", fixtures::operator_scan_stats());
     case!("DailyScanCount", fixtures::daily_scan_count());
     case!("SealResponse", fixtures::seal_response());
+    case!("SealDeclarer", fixtures::seal_declarer());
     case!("SealSummaryResponse", fixtures::seal_summary_response());
     case!("InstalledPlugin", fixtures::installed_plugin());
     case!("WebhookSubscription", fixtures::webhook_subscription());
@@ -2166,7 +2167,7 @@ mod fixtures {
                 CurrentOperatorView, PassportRegistryView, RegistrationCounts, RegistrationView,
                 RegistryRollupView, TransferCounts, TransferView, VerificationView,
             },
-            seal::{Coverage, SealResponse, SealSummaryResponse},
+            seal::{Coverage, SealDeclarer, SealResponse, SealSummaryResponse},
             suspend::SuspendRequest,
             transfer::TransferInitiateRequest,
             validate::ValidateResponse,
@@ -2933,8 +2934,20 @@ mod fixtures {
         }
     }
 
+    pub fn seal_declarer() -> SealDeclarer {
+        SealDeclarer {
+            manufacturer: "TestCorp GmbH".into(),
+            operator_identifier: Some("LEI:529900T8BM49AURSDO55".into()),
+            responsibility_may_have_transferred: true,
+            // A `&'static str` constant on the type, like `verification` below;
+            // the fixture needs a value of the right shape for the key set.
+            note: "the seal attests to the sender, not the author",
+        }
+    }
+
     pub fn seal_response() -> SealResponse {
         SealResponse {
+            declared_by: seal_declarer(),
             format: "CADES".into(),
             seal_value: "MIIB...".into(),
             sealed_at: ts(),

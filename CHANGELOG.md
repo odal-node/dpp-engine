@@ -12,6 +12,29 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ### Added
 
+- **The seal route names who declared the content it covers.**
+  `GET /api/v1/dpp/{dppId}/seal` gains `declaredBy`, carrying the manufacturer
+  and Annex III(k) operator identifier frozen at publish, a
+  `responsibilityMayHaveTransferred` flag, and a note stating the distinction
+  outright.
+
+  A seal proves a document came from whoever holds the certificate and says
+  nothing about *scope*, so "we vouch for this content" and "we transmitted this
+  intact" look identical. Every audience view strips the seal, which makes this
+  the one surface where the two can be collapsed — and its readers being
+  authenticated and technical is a reason to be more careful, not less.
+
+  **Only a completed handover sets the flag.** An initiated transfer nobody
+  accepted has moved nothing, and reporting it would claim a transfer that may
+  still be rejected. The names cannot simply be updated instead: they are frozen
+  into the sealed bytes and the seal covers them, so a "current operator" field
+  would be an unverifiable claim sitting beside a verifiable document. The flag
+  says the answer is historical and points at where the current one lives.
+
+  A transfer-store failure now fails the read rather than defaulting the flag to
+  `false` — that default is a positive claim that responsibility has not moved,
+  which is worse than serving nothing.
+
 - **The contract gate now checks documented error codes.** It compared schemas,
   numeric bounds, enum variants, query parameters, request bodies and route
   coverage — everything except what a route says goes *wrong*. A status code has

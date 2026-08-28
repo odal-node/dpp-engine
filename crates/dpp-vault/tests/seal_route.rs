@@ -13,12 +13,17 @@ mod helpers;
 use helpers::{TestClient, make_jwt, start_postgres, start_vault};
 
 use chrono::Utc;
-use dpp_dal::pg::{PgDal, PgPassportRepo};
+use dpp_dal::pg::{PgDal, PgPassportRepo, PgTransferRepo};
 use dpp_domain::passport::{ManufacturerInfo, Passport, PassportId};
 use dpp_domain::ports::passport_repo::PassportRepository;
 use dpp_domain::product_group::ProductGroup;
 use dpp_domain::seal::{SealFormat, SealedEnvelope};
 use dpp_domain::status::PassportStatus;
+use dpp_domain::transfer::{
+    OperatorRole, ResponsibleOperator, TransferChain, TransferReason, TransferRecord,
+};
+use dpp_types::TransferStore;
+use uuid::Uuid;
 
 fn op() -> String {
     "00000000-0000-0000-0000-000000000001".to_owned()
@@ -239,4 +244,127 @@ async fn the_summary_route_requires_authentication() {
         .await
         .expect("request");
     assert_eq!(resp.status(), 401);
+}
+
+/// **A seal is never served without a legible declaring party.**
+///
+/// A seal proves a document came from whoever holds the certificate. It says
+/// nothing about *scope* — "we vouch for this content" and "we transmitted this
+/// intact" look identical — so a response carrying a seal and no declarer lets a
+/// reader conclude the sealer authored the content.
+///
+/// Every audience view strips the seal, which makes this route the only surface
+/// where that conclusion is reachable. Its readers being authenticated and
+/// technical is a reason to be more careful, not less: they are the ones who
+/// build systems on the assumption.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_served_seal_always_names_who_declared_the_content() {
+    let pg = start_postgres().await;
+    let base = start_vault(pg.dal.clone()).await;
+    let id = seed(&pg.dal, Some(envelope()), Some(JWS)).await;
+    let client = TestClient::new(&base, make_jwt(&op()));
+
+    let resp = client.get(&format!("/api/v1/dpp/{id}/seal")).await;
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = resp.json().await.unwrap();
+
+    // The property, asserted against the seal rather than on its own: if a seal
+    // is present, a declarer must be too.
+    assert!(
+        body.get("sealValue").is_some(),
+        "fixture must actually serve a seal, or this proves nothing"
+    );
+    let declared = &body["declaredBy"];
+    assert_eq!(
+        declared["manufacturer"], "TestCorp GmbH",
+        "the declaring party must be legible beside the seal: {body}"
+    );
+
+    // Nothing was transferred, so the response must not hint that it was.
+    assert_eq!(
+        declared["responsibilityMayHaveTransferred"], false,
+        "an untransferred passport must not suggest responsibility moved"
+    );
+
+    // And the distinction is stated, not left to be inferred from field names.
+    let note = declared["note"].as_str().expect("note present");
+    assert!(
+        note.contains("no statement about who authored"),
+        "the note must separate sealing from authorship: {note}"
+    );
+}
+
+/// **The flag flips when a handover actually completed.**
+///
+/// The test above pins the `false` side, which is the easy half: a passport with
+/// no completed handover must not hint that responsibility moved. This pins the
+/// half the field exists for — and it is the one that can rot silently, because
+/// every way of *failing* to detect a transfer produces `false`, which is also
+/// the correct answer almost everywhere.
+///
+/// That is not hypothetical. Until the harness wired a transfer store, the seal
+/// handler took its `None => false` branch on every request here, so the `false`
+/// assertion above held because nothing could be recorded rather than because
+/// nothing was. Both sides are now asserted against the same wiring production
+/// uses.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_completed_handover_says_responsibility_may_have_moved() {
+    let pg = start_postgres().await;
+    let base = start_vault(pg.dal.clone()).await;
+    let id = seed(&pg.dal, Some(envelope()), Some(JWS)).await;
+
+    // A chain carrying one *completed* handover. Written straight to the store
+    // rather than driven through initiate/accept, because this test is about
+    // what the seal route reports, not about how a transfer gets completed —
+    // that path has its own tests.
+    let operator = |did: &str, name: &str| ResponsibleOperator {
+        did: did.to_owned(),
+        name: name.to_owned(),
+        role: OperatorRole::Manufacturer,
+        eu_operator_id: None,
+        eu_operator_id_scheme: None,
+        country: "DE".to_owned(),
+    };
+    let from = operator("did:web:acme.example", "Acme GmbH");
+    let mut chain = TransferChain::new(id, from.clone());
+    chain
+        .initiate_transfer(TransferRecord {
+            transfer_id: Uuid::now_v7(),
+            passport_id: id,
+            from_operator: from,
+            to_operator: operator("did:web:reco.example", "ReCo"),
+            reason: TransferReason::Sale,
+            // All three present is what `status()` reads as `Completed`; the
+            // signatures are opaque to this route.
+            from_signature: Some("from-jws".to_owned()),
+            node_acceptance_attestation: Some("to-jws".to_owned()),
+            initiated_at: Utc::now(),
+            completed_at: Some(Utc::now()),
+            rejected_at: None,
+            cancelled_at: None,
+            notes: None,
+        })
+        .expect("chain accepts the first handover");
+    PgTransferRepo::new(pg.dal.clone())
+        .save_chain(&chain)
+        .await
+        .expect("save transfer chain");
+
+    let client = TestClient::new(&base, make_jwt(&op()));
+    let resp = client.get(&format!("/api/v1/dpp/{id}/seal")).await;
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = resp.json().await.unwrap();
+
+    assert_eq!(
+        body["declaredBy"]["responsibilityMayHaveTransferred"],
+        serde_json::Value::Bool(true),
+        "a completed handover must be reported beside the seal: {body}"
+    );
+
+    // The declarer itself is still the party frozen at publish — the whole point
+    // of the flag is that these two answers differ.
+    assert_eq!(
+        body["declaredBy"]["manufacturer"], "TestCorp GmbH",
+        "the sealed names are frozen and must not be rewritten by a transfer"
+    );
 }

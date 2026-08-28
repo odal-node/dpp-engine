@@ -3,6 +3,7 @@ description: >-
   The eIDAS seal, plus what is needed to check it — and an explicit statement of
   what this node did **not** check.
 required:
+  - declaredBy
   - format
   - sealValue
   - sealedAt
@@ -12,6 +13,8 @@ required:
   - coverage
   - verification
 properties:
+  declaredBy:
+    $ref: ./SealDeclarer.yaml
   format:
     type: string
     description: AdES format of `sealValue`.

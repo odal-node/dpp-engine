@@ -15,7 +15,7 @@ use base64::Engine;
 use dpp_dal::pg::{
     PgApiKeyRepo, PgAuditRepo, PgDal, PgEvidenceDossierRepo, PgOperatorConfigRepo, PgPassportRepo,
     PgRegistryIdentityRepo, PgRegistrySyncRepo, PgRegistryTransferRepo, PgScanTelemetryRepo,
-    PgSealOutboxRepo, PgWebhookRepo,
+    PgSealOutboxRepo, PgTransferRepo, PgWebhookRepo,
 };
 use dpp_domain::{
     DppError, GhostArchive, GhostRegistrySync, PassthroughRegistry,
@@ -291,6 +291,12 @@ async fn start_vault_with_identity(
         // selected wires this, so a harness without it reports the sealing
         // surface as unconfigured and cannot exercise it at all.
         .with_seal_outbox(Arc::new(PgSealOutboxRepo::new(dal.clone())))
+        // Same reasoning again, and it had already cost something: without a
+        // transfer store the seal route's `responsibilityMayHaveTransferred`
+        // took its `None => false` branch, so a test asserting the flag was
+        // `false` passed because nothing *could* be recorded rather than
+        // because nothing was.
+        .with_transfer_store(Arc::new(PgTransferRepo::new(dal.clone())))
         .with_evidence_store(Arc::new(PgEvidenceDossierRepo::new(dal.clone()))),
     );
     let operator_service = Arc::new(OperatorService::new(operator_repo));

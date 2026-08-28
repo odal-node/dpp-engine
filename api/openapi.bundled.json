@@ -5627,6 +5627,38 @@
           }
         }
       },
+      "SealDeclarer": {
+        "type": "object",
+        "description": "Who declared the content a seal covers, which is not who sealed it.\n\nA seal proves a document came from whoever holds the certificate. It carries no\nstatement about *scope*: \"we vouch for this content\" and \"we transmitted this\nintact\" look identical. A response that serves a seal and names no declaring\nparty invites the reader to collapse the two, whatever anyone intended.\n\nEvery audience view strips the seal, so this is the only surface where that\ncollapse is reachable — and its readers being authenticated and technical makes\nthem more likely to build on the assumption, not less.\n",
+        "required": [
+          "manufacturer",
+          "operatorIdentifier",
+          "responsibilityMayHaveTransferred",
+          "note"
+        ],
+        "properties": {
+          "manufacturer": {
+            "type": "string",
+            "description": "The manufacturer named in the sealed passport, frozen at publish.",
+            "example": "TestCorp GmbH"
+          },
+          "operatorIdentifier": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The Annex III(k) unique operator identifier recorded at publish. `null` means none was recorded — never that none applies."
+          },
+          "responsibilityMayHaveTransferred": {
+            "type": "boolean",
+            "description": "True when the passport's transfer chain records a **completed** handover,\nso the party responsible now is not the one named above. An initiated\nhandover nobody accepted has moved nothing and does not set this.\n\nThe names above are frozen into the sealed bytes and cannot be rewritten —\na published passport's content is immutable and the seal covers it — so\nthis flag is the only honest way to say the answer above is historical\nrather than current.\n"
+          },
+          "note": {
+            "type": "string",
+            "description": "States the sealing/authorship distinction outright rather than leaving it to be inferred from field names, in the same spirit as `verification`."
+          }
+        }
+      },
       "Coverage": {
         "type": "string",
         "description": "Whether the stored seal covers the passport's current signature. Answered from this node's record of what it *asked* to be sealed — weaker than a validator's verdict, stronger than nothing: it cannot confirm the CAdES, but a passport re-published after sealing is knowable without any AdES tooling.",
@@ -5640,6 +5672,7 @@
         "type": "object",
         "description": "The eIDAS seal, plus what is needed to check it — and an explicit statement of what this node did **not** check.",
         "required": [
+          "declaredBy",
           "format",
           "sealValue",
           "sealedAt",
@@ -5650,6 +5683,9 @@
           "verification"
         ],
         "properties": {
+          "declaredBy": {
+            "$ref": "#/components/schemas/SealDeclarer"
+          },
           "format": {
             "type": "string",
             "description": "AdES format of `sealValue`.",
