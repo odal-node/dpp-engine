@@ -550,13 +550,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "type": "object",
-                "properties": {
-                  "reason": {
-                    "type": "string",
-                    "example": "Product recall — safety investigation pending"
-                  }
-                }
+                "$ref": "#/components/schemas/SuspendRequest"
               }
             }
           }
@@ -4535,6 +4529,17 @@
           "skip": {
             "type": "integer",
             "description": "The offset this page starts at."
+          }
+        }
+      },
+      "SuspendRequest": {
+        "type": "object",
+        "description": "Optional body for suspending a published passport.\n\nThe body itself is optional — `POST` with no body suspends without a recorded\nreason. Where a reason is supplied it is appended to the audit entry, not\nstored on the passport, so it is not part of the signed document.\n",
+        "properties": {
+          "reason": {
+            "type": "string",
+            "description": "Human-readable reason for the suspension, appended to the audit trail.",
+            "example": "Product recall — safety investigation pending"
           }
         }
       },

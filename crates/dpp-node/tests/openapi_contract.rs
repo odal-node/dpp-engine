@@ -7,7 +7,7 @@
 //! never made the spec fail. Drift was not a risk being managed; it was
 //! guaranteed, and it accumulated (see `docs/` for the audit that found it).
 //!
-//! Three things are checked, and every one of them fails loudly rather than
+//! Five things are checked, and every one of them fails loudly rather than
 //! skipping:
 //!
 //! 1. **Object schemas** — the property set of each schema equals the key set
@@ -18,7 +18,15 @@
 //! 2. **Enum schemas** — the `enum` list equals the wire strings the Rust enum
 //!    serialises to. A status the server can return and the spec does not list
 //!    breaks every generated client that models it as a closed enum.
-//! 3. **Route coverage** — the paths in the spec equal the routes actually
+//! 3. **Query parameters** — the documented parameter names for each operation
+//!    equal the names the struct that deserialises them actually reads. Both
+//!    directions fail: a documented parameter no handler reads is silently
+//!    ignored, and one the handler reads and the spec omits is undiscoverable.
+//! 4. **Reachability** — every published shape has a name the checks above can
+//!    look up. A shape written inline — in a schema's properties, in a JSON
+//!    response, or in a JSON request body — is not skipped, it is invisible, so
+//!    each of those three is failed rather than tolerated.
+//! 5. **Route coverage** — the paths in the spec equal the routes actually
 //!    registered by every deployable `openapi.yaml` names in `servers`: the
 //!    assembled node, the standalone resolver, and the standalone identity
 //!    service's mTLS signing surface. No exception list — see
@@ -276,7 +284,7 @@ const UNCHECKED: &[(&str, &str)] = &[
     (
         "ProductGroupData",
         "deliberately open (`additionalProperties: true`, discriminated by \
-         `product_group`). The per-product-group payloads are described by the versioned JSON \
+         `productGroup`). The per-product-group payloads are described by the versioned JSON \
          Schemas served from `/integrator/api/v1/schemas/{productGroup}`, which is the \
          authoritative description; duplicating them into OpenAPI would create a \
          second copy to drift",
@@ -400,6 +408,7 @@ fn object_cases() -> Vec<ObjectCase> {
         fixtures::created_webhook_response()
     );
     case!("EolRequest", fixtures::eol_request());
+    case!("SuspendRequest", fixtures::suspend_request());
     case!("NodeState", fixtures::node_state());
     case!("VaultInfo", fixtures::vault_info());
     case!(
@@ -1170,6 +1179,115 @@ fn every_json_success_response_names_a_schema() {
     );
 }
 
+// ── Request-body coverage ──────────────────────────────────────────────────
+
+/// `application/json` request bodies that legitimately name no schema, with the
+/// reason. Keyed by `(method, path)`, because one path can take a body on more
+/// than one method and only one of them may be exempt.
+const INLINE_JSON_REQUEST_ALLOWED: &[(&str, &str, &str)] = &[(
+    "put",
+    "/vault/api/v1/dpp/{dppId}",
+    "a free-form merge-patch: the caller supplies only the fields being changed, \
+     so the body is an open bag of passport fields rather than a fixed shape. \
+     There is no Rust struct behind it to compare a property list against — the \
+     handler takes the object and applies it field by field. Naming it would \
+     require enumerating every patchable field, which is `PassportResponse`'s \
+     job and would be a second copy to drift",
+)];
+
+/// Every `application/json` request body names a schema.
+///
+/// The sibling of `every_json_success_response_names_a_schema`, and the half
+/// that was missing. `every_published_object_shape_has_a_name` walks the
+/// properties of *named schemas*, and the response check walks responses — so a
+/// body shape written inline under `requestBody` fell between them and was
+/// checked by nothing at all.
+///
+/// That was not hypothetical either: the suspend endpoint declared its
+/// `{ reason }` body inline while a real `SuspendRequest` struct sat behind it,
+/// so renaming that field would have changed what the server accepts and failed
+/// nothing. A request body is the side of the contract a *client* has to get
+/// right, which makes an unverified one the more expensive of the two.
+///
+/// Non-JSON bodies are out of scope by construction: `multipart/form-data`
+/// uploads describe file parts, not a serialised Rust type, and there is no
+/// struct whose serde output could be compared to them.
+#[test]
+fn every_json_request_body_names_a_schema() {
+    let spec = spec();
+    let allowed: BTreeSet<(&str, &str)> = INLINE_JSON_REQUEST_ALLOWED
+        .iter()
+        .map(|(m, p, _)| (*m, *p))
+        .collect();
+
+    let mut failures = Vec::new();
+    let mut allowlist_used: BTreeSet<(&str, &str)> = BTreeSet::new();
+
+    let paths = spec["paths"].as_object().expect("paths is not an object");
+    for (path, item) in paths {
+        let Some(ops) = item.as_object() else {
+            continue;
+        };
+        for (method, op) in ops {
+            let Some(schema) = op
+                .get("requestBody")
+                .and_then(|b| b.get("content"))
+                .and_then(|c| c.get("application/json"))
+                .and_then(|j| j.get("schema"))
+            else {
+                continue;
+            };
+
+            // A named schema, an array of one, or a composition over one — the
+            // same three shapes the response check accepts.
+            let named = schema.get("$ref").is_some()
+                || schema.get("items").is_some_and(|i| i.get("$ref").is_some())
+                || schema
+                    .get("allOf")
+                    .and_then(Value::as_array)
+                    .is_some_and(|b| b.iter().any(|x| x.get("$ref").is_some()));
+
+            if named {
+                continue;
+            }
+
+            let key = (method.as_str(), path.as_str());
+            if allowed.contains(&key) {
+                allowlist_used.insert(key);
+                continue;
+            }
+            failures.push(format!(
+                "{} {path} describes its JSON request body inline — nothing checks that \
+                 shape against the code",
+                method.to_uppercase()
+            ));
+        }
+    }
+
+    // A stale excuse covers whatever drifts into its place next; delete it
+    // rather than leaving it to do that.
+    let stale: Vec<String> = allowed
+        .difference(&allowlist_used)
+        .map(|(m, p)| format!("{} {p}", m.to_uppercase()))
+        .collect();
+    if !stale.is_empty() {
+        failures.push(format!(
+            "INLINE_JSON_REQUEST_ALLOWED names operations that no longer have an inline \
+             JSON request body: {}",
+            stale.join(", ")
+        ));
+    }
+
+    assert!(
+        failures.is_empty(),
+        "JSON request bodies that name no schema:\n  {}\n\n\
+         Give the handler's body a named type, add a schema for it under \
+         api/components/schemas/, `$ref` it here, and register it in `object_cases` \
+         — that is what puts the body under the contract test.",
+        failures.join("\n  ")
+    );
+}
+
 // ── No unnamed shapes ──────────────────────────────────────────────────────
 
 /// Whether a property node declares an object shape inline rather than naming
@@ -1608,6 +1726,7 @@ mod fixtures {
                 RegistryRollupView, TransferCounts, TransferView, VerificationView,
             },
             seal::{Coverage, SealResponse, SealSummaryResponse},
+            suspend::SuspendRequest,
             transfer::TransferInitiateRequest,
             validate::ValidateResponse,
             webhooks::CreatedWebhookResponse,
@@ -2213,6 +2332,15 @@ mod fixtures {
 
     pub fn vault_info() -> VaultInfo {
         VaultInfo::current()
+    }
+
+    /// `reason` is the only field, and it is `Some` here for the reason every
+    /// fixture is maximal: an `Option` left `None` emits nothing and the schema
+    /// check would pass by not looking.
+    pub fn suspend_request() -> SuspendRequest {
+        SuspendRequest {
+            reason: Some("Product recall — safety investigation pending".into()),
+        }
     }
 
     pub fn transfer_initiate_request() -> TransferInitiateRequest {

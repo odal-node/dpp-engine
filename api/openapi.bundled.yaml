@@ -421,11 +421,7 @@ paths:
         content:
           application/json:
             schema:
-              type: object
-              properties:
-                reason:
-                  type: string
-                  example: Product recall — safety investigation pending
+              $ref: '#/components/schemas/SuspendRequest'
       responses:
         '200':
           description: DPP suspended. Returns the full passport record.
@@ -3465,6 +3461,19 @@ components:
         skip:
           type: integer
           description: The offset this page starts at.
+    SuspendRequest:
+      type: object
+      description: |
+        Optional body for suspending a published passport.
+
+        The body itself is optional — `POST` with no body suspends without a recorded
+        reason. Where a reason is supplied it is appended to the audit entry, not
+        stored on the passport, so it is not part of the signed document.
+      properties:
+        reason:
+          type: string
+          description: Human-readable reason for the suspension, appended to the audit trail.
+          example: Product recall — safety investigation pending
     DerogationRef:
       type: object
       required:

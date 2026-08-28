@@ -32,6 +32,17 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   way has nothing stripped, and the derived key is the whole stem — the install is
   refused. Same residue, third instance.
 
+- **The suspend endpoint's request body was described by nothing.** It declared
+  its `{ reason }` shape inline while a real `SuspendRequest` struct sat behind
+  it, so renaming that field would have changed what the server accepts and
+  failed no test. It is now a named schema checked against the type, and
+  `every_json_request_body_names_a_schema` fails the build on any other
+  `application/json` body that names no schema — the sibling of the response
+  check, and the half that was missing. Request bodies are the side of the
+  contract a client has to get right, which makes an unverified one the more
+  expensive of the two. One allowlist entry, with its reason: the `PUT` merge-
+  patch is a free-form bag of passport fields with no struct behind it.
+
 - **A GTIN check on the create path could not fail, and read as though it were
   the only thing checking.** `POST /api/v1/dpp` re-validated the GS1 check digit
   of `ProductGroupData::Battery`'s GTIN — a value that had already been through
