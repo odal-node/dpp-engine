@@ -161,6 +161,47 @@ fn joined(set: &BTreeSet<String>) -> String {
     set.iter().cloned().collect::<Vec<_>>().join(", ")
 }
 
+/// Query parameter names an operation declares, in spec order.
+///
+/// Path parameters are excluded: they are part of the path template, which
+/// `every_route_is_documented_and_every_documented_path_exists` already checks,
+/// and they never appear in the query struct.
+fn spec_query_params(spec: &Value, method: &str, path: &str) -> Option<BTreeSet<String>> {
+    let operation = spec["paths"].get(path)?.get(method)?;
+    Some(
+        operation
+            .get("parameters")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter(|p| p.get("in").and_then(Value::as_str) == Some("query"))
+            .filter_map(|p| p.get("name").and_then(Value::as_str))
+            .map(str::to_owned)
+            .collect(),
+    )
+}
+
+/// Every `(method, path)` in the spec that declares at least one query
+/// parameter.
+fn operations_with_query_params(spec: &Value) -> BTreeSet<(String, String)> {
+    let mut out = BTreeSet::new();
+    for (path, item) in spec["paths"].as_object().expect("paths is not an object") {
+        for (method, operation) in item.as_object().expect("path item is not an object") {
+            let declares_query = operation
+                .get("parameters")
+                .and_then(Value::as_array)
+                .is_some_and(|ps| {
+                    ps.iter()
+                        .any(|p| p.get("in").and_then(Value::as_str) == Some("query"))
+                });
+            if declares_query {
+                out.insert((method.clone(), path.clone()));
+            }
+        }
+    }
+    out
+}
+
 // ── Timestamps ─────────────────────────────────────────────────────────────
 //
 // Fixed rather than `Utc::now()` so a failure message is stable and diffable.
@@ -184,6 +225,19 @@ struct ObjectCase {
     /// Schema name in `components/schemas`.
     name: &'static str,
     /// A maximally-populated instance, serialised.
+    value: Value,
+}
+
+/// A documented operation's query parameters, checked against the struct that
+/// deserialises them.
+struct QueryCase {
+    /// Lowercase HTTP method, as the spec spells it.
+    method: &'static str,
+    /// Path template, as the spec spells it.
+    path: &'static str,
+    /// A maximally-populated instance of the handler's query struct,
+    /// serialised. Same ground truth as `ObjectCase`: what serde emits, not
+    /// what the field list looks like.
     value: Value,
 }
 
@@ -450,6 +504,72 @@ fn enum_cases() -> Vec<EnumCase> {
             variants: wire(&fixtures::all_regulatory_statuses()),
         },
     ]
+}
+
+/// Every documented operation that takes query parameters, paired with the
+/// struct the handler deserialises them into.
+///
+/// Several operations share one struct — `days` is `StatsQuery` on both stats
+/// routes, `linkType` is `ByGtinQuery` on all four Digital Link routes — so each
+/// route is registered separately rather than the struct being registered once.
+/// A parameter documented on one route and not its sibling is exactly the kind
+/// of drift this is for, and registering per struct would hide it.
+fn query_cases() -> Vec<QueryCase> {
+    let mut cases = Vec::new();
+
+    macro_rules! case {
+        ($method:literal, $path:literal, $value:expr) => {
+            cases.push(QueryCase {
+                method: $method,
+                path: $path,
+                value: serde_json::to_value(&$value).expect(concat!(
+                    "query fixture for ",
+                    $method,
+                    " ",
+                    $path,
+                    " failed to serialise"
+                )),
+            });
+        };
+    }
+
+    case!("get", "/vault/api/v1/dpps", fixtures::list_query());
+    case!(
+        "get",
+        "/vault/api/v1/dpp/by-identity",
+        fixtures::identity_query()
+    );
+    case!(
+        "get",
+        "/vault/api/v1/dpp/{dppId}/stats",
+        fixtures::stats_query()
+    );
+    case!("get", "/vault/api/v1/stats", fixtures::stats_query());
+    case!(
+        "get",
+        "/vault/public/dpp/{dppId}",
+        fixtures::public_read_query()
+    );
+    case!(
+        "get",
+        "/vault/public/dpp/by-gtin/{gtin}",
+        fixtures::public_read_query()
+    );
+    case!(
+        "get",
+        "/integrator/api/v1/templates/{productGroup}",
+        fixtures::template_query()
+    );
+    case!("get", "/01/{gtin}", fixtures::by_gtin_query());
+    case!("get", "/01/{gtin}/21/{serial}", fixtures::by_gtin_query());
+    case!("get", "/01/{gtin}/10/{batch}", fixtures::by_gtin_query());
+    case!(
+        "get",
+        "/01/{gtin}/10/{batch}/21/{serial}",
+        fixtures::by_gtin_query()
+    );
+
+    cases
 }
 
 /// `DeactivationReason` is an internally-tagged enum whose spec is a `oneOf` of
@@ -1026,6 +1146,115 @@ fn every_json_success_response_names_a_schema() {
          api/components/schemas/, `$ref` it here, and register it in `object_cases` \
          — that is what puts the body under the contract test.",
         failures.join("\n  ")
+    );
+}
+
+// ── Query parameters ───────────────────────────────────────────────────────
+
+/// Documented query parameter names equal the names the handler's struct
+/// actually reads.
+///
+/// This gate shipped a parameter no client could send. Until the product group
+/// rename, `/vault/api/v1/dpp/by-identity` documented a parameter named
+/// `product group` — a space, in an identifier position, the residue of a
+/// find-and-replace that ran over a `name:` field. The handler reads
+/// `productGroup`; an integration test was sending `product_group`. Three
+/// spellings of one parameter, and every existing check passed: the schemas
+/// matched, the bounds matched, the route was documented.
+///
+/// It survived because the old name was a single word, spelled identically in
+/// snake_case and camelCase, so the description, the test and the handler had
+/// agreed **by coincidence** rather than because anything compared them.
+/// Renaming to two words broke the coincidence in all three places at once.
+///
+/// Both directions fail. A documented parameter the handler never reads is
+/// dead — a client that sends it is silently ignored. A parameter the handler
+/// reads and the spec omits is undiscoverable.
+#[test]
+fn documented_query_parameters_are_the_ones_the_handler_reads() {
+    let spec = spec();
+    let mut failures: Vec<String> = Vec::new();
+
+    for case in query_cases() {
+        let Some(documented) = spec_query_params(&spec, case.method, case.path) else {
+            failures.push(format!(
+                "{} {}: registered here but absent from the spec",
+                case.method.to_uppercase(),
+                case.path
+            ));
+            continue;
+        };
+
+        let read = wire_keys(&case.value);
+
+        let undocumented: BTreeSet<String> = read.difference(&documented).cloned().collect();
+        let dead: BTreeSet<String> = documented.difference(&read).cloned().collect();
+
+        if !undocumented.is_empty() {
+            failures.push(format!(
+                "{} {}: the handler reads parameters the spec does not document: {}",
+                case.method.to_uppercase(),
+                case.path,
+                joined(&undocumented)
+            ));
+        }
+        if !dead.is_empty() {
+            failures.push(format!(
+                "{} {}: the spec documents parameters the handler never reads: {} \
+                 (a client sending them is silently ignored)",
+                case.method.to_uppercase(),
+                case.path,
+                joined(&dead)
+            ));
+        }
+    }
+
+    assert!(
+        failures.is_empty(),
+        "OpenAPI query parameters disagree with the structs that read them:\n  {}\n\n\
+         Fix the `name:` under api/paths/ (then `just openapi-bundle`), or fix the \
+         handler's query struct. The wire name is the field name after the struct's \
+         serde rename rule — not the Rust field name.",
+        failures.join("\n  ")
+    );
+}
+
+/// No operation takes query parameters without something checking them.
+///
+/// Without this, the check above is only as good as whoever remembered to
+/// register a case, and a new route with a new parameter is exactly when nobody
+/// does.
+#[test]
+fn every_operation_with_query_parameters_is_covered() {
+    let spec = spec();
+
+    let documented = operations_with_query_params(&spec);
+    let registered: BTreeSet<(String, String)> = query_cases()
+        .into_iter()
+        .map(|c| (c.method.to_owned(), c.path.to_owned()))
+        .collect();
+
+    let uncovered: Vec<String> = documented
+        .difference(&registered)
+        .map(|(m, p)| format!("{} {p}", m.to_uppercase()))
+        .collect();
+    assert!(
+        uncovered.is_empty(),
+        "these operations declare query parameters but nothing checks them against \
+         a handler struct: {}\n\n\
+         Add a case to `query_cases`.",
+        uncovered.join(", ")
+    );
+
+    let stale: Vec<String> = registered
+        .difference(&documented)
+        .map(|(m, p)| format!("{} {p}", m.to_uppercase()))
+        .collect();
+    assert!(
+        stale.is_empty(),
+        "these operations are registered in `query_cases` but no longer declare query \
+         parameters in the spec: {}",
+        stale.join(", ")
     );
 }
 
@@ -2088,6 +2317,57 @@ mod fixtures {
     pub fn all_recorded_bases() -> Vec<dpp_domain::instrument::RecordedBasis> {
         use dpp_domain::instrument::RecordedBasis;
         vec![RecordedBasis::Catalog, RecordedBasis::Operator]
+    }
+
+    // ── Query structs ──────────────────────────────────────────────────────
+    //
+    // Every `Option` is `Some` for the same reason the object fixtures populate
+    // theirs: a `None` under `skip_serializing_if` emits no key, and the check
+    // would pass by not looking. None of these carry that attribute today, so a
+    // new field appears in the wire keys either way — but that is a property of
+    // the structs as they happen to be written, not a guarantee, and these
+    // literals are exhaustive so a new field fails to compile here first.
+
+    pub fn list_query() -> dpp_vault::handlers::list::ListQuery {
+        use dpp_domain::PassportStatus;
+        dpp_vault::handlers::list::ListQuery {
+            status: Some(PassportStatus::Published),
+            q: Some("kettle".into()),
+            facility_id: Some("4012345000009".into()),
+            limit: Some(20),
+            skip: Some(0),
+        }
+    }
+
+    pub fn identity_query() -> dpp_vault::handlers::find_by_identity::IdentityQuery {
+        use dpp_domain::product_group::ProductGroup;
+        dpp_vault::handlers::find_by_identity::IdentityQuery {
+            product_group: ProductGroup::Battery,
+            gtin: "04012345000009".into(),
+            batch_id: Some("BATCH-2026-04-001".into()),
+        }
+    }
+
+    pub fn stats_query() -> dpp_vault::handlers::stats::StatsQuery {
+        dpp_vault::handlers::stats::StatsQuery { days: Some(30) }
+    }
+
+    pub fn public_read_query() -> dpp_vault::handlers::public_read::PublicReadQuery {
+        dpp_vault::handlers::public_read::PublicReadQuery {
+            schema_view: Some("battery".into()),
+        }
+    }
+
+    pub fn template_query() -> dpp_integrator::handlers::templates::TemplateQuery {
+        dpp_integrator::handlers::templates::TemplateQuery {
+            format: Some("csv".into()),
+        }
+    }
+
+    pub fn by_gtin_query() -> dpp_resolver::handlers::resolve_by_gtin::ByGtinQuery {
+        dpp_resolver::handlers::resolve_by_gtin::ByGtinQuery {
+            link_type: Some("linkset".into()),
+        }
     }
 
     pub fn all_instrument_statuses() -> Vec<dpp_domain::instrument::InstrumentStatus> {

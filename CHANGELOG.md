@@ -44,6 +44,32 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ### Added
 
+- **The contract gate now checks query parameter names.** It gated schemas,
+  numeric bounds, enum variants and route coverage — every axis except the one
+  that had actually shipped a defect. `/vault/api/v1/dpp/by-identity` documented
+  a parameter named `product group`, with a space, in an identifier position: the
+  residue of a find-and-replace that ran over a `name:` field. The handler reads
+  `productGroup` and an integration test was sending `product_group` — three
+  spellings of one parameter, and every existing check passed.
+
+  It survived because the previous name was a single word, spelled identically in
+  snake_case and camelCase, so the description, the test and the handler agreed
+  **by coincidence** rather than because anything compared them. Renaming to two
+  words broke the coincidence in all three places at once.
+
+  Each of the eleven operations that take query parameters is now checked against
+  the struct that deserialises them, both directions: a documented parameter the
+  handler never reads is dead (a client sending it is silently ignored), and a
+  parameter the handler reads and the spec omits is undiscoverable. A companion
+  check fails if any operation declares query parameters with no case registered,
+  so a new route cannot opt out by omission. Verified by reintroducing
+  `product group` and watching it fail.
+
+  The six query structs gained `Serialize` so the gate can read their wire names
+  from serde rather than from the field list — the same ground truth the object
+  schema check uses. Note it reads the *serialisation* rename rule, so a
+  `#[serde(alias)]`, which affects only deserialisation, would not be seen.
+
 - **The node can be asked whether a product needs a passport.**
   `GET /integrator/api/v1/product-groups` and `/{productGroup}` serve, per
   product group, whether a digital product passport is required, from what date,

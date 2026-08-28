@@ -7,7 +7,7 @@ use axum::{
     http::StatusCode,
     response::IntoResponse,
 };
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use dpp_domain::{product::ProductIdentity, product_group::ProductGroup};
 
@@ -16,7 +16,7 @@ use crate::{middleware::auth::AuthContext, state::AppState};
 use super::error::internal_error;
 
 /// Query parameters for the identity-lookup endpoint.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct IdentityQuery {
     pub product_group: ProductGroup,

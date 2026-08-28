@@ -10,7 +10,7 @@ use axum::{
     http::StatusCode,
     response::IntoResponse,
 };
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::{middleware::auth::AuthContext, state::AppState};
 
@@ -23,7 +23,7 @@ const DEFAULT_WINDOW_DAYS: i64 = 30;
 const MAX_WINDOW_DAYS: i64 = 730;
 
 /// `?days=N` selects the trailing window; clamped to `[1, MAX_WINDOW_DAYS]`.
-#[derive(Deserialize)]
+#[derive(Deserialize, Serialize)]
 pub struct StatsQuery {
     /// Trailing window in days.
     pub days: Option<i64>,
