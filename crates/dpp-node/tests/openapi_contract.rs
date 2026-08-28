@@ -425,6 +425,30 @@ fn enum_cases() -> Vec<EnumCase> {
             name: "RetentionBasis",
             variants: wire(&fixtures::all_retention_bases()),
         },
+        // Both were written out inline twice — once on the passport, once on the
+        // obligation — and so were checked nowhere: an `enum` list only reachable
+        // through a property is not a schema this gate can name. One shared
+        // schema each, and now a core variant that neither copy knew about fails
+        // here instead of shipping.
+        EnumCase {
+            name: "Granularity",
+            variants: wire(&fixtures::all_granularities()),
+        },
+        EnumCase {
+            name: "RecordedBasis",
+            variants: wire(&fixtures::all_recorded_bases()),
+        },
+        // The two statuses that qualify a served passport obligation. A variant
+        // core adds here changes what the endpoint can say about how firm a
+        // requirement is, so it must not reach the wire undocumented.
+        EnumCase {
+            name: "InstrumentStatus",
+            variants: wire(&fixtures::all_instrument_statuses()),
+        },
+        EnumCase {
+            name: "RegulatoryStatus",
+            variants: wire(&fixtures::all_regulatory_statuses()),
+        },
     ]
 }
 
@@ -464,6 +488,12 @@ const UNENUMERABLE_CORE_ENUMS: &[&str] = &[
     "ComplianceStatus",
     "LifecycleStage",
     "SystemBoundary",
+    "DateBasis",
+    "RetentionBasis",
+    "Granularity",
+    "RecordedBasis",
+    "InstrumentStatus",
+    "RegulatoryStatus",
 ];
 
 /// A `dpp-core` repin must not pass silently.
@@ -2050,14 +2080,42 @@ mod fixtures {
         vec![RetentionBasis::Sourced, RetentionBasis::Assumed]
     }
 
+    pub fn all_granularities() -> Vec<dpp_domain::catalog::Granularity> {
+        use dpp_domain::catalog::Granularity;
+        vec![Granularity::Model, Granularity::Batch, Granularity::Item]
+    }
+
+    pub fn all_recorded_bases() -> Vec<dpp_domain::instrument::RecordedBasis> {
+        use dpp_domain::instrument::RecordedBasis;
+        vec![RecordedBasis::Catalog, RecordedBasis::Operator]
+    }
+
+    pub fn all_instrument_statuses() -> Vec<dpp_domain::instrument::InstrumentStatus> {
+        use dpp_domain::instrument::InstrumentStatus;
+        vec![
+            InstrumentStatus::Adopted,
+            InstrumentStatus::Proposed,
+            InstrumentStatus::Anticipated,
+        ]
+    }
+
+    pub fn all_regulatory_statuses() -> Vec<dpp_domain::catalog::RegulatoryStatus> {
+        use dpp_domain::catalog::RegulatoryStatus;
+        vec![
+            RegulatoryStatus::InForce,
+            RegulatoryStatus::Provisional,
+            RegulatoryStatus::Watch,
+        ]
+    }
+
     /// A fully populated obligation — every optional field present, so the
     /// contract gate sees the whole key set. A fixture that left `from`,
     /// `granularity` or `retention` as `None` would still serialise the keys
     /// (they are not `skip_serializing_if`), but populating them keeps the
     /// fixture honest about what the endpoint can return.
     pub fn product_group_obligation() -> ProductGroupObligation {
-        use dpp_domain::catalog::{Granularity, RetentionBasis};
-        use dpp_domain::instrument::{DateBasis, RecordedBasis};
+        use dpp_domain::catalog::{Granularity, RegulatoryStatus, RetentionBasis};
+        use dpp_domain::instrument::{DateBasis, InstrumentStatus, RecordedBasis};
 
         ProductGroupObligation {
             product_group: "toy".into(),
@@ -2078,6 +2136,8 @@ mod fixtures {
             instruments: vec![InstrumentRefView {
                 instrument: "toy-safety-2025-2509".into(),
                 recorded: RecordedBasis::Catalog,
+                instrument_status: InstrumentStatus::Adopted,
+                binding_status: RegulatoryStatus::Provisional,
             }],
         }
     }

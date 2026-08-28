@@ -4,12 +4,20 @@ get:
   description: |
     The passport obligation for a single product group. Unauthenticated.
 
-    A key this node carries no catalog entry for is a `404` rather than an entry
-    with an empty obligation — "this node does not model it" and "no passport is
+    A key neither catalog knows is a `404` rather than an entry with an empty
+    obligation — "this node knows nothing about it" and "no passport is
     required" are different answers, and the second would be a compliance claim
     the node is not entitled to make.
+
+    A key an act reaches while no product group descriptor exists for it is
+    **not** a `404`. The node holds a recorded binding for such a group, and
+    refusing it would deny knowledge the node has. It is served with a `null`
+    `title` and its obligation in full.
   tags:
     - Integrator
+  # See the list route for why this is an explicit `[]` rather than an omitted
+  # key and not a `.redocly.lint-ignore.yaml` entry.
+  security: []
   parameters:
     - name: productGroup
       in: path

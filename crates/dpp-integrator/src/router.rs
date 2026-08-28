@@ -152,11 +152,16 @@ mod tests {
         (status, value)
     }
 
-    /// The obligation endpoint covers every product group the catalog models —
-    /// discovered from the catalog rather than compared against a list here, so
-    /// adding a product group cannot leave it silently unserved.
+    /// Every key either catalog knows is served — discovered from the catalogs
+    /// rather than compared against a list here, so adding a product group or an
+    /// act that reaches a new one cannot leave it silently unserved.
+    ///
+    /// The union, not the product-group catalog alone. An act can reach a key
+    /// that has no product-group descriptor, and that key is exactly the one an
+    /// operator most needs an answer about — there is no schema, no plugin and
+    /// no template to discover it from anywhere else.
     #[tokio::test]
-    async fn every_catalogued_product_group_is_served() {
+    async fn every_key_either_catalog_knows_is_served() {
         let (status, body) = get_json("/api/v1/product-groups").await;
         assert_eq!(status, StatusCode::OK);
 
@@ -167,14 +172,113 @@ mod tests {
             .map(|e| e["productGroup"].as_str().unwrap().to_owned())
             .collect();
 
-        let catalogued: std::collections::BTreeSet<String> =
+        let known: std::collections::BTreeSet<String> =
             dpp_domain::catalog::ProductGroupCatalog::new()
                 .keys()
                 .into_iter()
+                .chain(dpp_domain::instrument::InstrumentCatalog::new().product_group_keys())
                 .map(ToOwned::to_owned)
                 .collect();
 
-        assert_eq!(served, catalogued);
+        assert_eq!(served, known);
+    }
+
+    /// A product group an act reaches while no product-group descriptor exists
+    /// for it is served, with a `null` title.
+    ///
+    /// This is the case the instrument catalog was built to represent, and the
+    /// one an operator has no other way to ask about: no schema, no plugin and
+    /// no template mentions it. Reading the key set off the product-group
+    /// catalog alone dropped it from the list and answered `404` for it — a
+    /// node that holds a recorded binding replying "no such product group".
+    ///
+    /// Pinned on the real key rather than discovered, so this stays a worked
+    /// case. Should a descriptor for it ever be authored, this test failing is
+    /// the correct outcome: pick another key that has none, or delete the test
+    /// once no key does.
+    #[tokio::test]
+    async fn a_group_only_an_act_reaches_is_served_not_a_404() {
+        let (status, body) = get_json("/api/v1/product-groups/lmt").await;
+
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "a key an act reaches must not be refused as unmodelled"
+        );
+        assert_eq!(
+            body["title"],
+            serde_json::Value::Null,
+            "no product-group descriptor exists for this key, so the title is null"
+        );
+        assert_eq!(
+            body["passport"]["required"],
+            serde_json::json!(true),
+            "the reaching act carries a passport obligation"
+        );
+
+        // And this is why `required: true` here must never travel alone. The one
+        // act behind it does not exist yet and binds nothing — its manifest
+        // records the source as a preparatory study that is explicitly not law,
+        // with an empty legal basis. Serving the bare `true` would publish that
+        // as an unqualified requirement.
+        let act = &body["instruments"][0];
+        assert_eq!(act["instrumentStatus"], "anticipated");
+        assert_eq!(act["bindingStatus"], "provisional");
+
+        assert!(
+            dpp_domain::catalog::ProductGroupCatalog::new()
+                .get("lmt")
+                .is_none(),
+            "this test is only meaningful while no descriptor exists for the key"
+        );
+    }
+
+    /// **No `required` is ever served without the status of the acts behind it.**
+    ///
+    /// `passport.required` folds across every reaching act, so it says an act
+    /// imposes a passport — not that any act binds the group today. Bare, an
+    /// obligation resting on an anticipated act with a provisional binding is
+    /// byte-identical to one resting on an adopted regulation with a firm date.
+    ///
+    /// This is the same rule as `no_date_is_ever_served_without_its_basis`,
+    /// applied to the obligation instead of the date.
+    #[tokio::test]
+    async fn no_obligation_is_ever_served_without_its_instruments_statuses() {
+        let (_, body) = get_json("/api/v1/product-groups").await;
+        let mut required_and_unbound = 0usize;
+
+        for entry in body["productGroups"].as_array().unwrap() {
+            let key = entry["productGroup"].as_str().unwrap();
+            let acts = entry["instruments"].as_array().unwrap();
+
+            for act in acts {
+                for field in ["instrumentStatus", "bindingStatus"] {
+                    assert!(
+                        act.get(field).is_some_and(|v| v.is_string()),
+                        "{key}: an act was served without its {field}"
+                    );
+                }
+            }
+
+            // A group whose passport is required while nothing binds it yet is
+            // the case the statuses exist for. Count them so this cannot pass by
+            // never meeting one.
+            let required = entry["passport"]["required"] == serde_json::json!(true);
+            let none_bind = !acts.is_empty()
+                && acts
+                    .iter()
+                    .all(|a| a["bindingStatus"].as_str() != Some("in_force"));
+            if required && none_bind {
+                required_and_unbound += 1;
+            }
+        }
+
+        assert!(
+            required_and_unbound > 0,
+            "no product group required a passport on acts that bind nothing yet — \
+             the qualifier this test guards was never exercised, so it passed \
+             vacuously"
+        );
     }
 
     /// **The rule this endpoint exists to keep.** Most of the catalog is undated,

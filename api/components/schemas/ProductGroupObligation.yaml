@@ -11,7 +11,14 @@ properties:
     type:
       - string
       - 'null'
-    description: Human-readable name from the product group catalog.
+    description: |
+      Human-readable name from the product group catalog.
+
+      `null` where an act reaches this key but no product group descriptor
+      exists for it — a real case, and the one this endpoint is most needed for:
+      no schema, plugin or template names such a group, so nothing else in the
+      API can be asked about it. A `null` title is not an error and says nothing
+      about the obligation, which is reported in full beside it.
     example: Toys
   passport:
     type: object
@@ -20,9 +27,15 @@ properties:
       required:
         type: boolean
         description: |
-          Whether an adopted instrument imposes a passport obligation on this
-          product group. Says nothing about whether one can be produced today —
-          see `determinable`.
+          Whether an instrument recorded against this product group imposes a
+          passport obligation. Says nothing about whether one can be produced
+          today — see `determinable`.
+
+          **Read with `instruments[].bindingStatus`.** This is a fold across
+          every reaching act, so `true` means an act imposes a passport, not
+          that any act binds this group today. Where every reaching act is
+          `provisional` or `watch`, this is a reading of instruments that have
+          not yet bound anything.
         example: true
       from:
         type:
@@ -53,17 +66,17 @@ properties:
       define its technical requirements are unpublished.
     example: false
   granularity:
-    type:
-      - string
-      - 'null'
-    enum:
-      - model
-      - batch
-      - item
-      - null
+    anyOf:
+      - $ref: ./Granularity.yaml
+      - type: 'null'
     description: |
-      The level a passport is issued at, where a delegated act fixes one. `null`
-      where none does.
+      The level a passport is issued at for this product group, where a
+      delegated act fixes one. `null` where none does — which is every product
+      group today.
+
+      Nullable here rather than omitted, unlike the same field on a passport:
+      this endpoint answers a question about every product group it lists, and a
+      missing key would read as "not asked" rather than "no act has fixed one".
   retention:
     type:
       - object
@@ -80,7 +93,15 @@ properties:
       - basis
   instruments:
     type: array
-    description: The acts the catalog knows reach this product group.
+    description: |
+      The acts the catalog knows reach this product group, each with how far
+      along the act itself is and whether it binds *this* group.
+
+      **These statuses qualify `passport.required`.** That field folds across
+      every act here, so it reports that an act imposes a passport — not that
+      any act binds this group today. Where every entry is `provisional` or
+      `watch`, a `required: true` is a reading of instruments that have not yet
+      bound anything, and must not be presented as a determination.
     items:
       type: object
       properties:
@@ -88,18 +109,35 @@ properties:
           type: string
           description: The instrument's catalog id.
           example: toy-safety-2025-2509
+        instrumentStatus:
+          $ref: ./InstrumentStatus.yaml
+          description: Whether the act itself exists.
+        bindingStatus:
+          $ref: ./RegulatoryStatus.yaml
+          description: >-
+            Whether that act's obligations bind this product group. Independent
+            of `instrumentStatus` in both directions.
         recorded:
-          type: string
-          enum:
-            - catalog
-            - operator
-          description: Who asserted that this act applies.
-          example: catalog
+          $ref: ./RecordedBasis.yaml
+          description: >-
+            Always `catalog` on this endpoint — it reports what the embedded
+            catalog holds, and an operator assertion is recorded on a passport,
+            not here. Shared with the passport's own instrument entries so the
+            two shapes stay one shape.
       required:
         - instrument
         - recorded
+        - instrumentStatus
+        - bindingStatus
+# Every property is always present. `title`, `granularity` and `retention` are
+# nullable rather than optional — the server emits the key with a `null` value
+# where it has no answer, exactly as it does for `passport.from`, so a client
+# never has to tell "absent" from "nothing to report".
 required:
   - productGroup
+  - title
   - passport
   - determinable
+  - granularity
+  - retention
   - instruments

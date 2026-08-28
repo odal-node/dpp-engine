@@ -1,0 +1,17 @@
+type: string
+enum:
+  - catalog
+  - operator
+description: |
+  Who asserted that an act applies. Read it as provenance, not as how much to
+  trust the entry.
+
+  `catalog` — resolved from the instrument catalog.
+
+  `operator` — asserted by the economic operator placing the product on the
+  market. **Not a fallback.** The catalog cannot be exhaustive: horizontal
+  ecodesign requirements cover sets of products that were never shortlisted as
+  product groups, so an act may apply to a product while reaching no product
+  group the catalog models. An operator who knows an act applies must be able to
+  say so.
+example: catalog

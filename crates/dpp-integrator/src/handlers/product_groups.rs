@@ -30,6 +30,31 @@
 //! carries its CELEX identifier and legal basis and has been checked against the
 //! Official Journal; the schema `description` prose has not.
 //!
+//! # The key set is both catalogs, not the product-group one
+//!
+//! `ProductGroupCatalog` is identity and scope only — by its own documentation,
+//! anything about the *law* comes from `InstrumentCatalog`. So the key set here
+//! is the union: an act can reach a product group that has no descriptor, no
+//! schema and no plugin, and that key is precisely the one nothing else in the
+//! system can be asked about. Serving only the descriptor keys would drop it and
+//! answer `404` for it, which claims the node knows nothing about a group it
+//! holds a recorded binding for. `title` is `null` for such a key.
+//!
+//! # The obligation travels with its status, for the same reason
+//!
+//! `passport_required_for` folds across every act reaching the group, so
+//! `required: true` means *an act imposes a passport* — not that any act binds
+//! this group today. Served bare, an obligation resting on an anticipated act
+//! whose binding is provisional reads exactly like one resting on an adopted
+//! regulation with a firm date.
+//!
+//! That is not hypothetical here. The horizontal EEE recyclability act reaches
+//! a product group whose own manifest records the source as a preparatory study
+//! that is explicitly not law, with an empty legal basis — and it carries a
+//! passport obligation, so the fold returns `true`. Every entry in `instruments`
+//! therefore carries both statuses, and a caller can see that the only act
+//! behind a `required` is one that binds nothing yet.
+//!
 //! # `determinable` is the honest "can this node actually do it"
 //!
 //! Separate from `required` on purpose. An obligation can exist while the
@@ -38,6 +63,8 @@
 //! written. Reporting only `required: true` would imply a capability the node
 //! does not have.
 
+use std::collections::BTreeSet;
+
 use axum::{
     Json,
     extract::Path,
@@ -45,8 +72,8 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use dpp_common::http_problem;
-use dpp_domain::catalog::{Granularity, ProductGroupCatalog, RetentionBasis};
-use dpp_domain::instrument::{DateBasis, InstrumentCatalog, RecordedBasis};
+use dpp_domain::catalog::{Granularity, ProductGroupCatalog, RegulatoryStatus, RetentionBasis};
+use dpp_domain::instrument::{DateBasis, InstrumentCatalog, InstrumentStatus, RecordedBasis};
 use serde::Serialize;
 
 /// One product group's passport obligation, as served.
@@ -104,12 +131,27 @@ pub struct RetentionView {
     pub basis: RetentionBasis,
 }
 
-/// An act that reaches this product group, and who said so.
+/// An act that reaches this product group, who said so, and how far along both
+/// the act and its reach into *this* group are.
+///
+/// The two statuses are the qualifier `required` would otherwise travel without.
+/// `passport.required` folds across every reaching act, so it says an act
+/// imposes a passport — not that any act binds this group today. Without these,
+/// an obligation resting on an anticipated act with a provisional binding is
+/// served byte-identically to one resting on an adopted regulation with a firm
+/// date, and a caller has no way to tell them apart.
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct InstrumentRefView {
     pub instrument: String,
     pub recorded: RecordedBasis,
+    /// Whether the act itself exists — adopted, merely proposed, or only
+    /// anticipated.
+    pub instrument_status: InstrumentStatus,
+    /// Whether that act's obligations bind *this* product group. Independent of
+    /// `instrumentStatus` in both directions: ESPR has been adopted since 2024
+    /// while every product group under it is still provisional.
+    pub binding_status: RegulatoryStatus,
 }
 
 /// The list response.
@@ -119,17 +161,39 @@ pub struct ProductGroupObligationList {
     pub product_groups: Vec<ProductGroupObligation>,
 }
 
+/// Every key this endpoint can answer for, sorted and deduplicated.
+///
+/// The **union** of the two catalogs, not the product-group catalog alone.
+/// `ProductGroupCatalog` is identity and scope; it says nothing about the law,
+/// and an act can reach a key that has no descriptor at all — the horizontal
+/// case `InstrumentCatalog` exists to represent, and the one an operator has no
+/// other way to ask about, since no schema, plugin or template mentions it.
+/// `product_group_keys` documents that its callers must resolve each key against
+/// the product-group catalog and handle absence; `title` is the `Option` that
+/// handles it.
+///
+/// Both routes read this one function so the list and the single-key route
+/// cannot disagree about what exists — a `404` for a key the list serves, or the
+/// reverse, would be a contradiction the endpoint states in two places.
+fn known_keys<'a>(
+    catalog: &'a ProductGroupCatalog,
+    instruments: &'a InstrumentCatalog,
+) -> BTreeSet<&'a str> {
+    catalog
+        .keys()
+        .into_iter()
+        .chain(instruments.product_group_keys())
+        .collect()
+}
+
 /// `GET /api/v1/product-groups`
 ///
-/// Every product group this build models, with its passport obligation.
+/// Every product group this build knows of, with its passport obligation.
 pub async fn list_product_groups() -> Response {
     let catalog = ProductGroupCatalog::new();
     let instruments = InstrumentCatalog::new();
 
-    let mut keys: Vec<&str> = catalog.keys();
-    keys.sort_unstable();
-
-    let product_groups = keys
+    let product_groups = known_keys(&catalog, &instruments)
         .into_iter()
         .map(|key| describe(&catalog, &instruments, key))
         .collect();
@@ -143,17 +207,20 @@ pub async fn list_product_groups() -> Response {
 
 /// `GET /api/v1/product-groups/{productGroup}`
 ///
-/// One product group. `404` for a key this build does not model — including a
-/// key that is a valid `ProductGroup::Other` tag on the wire, because "this node
-/// carries no catalog entry for it" is the honest answer rather than an empty
+/// One product group. `404` for a key neither catalog knows — including a key
+/// that is a valid `ProductGroup::Other` tag on the wire, because "this node
+/// carries nothing about it" is the honest answer rather than an empty
 /// obligation that reads as "no passport required".
+///
+/// A key only an act reaches is **not** a `404`: the node holds a recorded
+/// binding for it, and refusing it would deny knowledge the node has.
 pub async fn get_product_group(Path(product_group): Path<String>) -> Response {
     let catalog = ProductGroupCatalog::new();
     let instruments = InstrumentCatalog::new();
 
-    if catalog.get(&product_group).is_none() {
+    if !known_keys(&catalog, &instruments).contains(product_group.as_str()) {
         return http_problem::not_found(format!(
-            "No product group '{product_group}'. GET /api/v1/product-groups lists the ones this node models."
+            "No product group '{product_group}'. GET /api/v1/product-groups lists the ones this node knows of."
         ))
         .into_response();
     }
@@ -192,12 +259,24 @@ fn describe(
         retention: instruments
             .retention_for(key)
             .map(|(years, basis)| RetentionView { years, basis }),
+        // `bindings_for` rather than `instrument_refs_for`: the latter returns
+        // what gets *recorded on a passport*, which deliberately drops both
+        // statuses because a passport freezes its applicable set and re-deriving
+        // status later would be wrong. Here nothing is being frozen — the
+        // question is what the catalog holds right now — and the statuses are
+        // the whole reason a caller can tell an adopted duty from a reading.
+        //
+        // `recorded` is `Catalog` by construction and not a fold of anything: an
+        // operator assertion is recorded against a passport, never against the
+        // catalog. Kept so this entry is the same shape the passport serves.
         instruments: instruments
-            .instrument_refs_for(key)
+            .bindings_for(key)
             .into_iter()
-            .map(|r| InstrumentRefView {
-                instrument: r.instrument,
-                recorded: r.recorded,
+            .map(|(instrument, binding)| InstrumentRefView {
+                instrument: instrument.id.clone(),
+                recorded: RecordedBasis::Catalog,
+                instrument_status: instrument.status,
+                binding_status: binding.status,
             })
             .collect(),
     }

@@ -44,6 +44,57 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ### Added
 
+- **The node can be asked whether a product needs a passport.**
+  `GET /integrator/api/v1/product-groups` and `/{productGroup}` serve, per
+  product group, whether a digital product passport is required, from what date,
+  at what granularity, for how long records must be kept, and under which acts.
+  Both are unauthenticated, like the neighbouring `/schemas` routes.
+
+  The instrument catalog has been able to answer this all along. Nothing served
+  it — every call site used it only to decide whether to load a plugin — so the
+  first question an operator asks had no endpoint behind it. Schema versions are
+  deliberately not restated here; `/integrator/api/v1/schemas` remains their one
+  home.
+
+  **Every date is served with its basis.** Some of the catalog's dates trace to
+  an adopted text and some are a reading, and `retention` carries the same
+  distinction. Serving either number bare would present a qualified reading as an
+  unqualified claim, so the date and its `basis` are one object in the response
+  shape and neither can be emitted without the other. `required` and
+  `determinable` are reported separately for the same reason: an obligation can
+  exist while the implementing acts that would make it determinable do not.
+
+  The key set is the **union** of the product group and instrument catalogs. An
+  act can reach a product group that has no descriptor, schema or plugin — the
+  horizontal case — and that group is the one an operator has no other way to ask
+  about. It is listed with a `null` title, and answered rather than `404`ed.
+
+  **The obligation travels with its status, for the same reason the date travels
+  with its basis.** `required` folds across every act reaching the group, so it
+  reports that an act imposes a passport — not that any act binds the group
+  today. Each entry in `instruments` therefore carries `instrumentStatus`
+  (whether the act exists) and `bindingStatus` (whether it binds *this* group),
+  which are independent in both directions: ESPR has been adopted since 2024
+  while every product group under it is still provisional. Without them, an
+  obligation resting on an anticipated act whose only source is a preparatory
+  study that is explicitly not law is served byte-identically to one resting on
+  an adopted regulation with a firm date.
+
+### Changed
+
+- **`granularity` and `recorded` are one schema each, and are now gated against
+  the code.** Both were written out inline twice — once on `PassportResponse`,
+  once on the new obligation shape — which made them two things to drift, and
+  left them checked nowhere: the OpenAPI contract test can only name a schema in
+  `components`, so an `enum` list reachable only through a property was invisible
+  to it. A variant added in core would have shipped undocumented in both copies.
+
+  They are now `Granularity` and `RecordedBasis` components, referenced from
+  both sites (the obligation wraps the first in `anyOf: [$ref, null]`, since it
+  reports `null` where a passport simply omits the field), with contract cases
+  and entries in the core-repin tripwire. Verified by removing a variant and
+  watching the gate fail.
+
 - **The create request is one type, not two kept in step by a comment.**
   `dpp_types::CreatePassportRequest` is now the body both sides use: the vault
   deserialises it, the bulk importer serialises it. They were separate structs in
