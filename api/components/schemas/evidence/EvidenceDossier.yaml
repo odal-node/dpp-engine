@@ -1,3 +1,5 @@
+x-tags:
+  - Evidence & Verification
 type: object
 description: |
   A self-contained, signed snapshot of a passport's full proof chain,

@@ -1,3 +1,5 @@
+x-tags:
+  - Access & Integrations
 type: object
 required:
   - bootstrapped

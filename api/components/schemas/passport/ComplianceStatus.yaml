@@ -1,3 +1,5 @@
+x-tags:
+  - Passport
 type: string
 description: >-
   Overall compliance determination. `PASSTHROUGH_NO_VALIDATION` means no product group

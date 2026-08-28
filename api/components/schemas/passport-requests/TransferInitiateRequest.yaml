@@ -1,3 +1,5 @@
+x-tags:
+  - Passport Requests
 type: object
 required:
   - fromOperator

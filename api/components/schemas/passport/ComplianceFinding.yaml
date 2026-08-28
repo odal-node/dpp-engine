@@ -1,3 +1,5 @@
+x-tags:
+  - Passport
 type: object
 description: >-
   A single compliance finding. Severity is encoded by which array it lands in

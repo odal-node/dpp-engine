@@ -1,3 +1,5 @@
+x-tags:
+  - Bulk Import
 type: object
 description: One row that matched an existing passport and updated it.
 required:

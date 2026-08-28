@@ -1,3 +1,5 @@
+x-tags:
+  - Passport
 type: object
 description: >-
   An eIDAS electronic seal over the passport's full-payload signature. Check

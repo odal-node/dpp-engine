@@ -1,3 +1,5 @@
+x-tags:
+  - Seals
 type: object
 description: >-
   The eIDAS seal, plus what is needed to check it — and an explicit statement of

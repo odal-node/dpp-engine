@@ -1,3 +1,5 @@
+x-tags:
+  - Evidence & Verification
 type: object
 description: A stored dossier snapshot — the dossier plus its persistence envelope.
 required:

@@ -1,3 +1,5 @@
+x-tags:
+  - Regulatory Catalog
 type: string
 enum:
   - in_force

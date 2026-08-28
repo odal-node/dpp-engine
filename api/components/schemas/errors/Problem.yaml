@@ -1,3 +1,5 @@
+x-tags:
+  - Errors
 type: object
 description: |
   RFC 7807 / RFC 9457 problem details. The shape

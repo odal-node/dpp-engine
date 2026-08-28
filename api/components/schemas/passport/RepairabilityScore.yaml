@@ -1,3 +1,5 @@
+x-tags:
+  - Passport
 type: object
 description: >-
   Repairability as a **non-regulatory heuristic**. Deliberately not an EN 45554

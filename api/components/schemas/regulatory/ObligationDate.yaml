@@ -1,3 +1,5 @@
+x-tags:
+  - Regulatory Catalog
 type: object
 description: |
   The date a passport obligation applies from, with the provenance of that date.

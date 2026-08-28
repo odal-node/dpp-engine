@@ -1,3 +1,5 @@
+x-tags:
+  - Access & Integrations
 type: string
 description: >-
   What an API key authorises. `admin` is the default when a key is minted

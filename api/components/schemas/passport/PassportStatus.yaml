@@ -1,3 +1,5 @@
+x-tags:
+  - Passport
 type: string
 enum:
   - draft

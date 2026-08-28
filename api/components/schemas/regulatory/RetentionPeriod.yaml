@@ -1,3 +1,5 @@
+x-tags:
+  - Regulatory Catalog
 type: object
 description: |
   How long records must be kept, with the provenance of that figure.

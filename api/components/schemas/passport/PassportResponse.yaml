@@ -1,3 +1,5 @@
+x-tags:
+  - Passport
 type: object
 description: >-
   The canonical Digital Product Passport record. Fields marked required are

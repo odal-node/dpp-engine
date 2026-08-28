@@ -75,6 +75,221 @@ components:
         The standalone identity service accepts the internal `/internal/*`
         endpoints only from a client presenting `CN=odal-vault`. The fused
         `dpp-node` never exposes these over the network — it signs in-process.
+  schemas:
+    Problem:
+      $ref: components/schemas/errors/Problem.yaml
+    PassportResponse:
+      $ref: components/schemas/passport/PassportResponse.yaml
+    DppId:
+      $ref: components/schemas/passport/DppId.yaml
+    PassportStatus:
+      $ref: components/schemas/passport/PassportStatus.yaml
+    Granularity:
+      $ref: components/schemas/passport/Granularity.yaml
+    ManufacturerInfo:
+      $ref: components/schemas/passport/ManufacturerInfo.yaml
+    FacilitySnapshot:
+      $ref: components/schemas/passport/FacilitySnapshot.yaml
+    MaterialEntry:
+      $ref: components/schemas/passport/MaterialEntry.yaml
+    ProductGroupData:
+      $ref: components/schemas/passport/ProductGroupData.yaml
+    PassportRef:
+      $ref: components/schemas/passport/PassportRef.yaml
+    CarbonFootprint:
+      $ref: components/schemas/passport/CarbonFootprint.yaml
+    RepairabilityScore:
+      $ref: components/schemas/passport/RepairabilityScore.yaml
+    RepairCriterion:
+      $ref: components/schemas/passport/RepairCriterion.yaml
+    ComplianceResult:
+      $ref: components/schemas/passport/ComplianceResult.yaml
+    ComplianceStatus:
+      $ref: components/schemas/passport/ComplianceStatus.yaml
+    ComplianceFinding:
+      $ref: components/schemas/passport/ComplianceFinding.yaml
+    LintResult:
+      $ref: components/schemas/passport/LintResult.yaml
+    LintFinding:
+      $ref: components/schemas/passport/LintFinding.yaml
+    LintSeverity:
+      $ref: components/schemas/passport/LintSeverity.yaml
+    InstrumentRef:
+      $ref: components/schemas/passport/InstrumentRef.yaml
+    RecordedBasis:
+      $ref: components/schemas/passport/RecordedBasis.yaml
+    SealedEnvelope:
+      $ref: components/schemas/passport/SealedEnvelope.yaml
+    SealFormat:
+      $ref: components/schemas/passport/SealFormat.yaml
+    CreateRequest:
+      $ref: components/schemas/passport-requests/CreateRequest.yaml
+    SuspendRequest:
+      $ref: components/schemas/passport-requests/SuspendRequest.yaml
+    EolRequest:
+      $ref: components/schemas/passport-requests/EolRequest.yaml
+    DeactivationReason:
+      $ref: components/schemas/passport-requests/DeactivationReason.yaml
+    DerogationRef:
+      $ref: components/schemas/passport-requests/DerogationRef.yaml
+    TransferInitiateRequest:
+      $ref: components/schemas/passport-requests/TransferInitiateRequest.yaml
+    TransferReason:
+      $ref: components/schemas/passport-requests/TransferReason.yaml
+    PassportListResponse:
+      $ref: components/schemas/passport-reports/PassportListResponse.yaml
+    ValidateResponse:
+      $ref: components/schemas/passport-reports/ValidateResponse.yaml
+    AuditEntry:
+      $ref: components/schemas/passport-reports/AuditEntry.yaml
+    TreeReport:
+      $ref: components/schemas/passport-reports/TreeReport.yaml
+    TreeNodeReport:
+      $ref: components/schemas/passport-reports/TreeNodeReport.yaml
+    TransferRecord:
+      $ref: components/schemas/transfer/TransferRecord.yaml
+    ResponsibleOperator:
+      $ref: components/schemas/transfer/ResponsibleOperator.yaml
+    OperatorRole:
+      $ref: components/schemas/transfer/OperatorRole.yaml
+    SealResponse:
+      $ref: components/schemas/seals/SealResponse.yaml
+    SealSummaryResponse:
+      $ref: components/schemas/seals/SealSummaryResponse.yaml
+    SealDeclarer:
+      $ref: components/schemas/seals/SealDeclarer.yaml
+    Coverage:
+      $ref: components/schemas/seals/Coverage.yaml
+    EvidenceDossier:
+      $ref: components/schemas/evidence/EvidenceDossier.yaml
+    DossierManifest:
+      $ref: components/schemas/evidence/DossierManifest.yaml
+    SignedLayer:
+      $ref: components/schemas/evidence/SignedLayer.yaml
+    QualifiedSealMember:
+      $ref: components/schemas/evidence/QualifiedSealMember.yaml
+    EvidenceDossierRecord:
+      $ref: components/schemas/evidence/EvidenceDossierRecord.yaml
+    EvidenceDossierSummary:
+      $ref: components/schemas/evidence/EvidenceDossierSummary.yaml
+    VerificationReport:
+      $ref: components/schemas/evidence/VerificationReport.yaml
+    CheckResult:
+      $ref: components/schemas/evidence/CheckResult.yaml
+    PassportRegistryView:
+      $ref: components/schemas/registry/PassportRegistryView.yaml
+    RegistryRollupView:
+      $ref: components/schemas/registry/RegistryRollupView.yaml
+    RegistrationView:
+      $ref: components/schemas/registry/RegistrationView.yaml
+    RegistrationCounts:
+      $ref: components/schemas/registry/RegistrationCounts.yaml
+    TransferView:
+      $ref: components/schemas/registry/TransferView.yaml
+    TransferCounts:
+      $ref: components/schemas/registry/TransferCounts.yaml
+    VerificationView:
+      $ref: components/schemas/registry/VerificationView.yaml
+    CurrentOperatorView:
+      $ref: components/schemas/registry/CurrentOperatorView.yaml
+    PassportScanStats:
+      $ref: components/schemas/telemetry/PassportScanStats.yaml
+    OperatorScanStats:
+      $ref: components/schemas/telemetry/OperatorScanStats.yaml
+    DailyScanCount:
+      $ref: components/schemas/telemetry/DailyScanCount.yaml
+    ScanBatch:
+      $ref: components/schemas/telemetry/ScanBatch.yaml
+    ScanCount:
+      $ref: components/schemas/telemetry/ScanCount.yaml
+    QrRenderCount:
+      $ref: components/schemas/telemetry/QrRenderCount.yaml
+    ScanVariant:
+      $ref: components/schemas/telemetry/ScanVariant.yaml
+    OperatorConfig:
+      $ref: components/schemas/operator/OperatorConfig.yaml
+    UpdateOperatorConfig:
+      $ref: components/schemas/operator/UpdateOperatorConfig.yaml
+    Facility:
+      $ref: components/schemas/operator/Facility.yaml
+    CreateFacilityRequest:
+      $ref: components/schemas/operator/CreateFacilityRequest.yaml
+    OperatorIdentifier:
+      $ref: components/schemas/operator/OperatorIdentifier.yaml
+    CreateOperatorIdentifierRequest:
+      $ref: components/schemas/operator/CreateOperatorIdentifierRequest.yaml
+    RegistryIdentityAudit:
+      $ref: components/schemas/operator/RegistryIdentityAudit.yaml
+    ApiKey:
+      $ref: components/schemas/access/ApiKey.yaml
+    ApiKeyScope:
+      $ref: components/schemas/access/ApiKeyScope.yaml
+    CreateApiKeyRequest:
+      $ref: components/schemas/access/CreateApiKeyRequest.yaml
+    NewApiKey:
+      $ref: components/schemas/access/NewApiKey.yaml
+    WebhookSubscription:
+      $ref: components/schemas/access/WebhookSubscription.yaml
+    NewWebhookSubscription:
+      $ref: components/schemas/access/NewWebhookSubscription.yaml
+    CreatedWebhookResponse:
+      $ref: components/schemas/access/CreatedWebhookResponse.yaml
+    InstalledPlugin:
+      $ref: components/schemas/access/InstalledPlugin.yaml
+    NodeState:
+      $ref: components/schemas/access/NodeState.yaml
+    WhoamiResponse:
+      $ref: components/schemas/access/WhoamiResponse.yaml
+    VaultInfo:
+      $ref: components/schemas/access/VaultInfo.yaml
+    DidDocument:
+      $ref: components/schemas/identity/DidDocument.yaml
+    SignRequest:
+      $ref: components/schemas/identity/SignRequest.yaml
+    SignResponse:
+      $ref: components/schemas/identity/SignResponse.yaml
+    VerifyRequest:
+      $ref: components/schemas/identity/VerifyRequest.yaml
+    VerifyResponse:
+      $ref: components/schemas/identity/VerifyResponse.yaml
+    RotateRequest:
+      $ref: components/schemas/identity/RotateRequest.yaml
+    RotateResponse:
+      $ref: components/schemas/identity/RotateResponse.yaml
+    ImportSyncResponse:
+      $ref: components/schemas/import/ImportSyncResponse.yaml
+    ImportAsyncResponse:
+      $ref: components/schemas/import/ImportAsyncResponse.yaml
+    ImportCreatedEntry:
+      $ref: components/schemas/import/ImportCreatedEntry.yaml
+    ImportUpdatedEntry:
+      $ref: components/schemas/import/ImportUpdatedEntry.yaml
+    ImportErrorEntry:
+      $ref: components/schemas/import/ImportErrorEntry.yaml
+    JobStatusResponse:
+      $ref: components/schemas/import/JobStatusResponse.yaml
+    JobProgress:
+      $ref: components/schemas/import/JobProgress.yaml
+    ProductGroupObligationList:
+      $ref: components/schemas/regulatory/ProductGroupObligationList.yaml
+    ProductGroupObligation:
+      $ref: components/schemas/regulatory/ProductGroupObligation.yaml
+    PassportObligation:
+      $ref: components/schemas/regulatory/PassportObligation.yaml
+    ObligationDate:
+      $ref: components/schemas/regulatory/ObligationDate.yaml
+    DateBasis:
+      $ref: components/schemas/regulatory/DateBasis.yaml
+    RetentionPeriod:
+      $ref: components/schemas/regulatory/RetentionPeriod.yaml
+    RetentionBasis:
+      $ref: components/schemas/regulatory/RetentionBasis.yaml
+    ReachingInstrument:
+      $ref: components/schemas/regulatory/ReachingInstrument.yaml
+    InstrumentStatus:
+      $ref: components/schemas/regulatory/InstrumentStatus.yaml
+    RegulatoryStatus:
+      $ref: components/schemas/regulatory/RegulatoryStatus.yaml
 paths:
   /vault/api/v1/dpp:
     $ref: paths/vault/vault_api_v1_dpp.yaml
@@ -86,6 +301,16 @@ paths:
     $ref: paths/vault/vault_api_v1_dpp_by-identity.yaml
   /vault/api/v1/dpp/{dppId}:
     $ref: paths/vault/vault_api_v1_dpp_{dppId}.yaml
+  /vault/api/v1/dpp/{dppId}/history:
+    $ref: paths/vault/vault_api_v1_dpp_{dppId}_history.yaml
+  /vault/api/v1/dpp/{dppId}/lint:
+    $ref: paths/vault/vault_api_v1_dpp_{dppId}_lint.yaml
+  /vault/api/v1/dpp/{dppId}/verify-tree:
+    $ref: paths/vault/vault_api_v1_dpp_{dppId}_verify-tree.yaml
+  /vault/api/v1/dpp/{dppId}/seal:
+    $ref: paths/vault/vault_api_v1_dpp_{dppId}_seal.yaml
+  /vault/api/v1/seal:
+    $ref: paths/vault/vault_api_v1_seal.yaml
   /vault/api/v1/dpp/{dppId}/publish:
     $ref: paths/vault/vault_api_v1_dpp_{dppId}_publish.yaml
   /vault/api/v1/dpp/{dppId}/suspend:
@@ -102,24 +327,6 @@ paths:
     $ref: paths/vault/vault_api_v1_dpp_{dppId}_transfer_reject.yaml
   /vault/api/v1/dpp/{dppId}/transfer/cancel:
     $ref: paths/vault/vault_api_v1_dpp_{dppId}_transfer_cancel.yaml
-  /vault/api/v1/dpp/{dppId}/history:
-    $ref: paths/vault/vault_api_v1_dpp_{dppId}_history.yaml
-  /vault/api/v1/dpp/{dppId}/stats:
-    $ref: paths/vault/vault_api_v1_dpp_{dppId}_stats.yaml
-  /vault/api/v1/stats:
-    $ref: paths/vault/vault_api_v1_stats.yaml
-  /vault/api/v1/dpp/{dppId}/registry:
-    $ref: paths/vault/vault_api_v1_dpp_{dppId}_registry.yaml
-  /vault/api/v1/registry:
-    $ref: paths/vault/vault_api_v1_registry.yaml
-  /vault/api/v1/dpp/{dppId}/verify-tree:
-    $ref: paths/vault/vault_api_v1_dpp_{dppId}_verify-tree.yaml
-  /vault/api/v1/seal:
-    $ref: paths/vault/vault_api_v1_seal.yaml
-  /vault/api/v1/dpp/{dppId}/seal:
-    $ref: paths/vault/vault_api_v1_dpp_{dppId}_seal.yaml
-  /vault/api/v1/dpp/{dppId}/lint:
-    $ref: paths/vault/vault_api_v1_dpp_{dppId}_lint.yaml
   /vault/api/v1/dpp/{dppId}/evidence:
     $ref: paths/vault/vault_api_v1_dpp_{dppId}_evidence.yaml
   /vault/api/v1/evidence/{id}:
@@ -128,40 +335,48 @@ paths:
     $ref: paths/vault/vault_api_v1_evidence_{id}_verify.yaml
   /vault/api/v1/evidence/verify:
     $ref: paths/vault/vault_api_v1_evidence_verify.yaml
+  /vault/api/v1/dpp/{dppId}/registry:
+    $ref: paths/vault/vault_api_v1_dpp_{dppId}_registry.yaml
+  /vault/api/v1/registry:
+    $ref: paths/vault/vault_api_v1_registry.yaml
+  /vault/api/v1/dpp/{dppId}/stats:
+    $ref: paths/vault/vault_api_v1_dpp_{dppId}_stats.yaml
+  /vault/api/v1/stats:
+    $ref: paths/vault/vault_api_v1_stats.yaml
   /vault/api/v1/operator:
     $ref: paths/vault/vault_api_v1_operator.yaml
+  /vault/api/v1/facilities:
+    $ref: paths/vault/vault_api_v1_facilities.yaml
+  /vault/api/v1/facilities/{id}:
+    $ref: paths/vault/vault_api_v1_facilities_{id}.yaml
+  /vault/api/v1/facilities/{id}/default:
+    $ref: paths/vault/vault_api_v1_facilities_{id}_default.yaml
+  /vault/api/v1/facilities/{id}/audit:
+    $ref: paths/vault/vault_api_v1_facilities_{id}_audit.yaml
+  /vault/api/v1/operator-identifiers:
+    $ref: paths/vault/vault_api_v1_operator-identifiers.yaml
+  /vault/api/v1/operator-identifiers/{id}:
+    $ref: paths/vault/vault_api_v1_operator-identifiers_{id}.yaml
+  /vault/api/v1/operator-identifiers/{id}/primary:
+    $ref: paths/vault/vault_api_v1_operator-identifiers_{id}_primary.yaml
+  /vault/api/v1/operator-identifiers/{id}/audit:
+    $ref: paths/vault/vault_api_v1_operator-identifiers_{id}_audit.yaml
   /vault/api/v1/api-keys:
     $ref: paths/vault/vault_api_v1_api-keys.yaml
   /vault/api/v1/api-keys/{id}:
     $ref: paths/vault/vault_api_v1_api-keys_{id}.yaml
-  /vault/api/v1/plugins:
-    $ref: paths/vault/vault_api_v1_plugins.yaml
   /vault/api/v1/webhooks:
     $ref: paths/vault/vault_api_v1_webhooks.yaml
   /vault/api/v1/webhooks/{id}:
     $ref: paths/vault/vault_api_v1_webhooks_{id}.yaml
   /vault/api/v1/webhooks/{id}/test:
     $ref: paths/vault/vault_api_v1_webhooks_{id}_test.yaml
+  /vault/api/v1/plugins:
+    $ref: paths/vault/vault_api_v1_plugins.yaml
   /vault/api/v1/node/state:
     $ref: paths/vault/vault_api_v1_node_state.yaml
   /vault/api/v1/whoami:
     $ref: paths/vault/vault_api_v1_whoami.yaml
-  /vault/api/v1/facilities:
-    $ref: paths/vault/vault_api_v1_facilities.yaml
-  /vault/api/v1/facilities/{id}:
-    $ref: paths/vault/vault_api_v1_facilities_{id}.yaml
-  /vault/api/v1/facilities/{id}/audit:
-    $ref: paths/vault/vault_api_v1_facilities_{id}_audit.yaml
-  /vault/api/v1/facilities/{id}/default:
-    $ref: paths/vault/vault_api_v1_facilities_{id}_default.yaml
-  /vault/api/v1/operator-identifiers:
-    $ref: paths/vault/vault_api_v1_operator-identifiers.yaml
-  /vault/api/v1/operator-identifiers/{id}:
-    $ref: paths/vault/vault_api_v1_operator-identifiers_{id}.yaml
-  /vault/api/v1/operator-identifiers/{id}/audit:
-    $ref: paths/vault/vault_api_v1_operator-identifiers_{id}_audit.yaml
-  /vault/api/v1/operator-identifiers/{id}/primary:
-    $ref: paths/vault/vault_api_v1_operator-identifiers_{id}_primary.yaml
   /vault/public/dpp/{dppId}:
     $ref: paths/vault/vault_public_dpp_{dppId}.yaml
   /vault/public/dpp/by-gtin/{gtin}:
@@ -170,28 +385,6 @@ paths:
     $ref: paths/vault/vault_credential_dpp_{dppId}.yaml
   /vault/internal/scan-batch:
     $ref: paths/vault/vault_internal_scan-batch.yaml
-  /vault/health:
-    $ref: paths/health/vault_health.yaml
-  /vault/ready:
-    $ref: paths/health/vault_ready.yaml
-  /vault/api/v1/info:
-    $ref: paths/health/vault_api_v1_info.yaml
-  /identity/.well-known/did.json:
-    $ref: paths/identity/identity_.well-known_did.json.yaml
-  /identity/health:
-    $ref: paths/health/identity_health.yaml
-  /identity/ready:
-    $ref: paths/health/identity_ready.yaml
-  /internal/sign:
-    $ref: paths/identity/internal_sign.yaml
-  /internal/verify:
-    $ref: paths/identity/internal_verify.yaml
-  /internal/keys/rotate:
-    $ref: paths/identity/internal_keys_rotate.yaml
-  /integrator/health:
-    $ref: paths/health/integrator_health.yaml
-  /integrator/api/v1/templates/{productGroup}:
-    $ref: paths/integrator/integrator_api_v1_templates_{productGroup}.yaml
   /integrator/api/v1/product-groups:
     $ref: paths/integrator/integrator_api_v1_product-groups.yaml
   /integrator/api/v1/product-groups/{productGroup}:
@@ -202,10 +395,20 @@ paths:
     $ref: paths/integrator/integrator_api_v1_schemas_{productGroup}.yaml
   /integrator/api/v1/schemas/{productGroup}/{version}:
     $ref: paths/integrator/integrator_api_v1_schemas_{productGroup}_{version}.yaml
+  /integrator/api/v1/templates/{productGroup}:
+    $ref: paths/integrator/integrator_api_v1_templates_{productGroup}.yaml
   /integrator/api/v1/import/{productGroup}:
     $ref: paths/integrator/integrator_api_v1_import_{productGroup}.yaml
   /integrator/api/v1/imports/{job_id}:
     $ref: paths/integrator/integrator_api_v1_imports_{job_id}.yaml
+  /identity/.well-known/did.json:
+    $ref: paths/identity/identity_.well-known_did.json.yaml
+  /internal/sign:
+    $ref: paths/identity/internal_sign.yaml
+  /internal/verify:
+    $ref: paths/identity/internal_verify.yaml
+  /internal/keys/rotate:
+    $ref: paths/identity/internal_keys_rotate.yaml
   /dpp/{dppId}:
     $ref: paths/resolver/dpp_{dppId}.yaml
   /dpp/{dppId}/qr:
@@ -218,6 +421,18 @@ paths:
     $ref: paths/resolver/01_{gtin}_10_{batch}.yaml
   /01/{gtin}/10/{batch}/21/{serial}:
     $ref: paths/resolver/01_{gtin}_10_{batch}_21_{serial}.yaml
+  /vault/health:
+    $ref: paths/health/vault_health.yaml
+  /vault/ready:
+    $ref: paths/health/vault_ready.yaml
+  /vault/api/v1/info:
+    $ref: paths/health/vault_api_v1_info.yaml
+  /identity/health:
+    $ref: paths/health/identity_health.yaml
+  /identity/ready:
+    $ref: paths/health/identity_ready.yaml
+  /integrator/health:
+    $ref: paths/health/integrator_health.yaml
   /health:
     $ref: paths/health/health.yaml
   /ready:
@@ -226,48 +441,41 @@ tags:
   - name: DPP Management
     description: Create, read, update, list, and audit Digital Product Passports.
   - name: DPP Lifecycle
-    description: Lifecycle transitions — publish, suspend, archive.
-  - name: Scan Telemetry
     description: >-
-      Aggregate, privacy-safe resolution counts — per-passport and operator-wide
-      rollups.
-  - name: Registry
-    description: >-
-      EU-registry registration state — per-passport and operator-wide, plus the
-      operator's verified-registry standing.
+      Lifecycle transitions — publish, suspend, archive, end-of-life, and
+      transfer of responsibility.
   - name: Evidence Dossiers
     description: >-
       Signed, self-contained evidence dossiers — generate, fetch, and verify
       (stored or uploaded) offline, with zero trust in the issuing node.
+  - name: Registry
+    description: >-
+      EU-registry registration state — per-passport and operator-wide, plus the
+      operator's verified-registry standing.
+  - name: Scan Telemetry
+    description: >-
+      Aggregate, privacy-safe resolution counts — per-passport and operator-wide
+      rollups.
   - name: Operator
     description: Operator configuration (branding, legal info, retention policy).
-  - name: API Keys
-    description: API key management — create, list, revoke.
-  - name: Plugins
-    description: Signed product group-plugin hot-install — verify, persist, hot-swap (admin-only).
-  - name: Webhooks
-    description: Signed outbound event delivery — subscribe, list, remove, test.
   - name: Facilities
     description: >-
       Manufacturing/processing facilities (ESPR Annex III) stamped onto new
       passports.
   - name: Operator Identifiers
     description: Economic-operator identifiers (ESPR Art. 13) stamped onto new passports.
+  - name: API Keys
+    description: API key management — create, list, revoke.
+  - name: Webhooks
+    description: Signed outbound event delivery — subscribe, list, remove, test.
+  - name: Plugins
+    description: >-
+      Signed product-group plugin hot-install — verify, persist, hot-swap
+      (admin-only).
   - name: Node
-    description: Node setup/readiness state.
-  - name: Identity
     description: >-
-      Public did:web identity — DID document, health, readiness. On the fused
-      node these are served under `/identity/*`. The standalone identity service
-      (:8002) serves them at the root — `/health`, `/ready`,
-      `/.well-known/did.json`.
-  - name: Identity (internal)
-    description: >-
-      mTLS service-to-service signing/rotation. **Not exposed by the fused
-      node**, which signs in-process — reachable only on the standalone identity
-      service, and only from a client presenting `CN=odal-vault`.
-  - name: Integrator
-    description: CSV/XLSX bulk import — templates, upload, async job polling.
+      Node setup state, and what credential the caller presented. `/whoami`
+      reports only what the request already carried; it is not a lookup.
   - name: Public (Vault)
     description: Unauthenticated vault endpoints for inter-service communication.
   - name: Credentialed Access
@@ -280,7 +488,125 @@ tags:
       authority holds a credential and no key).
   - name: Vault (internal)
     description: mTLS service-to-service telemetry ingestion (resolver → vault only).
+  - name: Integrator
+    description: >-
+      CSV/XLSX bulk import — product groups, their versioned JSON Schemas,
+      templates, upload, and async job polling.
+  - name: Identity
+    description: >-
+      Public did:web identity — DID document, health, readiness. On the fused
+      node these are served under `/identity/*`. The standalone identity service
+      (:8002) serves them at the root — `/health`, `/ready`,
+      `/.well-known/did.json`.
+  - name: Identity (internal)
+    description: >-
+      mTLS service-to-service signing/rotation. **Not exposed by the fused
+      node**, which signs in-process — reachable only on the standalone identity
+      service, and only from a client presenting `CN=odal-vault`.
   - name: Public Resolver
     description: Unauthenticated public endpoints for QR scan resolution.
   - name: Health
-    description: Health and readiness probes.
+    description: >-
+      Health and readiness probes, plus the vault's build metadata — every
+      deployable's unauthenticated liveness surface in one place.
+  - name: Errors
+    description: >-
+      The one error shape every endpoint returns. Documented once here rather
+      than restated per operation.
+  - name: Passport
+    description: >-
+      The passport record and every shape embedded in it. These are what the
+      signature covers, so a change here changes what a published passport
+      means.
+  - name: Passport Requests
+    description: Bodies accepted by the create, update, and lifecycle-transition routes.
+  - name: Passport Reports
+    description: >-
+      Derived reads over a passport — paging, dry-run validation, audit history,
+      and component-tree verification. Computed on request, never signed.
+  - name: Transfer of Responsibility
+    description: >-
+      The dual-signed handover record and the operators named in it (ESPR
+      "responsible economic operator").
+  - name: Seals
+    description: >-
+      The eIDAS seal as served, with what this node did and did not check. The
+      seal envelope itself lives on the passport — see `SealedEnvelope`.
+  - name: Evidence & Verification
+    description: >-
+      The dossier document, its members, and the verdict a verifier returns for
+      one. Distinct from `Seals`: a dossier is what an authority is handed, a
+      seal is one member of it.
+  - name: EU Registry State
+    description: >-
+      Projections of the registry queues — what is registered, what is owed, and
+      whether the operator's own verification is still current. Queue state, not
+      passport content.
+  - name: Scan Counters
+    description: >-
+      Both directions of scan telemetry: the rows the resolver flushes inward,
+      and the aggregates the vault serves outward.
+  - name: Operator Profile
+    description: >-
+      Operator configuration and the registry identities stamped onto new
+      passports — facilities (Annex III) and economic-operator identifiers
+      (Art. 13), with their append-only audit record.
+  - name: Access & Integrations
+    description: >-
+      Credentials, outbound delivery, plugins, and what the node reports about
+      itself.
+  - name: Node Identity
+    description: >-
+      The published DID document, and the bodies of the mTLS-only signing
+      surface. These use snake_case — they are an internal contract, not part of
+      the public API's camelCase surface.
+  - name: Bulk Import
+    description: Import results and async job state.
+  - name: Regulatory Catalog
+    description: >-
+      What this build knows about which acts reach which product groups, and
+      from when. Every date and period carries the provenance of the reading —
+      a qualified reading served unqualified is a different claim.
+x-tagGroups:
+  - name: Vault
+    tags:
+      - DPP Management
+      - DPP Lifecycle
+      - Evidence Dossiers
+      - Registry
+      - Scan Telemetry
+      - Operator
+      - Facilities
+      - Operator Identifiers
+      - API Keys
+      - Webhooks
+      - Plugins
+      - Node
+      - Public (Vault)
+      - Credentialed Access
+      - Vault (internal)
+  - name: Integrator & Identity
+    tags:
+      - Integrator
+      - Identity
+      - Identity (internal)
+  - name: Resolver & Health
+    tags:
+      - Public Resolver
+      - Health
+  - name: Models
+    tags:
+      - Errors
+      - Passport
+      - Passport Requests
+      - Passport Reports
+      - Transfer of Responsibility
+      - Seals
+      - Evidence & Verification
+      - EU Registry State
+      - Scan Counters
+      - Operator Profile
+      - Access & Integrations
+      - Node Identity
+      - Bulk Import
+      - Regulatory Catalog

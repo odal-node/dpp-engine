@@ -1,3 +1,5 @@
+x-tags:
+  - EU Registry State
 type: object
 description: One transfer-of-responsibility notification owed to the registry.
 required:

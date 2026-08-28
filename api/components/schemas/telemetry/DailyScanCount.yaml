@@ -1,3 +1,5 @@
+x-tags:
+  - Scan Counters
 type: object
 required:
   - day

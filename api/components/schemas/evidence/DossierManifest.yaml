@@ -1,3 +1,5 @@
+x-tags:
+  - Evidence & Verification
 type: object
 description: |
   Signed metadata binding every dossier member into one atomic,

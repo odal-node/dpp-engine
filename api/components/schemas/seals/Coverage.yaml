@@ -1,3 +1,5 @@
+x-tags:
+  - Seals
 type: string
 description: >-
   Whether the stored seal covers the passport's current signature. Answered from

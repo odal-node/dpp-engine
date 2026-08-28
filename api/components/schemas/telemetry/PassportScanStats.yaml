@@ -1,3 +1,5 @@
+x-tags:
+  - Scan Counters
 type: object
 description: >-
   Per-passport scan aggregates over a trailing window. `totalScans` and

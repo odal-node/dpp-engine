@@ -1,3 +1,5 @@
+x-tags:
+  - Evidence & Verification
 type: object
 description: |
   The passport's eIDAS qualified seal as carried inside an evidence dossier:
