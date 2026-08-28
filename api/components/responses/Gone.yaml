@@ -1,0 +1,13 @@
+description: |
+  The passport exists but has been withdrawn from public view — it is suspended.
+  Distinct from `404`: the node is confirming the identifier is real and
+  declining to serve it, rather than denying knowledge of it.
+content:
+  application/problem+json:
+    schema:
+      $ref: ../schemas/Problem.yaml
+    example:
+      type: https://problems.odal-node.io/gone
+      title: Gone
+      status: 410
+      detail: This passport is suspended and is not publicly available.

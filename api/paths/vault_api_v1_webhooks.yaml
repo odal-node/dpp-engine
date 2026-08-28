@@ -20,6 +20,8 @@ get:
               $ref: ../components/schemas/WebhookSubscription.yaml
     '401':
       $ref: ../components/responses/Unauthorized.yaml
+    '403':
+      $ref: ../components/responses/Forbidden.yaml
 post:
   operationId: createWebhook
   summary: Create a webhook subscription
@@ -50,3 +52,5 @@ post:
       $ref: ../components/responses/Unauthorized.yaml
     '422':
       $ref: ../components/responses/ValidationError.yaml
+    '403':
+      $ref: ../components/responses/Forbidden.yaml
