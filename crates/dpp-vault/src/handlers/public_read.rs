@@ -6,7 +6,7 @@ use axum::{
     http::StatusCode,
     response::IntoResponse,
 };
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use dpp_domain::schemas::{LensRegistry, UpcastError};
@@ -20,10 +20,10 @@ use super::error::{api_error, internal_error, not_found_error, parse_passport_id
 /// Query params for the public read. `schema_view` requests a read-time upcast
 /// of the product group data to a newer schema version, served *alongside* the
 /// canonical (signed) passport — never re-signed as if original.
-#[derive(Deserialize)]
+#[derive(Deserialize, Serialize)]
 pub struct PublicReadQuery {
     #[serde(rename = "schema_view")]
-    pub(crate) schema_view: Option<String>,
+    pub schema_view: Option<String>,
 }
 
 /// Shared upcast-lens registry, built once.

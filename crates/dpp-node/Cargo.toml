@@ -82,6 +82,12 @@ integration-tests = ["s3"]
 # The shared Postgres harness the integration suites use. `test-harness` is a
 # dev-only feature of dpp-dal; the normal dependency above stays featureless.
 dpp-dal        = { path = "../dpp-dal", features = ["test-harness"] }
+# The resolver is a separate deployable the node never links, but `openapi.yaml`
+# names it as one of its three servers — so the contract test has to reach its
+# query types to check the parameters documented for those routes. Route
+# coverage gets away with scanning `router.rs` as text; a struct's wire shape
+# cannot be read that way and must come from serde.
+dpp-resolver   = { path = "../dpp-resolver" }
 tower          = { version = "0.5", features = ["util"] }
 serial_test    = "4"
 wat            = "1"

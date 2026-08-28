@@ -1,0 +1,20 @@
+type: object
+description: |
+  The date a passport obligation applies from, with the provenance of that date.
+
+  One object rather than two loose fields so a date cannot be served without its
+  basis. Most of the catalog is undated, and of the dates that exist some trace
+  to an adopted text and some are a reading — a date presented bare turns a
+  qualified reading into an unqualified claim.
+properties:
+  date:
+    type: string
+    format: date
+    description: ISO-8601 date the obligation applies from.
+    example: '2030-08-01'
+  basis:
+    $ref: ./DateBasis.yaml
+    description: Whether this date traces to an adopted text.
+required:
+  - date
+  - basis

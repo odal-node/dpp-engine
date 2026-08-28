@@ -32,7 +32,7 @@ pub struct PassportListResponse {
 }
 
 /// Query parameters for the passport list endpoint.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ListQuery {
     /// Filter by passport status. Omit to return all statuses.

@@ -33,7 +33,7 @@ post:
               description: >
                 The `.wasm` or precompiled `.cwasm` plugin artifact. Its
                 filename determines the product group when `productGroup` is omitted
-                (`product group-<key>.wasm`) and whether it is treated as precompiled
+                (`product-group-<key>.wasm`) and whether it is treated as precompiled
                 (`.cwasm`).
             sig:
               type: string

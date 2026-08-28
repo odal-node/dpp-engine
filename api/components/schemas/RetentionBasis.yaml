@@ -1,0 +1,10 @@
+type: string
+enum:
+  - sourced
+  - assumed
+description: |
+  Whether a retention period traces to an adopted text (`sourced`) or is a
+  reading that has not been confirmed against one (`assumed`).
+
+  See `DateBasis` for why these are two schemas rather than one.
+example: sourced

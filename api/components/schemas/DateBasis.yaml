@@ -1,0 +1,17 @@
+type: string
+enum:
+  - sourced
+  - assumed
+description: |
+  Whether an obligation date traces to an adopted text (`sourced`) or is a
+  reading that has not been confirmed against one (`assumed`).
+
+  Always served with the date it qualifies. A date without its basis presents a
+  qualified reading as an unqualified claim, which on a public endpoint from a
+  compliance vendor is a materially different statement.
+
+  Deliberately a separate schema from `RetentionBasis`, which it currently
+  matches variant for variant. They are two enumerations in the code answering
+  two questions, and collapsing them here would let one drift silently behind
+  the other.
+example: sourced
