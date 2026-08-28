@@ -1,0 +1,35 @@
+type: object
+description: |
+  One act the catalog records as reaching a product group, with how far along
+  the act itself is and whether it binds *this* group.
+
+  Distinct from the entries recorded on a passport, which carry no status: a
+  passport freezes its applicable set at issuance and re-deriving status later
+  would misstate what governed the product when it was placed on the market.
+  Here nothing is frozen — the question is what the catalog holds now — so the
+  statuses are what let a caller tell an adopted duty from a reading.
+properties:
+  instrument:
+    type: string
+    description: The instrument's catalog id.
+    example: toy-safety-2025-2509
+  instrumentStatus:
+    $ref: ./InstrumentStatus.yaml
+    description: Whether the act itself exists.
+  bindingStatus:
+    $ref: ./RegulatoryStatus.yaml
+    description: >-
+      Whether that act's obligations bind this product group. Independent of
+      `instrumentStatus` in both directions.
+  recorded:
+    $ref: ./RecordedBasis.yaml
+    description: >-
+      Always `catalog` here — this reports what the embedded catalog holds, and
+      an operator assertion is recorded on a passport, not against the catalog.
+      Shared with the passport's own instrument entries so the two stay one
+      shape.
+required:
+  - instrument
+  - recorded
+  - instrumentStatus
+  - bindingStatus

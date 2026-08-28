@@ -2905,6 +2905,29 @@ components:
         group the catalog models. An operator who knows an act applies must be able to
         say so.
       example: catalog
+    InstrumentRef:
+      type: object
+      description: |
+        One legal instrument recorded on a passport as applicable to it, and who
+        asserted that it applies.
+
+        Fixed when the product was placed on the market and never recomputed. Carries
+        no status, deliberately: a passport freezes its applicable set at issuance, and
+        re-deriving how far along an act is would misstate what governed the product at
+        that moment. The obligation endpoint's `ReachingInstrument` answers the live
+        question and does carry status.
+      properties:
+        instrument:
+          type: string
+          description: The instrument's catalog id.
+          example: battery-reg-2023-1542
+        recorded:
+          $ref: '#/components/schemas/RecordedBasis'
+          description: Who asserted this entry, fixed at issuance along with the rest of the applicable set.
+      required:
+        - instrument
+        - recorded
+      additionalProperties: false
     Granularity:
       type: string
       enum:
@@ -3226,19 +3249,7 @@ components:
 
             Not derivable from `productGroup`. A horizontal act can reach a product whose product group is not one the catalog models, so an entry may be asserted by the economic operator rather than resolved from the catalog — which `recorded` distinguishes. Read it as who asserted the entry, not as how much to trust it.
           items:
-            type: object
-            required:
-              - instrument
-              - recorded
-            properties:
-              instrument:
-                type: string
-                description: The instrument's catalog id.
-                example: battery-reg-2023-1542
-              recorded:
-                $ref: '#/components/schemas/RecordedBasis'
-                description: Who asserted this entry, fixed at issuance along with the rest of the applicable set.
-            additionalProperties: false
+            $ref: '#/components/schemas/InstrumentRef'
         granularity:
           $ref: '#/components/schemas/Granularity'
           description: The level this passport describes. Omitted entirely while no adopted act has fixed one — see `Granularity` for why omitted is not `item`.
@@ -4128,6 +4139,37 @@ components:
         jws:
           type: string
           description: Compact EdDSA JWS.
+    QualifiedSealMember:
+      type: object
+      description: |
+        The passport's eIDAS qualified seal as carried inside an evidence dossier:
+        the seal envelope plus the JWS it was computed over and that payload's hash,
+        so a verifier holding only the dossier has both the CAdES and the preimage to
+        check it against.
+
+        Included because a dossier is what an authority is handed, and the seal is its
+        one member carrying an Art. 35(2) presumption — and because it is unreachable
+        otherwise: the seal is stripped from `fullView` and `publicView` alike, since
+        it covers the full-payload signature rather than any redaction. Bound into
+        `contentHashes` like every other member.
+
+        ⚠️ **This shape is described here but not enforced anywhere.** The field is
+        held as untyped JSON on the dossier record, so no Rust type declares these
+        three members and the OpenAPI contract test has nothing to compare them
+        against. Treat the property list as documentation of intent, not as a
+        guarantee. Giving the dossier a real type for this member would close that,
+        and is the only thing that would.
+      properties:
+        seal:
+          type: object
+          description: The `SealedEnvelope` as persisted on the passport.
+        signedOverJws:
+          type: string
+          description: The JWS the seal was computed over.
+        payloadHash:
+          type: string
+          pattern: ^[0-9a-f]{64}$
+          description: SHA-256 of the sealed payload, lowercase hex.
     EvidenceDossier:
       type: object
       description: |
@@ -4201,30 +4243,10 @@ components:
             it proves each node's signed public view is unchanged against its
             pinned hash, not the cryptographic validity of that node's signature.
         qualifiedSeal:
-          type:
-            - object
-            - 'null'
-          description: |
-            The passport's eIDAS qualified seal, present iff one has been
-            applied. Carries the seal envelope plus `signedOverJws` and
-            `payloadHash`, so a verifier holding only this dossier has both the
-            CAdES and the preimage to check it against.
-
-            Included because a dossier is what an authority is handed and the
-            seal is its one member carrying an Art. 35(2) presumption — and
-            because it is unreachable otherwise: the seal is stripped from
-            `fullView` and `publicView` alike, since it covers the full-payload
-            signature rather than any redaction. Bound into `contentHashes` like
-            every other member. `null` when the seal is still queued.
-          properties:
-            seal:
-              type: object
-              description: The `SealedEnvelope` as persisted on the passport.
-            signedOverJws:
-              type: string
-            payloadHash:
-              type: string
-              pattern: ^[0-9a-f]{64}$
+          anyOf:
+            - $ref: '#/components/schemas/QualifiedSealMember'
+            - type: 'null'
+          description: The passport's eIDAS qualified seal, present iff one has been applied. `null` when the seal is still queued.
     EvidenceDossierRecord:
       type: object
       description: A stored dossier snapshot — the dossier plus its persistence envelope.
@@ -5007,6 +5029,56 @@ components:
         two questions, and collapsing them here would let one drift silently behind
         the other.
       example: sourced
+    ObligationDate:
+      type: object
+      description: |
+        The date a passport obligation applies from, with the provenance of that date.
+
+        One object rather than two loose fields so a date cannot be served without its
+        basis. Most of the catalog is undated, and of the dates that exist some trace
+        to an adopted text and some are a reading — a date presented bare turns a
+        qualified reading into an unqualified claim.
+      properties:
+        date:
+          type: string
+          format: date
+          description: ISO-8601 date the obligation applies from.
+          example: '2030-08-01'
+        basis:
+          $ref: '#/components/schemas/DateBasis'
+          description: Whether this date traces to an adopted text.
+      required:
+        - date
+        - basis
+    PassportObligation:
+      type: object
+      description: |
+        Whether a passport is required for a product group, and from when.
+
+        The obligation is split from its date so `required` can be answered where
+        nothing fixes a date — which is most of the catalog.
+      properties:
+        required:
+          type: boolean
+          description: |
+            Whether an instrument recorded against this product group imposes a
+            passport obligation. Says nothing about whether one can be produced today
+            — see `determinable` on the enclosing object.
+
+            **Read with `instruments[].bindingStatus`.** This is a fold across every
+            reaching act, so `true` means an act imposes a passport, not that any act
+            binds this group today.
+          example: true
+        from:
+          anyOf:
+            - $ref: '#/components/schemas/ObligationDate'
+            - type: 'null'
+          description: |
+            The date the obligation applies from, or `null` where no instrument fixes
+            one. An obligation with no date is not one starting today.
+      required:
+        - required
+        - from
     RetentionBasis:
       type: string
       enum:
@@ -5018,6 +5090,28 @@ components:
 
         See `DateBasis` for why these are two schemas rather than one.
       example: sourced
+    RetentionPeriod:
+      type: object
+      description: |
+        How long records must be kept, with the provenance of that figure.
+
+        The figure is the maximum across every act reaching the product group, because
+        retention periods are floors and a record kept long enough for the longest
+        satisfies them all. The basis is `sourced` only when every contributing figure
+        is sourced — one assumption anywhere makes the compound figure an assumption,
+        whichever act supplied the maximum.
+      properties:
+        years:
+          type: integer
+          minimum: 0
+          description: Years the record must be kept.
+          example: 10
+        basis:
+          $ref: '#/components/schemas/RetentionBasis'
+          description: Whether this figure traces to an adopted text.
+      required:
+        - years
+        - basis
     InstrumentStatus:
       type: string
       enum:
@@ -5069,6 +5163,36 @@ components:
         reaching act is `provisional` or `watch`, the requirement is a reading of
         instruments that have not yet bound anything.
       example: provisional
+    ReachingInstrument:
+      type: object
+      description: |
+        One act the catalog records as reaching a product group, with how far along
+        the act itself is and whether it binds *this* group.
+
+        Distinct from the entries recorded on a passport, which carry no status: a
+        passport freezes its applicable set at issuance and re-deriving status later
+        would misstate what governed the product when it was placed on the market.
+        Here nothing is frozen — the question is what the catalog holds now — so the
+        statuses are what let a caller tell an adopted duty from a reading.
+      properties:
+        instrument:
+          type: string
+          description: The instrument's catalog id.
+          example: toy-safety-2025-2509
+        instrumentStatus:
+          $ref: '#/components/schemas/InstrumentStatus'
+          description: Whether the act itself exists.
+        bindingStatus:
+          $ref: '#/components/schemas/RegulatoryStatus'
+          description: Whether that act's obligations bind this product group. Independent of `instrumentStatus` in both directions.
+        recorded:
+          $ref: '#/components/schemas/RecordedBasis'
+          description: Always `catalog` here — this reports what the embedded catalog holds, and an operator assertion is recorded on a passport, not against the catalog. Shared with the passport's own instrument entries so the two stay one shape.
+      required:
+        - instrument
+        - recorded
+        - instrumentStatus
+        - bindingStatus
     ProductGroupObligation:
       type: object
       description: |
@@ -5093,43 +5217,8 @@ components:
             about the obligation, which is reported in full beside it.
           example: Toys
         passport:
-          type: object
-          description: Whether a passport is required, and from when.
-          properties:
-            required:
-              type: boolean
-              description: |
-                Whether an instrument recorded against this product group imposes a
-                passport obligation. Says nothing about whether one can be produced
-                today — see `determinable`.
-
-                **Read with `instruments[].bindingStatus`.** This is a fold across
-                every reaching act, so `true` means an act imposes a passport, not
-                that any act binds this group today. Where every reaching act is
-                `provisional` or `watch`, this is a reading of instruments that have
-                not yet bound anything.
-              example: true
-            from:
-              type:
-                - object
-                - 'null'
-              description: |
-                The date the obligation applies from, or `null` where no instrument
-                fixes one. Most of the catalog is undated, and an obligation with no
-                date is not the same as one starting today.
-              properties:
-                date:
-                  type: string
-                  format: date
-                  example: '2030-08-01'
-                basis:
-                  $ref: '#/components/schemas/DateBasis'
-              required:
-                - date
-                - basis
-          required:
-            - required
-            - from
+          $ref: '#/components/schemas/PassportObligation'
+          description: Whether a passport is required for this product group, and from when.
         determinable:
           type: boolean
           description: |
@@ -5150,19 +5239,10 @@ components:
             this endpoint answers a question about every product group it lists, and a
             missing key would read as "not asked" rather than "no act has fixed one".
         retention:
-          type:
-            - object
-            - 'null'
-          description: How long records must be kept, with the basis of that figure.
-          properties:
-            years:
-              type: integer
-              example: 10
-            basis:
-              $ref: '#/components/schemas/RetentionBasis'
-          required:
-            - years
-            - basis
+          anyOf:
+            - $ref: '#/components/schemas/RetentionPeriod'
+            - type: 'null'
+          description: How long records must be kept, with the basis of that figure. `null` where no reaching act fixes one.
         instruments:
           type: array
           description: |
@@ -5175,26 +5255,7 @@ components:
             `watch`, a `required: true` is a reading of instruments that have not yet
             bound anything, and must not be presented as a determination.
           items:
-            type: object
-            properties:
-              instrument:
-                type: string
-                description: The instrument's catalog id.
-                example: toy-safety-2025-2509
-              instrumentStatus:
-                $ref: '#/components/schemas/InstrumentStatus'
-                description: Whether the act itself exists.
-              bindingStatus:
-                $ref: '#/components/schemas/RegulatoryStatus'
-                description: Whether that act's obligations bind this product group. Independent of `instrumentStatus` in both directions.
-              recorded:
-                $ref: '#/components/schemas/RecordedBasis'
-                description: Always `catalog` on this endpoint — it reports what the embedded catalog holds, and an operator assertion is recorded on a passport, not here. Shared with the passport's own instrument entries so the two shapes stay one shape.
-            required:
-              - instrument
-              - recorded
-              - instrumentStatus
-              - bindingStatus
+            $ref: '#/components/schemas/ReachingInstrument'
       required:
         - productGroup
         - title
@@ -5309,6 +5370,23 @@ components:
           example: queued
         totalRows:
           type: integer
+    JobProgress:
+      type: object
+      description: How far through its rows an import job has got.
+      properties:
+        processed:
+          type: integer
+          minimum: 0
+          description: Rows handled so far.
+          example: 120
+        total:
+          type: integer
+          minimum: 0
+          description: Rows the job was created with.
+          example: 500
+      required:
+        - processed
+        - total
     JobStatusResponse:
       type: object
       required:
@@ -5327,12 +5405,7 @@ components:
             - completed
             - failed
         progress:
-          type: object
-          properties:
-            processed:
-              type: integer
-            total:
-              type: integer
+          $ref: '#/components/schemas/JobProgress'
         result:
           type:
             - object

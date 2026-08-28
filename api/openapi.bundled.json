@@ -3858,6 +3858,26 @@
         "description": "Who asserted that an act applies. Read it as provenance, not as how much to\ntrust the entry.\n\n`catalog` — resolved from the instrument catalog.\n\n`operator` — asserted by the economic operator placing the product on the\nmarket. **Not a fallback.** The catalog cannot be exhaustive: horizontal\necodesign requirements cover sets of products that were never shortlisted as\nproduct groups, so an act may apply to a product while reaching no product\ngroup the catalog models. An operator who knows an act applies must be able to\nsay so.\n",
         "example": "catalog"
       },
+      "InstrumentRef": {
+        "type": "object",
+        "description": "One legal instrument recorded on a passport as applicable to it, and who\nasserted that it applies.\n\nFixed when the product was placed on the market and never recomputed. Carries\nno status, deliberately: a passport freezes its applicable set at issuance, and\nre-deriving how far along an act is would misstate what governed the product at\nthat moment. The obligation endpoint's `ReachingInstrument` answers the live\nquestion and does carry status.\n",
+        "properties": {
+          "instrument": {
+            "type": "string",
+            "description": "The instrument's catalog id.",
+            "example": "battery-reg-2023-1542"
+          },
+          "recorded": {
+            "$ref": "#/components/schemas/RecordedBasis",
+            "description": "Who asserted this entry, fixed at issuance along with the rest of the applicable set."
+          }
+        },
+        "required": [
+          "instrument",
+          "recorded"
+        ],
+        "additionalProperties": false
+      },
       "Granularity": {
         "type": "string",
         "enum": [
@@ -4234,23 +4254,7 @@
             "type": "array",
             "description": "The legal instruments this passport was issued under, fixed when the product was placed on the market and never recomputed afterwards.\n\nA set rather than a single value because acts accumulate: ESPR Art. 5(7) lets a group-specific delegated act supplement a horizontal one and the Regulation states no precedence rule, so the governing law is the union of the members' requirements.\n\nNot derivable from `productGroup`. A horizontal act can reach a product whose product group is not one the catalog models, so an entry may be asserted by the economic operator rather than resolved from the catalog — which `recorded` distinguishes. Read it as who asserted the entry, not as how much to trust it.",
             "items": {
-              "type": "object",
-              "required": [
-                "instrument",
-                "recorded"
-              ],
-              "properties": {
-                "instrument": {
-                  "type": "string",
-                  "description": "The instrument's catalog id.",
-                  "example": "battery-reg-2023-1542"
-                },
-                "recorded": {
-                  "$ref": "#/components/schemas/RecordedBasis",
-                  "description": "Who asserted this entry, fixed at issuance along with the rest of the applicable set."
-                }
-              },
-              "additionalProperties": false
+              "$ref": "#/components/schemas/InstrumentRef"
             }
           },
           "granularity": {
@@ -5484,6 +5488,25 @@
           }
         }
       },
+      "QualifiedSealMember": {
+        "type": "object",
+        "description": "The passport's eIDAS qualified seal as carried inside an evidence dossier:\nthe seal envelope plus the JWS it was computed over and that payload's hash,\nso a verifier holding only the dossier has both the CAdES and the preimage to\ncheck it against.\n\nIncluded because a dossier is what an authority is handed, and the seal is its\none member carrying an Art. 35(2) presumption — and because it is unreachable\notherwise: the seal is stripped from `fullView` and `publicView` alike, since\nit covers the full-payload signature rather than any redaction. Bound into\n`contentHashes` like every other member.\n\n⚠️ **This shape is described here but not enforced anywhere.** The field is\nheld as untyped JSON on the dossier record, so no Rust type declares these\nthree members and the OpenAPI contract test has nothing to compare them\nagainst. Treat the property list as documentation of intent, not as a\nguarantee. Giving the dossier a real type for this member would close that,\nand is the only thing that would.\n",
+        "properties": {
+          "seal": {
+            "type": "object",
+            "description": "The `SealedEnvelope` as persisted on the passport."
+          },
+          "signedOverJws": {
+            "type": "string",
+            "description": "The JWS the seal was computed over."
+          },
+          "payloadHash": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$",
+            "description": "SHA-256 of the sealed payload, lowercase hex."
+          }
+        }
+      },
       "EvidenceDossier": {
         "type": "object",
         "description": "A self-contained, signed snapshot of a passport's full proof chain,\npersisted by the node at generation time. Verification\n(`POST /evidence/{id}/verify`) is an integrity check of the stored\ndossier against its own signatures and hash chains. See\n`docs/architecture/EVIDENCE-DOSSIER.md` for the full specification,\nincluding why `calcReceipts`/`checkpoint` are always empty/`null` in\nformat v1.\n",
@@ -5561,24 +5584,15 @@
             "description": "The recursive component-tree (bill-of-materials) verification report,\npresent iff the passport declares `componentRefs`. `null` for a unit\nwith no modelled sub-assemblies.\n\nGenerated at dossier-assembly time by walking the tree and pin-checking\neach node, then bound into `contentHashes` like every other member — so\na tampered report fails the dossier's `content_integrity` check rather\nthan passing as an unverifiable attachment.\n\nIntegrity only, the same caveat as the standalone `verify-tree` route:\nit proves each node's signed public view is unchanged against its\npinned hash, not the cryptographic validity of that node's signature.\n"
           },
           "qualifiedSeal": {
-            "type": [
-              "object",
-              "null"
-            ],
-            "description": "The passport's eIDAS qualified seal, present iff one has been\napplied. Carries the seal envelope plus `signedOverJws` and\n`payloadHash`, so a verifier holding only this dossier has both the\nCAdES and the preimage to check it against.\n\nIncluded because a dossier is what an authority is handed and the\nseal is its one member carrying an Art. 35(2) presumption — and\nbecause it is unreachable otherwise: the seal is stripped from\n`fullView` and `publicView` alike, since it covers the full-payload\nsignature rather than any redaction. Bound into `contentHashes` like\nevery other member. `null` when the seal is still queued.\n",
-            "properties": {
-              "seal": {
-                "type": "object",
-                "description": "The `SealedEnvelope` as persisted on the passport."
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/QualifiedSealMember"
               },
-              "signedOverJws": {
-                "type": "string"
-              },
-              "payloadHash": {
-                "type": "string",
-                "pattern": "^[0-9a-f]{64}$"
+              {
+                "type": "null"
               }
-            }
+            ],
+            "description": "The passport's eIDAS qualified seal, present iff one has been applied. `null` when the seal is still queued."
           }
         }
       },
@@ -6618,6 +6632,52 @@
         "description": "Whether an obligation date traces to an adopted text (`sourced`) or is a\nreading that has not been confirmed against one (`assumed`).\n\nAlways served with the date it qualifies. A date without its basis presents a\nqualified reading as an unqualified claim, which on a public endpoint from a\ncompliance vendor is a materially different statement.\n\nDeliberately a separate schema from `RetentionBasis`, which it currently\nmatches variant for variant. They are two enumerations in the code answering\ntwo questions, and collapsing them here would let one drift silently behind\nthe other.\n",
         "example": "sourced"
       },
+      "ObligationDate": {
+        "type": "object",
+        "description": "The date a passport obligation applies from, with the provenance of that date.\n\nOne object rather than two loose fields so a date cannot be served without its\nbasis. Most of the catalog is undated, and of the dates that exist some trace\nto an adopted text and some are a reading — a date presented bare turns a\nqualified reading into an unqualified claim.\n",
+        "properties": {
+          "date": {
+            "type": "string",
+            "format": "date",
+            "description": "ISO-8601 date the obligation applies from.",
+            "example": "2030-08-01"
+          },
+          "basis": {
+            "$ref": "#/components/schemas/DateBasis",
+            "description": "Whether this date traces to an adopted text."
+          }
+        },
+        "required": [
+          "date",
+          "basis"
+        ]
+      },
+      "PassportObligation": {
+        "type": "object",
+        "description": "Whether a passport is required for a product group, and from when.\n\nThe obligation is split from its date so `required` can be answered where\nnothing fixes a date — which is most of the catalog.\n",
+        "properties": {
+          "required": {
+            "type": "boolean",
+            "description": "Whether an instrument recorded against this product group imposes a\npassport obligation. Says nothing about whether one can be produced today\n— see `determinable` on the enclosing object.\n\n**Read with `instruments[].bindingStatus`.** This is a fold across every\nreaching act, so `true` means an act imposes a passport, not that any act\nbinds this group today.\n",
+            "example": true
+          },
+          "from": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ObligationDate"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The date the obligation applies from, or `null` where no instrument fixes\none. An obligation with no date is not one starting today.\n"
+          }
+        },
+        "required": [
+          "required",
+          "from"
+        ]
+      },
       "RetentionBasis": {
         "type": "string",
         "enum": [
@@ -6626,6 +6686,26 @@
         ],
         "description": "Whether a retention period traces to an adopted text (`sourced`) or is a\nreading that has not been confirmed against one (`assumed`).\n\nSee `DateBasis` for why these are two schemas rather than one.\n",
         "example": "sourced"
+      },
+      "RetentionPeriod": {
+        "type": "object",
+        "description": "How long records must be kept, with the provenance of that figure.\n\nThe figure is the maximum across every act reaching the product group, because\nretention periods are floors and a record kept long enough for the longest\nsatisfies them all. The basis is `sourced` only when every contributing figure\nis sourced — one assumption anywhere makes the compound figure an assumption,\nwhichever act supplied the maximum.\n",
+        "properties": {
+          "years": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Years the record must be kept.",
+            "example": 10
+          },
+          "basis": {
+            "$ref": "#/components/schemas/RetentionBasis",
+            "description": "Whether this figure traces to an adopted text."
+          }
+        },
+        "required": [
+          "years",
+          "basis"
+        ]
       },
       "InstrumentStatus": {
         "type": "string",
@@ -6647,6 +6727,35 @@
         "description": "Whether an act's obligations bind **a given product group** — a different\nquestion from whether the act exists, which is `InstrumentStatus`.\n\n`in_force` — the act creates binding obligations for this product group that\ncan be determined now. A future applicability date is *not* this status.\n\n`provisional` — the act exists or is anticipated, but nothing is bindingly\ndeterminable for this product group yet. Any obligation reported alongside\nthis status is a reading, not a determination.\n\n`watch` — tracked, but this act imposes nothing on this product group. A\nwatching brief rather than a duty, and never determinable.\n\n**Read this before acting on `passport.required`.** The obligation is a fold\nacross every act reaching the product group, so `required: true` says an act\nimposes a passport — not that the act binds this group today. Where every\nreaching act is `provisional` or `watch`, the requirement is a reading of\ninstruments that have not yet bound anything.\n",
         "example": "provisional"
       },
+      "ReachingInstrument": {
+        "type": "object",
+        "description": "One act the catalog records as reaching a product group, with how far along\nthe act itself is and whether it binds *this* group.\n\nDistinct from the entries recorded on a passport, which carry no status: a\npassport freezes its applicable set at issuance and re-deriving status later\nwould misstate what governed the product when it was placed on the market.\nHere nothing is frozen — the question is what the catalog holds now — so the\nstatuses are what let a caller tell an adopted duty from a reading.\n",
+        "properties": {
+          "instrument": {
+            "type": "string",
+            "description": "The instrument's catalog id.",
+            "example": "toy-safety-2025-2509"
+          },
+          "instrumentStatus": {
+            "$ref": "#/components/schemas/InstrumentStatus",
+            "description": "Whether the act itself exists."
+          },
+          "bindingStatus": {
+            "$ref": "#/components/schemas/RegulatoryStatus",
+            "description": "Whether that act's obligations bind this product group. Independent of `instrumentStatus` in both directions."
+          },
+          "recorded": {
+            "$ref": "#/components/schemas/RecordedBasis",
+            "description": "Always `catalog` here — this reports what the embedded catalog holds, and an operator assertion is recorded on a passport, not against the catalog. Shared with the passport's own instrument entries so the two stay one shape."
+          }
+        },
+        "required": [
+          "instrument",
+          "recorded",
+          "instrumentStatus",
+          "bindingStatus"
+        ]
+      },
       "ProductGroupObligation": {
         "type": "object",
         "description": "What this node knows about one product group's digital product passport\nobligation, drawn from the embedded instrument catalog.\n",
@@ -6665,40 +6774,8 @@
             "example": "Toys"
           },
           "passport": {
-            "type": "object",
-            "description": "Whether a passport is required, and from when.",
-            "properties": {
-              "required": {
-                "type": "boolean",
-                "description": "Whether an instrument recorded against this product group imposes a\npassport obligation. Says nothing about whether one can be produced\ntoday — see `determinable`.\n\n**Read with `instruments[].bindingStatus`.** This is a fold across\nevery reaching act, so `true` means an act imposes a passport, not\nthat any act binds this group today. Where every reaching act is\n`provisional` or `watch`, this is a reading of instruments that have\nnot yet bound anything.\n",
-                "example": true
-              },
-              "from": {
-                "type": [
-                  "object",
-                  "null"
-                ],
-                "description": "The date the obligation applies from, or `null` where no instrument\nfixes one. Most of the catalog is undated, and an obligation with no\ndate is not the same as one starting today.\n",
-                "properties": {
-                  "date": {
-                    "type": "string",
-                    "format": "date",
-                    "example": "2030-08-01"
-                  },
-                  "basis": {
-                    "$ref": "#/components/schemas/DateBasis"
-                  }
-                },
-                "required": [
-                  "date",
-                  "basis"
-                ]
-              }
-            },
-            "required": [
-              "required",
-              "from"
-            ]
+            "$ref": "#/components/schemas/PassportObligation",
+            "description": "Whether a passport is required for this product group, and from when."
           },
           "determinable": {
             "type": "boolean",
@@ -6717,55 +6794,21 @@
             "description": "The level a passport is issued at for this product group, where a\ndelegated act fixes one. `null` where none does — which is every product\ngroup today.\n\nNullable here rather than omitted, unlike the same field on a passport:\nthis endpoint answers a question about every product group it lists, and a\nmissing key would read as \"not asked\" rather than \"no act has fixed one\".\n"
           },
           "retention": {
-            "type": [
-              "object",
-              "null"
-            ],
-            "description": "How long records must be kept, with the basis of that figure.",
-            "properties": {
-              "years": {
-                "type": "integer",
-                "example": 10
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RetentionPeriod"
               },
-              "basis": {
-                "$ref": "#/components/schemas/RetentionBasis"
+              {
+                "type": "null"
               }
-            },
-            "required": [
-              "years",
-              "basis"
-            ]
+            ],
+            "description": "How long records must be kept, with the basis of that figure. `null` where no reaching act fixes one."
           },
           "instruments": {
             "type": "array",
             "description": "The acts the catalog knows reach this product group, each with how far\nalong the act itself is and whether it binds *this* group.\n\n**These statuses qualify `passport.required`.** That field folds across\nevery act here, so it reports that an act imposes a passport — not that\nany act binds this group today. Where every entry is `provisional` or\n`watch`, a `required: true` is a reading of instruments that have not yet\nbound anything, and must not be presented as a determination.\n",
             "items": {
-              "type": "object",
-              "properties": {
-                "instrument": {
-                  "type": "string",
-                  "description": "The instrument's catalog id.",
-                  "example": "toy-safety-2025-2509"
-                },
-                "instrumentStatus": {
-                  "$ref": "#/components/schemas/InstrumentStatus",
-                  "description": "Whether the act itself exists."
-                },
-                "bindingStatus": {
-                  "$ref": "#/components/schemas/RegulatoryStatus",
-                  "description": "Whether that act's obligations bind this product group. Independent of `instrumentStatus` in both directions."
-                },
-                "recorded": {
-                  "$ref": "#/components/schemas/RecordedBasis",
-                  "description": "Always `catalog` on this endpoint — it reports what the embedded catalog holds, and an operator assertion is recorded on a passport, not here. Shared with the passport's own instrument entries so the two shapes stay one shape."
-                }
-              },
-              "required": [
-                "instrument",
-                "recorded",
-                "instrumentStatus",
-                "bindingStatus"
-              ]
+              "$ref": "#/components/schemas/ReachingInstrument"
             }
           }
         },
@@ -6926,6 +6969,28 @@
           }
         }
       },
+      "JobProgress": {
+        "type": "object",
+        "description": "How far through its rows an import job has got.",
+        "properties": {
+          "processed": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Rows handled so far.",
+            "example": 120
+          },
+          "total": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Rows the job was created with.",
+            "example": 500
+          }
+        },
+        "required": [
+          "processed",
+          "total"
+        ]
+      },
       "JobStatusResponse": {
         "type": "object",
         "required": [
@@ -6948,15 +7013,7 @@
             ]
           },
           "progress": {
-            "type": "object",
-            "properties": {
-              "processed": {
-                "type": "integer"
-              },
-              "total": {
-                "type": "integer"
-              }
-            }
+            "$ref": "#/components/schemas/JobProgress"
           },
           "result": {
             "type": [

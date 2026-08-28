@@ -72,27 +72,9 @@ properties:
       it proves each node's signed public view is unchanged against its
       pinned hash, not the cryptographic validity of that node's signature.
   qualifiedSeal:
-    type:
-      - object
-      - 'null'
-    description: |
-      The passport's eIDAS qualified seal, present iff one has been
-      applied. Carries the seal envelope plus `signedOverJws` and
-      `payloadHash`, so a verifier holding only this dossier has both the
-      CAdES and the preimage to check it against.
-
-      Included because a dossier is what an authority is handed and the
-      seal is its one member carrying an Art. 35(2) presumption — and
-      because it is unreachable otherwise: the seal is stripped from
-      `fullView` and `publicView` alike, since it covers the full-payload
-      signature rather than any redaction. Bound into `contentHashes` like
-      every other member. `null` when the seal is still queued.
-    properties:
-      seal:
-        type: object
-        description: The `SealedEnvelope` as persisted on the passport.
-      signedOverJws:
-        type: string
-      payloadHash:
-        type: string
-        pattern: ^[0-9a-f]{64}$
+    anyOf:
+      - $ref: ./QualifiedSealMember.yaml
+      - type: 'null'
+    description: >-
+      The passport's eIDAS qualified seal, present iff one has been applied.
+      `null` when the seal is still queued.

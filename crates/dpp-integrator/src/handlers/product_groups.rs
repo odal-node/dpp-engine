@@ -116,6 +116,17 @@ pub struct PassportObligationView {
 
 /// A date and the basis it rests on. The two are one type so that neither can
 /// be served without the other.
+///
+/// This is the same shape as core's `ObligationDate`, field for field, and the
+/// copy is the point rather than an oversight. Publishing core's type directly
+/// would tie a public field name to a library's field name, so a rename there
+/// would rewrite this endpoint's output with nobody deciding to. Copying it
+/// means such a rename stops `describe` from compiling instead.
+///
+/// That is a stricter choice than the passport response makes for its nested
+/// types, which are core's and are guarded by the contract gate alone. Both are
+/// legitimate; this one is worth its transcription because the endpoint is new
+/// and its field names have no consumers to protect yet.
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ObligationDateView {

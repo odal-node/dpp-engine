@@ -265,6 +265,15 @@ const UNCHECKED: &[(&str, &str)] = &[
          did not author",
     ),
     (
+        "QualifiedSealMember",
+        "the dossier holds this member as untyped JSON (`serde_json::Value`), so \
+         no Rust type declares `seal`/`signedOverJws`/`payloadHash` and there is \
+         nothing to compare the property list against. Naming the schema at \
+         least makes that gap visible instead of hiding it inside \
+         `EvidenceDossier`; giving the dossier a real type for the member is \
+         the only thing that would actually close it",
+    ),
+    (
         "ProductGroupData",
         "deliberately open (`additionalProperties: true`, discriminated by \
          `product_group`). The per-product-group payloads are described by the versioned JSON \
@@ -300,6 +309,7 @@ fn object_cases() -> Vec<ObjectCase> {
         "PassportResponse",
         dpp_vault::api::PassportResponse::from(&fixtures::passport())
     );
+    case!("InstrumentRef", fixtures::instrument_ref());
     case!("ManufacturerInfo", fixtures::manufacturer());
     case!("MaterialEntry", fixtures::material());
     case!("PassportRef", fixtures::passport_ref());
@@ -314,6 +324,12 @@ fn object_cases() -> Vec<ObjectCase> {
 
     // The obligation endpoint. Served as declared types rather than assembled
     // JSON, so this gate has something to check the published shape against.
+    //
+    // Every nested shape is registered too, not just the two outer ones. This
+    // gate compares the top-level keys of a *named* schema; a shape written
+    // inline inside another has no name to look up and is checked by nothing.
+    // Declaring the Rust types while inlining their schemas bought exactly
+    // nothing — the three below were unverified until they were given names.
     case!(
         "ProductGroupObligation",
         fixtures::product_group_obligation()
@@ -322,6 +338,11 @@ fn object_cases() -> Vec<ObjectCase> {
         "ProductGroupObligationList",
         fixtures::product_group_obligation_list()
     );
+    case!("PassportObligation", fixtures::passport_obligation());
+    case!("ObligationDate", fixtures::obligation_date());
+    case!("RetentionPeriod", fixtures::retention_period());
+    case!("ReachingInstrument", fixtures::reaching_instrument());
+    case!("JobProgress", fixtures::job_progress());
     case!("LintFinding", fixtures::lint_finding());
     case!("SealedEnvelope", fixtures::sealed_envelope());
     case!("ResponsibleOperator", fixtures::responsible_operator());
@@ -1146,6 +1167,81 @@ fn every_json_success_response_names_a_schema() {
          api/components/schemas/, `$ref` it here, and register it in `object_cases` \
          — that is what puts the body under the contract test.",
         failures.join("\n  ")
+    );
+}
+
+// ── No unnamed shapes ──────────────────────────────────────────────────────
+
+/// Whether a property node declares an object shape inline rather than naming
+/// one, looking through arrays and composition but **not** through `$ref`.
+///
+/// A `$ref` is the whole point: it resolves to a named schema, which is what
+/// makes the shape reachable by every other check in this file.
+fn declares_inline_object(node: &Value) -> bool {
+    if node.get("$ref").is_some() {
+        return false;
+    }
+    if node.get("properties").is_some() {
+        return true;
+    }
+    if let Some(items) = node.get("items")
+        && declares_inline_object(items)
+    {
+        return true;
+    }
+    ["allOf", "anyOf", "oneOf"].iter().any(|key| {
+        node.get(key)
+            .and_then(Value::as_array)
+            .is_some_and(|branches| branches.iter().any(declares_inline_object))
+    })
+}
+
+/// Every published object shape has a name of its own.
+///
+/// This closes the hole the rest of this file was built around but could not
+/// see. `every_schema_is_covered` guarantees that no *named* schema goes
+/// unchecked — but a shape written inline inside another schema never becomes a
+/// named schema, so it is not skipped, it is invisible. Nothing compares it to
+/// code, and nothing ever reports that as a gap.
+///
+/// That is not theoretical. The product-group obligation endpoint declared four
+/// Rust types **specifically so this gate could check them**, then wrote all
+/// four inline — so renaming a field in any of them failed nothing at all. The
+/// stated reason for declaring them was not being delivered, and no test said
+/// so.
+///
+/// There is no exception list on purpose. An allowlist here would refill with
+/// exactly the shapes this exists to prevent, one justified entry at a time.
+///
+/// Scoped to *properties*. A named schema that is itself a `oneOf` of object
+/// variants — `DeactivationReason` — is a tagged union, is named, and has its
+/// own check.
+#[test]
+fn every_published_object_shape_has_a_name() {
+    let spec = spec();
+    let mut unnamed: Vec<String> = Vec::new();
+
+    for (name, schema) in schemas(&spec) {
+        let Some(properties) = schema.get("properties").and_then(Value::as_object) else {
+            continue;
+        };
+        for (property, node) in properties {
+            if declares_inline_object(node) {
+                unnamed.push(format!("{name}.{property}"));
+            }
+        }
+    }
+
+    unnamed.sort();
+    assert!(
+        unnamed.is_empty(),
+        "these properties hold an object shape written inline, so no test can \
+         reach it:\n  {}\n\n\
+         Give each one its own file under api/components/schemas/, `$ref` it \
+         here, and register it in `object_cases` (or in `UNCHECKED` with the \
+         reason it cannot be checked). An inline shape is not covered by \
+         `every_schema_is_covered` — it never becomes a schema at all.",
+        unnamed.join("\n  ")
     );
 }
 
@@ -2393,32 +2489,66 @@ mod fixtures {
     /// `granularity` or `retention` as `None` would still serialise the keys
     /// (they are not `skip_serializing_if`), but populating them keeps the
     /// fixture honest about what the endpoint can return.
+    pub fn instrument_ref() -> dpp_domain::instrument::InstrumentRef {
+        use dpp_domain::instrument::{InstrumentRef, RecordedBasis};
+        InstrumentRef {
+            instrument: "battery-reg-2023-1542".into(),
+            recorded: RecordedBasis::Catalog,
+        }
+    }
+
+    pub fn job_progress() -> dpp_integrator::handlers::job_status::JobProgress {
+        dpp_integrator::handlers::job_status::JobProgress {
+            processed: 120,
+            total: 500,
+        }
+    }
+
+    pub fn obligation_date() -> ObligationDateView {
+        use dpp_domain::instrument::DateBasis;
+        ObligationDateView {
+            date: "2030-08-01".into(),
+            basis: DateBasis::Sourced,
+        }
+    }
+
+    pub fn passport_obligation() -> PassportObligationView {
+        PassportObligationView {
+            required: true,
+            from: Some(obligation_date()),
+        }
+    }
+
+    pub fn retention_period() -> RetentionView {
+        use dpp_domain::catalog::RetentionBasis;
+        RetentionView {
+            years: 10,
+            basis: RetentionBasis::Sourced,
+        }
+    }
+
+    pub fn reaching_instrument() -> InstrumentRefView {
+        use dpp_domain::catalog::RegulatoryStatus;
+        use dpp_domain::instrument::{InstrumentStatus, RecordedBasis};
+        InstrumentRefView {
+            instrument: "toy-safety-2025-2509".into(),
+            recorded: RecordedBasis::Catalog,
+            instrument_status: InstrumentStatus::Adopted,
+            binding_status: RegulatoryStatus::Provisional,
+        }
+    }
+
     pub fn product_group_obligation() -> ProductGroupObligation {
-        use dpp_domain::catalog::{Granularity, RegulatoryStatus, RetentionBasis};
-        use dpp_domain::instrument::{DateBasis, InstrumentStatus, RecordedBasis};
+        use dpp_domain::catalog::Granularity;
 
         ProductGroupObligation {
             product_group: "toy".into(),
             title: Some("Toys".into()),
-            passport: PassportObligationView {
-                required: true,
-                from: Some(ObligationDateView {
-                    date: "2030-08-01".into(),
-                    basis: DateBasis::Sourced,
-                }),
-            },
+            passport: passport_obligation(),
             determinable: false,
             granularity: Some(Granularity::Model),
-            retention: Some(RetentionView {
-                years: 10,
-                basis: RetentionBasis::Sourced,
-            }),
-            instruments: vec![InstrumentRefView {
-                instrument: "toy-safety-2025-2509".into(),
-                recorded: RecordedBasis::Catalog,
-                instrument_status: InstrumentStatus::Adopted,
-                binding_status: RegulatoryStatus::Provisional,
-            }],
+            retention: Some(retention_period()),
+            instruments: vec![reaching_instrument()],
         }
     }
 

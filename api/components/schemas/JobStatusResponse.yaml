@@ -15,12 +15,7 @@ properties:
       - completed
       - failed
   progress:
-    type: object
-    properties:
-      processed:
-        type: integer
-      total:
-        type: integer
+    $ref: ./JobProgress.yaml
   result:
     type:
       - object

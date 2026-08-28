@@ -21,43 +21,8 @@ properties:
       about the obligation, which is reported in full beside it.
     example: Toys
   passport:
-    type: object
-    description: Whether a passport is required, and from when.
-    properties:
-      required:
-        type: boolean
-        description: |
-          Whether an instrument recorded against this product group imposes a
-          passport obligation. Says nothing about whether one can be produced
-          today — see `determinable`.
-
-          **Read with `instruments[].bindingStatus`.** This is a fold across
-          every reaching act, so `true` means an act imposes a passport, not
-          that any act binds this group today. Where every reaching act is
-          `provisional` or `watch`, this is a reading of instruments that have
-          not yet bound anything.
-        example: true
-      from:
-        type:
-          - object
-          - 'null'
-        description: |
-          The date the obligation applies from, or `null` where no instrument
-          fixes one. Most of the catalog is undated, and an obligation with no
-          date is not the same as one starting today.
-        properties:
-          date:
-            type: string
-            format: date
-            example: '2030-08-01'
-          basis:
-            $ref: ./DateBasis.yaml
-        required:
-          - date
-          - basis
-    required:
-      - required
-      - from
+    $ref: ./PassportObligation.yaml
+    description: Whether a passport is required for this product group, and from when.
   determinable:
     type: boolean
     description: |
@@ -78,19 +43,12 @@ properties:
       this endpoint answers a question about every product group it lists, and a
       missing key would read as "not asked" rather than "no act has fixed one".
   retention:
-    type:
-      - object
-      - 'null'
-    description: How long records must be kept, with the basis of that figure.
-    properties:
-      years:
-        type: integer
-        example: 10
-      basis:
-        $ref: ./RetentionBasis.yaml
-    required:
-      - years
-      - basis
+    anyOf:
+      - $ref: ./RetentionPeriod.yaml
+      - type: 'null'
+    description: >-
+      How long records must be kept, with the basis of that figure. `null` where
+      no reaching act fixes one.
   instruments:
     type: array
     description: |
@@ -103,32 +61,7 @@ properties:
       `watch`, a `required: true` is a reading of instruments that have not yet
       bound anything, and must not be presented as a determination.
     items:
-      type: object
-      properties:
-        instrument:
-          type: string
-          description: The instrument's catalog id.
-          example: toy-safety-2025-2509
-        instrumentStatus:
-          $ref: ./InstrumentStatus.yaml
-          description: Whether the act itself exists.
-        bindingStatus:
-          $ref: ./RegulatoryStatus.yaml
-          description: >-
-            Whether that act's obligations bind this product group. Independent
-            of `instrumentStatus` in both directions.
-        recorded:
-          $ref: ./RecordedBasis.yaml
-          description: >-
-            Always `catalog` on this endpoint — it reports what the embedded
-            catalog holds, and an operator assertion is recorded on a passport,
-            not here. Shared with the passport's own instrument entries so the
-            two shapes stay one shape.
-      required:
-        - instrument
-        - recorded
-        - instrumentStatus
-        - bindingStatus
+      $ref: ./ReachingInstrument.yaml
 # Every property is always present. `title`, `granularity` and `retention` are
 # nullable rather than optional — the server emits the key with a `null` value
 # where it has no answer, exactly as it does for `passport.from`, so a client

@@ -108,6 +108,39 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ### Changed
 
+- **Every published object shape must now have a name, and the build enforces
+  it.** `every_schema_is_covered` already guaranteed that no *named* schema goes
+  unchecked. A shape written inline inside another schema never becomes a named
+  schema, so it was not skipped — it was invisible, and nothing reported that as
+  a gap.
+
+  `every_published_object_shape_has_a_name` closes the category rather than the
+  instances: an inline object shape now fails the build and names itself. It
+  ships with **no exception list**, because an allowlist here would refill with
+  exactly what it exists to prevent. The three pre-existing offenders were fixed
+  to get there — `InstrumentRef`, `JobProgress` and `QualifiedSealMember` are
+  now components.
+
+  `QualifiedSealMember` is registered as explicitly unchecked, with the reason:
+  the dossier holds it as untyped JSON, so no Rust type declares its three
+  members and nothing can compare them. Naming it does not close that gap, but
+  it makes it visible instead of hiding it inside `EvidenceDossier`.
+
+- **The obligation response's nested shapes are named schemas, so the contract
+  gate can actually see them.** The endpoint declares Rust types for its nested
+  shapes specifically so the gate can check the published shape against the
+  code — but the gate compares the top-level keys of a *named* schema, and all
+  three were written inline, where they have no name to look up. Renaming a
+  field in any of them failed nothing. The stated reason for declaring them was
+  not being delivered.
+
+  `PassportObligation`, `ObligationDate`, `RetentionPeriod` and
+  `ReachingInstrument` are now components with contract cases of their own.
+  Verified by renaming a nested field and watching the gate fail on it, which it
+  previously would not have. Across the whole description this halves the
+  properties holding an unverifiable inline shape, from six to three; the
+  remaining three are older and untouched here.
+
 - **`granularity` and `recorded` are one schema each, and are now gated against
   the code.** Both were written out inline twice — once on `PassportResponse`,
   once on the new obligation shape — which made them two things to drift, and

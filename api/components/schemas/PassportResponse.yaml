@@ -52,21 +52,7 @@ properties:
       which `recorded` distinguishes. Read it as who asserted the entry, not as
       how much to trust it.
     items:
-      type: object
-      required:
-        - instrument
-        - recorded
-      properties:
-        instrument:
-          type: string
-          description: The instrument's catalog id.
-          example: battery-reg-2023-1542
-        recorded:
-          $ref: ./RecordedBasis.yaml
-          description: >-
-            Who asserted this entry, fixed at issuance along with the rest of
-            the applicable set.
-      additionalProperties: false
+      $ref: ./InstrumentRef.yaml
   granularity:
     $ref: ./Granularity.yaml
     description: >-
