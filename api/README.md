@@ -97,13 +97,18 @@ description, or this file — never in a `#` comment.
 
 ## Layout
 
-**One rule: a file lives in the directory of the section it renders under.**
+**One rule: a file lives in the directory of the thing it belongs to.**
 
-`paths/vault/`, `paths/integrator/`, `paths/identity/`, `paths/resolver/`,
-`paths/health/` are the five `x-tagGroups` entries. `components/schemas/<group>/`
-are the fourteen model groups, and a schema's directory is also the value of its
-`x-tags`. So the tree, the sidebar, and the spec cannot disagree about where
-something belongs without the disagreement being visible as a wrong path.
+`paths/` has one directory per service — `vault/`, `integrator/`, `identity/`,
+`resolver/`, `health/`. `components/schemas/` has one per model group, and a
+schema's directory is also the value of its `x-tags`, so those fourteen names
+appear twice and cannot drift apart unnoticed.
+
+The four `x-tagGroups` are not quite the five service directories: `Integrator &
+Identity` and `Resolver & Health` each cover two, because a group whose only
+child repeats its own name renders as a heading above one identically-named
+entry. Group names must therefore differ from every tag name — check that before
+adding one.
 
 Filenames keep `redocly split`'s URL-derived convention (`/` written as `_`), but
 the directories do not: `split` writes one flat `paths/` directory, so **this
@@ -116,3 +121,51 @@ The move that introduced this layout rewrote 373 `$ref`s across 180 files and
 left `openapi.bundled.yaml` **byte-identical** — which is the check to repeat if
 the tree is ever restructured again. A reorganisation that changes the bundle
 changed the API.
+
+## Ordering
+
+**Three blocks in `openapi.yaml` decide what the rendered reference looks like,
+and nothing else does.**
+
+| block | controls |
+|---|---|
+| `tags:` | the order of the sections |
+| `paths:` | the order of operations *within* a section |
+| `components.schemas:` | the order of the models |
+
+That third one is the reason it exists. `components.schemas` holds no shapes —
+every entry is a `$ref` — and the bundler would happily assemble the same
+document without it. Without it, though, the models come out in whatever order
+redocly's traversal happened to reach them, which is neither alphabetical nor
+meaningful, and there is no file you can edit to change it. Declaring the refs
+in the root is what makes the order a decision rather than an accident.
+
+A schema listed nowhere in that block still bundles — it is reachable through the
+paths — but it lands *after* the declared ones. So a new schema that is not added
+here is not an error, it is a straggler at the end of the Models list. Add it in
+the group it belongs to.
+
+## Naming
+
+**A schema's name must stand alone, because it has to.** Rust disambiguates with
+module paths — `handlers::sign::SignRequest` and `handlers::create::CreateRequest`
+each read clearly where they are declared. OpenAPI has no such thing: these 107
+schemas share one flat namespace and are read as one flat list, where
+`SignRequest` and `CreateRequest` say nothing about what is signed or created.
+So the qualification that Rust gets from the module path is written into the name
+here: `InternalSignRequest`, `CreatePassportRequest`.
+
+**The Rust type carries the same name.** The alternative — a qualified schema
+name over an unqualified struct — buys a shorter struct name and pays for it with
+a permanent translation step in `openapi_contract.rs` and two names for one thing.
+The gate binds them by string, so a divergence is silent.
+
+Two pairs are worth copying, because they were the ambiguity that prompted this:
+
+| Direction | Shape | Example |
+|---|---|---|
+| request body | `Create<Thing>Request` | `CreateApiKeyRequest`, `CreateWebhookRequest` |
+| response carrying a one-time secret | `Created<Thing>Response` | `CreatedApiKeyResponse`, `CreatedWebhookResponse` |
+
+`New*` previously meant *response* for API keys and *request* for webhooks. Do
+not reintroduce a prefix that does not name a direction.

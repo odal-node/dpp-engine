@@ -15,7 +15,7 @@ use dpp_domain::{
     product_group::{CarbonFootprint, ProductGroupData, RepairabilityScore},
     status::PassportStatus,
 };
-use dpp_types::{STANDALONE_OPERATOR_ID, audit::AuditEntry, auth::AuthContext};
+use dpp_types::{STANDALONE_OPERATOR_ID, audit::PassportAuditEntry, auth::AuthContext};
 use serde_json::Value;
 use uuid::Uuid;
 
@@ -75,7 +75,7 @@ impl PassportService {
 
         let created = self.repo.create(passport).await?;
 
-        let entry = AuditEntry::new(
+        let entry = PassportAuditEntry::new(
             &created.id.to_string(),
             "created",
             &auth.user_id,
@@ -153,7 +153,7 @@ impl PassportService {
             .patch_fields(id, serde_json::Value::Object(delta))
             .await?;
 
-        let entry = AuditEntry::new(
+        let entry = PassportAuditEntry::new(
             &updated.id.to_string(),
             "updated",
             &auth.user_id,

@@ -310,7 +310,7 @@ mod tests {
     use base64::Engine;
     use chrono::Utc;
     use dpp_crypto::jws::canonicalize;
-    use dpp_types::audit::AuditEntry;
+    use dpp_types::audit::PassportAuditEntry;
     use dpp_types::evidence::{DossierManifest, SignedLayer};
     use ed25519_dalek::{Signer, SigningKey};
     use std::collections::BTreeMap;
@@ -338,8 +338,8 @@ mod tests {
         format!("{signing_input}.{}", b64.encode(sig.to_bytes()))
     }
 
-    fn genesis_entry(action: &str) -> AuditEntry {
-        AuditEntry {
+    fn genesis_entry(action: &str) -> PassportAuditEntry {
+        PassportAuditEntry {
             id: Uuid::now_v7(),
             passport_id: "p1".into(),
             actor: "actor".into(),
@@ -353,7 +353,7 @@ mod tests {
         }
     }
 
-    fn chain_entries(mut entries: Vec<AuditEntry>) -> Vec<AuditEntry> {
+    fn chain_entries(mut entries: Vec<PassportAuditEntry>) -> Vec<PassportAuditEntry> {
         let mut prev = String::new();
         for e in &mut entries {
             let h = e.chain_hash(&prev);

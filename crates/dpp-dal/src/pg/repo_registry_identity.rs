@@ -10,7 +10,7 @@ use uuid::Uuid;
 
 use dpp_domain::DppError;
 use dpp_types::registry_identity::{
-    Facility, OperatorIdentifier, RegistryIdentityAudit, RegistryIdentityRepository,
+    Facility, OperatorIdentifier, RegistryIdentityAuditEntry, RegistryIdentityRepository,
 };
 
 use super::{PgDal, db_err};
@@ -61,8 +61,8 @@ impl PgRegistryIdentityRepo {
         }
     }
 
-    fn registry_audit_from_row(r: &sqlx::postgres::PgRow) -> RegistryIdentityAudit {
-        RegistryIdentityAudit {
+    fn registry_audit_from_row(r: &sqlx::postgres::PgRow) -> RegistryIdentityAuditEntry {
+        RegistryIdentityAuditEntry {
             id: r.get("id"),
             operator_id: r.get("operator_id"),
             entity_type: r.get("entity_type"),
@@ -298,7 +298,7 @@ impl RegistryIdentityRepository for PgRegistryIdentityRepo {
 
     // ── Registry-identity audit (append-only) ────────────────────────────────
 
-    async fn append_audit(&self, entry: RegistryIdentityAudit) -> Result<(), DppError> {
+    async fn append_audit(&self, entry: RegistryIdentityAuditEntry) -> Result<(), DppError> {
         sqlx::query(
             "INSERT INTO odal.registry_identity_audit \
                (id, operator_id, entity_type, entity_id, action, actor, snapshot, ts) \
@@ -322,7 +322,7 @@ impl RegistryIdentityRepository for PgRegistryIdentityRepo {
         &self,
         entity_type: &str,
         entity_id: Uuid,
-    ) -> Result<Vec<RegistryIdentityAudit>, DppError> {
+    ) -> Result<Vec<RegistryIdentityAuditEntry>, DppError> {
         let rows = sqlx::query(
             "SELECT id, operator_id, entity_type, entity_id, action, actor, snapshot, ts \
              FROM odal.registry_identity_audit \

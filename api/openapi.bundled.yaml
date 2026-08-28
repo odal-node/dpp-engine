@@ -130,7 +130,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/CreateRequest'
+              $ref: '#/components/schemas/CreatePassportRequest'
             example:
               productName: EcoCell Pro 48V
               productGroup: battery
@@ -204,7 +204,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/CreateRequest'
+              $ref: '#/components/schemas/CreatePassportRequest'
       responses:
         '200':
           description: |
@@ -418,7 +418,7 @@ paths:
               schema:
                 type: array
                 items:
-                  $ref: '#/components/schemas/AuditEntry'
+                  $ref: '#/components/schemas/PassportAuditEntry'
         '400':
           $ref: '#/components/responses/BadRequest'
         '401':
@@ -1477,7 +1477,7 @@ paths:
               schema:
                 type: array
                 items:
-                  $ref: '#/components/schemas/RegistryIdentityAudit'
+                  $ref: '#/components/schemas/RegistryIdentityAuditEntry'
         '400':
           $ref: '#/components/responses/BadRequest'
         '401':
@@ -1625,7 +1625,7 @@ paths:
               schema:
                 type: array
                 items:
-                  $ref: '#/components/schemas/RegistryIdentityAudit'
+                  $ref: '#/components/schemas/RegistryIdentityAuditEntry'
         '400':
           $ref: '#/components/responses/BadRequest'
         '401':
@@ -1680,7 +1680,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/NewApiKey'
+                $ref: '#/components/schemas/CreatedApiKeyResponse'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -1764,7 +1764,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/NewWebhookSubscription'
+              $ref: '#/components/schemas/CreateWebhookRequest'
       responses:
         '201':
           description: Subscription created. The `secret` field is shown ONCE.
@@ -2197,7 +2197,7 @@ paths:
           $ref: '#/components/responses/NotFound'
   /integrator/api/v1/schemas:
     get:
-      operationId: listSectorSchemas
+      operationId: listProductGroupSchemas
       summary: List product group schemas and their versions
       description: |
         Every product group with a JSON Schema, the version a new passport is validated
@@ -2235,7 +2235,7 @@ paths:
                             - 2.6.0
   /integrator/api/v1/schemas/{productGroup}:
     get:
-      operationId: getCurrentSectorSchema
+      operationId: getCurrentProductGroupSchema
       summary: Fetch a product group's current JSON Schema
       description: |
         The schema a passport created today is validated against, resolved through
@@ -2272,7 +2272,7 @@ paths:
                 $ref: '#/components/schemas/Problem'
   /integrator/api/v1/schemas/{productGroup}/{version}:
     get:
-      operationId: getPinnedSectorSchema
+      operationId: getPinnedProductGroupSchema
       summary: Fetch a pinned version of a product group's JSON Schema
       description: |
         A stored passport records the `schemaVersion` it was written under, so a
@@ -2480,14 +2480,14 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/SignRequest'
+              $ref: '#/components/schemas/InternalSignRequest'
       responses:
         '200':
           description: Signed payload.
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/SignResponse'
+                $ref: '#/components/schemas/InternalSignResponse'
         '400':
           description: Payload is not valid base64 or not valid JSON.
         '422':
@@ -2514,14 +2514,14 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/VerifyRequest'
+              $ref: '#/components/schemas/InternalVerifyRequest'
       responses:
         '200':
           description: 'Verification result. Always `200` — an unverifiable signature is `{ "valid": false }`, not an error status.'
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/VerifyResponse'
+                $ref: '#/components/schemas/InternalVerifyResponse'
         '422':
           $ref: '#/components/responses/ValidationError'
   /internal/keys/rotate:
@@ -2544,14 +2544,14 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/RotateRequest'
+              $ref: '#/components/schemas/InternalRotateKeyRequest'
       responses:
         '200':
           description: Key rotated; returns the new fingerprint and DID document.
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/RotateResponse'
+                $ref: '#/components/schemas/InternalRotateKeyResponse'
         '422':
           $ref: '#/components/responses/ValidationError'
   /dpp/{dppId}:
@@ -3000,7 +3000,7 @@ components:
         detail:
           type: string
           description: Human-readable explanation for this specific occurrence.
-          example: 'No schema for product group ''nosuchsector''. Known product groups: aluminium, battery.'
+          example: 'No schema for product group ''nosuchgroup''. Known product groups: aluminium, battery.'
         instance:
           type: string
           format: uri-reference
@@ -3305,7 +3305,7 @@ components:
         discriminator — e.g.
         `{ "productGroup": "battery", "gtin": "…", "batteryChemistry": "LFP", … }`.
         The remaining fields are product group-specific and validated against the
-        product group's versioned JSON schema. Sectors include `battery`, `textile`,
+        product group's versioned JSON schema. Product groups include `battery`, `textile`,
         `steel`, `aluminium`, `tyre`, `electronics`, and others.
 
         The tag is **open**. A product group this build does not model round-trips its
@@ -3625,7 +3625,7 @@ components:
         - PADES
         - CADES
         - XADES
-    CreateRequest:
+    CreatePassportRequest:
       x-tags:
         - Passport Requests
       type: object
@@ -3910,7 +3910,7 @@ components:
             - 'null'
           description: Why the product group data would be refused. Null when `productGroupDataValid` is true.
           example: 'cannot publish: no registered JSON Schema for product group ''furniture'' — publish requires a resolvable schema when product group data is present'
-    AuditEntry:
+    PassportAuditEntry:
       x-tags:
         - Passport Reports
       type: object
@@ -4154,7 +4154,7 @@ components:
             - 'null'
           description: 'Hex SHA-256 this node **asked** the backend to seal. A record, not proof: it says what was requested, while the validator''s extracted message digest says what the CAdES actually covers. The two agreeing is the cross-check. Null for a seal restored from a backup or produced elsewhere.'
         coverage:
-          $ref: '#/components/schemas/Coverage'
+          $ref: '#/components/schemas/SealCoverage'
         verification:
           type: string
           description: 'Stated, not implied: this node did not cryptographically validate the CAdES. A detached CAdES must be checked by an independent AdES validator against the EU Trusted List.'
@@ -4226,7 +4226,7 @@ components:
         note:
           type: string
           description: States the sealing/authorship distinction outright rather than leaving it to be inferred from field names, in the same spirit as `verification`.
-    Coverage:
+    SealCoverage:
       x-tags:
         - Seals
       type: string
@@ -4271,7 +4271,7 @@ components:
         auditEntries:
           type: array
           items:
-            $ref: '#/components/schemas/AuditEntry'
+            $ref: '#/components/schemas/PassportAuditEntry'
         transferChain:
           type:
             - object
@@ -4517,7 +4517,7 @@ components:
           type: array
           description: Handover notifications recorded for this passport, newest first.
           items:
-            $ref: '#/components/schemas/TransferView'
+            $ref: '#/components/schemas/TransferNotificationView'
         currentOperator:
           allOf:
             - $ref: '#/components/schemas/CurrentOperatorView'
@@ -4534,11 +4534,11 @@ components:
         configured:
           type: boolean
         verification:
-          $ref: '#/components/schemas/VerificationView'
+          $ref: '#/components/schemas/RegistryVerificationView'
         registrations:
           $ref: '#/components/schemas/RegistrationCounts'
         transfers:
-          $ref: '#/components/schemas/TransferCounts'
+          $ref: '#/components/schemas/TransferNotificationCounts'
     RegistrationView:
       x-tags:
         - EU Registry State
@@ -4604,7 +4604,7 @@ components:
         unregisteredPublished:
           type: integer
           description: 'Published passports with **no** outbox row at all — they owe a registration nobody is tracking (published before the outbox existed, or lost to an older write path). Reported, not repaired: the queued payload is what a drain replays and there is none to rebuild, so fabricating a row would create an entry that can never drain.'
-    TransferView:
+    TransferNotificationView:
       x-tags:
         - EU Registry State
       type: object
@@ -4632,7 +4632,7 @@ components:
           type: integer
         stalled:
           type: boolean
-    TransferCounts:
+    TransferNotificationCounts:
       x-tags:
         - EU Registry State
       type: object
@@ -4650,7 +4650,7 @@ components:
           type: integer
         stalled:
           type: integer
-    VerificationView:
+    RegistryVerificationView:
       x-tags:
         - EU Registry State
       type: object
@@ -4764,12 +4764,12 @@ components:
         scans:
           type: array
           items:
-            $ref: '#/components/schemas/ScanCount'
+            $ref: '#/components/schemas/ScanBatchEntry'
         qrRenders:
           type: array
           items:
-            $ref: '#/components/schemas/QrRenderCount'
-    ScanCount:
+            $ref: '#/components/schemas/QrRenderBatchEntry'
+    ScanBatchEntry:
       x-tags:
         - Scan Counters
       type: object
@@ -4791,7 +4791,7 @@ components:
         count:
           type: integer
           minimum: 0
-    QrRenderCount:
+    QrRenderBatchEntry:
       x-tags:
         - Scan Counters
       type: object
@@ -5077,7 +5077,7 @@ components:
           type: boolean
           default: false
           description: Make this the primary identifier on creation (unsets any previous primary).
-    RegistryIdentityAudit:
+    RegistryIdentityAuditEntry:
       x-tags:
         - Operator Profile
       type: object
@@ -5191,7 +5191,7 @@ components:
           allOf:
             - $ref: '#/components/schemas/ApiKeyScope'
           description: Defaults to `admin` when omitted. Name `read` or `write` explicitly for a key issued to an integration.
-    NewApiKey:
+    CreatedApiKeyResponse:
       x-tags:
         - Access & Integrations
       type: object
@@ -5245,7 +5245,7 @@ components:
         updatedAt:
           type: string
           format: date-time
-    NewWebhookSubscription:
+    CreateWebhookRequest:
       x-tags:
         - Access & Integrations
       type: object
@@ -5422,7 +5422,7 @@ components:
           - did:web:id.odal-node.io#key-1
         assertionMethod:
           - did:web:id.odal-node.io#key-1
-    SignRequest:
+    InternalSignRequest:
       x-tags:
         - Node Identity
       type: object
@@ -5442,7 +5442,7 @@ components:
         payload:
           type: string
           description: Base64-encoded canonical JSON of the payload to sign.
-    SignResponse:
+    InternalSignResponse:
       x-tags:
         - Node Identity
       type: object
@@ -5452,7 +5452,7 @@ components:
         jws_signature:
           type: string
           description: Compact JWS (EdDSA over RFC 8785 canonical bytes).
-    VerifyRequest:
+    InternalVerifyRequest:
       x-tags:
         - Node Identity
       type: object
@@ -5471,7 +5471,7 @@ components:
           description: The compact JWS to verify.
         payload:
           description: The payload the caller expects the JWS to have been signed over.
-    VerifyResponse:
+    InternalVerifyResponse:
       x-tags:
         - Node Identity
       type: object
@@ -5481,7 +5481,7 @@ components:
         valid:
           type: boolean
           description: True iff the signature verifies against the named operator's key AND was signed over exactly this payload.
-    RotateRequest:
+    InternalRotateKeyRequest:
       x-tags:
         - Node Identity
       type: object
@@ -5491,7 +5491,7 @@ components:
         operator_id:
           type: string
           example: self_hosted
-    RotateResponse:
+    InternalRotateKeyResponse:
       x-tags:
         - Node Identity
       type: object

@@ -23,7 +23,7 @@ properties:
     type: array
     description: Handover notifications recorded for this passport, newest first.
     items:
-      $ref: ./TransferView.yaml
+      $ref: ./TransferNotificationView.yaml
   currentOperator:
     allOf:
       - $ref: ./CurrentOperatorView.yaml

@@ -16,7 +16,7 @@ use std::time::Duration;
 
 use chrono::{NaiveDate, Utc};
 
-use dpp_common::scan::{QrRenderCount, ScanBatch, ScanCount, ScanVariant};
+use dpp_common::scan::{QrRenderBatchEntry, ScanBatch, ScanBatchEntry, ScanVariant};
 
 /// Cap on distinct keys held per map, so a stuck ingest endpoint or a flood of
 /// distinct `dpp_id`s can't grow the resolver's memory without bound. Once at
@@ -69,7 +69,7 @@ impl ScanCounter {
         ScanBatch {
             scans: scans
                 .into_iter()
-                .map(|((dpp_id, day, variant), count)| ScanCount {
+                .map(|((dpp_id, day, variant), count)| ScanBatchEntry {
                     dpp_id,
                     day,
                     variant,
@@ -78,7 +78,7 @@ impl ScanCounter {
                 .collect(),
             qr_renders: qr_renders
                 .into_iter()
-                .map(|((dpp_id, day), count)| QrRenderCount { dpp_id, day, count })
+                .map(|((dpp_id, day), count)| QrRenderBatchEntry { dpp_id, day, count })
                 .collect(),
         }
     }

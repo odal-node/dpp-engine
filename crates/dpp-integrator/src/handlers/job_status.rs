@@ -22,7 +22,7 @@ pub struct JobProgress {
 /// Response body for the job-status endpoint.
 ///
 /// A named type rather than a `json!` literal so the OpenAPI contract test can
-/// check `components/schemas/JobStatusResponse` against it.
+/// check `components/schemas/import/JobStatusResponse` against it.
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct JobStatusResponse {

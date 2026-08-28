@@ -24,7 +24,7 @@ get:
           schema:
             type: array
             items:
-              $ref: ../../components/schemas/operator/RegistryIdentityAudit.yaml
+              $ref: ../../components/schemas/operator/RegistryIdentityAuditEntry.yaml
     '401':
       $ref: ../../components/responses/Unauthorized.yaml
     '403':

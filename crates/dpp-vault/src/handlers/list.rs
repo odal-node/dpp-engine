@@ -17,7 +17,7 @@ use super::error::internal_error;
 /// One page of passports, with the totals a caller needs to page through them.
 ///
 /// A named type rather than a `json!` literal so the OpenAPI contract test can
-/// check `components/schemas/PassportListResponse` against it.
+/// check `components/schemas/passport-reports/PassportListResponse` against it.
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PassportListResponse {

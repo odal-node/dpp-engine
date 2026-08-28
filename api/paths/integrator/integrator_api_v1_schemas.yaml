@@ -1,5 +1,5 @@
 get:
-  operationId: listSectorSchemas
+  operationId: listProductGroupSchemas
   summary: List product group schemas and their versions
   description: |
     Every product group with a JSON Schema, the version a new passport is validated

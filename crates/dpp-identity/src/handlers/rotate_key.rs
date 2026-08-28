@@ -17,7 +17,7 @@ use crate::state::AppState;
 
 /// Request body for the key rotation endpoint.
 #[derive(Debug, Deserialize, Serialize)]
-pub struct RotateRequest {
+pub struct InternalRotateKeyRequest {
     /// The operator whose active signing key is to be rotated.
     pub operator_id: String,
 }
@@ -25,10 +25,10 @@ pub struct RotateRequest {
 /// Response body for the key rotation endpoint.
 ///
 /// A named type rather than a `json!` literal so the OpenAPI contract test can
-/// check `components/schemas/RotateResponse` against it. snake_case, like the
+/// check `components/schemas/identity/InternalRotateKeyResponse` against it. snake_case, like the
 /// rest of this internal service-to-service surface.
 #[derive(Debug, Serialize)]
-pub struct RotateResponse {
+pub struct InternalRotateKeyResponse {
     pub operator_id: String,
     /// The new primary verification method, e.g. `did:web:…#key-1`.
     pub new_key_id: String,
@@ -52,7 +52,7 @@ pub struct RotateResponse {
 ///   4. Return the new fingerprint and the updated DID document.
 pub async fn rotate_key_handler(
     State(state): State<AppState>,
-    Json(body): Json<RotateRequest>,
+    Json(body): Json<InternalRotateKeyRequest>,
 ) -> impl IntoResponse {
     if !super::sign::is_valid_operator_id(&body.operator_id) {
         return http_problem::unprocessable(
@@ -95,7 +95,7 @@ pub async fn rotate_key_handler(
 
     (
         StatusCode::OK,
-        Json(RotateResponse {
+        Json(InternalRotateKeyResponse {
             new_key_id: format!("{}#key-1", did_document["id"].as_str().unwrap_or("")),
             operator_id: body.operator_id,
             // `KeyEntry` implements `Drop` (zeroizing), so the field is cloned
@@ -155,7 +155,7 @@ mod tests {
 
         let resp = rotate_key_handler(
             State(state.clone()),
-            Json(RotateRequest {
+            Json(InternalRotateKeyRequest {
                 operator_id: "op1".into(),
             }),
         )

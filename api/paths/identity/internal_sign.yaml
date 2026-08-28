@@ -17,14 +17,14 @@ post:
     content:
       application/json:
         schema:
-          $ref: ../../components/schemas/identity/SignRequest.yaml
+          $ref: ../../components/schemas/identity/InternalSignRequest.yaml
   responses:
     '200':
       description: Signed payload.
       content:
         application/json:
           schema:
-            $ref: ../../components/schemas/identity/SignResponse.yaml
+            $ref: ../../components/schemas/identity/InternalSignResponse.yaml
     '400':
       description: Payload is not valid base64 or not valid JSON.
     '422':

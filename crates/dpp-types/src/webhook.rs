@@ -91,7 +91,7 @@ pub struct WebhookSubscription {
 /// server-side (never client-supplied), so it is not part of this struct.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct NewWebhookSubscription {
+pub struct CreateWebhookRequest {
     /// Receiver URL. The service SSRF-validates this before persisting.
     pub url: String,
     /// Subject filter: event_type strings, or a single `"*"` for all events.
@@ -160,7 +160,7 @@ pub trait WebhookSubscriptionStore: Send + Sync {
     /// Persist a new subscription with its server-generated signing `secret`.
     async fn create(
         &self,
-        input: &NewWebhookSubscription,
+        input: &CreateWebhookRequest,
         secret: &str,
     ) -> Result<WebhookSubscription, DppError>;
 

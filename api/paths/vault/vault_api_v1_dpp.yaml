@@ -18,7 +18,7 @@ post:
     content:
       application/json:
         schema:
-          $ref: ../../components/schemas/passport-requests/CreateRequest.yaml
+          $ref: ../../components/schemas/passport-requests/CreatePassportRequest.yaml
         example:
           productName: EcoCell Pro 48V
           productGroup: battery

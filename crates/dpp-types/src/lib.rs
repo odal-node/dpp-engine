@@ -40,9 +40,11 @@ pub mod transfer;
 pub mod trust;
 pub mod webhook;
 
-pub use api_key::{ApiKey, ApiKeyRecord, ApiKeyRepository, CreateApiKeyRequest, NewApiKey};
+pub use api_key::{
+    ApiKey, ApiKeyRecord, ApiKeyRepository, CreateApiKeyRequest, CreatedApiKeyResponse,
+};
 pub use audit::{
-    AuditChainBreak, AuditEntry, AuditRepository, GENESIS_PREV_HASH, verify_audit_chain,
+    AuditChainBreak, AuditRepository, GENESIS_PREV_HASH, PassportAuditEntry, verify_audit_chain,
 };
 pub use auth::{AuthContext, AuthError, AuthProvider};
 pub use evidence::{
@@ -77,6 +79,6 @@ pub use snapshot::{
 pub use transfer::TransferStore;
 pub use trust::{NodeProfile, NodeTrustReport, TrustMode, TrustPort};
 pub use webhook::{
-    NewWebhookSubscription, WebhookCounts, WebhookDeliveryRow, WebhookDeliveryStatus,
-    WebhookOutbox, WebhookSubscription, WebhookSubscriptionStore,
+    CreateWebhookRequest, WebhookCounts, WebhookDeliveryRow, WebhookDeliveryStatus, WebhookOutbox,
+    WebhookSubscription, WebhookSubscriptionStore,
 };

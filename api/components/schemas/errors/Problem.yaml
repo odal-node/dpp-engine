@@ -29,7 +29,7 @@ properties:
   detail:
     type: string
     description: Human-readable explanation for this specific occurrence.
-    example: "No schema for product group 'nosuchsector'. Known product groups: aluminium, battery."
+    example: "No schema for product group 'nosuchgroup'. Known product groups: aluminium, battery."
   instance:
     type: string
     format: uri-reference

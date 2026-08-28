@@ -4,7 +4,7 @@ use serde::Serialize;
 /// Vault build/version metadata, for dashboard feature detection.
 ///
 /// A named type rather than a `json!` literal so the OpenAPI contract test can
-/// serialise it and check `components/schemas/VaultInfo` against it. A literal
+/// serialise it and check `components/schemas/access/VaultInfo` against it. A literal
 /// has no shape anything can verify.
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]

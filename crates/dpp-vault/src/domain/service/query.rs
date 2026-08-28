@@ -6,7 +6,7 @@ use dpp_domain::{
     product::ProductIdentity,
     status::PassportStatus,
 };
-use dpp_types::audit::AuditEntry;
+use dpp_types::audit::PassportAuditEntry;
 
 use super::PassportService;
 
@@ -85,7 +85,7 @@ impl PassportService {
     ///
     /// Verifies the passport exists first so an unknown id returns
     /// `DppError::NotFound` rather than an empty list.
-    pub async fn history(&self, id: PassportId) -> Result<Vec<AuditEntry>, DppError> {
+    pub async fn history(&self, id: PassportId) -> Result<Vec<PassportAuditEntry>, DppError> {
         // Verify the passport exists so an unknown id returns 404 (consistent
         // with GET /dpp/{id}); otherwise the handler's NotFound branch is dead
         // and a nonexistent passport would return `200 []`.

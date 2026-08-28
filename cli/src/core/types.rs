@@ -117,7 +117,7 @@ pub struct HistoryParams {
     pub id: String,
 }
 
-pub struct AuditEntry {
+pub struct PassportAuditEntry {
     pub timestamp: String,
     pub action: String,
     pub actor: String,

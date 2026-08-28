@@ -26,7 +26,7 @@ pub(crate) fn is_valid_operator_id(id: &str) -> bool {
 
 /// Request body for the signing endpoint.
 #[derive(Debug, Deserialize, Serialize)]
-pub struct SignRequest {
+pub struct InternalSignRequest {
     /// Operator id whose key is used for signing. Auto-provisioned on first use.
     pub operator_id: String,
     /// The passport id being signed (informational — recorded in the JWS payload).
@@ -38,7 +38,7 @@ pub struct SignRequest {
 /// Response body for the signing endpoint.
 ///
 /// A named type rather than a `json!` literal so the OpenAPI contract test can
-/// check `components/schemas/SignResponse` against it.
+/// check `components/schemas/identity/InternalSignResponse` against it.
 ///
 /// Note the field is `jws_signature`, not `jwsSignature`: this internal
 /// service-to-service surface is snake_case, unlike the public `/api/v1` one.
@@ -46,7 +46,7 @@ pub struct SignRequest {
 /// not changed here, because renaming it would break the vault client for a
 /// consistency the internal surface never claimed.
 #[derive(Debug, Serialize)]
-pub struct SignResponse {
+pub struct InternalSignResponse {
     /// Compact JWS (EdDSA over RFC 8785 canonical bytes).
     pub jws_signature: String,
 }
@@ -57,7 +57,7 @@ pub struct SignResponse {
 /// Returns `{ "jws_signature": "<compact JWS>" }` on success.
 pub async fn sign_handler(
     State(state): State<AppState>,
-    Json(body): Json<SignRequest>,
+    Json(body): Json<InternalSignRequest>,
 ) -> impl IntoResponse {
     if !is_valid_operator_id(&body.operator_id) {
         return http_problem::unprocessable(
@@ -93,7 +93,11 @@ pub async fn sign_handler(
     }
 
     match signer::sign(&state.store, &body.operator_id, &payload_value) {
-        Ok(jws) => (StatusCode::OK, Json(SignResponse { jws_signature: jws })).into_response(),
+        Ok(jws) => (
+            StatusCode::OK,
+            Json(InternalSignResponse { jws_signature: jws }),
+        )
+            .into_response(),
         Err(e) => {
             tracing::error!(operator_id = %body.operator_id, error = %e, "signing failed");
             http_problem::internal_error(e.to_string()).into_response()

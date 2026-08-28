@@ -1,5 +1,5 @@
 get:
-  operationId: getCurrentSectorSchema
+  operationId: getCurrentProductGroupSchema
   summary: Fetch a product group's current JSON Schema
   description: |
     The schema a passport created today is validated against, resolved through

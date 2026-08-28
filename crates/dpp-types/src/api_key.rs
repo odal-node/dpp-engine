@@ -120,16 +120,16 @@ pub struct ApiKeyRecord {
 /// same thing at all — it turns a shown-once secret into a stored-forever one.
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct NewApiKey {
+pub struct CreatedApiKeyResponse {
     /// Key metadata (same shape as what future GET requests return).
     pub key: ApiKey,
     /// The full plaintext key secret. Shown once; store it securely.
     pub secret: String,
 }
 
-impl std::fmt::Debug for NewApiKey {
+impl std::fmt::Debug for CreatedApiKeyResponse {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("NewApiKey")
+        f.debug_struct("CreatedApiKeyResponse")
             .field("key", &self.key)
             .field("secret", &"[redacted]")
             .finish()
@@ -224,7 +224,7 @@ mod tests {
     /// how the caller legitimately receives it, must keep working.
     #[test]
     fn new_api_key_debug_redacts_but_serialize_does_not() {
-        let new_key = NewApiKey {
+        let new_key = CreatedApiKeyResponse {
             key: ApiKey {
                 id: Uuid::now_v7(),
                 name: "CI pipeline".into(),

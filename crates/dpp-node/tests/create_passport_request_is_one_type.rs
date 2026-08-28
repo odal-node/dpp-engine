@@ -1,7 +1,7 @@
 //! The vault's create body and the importer's create body are the same type.
 //!
 //! They were two structs, in two crates, kept in step by a comment reading
-//! "Shape must match `dpp-vault::handlers::create::CreateRequest`". A comment is
+//! "Shape must match `dpp-vault::handlers::create::CreatePassportRequest`". A comment is
 //! not a mechanism: the importer's copy drifted four fields short, and one of
 //! them was `placedOnMarketDate` — the regulated event that fixes which law
 //! governs a product, and the moment its applicable-instrument set is frozen. A
@@ -14,7 +14,7 @@
 //! this stops building.
 
 /// Accepts the vault's request type by name.
-fn vault_side(request: dpp_vault::handlers::create::CreateRequest) -> String {
+fn vault_side(request: dpp_vault::handlers::create::CreatePassportRequest) -> String {
     request.product_name
 }
 

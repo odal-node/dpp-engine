@@ -19,7 +19,7 @@ post:
     content:
       application/json:
         schema:
-          $ref: ../../components/schemas/identity/VerifyRequest.yaml
+          $ref: ../../components/schemas/identity/InternalVerifyRequest.yaml
   responses:
     '200':
       description: >-
@@ -28,6 +28,6 @@ post:
       content:
         application/json:
           schema:
-            $ref: ../../components/schemas/identity/VerifyResponse.yaml
+            $ref: ../../components/schemas/identity/InternalVerifyResponse.yaml
     '422':
       $ref: ../../components/responses/ValidationError.yaml

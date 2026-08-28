@@ -94,6 +94,59 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   trail that is compliance evidence. The two differ in the outcome written and in
   the states core permits them from.
 
+### Changed
+
+- **The API description is ordered and grouped by what it renders as.** `paths:`
+  and `tags:` in `api/openapi.yaml` are ordered service-first, an `x-tagGroups`
+  block gives the reference four top-level sections — Vault, Integrator &
+  Identity, Resolver & Health, Models — and every schema carries `x-tags` naming
+  its model group. The 107 models rendered as one flat list in whatever order
+  redocly's path traversal happened to reach them; they now render as fourteen
+  named groups in a declared order, because `components.schemas` is an explicit
+  block in the root rather than something the bundler assembles.
+
+  Path and schema files moved into directories named for the section they render
+  under, so the tree, the sidebar and the spec cannot disagree without the
+  disagreement showing up as a wrong path. That move rewrote 373 `$ref`s across
+  180 files and left `openapi.bundled.yaml` byte-identical.
+
+### Breaking
+
+- **Seventeen schemas are renamed to be unambiguous in a flat namespace.**
+  *(Breaking: seventeen schema names in the published description are renamed,
+  and so are the Rust types behind them. No wire field changes — the contract
+  test proves the property sets are untouched.)*
+
+  | was | now | why |
+  |---|---|---|
+  | `NewApiKey` | `CreatedApiKeyResponse` | `New*` meant *response* here and *request* for webhooks |
+  | `NewWebhookSubscription` | `CreateWebhookRequest` | same prefix, opposite direction |
+  | `CreateRequest` | `CreatePassportRequest` | every sibling was already qualified |
+  | `VerificationView` | `RegistryVerificationView` | registry standing, not signature verification |
+  | `AuditEntry` | `PassportAuditEntry` | distinguishes it from the registry-identity audit |
+  | `RegistryIdentityAudit` | `RegistryIdentityAuditEntry` | the other half of that pair |
+  | `Coverage` | `SealCoverage` | a bare noun for a seal-specific answer |
+  | `ScanCount` | `ScanBatchEntry` | an ingest row, not the `DailyScanCount` output row |
+  | `QrRenderCount` | `QrRenderBatchEntry` | keeps the pair symmetric |
+  | `TransferView` | `TransferNotificationView` | a registry queue row, not `TransferRecord` |
+  | `TransferCounts` | `TransferNotificationCounts` | matches `RegistrationCounts` |
+  | `SignRequest` / `SignResponse` | `InternalSignRequest` / `InternalSignResponse` | mTLS-only, matches `internalSign` |
+  | `VerifyRequest` / `VerifyResponse` | `InternalVerifyRequest` / `InternalVerifyResponse` | as above |
+  | `RotateRequest` / `RotateResponse` | `InternalRotateKeyRequest` / `InternalRotateKeyResponse` | as above |
+
+  Rust disambiguates with module paths; OpenAPI has one flat namespace for 107
+  schemas and has none, so the qualification is written into the name. See
+  *Naming* in `api/README.md` for the rule, and for why the Rust type carries the
+  same name rather than diverging from it.
+
+- **Three integrator operations still said `Sector` in their `operationId`.**
+  *(Breaking: `listSectorSchemas` → `listProductGroupSchemas`,
+  `getCurrentSectorSchema` → `getCurrentProductGroupSchema`,
+  `getPinnedSectorSchema` → `getPinnedProductGroupSchema`.)* Residue from the
+  `sector` → `product group` rename, missed because that pass covered fields,
+  paths and schemas but not operation ids — which is what a generated client
+  turns into method names. Two prose examples carried it too.
+
 ### Fixed
 
 - **Every push to a branch with an open PR ran the whole suite twice.**

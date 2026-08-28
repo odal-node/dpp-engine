@@ -17,13 +17,13 @@ post:
     content:
       application/json:
         schema:
-          $ref: ../../components/schemas/identity/RotateRequest.yaml
+          $ref: ../../components/schemas/identity/InternalRotateKeyRequest.yaml
   responses:
     '200':
       description: Key rotated; returns the new fingerprint and DID document.
       content:
         application/json:
           schema:
-            $ref: ../../components/schemas/identity/RotateResponse.yaml
+            $ref: ../../components/schemas/identity/InternalRotateKeyResponse.yaml
     '422':
       $ref: ../../components/responses/ValidationError.yaml

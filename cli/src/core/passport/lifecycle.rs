@@ -3,7 +3,7 @@
 use anyhow::Result;
 use serde_json::json;
 
-use super::super::types::{ArchiveParams, AuditEntry, HistoryParams, SuspendParams};
+use super::super::types::{ArchiveParams, HistoryParams, PassportAuditEntry, SuspendParams};
 use crate::{
     config::Config,
     http::{OdalClient, describe_error},
@@ -43,7 +43,7 @@ pub async fn action_history(
     params: &HistoryParams,
     client: &OdalClient,
     cfg: &Config,
-) -> Result<Vec<AuditEntry>> {
+) -> Result<Vec<PassportAuditEntry>> {
     let url = format!("{}/api/v1/dpp/{}/history", cfg.vault_url, params.id);
     let (status, body) = client.get(&url).await?;
     if !status.is_success() {
@@ -57,7 +57,7 @@ pub async fn action_history(
 
     Ok(arr
         .iter()
-        .map(|e| AuditEntry {
+        .map(|e| PassportAuditEntry {
             timestamp: e
                 .get("timestamp")
                 .and_then(|v| v.as_str())

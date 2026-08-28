@@ -56,7 +56,7 @@ properties:
       says what the CAdES actually covers. The two agreeing is the cross-check.
       Null for a seal restored from a backup or produced elsewhere.
   coverage:
-    $ref: ./Coverage.yaml
+    $ref: ./SealCoverage.yaml
   verification:
     type: string
     description: >-

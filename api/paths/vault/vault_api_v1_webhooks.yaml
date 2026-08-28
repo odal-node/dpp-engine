@@ -40,7 +40,7 @@ post:
     content:
       application/json:
         schema:
-          $ref: ../../components/schemas/access/NewWebhookSubscription.yaml
+          $ref: ../../components/schemas/access/CreateWebhookRequest.yaml
   responses:
     '201':
       description: Subscription created. The `secret` field is shown ONCE.

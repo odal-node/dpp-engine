@@ -120,7 +120,7 @@ pub struct SealResponse {
     pub sealed_payload_hash: Option<String>,
 
     /// Whether the stored seal covers the passport's current signature.
-    pub coverage: Coverage,
+    pub coverage: SealCoverage,
     /// Stated, not implied: this node did not cryptographically validate the
     /// CAdES, and says so rather than letting the response read as a verdict.
     pub verification: &'static str,
@@ -139,7 +139,7 @@ const NOT_VALIDATED: &str = "not validated by this node — a detached CAdES mus
 /// sealing is knowable here without any AdES tooling at all.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
-pub enum Coverage {
+pub enum SealCoverage {
     /// The requested digest is the passport's current one.
     Current,
     /// The passport was re-published after this seal was bought. The seal stays
@@ -157,11 +157,11 @@ pub enum Coverage {
 /// Split out from the handler so it is testable without a database: the whole
 /// rule is which of three answers a pair of digests warrants, and that should not
 /// need Postgres and an `AppState` to exercise.
-fn coverage_of(sealed: Option<&str>, current: &str) -> Coverage {
+fn coverage_of(sealed: Option<&str>, current: &str) -> SealCoverage {
     match sealed {
-        Some(sealed) if sealed == current => Coverage::Current,
-        Some(_) => Coverage::Superseded,
-        None => Coverage::Unknown,
+        Some(sealed) if sealed == current => SealCoverage::Current,
+        Some(_) => SealCoverage::Superseded,
+        None => SealCoverage::Unknown,
     }
 }
 
@@ -340,14 +340,14 @@ mod tests {
 
     #[test]
     fn a_matching_digest_is_current() {
-        assert_eq!(coverage_of(Some(A), A), Coverage::Current);
+        assert_eq!(coverage_of(Some(A), A), SealCoverage::Current);
     }
 
     /// The case the whole lookup exists for: the passport was re-published, so
     /// the stored seal covers a signature it no longer carries.
     #[test]
     fn a_differing_digest_is_superseded() {
-        assert_eq!(coverage_of(Some(A), B), Coverage::Superseded);
+        assert_eq!(coverage_of(Some(A), B), SealCoverage::Superseded);
     }
 
     /// No record is not the same as no coverage.
@@ -357,15 +357,15 @@ mod tests {
     /// stale on the strength of a missing row.
     #[test]
     fn no_record_is_unknown_rather_than_superseded() {
-        assert_eq!(coverage_of(None, A), Coverage::Unknown);
+        assert_eq!(coverage_of(None, A), SealCoverage::Unknown);
     }
 
     /// The wire values are part of the published contract.
     #[test]
     fn coverage_serialises_to_the_documented_strings() {
-        let rendered = |c: Coverage| serde_json::to_string(&c).expect("serialise");
-        assert_eq!(rendered(Coverage::Current), "\"current\"");
-        assert_eq!(rendered(Coverage::Superseded), "\"superseded\"");
-        assert_eq!(rendered(Coverage::Unknown), "\"unknown\"");
+        let rendered = |c: SealCoverage| serde_json::to_string(&c).expect("serialise");
+        assert_eq!(rendered(SealCoverage::Current), "\"current\"");
+        assert_eq!(rendered(SealCoverage::Superseded), "\"superseded\"");
+        assert_eq!(rendered(SealCoverage::Unknown), "\"unknown\"");
     }
 }

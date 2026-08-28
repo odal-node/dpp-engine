@@ -14,7 +14,7 @@ use uuid::Uuid;
 
 use dpp_domain::DppError;
 use dpp_types::{
-    NewWebhookSubscription, WebhookCounts, WebhookDeliveryRow, WebhookOutbox, WebhookSubscription,
+    CreateWebhookRequest, WebhookCounts, WebhookDeliveryRow, WebhookOutbox, WebhookSubscription,
     WebhookSubscriptionStore,
 };
 
@@ -48,7 +48,7 @@ impl PgWebhookRepo {
 impl WebhookSubscriptionStore for PgWebhookRepo {
     async fn create(
         &self,
-        input: &NewWebhookSubscription,
+        input: &CreateWebhookRequest,
         secret: &str,
     ) -> Result<WebhookSubscription, DppError> {
         let row = sqlx::query(

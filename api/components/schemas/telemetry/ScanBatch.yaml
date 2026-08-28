@@ -9,8 +9,8 @@ properties:
   scans:
     type: array
     items:
-      $ref: ./ScanCount.yaml
+      $ref: ./ScanBatchEntry.yaml
   qrRenders:
     type: array
     items:
-      $ref: ./QrRenderCount.yaml
+      $ref: ./QrRenderBatchEntry.yaml

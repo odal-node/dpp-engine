@@ -45,7 +45,7 @@ post:
       content:
         application/json:
           schema:
-            $ref: ../../components/schemas/access/NewApiKey.yaml
+            $ref: ../../components/schemas/access/CreatedApiKeyResponse.yaml
     '401':
       $ref: ../../components/responses/Unauthorized.yaml
     '422':

@@ -122,8 +122,8 @@ components:
       $ref: components/schemas/passport/SealedEnvelope.yaml
     SealFormat:
       $ref: components/schemas/passport/SealFormat.yaml
-    CreateRequest:
-      $ref: components/schemas/passport-requests/CreateRequest.yaml
+    CreatePassportRequest:
+      $ref: components/schemas/passport-requests/CreatePassportRequest.yaml
     SuspendRequest:
       $ref: components/schemas/passport-requests/SuspendRequest.yaml
     EolRequest:
@@ -140,8 +140,8 @@ components:
       $ref: components/schemas/passport-reports/PassportListResponse.yaml
     ValidateResponse:
       $ref: components/schemas/passport-reports/ValidateResponse.yaml
-    AuditEntry:
-      $ref: components/schemas/passport-reports/AuditEntry.yaml
+    PassportAuditEntry:
+      $ref: components/schemas/passport-reports/PassportAuditEntry.yaml
     TreeReport:
       $ref: components/schemas/passport-reports/TreeReport.yaml
     TreeNodeReport:
@@ -158,8 +158,8 @@ components:
       $ref: components/schemas/seals/SealSummaryResponse.yaml
     SealDeclarer:
       $ref: components/schemas/seals/SealDeclarer.yaml
-    Coverage:
-      $ref: components/schemas/seals/Coverage.yaml
+    SealCoverage:
+      $ref: components/schemas/seals/SealCoverage.yaml
     EvidenceDossier:
       $ref: components/schemas/evidence/EvidenceDossier.yaml
     DossierManifest:
@@ -184,12 +184,12 @@ components:
       $ref: components/schemas/registry/RegistrationView.yaml
     RegistrationCounts:
       $ref: components/schemas/registry/RegistrationCounts.yaml
-    TransferView:
-      $ref: components/schemas/registry/TransferView.yaml
-    TransferCounts:
-      $ref: components/schemas/registry/TransferCounts.yaml
-    VerificationView:
-      $ref: components/schemas/registry/VerificationView.yaml
+    TransferNotificationView:
+      $ref: components/schemas/registry/TransferNotificationView.yaml
+    TransferNotificationCounts:
+      $ref: components/schemas/registry/TransferNotificationCounts.yaml
+    RegistryVerificationView:
+      $ref: components/schemas/registry/RegistryVerificationView.yaml
     CurrentOperatorView:
       $ref: components/schemas/registry/CurrentOperatorView.yaml
     PassportScanStats:
@@ -200,10 +200,10 @@ components:
       $ref: components/schemas/telemetry/DailyScanCount.yaml
     ScanBatch:
       $ref: components/schemas/telemetry/ScanBatch.yaml
-    ScanCount:
-      $ref: components/schemas/telemetry/ScanCount.yaml
-    QrRenderCount:
-      $ref: components/schemas/telemetry/QrRenderCount.yaml
+    ScanBatchEntry:
+      $ref: components/schemas/telemetry/ScanBatchEntry.yaml
+    QrRenderBatchEntry:
+      $ref: components/schemas/telemetry/QrRenderBatchEntry.yaml
     ScanVariant:
       $ref: components/schemas/telemetry/ScanVariant.yaml
     OperatorConfig:
@@ -218,20 +218,20 @@ components:
       $ref: components/schemas/operator/OperatorIdentifier.yaml
     CreateOperatorIdentifierRequest:
       $ref: components/schemas/operator/CreateOperatorIdentifierRequest.yaml
-    RegistryIdentityAudit:
-      $ref: components/schemas/operator/RegistryIdentityAudit.yaml
+    RegistryIdentityAuditEntry:
+      $ref: components/schemas/operator/RegistryIdentityAuditEntry.yaml
     ApiKey:
       $ref: components/schemas/access/ApiKey.yaml
     ApiKeyScope:
       $ref: components/schemas/access/ApiKeyScope.yaml
     CreateApiKeyRequest:
       $ref: components/schemas/access/CreateApiKeyRequest.yaml
-    NewApiKey:
-      $ref: components/schemas/access/NewApiKey.yaml
+    CreatedApiKeyResponse:
+      $ref: components/schemas/access/CreatedApiKeyResponse.yaml
     WebhookSubscription:
       $ref: components/schemas/access/WebhookSubscription.yaml
-    NewWebhookSubscription:
-      $ref: components/schemas/access/NewWebhookSubscription.yaml
+    CreateWebhookRequest:
+      $ref: components/schemas/access/CreateWebhookRequest.yaml
     CreatedWebhookResponse:
       $ref: components/schemas/access/CreatedWebhookResponse.yaml
     InstalledPlugin:
@@ -244,18 +244,18 @@ components:
       $ref: components/schemas/access/VaultInfo.yaml
     DidDocument:
       $ref: components/schemas/identity/DidDocument.yaml
-    SignRequest:
-      $ref: components/schemas/identity/SignRequest.yaml
-    SignResponse:
-      $ref: components/schemas/identity/SignResponse.yaml
-    VerifyRequest:
-      $ref: components/schemas/identity/VerifyRequest.yaml
-    VerifyResponse:
-      $ref: components/schemas/identity/VerifyResponse.yaml
-    RotateRequest:
-      $ref: components/schemas/identity/RotateRequest.yaml
-    RotateResponse:
-      $ref: components/schemas/identity/RotateResponse.yaml
+    InternalSignRequest:
+      $ref: components/schemas/identity/InternalSignRequest.yaml
+    InternalSignResponse:
+      $ref: components/schemas/identity/InternalSignResponse.yaml
+    InternalVerifyRequest:
+      $ref: components/schemas/identity/InternalVerifyRequest.yaml
+    InternalVerifyResponse:
+      $ref: components/schemas/identity/InternalVerifyResponse.yaml
+    InternalRotateKeyRequest:
+      $ref: components/schemas/identity/InternalRotateKeyRequest.yaml
+    InternalRotateKeyResponse:
+      $ref: components/schemas/identity/InternalRotateKeyResponse.yaml
     ImportSyncResponse:
       $ref: components/schemas/import/ImportSyncResponse.yaml
     ImportAsyncResponse:

@@ -11,8 +11,8 @@ use dpp_types::evidence::{CheckStatus, VerificationReport};
 
 use crate::config::{Config, EnvKind};
 use crate::core::types::{
-    AuditEntry, BootstrapResult, DryRunVerdict, ExportResult, ImportSummary, KeyCreateResult,
-    KeyEntry, NodeState, PassportPage, PublishSummary, SchemaCheckResult, ServiceStatus,
+    BootstrapResult, DryRunVerdict, ExportResult, ImportSummary, KeyCreateResult, KeyEntry,
+    NodeState, PassportAuditEntry, PassportPage, PublishSummary, SchemaCheckResult, ServiceStatus,
     StatusReport, ValidationReport, WhoAmI,
 };
 
@@ -396,7 +396,7 @@ pub fn render_publish_summary(summary: &PublishSummary, single: bool) {
     }
 }
 
-pub fn render_history(entries: &[AuditEntry], id: &str) {
+pub fn render_history(entries: &[PassportAuditEntry], id: &str) {
     if entries.is_empty() {
         println!("No audit entries for {id}.");
         return;

@@ -33,7 +33,7 @@ properties:
   auditEntries:
     type: array
     items:
-      $ref: ../passport-reports/AuditEntry.yaml
+      $ref: ../passport-reports/PassportAuditEntry.yaml
   transferChain:
     type:
       - object

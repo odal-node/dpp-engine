@@ -15,7 +15,7 @@ use super::error::internal_error;
 /// Setup/readiness state for a node, used by the CLI to keep `odal bootstrap`
 /// idempotent.
 /// Public so the OpenAPI contract test can serialise it and check the shape
-/// against `components/schemas/NodeState`. A response type only the handler can
+/// against `components/schemas/access/NodeState`. A response type only the handler can
 /// name is a response type nothing can gate.
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]

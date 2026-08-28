@@ -1,5 +1,5 @@
 get:
-  operationId: getPinnedSectorSchema
+  operationId: getPinnedProductGroupSchema
   summary: Fetch a pinned version of a product group's JSON Schema
   description: |
     A stored passport records the `schemaVersion` it was written under, so a

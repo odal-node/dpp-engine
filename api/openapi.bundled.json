@@ -189,7 +189,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/CreateRequest"
+                "$ref": "#/components/schemas/CreatePassportRequest"
               },
               "example": {
                 "productName": "EcoCell Pro 48V",
@@ -257,7 +257,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/CreateRequest"
+                "$ref": "#/components/schemas/CreatePassportRequest"
               }
             }
           }
@@ -575,7 +575,7 @@
                 "schema": {
                   "type": "array",
                   "items": {
-                    "$ref": "#/components/schemas/AuditEntry"
+                    "$ref": "#/components/schemas/PassportAuditEntry"
                   }
                 }
               }
@@ -2025,7 +2025,7 @@
                 "schema": {
                   "type": "array",
                   "items": {
-                    "$ref": "#/components/schemas/RegistryIdentityAudit"
+                    "$ref": "#/components/schemas/RegistryIdentityAuditEntry"
                   }
                 }
               }
@@ -2259,7 +2259,7 @@
                 "schema": {
                   "type": "array",
                   "items": {
-                    "$ref": "#/components/schemas/RegistryIdentityAudit"
+                    "$ref": "#/components/schemas/RegistryIdentityAuditEntry"
                   }
                 }
               }
@@ -2346,7 +2346,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/NewApiKey"
+                  "$ref": "#/components/schemas/CreatedApiKeyResponse"
                 }
               }
             }
@@ -2474,7 +2474,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/NewWebhookSubscription"
+                "$ref": "#/components/schemas/CreateWebhookRequest"
               }
             }
           }
@@ -3051,7 +3051,7 @@
     },
     "/integrator/api/v1/schemas": {
       "get": {
-        "operationId": "listSectorSchemas",
+        "operationId": "listProductGroupSchemas",
         "summary": "List product group schemas and their versions",
         "description": "Every product group with a JSON Schema, the version a new passport is validated\nagainst (`current`), and every version a stored passport may legitimately\nrecord (`versions`). Unauthenticated.\n",
         "tags": [
@@ -3104,7 +3104,7 @@
     },
     "/integrator/api/v1/schemas/{productGroup}": {
       "get": {
-        "operationId": "getCurrentSectorSchema",
+        "operationId": "getCurrentProductGroupSchema",
         "summary": "Fetch a product group's current JSON Schema",
         "description": "The schema a passport created today is validated against, resolved through\nthe same registry the publish gate uses — never a copy, which would drift in\nthe direction where a body passes here and fails at publish. Unauthenticated.\n\nEvery `description` is omitted from the served document. Those fields make\nregulatory assertions that have not been verified against primary text, and\nserving them would turn developer-facing comments into a product surface.\nEverything that decides accept or reject — types, `enum`, `required`,\n`pattern`, bounds, `additionalProperties` — is served in full, so a client\ncan pre-validate a body and get the verdict the create route would give.\n",
         "tags": [
@@ -3147,7 +3147,7 @@
     },
     "/integrator/api/v1/schemas/{productGroup}/{version}": {
       "get": {
-        "operationId": "getPinnedSectorSchema",
+        "operationId": "getPinnedProductGroupSchema",
         "summary": "Fetch a pinned version of a product group's JSON Schema",
         "description": "A stored passport records the `schemaVersion` it was written under, so a\nclient holding one needs that exact schema rather than whatever is current.\nThe version may be given with or without a leading `v`. Unauthenticated.\n\nDescriptions are omitted, as on the current-schema route.\n",
         "tags": [
@@ -3435,7 +3435,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/SignRequest"
+                "$ref": "#/components/schemas/InternalSignRequest"
               }
             }
           }
@@ -3446,7 +3446,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/SignResponse"
+                  "$ref": "#/components/schemas/InternalSignResponse"
                 }
               }
             }
@@ -3484,7 +3484,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/VerifyRequest"
+                "$ref": "#/components/schemas/InternalVerifyRequest"
               }
             }
           }
@@ -3495,7 +3495,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/VerifyResponse"
+                  "$ref": "#/components/schemas/InternalVerifyResponse"
                 }
               }
             }
@@ -3530,7 +3530,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/RotateRequest"
+                "$ref": "#/components/schemas/InternalRotateKeyRequest"
               }
             }
           }
@@ -3541,7 +3541,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/RotateResponse"
+                  "$ref": "#/components/schemas/InternalRotateKeyResponse"
                 }
               }
             }
@@ -4042,7 +4042,7 @@
           "detail": {
             "type": "string",
             "description": "Human-readable explanation for this specific occurrence.",
-            "example": "No schema for product group 'nosuchsector'. Known product groups: aluminium, battery."
+            "example": "No schema for product group 'nosuchgroup'. Known product groups: aluminium, battery."
           },
           "instance": {
             "type": "string",
@@ -4420,7 +4420,7 @@
           "Passport"
         ],
         "type": "object",
-        "description": "Product group-specific data, **internally tagged** by a `productGroup`\ndiscriminator — e.g.\n`{ \"productGroup\": \"battery\", \"gtin\": \"…\", \"batteryChemistry\": \"LFP\", … }`.\nThe remaining fields are product group-specific and validated against the\nproduct group's versioned JSON schema. Sectors include `battery`, `textile`,\n`steel`, `aluminium`, `tyre`, `electronics`, and others.\n\nThe tag is **open**. A product group this build does not model round-trips its\ntag and payload verbatim instead of failing to parse, so a group added to the\ncatalog does not require a client release. That is why the server does not\nderive this shape with `#[serde(tag = …)]`, which would close the set at\ncompile time.\n",
+        "description": "Product group-specific data, **internally tagged** by a `productGroup`\ndiscriminator — e.g.\n`{ \"productGroup\": \"battery\", \"gtin\": \"…\", \"batteryChemistry\": \"LFP\", … }`.\nThe remaining fields are product group-specific and validated against the\nproduct group's versioned JSON schema. Product groups include `battery`, `textile`,\n`steel`, `aluminium`, `tyre`, `electronics`, and others.\n\nThe tag is **open**. A product group this build does not model round-trips its\ntag and payload verbatim instead of failing to parse, so a group added to the\ncatalog does not require a client release. That is why the server does not\nderive this shape with `#[serde(tag = …)]`, which would close the set at\ncompile time.\n",
         "required": [
           "productGroup"
         ],
@@ -4819,7 +4819,7 @@
           "XADES"
         ]
       },
-      "CreateRequest": {
+      "CreatePassportRequest": {
         "x-tags": [
           "Passport Requests"
         ],
@@ -5168,7 +5168,7 @@
           }
         }
       },
-      "AuditEntry": {
+      "PassportAuditEntry": {
         "x-tags": [
           "Passport Reports"
         ],
@@ -5498,7 +5498,7 @@
             "description": "Hex SHA-256 this node **asked** the backend to seal. A record, not proof: it says what was requested, while the validator's extracted message digest says what the CAdES actually covers. The two agreeing is the cross-check. Null for a seal restored from a backup or produced elsewhere."
           },
           "coverage": {
-            "$ref": "#/components/schemas/Coverage"
+            "$ref": "#/components/schemas/SealCoverage"
           },
           "verification": {
             "type": "string",
@@ -5574,7 +5574,7 @@
           }
         }
       },
-      "Coverage": {
+      "SealCoverage": {
         "x-tags": [
           "Seals"
         ],
@@ -5623,7 +5623,7 @@
           "auditEntries": {
             "type": "array",
             "items": {
-              "$ref": "#/components/schemas/AuditEntry"
+              "$ref": "#/components/schemas/PassportAuditEntry"
             }
           },
           "transferChain": {
@@ -5928,7 +5928,7 @@
             "type": "array",
             "description": "Handover notifications recorded for this passport, newest first.",
             "items": {
-              "$ref": "#/components/schemas/TransferView"
+              "$ref": "#/components/schemas/TransferNotificationView"
             }
           },
           "currentOperator": {
@@ -5956,13 +5956,13 @@
             "type": "boolean"
           },
           "verification": {
-            "$ref": "#/components/schemas/VerificationView"
+            "$ref": "#/components/schemas/RegistryVerificationView"
           },
           "registrations": {
             "$ref": "#/components/schemas/RegistrationCounts"
           },
           "transfers": {
-            "$ref": "#/components/schemas/TransferCounts"
+            "$ref": "#/components/schemas/TransferNotificationCounts"
           }
         }
       },
@@ -6054,7 +6054,7 @@
           }
         }
       },
-      "TransferView": {
+      "TransferNotificationView": {
         "x-tags": [
           "EU Registry State"
         ],
@@ -6093,7 +6093,7 @@
           }
         }
       },
-      "TransferCounts": {
+      "TransferNotificationCounts": {
         "x-tags": [
           "EU Registry State"
         ],
@@ -6119,7 +6119,7 @@
           }
         }
       },
-      "VerificationView": {
+      "RegistryVerificationView": {
         "x-tags": [
           "EU Registry State"
         ],
@@ -6276,18 +6276,18 @@
           "scans": {
             "type": "array",
             "items": {
-              "$ref": "#/components/schemas/ScanCount"
+              "$ref": "#/components/schemas/ScanBatchEntry"
             }
           },
           "qrRenders": {
             "type": "array",
             "items": {
-              "$ref": "#/components/schemas/QrRenderCount"
+              "$ref": "#/components/schemas/QrRenderBatchEntry"
             }
           }
         }
       },
-      "ScanCount": {
+      "ScanBatchEntry": {
         "x-tags": [
           "Scan Counters"
         ],
@@ -6317,7 +6317,7 @@
           }
         }
       },
-      "QrRenderCount": {
+      "QrRenderBatchEntry": {
         "x-tags": [
           "Scan Counters"
         ],
@@ -6711,7 +6711,7 @@
           }
         }
       },
-      "RegistryIdentityAudit": {
+      "RegistryIdentityAuditEntry": {
         "x-tags": [
           "Operator Profile"
         ],
@@ -6868,7 +6868,7 @@
           }
         }
       },
-      "NewApiKey": {
+      "CreatedApiKeyResponse": {
         "x-tags": [
           "Access & Integrations"
         ],
@@ -6939,7 +6939,7 @@
           }
         }
       },
-      "NewWebhookSubscription": {
+      "CreateWebhookRequest": {
         "x-tags": [
           "Access & Integrations"
         ],
@@ -7164,7 +7164,7 @@
           ]
         }
       },
-      "SignRequest": {
+      "InternalSignRequest": {
         "x-tags": [
           "Node Identity"
         ],
@@ -7191,7 +7191,7 @@
           }
         }
       },
-      "SignResponse": {
+      "InternalSignResponse": {
         "x-tags": [
           "Node Identity"
         ],
@@ -7206,7 +7206,7 @@
           }
         }
       },
-      "VerifyRequest": {
+      "InternalVerifyRequest": {
         "x-tags": [
           "Node Identity"
         ],
@@ -7232,7 +7232,7 @@
           }
         }
       },
-      "VerifyResponse": {
+      "InternalVerifyResponse": {
         "x-tags": [
           "Node Identity"
         ],
@@ -7247,7 +7247,7 @@
           }
         }
       },
-      "RotateRequest": {
+      "InternalRotateKeyRequest": {
         "x-tags": [
           "Node Identity"
         ],
@@ -7262,7 +7262,7 @@
           }
         }
       },
-      "RotateResponse": {
+      "InternalRotateKeyResponse": {
         "x-tags": [
           "Node Identity"
         ],

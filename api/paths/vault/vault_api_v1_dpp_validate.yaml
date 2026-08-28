@@ -41,7 +41,7 @@ post:
     content:
       application/json:
         schema:
-          $ref: ../../components/schemas/passport-requests/CreateRequest.yaml
+          $ref: ../../components/schemas/passport-requests/CreatePassportRequest.yaml
   responses:
     '200':
       description: |

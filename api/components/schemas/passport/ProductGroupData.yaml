@@ -6,7 +6,7 @@ description: |
   discriminator — e.g.
   `{ "productGroup": "battery", "gtin": "…", "batteryChemistry": "LFP", … }`.
   The remaining fields are product group-specific and validated against the
-  product group's versioned JSON schema. Sectors include `battery`, `textile`,
+  product group's versioned JSON schema. Product groups include `battery`, `textile`,
   `steel`, `aluminium`, `tyre`, `electronics`, and others.
 
   The tag is **open**. A product group this build does not model round-trips its

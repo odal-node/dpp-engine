@@ -24,7 +24,7 @@ get:
           schema:
             type: array
             items:
-              $ref: ../../components/schemas/passport-reports/AuditEntry.yaml
+              $ref: ../../components/schemas/passport-reports/PassportAuditEntry.yaml
     '401':
       $ref: ../../components/responses/Unauthorized.yaml
     '404':

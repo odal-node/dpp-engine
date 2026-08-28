@@ -9,7 +9,9 @@ use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 use dpp_domain::error::DppError;
-use dpp_types::api_key::{ApiKey, ApiKeyRecord, ApiKeyRepository, ApiKeyScope, NewApiKey};
+use dpp_types::api_key::{
+    ApiKey, ApiKeyRecord, ApiKeyRepository, ApiKeyScope, CreatedApiKeyResponse,
+};
 
 const KEY_PREFIX: &str = "odal_sk_";
 const KEY_ENTROPY_BYTES: usize = 24;
@@ -48,7 +50,7 @@ impl ApiKeyService {
 
     /// Generate and persist a new API key, returning the plaintext secret.
     ///
-    /// The `secret` field in [`NewApiKey`] is the **only** opportunity to
+    /// The `secret` field in [`CreatedApiKeyResponse`] is the **only** opportunity to
     /// retrieve the plaintext — it is not stored and cannot be recovered.
     ///
     /// # Errors
@@ -59,7 +61,7 @@ impl ApiKeyService {
         name: &str,
         scope: ApiKeyScope,
         expires_at: Option<DateTime<Utc>>,
-    ) -> Result<NewApiKey, DppError> {
+    ) -> Result<CreatedApiKeyResponse, DppError> {
         let name = name.trim();
         if name.is_empty() {
             return Err(DppError::Validation("API key name is required".into()));
@@ -88,7 +90,7 @@ impl ApiKeyService {
             })
             .await?;
 
-        Ok(NewApiKey {
+        Ok(CreatedApiKeyResponse {
             key: stored,
             secret,
         })

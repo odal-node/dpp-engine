@@ -15,7 +15,7 @@ use crate::state::AppState;
 
 /// Request body for the verification endpoint.
 #[derive(Debug, Deserialize, Serialize)]
-pub struct VerifyRequest {
+pub struct InternalVerifyRequest {
     /// Operator id whose key the signature is checked against.
     pub operator_id: String,
     /// The compact JWS to verify.
@@ -27,9 +27,9 @@ pub struct VerifyRequest {
 /// Response body for the verification endpoint.
 ///
 /// A named type rather than a `json!` literal so the OpenAPI contract test can
-/// check `components/schemas/VerifyResponse` against it.
+/// check `components/schemas/identity/InternalVerifyResponse` against it.
 #[derive(Debug, Serialize)]
-pub struct VerifyResponse {
+pub struct InternalVerifyResponse {
     /// True iff the signature verifies against the named operator's key **and**
     /// was signed over exactly this payload.
     pub valid: bool,
@@ -44,7 +44,7 @@ pub struct VerifyResponse {
 /// signature that simply fails to verify — that is a `false`, not a fault.
 pub async fn verify_handler(
     State(state): State<AppState>,
-    Json(body): Json<VerifyRequest>,
+    Json(body): Json<InternalVerifyRequest>,
 ) -> impl IntoResponse {
     if !is_valid_operator_id(&body.operator_id) {
         return http_problem::unprocessable(
@@ -55,7 +55,11 @@ pub async fn verify_handler(
 
     // No key on file for this operator: cannot be a signature we issued.
     if !state.store.has_key(&body.operator_id) {
-        return (StatusCode::OK, Json(VerifyResponse { valid: false })).into_response();
+        return (
+            StatusCode::OK,
+            Json(InternalVerifyResponse { valid: false }),
+        )
+            .into_response();
     }
 
     // A structurally malformed signature segment (bad base64, wrong decoded
@@ -74,7 +78,7 @@ pub async fn verify_handler(
 
     (
         StatusCode::OK,
-        Json(VerifyResponse {
+        Json(InternalVerifyResponse {
             valid: sig_valid && payload_matches,
         }),
     )

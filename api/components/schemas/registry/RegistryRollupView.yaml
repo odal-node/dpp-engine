@@ -11,8 +11,8 @@ properties:
   configured:
     type: boolean
   verification:
-    $ref: ./VerificationView.yaml
+    $ref: ./RegistryVerificationView.yaml
   registrations:
     $ref: ./RegistrationCounts.yaml
   transfers:
-    $ref: ./TransferCounts.yaml
+    $ref: ./TransferNotificationCounts.yaml

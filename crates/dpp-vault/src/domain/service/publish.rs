@@ -12,7 +12,7 @@ use dpp_domain::{
     product_group::ProductGroupData,
     status::PassportStatus,
 };
-use dpp_types::{STANDALONE_OPERATOR_ID, audit::AuditEntry, auth::AuthContext};
+use dpp_types::{STANDALONE_OPERATOR_ID, audit::PassportAuditEntry, auth::AuthContext};
 
 use super::{PassportService, retention_years_for};
 use super::{catalog, schema_registry};
@@ -404,7 +404,7 @@ impl PassportService {
         // by then possibly mutated — row. A re-publish (Suspend -> Published)
         // runs this same path again and appends a new "published" entry with
         // a fresh snapshot; generation always uses the most recent one.
-        let entry = AuditEntry::new(
+        let entry = PassportAuditEntry::new(
             &updated.id.to_string(),
             "published",
             &auth.user_id,

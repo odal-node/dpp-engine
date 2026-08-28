@@ -9,7 +9,7 @@ use serde::Serialize;
 
 use crate::{middleware::auth::AuthContext, state::AppState};
 
-use super::{create::CreateRequest, error::require_write};
+use super::{create::CreatePassportRequest, error::require_write};
 
 /// The dry-run verdict.
 ///
@@ -18,7 +18,7 @@ use super::{create::CreateRequest, error::require_write};
 /// that into a single flag would hide the gap until the caller tried to publish.
 ///
 /// A named type rather than a `json!` literal so the OpenAPI contract test can
-/// check `components/schemas/ValidateResponse` against it.
+/// check `components/schemas/passport-reports/ValidateResponse` against it.
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ValidateResponse {
@@ -51,7 +51,7 @@ pub struct ValidateResponse {
 pub async fn validate_handler(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthContext>,
-    Json(body): Json<CreateRequest>,
+    Json(body): Json<CreatePassportRequest>,
 ) -> impl IntoResponse {
     if let Some(resp) = require_write(&auth, "Validating a passport body") {
         return resp;
