@@ -138,6 +138,31 @@ pub enum Commands {
         #[command(subcommand)]
         command: SealCommands,
     },
+    // ── Regulatory catalog ───────────────────────────────────────────────────
+    /// Which product groups need a passport, from when, and under which acts
+    #[command(name = "product-group")]
+    ProductGroup {
+        #[command(subcommand)]
+        command: ProductGroupCommands,
+    },
+    /// Download the CSV import template for a product group (the header row
+    /// `odal passport import` expects)
+    Template {
+        /// Product group key (battery, textile, steel, aluminium, tyre)
+        product_group: String,
+        /// Output file (stdout if omitted)
+        #[arg(short, long)]
+        output: Option<String>,
+    },
+    // ── EU registry ──────────────────────────────────────────────────────────
+    /// EU registry sync status — the rollup, or one passport's record
+    Registry {
+        /// Passport ID (operator-wide rollup if omitted)
+        id: Option<String>,
+        /// Output raw JSON instead of a summary
+        #[arg(long)]
+        json: bool,
+    },
     // ── Insight ──────────────────────────────────────────────────────────────
     /// Operator-wide scan telemetry — how often your passports were resolved
     /// (per-passport detail: `odal passport stats <id>`)
@@ -235,12 +260,200 @@ pub enum PassportCommands {
         #[arg(short, long)]
         output: Option<String>,
     },
+    /// Re-run the plausibility lint pack and store the refreshed findings.
+    /// Findings are advisory — they never gate publish.
+    Lint {
+        /// Passport ID
+        id: String,
+        /// Output raw JSON instead of a summary
+        #[arg(long)]
+        json: bool,
+    },
+    /// Declare a passport end-of-life (terminal). The record is retained,
+    /// never deleted — the passport outlives the product.
+    Eol {
+        /// Passport ID
+        id: String,
+        /// Why the product reached end-of-life
+        #[arg(long, value_parser = ["recycled", "destroyed", "exported", "lost"])]
+        reason: String,
+        /// Derogation category permitting destruction — required for
+        /// `--reason destroyed`, which is otherwise barred by the ESPR
+        /// Art. 25 unsold-goods destruction ban
+        #[arg(long)]
+        derogation: Option<String>,
+        /// The act or article the derogation is grounded in (OJ/CELEX ref)
+        #[arg(long = "derogation-citation")]
+        derogation_citation: Option<String>,
+        /// Free-text note recorded with the declaration
+        #[arg(long)]
+        notes: Option<String>,
+    },
+    /// Walk and verify the component (BOM) tree — checks each node's signed
+    /// public view against the hash pinned by its parent
+    Tree {
+        /// Passport ID of the tree root
+        id: String,
+        /// Output raw JSON instead of a summary
+        #[arg(long)]
+        json: bool,
+    },
+    /// Find a passport by its business identity rather than its ID
+    Find {
+        /// Product group key (battery, textile, …)
+        #[arg(long = "product-group")]
+        product_group: String,
+        /// GTIN
+        #[arg(long)]
+        gtin: String,
+        /// Batch identifier
+        #[arg(long)]
+        batch: Option<String>,
+        /// Output raw JSON instead of a summary
+        #[arg(long)]
+        json: bool,
+    },
+    /// Transfer responsibility for a passport to another economic operator
+    Transfer {
+        #[command(subcommand)]
+        command: TransferCommands,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum TransferCommands {
+    /// Sign a pending handover onto the passport's transfer chain. Only a
+    /// published passport can be transferred.
+    ///
+    /// Boxed, and its eleven arguments held in their own struct: two full
+    /// economic operators inline would make every variant of this enum — and
+    /// so every variant of `Commands` above it — as large as this one.
+    Initiate(Box<TransferInitiateArgs>),
+    /// Countersign a pending handover and complete it
+    Accept {
+        /// Passport ID
+        id: String,
+    },
+    /// End a pending handover as refused (terminal — frees the chain)
+    Reject {
+        /// Passport ID
+        id: String,
+    },
+    /// End a pending handover as withdrawn (terminal — frees the chain)
+    Cancel {
+        /// Passport ID
+        id: String,
+    },
+}
+
+/// Both sides of a handover: who is giving responsibility up and who is taking
+/// it on. The API needs a complete `ResponsibleOperator` for each, so all four
+/// fields of each are required.
+#[derive(clap::Args)]
+pub struct TransferInitiateArgs {
+    /// Passport ID
+    pub id: String,
+    /// DID of the outgoing operator — must match the chain head
+    #[arg(long = "from-did")]
+    pub from_did: String,
+    /// Legal name of the outgoing operator
+    #[arg(long = "from-name")]
+    pub from_name: String,
+    /// Supply-chain role of the outgoing operator
+    #[arg(long = "from-role", value_parser = OPERATOR_ROLES)]
+    pub from_role: String,
+    /// ISO 3166-1 alpha-2 country of the outgoing operator
+    #[arg(long = "from-country")]
+    pub from_country: String,
+    /// DID of the incoming operator
+    #[arg(long = "to-did")]
+    pub to_did: String,
+    /// Legal name of the incoming operator
+    #[arg(long = "to-name")]
+    pub to_name: String,
+    /// Supply-chain role of the incoming operator
+    #[arg(long = "to-role", value_parser = OPERATOR_ROLES)]
+    pub to_role: String,
+    /// ISO 3166-1 alpha-2 country of the incoming operator
+    #[arg(long = "to-country")]
+    pub to_country: String,
+    /// Why responsibility is moving
+    #[arg(long, value_parser = TRANSFER_REASONS)]
+    pub reason: String,
+    /// Free-text note recorded on the transfer
+    #[arg(long)]
+    pub notes: Option<String>,
+}
+
+/// The `OperatorRole` enum as the API spells it. Listed here so `--from-role`
+/// rejects a typo at parse time with the valid set, rather than costing a
+/// round-trip to be told the same thing.
+const OPERATOR_ROLES: [&str; 9] = [
+    "manufacturer",
+    "importer",
+    "distributor",
+    "authorisedRepresentative",
+    "remanufacturer",
+    "repurposer",
+    "preparerForReuse",
+    "repairer",
+    "recycler",
+];
+
+/// The `TransferReason` enum as the API spells it — same reasoning as
+/// [`OPERATOR_ROLES`].
+const TRANSFER_REASONS: [&str; 7] = [
+    "sale",
+    "return",
+    "remanufacturing",
+    "repurposing",
+    "preparationForReuse",
+    "import",
+    "insolvencySuccession",
+];
+
+#[derive(Subcommand)]
+pub enum ProductGroupCommands {
+    /// List every product group this node knows of, with whether a passport is
+    /// required and from when
+    List {
+        /// Show only groups a passport is already required for
+        #[arg(long)]
+        required: bool,
+        /// Output raw JSON instead of a table
+        #[arg(long)]
+        json: bool,
+    },
+    /// Show one product group's obligation in full, including the acts behind it
+    Show {
+        /// Product group key (battery, textile, toy, …)
+        product_group: String,
+        /// Output raw JSON instead of a summary
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[derive(Subcommand)]
 pub enum SchemaCommands {
     /// Check if a schema update is available
     Check,
+    /// List every product group with a schema, and the version this node serves
+    List {
+        /// Output raw JSON instead of a table
+        #[arg(long)]
+        json: bool,
+    },
+    /// Print a product group's JSON Schema
+    Show {
+        /// Product group key (battery, textile, …)
+        product_group: String,
+        /// Schema version (the node's current one if omitted)
+        version: Option<String>,
+        /// Output file (stdout if omitted)
+        #[arg(short, long)]
+        output: Option<String>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -385,6 +598,12 @@ pub enum FacilityCommands {
         /// Facility id
         id: String,
     },
+    /// Show a facility's append-only provenance trail (retire, restore,
+    /// default changes)
+    Audit {
+        /// Facility id
+        id: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -413,6 +632,12 @@ pub enum OperatorIdCommands {
     },
     /// Remove an operator identifier by id
     Remove {
+        /// Operator identifier id
+        id: String,
+    },
+    /// Show an identifier's append-only provenance trail (retire, restore,
+    /// primary changes)
+    Audit {
         /// Operator identifier id
         id: String,
     },

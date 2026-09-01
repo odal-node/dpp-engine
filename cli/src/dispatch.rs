@@ -2,11 +2,15 @@
 
 use crate::cli_args::{
     Commands, FacilityCommands, KeyCommands, OperatorCommands, OperatorIdCommands,
-    PassportCommands, PluginCommands, ProfileCommands, SchemaCommands, SealCommands,
-    WebhookCommands,
+    PassportCommands, PluginCommands, ProductGroupCommands, ProfileCommands, SchemaCommands,
+    SealCommands, TransferCommands, WebhookCommands,
 };
 use crate::commands::{
     bootstrap::run_bootstrap,
+    catalog::{
+        run_product_group_list, run_product_group_show, run_schema_list, run_schema_show,
+        run_template,
+    },
     down::run_down,
     evidence::run_evidence,
     export::run_export,
@@ -15,6 +19,7 @@ use crate::commands::{
     },
     import::run_import,
     init::run_init,
+    inspect::{run_eol, run_find, run_lint, run_tree},
     key::{run_key_create, run_key_list, run_key_revoke, run_key_use},
     lifecycle::{run_archive, run_history, run_suspend},
     list::run_passport_list,
@@ -29,10 +34,12 @@ use crate::commands::{
         run_profile_show, run_profile_use,
     },
     publish::run_publish,
+    registry::{run_facility_audit, run_operator_id_audit, run_registry},
     schema::run_schema,
     seal::run_seal_status,
     stats::{run_operator_stats, run_passport_stats},
     status::run_status,
+    transfer::{run_transfer_initiate, run_transfer_resolve},
     up::run_up,
     update::run_update,
     validate::run_validate,
@@ -156,6 +163,9 @@ pub async fn dispatch(cmd: Commands) -> anyhow::Result<()> {
         Commands::Facility {
             command: FacilityCommands::Remove { id },
         } => run_facility_remove(&id).await,
+        Commands::Facility {
+            command: FacilityCommands::Audit { id },
+        } => run_facility_audit(&id).await,
         Commands::OperatorId {
             command: OperatorIdCommands::List,
         } => run_operator_id_list().await,
@@ -174,6 +184,9 @@ pub async fn dispatch(cmd: Commands) -> anyhow::Result<()> {
         Commands::OperatorId {
             command: OperatorIdCommands::Remove { id },
         } => run_operator_id_remove(&id).await,
+        Commands::OperatorId {
+            command: OperatorIdCommands::Audit { id },
+        } => run_operator_id_audit(&id).await,
         Commands::Webhook {
             command: WebhookCommands::List,
         } => run_webhook_list().await,
@@ -271,9 +284,77 @@ pub async fn dispatch(cmd: Commands) -> anyhow::Result<()> {
                     output,
                 },
         } => run_export(&format, status.as_deref(), output.as_deref()).await,
+        Commands::Passport {
+            command: PassportCommands::Lint { id, json },
+        } => run_lint(&id, json).await,
+        Commands::Passport {
+            command:
+                PassportCommands::Eol {
+                    id,
+                    reason,
+                    derogation,
+                    derogation_citation,
+                    notes,
+                },
+        } => {
+            run_eol(
+                &id,
+                &reason,
+                derogation.as_deref(),
+                derogation_citation.as_deref(),
+                notes.as_deref(),
+            )
+            .await
+        }
+        Commands::Passport {
+            command: PassportCommands::Tree { id, json },
+        } => run_tree(&id, json).await,
+        Commands::Passport {
+            command:
+                PassportCommands::Find {
+                    product_group,
+                    gtin,
+                    batch,
+                    json,
+                },
+        } => run_find(&product_group, &gtin, batch.as_deref(), json).await,
+        Commands::Passport {
+            command: PassportCommands::Transfer { command },
+        } => match command {
+            TransferCommands::Initiate(args) => run_transfer_initiate(&args).await,
+            TransferCommands::Accept { id } => run_transfer_resolve(&id, "accept").await,
+            TransferCommands::Reject { id } => run_transfer_resolve(&id, "reject").await,
+            TransferCommands::Cancel { id } => run_transfer_resolve(&id, "cancel").await,
+        },
         Commands::Schema {
             command: SchemaCommands::Check,
         } => run_schema().await,
+        Commands::Schema {
+            command: SchemaCommands::List { json },
+        } => run_schema_list(json).await,
+        Commands::Schema {
+            command:
+                SchemaCommands::Show {
+                    product_group,
+                    version,
+                    output,
+                },
+        } => run_schema_show(&product_group, version.as_deref(), output.as_deref()).await,
+        Commands::ProductGroup {
+            command: ProductGroupCommands::List { required, json },
+        } => run_product_group_list(required, json).await,
+        Commands::ProductGroup {
+            command:
+                ProductGroupCommands::Show {
+                    product_group,
+                    json,
+                },
+        } => run_product_group_show(&product_group, json).await,
+        Commands::Template {
+            product_group,
+            output,
+        } => run_template(&product_group, output.as_deref()).await,
+        Commands::Registry { id, json } => run_registry(id.as_deref(), json).await,
         Commands::Verify { target } => run_verify(&target).await,
         Commands::Seal {
             command: SealCommands::Status { id, json },

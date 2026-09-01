@@ -133,7 +133,7 @@ odal operator set \
   --address "1 Allee, Berlin" \
   --contact-email ops@acme.example   # set the legal operator identity (required before publish)
 odal passport import products.csv    # create draft passports
-odal passport validate               # check stored drafts against sector schema
+odal passport validate               # check stored drafts against the product-group schema
 odal passport validate body.json     # dry-run one body, creating nothing
 odal passport publish                # sign + publish (mints GS1 Digital Link / QR)
 ```
@@ -213,12 +213,44 @@ least-privilege key cannot mutate the operator's registry identity).
 | `odal passport archive <id>` | Archive (terminal state) | API key |
 | `odal passport history <id>` | Passport audit trail | API key |
 | `odal passport export [--format] [--status] [-o]` | Export passports (JSON/CSV) | API key |
+| `odal passport find --product-group --gtin [--batch] [--json]` | Look a passport up by its business identity instead of its ID. The batch is part of that identity, not a filter on it | API key |
+| `odal passport lint <id> [--json]` | Re-run the plausibility lint pack and store the findings. Advisory — they never gate publish | API key (write) |
+| `odal passport tree <id> [--json]` | Walk the component (BOM) tree, checking each node against the hash its parent pinned. Integrity only, not a signature check | API key |
+| `odal passport eol <id> --reason [--derogation] [--derogation-citation] [--notes]` | Declare end of life (terminal). The record is retained. `--reason destroyed` requires a `--derogation` — the ESPR Art. 25 ban | API key (write) |
 
-### Schema
+### Transfer of responsibility
+
+A handover is two steps with three terminal outcomes, so each is its own verb.
+Only a published passport can be transferred.
 
 | Command | Purpose | Auth |
 |---|---|---|
-| `odal schema check` | Check for a sector-schema update | none |
+| `odal passport transfer initiate <id> --from-… --to-… --reason [--notes]` | Sign a pending handover onto the transfer chain | API key (write) |
+| `odal passport transfer accept <id>` | Countersign and complete it | API key (write) |
+| `odal passport transfer reject <id>` | End it as refused — frees the chain | API key (write) |
+| `odal passport transfer cancel <id>` | End it as withdrawn — frees the chain | API key (write) |
+
+### Regulatory catalog
+
+Unauthenticated: "does my product need a passport" is a question asked before
+anyone has a node, let alone a key.
+
+| Command | Purpose | Auth |
+|---|---|---|
+| `odal product-group list [--required] [--json]` | Every product group an act reaches — whether a passport is required, from when, and whether this build can bindingly determine it | none |
+| `odal product-group show <group> [--json]` | One group in full, including the acts behind it and their status | none |
+| `odal schema check` | The node build, core version, and active ruleset it applies | none |
+| `odal schema list [--json]` | Product groups with a schema, the current version, and the older ones the upcast lens chain still reads | none |
+| `odal schema show <group> [version] [-o]` | Print a product group's JSON Schema | none |
+| `odal template <group> [-o]` | The CSV header row `odal passport import` expects. Only the five groups with a row validator have one | none |
+
+### EU registry & provenance
+
+| Command | Purpose | Auth |
+|---|---|---|
+| `odal registry [id] [--json]` | Registry sync rollup, or one passport's record | API key |
+| `odal facility audit <id>` | A facility's append-only trail (facilities are retired, never deleted) | API key (Admin) |
+| `odal operator-id audit <id>` | An operator identifier's append-only trail | API key (Admin) |
 
 ---
 
@@ -256,8 +288,10 @@ odal bootstrap \
 
 ### `odal passport import <file>`
 
-One passport per record. `.csv`/`.tsv`: `sectorData` is built from headers
-(sector defaults to `battery`; add a `sector` column for others like `textile`).
+One passport per record. `.csv`/`.tsv`: `productGroupData` is built from headers,
+and the product group comes from a `productGroup` column (`productCategory` is
+still read for older files). `odal template <group>` prints the header row this
+expects.
 `.json`: a single object or array, posted verbatim. Each record is created as a
 **draft** and validated server-side; results are reported per row.
 
