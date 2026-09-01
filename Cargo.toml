@@ -110,7 +110,7 @@ qrcode       = "0.12"
 # including the OpenEXR stack (exr -> pulp -> the unmaintained `paste`), none
 # of which this workspace can reach. Keep this list minimal: each format added
 # here is parser surface in a binary that serves public HTTP.
-image        = { version = "0.24", default-features = false, features = ["png"] }
+image        = { version = "0.25", default-features = false, features = ["png"] }
 
 # HTTP client
 # 0.13 renamed the TLS feature (`rustls-tls` -> `rustls`) and moved several
