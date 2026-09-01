@@ -1110,6 +1110,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1fd0f2584146f6f2ef48085050886acf353beff7305ebd1ae69500e27c67f64b"
 
 [[package]]
+name = "byteorder-lite"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8f1fe948ff07f4bd06c30984e69f5b4899c516a3ef74f34df92a2df2ab535495"
+
+[[package]]
 name = "bytes"
 version = "1.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1227,12 +1233,6 @@ dependencies = [
  "cpufeatures 0.3.0",
  "rand_core 0.10.1",
 ]
-
-[[package]]
-name = "checked_int_cast"
-version = "1.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "17cc5e6b5ab06331c33589842070416baa137e8b0eb912b008cfd4a78ada7919"
 
 [[package]]
 name = "chrono"
@@ -2140,6 +2140,8 @@ checksum = "75b325c5dbd37f80359721ad39aca5a29fb04c89279657cffdda8736d0c0b9d2"
 [[package]]
 name = "dpp-aas"
 version = "0.19.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "af4ec4a1cc09b41cc32c1d5c40e595c541c0c6c6e52cec2670810524a7548123"
 dependencies = [
  "dpp-domain",
  "dpp-vocab",
@@ -2150,6 +2152,8 @@ dependencies = [
 [[package]]
 name = "dpp-calc"
 version = "0.19.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f1f5a7897583c4fb6c43056506d83acfc71c1eb14a7d239dc71c154b2ce8d12d"
 dependencies = [
  "chrono",
  "dpp-rules",
@@ -2215,6 +2219,8 @@ dependencies = [
 [[package]]
 name = "dpp-crypto"
 version = "0.19.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1747716351031fbd56464d367ebfa5c2bc3b21d6bdbef10f6705a52a6bae2149"
 dependencies = [
  "aes-gcm",
  "anyhow",
@@ -2263,6 +2269,8 @@ dependencies = [
 [[package]]
 name = "dpp-digital-link"
 version = "0.19.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ee158b22c553f128c436121d011c8c9f0f6af67a5a33a6594828e837c2024863"
 dependencies = [
  "dpp-domain",
  "serde",
@@ -2273,6 +2281,8 @@ dependencies = [
 [[package]]
 name = "dpp-domain"
 version = "0.19.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3a19209f530263d1bfb75a86cc3b2cd54c058b87b57ff57e1b898072e4a7f452"
 dependencies = [
  "async-trait",
  "chrono",
@@ -2442,6 +2452,8 @@ dependencies = [
 [[package]]
 name = "dpp-plugin-traits"
 version = "0.19.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f3379fa5d91c4f7d179bb92dd08cfebc605ba3d699d9cb3729f0910aeaf8888d"
 dependencies = [
  "semver",
  "serde",
@@ -2452,6 +2464,8 @@ dependencies = [
 [[package]]
 name = "dpp-registry"
 version = "0.19.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b626175826e18ef802f2e9de5da9ea449a202e1d34823e5771880fedefaf85b6"
 dependencies = [
  "chrono",
  "dpp-domain",
@@ -2514,6 +2528,8 @@ dependencies = [
 [[package]]
 name = "dpp-rules"
 version = "0.19.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8bbedb7cce0dad9d136793248444eba53c305a2811168d1bf3a7f229d61b02ce"
 dependencies = [
  "base64 0.23.1",
  "chrono",
@@ -2617,6 +2633,8 @@ dependencies = [
 [[package]]
 name = "dpp-vc"
 version = "0.19.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e8feb107d2fe5a7a4391e3dfb46cfaa8335e2b9ef678bec9774a1669e1fa58a1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2637,6 +2655,8 @@ dependencies = [
 [[package]]
 name = "dpp-vocab"
 version = "0.19.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "73c5b4713451f179e3f7bbfa09f19c94cfb3713709a43116328875ef44a03735"
 dependencies = [
  "serde",
  "serde_json",
@@ -3691,20 +3711,6 @@ dependencies = [
 
 [[package]]
 name = "image"
-version = "0.23.14"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "24ffcb7e7244a9bf19d35bf2883b9c080c4ced3c07a9895572178cdb8f13f6a1"
-dependencies = [
- "bytemuck",
- "byteorder",
- "color_quant",
- "num-iter",
- "num-rational 0.3.2",
- "num-traits",
-]
-
-[[package]]
-name = "image"
 version = "0.24.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5690139d2f55868e080017335e4b94cb7414274c74f1669c84fb5feba2c9f69d"
@@ -3714,6 +3720,18 @@ dependencies = [
  "color_quant",
  "num-traits",
  "png",
+]
+
+[[package]]
+name = "image"
+version = "0.25.10"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "85ab80394333c02fe689eaf900ab500fbd0c2213da414687ebf995a65d5a6104"
+dependencies = [
+ "bytemuck",
+ "byteorder-lite",
+ "moxcms",
+ "num-traits",
 ]
 
 [[package]]
@@ -4240,6 +4258,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "moxcms"
+version = "0.8.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bb85c154ba489f01b25c0d36ae69a87e4a1c73a72631fc6c0eb6dde34a73e44b"
+dependencies = [
+ "num-traits",
+ "pxfm",
+]
+
+[[package]]
 name = "multer"
 version = "3.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4309,7 +4337,7 @@ dependencies = [
  "num-complex",
  "num-integer",
  "num-iter",
- "num-rational 0.4.2",
+ "num-rational",
  "num-traits",
 ]
 
@@ -4369,17 +4397,6 @@ version = "0.1.46"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c92800bd69a1eac91786bcfe9da64a897eb72911b8dc3095decbd07429e8048b"
 dependencies = [
- "num-integer",
- "num-traits",
-]
-
-[[package]]
-name = "num-rational"
-version = "0.3.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "12ac428b1cb17fce6f731001d307d351ec70a6d202fc2e60f7d4c5e42d8f4f07"
-dependencies = [
- "autocfg",
  "num-integer",
  "num-traits",
 ]
@@ -4853,7 +4870,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b570b25f7617e43d59005d0990ccb79e950a423952cea19671b7a876da390adf"
 dependencies = [
  "anyhow",
- "itertools 0.13.0",
+ "itertools 0.14.0",
  "proc-macro2",
  "quote",
  "syn 2.0.119",
@@ -4892,13 +4909,18 @@ dependencies = [
 ]
 
 [[package]]
-name = "qrcode"
-version = "0.12.0"
+name = "pxfm"
+version = "0.1.30"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "16d2f1455f3630c6e5107b4f2b94e74d76dea80736de0981fd27644216cff57f"
+checksum = "d55d956fa96f5ec02be2e13af0e20391a5aa83d6a074e3ad368959d0fab299ea"
+
+[[package]]
+name = "qrcode"
+version = "0.14.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d68782463e408eb1e668cf6152704bd856c78c5b6417adaee3203d8f4c1fc9ec"
 dependencies = [
- "checked_int_cast",
- "image 0.23.14",
+ "image 0.25.10",
 ]
 
 [[package]]
@@ -6325,7 +6347,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.3.4",
+ "getrandom 0.4.3",
  "once_cell",
  "rustix",
  "windows-sys 0.61.2",
