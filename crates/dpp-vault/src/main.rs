@@ -171,7 +171,7 @@ async fn main() -> anyhow::Result<()> {
         // No composition root here resolves trust ports or a ruleset, so this
         // binary reports neither rather than inventing a posture for them.
         trust: None,
-        ruleset_version: None,
+        ruleset_admin: None,
     };
 
     let app = router::build(state);

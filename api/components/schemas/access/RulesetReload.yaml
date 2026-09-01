@@ -1,0 +1,22 @@
+x-tags:
+  - Access & Integrations
+type: object
+description: >-
+  The outcome of re-reading the signed compliance-ruleset channel.
+required:
+  - rulesetVersion
+  - changed
+properties:
+  rulesetVersion:
+    type: string
+    description: >-
+      The bundle version in force after the reload. `baseline` on a node that has
+      never adopted a signed bundle.
+    example: 2026-Q3.2
+  changed:
+    type: boolean
+    description: >-
+      Whether this call actually replaced the ruleset. `false` means the channel
+      re-offered the bundle already in force — the ordinary answer on a quiet
+      channel, and a success rather than an error.
+    example: true

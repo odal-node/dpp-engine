@@ -330,7 +330,7 @@ async fn start_vault_with_identity(
         // These tests exercise the vault in isolation, with no composition
         // root resolving trust ports or a ruleset.
         trust: None,
-        ruleset_version: None,
+        ruleset_admin: None,
     };
 
     let app = router::build(state);

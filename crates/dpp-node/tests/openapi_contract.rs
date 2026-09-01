@@ -403,6 +403,7 @@ fn object_cases() -> Vec<ObjectCase> {
     case!("SealDeclarer", fixtures::seal_declarer());
     case!("SealSummaryResponse", fixtures::seal_summary_response());
     case!("InstalledPlugin", fixtures::installed_plugin());
+    case!("RulesetReload", fixtures::ruleset_reload());
     case!("WebhookSubscription", fixtures::webhook_subscription());
     case!("CreateWebhookRequest", fixtures::new_webhook_subscription());
     case!(
@@ -1687,6 +1688,7 @@ mod handler_sources {
         include_str!("../../dpp-vault/src/handlers/read.rs"),
         include_str!("../../dpp-vault/src/handlers/registry_identity.rs"),
         include_str!("../../dpp-vault/src/handlers/registry_status.rs"),
+        include_str!("../../dpp-vault/src/handlers/ruleset.rs"),
         include_str!("../../dpp-vault/src/handlers/scan_ingest.rs"),
         include_str!("../../dpp-vault/src/handlers/seal.rs"),
         include_str!("../../dpp-vault/src/handlers/stats.rs"),
@@ -2108,6 +2110,7 @@ mod fixtures {
     use dpp_common::{
         http_problem::{Problem, ProblemFieldError},
         plugin_admin::InstalledPlugin,
+        ruleset_admin::RulesetReload,
         scan::{QrRenderBatchEntry, ScanBatch, ScanBatchEntry, ScanVariant},
     };
     use dpp_domain::{
@@ -3169,6 +3172,13 @@ mod fixtures {
         InstalledPlugin {
             product_group: "battery".into(),
             abi_version: "1.0".into(),
+        }
+    }
+
+    pub fn ruleset_reload() -> RulesetReload {
+        RulesetReload {
+            ruleset_version: "2026-Q3.2".into(),
+            changed: true,
         }
     }
 

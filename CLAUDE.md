@@ -362,6 +362,7 @@ Background cleanup task runs every 6 hours, deleting completed/failed jobs older
 | POST | `/vault/api/v1/api-keys` | Bearer (admin) | Create API key |
 | DELETE | `/vault/api/v1/api-keys/{id}` | Bearer (admin) | Revoke API key |
 | POST | `/vault/api/v1/plugins` | Bearer (admin) | Install a **signed** product group plugin and hot-swap it |
+| POST | `/vault/api/v1/ruleset/reload` | Bearer (admin) | Re-read the **signed** compliance-ruleset channel and hot-swap a verified bundle |
 | GET | `/vault/api/v1/webhooks` | Bearer (admin) | List webhook subscriptions |
 | POST | `/vault/api/v1/webhooks` | Bearer (admin) | Create one (SSRF-guarded URL) |
 | DELETE | `/vault/api/v1/webhooks/{id}` | Bearer (admin) | Remove one |

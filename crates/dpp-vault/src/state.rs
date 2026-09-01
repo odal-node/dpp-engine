@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use dpp_common::plugin_admin::PluginAdmin;
+use dpp_common::ruleset_admin::RulesetAdmin;
 use dpp_types::auth::AuthProvider;
 use dpp_types::scan::ScanTelemetryRepository;
 
@@ -79,8 +80,13 @@ pub struct AppState {
     /// `None` for the standalone vault binary, which has no composition root to
     /// resolve trust ports.
     pub trust: Option<Arc<dpp_types::trust::NodeTrustReport>>,
-    /// Version of the Compliance Current ruleset this node validates against,
-    /// reported alongside `trust`. A string rather than the ruleset type: that
-    /// type belongs to the node binary, which depends on this crate.
-    pub ruleset_version: Option<String>,
+    /// The node's signed Compliance Current channel: the version in force
+    /// (reported alongside `trust`) and the reload the admin route triggers.
+    ///
+    /// A port rather than the node's concrete `ActiveRuleset`, which belongs to
+    /// the node binary and depends on this crate — and a port rather than the
+    /// `String` this used to be, because a version cloned once at boot stops
+    /// being true the moment a swap can happen. `None` on deployments with no
+    /// ruleset channel wired (e.g. the standalone vault binary).
+    pub ruleset_admin: Option<Arc<dyn RulesetAdmin>>,
 }

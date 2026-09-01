@@ -107,6 +107,11 @@ pub enum Commands {
         #[command(subcommand)]
         command: PluginCommands,
     },
+    /// Manage the signed compliance-ruleset channel (Compliance Current)
+    Ruleset {
+        #[command(subcommand)]
+        command: RulesetCommands,
+    },
     // ── Profiles / environments ──────────────────────────────────────────────
     /// Manage named connection profiles (dev / prod / …)
     Profile {
@@ -653,6 +658,16 @@ pub enum PluginCommands {
         /// alongside it as `<file>.sig`)
         file: String,
     },
+}
+
+#[derive(Subcommand)]
+pub enum RulesetCommands {
+    /// Re-read the signed ruleset channel now and hot-swap a verified bundle.
+    /// The node verifies the manifest against its pinned publisher key, refuses
+    /// a bundle that is not yet effective or older than the one in force, and
+    /// swaps atomically — no restart. The node also polls on its own; this is
+    /// how you say "take it now".
+    Reload,
 }
 
 #[derive(Subcommand)]

@@ -75,6 +75,10 @@
       "description": "Signed product-group plugin hot-install — verify, persist, hot-swap (admin-only)."
     },
     {
+      "name": "Ruleset",
+      "description": "Compliance Current — the signed, versioned ruleset channel. Re-read it and hot-swap a verified bundle without a node restart (admin-only)."
+    },
+    {
       "name": "Node",
       "description": "Node setup state, and what credential the caller presented. `/whoami` reports only what the request already carried; it is not a lookup."
     },
@@ -2673,6 +2677,51 @@
           },
           "501": {
             "description": "This node has no plugin host configured; runtime install is unavailable."
+          }
+        }
+      }
+    },
+    "/vault/api/v1/ruleset/reload": {
+      "post": {
+        "operationId": "reloadRuleset",
+        "summary": "Re-read the signed ruleset channel and hot-swap a verified bundle",
+        "description": "Adopt a newly published compliance ruleset — no node restart.\n\nThe node re-reads its configured channel, verifies the bundle's manifest\nsignature against the pinned publisher key, checks the content hash, refuses\na bundle whose rules do not take effect yet or that is older than the one\nalready in force, and only then swaps it in atomically. Requests in flight\nkeep serving throughout. Any rejection is fail-closed — the ruleset already\nin force keeps validating. Admin-scoped.\n\nThe node also polls the channel on its own (`RULESET_POLL_INTERVAL_SECS`),\nso this route is how an operator says \"take it now\", not the only way a swap\nhappens.\n\nRe-reading a channel that has not changed is a **success** with\n`changed: false`, not an error.\n",
+        "tags": [
+          "Ruleset"
+        ],
+        "security": [
+          {
+            "BearerApiKey": []
+          },
+          {
+            "BasicAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The channel was read. `changed` says whether the ruleset in force moved.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RulesetReload"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "description": "A non-admin credential attempted to reload the ruleset."
+          },
+          "422": {
+            "description": "The bundle was refused and the ruleset in force is unchanged. The problem `code` says which refusal: `RULESET_REJECTED` (bad signature, content-hash mismatch, or a malformed manifest — distrust the bytes), `RULESET_NOT_YET_EFFECTIVE` (authentic but its rules start later — leave it staged and re-offer it once the date arrives), or `RULESET_SUPERSEDED` (authentic but older than what is running — the rollback refusal; something served a stale bundle)."
+          },
+          "501": {
+            "description": "This node has no signed ruleset channel configured; it is running its compiled-in baseline and there is nothing to re-read."
+          },
+          "503": {
+            "description": "The channel could not be read at all — the bundle file is missing or unreadable, or what arrived was not a bundle. Transport-level; retry once the drop is fixed."
           }
         }
       }
@@ -7782,6 +7831,29 @@
         ],
         "description": "Whether an act's obligations bind **a given product group** — a different\nquestion from whether the act exists, which is `InstrumentStatus`.\n\n`in_force` — the act creates binding obligations for this product group that\ncan be determined now. A future applicability date is *not* this status.\n\n`provisional` — the act exists or is anticipated, but nothing is bindingly\ndeterminable for this product group yet. Any obligation reported alongside\nthis status is a reading, not a determination.\n\n`watch` — tracked, but this act imposes nothing on this product group. A\nwatching brief rather than a duty, and never determinable.\n\n**Read this before acting on `passport.required`.** The obligation is a fold\nacross every act reaching the product group, so `required: true` says an act\nimposes a passport — not that the act binds this group today. Where every\nreaching act is `provisional` or `watch`, the requirement is a reading of\ninstruments that have not yet bound anything.\n",
         "example": "provisional"
+      },
+      "RulesetReload": {
+        "x-tags": [
+          "Access & Integrations"
+        ],
+        "type": "object",
+        "description": "The outcome of re-reading the signed compliance-ruleset channel.",
+        "required": [
+          "rulesetVersion",
+          "changed"
+        ],
+        "properties": {
+          "rulesetVersion": {
+            "type": "string",
+            "description": "The bundle version in force after the reload. `baseline` on a node that has never adopted a signed bundle.",
+            "example": "2026-Q3.2"
+          },
+          "changed": {
+            "type": "boolean",
+            "description": "Whether this call actually replaced the ruleset. `false` means the channel re-offered the bundle already in force — the ordinary answer on a quiet channel, and a success rather than an error.",
+            "example": true
+          }
+        }
       }
     },
     "responses": {
@@ -7946,6 +8018,7 @@
         "API Keys",
         "Webhooks",
         "Plugins",
+        "Ruleset",
         "Node",
         "Public (Vault)",
         "Credentialed Access",

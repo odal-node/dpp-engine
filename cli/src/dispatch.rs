@@ -2,8 +2,8 @@
 
 use crate::cli_args::{
     Commands, FacilityCommands, KeyCommands, OperatorCommands, OperatorIdCommands,
-    PassportCommands, PluginCommands, ProductGroupCommands, ProfileCommands, SchemaCommands,
-    SealCommands, TransferCommands, WebhookCommands,
+    PassportCommands, PluginCommands, ProductGroupCommands, ProfileCommands, RulesetCommands,
+    SchemaCommands, SealCommands, TransferCommands, WebhookCommands,
 };
 use crate::commands::{
     bootstrap::run_bootstrap,
@@ -35,6 +35,7 @@ use crate::commands::{
     },
     publish::run_publish,
     registry::{run_facility_audit, run_operator_id_audit, run_registry},
+    ruleset::run_ruleset_reload,
     schema::run_schema,
     seal::run_seal_status,
     stats::{run_operator_stats, run_passport_stats},
@@ -207,6 +208,9 @@ pub async fn dispatch(cmd: Commands) -> anyhow::Result<()> {
         Commands::Plugin {
             command: PluginCommands::Install { file },
         } => run_plugin_install(&file).await,
+        Commands::Ruleset {
+            command: RulesetCommands::Reload,
+        } => run_ruleset_reload().await,
         Commands::Profile {
             command: ProfileCommands::List,
         } => run_profile_list(),

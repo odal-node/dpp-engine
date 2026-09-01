@@ -7,6 +7,7 @@ pub mod passport;
 pub mod plugin;
 pub mod registry;
 pub mod registry_identity;
+pub mod ruleset;
 pub mod schema;
 pub mod seal;
 pub mod types;

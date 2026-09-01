@@ -375,6 +375,8 @@ paths:
     $ref: paths/vault/vault_api_v1_webhooks_{id}_test.yaml
   /vault/api/v1/plugins:
     $ref: paths/vault/vault_api_v1_plugins.yaml
+  /vault/api/v1/ruleset/reload:
+    $ref: paths/vault/vault_api_v1_ruleset_reload.yaml
   /vault/api/v1/node/state:
     $ref: paths/vault/vault_api_v1_node_state.yaml
   /vault/api/v1/whoami:
@@ -474,6 +476,10 @@ tags:
     description: >-
       Signed product-group plugin hot-install — verify, persist, hot-swap
       (admin-only).
+  - name: Ruleset
+    description: >-
+      Compliance Current — the signed, versioned ruleset channel. Re-read it and
+      hot-swap a verified bundle without a node restart (admin-only).
   - name: Node
     description: >-
       Node setup state, and what credential the caller presented. `/whoami`
@@ -583,6 +589,7 @@ x-tagGroups:
       - API Keys
       - Webhooks
       - Plugins
+      - Ruleset
       - Node
       - Public (Vault)
       - Credentialed Access
