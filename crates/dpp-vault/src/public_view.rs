@@ -102,14 +102,16 @@ pub fn audience_view(
         .unwrap_or_else(ProductGroupAccessPolicy::passport_default);
     let mut view = filter_by_audience(full, &policy, audience).filtered_data;
 
+    // Core's list, not a copy of it. Which keys are proofs is a statement about
+    // the domain — a proof attests to a specific sequence of bytes, so no
+    // audience class can decide who sees one — and core owns that statement in
+    // `PASSPORT_PROOF_FIELDS`, with a build gate that stops core compiling if a
+    // new `Passport` key lands unclassified. A hand-typed copy here opted this
+    // crate out of that gate: adding a fifth proof field in core would have
+    // left it in every audience view, attached to a body it cannot verify.
     if let Some(obj) = view.as_object_mut() {
-        for proof in [
-            "publicJwsSignature",
-            "jwsSignature",
-            "disclosureSignatures",
-            "seal",
-        ] {
-            obj.remove(proof);
+        for proof in dpp_domain::PASSPORT_PROOF_FIELDS {
+            obj.remove(*proof);
         }
     }
 
@@ -319,6 +321,37 @@ pub async fn sign_disclosure_views(
 pub(crate) mod tests {
     use super::*;
     use serde_json::json;
+
+    /// Driven by core's list rather than by a list written here, so a proof
+    /// field added in core extends this assertion by itself. That is the whole
+    /// point of consuming the constant: the previous hand-typed strip list
+    /// would have left a fifth proof field in every audience view, and no test
+    /// in either repo would have noticed.
+    #[test]
+    fn no_proof_field_core_declares_survives_any_audience_view() {
+        let mut payload = json!({
+            "productName": "Widget",
+            "productGroupData": { "productGroup": "battery" },
+        });
+        for proof in dpp_domain::PASSPORT_PROOF_FIELDS {
+            payload[*proof] = json!("a proof that must not be served");
+        }
+
+        for audience in [
+            Audience::Public,
+            Audience::LegitimateInterest,
+            Audience::Authority,
+        ] {
+            let view = audience_view(&payload, "battery", "2.6.0", audience);
+            for proof in dpp_domain::PASSPORT_PROOF_FIELDS {
+                assert!(
+                    view.get(*proof).is_none(),
+                    "{proof} reached the {audience:?} view; a view is a payload and \
+                     whoever serves it attaches the one proof covering those bytes"
+                );
+            }
+        }
+    }
 
     /// A compact JWS whose payload segment decodes to `payload`. Header and
     /// signature are placeholders — `signed_public_view` decodes, it does not
