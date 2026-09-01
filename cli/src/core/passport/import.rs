@@ -27,7 +27,8 @@ pub async fn action_import(
     // CSV/XLSX go through the integrator's bulk endpoint — the single validated
     // path that maps every column (Annex XIII fields, materials) and runs the
     // compliance determination server-side via the vault create handler. The
-    // product group is detected from the file's `product_group` (or `productCategory`) column.
+    // product group is detected from the file's `productGroup` (or the legacy
+    // `productCategory`) column.
     let bytes = std::fs::read(&params.file)
         .with_context(|| format!("Cannot read file: {}", params.file))?;
     let filename = std::path::Path::new(&params.file)
@@ -37,7 +38,7 @@ pub async fn action_import(
         .to_owned();
     let product_group = detect_product_group(&bytes).with_context(|| {
         format!(
-            "Could not determine the product_group for {}. Add a `product_group` column \
+            "Could not determine the product group for {}. Add a `productGroup` column \
              (battery, textile, steel, aluminium, tyre).",
             params.file
         )
@@ -118,7 +119,8 @@ pub fn parse_json_payloads(content: &str) -> Result<Vec<serde_json::Value>> {
     }
 }
 
-/// Detect the import product group from a CSV's `product_group` (or `productCategory`) column.
+/// Detect the import product group from a CSV's `productGroup` column, or the
+/// legacy `productCategory` / `product_category` spellings.
 ///
 /// Returns `None` for non-UTF-8 input (e.g. XLSX) or when no recognisable product group
 /// column/value is present. Delimiter is auto-detected (comma / tab / semicolon).
