@@ -1142,7 +1142,7 @@ dependencies = [
  "log",
  "quick-xml",
  "serde",
- "zip 8.6.0",
+ "zip",
 ]
 
 [[package]]
@@ -2140,6 +2140,8 @@ checksum = "75b325c5dbd37f80359721ad39aca5a29fb04c89279657cffdda8736d0c0b9d2"
 [[package]]
 name = "dpp-aas"
 version = "0.19.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "af4ec4a1cc09b41cc32c1d5c40e595c541c0c6c6e52cec2670810524a7548123"
 dependencies = [
  "dpp-domain",
  "dpp-vocab",
@@ -2150,6 +2152,8 @@ dependencies = [
 [[package]]
 name = "dpp-calc"
 version = "0.19.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f1f5a7897583c4fb6c43056506d83acfc71c1eb14a7d239dc71c154b2ce8d12d"
 dependencies = [
  "chrono",
  "dpp-rules",
@@ -2215,6 +2219,8 @@ dependencies = [
 [[package]]
 name = "dpp-crypto"
 version = "0.19.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1747716351031fbd56464d367ebfa5c2bc3b21d6bdbef10f6705a52a6bae2149"
 dependencies = [
  "aes-gcm",
  "anyhow",
@@ -2263,6 +2269,8 @@ dependencies = [
 [[package]]
 name = "dpp-digital-link"
 version = "0.19.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ee158b22c553f128c436121d011c8c9f0f6af67a5a33a6594828e837c2024863"
 dependencies = [
  "dpp-domain",
  "serde",
@@ -2273,6 +2281,8 @@ dependencies = [
 [[package]]
 name = "dpp-domain"
 version = "0.19.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3a19209f530263d1bfb75a86cc3b2cd54c058b87b57ff57e1b898072e4a7f452"
 dependencies = [
  "async-trait",
  "chrono",
@@ -2357,7 +2367,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "uuid",
- "zip 0.6.6",
+ "zip",
 ]
 
 [[package]]
@@ -2442,6 +2452,8 @@ dependencies = [
 [[package]]
 name = "dpp-plugin-traits"
 version = "0.19.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f3379fa5d91c4f7d179bb92dd08cfebc605ba3d699d9cb3729f0910aeaf8888d"
 dependencies = [
  "semver",
  "serde",
@@ -2452,6 +2464,8 @@ dependencies = [
 [[package]]
 name = "dpp-registry"
 version = "0.19.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b626175826e18ef802f2e9de5da9ea449a202e1d34823e5771880fedefaf85b6"
 dependencies = [
  "chrono",
  "dpp-domain",
@@ -2514,6 +2528,8 @@ dependencies = [
 [[package]]
 name = "dpp-rules"
 version = "0.19.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8bbedb7cce0dad9d136793248444eba53c305a2811168d1bf3a7f229d61b02ce"
 dependencies = [
  "base64 0.23.1",
  "chrono",
@@ -2617,6 +2633,8 @@ dependencies = [
 [[package]]
 name = "dpp-vc"
 version = "0.19.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e8feb107d2fe5a7a4391e3dfb46cfaa8335e2b9ef678bec9774a1669e1fa58a1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2637,6 +2655,8 @@ dependencies = [
 [[package]]
 name = "dpp-vocab"
 version = "0.19.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "73c5b4713451f179e3f7bbfa09f19c94cfb3713709a43116328875ef44a03735"
 dependencies = [
  "serde",
  "serde_json",
@@ -4853,7 +4873,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b570b25f7617e43d59005d0990ccb79e950a423952cea19671b7a876da390adf"
 dependencies = [
  "anyhow",
- "itertools 0.13.0",
+ "itertools 0.14.0",
  "proc-macro2",
  "quote",
  "syn 2.0.119",
@@ -6325,7 +6345,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.3.4",
+ "getrandom 0.4.3",
  "once_cell",
  "rustix",
  "windows-sys 0.61.2",
@@ -8314,18 +8334,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.119",
-]
-
-[[package]]
-name = "zip"
-version = "0.6.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "760394e246e4c28189f19d488c058bf16f564016aefac5d32bb1f3b51d5e9261"
-dependencies = [
- "byteorder",
- "crc32fast",
- "crossbeam-utils",
- "flate2",
 ]
 
 [[package]]
