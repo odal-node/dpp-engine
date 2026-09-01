@@ -1,0 +1,108 @@
+{
+  "productName": "Odal Industrial Battery NMC-48",
+  "batchId": "ODL-IND-NMC-2026-Q2-001",
+  "manufacturer": {
+    "name": "GreenCell GmbH",
+    "address": "Prenzlauer Berg 12, 10405 Berlin, DE",
+    "didWebUrl": "https://greencell.example/.well-known/did.json"
+  },
+  "placedOnMarketDate": "2026-06-01",
+  "commodityCode": "85076000",
+  "materials": [
+    { "name": "Lithium Nickel Manganese Cobalt Oxide", "weightKg": 14.2, "recycledPct": 11.0, "countryOfOrigin": "DE" },
+    { "name": "Graphite", "weightKg": 6.4, "recycledPct": 5.0, "countryOfOrigin": "DE" },
+    { "name": "Aluminium enclosure", "weightKg": 8.1, "recycledPct": 78.0, "countryOfOrigin": "DE" }
+  ],
+  "repairabilityScore": 7.5,
+  "productGroupData": {
+    "productGroup": "battery",
+    "gtin": "09590000000014",
+    "batteryType": "industrial",
+    "batteryChemistry": "NMC",
+    "co2ePerUnitKg": 41.8,
+    "batteryPassportNumber": "URN:ODL:BATT:09590000000014:ODL-IND-NMC-2026-Q2-001",
+    "batteryModelId": "GC-IND-NMC48-320",
+    "manufacturingPlace": "Berlin, DE (plant BLN-1)",
+    "manufacturingDate": "2026-04-15T00:00:00Z",
+    "batteryWeightKg": 32.0,
+    "nominalVoltageV": 48.0,
+    "minimalVoltageV": 42.0,
+    "maximumVoltageV": 54.6,
+    "nominalCapacityAh": 90.0,
+    "ratedCapacityKwh": 4.32,
+    "ratedEnergyWh": 4320.0,
+    "originalPowerCapabilityW": 4600.0,
+    "powerLimitMinW": 200.0,
+    "powerLimitMaxW": 6000.0,
+    "renewableContentPct": 18.0,
+    "recycledContentCobaltPct": 9.8,
+    "recycledContentLithiumPct": 10.5,
+    "recycledContentNickelPct": 12.3,
+    "recycledContentLeadPct": 0.0,
+    "recycledContentReportingYear": 2026,
+    "expectedLifetimeCycles": 2800,
+    "expectedLifetimeReferenceTest": "IEC 61427-1:2013, 25 degC, 80% DoD",
+    "initialRoundTripEfficiencyPct": 95.0,
+    "roundTripEfficiencyAtHalfCycleLifePct": 89.0,
+    "cycleLifeTestCRate": 0.5,
+    "internalCellResistanceMohm": 0.9,
+    "internalPackResistanceMohm": 14.0,
+    "notInUseTemperatureRange": { "minC": -20.0, "maxC": 45.0 },
+    "notInUseTemperatureReferenceTest": "IEC 62660-1:2018 storage profile",
+    "commercialWarrantyPeriodMonths": 120,
+    "hazardSymbol": null,
+    "hazardousSubstances": [
+      { "name": "Nickel sulfate", "casNumber": "7786-81-4", "concentrationPct": 1.2 },
+      { "name": "Lithium hexafluorophosphate", "casNumber": "21324-40-3", "concentrationPct": 0.8 }
+    ],
+    "usableExtinguishingAgent": "Water mist or ABC dry powder; do not use CO2",
+    "criticalRawMaterials": [
+      { "name": "Cobalt", "casNumber": "7440-48-4", "weightGrams": 1450.0, "countryOfOrigin": "CD" },
+      { "name": "Lithium", "casNumber": "7439-93-2", "weightGrams": 2100.0, "countryOfOrigin": "CL" },
+      { "name": "Natural graphite", "casNumber": "7782-42-5", "weightGrams": 6400.0, "countryOfOrigin": "CN" }
+    ],
+    "cathodeMaterial": [
+      { "name": "LiNi0.6Mn0.2Co0.2O2", "weightPct": 96.0, "casNumber": "346417-97-8" },
+      { "name": "PVDF binder", "weightPct": 2.0, "casNumber": "24937-79-9" },
+      { "name": "Conductive carbon black", "weightPct": 2.0, "casNumber": "1333-86-4" }
+    ],
+    "anodeMaterial": [
+      { "name": "Graphite", "weightPct": 95.0, "casNumber": "7782-42-5" },
+      { "name": "SBR/CMC binder", "weightPct": 3.0, "casNumber": "9003-55-8" },
+      { "name": "Conductive carbon black", "weightPct": 2.0, "casNumber": "1333-86-4" }
+    ],
+    "electrolyteMaterial": [
+      { "name": "Ethylene carbonate", "weightPct": 40.0, "casNumber": "96-49-1" },
+      { "name": "Dimethyl carbonate", "weightPct": 47.0, "casNumber": "616-38-6" },
+      { "name": "Lithium hexafluorophosphate", "weightPct": 13.0, "casNumber": "21324-40-3" }
+    ],
+    "componentPartNumbers": ["GC-CELL-2170-NMC", "GC-BMS-48-V3", "GC-PACK-ENCL-320"],
+    "sparePartsContacts": "spares@greencell.example; +49 30 5550 1200",
+    "disassemblyInstructionsUrl": "https://greencell.example/service/ind-nmc48/disassembly",
+    "safetyMeasures": "De-energise and wait 15 min before opening. Class 0 gloves. No conductive tools.",
+    "testReportResults": "IEC 62619:2022 pass; UN 38.3 pass; report GC-TR-2026-0412",
+    "markingInformation": "Separate-collection symbol (crossed-out wheeled bin) per Art. 13(4); capacity 90 Ah / 4.32 kWh",
+    "euDeclarationOfConformity": "EU-DoC GC-2026-IND-0091 dated 2026-04-20, per Regulation (EU) 2023/1542 Art. 18",
+    "wasteBatteryInformation": "Return to an authorised collection point or installer. Do not shred. Contains lithium; fire risk if damaged. Producer registration DE-BATT-00123.",
+    "batteryStatus": "original",
+    "dynamicPerformance": {
+      "ratedCapacityAh": 89.4,
+      "capacityFadePct": 0.7,
+      "internalResistanceMohm": 14.2,
+      "roundTripEfficiencyPct": 94.6,
+      "expectedLifetimeCycles": 2790
+    },
+    "stateOfHealth": {
+      "parameterSet": "stationaryOrLmt",
+      "remainingCapacityPct": 99.3,
+      "remainingPowerCapabilityPct": 99.0,
+      "remainingRoundTripEfficiencyPct": 98.5,
+      "selfDischargeRatePctPerMonth": 2.1,
+      "ohmicResistanceMohm": 14.2
+    },
+    "usageHistory": {
+      "chargeDischargeCycles": 12,
+      "negativeEvents": []
+    }
+  }
+}
