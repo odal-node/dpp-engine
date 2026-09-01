@@ -1,21 +1,22 @@
 {
   "productName": "Odal Reference Organic Cotton Tee",
-  "productCategory": "TEXTILE",
+  "productGroup": "textile",
   "batchId": "TEX-2026-SS-014",
   "manufacturer": {
     "name": "EcoTextile Ltd",
     "address": "Whitworth Street 5, Manchester M1, GB",
     "didWebUrl": "https://ecotextile.example/.well-known/did.json"
   },
+  "placedOnMarketDate": "2026-03-15",
+  "commodityCode": "61091000",
   "materials": [
     { "name": "Organic Cotton", "weightKg": 0.18, "recycledPct": 0.0, "countryOfOrigin": "IN" },
     { "name": "Recycled Polyester", "weightKg": 0.12, "recycledPct": 100.0, "countryOfOrigin": "TR" }
   ],
   "co2ePerUnit": 3.2,
   "repairabilityScore": 6.0,
-  "schemaVersion": "1.0.0",
-  "sectorData": {
-    "sector": "textile",
+  "productGroupData": {
+    "productGroup": "textile",
     "gtin": "09506000134352",
     "fibreComposition": [
       { "fibre": "organic cotton", "pct": 60.0, "countryOfOrigin": "IN" },

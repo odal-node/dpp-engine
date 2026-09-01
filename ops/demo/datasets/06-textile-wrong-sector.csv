@@ -1,4 +1,4 @@
-productName,sector,gtin,manufacturerName,manufacturerCountry,batchId,fibreComposition,countryOfOrigin,careInstructions,chemicalComplianceStandard
+productName,productGroup,gtin,manufacturerName,manufacturerCountry,batchId,fibreComposition,countryOfOrigin,careInstructions,chemicalComplianceStandard
 Glamor T-Shirt Wrong Sector Battery,battery,38012345003014,Glamor Clothing,DE,BATCH-SEC-001,"[{""fibre"":""cotton"",""pct"":100.0}]",DE,Machine wash 40°C.,OEKO-TEX Standard 100
 Glamor T-Shirt Unknown Sector,electronics,38012345003021,Glamor Clothing,DE,BATCH-SEC-002,"[{""fibre"":""cotton"",""pct"":100.0}]",DE,Machine wash 40°C.,OEKO-TEX Standard 100
 Glamor T-Shirt Empty Sector,,38012345003038,Glamor Clothing,DE,BATCH-SEC-003,"[{""fibre"":""cotton"",""pct"":100.0}]",DE,Machine wash 40°C.,OEKO-TEX Standard 100
