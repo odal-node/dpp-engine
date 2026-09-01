@@ -14,8 +14,8 @@ use serde::{Deserialize, Serialize};
 use crate::{middleware::auth::AuthContext, state::AppState};
 
 use super::error::{
-    conflict_error, internal_error, not_found_error, parse_passport_id, require_write,
-    validation_error,
+    conflict_error, field_validation_error, internal_error, not_found_error, parse_passport_id,
+    require_write, validation_error,
 };
 
 /// Body for initiating a transfer: the outgoing and incoming operators and the
@@ -81,7 +81,7 @@ pub async fn transfer_initiate_handler(
         Err(dpp_domain::DppError::InvalidTransition { .. }) => {
             conflict_error("Only a published DPP can be transferred.")
         }
-        Err(e @ dpp_domain::DppError::Validation(_)) => validation_error(&e.to_string()),
+        Err(dpp_domain::DppError::Validation(errs)) => field_validation_error(&errs),
         Err(e) => internal_error(e),
     }
 }
@@ -105,7 +105,7 @@ pub async fn transfer_accept_handler(
         Err(dpp_domain::DppError::NotFound(_)) => {
             not_found_error("No transfer to accept for this DPP.")
         }
-        Err(e @ dpp_domain::DppError::Validation(_)) => validation_error(&e.to_string()),
+        Err(dpp_domain::DppError::Validation(errs)) => field_validation_error(&errs),
         Err(e) => internal_error(e),
     }
 }
@@ -138,7 +138,7 @@ pub async fn transfer_reject_handler(
         Err(dpp_domain::DppError::NotFound(_)) => {
             not_found_error("No transfer to reject for this DPP.")
         }
-        Err(e @ dpp_domain::DppError::Validation(_)) => validation_error(&e.to_string()),
+        Err(dpp_domain::DppError::Validation(errs)) => field_validation_error(&errs),
         Err(e) => internal_error(e),
     }
 }
@@ -166,7 +166,7 @@ pub async fn transfer_cancel_handler(
         Err(dpp_domain::DppError::NotFound(_)) => {
             not_found_error("No transfer to cancel for this DPP.")
         }
-        Err(e @ dpp_domain::DppError::Validation(_)) => validation_error(&e.to_string()),
+        Err(dpp_domain::DppError::Validation(errs)) => field_validation_error(&errs),
         Err(e) => internal_error(e),
     }
 }

@@ -19,7 +19,9 @@ use dpp_types::{CreateWebhookRequest, WebhookSubscription};
 
 use crate::{middleware::auth::AuthContext, state::AppState};
 
-use super::error::{api_error, internal_error, not_found_error, require_admin, validation_error};
+use super::error::{
+    api_error, field_validation_error, internal_error, not_found_error, require_admin,
+};
 
 /// Create response — the redacted subscription plus the signing secret, shown once.
 #[derive(Serialize)]
@@ -63,7 +65,7 @@ pub async fn webhooks_create_handler(
             }),
         )
             .into_response(),
-        Err(DppError::Validation(msg)) => validation_error(&msg.to_string()),
+        Err(DppError::Validation(msg)) => field_validation_error(&msg),
         Err(e) => internal_error(e),
     }
 }

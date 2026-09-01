@@ -1,0 +1,24 @@
+x-tags:
+  - Errors
+type: object
+description: |
+  One field's failure inside a `Problem`.
+
+  Present only on problems that are about specific members of the request
+  document — a validation rejection, most often. `field` is a JSON Pointer into
+  that document, so a client can address the offending member directly instead
+  of parsing it back out of `detail`.
+required:
+  - field
+  - message
+properties:
+  field:
+    type: string
+    description: |
+      RFC 6901 JSON Pointer to the offending member. Empty when the failure is
+      about the document as a whole rather than one of its fields.
+    example: /productGroupData/batteryModelId
+  message:
+    type: string
+    description: What is wrong with that member, in one sentence.
+    example: "'batteryModelId' is mandatory for a 'industrial' battery and is absent"

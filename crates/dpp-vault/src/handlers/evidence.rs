@@ -12,7 +12,8 @@ use uuid::Uuid;
 use crate::{domain::verify::verify_dossier_json, middleware::auth::AuthContext, state::AppState};
 
 use super::error::{
-    api_error, conflict_error, internal_error, not_found_error, parse_passport_id, require_write,
+    api_error, field_conflict_error, internal_error, not_found_error, parse_passport_id,
+    require_write,
 };
 
 #[allow(clippy::result_large_err)]
@@ -48,7 +49,7 @@ pub async fn generate_evidence_handler(
     match state.service.generate_evidence(passport_id, &auth).await {
         Ok(record) => (StatusCode::CREATED, Json(record)).into_response(),
         Err(dpp_domain::DppError::NotFound(_)) => not_found_error("DPP not found."),
-        Err(dpp_domain::DppError::Validation(msg)) => conflict_error(&msg.to_string()),
+        Err(dpp_domain::DppError::Validation(msg)) => field_conflict_error(&msg),
         Err(e) => internal_error(e),
     }
 }

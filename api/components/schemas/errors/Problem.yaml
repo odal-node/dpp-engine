@@ -34,3 +34,17 @@ properties:
     type: string
     format: uri-reference
     description: URI reference identifying this specific occurrence.
+  errors:
+    type: array
+    description: |
+      The individual field failures behind this problem, when there are any.
+
+      An RFC 7807 §3.2 extension member. `detail` carries the same failures
+      joined with `"; "` and is unaffected, so a client written before this
+      member existed keeps working; `errors` is what lets a newer one address a
+      single field. Publishing a battery that is missing its Annex XIII content
+      produces upwards of thirty entries here.
+
+      Omitted entirely — never `[]` — on problems that are not about fields.
+    items:
+      $ref: ./ProblemFieldError.yaml

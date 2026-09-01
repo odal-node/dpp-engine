@@ -386,6 +386,7 @@ fn object_cases() -> Vec<ObjectCase> {
 
     // ── dpp-common ────────────────────────────────────────────────────────
     case!("Problem", fixtures::problem());
+    case!("ProblemFieldError", fixtures::problem_field_error());
     case!("ScanBatch", fixtures::scan_batch());
     case!("ScanBatchEntry", fixtures::scan_count());
     case!("QrRenderBatchEntry", fixtures::qr_render_count());
@@ -2105,7 +2106,7 @@ mod fixtures {
     use super::*;
 
     use dpp_common::{
-        http_problem::Problem,
+        http_problem::{Problem, ProblemFieldError},
         plugin_admin::InstalledPlugin,
         scan::{QrRenderBatchEntry, ScanBatch, ScanBatchEntry, ScanVariant},
     };
@@ -2664,6 +2665,23 @@ mod fixtures {
             status: 422,
             detail: Some("productName must not be empty".into()),
             instance: Some("/vault/api/v1/dpp".into()),
+            // Two, not one: the member exists because a validation failure is
+            // usually plural, and a single-element fixture would let a spec
+            // that typed it as an object rather than an array pass.
+            errors: Some(vec![
+                problem_field_error(),
+                ProblemFieldError {
+                    field: "/productGroupData/gtin".into(),
+                    message: "check digit is wrong".into(),
+                },
+            ]),
+        }
+    }
+
+    pub fn problem_field_error() -> ProblemFieldError {
+        ProblemFieldError {
+            field: "/productName".into(),
+            message: "productName must not be empty".into(),
         }
     }
 
