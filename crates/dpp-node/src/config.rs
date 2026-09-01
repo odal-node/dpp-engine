@@ -162,10 +162,17 @@ impl NodeConfig {
         let admin_password = std::env::var("ADMIN_PASSWORD")
             .ok()
             .filter(|s| !s.is_empty());
+        // Read here, beside the other two credentials, rather than inside the
+        // check — see `ensure_bootstrap_credentials` for what reading it in
+        // there cost.
+        let allow_dev_credentials = std::env::var(ALLOW_DEV_CREDENTIALS)
+            .map(|v| v.trim().eq_ignore_ascii_case("true"))
+            .unwrap_or(false);
         ensure_bootstrap_credentials(
             admin_username.as_deref(),
             admin_password.as_deref(),
             &key_store_passphrase,
+            allow_dev_credentials,
         )?;
 
         Ok(Self {
@@ -246,8 +253,17 @@ const ALLOW_DEV_CREDENTIALS: &str = "ALLOW_DEV_CREDENTIALS";
 /// path produced a node whose most powerful credential was public knowledge.
 ///
 /// This is a pure function so it is testable without mutating process-global
-/// environment state, matching `ensure_signing_policy` in `plugins.rs`. It
-/// deliberately checks only for the *shipped literals*: a boot-time password
+/// environment state, matching `ensure_signing_policy` in `plugins.rs` — which
+/// is why `allow_dev` is a parameter rather than a `std::env::var` call in the
+/// body. It used to be the latter, and the difference was not academic: the
+/// `justfile` loads `.env`, a developer `.env` sets `ALLOW_DEV_CREDENTIALS=true`
+/// because that is what it is for, and so `just check` handed the escape hatch
+/// to the three tests whose whole purpose is to prove the placeholders are
+/// refused. They failed on every machine set up for development and passed in
+/// CI, where no `.env` exists — the gate was green exactly where nobody was
+/// running it.
+///
+/// It deliberately checks only for the *shipped literals*: a boot-time password
 /// strength policy is a different control with a different failure mode, and
 /// bundling the two would make this one arguable.
 ///
@@ -263,6 +279,7 @@ fn ensure_bootstrap_credentials(
     admin_username: Option<&str>,
     admin_password: Option<&str>,
     key_store_passphrase: &str,
+    allow_dev: bool,
 ) -> Result<()> {
     if key_store_passphrase.trim().is_empty() {
         anyhow::bail!(
@@ -271,9 +288,6 @@ fn ensure_bootstrap_credentials(
         );
     }
 
-    let allow_dev = std::env::var(ALLOW_DEV_CREDENTIALS)
-        .map(|v| v.trim().eq_ignore_ascii_case("true"))
-        .unwrap_or(false);
     if allow_dev {
         tracing::warn!(
             "{ALLOW_DEV_CREDENTIALS}=true — placeholder credentials accepted. \
@@ -316,15 +330,22 @@ fn ensure_bootstrap_credentials(
 #[cfg(test)]
 mod bootstrap_credentials {
     //! The guard is a pure function precisely so these need no env mutation and
-    //! no `#[serial]` — the one exception being the escape hatch, which reads a
-    //! process-global var by design.
-    use super::{ALLOW_DEV_CREDENTIALS, ensure_bootstrap_credentials};
+    //! no `#[serial]` — the escape hatch included, now that it is a parameter
+    //! rather than a `std::env::var` read inside the guard.
+    //!
+    //! That exception was not free. `just check` loads `.env`, a developer
+    //! `.env` sets `ALLOW_DEV_CREDENTIALS=true` because that is what it is for,
+    //! and the three "the placeholders are refused" tests inherited it — so
+    //! they failed on every machine set up for development and passed in CI,
+    //! where there is no `.env`. A test whose subject is a process-global reads
+    //! that global from whoever ran it.
+    use super::ensure_bootstrap_credentials;
 
     const GOOD_PASS: &str = "PmDq0aUu0kXwQ0nS+9kQ0Q==";
 
     #[test]
     fn the_shipped_admin_pair_is_refused() {
-        let err = ensure_bootstrap_credentials(Some("admin"), Some("admin"), GOOD_PASS)
+        let err = ensure_bootstrap_credentials(Some("admin"), Some("admin"), GOOD_PASS, false)
             .expect_err("`admin`/`admin` must not boot");
         assert!(err.to_string().contains("ADMIN_USERNAME/ADMIN_PASSWORD"));
     }
@@ -333,12 +354,14 @@ mod bootstrap_credentials {
     /// changed it", and `ADMIN_PASSWORD=Admin ` is the same non-change.
     #[test]
     fn the_shipped_pair_is_matched_loosely() {
-        assert!(ensure_bootstrap_credentials(Some(" Admin"), Some("ADMIN "), GOOD_PASS).is_err());
+        assert!(
+            ensure_bootstrap_credentials(Some(" Admin"), Some("ADMIN "), GOOD_PASS, false).is_err()
+        );
     }
 
     #[test]
     fn the_shipped_key_store_passphrase_is_refused() {
-        let err = ensure_bootstrap_credentials(None, None, "dev-passphrase-change-in-prod")
+        let err = ensure_bootstrap_credentials(None, None, "dev-passphrase-change-in-prod", false)
             .expect_err("the shipped passphrase must not boot");
         assert!(err.to_string().contains("KEY_STORE_PASSPHRASE"));
     }
@@ -350,7 +373,7 @@ mod bootstrap_credentials {
     fn an_empty_key_store_passphrase_is_refused() {
         for blank in ["", "   ", "\t"] {
             assert!(
-                ensure_bootstrap_credentials(None, None, blank).is_err(),
+                ensure_bootstrap_credentials(None, None, blank, false).is_err(),
                 "{blank:?} must be refused"
             );
         }
@@ -360,8 +383,8 @@ mod bootstrap_credentials {
     /// `ADMIN_USERNAME=admin` authenticates nothing and must not block a boot.
     #[test]
     fn a_lone_shipped_username_is_not_a_credential() {
-        assert!(ensure_bootstrap_credentials(Some("admin"), None, GOOD_PASS).is_ok());
-        assert!(ensure_bootstrap_credentials(None, Some("admin"), GOOD_PASS).is_ok());
+        assert!(ensure_bootstrap_credentials(Some("admin"), None, GOOD_PASS, false).is_ok());
+        assert!(ensure_bootstrap_credentials(None, Some("admin"), GOOD_PASS, false).is_ok());
     }
 
     /// The guard checks for the shipped literals, not for password strength.
@@ -369,37 +392,32 @@ mod bootstrap_credentials {
     /// two would make this guard arguable and therefore disabled.
     #[test]
     fn a_deliberate_choice_is_not_second_guessed() {
-        assert!(ensure_bootstrap_credentials(Some("root"), Some("hunter2"), "hunter2").is_ok());
+        assert!(
+            ensure_bootstrap_credentials(Some("root"), Some("hunter2"), "hunter2", false).is_ok()
+        );
     }
 
     #[test]
     fn no_admin_credentials_at_all_is_the_recommended_state() {
-        assert!(ensure_bootstrap_credentials(None, None, GOOD_PASS).is_ok());
+        assert!(ensure_bootstrap_credentials(None, None, GOOD_PASS, false).is_ok());
     }
 
     #[test]
-    #[serial_test::serial]
     fn the_escape_hatch_allows_the_placeholders() {
-        // Safety: `#[serial]`, so no concurrent env mutation in this process.
-        unsafe { std::env::set_var(ALLOW_DEV_CREDENTIALS, "true") };
         let allowed = ensure_bootstrap_credentials(
             Some("admin"),
             Some("admin"),
             "dev-passphrase-change-in-prod",
+            true,
         );
-        unsafe { std::env::remove_var(ALLOW_DEV_CREDENTIALS) };
         assert!(allowed.is_ok(), "the dev escape hatch must permit them");
     }
 
     /// The escape hatch is for placeholders, not for an absent passphrase —
     /// there is no key to derive from an empty string in any environment.
     #[test]
-    #[serial_test::serial]
     fn the_escape_hatch_does_not_permit_an_empty_passphrase() {
-        unsafe { std::env::set_var(ALLOW_DEV_CREDENTIALS, "true") };
-        let refused = ensure_bootstrap_credentials(None, None, "");
-        unsafe { std::env::remove_var(ALLOW_DEV_CREDENTIALS) };
-        assert!(refused.is_err());
+        assert!(ensure_bootstrap_credentials(None, None, "", true).is_err());
     }
 }
 
