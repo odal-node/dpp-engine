@@ -104,7 +104,7 @@ jsonwebtoken = "9"
 jsonschema   = "0.17"
 
 # QR code
-qrcode       = "0.12"
+qrcode       = "0.14"
 # PNG only — the sole use is encoding a QR code (dpp-resolver's resolve_qr).
 # The default feature set pulls decoders for every format the crate supports,
 # including the OpenEXR stack (exr -> pulp -> the unmaintained `paste`), none
