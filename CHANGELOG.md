@@ -149,6 +149,31 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ### Fixed
 
+- **Four `s3_archive` tests booted a MinIO container each, and sat 0.4s from
+  failing CI.** Around eight seconds apiece was container startup, which the test
+  body does not control — so the four crossed the ten-second slow-test budget
+  whenever the runner was busy, in a different combination each run. They were
+  missed when the container-bound suites were exempted, because that survey
+  counted `start_nats` and `start_pg_before` call sites and `start_minio` is a
+  third way to start one.
+
+  Exempting them would have been the wrong answer. The NATS suite genuinely
+  cannot share a server — `NatsEventBus::connect` hard-codes the `DPP_EVENTS`
+  stream, so four tests against one would consume each other's messages — but
+  nothing equivalent constrains these. The only name they shared was the bucket.
+
+  They now use one MinIO for the whole job, found through `ODAL_TEST_S3_ENDPOINT`
+  with a bucket per test, exactly as `ODAL_TEST_PG_ADMIN_URL` already works for
+  Postgres. Sharing in-process is not available: nextest runs each test in its
+  own process, so a `OnceLock` holding a container is one container per test
+  again — the server has to outlive the test and be found through the
+  environment. Unset, each test starts its own container as before, so a bare
+  `cargo test` needs no orchestration.
+
+  Measured both ways: **8.0s to 0.107s** for the suite, four distinct buckets on
+  the shared server, and a wrong endpoint fails all four loudly rather than
+  falling back to containers and passing slowly.
+
 - **Every push to a branch with an open PR ran the whole suite twice.**
   `push: ["**"]` and `pull_request` both fired, on two runners, for the same
   commit. Beyond the double spend, it took two independent samples of every

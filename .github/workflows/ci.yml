@@ -161,6 +161,7 @@ jobs:
           --health-retries 12
     env:
       ODAL_TEST_PG_ADMIN_URL: postgres://postgres:test@127.0.0.1:5432/postgres
+      ODAL_TEST_S3_ENDPOINT: http://127.0.0.1:9000
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -177,6 +178,39 @@ jobs:
           tool: nextest
       - name: Create results dir
         run: mkdir -p dpp-engine/results
+      # One MinIO for the whole job, rather than one per S3 test — the same
+      # arrangement as the Postgres service above, for the same reason. The four
+      # `s3_archive` tests booted their own and spent about ten seconds each
+      # doing it, which put them on the wrong side of the slow-test budget
+      # whenever the runner was busy. `ODAL_TEST_S3_ENDPOINT` points them here;
+      # unset, they still start their own container, so a bare `cargo test`
+      # keeps working.
+      #
+      # A step rather than a `services:` entry because MinIO needs `server /data`
+      # as its command, and a service container can set `image`, `env`, `ports`,
+      # `volumes` and `options` but not a command. The alternative — an image
+      # that runs the server by default — would have CI and a local run testing
+      # two different MinIO builds, which is a worse trade than a longer step.
+      # The tag is the one `s3_archive.rs` pins for its own container; the two
+      # must move together.
+      - name: Start MinIO
+        run: |
+          docker run -d --name minio \
+            -p 9000:9000 \
+            -e MINIO_ROOT_USER=minioadmin \
+            -e MINIO_ROOT_PASSWORD=minioadmin \
+            minio/minio:RELEASE.2025-09-07T16-13-09Z \
+            server /data --console-address :9001
+          for _ in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:9000/minio/health/live >/dev/null 2>&1; then
+              echo "minio ready"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "minio did not become ready in 30s"
+          docker logs minio
+          exit 1
       # Docker is pre-installed on ubuntu-latest; testcontainers uses it.
       # The plugin-host suite includes the fuel-exhaustion sandbox test, which
       # aborts on Windows (SEH unwind) but must pass on the Linux deploy target.
