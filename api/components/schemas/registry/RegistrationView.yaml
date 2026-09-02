@@ -1,0 +1,31 @@
+x-tags:
+  - EU Registry State
+type: object
+description: One passport's registration, as the EU-registry queue holds it.
+required:
+  - status
+  - attempts
+  - stalled
+properties:
+  status:
+    type: string
+    enum: [pending, submitted, registered, rejected, deactivated]
+  registryId:
+    type: string
+    description: The registry's own record id, once it has issued one.
+  message:
+    type: string
+    description: The last thing the registry (or the drain) said about it.
+  attempts:
+    type: integer
+  stalled:
+    type: boolean
+    description: >-
+      True once `attempts` reaches the drain threshold — the row is not going to
+      succeed without someone looking at it.
+  statusIntent:
+    type: string
+    description: >-
+      A status change owed to the registry, independent of the queue state.
+      Nothing drains these: the registry publishes no status-push API, so they
+      are held durably and reported rather than accumulating out of sight.

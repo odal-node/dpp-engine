@@ -1,0 +1,12 @@
+x-tags:
+  - Scan Counters
+type: object
+required:
+  - day
+  - count
+properties:
+  day:
+    type: string
+    format: date
+  count:
+    type: integer

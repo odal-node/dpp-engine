@@ -1,0 +1,33 @@
+delete:
+  operationId: removeWebhook
+  summary: Remove a webhook subscription
+  description: |
+    Soft-removes a subscription (`active` set to false). Deliveries already
+    queued still drain; no new events are enqueued. Admin-scoped.
+  tags:
+    - Webhooks
+  security:
+    - BearerApiKey: []
+    - BasicAuth: []
+  parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  responses:
+    '204':
+      description: Subscription removed.
+    '400':
+      description: Invalid subscription id.
+      content:
+        application/problem+json:
+          schema:
+            $ref: ../../components/schemas/errors/Problem.yaml
+    '401':
+      $ref: ../../components/responses/Unauthorized.yaml
+    '404':
+      $ref: ../../components/responses/NotFound.yaml
+    '403':
+      $ref: ../../components/responses/Forbidden.yaml

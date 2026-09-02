@@ -1,0 +1,27 @@
+x-tags:
+  - Passport Reports
+type: object
+required:
+  - path
+  - verified
+properties:
+  path:
+    type: array
+    items:
+      type: string
+    description: Component-ref URIs from the root down to this node.
+  verified:
+    type: boolean
+  reason:
+    type:
+      - string
+      - 'null'
+    enum:
+      - unreachable
+      - notPublished
+      - hashMismatch
+      - cycle
+      - depthExceeded
+      - nodeCapExceeded
+      - malformedRef
+    description: The failure reason when `verified` is false.

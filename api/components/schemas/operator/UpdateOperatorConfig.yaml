@@ -1,0 +1,43 @@
+x-tags:
+  - Operator Profile
+type: object
+description: Merge-patch update — only supply fields being changed.
+properties:
+  legalName:
+    type: string
+  tradeName:
+    type: string
+  address:
+    type: string
+  country:
+    type: string
+  contactEmail:
+    type: string
+  didWebUrl:
+    type: string
+  productCategories:
+    type: array
+    items:
+      type: string
+  brandPrimary:
+    type: string
+  brandSecondary:
+    type: string
+  brandLogoUrl:
+    type: string
+  customDomain:
+    type: string
+  dataResidency:
+    type: string
+  retentionPolicyDays:
+    type: integer
+  featureFlags:
+    type: object
+  registryVerifiedAt:
+    type:
+      - string
+      - 'null'
+    format: date-time
+    description: >-
+      When this operator's identity was last verified against the EU registry.
+      Null when no verification has succeeded — never treat absence as verified.

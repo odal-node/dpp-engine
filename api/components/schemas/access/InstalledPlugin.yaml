@@ -1,0 +1,16 @@
+x-tags:
+  - Access & Integrations
+type: object
+description: What the node installed, reported back after a successful hot-swap.
+required:
+  - productGroup
+  - abiVersion
+properties:
+  productGroup:
+    type: string
+    description: Product group catalog key the plugin is bound to.
+    example: battery
+  abiVersion:
+    type: string
+    description: ABI version the plugin declared, formatted `major.minor`.
+    example: '1.0'

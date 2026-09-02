@@ -1,4 +1,0 @@
-type: string
-format: uuid
-description: UUID v7 identifier assigned on creation. Embedded in QR codes and public URLs.
-example: 019723f4-1a2b-7c3d-8e4f-5a6b7c8d9e0f

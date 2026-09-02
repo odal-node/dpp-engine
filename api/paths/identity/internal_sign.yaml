@@ -1,0 +1,31 @@
+servers:
+  - url: http://localhost:8002
+    description: odal-identity standalone (mTLS internal)
+post:
+  operationId: internalSign
+  summary: Sign a payload (internal, mTLS)
+  description: |
+    Signs a base64-encoded canonical-JSON payload with the operator's
+    Ed25519 key (auto-provisioned on first use). Returns a compact JWS.
+    Service-to-service only — gated by mTLS (`CN=odal-vault`).
+  tags:
+    - Identity (internal)
+  security:
+    - MutualTLS: []
+  requestBody:
+    required: true
+    content:
+      application/json:
+        schema:
+          $ref: ../../components/schemas/identity/InternalSignRequest.yaml
+  responses:
+    '200':
+      description: Signed payload.
+      content:
+        application/json:
+          schema:
+            $ref: ../../components/schemas/identity/InternalSignResponse.yaml
+    '400':
+      description: Payload is not valid base64 or not valid JSON.
+    '422':
+      $ref: ../../components/responses/ValidationError.yaml

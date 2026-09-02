@@ -1,0 +1,16 @@
+x-tags:
+  - Evidence & Verification
+type: object
+required:
+  - trustAnchorNote
+  - checks
+properties:
+  trustAnchorNote:
+    type: string
+    example: >-
+      trust anchored to the dossier's embedded DID-document snapshot dated
+      2026-07-10T00:00:00Z
+  checks:
+    type: array
+    items:
+      $ref: ./CheckResult.yaml

@@ -1,0 +1,38 @@
+get:
+  operationId: getSealSummary
+  summary: Operator-wide sealing state
+  description: |
+    How many published passports carry no seal, plus the outbox totals
+    behind that number.
+
+    `unsealedPublished` is the headline; the three row counts are context.
+    They answer different questions and can legitimately disagree: the
+    counts describe outbox **rows**, while the obligation is about
+    **passports**. Enqueueing happens after the publish commits, so a crash
+    in that window publishes a passport that no row will ever cover —
+    `pending: 0, exhausted: 0` is therefore consistent with any number of
+    unsealed passports, and a summary built on rows alone would report all
+    clear. A repair sweep queues those passports on its next pass.
+
+    A passport whose seal covers a *superseded* signature is not counted
+    here — it carries a seal, and that seal remains a valid attestation of
+    the signature it was bought for. `GET /vault/api/v1/dpp/{dppId}/seal`
+    reports that case per passport as `coverage`.
+
+    When `sealingConfigured` is `false` no seal provider is selected, so
+    every count is `0` because this node has no outbox — not because it has
+    nothing outstanding.
+  tags:
+    - DPP Management
+  security:
+    - BearerApiKey: []
+    - BasicAuth: []
+  responses:
+    '200':
+      description: Operator-wide sealing state.
+      content:
+        application/json:
+          schema:
+            $ref: ../../components/schemas/seals/SealSummaryResponse.yaml
+    '401':
+      $ref: ../../components/responses/Unauthorized.yaml

@@ -7,7 +7,9 @@ use dpp_domain::{
     passport::{Passport, PassportId},
     status::PassportStatus,
 };
-use dpp_types::{audit::AuditEntry, auth::AuthContext, registry_sync::RegistryStatusIntent};
+use dpp_types::{
+    audit::PassportAuditEntry, auth::AuthContext, registry_sync::RegistryStatusIntent,
+};
 
 use super::{PassportService, retention_years_for};
 
@@ -40,7 +42,7 @@ impl PassportService {
             .update_status(id, PassportStatus::Suspended)
             .await?;
 
-        let mut entry = AuditEntry::new(
+        let mut entry = PassportAuditEntry::new(
             &updated.id.to_string(),
             "suspended",
             &auth.user_id,
@@ -133,7 +135,7 @@ impl PassportService {
             .update_status(id, PassportStatus::Archived)
             .await?;
 
-        let entry = AuditEntry::new(
+        let entry = PassportAuditEntry::new(
             &updated.id.to_string(),
             "archived",
             &auth.user_id,

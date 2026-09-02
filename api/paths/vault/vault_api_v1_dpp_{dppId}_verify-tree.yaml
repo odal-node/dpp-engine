@@ -1,0 +1,35 @@
+get:
+  operationId: verifyDppTree
+  summary: Recursively verify a passport's component tree (BOM)
+  description: |
+    Walks the passport's `componentRefs` breadth-first, fetching each node
+    and checking its public JWS against the pinned hash. Fails closed on
+    every ambiguity, bounded by a depth cap and a total-node cap; the report
+    names the path from the root to any broken node.
+
+    Integrity only: this proves each node's signed public view is unchanged
+    (hash pin), not the cryptographic validity of the signature.
+  tags:
+    - DPP Management
+  security:
+    - BearerApiKey: []
+    - BasicAuth: []
+  parameters:
+    - name: dppId
+      in: path
+      required: true
+      schema:
+        $ref: ../../components/schemas/passport/DppId.yaml
+  responses:
+    '200':
+      description: The component-tree verification report.
+      content:
+        application/json:
+          schema:
+            $ref: ../../components/schemas/passport-reports/TreeReport.yaml
+    '401':
+      $ref: ../../components/responses/Unauthorized.yaml
+    '404':
+      $ref: ../../components/responses/NotFound.yaml
+    '400':
+      $ref: ../../components/responses/BadRequest.yaml

@@ -1,0 +1,35 @@
+x-tags:
+  - Access & Integrations
+type: object
+required:
+  - version
+  - coreVersion
+  - authMethods
+  - features
+description: Vault build/version metadata, for dashboard feature detection.
+properties:
+  version:
+    type: string
+    description: This node's own dpp-vault crate version.
+    example: 0.11.0
+  coreVersion:
+    type: string
+    description: The dpp-domain (dpp-core) version this build was compiled against.
+    example: 0.16.0
+  authMethods:
+    type: array
+    items:
+      type: string
+    description: >-
+      Auth schemes the vault accepts. Currently a fixed list, not derived from
+      live config — `local` is listed even when
+      `ADMIN_USERNAME`/`ADMIN_PASSWORD` are unset.
+    example:
+      - api_key
+      - local
+  features:
+    type: array
+    items:
+      type: string
+    example:
+      - passthrough_compliance

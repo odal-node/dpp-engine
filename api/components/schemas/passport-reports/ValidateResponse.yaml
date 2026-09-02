@@ -1,0 +1,44 @@
+x-tags:
+  - Passport Reports
+type: object
+description: >-
+  The dry-run verdict. Two booleans rather than one, because create and publish
+  deliberately differ: a body can be creatable as a draft and not yet
+  publishable, and collapsing that into a single flag would hide the gap until
+  the caller tried to publish.
+required:
+  - createValid
+  - productGroupDataValid
+properties:
+  createValid:
+    type: boolean
+    description: >-
+      Always `true` on a 200 — a body create would reject gets back the
+      identical 422 create would have returned, not a paraphrase of it.
+    example: true
+  productGroupDataValid:
+    type: boolean
+    description: |
+      Whether the product group data would clear the publish-time schema gate. `true`
+      when no product group data is supplied, since publish only validates it when
+      present.
+
+      **Not a publish verdict.** It reports one of publish's preconditions, and
+      publish applies others this route does not run: the registry-identity
+      requirement (a default facility and a primary operator identifier), which
+      needs operator state this route never reads; the category-mandatory
+      content gate, reachable only by attempting the lifecycle transition; and
+      the compliance gate, which needs a `placedOnMarketDate` and a stored
+      passport. `true` means "this body clears the schema gate", never "publish
+      will succeed" — the field was called `publishValid` and was renamed
+      because that name promised the latter.
+    example: false
+  detail:
+    type:
+      - string
+      - 'null'
+    description: >-
+      Why the product group data would be refused. Null when `productGroupDataValid` is true.
+    example: >-
+      cannot publish: no registered JSON Schema for product group 'furniture' —
+      publish requires a resolvable schema when product group data is present

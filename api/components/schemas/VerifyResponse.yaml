@@ -1,9 +1,0 @@
-type: object
-required:
-  - valid
-properties:
-  valid:
-    type: boolean
-    description: >-
-      True iff the signature verifies against the named operator's key AND was
-      signed over exactly this payload.

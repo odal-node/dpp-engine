@@ -1,0 +1,53 @@
+x-tags:
+  - Passport Reports
+type: object
+required:
+  - id
+  - passportId
+  - actor
+  - action
+  - timestamp
+properties:
+  id:
+    type: string
+    format: uuid
+  passportId:
+    type: string
+  actor:
+    type: string
+    example: admin@example.com
+  action:
+    type: string
+    example: published
+  previousStatus:
+    type:
+      - string
+      - 'null'
+  newStatus:
+    type:
+      - string
+      - 'null'
+  metadata:
+    type:
+      - object
+      - 'null'
+  timestamp:
+    type: string
+    format: date-time
+  prevHash:
+    type:
+      - string
+      - 'null'
+    description: >-
+      Hex SHA-256 of the previous entry's `entryHash`, or null for the first
+      entry in a passport's chain. Together with `entryHash` this makes the
+      trail append-only and tamper-evident: recomputing the chain detects any
+      inserted, removed or edited entry.
+  entryHash:
+    type:
+      - string
+      - 'null'
+    description: >-
+      Hex SHA-256 over this entry's canonical (RFC 8785) bytes including
+      `prevHash`. Null only for entries written before the chain was
+      introduced.

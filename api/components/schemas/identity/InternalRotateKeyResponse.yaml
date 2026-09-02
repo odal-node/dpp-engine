@@ -1,0 +1,22 @@
+x-tags:
+  - Node Identity
+type: object
+required:
+  - operator_id
+  - new_key_id
+  - fingerprint
+  - rotated
+  - did_document
+properties:
+  operator_id:
+    type: string
+  new_key_id:
+    type: string
+    example: did:web:id.odal-node.io#key-1
+  fingerprint:
+    type: string
+    description: SHA-256 fingerprint (hex) of the new public key.
+  rotated:
+    type: boolean
+  did_document:
+    $ref: ./DidDocument.yaml

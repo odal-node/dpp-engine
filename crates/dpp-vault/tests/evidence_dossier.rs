@@ -27,7 +27,7 @@ use dpp_domain::{
 };
 use dpp_types::{
     api_key::ApiKeyScope,
-    audit::{AuditEntry, AuditRepository, GENESIS_PREV_HASH},
+    audit::{AuditRepository, GENESIS_PREV_HASH, PassportAuditEntry},
     auth::AuthContext,
     evidence::{
         EvidenceDossierRecord, EvidenceDossierRepository, EvidenceDossierSummary, content_hash,
@@ -46,12 +46,12 @@ use dpp_vault::domain::service::{OperatorIdentity, PassportService};
 /// on a perfectly legitimate dossier.
 #[derive(Default)]
 struct InMemoryAuditRepo {
-    entries: Mutex<Vec<AuditEntry>>,
+    entries: Mutex<Vec<PassportAuditEntry>>,
 }
 
 #[async_trait]
 impl AuditRepository for InMemoryAuditRepo {
-    async fn append(&self, entry: AuditEntry) -> Result<(), DppError> {
+    async fn append(&self, entry: PassportAuditEntry) -> Result<(), DppError> {
         let mut entries = self.entries.lock().unwrap();
         let prev_hash = entries
             .iter()
@@ -65,7 +65,10 @@ impl AuditRepository for InMemoryAuditRepo {
         entries.push(entry);
         Ok(())
     }
-    async fn list_by_passport(&self, passport_id: &str) -> Result<Vec<AuditEntry>, DppError> {
+    async fn list_by_passport(
+        &self,
+        passport_id: &str,
+    ) -> Result<Vec<PassportAuditEntry>, DppError> {
         Ok(self
             .entries
             .lock()

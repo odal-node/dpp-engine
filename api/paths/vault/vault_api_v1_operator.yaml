@@ -1,0 +1,51 @@
+get:
+  operationId: getOperatorConfig
+  summary: Get operator configuration
+  description: |
+    Returns the calling operator's configuration (branding, legal info,
+    retention settings). If no config has been saved yet, returns an
+    empty default config rather than 404.
+  tags:
+    - Operator
+  security:
+    - BearerApiKey: []
+    - BasicAuth: []
+  responses:
+    '200':
+      description: Operator configuration.
+      content:
+        application/json:
+          schema:
+            $ref: ../../components/schemas/operator/OperatorConfig.yaml
+    '401':
+      $ref: ../../components/responses/Unauthorized.yaml
+patch:
+  operationId: updateOperatorConfig
+  summary: Update operator configuration
+  description: |
+    Merge-patch the operator's configuration. Only supplied fields
+    are changed.
+  tags:
+    - Operator
+  security:
+    - BearerApiKey: []
+    - BasicAuth: []
+  requestBody:
+    required: true
+    content:
+      application/json:
+        schema:
+          $ref: ../../components/schemas/operator/UpdateOperatorConfig.yaml
+  responses:
+    '200':
+      description: Updated operator configuration.
+      content:
+        application/json:
+          schema:
+            $ref: ../../components/schemas/operator/OperatorConfig.yaml
+    '401':
+      $ref: ../../components/responses/Unauthorized.yaml
+    '400':
+      $ref: ../../components/responses/BadRequest.yaml
+    '403':
+      $ref: ../../components/responses/Forbidden.yaml

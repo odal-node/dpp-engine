@@ -1,0 +1,29 @@
+x-tags:
+  - Passport
+type: string
+enum:
+  - draft
+  - active
+  - suspended
+  - archived
+  - superseded
+  - deactivated
+description: |
+  DPP lifecycle state. The domain model uses `Published` internally;
+  the wire format uses `active`. Deserialization accepts both.
+  - `draft`: under construction; not publicly resolvable
+  - `active`: published and signed; publicly resolvable via QR
+  - `suspended`: temporarily hidden (recall, dispute); JWS preserved
+  - `archived`: end-of-life; immutable; retained for regulatory record-keeping
+  - `superseded`: replaced by a newer passport version; terminal
+  - `deactivated`: end-of-life declared (recycled, destroyed under a
+    derogation, exported, or lost); terminal. The typed reason is carried by
+    the EOL event, not this field
+
+  Valid transitions:
+  draft → active, draft → archived,
+  active → suspended, active → archived, active → superseded,
+  active → deactivated,
+  suspended → active, suspended → archived, suspended → deactivated.
+
+  `archived`, `superseded` and `deactivated` are terminal.

@@ -1,0 +1,30 @@
+x-tags:
+  - EU Registry State
+type: object
+description: >-
+  The operator's verified-registry standing. Verified status ends when the
+  electronic identification means used expire, and at the latest three years
+  after verification; an operator that lets it lapse cannot register or amend
+  anything until it verifies again. Reported whether or not the queues are
+  configured.
+required:
+  - current
+properties:
+  current:
+    type: boolean
+    description: >-
+      False both when never verified and when lapsed — the registry refuses
+      either way, though they are different situations to act on.
+  verifiedAt:
+    type: string
+    format: date-time
+    description: Absent when never verified.
+  expiresAt:
+    type: string
+    format: date-time
+    description: >-
+      The three-year cap. The eID means may expire sooner, which this cannot
+      see, so it is an upper bound rather than a promise.
+  daysRemaining:
+    type: integer
+    description: Negative once lapsed. Absent when never verified.

@@ -1,7 +1,7 @@
 //! Evidence dossiers: assemble, generate + persist, list, fetch, and verify
 //! a passport's self-contained signed proof snapshot. See `dpp_types::evidence`
 //! for the wire format. The audit trail's own wire type
-//! (`dpp_types::audit::AuditEntry`) is already the exact type the dossier
+//! (`dpp_types::audit::PassportAuditEntry`) is already the exact type the dossier
 //! wants — no mapping step needed.
 
 use std::collections::BTreeMap;

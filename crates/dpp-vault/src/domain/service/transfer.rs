@@ -12,7 +12,7 @@ use dpp_domain::{
         TransferStatus,
     },
 };
-use dpp_types::{audit::AuditEntry, auth::AuthContext};
+use dpp_types::{audit::PassportAuditEntry, auth::AuthContext};
 use uuid::Uuid;
 
 use super::PassportService;
@@ -74,12 +74,13 @@ impl PassportService {
             .map_err(|e| DppError::Validation(e.to_string().into()))?;
         store.save_chain(&chain).await?;
 
-        let entry = AuditEntry::new(&id.to_string(), "transferred", &auth.user_id, None, None)
-            .with_metadata(serde_json::json!({
-                "event": "transfer.initiated",
-                "transferId": record.transfer_id,
-                "toOperator": record.to_operator.did,
-            }));
+        let entry =
+            PassportAuditEntry::new(&id.to_string(), "transferred", &auth.user_id, None, None)
+                .with_metadata(serde_json::json!({
+                    "event": "transfer.initiated",
+                    "transferId": record.transfer_id,
+                    "toOperator": record.to_operator.did,
+                }));
         self.audit.append(entry).await?;
 
         self.emit(
@@ -161,12 +162,13 @@ impl PassportService {
             None => store.save_chain(&chain).await?,
         }
 
-        let entry = AuditEntry::new(&id.to_string(), "transferred", &auth.user_id, None, None)
-            .with_metadata(serde_json::json!({
-                "event": "transfer.accepted",
-                "transferId": record.transfer_id,
-                "toOperator": record.to_operator.did,
-            }));
+        let entry =
+            PassportAuditEntry::new(&id.to_string(), "transferred", &auth.user_id, None, None)
+                .with_metadata(serde_json::json!({
+                    "event": "transfer.accepted",
+                    "transferId": record.transfer_id,
+                    "toOperator": record.to_operator.did,
+                }));
         self.audit.append(entry).await?;
 
         self.emit(
@@ -296,12 +298,13 @@ impl PassportService {
         let record = chain.transfers[idx].clone();
         store.save_chain(&chain).await?;
 
-        let entry = AuditEntry::new(&id.to_string(), "transferred", &auth.user_id, None, None)
-            .with_metadata(serde_json::json!({
-                "event": format!("transfer.{}", how.phase()),
-                "transferId": record.transfer_id,
-                "toOperator": record.to_operator.did,
-            }));
+        let entry =
+            PassportAuditEntry::new(&id.to_string(), "transferred", &auth.user_id, None, None)
+                .with_metadata(serde_json::json!({
+                    "event": format!("transfer.{}", how.phase()),
+                    "transferId": record.transfer_id,
+                    "toOperator": record.to_operator.did,
+                }));
         self.audit.append(entry).await?;
 
         self.emit(

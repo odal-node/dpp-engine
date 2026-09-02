@@ -1,0 +1,33 @@
+get:
+  operationId: getDppHistory
+  summary: Get DPP audit history
+  description: |
+    Returns the chronological audit trail for a passport: creation,
+    status transitions, field updates, etc. Unbounded — returns the full
+    trail with no pagination or limit.
+  tags:
+    - DPP Management
+  security:
+    - BearerApiKey: []
+    - BasicAuth: []
+  parameters:
+    - name: dppId
+      in: path
+      required: true
+      schema:
+        $ref: ../../components/schemas/passport/DppId.yaml
+  responses:
+    '200':
+      description: List of audit entries.
+      content:
+        application/json:
+          schema:
+            type: array
+            items:
+              $ref: ../../components/schemas/passport-reports/PassportAuditEntry.yaml
+    '401':
+      $ref: ../../components/responses/Unauthorized.yaml
+    '404':
+      $ref: ../../components/responses/NotFound.yaml
+    '400':
+      $ref: ../../components/responses/BadRequest.yaml

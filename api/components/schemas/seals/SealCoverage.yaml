@@ -1,0 +1,12 @@
+x-tags:
+  - Seals
+type: string
+description: >-
+  Whether the stored seal covers the passport's current signature. Answered from
+  this node's record of what it *asked* to be sealed — weaker than a validator's
+  verdict, stronger than nothing: it cannot confirm the CAdES, but a passport
+  re-published after sealing is knowable without any AdES tooling.
+enum:
+  - current
+  - superseded
+  - unknown

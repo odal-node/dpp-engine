@@ -8,7 +8,9 @@ use dpp_domain::{
     passport::{Passport, PassportId},
     status::PassportStatus,
 };
-use dpp_types::{audit::AuditEntry, auth::AuthContext, registry_sync::RegistryStatusIntent};
+use dpp_types::{
+    audit::PassportAuditEntry, auth::AuthContext, registry_sync::RegistryStatusIntent,
+};
 
 use super::PassportService;
 
@@ -47,7 +49,7 @@ impl PassportService {
         // part of the tamper-evident chain.
         let eol_meta =
             serde_json::to_value(&eol).map_err(|e| DppError::Serialisation(e.to_string()))?;
-        let entry = AuditEntry::new(
+        let entry = PassportAuditEntry::new(
             &updated.id.to_string(),
             "deactivated",
             &auth.user_id,

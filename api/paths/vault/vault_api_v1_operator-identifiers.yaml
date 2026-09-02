@@ -1,0 +1,55 @@
+get:
+  operationId: listOperatorIdentifiers
+  summary: List operator identifiers
+  description: |
+    Lists the operator's economic-operator identifiers (ESPR Art. 13). The
+    `isPrimary` identifier is stamped onto new passports. Admin scope required.
+  tags:
+    - Operator Identifiers
+  security:
+    - BearerApiKey: []
+    - BasicAuth: []
+  responses:
+    '200':
+      description: List of operator identifiers.
+      content:
+        application/json:
+          schema:
+            type: array
+            items:
+              $ref: ../../components/schemas/operator/OperatorIdentifier.yaml
+    '401':
+      $ref: ../../components/responses/Unauthorized.yaml
+    '403':
+      $ref: ../../components/responses/Forbidden.yaml
+post:
+  operationId: addOperatorIdentifier
+  summary: Add an operator identifier
+  description: |
+    Add an economic-operator identifier. Validated by scheme — LEI uses
+    ISO 7064 MOD 97-10; DUNS is 9 digits; EORI/VAT require a country prefix.
+    Requires an admin-scoped key.
+  tags:
+    - Operator Identifiers
+  security:
+    - BearerApiKey: []
+    - BasicAuth: []
+  requestBody:
+    required: true
+    content:
+      application/json:
+        schema:
+          $ref: ../../components/schemas/operator/CreateOperatorIdentifierRequest.yaml
+  responses:
+    '201':
+      description: Operator identifier created.
+      content:
+        application/json:
+          schema:
+            $ref: ../../components/schemas/operator/OperatorIdentifier.yaml
+    '401':
+      $ref: ../../components/responses/Unauthorized.yaml
+    '403':
+      $ref: ../../components/responses/Forbidden.yaml
+    '422':
+      $ref: ../../components/responses/ValidationError.yaml

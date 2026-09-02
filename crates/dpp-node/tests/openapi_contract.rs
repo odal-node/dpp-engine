@@ -358,9 +358,9 @@ fn object_cases() -> Vec<ObjectCase> {
 
     // ── dpp-types: platform records ───────────────────────────────────────
     case!("ApiKey", fixtures::api_key());
-    case!("NewApiKey", fixtures::new_api_key());
+    case!("CreatedApiKeyResponse", fixtures::new_api_key());
     case!("CreateApiKeyRequest", fixtures::create_api_key_request());
-    case!("AuditEntry", fixtures::audit_entry());
+    case!("PassportAuditEntry", fixtures::audit_entry());
     case!("Facility", fixtures::facility());
     case!("CreateFacilityRequest", fixtures::create_facility_request());
     case!("OperatorIdentifier", fixtures::operator_identifier());
@@ -368,7 +368,10 @@ fn object_cases() -> Vec<ObjectCase> {
         "CreateOperatorIdentifierRequest",
         fixtures::create_operator_identifier_request()
     );
-    case!("RegistryIdentityAudit", fixtures::registry_identity_audit());
+    case!(
+        "RegistryIdentityAuditEntry",
+        fixtures::registry_identity_audit()
+    );
     case!("OperatorConfig", fixtures::operator_config());
     case!("UpdateOperatorConfig", fixtures::update_operator_config());
 
@@ -384,11 +387,11 @@ fn object_cases() -> Vec<ObjectCase> {
     // ── dpp-common ────────────────────────────────────────────────────────
     case!("Problem", fixtures::problem());
     case!("ScanBatch", fixtures::scan_batch());
-    case!("ScanCount", fixtures::scan_count());
-    case!("QrRenderCount", fixtures::qr_render_count());
+    case!("ScanBatchEntry", fixtures::scan_count());
+    case!("QrRenderBatchEntry", fixtures::qr_render_count());
 
     // ── dpp-vault: request and response bodies ────────────────────────────
-    case!("CreateRequest", fixtures::create_request());
+    case!("CreatePassportRequest", fixtures::create_request());
     case!("ValidateResponse", fixtures::validate_response());
     case!("PassportListResponse", fixtures::passport_list_response());
     case!("WhoamiResponse", fixtures::whoami_response());
@@ -400,10 +403,7 @@ fn object_cases() -> Vec<ObjectCase> {
     case!("SealSummaryResponse", fixtures::seal_summary_response());
     case!("InstalledPlugin", fixtures::installed_plugin());
     case!("WebhookSubscription", fixtures::webhook_subscription());
-    case!(
-        "NewWebhookSubscription",
-        fixtures::new_webhook_subscription()
-    );
+    case!("CreateWebhookRequest", fixtures::new_webhook_subscription());
     case!(
         "CreatedWebhookResponse",
         fixtures::created_webhook_response()
@@ -419,21 +419,21 @@ fn object_cases() -> Vec<ObjectCase> {
     case!("TreeReport", fixtures::tree_report());
     case!("TreeNodeReport", fixtures::tree_node_report());
     case!("RegistrationView", fixtures::registration_view());
-    case!("TransferView", fixtures::transfer_view());
+    case!("TransferNotificationView", fixtures::transfer_view());
     case!("CurrentOperatorView", fixtures::current_operator_view());
     case!("PassportRegistryView", fixtures::passport_registry_view());
-    case!("VerificationView", fixtures::verification_view());
+    case!("RegistryVerificationView", fixtures::verification_view());
     case!("RegistrationCounts", fixtures::registration_counts());
-    case!("TransferCounts", fixtures::transfer_counts());
+    case!("TransferNotificationCounts", fixtures::transfer_counts());
     case!("RegistryRollupView", fixtures::registry_rollup_view());
 
     // ── dpp-identity: the internal signing surface ────────────────────────
-    case!("SignRequest", fixtures::sign_request());
-    case!("SignResponse", fixtures::sign_response());
-    case!("VerifyRequest", fixtures::verify_request());
-    case!("VerifyResponse", fixtures::verify_response());
-    case!("RotateRequest", fixtures::rotate_request());
-    case!("RotateResponse", fixtures::rotate_response());
+    case!("InternalSignRequest", fixtures::sign_request());
+    case!("InternalSignResponse", fixtures::sign_response());
+    case!("InternalVerifyRequest", fixtures::verify_request());
+    case!("InternalVerifyResponse", fixtures::verify_response());
+    case!("InternalRotateKeyRequest", fixtures::rotate_request());
+    case!("InternalRotateKeyResponse", fixtures::rotate_response());
 
     // ── dpp-integrator: bulk import ───────────────────────────────────────
     case!("ImportSyncResponse", fixtures::import_sync_response());
@@ -494,7 +494,7 @@ fn enum_cases() -> Vec<EnumCase> {
             variants: wire(&fixtures::all_seal_formats()),
         },
         EnumCase {
-            name: "Coverage",
+            name: "SealCoverage",
             variants: wire(&fixtures::all_coverages()),
         },
         // `DateBasis` and `RetentionBasis` match variant for variant today and
@@ -961,7 +961,7 @@ fn every_schema_is_covered() {
 /// A documented numeric bound is a promise about what the server accepts, and
 /// nothing was checking it.
 ///
-/// `CreateRequest.repairabilityScore` was documented `minimum: 0, maximum: 100`
+/// `CreatePassportRequest.repairabilityScore` was documented `minimum: 0, maximum: 100`
 /// with a description saying "0–100", while the validator enforced `0..=10` and
 /// rejected anything above with a 422. Every check up to this point passed: the
 /// property existed, was named right, and was typed right. A client trusting
@@ -976,13 +976,13 @@ fn documented_numeric_bounds_are_the_bounds_actually_enforced() {
     use dpp_vault::handlers::create::validate_create_request;
 
     let spec = spec();
-    let schema = &schemas(&spec)["CreateRequest"];
+    let schema = &schemas(&spec)["CreatePassportRequest"];
     let props = schema_property_map(&spec, schema);
 
-    // Each numeric field of CreateRequest, with a way to set it on a body that
+    // Each numeric field of CreatePassportRequest, with a way to set it on a body that
     // is otherwise valid. Adding a bounded field without adding it here is
     // caught below.
-    type Setter = fn(&mut dpp_vault::handlers::create::CreateRequest, f64);
+    type Setter = fn(&mut dpp_vault::handlers::create::CreatePassportRequest, f64);
     let numeric: &[(&str, Setter)] = &[
         ("co2ePerUnit", |b, v| b.co2e_per_unit = Some(v)),
         ("repairabilityScore", |b, v| b.repairability_score = Some(v)),
@@ -999,7 +999,9 @@ fn documented_numeric_bounds_are_the_bounds_actually_enforced() {
 
     for (name, set) in numeric {
         let Some(prop) = props.get(*name) else {
-            failures.push(format!("CreateRequest.{name}: no longer in the spec"));
+            failures.push(format!(
+                "CreatePassportRequest.{name}: no longer in the spec"
+            ));
             continue;
         };
         let min = prop.get("minimum").and_then(Value::as_f64);
@@ -1016,12 +1018,12 @@ fn documented_numeric_bounds_are_the_bounds_actually_enforced() {
         if let Some(min) = min {
             if !accepts(*set, min) {
                 failures.push(format!(
-                    "CreateRequest.{name}: spec says minimum {min}, but the validator rejects it"
+                    "CreatePassportRequest.{name}: spec says minimum {min}, but the validator rejects it"
                 ));
             }
             if accepts(*set, min - nudge(min)) {
                 failures.push(format!(
-                    "CreateRequest.{name}: spec says minimum {min}, but the validator accepts \
+                    "CreatePassportRequest.{name}: spec says minimum {min}, but the validator accepts \
                      values below it"
                 ));
             }
@@ -1029,13 +1031,13 @@ fn documented_numeric_bounds_are_the_bounds_actually_enforced() {
         if let Some(max) = max {
             if !accepts(*set, max) {
                 failures.push(format!(
-                    "CreateRequest.{name}: spec says maximum {max}, but the validator REJECTS it \
+                    "CreatePassportRequest.{name}: spec says maximum {max}, but the validator REJECTS it \
                      — the documented range is wider than the enforced one"
                 ));
             }
             if accepts(*set, max + nudge(max)) {
                 failures.push(format!(
-                    "CreateRequest.{name}: spec says maximum {max}, but the validator accepts \
+                    "CreatePassportRequest.{name}: spec says maximum {max}, but the validator accepts \
                      values above it — the documented range is narrower than the enforced one"
                 ));
             }
@@ -1051,7 +1053,7 @@ fn documented_numeric_bounds_are_the_bounds_actually_enforced() {
     let undriven: BTreeSet<String> = bounded.difference(&checked).cloned().collect();
     if !undriven.is_empty() {
         failures.push(format!(
-            "CreateRequest declares bounds on properties this test does not drive: {} — add them \
+            "CreatePassportRequest declares bounds on properties this test does not drive: {} — add them \
              to `numeric` above",
             joined(&undriven)
         ));
@@ -2105,7 +2107,7 @@ mod fixtures {
     use dpp_common::{
         http_problem::Problem,
         plugin_admin::InstalledPlugin,
-        scan::{QrRenderCount, ScanBatch, ScanCount, ScanVariant},
+        scan::{QrRenderBatchEntry, ScanBatch, ScanBatchEntry, ScanVariant},
     };
     use dpp_domain::{
         compliance::{ComplianceFinding, ComplianceResult, ComplianceStatus},
@@ -2130,8 +2132,8 @@ mod fixtures {
         ProductGroupObligationList, RetentionView,
     };
     use dpp_types::{
-        api_key::{ApiKey, ApiKeyScope, CreateApiKeyRequest, NewApiKey},
-        audit::AuditEntry,
+        api_key::{ApiKey, ApiKeyScope, CreateApiKeyRequest, CreatedApiKeyResponse},
+        audit::PassportAuditEntry,
         evidence::{
             CheckResult, CheckStatus, DossierManifest, DossierV1, EvidenceDossierRecord,
             EvidenceDossierSummary, SignedLayer, VerificationReport,
@@ -2139,17 +2141,17 @@ mod fixtures {
         operator::{OperatorConfig, UpdateOperatorConfig},
         registry_identity::{
             CreateFacilityRequest, CreateOperatorIdentifierRequest, Facility, OperatorIdentifier,
-            RegistryIdentityAudit,
+            RegistryIdentityAuditEntry,
         },
         scan::{DailyScanCount, OperatorScanStats, PassportScanStats},
         trust::{NodeProfile, NodeTrustReport, TrustMode, TrustPort},
-        webhook::{NewWebhookSubscription, WebhookSubscription},
+        webhook::{CreateWebhookRequest, WebhookSubscription},
     };
 
     use dpp_identity_service::handlers::{
-        rotate_key::{RotateRequest, RotateResponse},
-        sign::{SignRequest, SignResponse},
-        verify::{VerifyRequest, VerifyResponse},
+        rotate_key::{InternalRotateKeyRequest, InternalRotateKeyResponse},
+        sign::{InternalSignRequest, InternalSignResponse},
+        verify::{InternalVerifyRequest, InternalVerifyResponse},
     };
     use dpp_integrator::handlers::{
         import::{AsyncImportResponse, CreatedEntry, ErrorEntry, SyncImportResponse, UpdatedEntry},
@@ -2158,16 +2160,17 @@ mod fixtures {
     use dpp_vault::{
         domain::verify::{NodeReport, RefUnverifiable, TreeReport},
         handlers::{
-            create::CreateRequest,
+            create::CreatePassportRequest,
             eol::EolRequest,
             info::VaultInfo,
             list::PassportListResponse,
             node_state::NodeState,
             registry_status::{
                 CurrentOperatorView, PassportRegistryView, RegistrationCounts, RegistrationView,
-                RegistryRollupView, TransferCounts, TransferView, VerificationView,
+                RegistryRollupView, RegistryVerificationView, TransferNotificationCounts,
+                TransferNotificationView,
             },
-            seal::{Coverage, SealDeclarer, SealResponse, SealSummaryResponse},
+            seal::{SealCoverage, SealDeclarer, SealResponse, SealSummaryResponse},
             suspend::SuspendRequest,
             transfer::TransferInitiateRequest,
             validate::ValidateResponse,
@@ -2458,8 +2461,8 @@ mod fixtures {
         }
     }
 
-    pub fn new_api_key() -> NewApiKey {
-        NewApiKey {
+    pub fn new_api_key() -> CreatedApiKeyResponse {
+        CreatedApiKeyResponse {
             key: api_key(),
             secret: "odal_sk_abc123def456".into(),
         }
@@ -2473,8 +2476,8 @@ mod fixtures {
         }
     }
 
-    pub fn audit_entry() -> AuditEntry {
-        AuditEntry {
+    pub fn audit_entry() -> PassportAuditEntry {
+        PassportAuditEntry {
             id: uuid(),
             passport_id: "019723f4-1a2b-7c3d-8e4f-5a6b7c8d9e0f".into(),
             actor: "admin@example.com".into(),
@@ -2532,8 +2535,8 @@ mod fixtures {
         }
     }
 
-    pub fn registry_identity_audit() -> RegistryIdentityAudit {
-        RegistryIdentityAudit {
+    pub fn registry_identity_audit() -> RegistryIdentityAuditEntry {
+        RegistryIdentityAuditEntry {
             id: uuid(),
             operator_id: "standalone".into(),
             entity_type: "facility".into(),
@@ -2664,8 +2667,8 @@ mod fixtures {
         }
     }
 
-    pub fn scan_count() -> ScanCount {
-        ScanCount {
+    pub fn scan_count() -> ScanBatchEntry {
+        ScanBatchEntry {
             dpp_id: "019723f4-1a2b-7c3d-8e4f-5a6b7c8d9e0f".into(),
             day: date(),
             variant: ScanVariant::Html,
@@ -2673,8 +2676,8 @@ mod fixtures {
         }
     }
 
-    pub fn qr_render_count() -> QrRenderCount {
-        QrRenderCount {
+    pub fn qr_render_count() -> QrRenderBatchEntry {
+        QrRenderBatchEntry {
             dpp_id: "019723f4-1a2b-7c3d-8e4f-5a6b7c8d9e0f".into(),
             day: date(),
             count: 7,
@@ -2715,8 +2718,8 @@ mod fixtures {
 
     // ── dpp-vault: request and response bodies ────────────────────────────
 
-    pub fn create_request() -> CreateRequest {
-        CreateRequest {
+    pub fn create_request() -> CreatePassportRequest {
+        CreatePassportRequest {
             product_name: "EcoCell Pro 48V".into(),
             product_group: Some(ProductGroup::Textile),
             manufacturer: manufacturer(),
@@ -2811,40 +2814,40 @@ mod fixtures {
 
     // ── dpp-identity ──────────────────────────────────────────────────────
 
-    pub fn sign_request() -> SignRequest {
-        SignRequest {
+    pub fn sign_request() -> InternalSignRequest {
+        InternalSignRequest {
             operator_id: "standalone".into(),
             passport_id: "019723f4-1a2b-7c3d-8e4f-5a6b7c8d9e0f".into(),
             payload: "eyJpZCI6IngifQ==".into(),
         }
     }
 
-    pub fn sign_response() -> SignResponse {
-        SignResponse {
+    pub fn sign_response() -> InternalSignResponse {
+        InternalSignResponse {
             jws_signature: "eyJhbGciOiJFZERTQSJ9..hhh".into(),
         }
     }
 
-    pub fn verify_request() -> VerifyRequest {
-        VerifyRequest {
+    pub fn verify_request() -> InternalVerifyRequest {
+        InternalVerifyRequest {
             operator_id: "standalone".into(),
             jws: "eyJhbGciOiJFZERTQSJ9..hhh".into(),
             payload: json!({ "id": "x" }),
         }
     }
 
-    pub fn verify_response() -> VerifyResponse {
-        VerifyResponse { valid: true }
+    pub fn verify_response() -> InternalVerifyResponse {
+        InternalVerifyResponse { valid: true }
     }
 
-    pub fn rotate_request() -> RotateRequest {
-        RotateRequest {
+    pub fn rotate_request() -> InternalRotateKeyRequest {
+        InternalRotateKeyRequest {
             operator_id: "standalone".into(),
         }
     }
 
-    pub fn rotate_response() -> RotateResponse {
-        RotateResponse {
+    pub fn rotate_response() -> InternalRotateKeyResponse {
+        InternalRotateKeyResponse {
             operator_id: "standalone".into(),
             new_key_id: "did:web:node.example#key-1".into(),
             fingerprint: "4".repeat(64),
@@ -2864,8 +2867,8 @@ mod fixtures {
     /// Deliberately *not* the maximal `create_request()` fixture: that one sets
     /// every field, so a rejection could come from any of them and the probe
     /// would be measuring the wrong rule.
-    pub fn minimal_create_request() -> CreateRequest {
-        CreateRequest {
+    pub fn minimal_create_request() -> CreatePassportRequest {
+        CreatePassportRequest {
             product_name: "EcoCell Pro 48V".into(),
             product_group: None,
             manufacturer: manufacturer(),
@@ -2956,7 +2959,7 @@ mod fixtures {
             current_jws: "eyJhbGciOiJFZERTQSJ9..iii".into(),
             current_payload_hash: "6".repeat(64),
             sealed_payload_hash: Some("6".repeat(64)),
-            coverage: Coverage::Current,
+            coverage: SealCoverage::Current,
             // A `&'static str` constant on the response type; the fixture only
             // needs a value of the right shape for the key set.
             verification: "not validated by this node",
@@ -2973,8 +2976,12 @@ mod fixtures {
         }
     }
 
-    pub fn all_coverages() -> Vec<Coverage> {
-        vec![Coverage::Current, Coverage::Superseded, Coverage::Unknown]
+    pub fn all_coverages() -> Vec<SealCoverage> {
+        vec![
+            SealCoverage::Current,
+            SealCoverage::Superseded,
+            SealCoverage::Unknown,
+        ]
     }
 
     pub fn all_date_bases() -> Vec<dpp_domain::instrument::DateBasis> {
@@ -3159,8 +3166,8 @@ mod fixtures {
         }
     }
 
-    pub fn new_webhook_subscription() -> NewWebhookSubscription {
-        NewWebhookSubscription {
+    pub fn new_webhook_subscription() -> CreateWebhookRequest {
+        CreateWebhookRequest {
             url: "https://hooks.example.com/odal".into(),
             events: vec!["dpp.passport.published".into()],
             description: Some("Production receiver".into()),
@@ -3187,8 +3194,8 @@ mod fixtures {
         }
     }
 
-    pub fn transfer_view() -> TransferView {
-        TransferView {
+    pub fn transfer_view() -> TransferNotificationView {
+        TransferNotificationView {
             transfer_id: uuid(),
             status: "notified",
             registry_id: Some("EUDPP-T-0001".into()),
@@ -3217,8 +3224,8 @@ mod fixtures {
         }
     }
 
-    pub fn verification_view() -> VerificationView {
-        VerificationView {
+    pub fn verification_view() -> RegistryVerificationView {
+        RegistryVerificationView {
             current: true,
             verified_at: Some(ts()),
             expires_at: Some(ts()),
@@ -3239,8 +3246,8 @@ mod fixtures {
         }
     }
 
-    pub fn transfer_counts() -> TransferCounts {
-        TransferCounts {
+    pub fn transfer_counts() -> TransferNotificationCounts {
+        TransferNotificationCounts {
             pending: 1,
             notified: 2,
             rejected: 0,

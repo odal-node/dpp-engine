@@ -1,0 +1,43 @@
+get:
+  operationId: getPinnedProductGroupSchema
+  summary: Fetch a pinned version of a product group's JSON Schema
+  description: |
+    A stored passport records the `schemaVersion` it was written under, so a
+    client holding one needs that exact schema rather than whatever is current.
+    The version may be given with or without a leading `v`. Unauthenticated.
+
+    Descriptions are omitted, as on the current-schema route.
+  tags:
+    - Integrator
+  parameters:
+    - name: productGroup
+      in: path
+      required: true
+      schema:
+        type: string
+        example: battery
+    - name: version
+      in: path
+      required: true
+      schema:
+        type: string
+        example: 2.6.0
+  responses:
+    '200':
+      description: The product group's JSON Schema at that version.
+      content:
+        application/json:
+          schema:
+            type: object
+    '400':
+      description: The version is not a semver string.
+      content:
+        application/problem+json:
+          schema:
+            $ref: ../../components/schemas/errors/Problem.yaml
+    '404':
+      description: No schema at that version; the body names what is available.
+      content:
+        application/problem+json:
+          schema:
+            $ref: ../../components/schemas/errors/Problem.yaml

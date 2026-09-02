@@ -84,7 +84,7 @@ mod tests {
     use async_trait::async_trait;
     use chrono::NaiveDate;
 
-    use dpp_common::scan::{QrRenderCount, ScanCount, ScanVariant};
+    use dpp_common::scan::{QrRenderBatchEntry, ScanBatchEntry, ScanVariant};
     use dpp_types::scan::{OperatorScanStats, PassportScanStats, ScanPruneCounts};
 
     use super::*;
@@ -132,13 +132,13 @@ mod tests {
         let repo = CapturingRepo::default();
         let id = "00000000-0000-4000-9000-000000000001";
         let batch = ScanBatch {
-            scans: vec![ScanCount {
+            scans: vec![ScanBatchEntry {
                 dpp_id: id.into(),
                 day: day(),
                 variant: ScanVariant::Html,
                 count: 5,
             }],
-            qr_renders: vec![QrRenderCount {
+            qr_renders: vec![QrRenderBatchEntry {
                 dpp_id: id.into(),
                 day: day(),
                 count: 2,
@@ -158,7 +158,7 @@ mod tests {
     async fn unparseable_id_is_dropped_not_fatal() {
         let repo = CapturingRepo::default();
         let batch = ScanBatch {
-            scans: vec![ScanCount {
+            scans: vec![ScanBatchEntry {
                 dpp_id: "not-a-uuid".into(),
                 day: day(),
                 variant: ScanVariant::Json,

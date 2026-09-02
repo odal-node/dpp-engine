@@ -1,0 +1,46 @@
+x-tags:
+  - Evidence & Verification
+type: object
+description: |
+  Signed metadata binding every dossier member into one atomic,
+  tamper-evident unit.
+required:
+  - formatVersion
+  - passportId
+  - issuerDid
+  - createdAt
+  - nodeVersion
+  - coreVersion
+  - contentHashes
+properties:
+  formatVersion:
+    type: string
+    example: '1'
+  passportId:
+    type: string
+  issuerDid:
+    type: string
+    example: did:web:node.example.com
+  createdAt:
+    type: string
+    format: date-time
+  nodeVersion:
+    type: string
+  rulesetVersion:
+    type:
+      - string
+      - 'null'
+  contentHashes:
+    type: object
+    description: member name -> hex SHA-256 of that member's JCS-canonical bytes.
+    additionalProperties:
+      type: string
+  coreVersion:
+    type: string
+    description: >-
+      The `dpp-core` version this node was built against. Recorded alongside
+      `nodeVersion` because the two move independently — the regulatory logic,
+      schemas and disclosure policy behind a determination live in core, so a
+      dossier naming only the node version cannot be traced back to the code
+      that produced its verdict.
+    example: 0.18.0

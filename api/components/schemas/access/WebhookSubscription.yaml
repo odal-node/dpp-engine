@@ -1,0 +1,40 @@
+x-tags:
+  - Access & Integrations
+type: object
+description: >-
+  A receiver subscription, redacted. The signing secret is never carried here —
+  it is returned exactly once from the create call and otherwise stays
+  server-side.
+required:
+  - id
+  - url
+  - events
+  - active
+  - createdAt
+  - updatedAt
+properties:
+  id:
+    type: string
+    format: uuid
+  url:
+    type: string
+    format: uri
+    description: Receiver URL — validated `https`, non-private host at creation.
+  events:
+    type: array
+    description: Subject filter — event type strings, or a single `*` for all events.
+    items:
+      type: string
+  active:
+    type: boolean
+    description: Removal is a soft `active = false`, never a hard delete.
+  description:
+    type:
+      - string
+      - 'null'
+  createdAt:
+    type: string
+    format: date-time
+  updatedAt:
+    type: string
+    format: date-time

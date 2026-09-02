@@ -1,0 +1,16 @@
+x-tags:
+  - Passport
+type: object
+description: One weighted criterion contributing to a repairability score.
+required:
+  - name
+  - score
+  - weight
+properties:
+  name:
+    type: string
+    example: disassembly_depth
+  score:
+    type: number
+  weight:
+    type: number

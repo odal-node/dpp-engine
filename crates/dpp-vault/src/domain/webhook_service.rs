@@ -15,7 +15,7 @@ use dpp_common::event::DppEvent;
 use dpp_common::url_guard::validate_webhook_url;
 use dpp_domain::error::DppError;
 use dpp_types::{
-    NewWebhookSubscription, STANDALONE_OPERATOR_ID, WebhookOutbox, WebhookSubscription,
+    CreateWebhookRequest, STANDALONE_OPERATOR_ID, WebhookOutbox, WebhookSubscription,
     WebhookSubscriptionStore,
 };
 
@@ -69,7 +69,7 @@ impl WebhookService {
     /// filter is empty.
     pub async fn create(
         &self,
-        mut input: NewWebhookSubscription,
+        mut input: CreateWebhookRequest,
     ) -> Result<CreatedWebhook, DppError> {
         let normalised = validate_webhook_url(&input.url, self.allow_private_targets)
             .map_err(|m| DppError::Validation(m.into()))?;

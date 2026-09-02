@@ -1,0 +1,37 @@
+x-tags:
+  - EU Registry State
+type: object
+required:
+  - pending
+  - submitted
+  - registered
+  - rejected
+  - deactivated
+  - statusIntents
+  - stalled
+  - unregisteredPublished
+properties:
+  pending:
+    type: integer
+  submitted:
+    type: integer
+  registered:
+    type: integer
+  rejected:
+    type: integer
+  deactivated:
+    type: integer
+  statusIntents:
+    type: integer
+    description: Status changes owed to the registry that nothing drains.
+  stalled:
+    type: integer
+    description: Rows that have retried past the point of self-recovery.
+  unregisteredPublished:
+    type: integer
+    description: >-
+      Published passports with **no** outbox row at all — they owe a
+      registration nobody is tracking (published before the outbox existed, or
+      lost to an older write path). Reported, not repaired: the queued payload
+      is what a drain replays and there is none to rebuild, so fabricating a row
+      would create an entry that can never drain.

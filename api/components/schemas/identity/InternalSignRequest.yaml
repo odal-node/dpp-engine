@@ -1,0 +1,19 @@
+x-tags:
+  - Node Identity
+type: object
+required:
+  - operator_id
+  - passport_id
+  - payload
+description: Internal signing request. Field names are snake_case (internal contract).
+properties:
+  operator_id:
+    type: string
+    description: Operator whose key signs. Auto-provisioned on first use.
+    example: self_hosted
+  passport_id:
+    type: string
+    description: The passport id being signed (recorded in the JWS payload).
+  payload:
+    type: string
+    description: Base64-encoded canonical JSON of the payload to sign.

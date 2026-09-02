@@ -5,7 +5,7 @@ use sqlx::Row;
 
 use dpp_domain::DppError;
 use dpp_types::audit::{
-    AuditChainBreak, AuditEntry, AuditRepository, GENESIS_PREV_HASH, verify_audit_chain,
+    AuditChainBreak, AuditRepository, GENESIS_PREV_HASH, PassportAuditEntry, verify_audit_chain,
 };
 
 use super::{PgDal, db_err};
@@ -32,7 +32,7 @@ impl AuditRepository for PgAuditRepo {
     ///
     /// # Errors
     /// Returns `DppError::Internal` on DB error or trigger constraint violation.
-    async fn append(&self, entry: AuditEntry) -> Result<(), DppError> {
+    async fn append(&self, entry: PassportAuditEntry) -> Result<(), DppError> {
         // Normalise the timestamp to microsecond precision *before* hashing:
         // Postgres `timestamptz` is microsecond-resolution, so the value we hash
         // must equal the value it stores, or the chain won't verify after a
@@ -83,7 +83,10 @@ impl AuditRepository for PgAuditRepo {
     }
 
     /// Retrieve all audit entries for a passport in ascending timestamp order.
-    async fn list_by_passport(&self, passport_id: &str) -> Result<Vec<AuditEntry>, DppError> {
+    async fn list_by_passport(
+        &self,
+        passport_id: &str,
+    ) -> Result<Vec<PassportAuditEntry>, DppError> {
         let mut tx = self.dal.begin().await?;
         let rows = sqlx::query(
             r#"SELECT id, passport_id, actor, action,
@@ -99,7 +102,7 @@ impl AuditRepository for PgAuditRepo {
         tx.commit().await.map_err(db_err)?;
         Ok(rows
             .into_iter()
-            .map(|r| AuditEntry {
+            .map(|r| PassportAuditEntry {
                 id: r.get("id"),
                 passport_id: r.get("passport_id"),
                 actor: r.get("actor"),

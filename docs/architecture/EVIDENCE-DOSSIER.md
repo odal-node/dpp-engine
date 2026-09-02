@@ -19,7 +19,7 @@ verify endpoints.
 | `fullView` | `SignedLayer` | The full (non-redacted) passport payload as it was actually signed, plus that signature. |
 | `publicView` | `SignedLayer` | The public (redacted) passport payload as it was actually signed, plus that signature. |
 | `didDocuments` | map\<DID, DID document\> | Snapshot of every DID document needed to verify every signature in the dossier — the issuer's own, plus any transfer-chain counterparties'. |
-| `auditEntries` | `AuditEntry[]` | The full hash-chained audit trail, oldest first. |
+| `auditEntries` | `PassportAuditEntry[]` | The full hash-chained audit trail, oldest first. |
 | `transferChain` | `TransferChain?` | Present iff the passport has ever changed responsible operator. |
 | `eolEvent` | object? | Present iff the passport was declared end-of-life. |
 | `checkpoint` | object? | **Always `null` in v1** — the signed-checkpoint layer is not yet built. |
@@ -61,7 +61,7 @@ What it does not prove, in any case: that the *issuing* operator didn't rewrite 
 
 ## Strictness
 
-Every dossier-owned type (`DossierV1`, `DossierManifest`, `SignedLayer`, `AuditEntry`) rejects unknown fields at deserialization. An unrecognised field anywhere in one of these types is treated as malformed input (`odal verify` exit code 2 / HTTP 422 from the verify endpoints), not silently ignored — it may mean the dossier was produced by a newer format version this verifier doesn't understand, and a verifier must never silently pass over content it didn't check.
+Every dossier-owned type (`DossierV1`, `DossierManifest`, `SignedLayer`, `PassportAuditEntry`) rejects unknown fields at deserialization. An unrecognised field anywhere in one of these types is treated as malformed input (`odal verify` exit code 2 / HTTP 422 from the verify endpoints), not silently ignored — it may mean the dossier was produced by a newer format version this verifier doesn't understand, and a verifier must never silently pass over content it didn't check.
 
 This alone is not sufficient: `didDocuments`, `checkpoint`, and `calcReceipts` are untyped JSON by design (forward-compatible placeholders), and `transferChain` embeds `dpp-domain` types (`TransferChain`, `TransferRecord`, `ResponsibleOperator`) that are *not* strict, because they are core domain types shared with contexts where tolerance is correct. An unknown field nested inside one of those would parse successfully and be silently dropped by serde — and because content hashes are computed from the *parsed* structure, the dropped content would not be reflected in a hash mismatch either.
 

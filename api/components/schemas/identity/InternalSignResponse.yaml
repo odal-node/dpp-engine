@@ -1,0 +1,9 @@
+x-tags:
+  - Node Identity
+type: object
+required:
+  - jws_signature
+properties:
+  jws_signature:
+    type: string
+    description: Compact JWS (EdDSA over RFC 8785 canonical bytes).

@@ -1,0 +1,20 @@
+x-tags:
+  - Access & Integrations
+type: object
+description: >-
+  Input for creating a subscription. The signing secret is generated
+  server-side and is never client-supplied, so it is not part of this body.
+required:
+  - url
+  - events
+properties:
+  url:
+    type: string
+    format: uri
+    description: Receiver URL. SSRF-validated before it is persisted.
+  events:
+    type: array
+    items:
+      type: string
+  description:
+    type: string

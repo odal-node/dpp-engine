@@ -1,0 +1,30 @@
+post:
+  operationId: verifyStoredEvidenceDossier
+  summary: Verify a stored dossier
+  description: |
+    An integrity check against the stored dossier's own signatures and
+    hash chains. A tamper is still a `200` response — the report's
+    `checks` name which check failed.
+  tags:
+    - Evidence Dossiers
+  security:
+    - BearerApiKey: []
+    - BasicAuth: []
+  parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  responses:
+    '200':
+      description: The verification report.
+      content:
+        application/json:
+          schema:
+            $ref: ../../components/schemas/evidence/VerificationReport.yaml
+    '401':
+      $ref: ../../components/responses/Unauthorized.yaml
+    '404':
+      $ref: ../../components/responses/NotFound.yaml

@@ -1,0 +1,41 @@
+get:
+  operationId: getDppScanStats
+  summary: Per-passport scan telemetry
+  description: |
+    Aggregate, privacy-safe resolution counts for one passport over a
+    trailing window. Scans and QR-image renders are reported as separate
+    fields and are never summed — a render is label production, not a
+    resolution. Nothing about the scanner (IP, agent, session) is collected
+    or returned; the counters carry no such fields. Returns zeros for a
+    passport that has never been scanned.
+  tags:
+    - Scan Telemetry
+  security:
+    - BearerApiKey: []
+    - BasicAuth: []
+  parameters:
+    - name: dppId
+      in: path
+      required: true
+      schema:
+        $ref: ../../components/schemas/passport/DppId.yaml
+    - name: days
+      in: query
+      required: false
+      description: Trailing window in days (default 30, clamped to 1..=730).
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 730
+        default: 30
+  responses:
+    '200':
+      description: Aggregate scan counts for the passport.
+      content:
+        application/json:
+          schema:
+            $ref: ../../components/schemas/telemetry/PassportScanStats.yaml
+    '401':
+      $ref: ../../components/responses/Unauthorized.yaml
+    '400':
+      $ref: ../../components/responses/BadRequest.yaml

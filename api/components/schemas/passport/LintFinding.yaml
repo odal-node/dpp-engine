@@ -1,0 +1,19 @@
+x-tags:
+  - Passport
+type: object
+required:
+  - code
+  - field
+  - severity
+  - message
+properties:
+  code:
+    type: string
+    example: mass.balance
+  field:
+    type: string
+    example: /materials
+  severity:
+    $ref: ./LintSeverity.yaml
+  message:
+    type: string

@@ -91,7 +91,7 @@ pub struct CreateOperatorIdentifierRequest {
 /// on any UPDATE or DELETE (mirrors `passport_audit`).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct RegistryIdentityAudit {
+pub struct RegistryIdentityAuditEntry {
     pub id: Uuid,
     /// Provenance identity of the node operator (`STANDALONE_OPERATOR_ID`).
     pub operator_id: String,
@@ -109,7 +109,7 @@ pub struct RegistryIdentityAudit {
     pub ts: DateTime<Utc>,
 }
 
-impl RegistryIdentityAudit {
+impl RegistryIdentityAuditEntry {
     /// Construct an append-only audit record with a fresh time-ordered id.
     pub fn new(
         operator_id: &str,
@@ -186,11 +186,11 @@ pub trait RegistryIdentityRepository: Send + Sync {
 
     // ── Registry-identity audit (append-only) ────────────────────────────────
     /// Append an immutable audit record for a registry-identity mutation.
-    async fn append_audit(&self, entry: RegistryIdentityAudit) -> Result<(), DppError>;
+    async fn append_audit(&self, entry: RegistryIdentityAuditEntry) -> Result<(), DppError>;
     /// List the append-only audit trail for one entity, oldest first.
     async fn list_registry_audit(
         &self,
         entity_type: &str,
         entity_id: Uuid,
-    ) -> Result<Vec<RegistryIdentityAudit>, DppError>;
+    ) -> Result<Vec<RegistryIdentityAuditEntry>, DppError>;
 }

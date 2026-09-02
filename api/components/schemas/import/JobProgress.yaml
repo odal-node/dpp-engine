@@ -1,0 +1,18 @@
+x-tags:
+  - Bulk Import
+type: object
+description: How far through its rows an import job has got.
+properties:
+  processed:
+    type: integer
+    minimum: 0
+    description: Rows handled so far.
+    example: 120
+  total:
+    type: integer
+    minimum: 0
+    description: Rows the job was created with.
+    example: 500
+required:
+  - processed
+  - total

@@ -1,0 +1,56 @@
+x-tags:
+  - Passport
+type: object
+description: >-
+  The computed compliance determination. Part of the signed passport payload and
+  immutable after retention lock. Absent until a determination has been computed
+  — for example on a product group with no plugin loaded.
+required:
+  - co2eScore
+  - repairabilityIndex
+  - recycledContentPct
+  - complianceStatus
+properties:
+  co2eScore:
+    type:
+      - number
+      - 'null'
+    description: Calculated or manufacturer-supplied CO₂e score in kg.
+  repairabilityIndex:
+    type:
+      - number
+      - 'null'
+    description: Calculated or manufacturer-supplied repairability index (0.0–10.0).
+  recycledContentPct:
+    type:
+      - number
+      - 'null'
+  complianceStatus:
+    $ref: ./ComplianceStatus.yaml
+  violations:
+    type: array
+    description: >-
+      Binding findings — these block publish when the product group is in force. Empty
+      for passthrough or not-assessed determinations.
+    items:
+      $ref: ./ComplianceFinding.yaml
+  warnings:
+    type: array
+    description: >-
+      Advisory findings — surfaced but never blocking (e.g. thresholds not yet
+      in force).
+    items:
+      $ref: ./ComplianceFinding.yaml
+  rulesetVersion:
+    type: string
+    description: Version of the resolved calculation ruleset, when one ran.
+  assessedAt:
+    type: string
+    format: date-time
+  receipt:
+    type: object
+    additionalProperties: true
+    description: >-
+      Calculation receipt (input hash, ruleset id and version, factor dataset
+      version and table hash) for notified-body audit. Present only when a
+      calculation actually ran.

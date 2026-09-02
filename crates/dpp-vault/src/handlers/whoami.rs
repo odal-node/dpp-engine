@@ -9,7 +9,7 @@ use crate::middleware::auth::AuthContext;
 /// What the presented credential is.
 ///
 /// A named type rather than a `json!` literal so the OpenAPI contract test can
-/// check `components/schemas/WhoamiResponse` against it.
+/// check `components/schemas/access/WhoamiResponse` against it.
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WhoamiResponse {

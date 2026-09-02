@@ -1,0 +1,90 @@
+x-tags:
+  - Operator Profile
+type: object
+required:
+  - operatorId
+  - legalName
+  - address
+  - country
+  - contactEmail
+properties:
+  operatorId:
+    type: string
+    example: self_hosted
+  legalName:
+    type: string
+    example: Odal Node GmbH
+  tradeName:
+    type:
+      - string
+      - 'null'
+  address:
+    type: string
+    example: Johannes Strauss 12
+  country:
+    type: string
+    minLength: 2
+    maxLength: 2
+    example: DE
+  contactEmail:
+    type: string
+    format: email
+    example: contact@odal-node.io
+  didWebUrl:
+    type:
+      - string
+      - 'null'
+    format: uri
+  productCategories:
+    type:
+      - array
+      - 'null'
+    items:
+      type: string
+  brandPrimary:
+    type:
+      - string
+      - 'null'
+    description: Primary brand colour (hex)
+    example: '#2E7D32'
+  brandSecondary:
+    type:
+      - string
+      - 'null'
+  brandLogoUrl:
+    type:
+      - string
+      - 'null'
+    format: uri
+  customDomain:
+    type:
+      - string
+      - 'null'
+  dataResidency:
+    type: string
+    default: EU
+  retentionPolicyDays:
+    type: integer
+    default: 3650
+  featureFlags:
+    type:
+      - object
+      - 'null'
+  createdAt:
+    type:
+      - string
+      - 'null'
+    format: date-time
+  updatedAt:
+    type:
+      - string
+      - 'null'
+    format: date-time
+  registryVerifiedAt:
+    type:
+      - string
+      - 'null'
+    format: date-time
+    description: >-
+      When this operator's identity was last verified against the EU registry.
+      Null when no verification has succeeded — never treat absence as verified.

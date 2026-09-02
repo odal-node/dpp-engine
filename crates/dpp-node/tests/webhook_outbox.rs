@@ -28,7 +28,7 @@ use dpp_dal::pg::{PgWebhookRepo, sqlx};
 use dpp_dal::test_harness::start_pg;
 use dpp_node::infra::webhook_drain::{MAX_ATTEMPTS, drain_once};
 use dpp_types::{
-    NewWebhookSubscription, WebhookDeliveryRow, WebhookOutbox, WebhookSubscriptionStore,
+    CreateWebhookRequest, WebhookDeliveryRow, WebhookOutbox, WebhookSubscriptionStore,
 };
 
 type HmacSha256 = Hmac<Sha256>;
@@ -123,7 +123,7 @@ fn signature_valid(secret: &str, header: &str, body: &str) -> bool {
 async fn subscribe(store: &PgWebhookRepo, url: &str, events: &[&str]) -> String {
     let sub = store
         .create(
-            &NewWebhookSubscription {
+            &CreateWebhookRequest {
                 url: url.to_owned(),
                 events: events.iter().map(|s| s.to_string()).collect(),
                 description: None,

@@ -1,0 +1,18 @@
+x-tags:
+  - EU Registry State
+type: object
+description: >-
+  Operator-wide EU-registry state. `configured: false` means this deployment has
+  no registry queues; the counts are then omitted rather than reported as zero.
+required:
+  - configured
+  - verification
+properties:
+  configured:
+    type: boolean
+  verification:
+    $ref: ./RegistryVerificationView.yaml
+  registrations:
+    $ref: ./RegistrationCounts.yaml
+  transfers:
+    $ref: ./TransferNotificationCounts.yaml

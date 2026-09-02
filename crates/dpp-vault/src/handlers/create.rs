@@ -28,7 +28,7 @@ use super::error::{api_error, internal_error, require_write};
 /// Re-exported rather than declared: the bulk importer builds the same body, and
 /// the two used to be separate structs kept in step by a comment. See the type
 /// for what that cost.
-pub use dpp_types::CreatePassportRequest as CreateRequest;
+pub use dpp_types::CreatePassportRequest;
 
 /// `POST /api/v1/dpp` — validate fields and create a new passport in `Draft` status.
 ///
@@ -42,7 +42,7 @@ pub use dpp_types::CreatePassportRequest as CreateRequest;
 pub async fn create_handler(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthContext>,
-    Json(body): Json<CreateRequest>,
+    Json(body): Json<CreatePassportRequest>,
 ) -> impl IntoResponse {
     if let Some(resp) = require_write(&auth, "Creating a passport") {
         return resp;
@@ -431,7 +431,7 @@ mod gtin_boundary {
     #[test]
     fn a_bad_check_digit_is_refused_while_the_body_is_parsed() {
         // Valid 14-digit shape, wrong GS1 mod-10 check digit.
-        let err = serde_json::from_value::<CreateRequest>(tyre_body("09506000134353"))
+        let err = serde_json::from_value::<CreatePassportRequest>(tyre_body("09506000134353"))
             .expect_err("a bad check digit must not deserialize");
         assert!(
             err.to_string().to_lowercase().contains("check digit"),
@@ -441,7 +441,7 @@ mod gtin_boundary {
 
     #[test]
     fn a_valid_gtin_parses_and_the_request_is_accepted() {
-        let body = serde_json::from_value::<CreateRequest>(tyre_body("09506000134352"))
+        let body = serde_json::from_value::<CreatePassportRequest>(tyre_body("09506000134352"))
             .expect("a valid GTIN must deserialize");
         assert!(
             validate_create_request(&body).is_none(),
@@ -455,7 +455,8 @@ mod gtin_boundary {
         // this ever returns `None` for a product group that declares a `gtin`,
         // the check silently stops covering it — which is how it came to cover
         // battery alone.
-        let body = serde_json::from_value::<CreateRequest>(tyre_body("09506000134352")).unwrap();
+        let body =
+            serde_json::from_value::<CreatePassportRequest>(tyre_body("09506000134352")).unwrap();
         let data = body.product_group_data.expect("payload present");
         assert_eq!(data.gtin(), Some("09506000134352"));
     }
@@ -468,7 +469,7 @@ mod gtin_boundary {
 /// Extracted so the dry-run endpoint runs *this* rather than a second copy — a
 /// preview that disagreed with the real thing would be worse than none, because
 /// the direction it disagrees is the direction bad data gets through.
-pub fn validate_create_request(body: &CreateRequest) -> Option<axum::response::Response> {
+pub fn validate_create_request(body: &CreatePassportRequest) -> Option<axum::response::Response> {
     // Shadows the module-level helper so every check below keeps the exact
     // form it had inside `create_handler` — the extraction is a move, not a
     // rewrite, and the compiler enforces that.

@@ -18,7 +18,7 @@ pub const GENESIS_PREV_HASH: &str = "";
 /// not silently vanish from an otherwise-valid content hash.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct AuditEntry {
+pub struct PassportAuditEntry {
     /// Unique identifier for this audit record.
     pub id: Uuid,
     /// The passport this entry is for (stringified UUID for forward-compat).
@@ -49,7 +49,7 @@ pub struct AuditEntry {
     pub entry_hash: Option<String>,
 }
 
-impl AuditEntry {
+impl PassportAuditEntry {
     /// Construct an audit entry from an action and its actor.
     ///
     /// `id` is a new UUIDv7 so entries are time-ordered within a passport.
@@ -139,7 +139,7 @@ pub struct AuditChainBreak {
 ///
 /// # Errors
 /// [`AuditChainBreak`] at the first inconsistent entry.
-pub fn verify_audit_chain(entries: &[AuditEntry]) -> Result<(), AuditChainBreak> {
+pub fn verify_audit_chain(entries: &[PassportAuditEntry]) -> Result<(), AuditChainBreak> {
     let mut expected_prev = GENESIS_PREV_HASH.to_owned();
     for (index, entry) in entries.iter().enumerate() {
         let stored_prev = entry.prev_hash.as_deref().unwrap_or(GENESIS_PREV_HASH);
@@ -170,9 +170,12 @@ pub fn verify_audit_chain(entries: &[AuditEntry]) -> Result<(), AuditChainBreak>
 #[async_trait]
 pub trait AuditRepository: Send + Sync {
     /// Append a new audit entry. The DB trigger prevents any update or delete.
-    async fn append(&self, entry: AuditEntry) -> Result<(), DppError>;
+    async fn append(&self, entry: PassportAuditEntry) -> Result<(), DppError>;
     /// Retrieve the full audit trail for a passport, ordered by timestamp ascending.
-    async fn list_by_passport(&self, passport_id: &str) -> Result<Vec<AuditEntry>, DppError>;
+    async fn list_by_passport(
+        &self,
+        passport_id: &str,
+    ) -> Result<Vec<PassportAuditEntry>, DppError>;
 }
 
 #[cfg(test)]
@@ -194,7 +197,7 @@ mod tests {
     /// a patch.
     #[test]
     fn chain_hash_matches_its_persisted_golden_value() {
-        let fixed = AuditEntry {
+        let fixed = PassportAuditEntry {
             id: Uuid::parse_str("019f7f0a-1077-7de0-b6c2-f03168422cbd").unwrap(),
             passport_id: "019f7f0a-1077-7de0-b6c2-f03168422cbd".into(),
             actor: "operator@example.com".into(),
@@ -212,8 +215,8 @@ mod tests {
         );
     }
 
-    fn entry(action: &str) -> AuditEntry {
-        AuditEntry {
+    fn entry(action: &str) -> PassportAuditEntry {
+        PassportAuditEntry {
             id: Uuid::now_v7(),
             passport_id: "p1".into(),
             actor: "actor".into(),
@@ -228,7 +231,7 @@ mod tests {
     }
 
     /// Link a slice into a chain exactly as the storage layer does on append.
-    fn chain(entries: &mut [AuditEntry]) {
+    fn chain(entries: &mut [PassportAuditEntry]) {
         let mut prev = GENESIS_PREV_HASH.to_owned();
         for e in entries.iter_mut() {
             let h = e.chain_hash(&prev);
@@ -247,7 +250,7 @@ mod tests {
 
     #[test]
     fn new_builds_from_a_plain_actor_string() {
-        let e = AuditEntry::new("p1", "created", "user-123", None, Some("draft"));
+        let e = PassportAuditEntry::new("p1", "created", "user-123", None, Some("draft"));
         assert_eq!(e.actor, "user-123");
         assert_eq!(e.action, "created");
         assert_eq!(e.new_status.as_deref(), Some("draft"));
@@ -282,7 +285,7 @@ mod tests {
     fn unknown_field_is_rejected_at_deserialize() {
         let mut value = serde_json::to_value(entry("created")).unwrap();
         value["notARealField"] = serde_json::json!("sneaky");
-        let result: Result<AuditEntry, _> = serde_json::from_value(value);
+        let result: Result<PassportAuditEntry, _> = serde_json::from_value(value);
         assert!(result.is_err(), "unknown field must fail to deserialize");
     }
 
@@ -296,7 +299,7 @@ mod tests {
             actions in proptest::collection::vec("[a-z]{1,8}", 1..12usize),
             tamper_seed in any::<usize>(),
         ) {
-            let mut es: Vec<AuditEntry> = actions.iter().map(|a| entry(a)).collect();
+            let mut es: Vec<PassportAuditEntry> = actions.iter().map(|a| entry(a)).collect();
             chain(&mut es);
             prop_assert!(verify_audit_chain(&es).is_ok());
 

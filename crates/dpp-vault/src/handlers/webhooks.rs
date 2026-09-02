@@ -15,7 +15,7 @@ use serde::Serialize;
 use uuid::Uuid;
 
 use dpp_domain::error::DppError;
-use dpp_types::{NewWebhookSubscription, WebhookSubscription};
+use dpp_types::{CreateWebhookRequest, WebhookSubscription};
 
 use crate::{middleware::auth::AuthContext, state::AppState};
 
@@ -49,7 +49,7 @@ pub async fn webhooks_list_handler(
 pub async fn webhooks_create_handler(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthContext>,
-    Json(body): Json<NewWebhookSubscription>,
+    Json(body): Json<CreateWebhookRequest>,
 ) -> impl IntoResponse {
     if let Some(resp) = require_admin(&auth, "Webhook management") {
         return resp;

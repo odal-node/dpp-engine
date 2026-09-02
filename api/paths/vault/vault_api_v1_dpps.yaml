@@ -1,0 +1,53 @@
+get:
+  operationId: listDpps
+  summary: List DPPs
+  description: |
+    Paginated list of DPPs for the authenticated operator.
+    Supports filtering by status, free-text search across
+    `productName`, `batchId`, and `manufacturer.name`, and an exact
+    `facilityId` match (ESPR Annex III). A grouping filter, never an
+    isolation boundary.
+  tags:
+    - DPP Management
+  security:
+    - BearerApiKey: []
+    - BasicAuth: []
+  parameters:
+    - name: q
+      in: query
+      schema:
+        type: string
+      description: Free-text search across productName, batchId, manufacturer.name
+    - name: status
+      in: query
+      schema:
+        $ref: ../../components/schemas/passport/PassportStatus.yaml
+    - name: facilityId
+      in: query
+      schema:
+        type: string
+      description: >-
+        Exact match on the facility identifier stamped on the passport (see GET
+        /facilities).
+    - name: limit
+      in: query
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 20
+    - name: skip
+      in: query
+      schema:
+        type: integer
+        minimum: 0
+        default: 0
+  responses:
+    '200':
+      description: Paginated list of DPPs.
+      content:
+        application/json:
+          schema:
+            $ref: ../../components/schemas/passport-reports/PassportListResponse.yaml
+    '401':
+      $ref: ../../components/responses/Unauthorized.yaml

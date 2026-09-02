@@ -1,0 +1,37 @@
+post:
+  operationId: archiveDpp
+  summary: Archive a DPP
+  description: |
+    Transition a DPP to `archived`. This is irreversible.
+    Archived DPPs are immutable and retained for regulatory record-keeping.
+    No request body is required.
+  tags:
+    - DPP Lifecycle
+  security:
+    - BearerApiKey: []
+    - BasicAuth: []
+  parameters:
+    - name: dppId
+      in: path
+      required: true
+      schema:
+        $ref: ../../components/schemas/passport/DppId.yaml
+  responses:
+    '200':
+      description: DPP archived. Returns the full passport record.
+      content:
+        application/json:
+          schema:
+            $ref: ../../components/schemas/passport/PassportResponse.yaml
+    '401':
+      $ref: ../../components/responses/Unauthorized.yaml
+    '404':
+      $ref: ../../components/responses/NotFound.yaml
+    '409':
+      $ref: ../../components/responses/Conflict.yaml
+    '400':
+      $ref: ../../components/responses/BadRequest.yaml
+    '403':
+      $ref: ../../components/responses/Forbidden.yaml
+    '422':
+      $ref: ../../components/responses/ValidationError.yaml

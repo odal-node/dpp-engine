@@ -60,7 +60,7 @@ use serde_json::Value;
 use dpp_domain::Audience;
 use dpp_domain::status::PassportStatus;
 
-use dpp_types::audit::AuditEntry;
+use dpp_types::audit::PassportAuditEntry;
 
 use crate::middleware::credential::{CredentialOutcome, VerifiedCredential, read_and_verify};
 use crate::public_view::{audience_view, signed_audience_view, signed_public_view};
@@ -196,7 +196,7 @@ async fn record_access(
         .map(dpp_domain::Disclosure::token)
         .collect();
 
-    let entry = AuditEntry::new(
+    let entry = PassportAuditEntry::new(
         &passport.id.to_string(),
         CREDENTIALED_READ,
         subject.id.clone(),

@@ -1,0 +1,24 @@
+x-tags:
+  - Node Identity
+type: object
+description: |
+  A W3C DID Core `did:web` document. Lists the operator's Ed25519
+  verification methods; rotated keys are retained (so historical
+  signatures still verify) and revoked keys are omitted.
+example:
+  '@context':
+    - https://www.w3.org/ns/did/v1
+    - https://w3id.org/security/suites/ed25519-2020/v1
+  id: did:web:id.odal-node.io
+  verificationMethod:
+    - id: did:web:id.odal-node.io#key-1
+      type: JsonWebKey2020
+      controller: did:web:id.odal-node.io
+      publicKeyJwk:
+        kty: OKP
+        crv: Ed25519
+        x: <base64url>
+  authentication:
+    - did:web:id.odal-node.io#key-1
+  assertionMethod:
+    - did:web:id.odal-node.io#key-1

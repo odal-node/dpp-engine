@@ -1,0 +1,20 @@
+x-tags:
+  - Passport
+type: object
+description: >-
+  Repairability as a **non-regulatory heuristic**. Deliberately not an EN 45554
+  or Regulation (EU) 2023/1669 index — those have prescribed methodologies this
+  does not implement, and presenting a heuristic as either would misstate it.
+required:
+  - overall
+properties:
+  overall:
+    type: number
+    minimum: 0
+    maximum: 10
+    example: 7.5
+  criteria:
+    type: array
+    description: Per-criterion breakdown. Empty when only the overall score is known.
+    items:
+      $ref: ./RepairCriterion.yaml

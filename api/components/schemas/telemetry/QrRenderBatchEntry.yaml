@@ -1,0 +1,17 @@
+x-tags:
+  - Scan Counters
+type: object
+required:
+  - dppId
+  - day
+  - count
+description: One aggregated QR-render increment since the resolver's last flush.
+properties:
+  dppId:
+    type: string
+  day:
+    type: string
+    format: date
+  count:
+    type: integer
+    minimum: 0

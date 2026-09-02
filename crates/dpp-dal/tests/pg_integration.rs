@@ -39,7 +39,7 @@ use dpp_domain::{
 };
 use dpp_types::{
     api_key::{ApiKey, ApiKeyRecord, ApiKeyRepository},
-    audit::{AuditEntry, AuditRepository},
+    audit::{AuditRepository, PassportAuditEntry},
     evidence::{
         DossierManifest, DossierV1, EvidenceDossierRecord, EvidenceDossierRepository, SignedLayer,
     },
@@ -296,7 +296,7 @@ async fn t3_retention_trigger_blocks_content_tamper() {
 async fn t4_audit_append_only() {
     let pg = start_pg().await;
     let audit = PgAuditRepo::new(pg.dal.clone());
-    let entry = AuditEntry {
+    let entry = PassportAuditEntry {
         id: Uuid::now_v7(),
         passport_id: Uuid::now_v7().to_string(),
         actor: "test".into(),
@@ -336,7 +336,7 @@ async fn t7_audit_hash_chain_detects_tamper() {
     let audit = PgAuditRepo::new(pg.dal.clone());
     let pid = Uuid::now_v7().to_string();
 
-    let mk = |action: &str, new: &str| AuditEntry {
+    let mk = |action: &str, new: &str| PassportAuditEntry {
         id: Uuid::now_v7(),
         passport_id: pid.clone(),
         actor: "test".into(),

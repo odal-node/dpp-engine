@@ -1,0 +1,65 @@
+x-tags:
+  - Seals
+type: object
+description: >-
+  The eIDAS seal, plus what is needed to check it — and an explicit statement of
+  what this node did **not** check.
+required:
+  - declaredBy
+  - format
+  - sealValue
+  - sealedAt
+  - placeholder
+  - currentJws
+  - currentPayloadHash
+  - coverage
+  - verification
+properties:
+  declaredBy:
+    $ref: ./SealDeclarer.yaml
+  format:
+    type: string
+    description: AdES format of `sealValue`.
+    example: CADES
+  sealValue:
+    type: string
+    description: Base64 detached CAdES (`.p7s`) as returned by the QTSP.
+  sealedAt:
+    type: string
+    format: date-time
+  signingCertRef:
+    type:
+      - string
+      - 'null'
+    description: >-
+      Hex SHA-256 of the certificate the seal names as its signer, **as reported
+      by the seal** — read out of the CAdES, never verified. It answers *which*
+      certificate to ask about, not whether that certificate was qualified or on
+      the EU Trusted List. Null when the seal predates extraction or could not
+      be parsed.
+  placeholder:
+    type: boolean
+    description: True when this is a placeholder with no legal validity.
+  currentJws:
+    type: string
+    description: The passport's **current** compact JWS.
+  currentPayloadHash:
+    type: string
+    description: Hex SHA-256 of `currentJws`.
+  sealedPayloadHash:
+    type:
+      - string
+      - 'null'
+    description: >-
+      Hex SHA-256 this node **asked** the backend to seal. A record, not proof:
+      it says what was requested, while the validator's extracted message digest
+      says what the CAdES actually covers. The two agreeing is the cross-check.
+      Null for a seal restored from a backup or produced elsewhere.
+  coverage:
+    $ref: ./SealCoverage.yaml
+  verification:
+    type: string
+    description: >-
+      Stated, not implied: this node did not cryptographically validate the
+      CAdES. A detached CAdES must be checked by an independent AdES validator
+      against the EU Trusted List.

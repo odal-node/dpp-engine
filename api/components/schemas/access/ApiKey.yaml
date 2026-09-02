@@ -1,0 +1,38 @@
+x-tags:
+  - Access & Integrations
+type: object
+required:
+  - id
+  - name
+  - keyPrefix
+  - isActive
+  - scope
+  - createdAt
+properties:
+  id:
+    type: string
+    format: uuid
+  name:
+    type: string
+    example: CI pipeline
+  keyPrefix:
+    type: string
+    description: First 12 characters of the key (e.g. 'odal_sk_abc1')
+    example: odal_sk_abc1
+  isActive:
+    type: boolean
+  createdAt:
+    type: string
+    format: date-time
+  lastUsedAt:
+    type:
+      - string
+      - 'null'
+    format: date-time
+  expiresAt:
+    type:
+      - string
+      - 'null'
+    format: date-time
+  scope:
+    $ref: ./ApiKeyScope.yaml

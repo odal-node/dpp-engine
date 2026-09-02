@@ -15,7 +15,7 @@ use dpp_domain::{DppError, passport::PassportId, transfer::TransferChain};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::audit::AuditEntry;
+use crate::audit::PassportAuditEntry;
 
 /// A JWS alongside the exact JSON payload it was signed over.
 ///
@@ -83,7 +83,7 @@ pub struct DossierV1 {
     /// transfer chain is present.
     pub did_documents: BTreeMap<String, serde_json::Value>,
     /// Ordered ascending by timestamp (chain order).
-    pub audit_entries: Vec<AuditEntry>,
+    pub audit_entries: Vec<PassportAuditEntry>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub transfer_chain: Option<TransferChain>,
     /// Present iff the passport was deactivated (End-of-Life declared).

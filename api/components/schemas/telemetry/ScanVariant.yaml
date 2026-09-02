@@ -1,0 +1,6 @@
+x-tags:
+  - Scan Counters
+type: string
+enum:
+  - html
+  - json

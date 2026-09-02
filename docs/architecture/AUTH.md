@@ -23,7 +23,7 @@ Handlers extract this from the request:
 ```rust
 async fn create_handler(
     Extension(auth): Extension<AuthContext>,
-    Json(body): Json<CreateRequest>,
+    Json(body): Json<CreatePassportRequest>,
 ) -> Result<Json<Passport>, AppError> {
     // auth.user_id is available here
 }

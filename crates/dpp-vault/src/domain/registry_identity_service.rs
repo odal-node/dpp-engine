@@ -14,7 +14,7 @@ use dpp_domain::error::DppError;
 use dpp_types::operator::STANDALONE_OPERATOR_ID;
 use dpp_types::registry_identity::{
     CreateFacilityRequest, CreateOperatorIdentifierRequest, Facility, OperatorIdentifier,
-    RegistryIdentityAudit, RegistryIdentityRepository,
+    RegistryIdentityAuditEntry, RegistryIdentityRepository,
 };
 
 /// `entity_type` discriminators for registry-identity audit records.
@@ -138,7 +138,7 @@ impl RegistryIdentityService {
         snapshot: Option<serde_json::Value>,
     ) -> Result<(), DppError> {
         self.repo
-            .append_audit(RegistryIdentityAudit::new(
+            .append_audit(RegistryIdentityAuditEntry::new(
                 STANDALONE_OPERATOR_ID,
                 entity_type,
                 entity_id,
@@ -254,7 +254,10 @@ impl RegistryIdentityService {
     // ── Audit trail ──────────────────────────────────────────────────────────
 
     /// Append-only mutation history for one facility (oldest first).
-    pub async fn facility_audit(&self, id: Uuid) -> Result<Vec<RegistryIdentityAudit>, DppError> {
+    pub async fn facility_audit(
+        &self,
+        id: Uuid,
+    ) -> Result<Vec<RegistryIdentityAuditEntry>, DppError> {
         self.repo.list_registry_audit(ENTITY_FACILITY, id).await
     }
 
@@ -262,7 +265,7 @@ impl RegistryIdentityService {
     pub async fn operator_identifier_audit(
         &self,
         id: Uuid,
-    ) -> Result<Vec<RegistryIdentityAudit>, DppError> {
+    ) -> Result<Vec<RegistryIdentityAuditEntry>, DppError> {
         self.repo
             .list_registry_audit(ENTITY_OPERATOR_IDENTIFIER, id)
             .await

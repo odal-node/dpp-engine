@@ -1,0 +1,41 @@
+x-tags:
+  - Passport
+type: object
+description: >-
+  A CO₂-equivalent figure with the LCA context needed to read it. A bare number
+  is not comparable across products — the lifecycle stage and system boundary
+  are what make two figures mean the same thing.
+required:
+  - valueKg
+properties:
+  valueKg:
+    type: number
+    description: CO₂-equivalent value in kg per functional unit.
+    example: 45.2
+  lifecycleStage:
+    type: string
+    description: LCA lifecycle stage this figure covers.
+    enum:
+      - cradle-to-gate
+      - cradle-to-grave
+      - cradle-to-cradle
+      - gate-to-grave
+      - other
+  systemBoundary:
+    type: string
+    description: LCA system-boundary standard used.
+    enum:
+      - EN-15804
+      - ISO-14044
+      - GHG-protocol
+      - other
+  methodologyRef:
+    type: string
+    description: Citation for the methodology behind the figure.
+  performanceClass:
+    type: string
+    maxLength: 8
+    description: >-
+      Performance class label as defined by the applicable delegated act (e.g.
+      an A–G band). Free text because the banding is per product group.
+    example: B

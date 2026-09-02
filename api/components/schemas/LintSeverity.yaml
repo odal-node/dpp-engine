@@ -1,7 +1,0 @@
-type: string
-description: >-
-  Severity of a plausibility finding. Neither value blocks publish — lint is
-  advisory by construction, unlike a compliance violation.
-enum:
-  - WARNING
-  - NOTICE

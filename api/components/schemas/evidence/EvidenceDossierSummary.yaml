@@ -1,0 +1,24 @@
+x-tags:
+  - Evidence & Verification
+type: object
+description: Listing projection of a stored dossier — everything but the document.
+required:
+  - id
+  - passportId
+  - actor
+  - createdAt
+  - docHash
+properties:
+  id:
+    type: string
+    format: uuid
+  passportId:
+    type: string
+    format: uuid
+  actor:
+    type: string
+  createdAt:
+    type: string
+    format: date-time
+  docHash:
+    type: string

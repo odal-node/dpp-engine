@@ -2,7 +2,7 @@ description: One or more fields failed validation.
 content:
   application/problem+json:
     schema:
-      $ref: ../schemas/Problem.yaml
+      $ref: ../schemas/errors/Problem.yaml
     example:
       type: https://problems.odal-node.io/unprocessable-entity
       title: Unprocessable Entity

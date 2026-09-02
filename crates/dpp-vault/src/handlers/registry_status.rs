@@ -54,7 +54,7 @@ pub struct RegistrationView {
 /// One transfer-of-responsibility notification.
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct TransferView {
+pub struct TransferNotificationView {
     pub transfer_id: uuid::Uuid,
     /// Queue state: `pending`, `notified`, `rejected`.
     pub status: &'static str,
@@ -79,7 +79,7 @@ pub struct PassportRegistryView {
     pub registration: Option<RegistrationView>,
     /// Every handover notification recorded for this passport, newest first.
     #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub transfers: Vec<TransferView>,
+    pub transfers: Vec<TransferNotificationView>,
     /// Who is responsible for this passport **now**, from its transfer chain.
     ///
     /// Reported separately because the passport's own `operatorIdentifier` is
@@ -109,11 +109,11 @@ pub struct CurrentOperatorView {
 pub struct RegistryRollupView {
     pub configured: bool,
     /// Whether this operator may currently register anything at all.
-    pub verification: VerificationView,
+    pub verification: RegistryVerificationView,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub registrations: Option<RegistrationCounts>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub transfers: Option<TransferCounts>,
+    pub transfers: Option<TransferNotificationCounts>,
 }
 
 /// The operator's verified-registry standing.
@@ -124,7 +124,7 @@ pub struct RegistryRollupView {
 /// reported whether or not the queues are configured.
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct VerificationView {
+pub struct RegistryVerificationView {
     /// `false` both when never verified and when lapsed — the registry refuses
     /// either way, though they are different situations to act on.
     pub current: bool,
@@ -166,7 +166,7 @@ pub struct RegistrationCounts {
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct TransferCounts {
+pub struct TransferNotificationCounts {
     pub pending: i64,
     pub notified: i64,
     pub rejected: i64,
@@ -222,7 +222,7 @@ pub async fn passport_registry_handler(
         Some(transfers) => match transfers.rows_for(passport_id).await {
             Ok(rows) => rows
                 .into_iter()
-                .map(|r| TransferView {
+                .map(|r| TransferNotificationView {
                     transfer_id: r.transfer_id,
                     status: transfer_status(r.status),
                     registry_id: r.registry_id,
@@ -311,7 +311,7 @@ pub async fn registry_rollup_handler(
 
     let transfers = match state.service.transfer_outbox.as_ref() {
         Some(t) => match t.status_counts(STALL_THRESHOLD).await {
-            Ok(c) => Some(TransferCounts {
+            Ok(c) => Some(TransferNotificationCounts {
                 pending: c.pending,
                 notified: c.notified,
                 rejected: c.rejected,
@@ -339,7 +339,7 @@ pub async fn registry_rollup_handler(
 /// A read failure reports "not current" rather than erroring the whole rollup:
 /// an operator asking "can I register?" is better served by a conservative no
 /// than by a 500.
-async fn verification_view(state: &AppState) -> VerificationView {
+async fn verification_view(state: &AppState) -> RegistryVerificationView {
     let config = match state.service.registry_reader.as_ref() {
         Some(reader) => reader
             .get(dpp_types::STANDALONE_OPERATOR_ID)
@@ -349,7 +349,7 @@ async fn verification_view(state: &AppState) -> VerificationView {
         None => None,
     };
     let Some(config) = config else {
-        return VerificationView {
+        return RegistryVerificationView {
             current: false,
             verified_at: None,
             expires_at: None,
@@ -358,7 +358,7 @@ async fn verification_view(state: &AppState) -> VerificationView {
     };
     let now = chrono::Utc::now();
     let expires_at = config.registry_verification_expires_at();
-    VerificationView {
+    RegistryVerificationView {
         current: config.registry_verification_is_current(now),
         verified_at: config.registry_verified_at,
         expires_at,
