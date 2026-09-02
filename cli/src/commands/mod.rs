@@ -18,6 +18,7 @@ pub mod plugin;
 pub mod profile;
 pub mod publish;
 pub mod registry;
+pub mod ruleset;
 pub mod schema;
 pub mod seal;
 pub mod stats;

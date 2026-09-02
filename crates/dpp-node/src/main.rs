@@ -189,38 +189,13 @@ async fn main() -> anyhow::Result<()> {
     // Load the pinned, signed bundle if a channel is configured; otherwise stay
     // on the in-repo baseline. A bad bundle never takes the node down — it stays
     // on the last-good ruleset (fail-closed) and raises an alarm metric.
-    let active_ruleset = Arc::new(dpp_node::infra::ruleset::ActiveRuleset::baseline());
-    match (
-        std::env::var("RULESET_BUNDLE_PATH")
-            .ok()
-            .filter(|s| !s.is_empty()),
-        std::env::var("RULESET_PUBLISHER_PUBKEY")
-            .ok()
-            .filter(|s| !s.is_empty()),
-    ) {
-        (Some(path), Some(pubkey)) => {
-            let loaded = dpp_node::infra::ruleset::read_bundle_file(std::path::Path::new(&path))
-                .and_then(|b| {
-                    active_ruleset
-                        .load_and_swap(&b, &pubkey)
-                        .map_err(anyhow::Error::from)
-                });
-            match loaded {
-                Ok(v) => tracing::info!(version = %v, "compliance-current ruleset loaded"),
-                Err(e) => {
-                    metrics::counter!("ruleset_load_failures_total").increment(1);
-                    tracing::error!(
-                        code = event_codes::RULESET_LOAD_FAILED,
-                        error = %e,
-                        "ruleset bundle failed to load — staying on baseline (fail-closed)"
-                    );
-                }
-            }
-        }
-        _ => tracing::info!(
-            "compliance-current ruleset: baseline — set RULESET_BUNDLE_PATH + RULESET_PUBLISHER_PUBKEY for a signed channel"
-        ),
-    }
+    //
+    // This is a `reload`, not a separate boot-time loader: the trigger the admin
+    // route and the poller use is the same one boot uses, so it is exercised on
+    // every start and cannot drift into a second copy of read-verify-swap.
+    let ruleset_wiring = dpp_node::infra::ruleset::from_env();
+    let active_ruleset = ruleset_wiring.active.clone();
+    dpp_node::infra::ruleset::reload_and_report(&active_ruleset, true).await;
     tracing::info!(version = %active_ruleset.version(), "active ruleset");
 
     // ── Vault service state ────────────────────────────────────────────────────
@@ -361,7 +336,10 @@ async fn main() -> anyhow::Result<()> {
         // Reported on the authenticated `/vault/api/v1/node/state`, not on the
         // public `/health` — see `dpp_node::router::node_health`.
         trust: Some(trust.clone()),
-        ruleset_version: Some(active_ruleset.version().to_owned()),
+        // The port, not a version snapshot — `/node/state` reads the version in
+        // force at the moment it is asked, and `POST /ruleset/reload` reaches
+        // the same channel this booted from.
+        ruleset_admin: Some(active_ruleset.clone()),
     };
 
     // ── Integrator service state ────────────────────────────────────────────────
@@ -376,6 +354,7 @@ async fn main() -> anyhow::Result<()> {
     // ── Background tasks: expired-import-job cleanup + registry outbox drain ──
     boot::tasks::spawn_job_cleanup(db.job_store.clone());
     boot::tasks::spawn_scan_prune(db.scan_repo.clone());
+    boot::tasks::spawn_ruleset_poll(active_ruleset.clone(), ruleset_wiring.poll_interval);
     boot::tasks::spawn_registry_drain(
         db.registry_outbox.clone(),
         registry_sync_for_drain.clone(),

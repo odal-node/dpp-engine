@@ -41,6 +41,36 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   valid.** Enforcement lands separately, in the verifier; until then the bound
   is stated and dated but not refused.
 
+- **The node can actually hot-swap a ruleset now.** `POST /api/v1/ruleset/reload`
+  (admin, `odal ruleset reload`) re-reads the signed channel and swaps in a
+  verified bundle, and a poller does the same unattended every
+  `RULESET_POLL_INTERVAL_SECS` (default 300; `0` disables it).
+
+  The type was built to swap and said it did. Nothing performed one: the single
+  production caller was a boot-time load, so taking a new ruleset meant a
+  restart — precisely what the promise ruled out. Verification was never the gap
+  (authenticity, integrity, applicability and the rollback refusal were all
+  correct and reachable); the trigger was.
+
+  **The version reported on `/api/v1/node/state` is now read live.** It was a
+  `String` cloned once at boot, which was true only while nothing could change
+  it — the moment a swap became possible it would have gone stale and stayed
+  stale, and a stale ruleset version is exactly the dishonesty that endpoint
+  exists to prevent. The vault now holds a `RulesetAdmin` port, mirroring
+  `PluginAdmin`.
+
+  **Boot and reload are one code path**, so the trigger is exercised on every
+  start rather than living beside a second copy of read-verify-swap. Bundles
+  arrive through a `RulesetSource` seam — a local file today, which the
+  distribution design has always called the placeholder for an HTTP feed or an
+  OCI pull — so the transport can change without the swap path moving.
+
+  Every refusal stays fail-closed and keeps its own wire code: `RULESET_REJECTED`
+  (distrust the bytes), `RULESET_NOT_YET_EFFECTIVE` (hold and re-offer),
+  `RULESET_SUPERSEDED` (the rollback refusal). Refusals count on the existing
+  `ruleset_load_failures_total`, which fleet self-checks already alarm on;
+  adoptions count on `ruleset_swaps_total`.
+
 - **The seal route names who declared the content it covers.**
   `GET /api/v1/dpp/{dppId}/seal` gains `declaredBy`, carrying the manufacturer
   and Annex III(k) operator identifier frozen at publish, a

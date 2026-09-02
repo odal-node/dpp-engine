@@ -9,7 +9,7 @@
 
 | Tier | Profile | What it honestly claims | Available |
 |---|---|---|---|
-| **T1 Pilot-grade** | default (`NODE_PROFILE` unset) | Full lifecycle, signed + verified passports, hash-chained audit, outbox-durable registry intent; **trust ports run Ghost and say so** in `/health.trust_mode` | **Now** |
+| **T1 Pilot-grade** | default (`NODE_PROFILE` unset) | Full lifecycle, signed + verified passports, hash-chained audit, outbox-durable registry intent; **trust ports run Ghost and say so** on `/vault/api/v1/node/state` (`trustMode`) and the `trust_mode` gauge | **Now** |
 | **T2 Sealed-grade** | `NODE_PROFILE=production` | Everything above + real qualified seals from a hosted QTSP | After a QTSP credential exists — the adapter is wired, the account is not |
 | **T3 Registry-grade** | `NODE_PROFILE=production` | + real EU registry registration | After the Commission publishes its registry spec |
 
@@ -73,7 +73,8 @@ Auto-HTTPS, zero certificate ops. (Traefik equivalent if preferred; Caddy is les
 | `NATS_URL` | opt | Compose provides it; unset ⇒ NoOp bus (acceptable for pilot if you drop the service) |
 | `METRICS_ADDR` | opt | `127.0.0.1:9464` — never public (RT2-7) |
 | `PLUGINS_DIR` | ✔ (compose: `/plugins`) | Mount the product group `.wasm` files into the `node-plugins` volume |
-| `RULESET_BUNDLE_PATH` + `RULESET_PUBLISHER_PUBKEY` | opt | Wire when the first Compliance Current bundle ships; bad bundle ⇒ last-good + alarm |
+| `RULESET_BUNDLE_PATH` + `RULESET_PUBLISHER_PUBKEY` | opt | Wire when the first Compliance Current bundle ships — both or neither. Bad bundle ⇒ last-good + `ruleset_load_failures_total`. Drop a new bundle at the path and the node takes it within `RULESET_POLL_INTERVAL_SECS`, or at once on `odal ruleset reload`; no restart |
+| `RULESET_POLL_INTERVAL_SECS` | opt | Default `300`. `0` polls never, leaving `POST /vault/api/v1/ruleset/reload` as the only trigger |
 | `NODE_PROFILE` | opt | **Leave unset** (T1). Set `production` only at T2 — it will refuse ghosts, correctly |
 | `DATABASE_MIGRATE_URL` | opt | Keep for pilot (idempotent sqlx migrations at boot); the least-privilege upgrade (external `just migrate`, app role only at runtime) is a later hardening |
 | `EU_REGISTRY_CLIENT_ID/SECRET`, `ARCHIVE_S3_BUCKET`… | opt | T3 / archive tier — leave unset until real |
@@ -83,7 +84,7 @@ Auto-HTTPS, zero certificate ops. (Traefik equivalent if preferred; Caddy is les
 
 **2.5 First boot.** `docker compose up -d` (with the local-core overlay until Blocker B clears) → postgres init runs `bootstrap.sql` (creates `odal_app`) → node applies `ops/pg` migrations via `DATABASE_MIGRATE_URL` → healthchecks green.
 
-**2.6 Go-live smoke (the gate — do not skip).** (1) `/health` shows expected `profile`, `trust_mode` per port, `ruleset.version`; (2) create → publish a test passport via API key; (3) resolve it: JSON *and* HTML on `dpp.<operator-domain>`, signature verifies (fail-closed path); (4) scan the QR from a phone on mobile data (not the VM's network); (5) tamper test: flip a field in `psql` → resolver returns 409; (6) `verify_chain` on the audit trail returns intact; (7) kill the node mid-publish, restart → outbox row survives (the chaos case, once per deployment). Record all seven in the operator's onboarding record — this doubles as your SLA evidence baseline.
+**2.6 Go-live smoke (the gate — do not skip).** (1) `curl` the **authenticated** `/vault/api/v1/node/state` with an API key and confirm expected `profile`, `trustMode` per port, and `rulesetVersion` — the public `/health` answers `{"status":"ok"}` and nothing else, so a probe pointed there passes without checking anything; (2) create → publish a test passport via API key; (3) resolve it: JSON *and* HTML on `dpp.<operator-domain>`, signature verifies (fail-closed path); (4) scan the QR from a phone on mobile data (not the VM's network); (5) tamper test: flip a field in `psql` → resolver returns 409; (6) `verify_chain` on the audit trail returns intact; (7) kill the node mid-publish, restart → outbox row survives (the chaos case, once per deployment). Record all seven in the operator's onboarding record — this doubles as your SLA evidence baseline.
 
 ---
 
@@ -91,9 +92,13 @@ Auto-HTTPS, zero certificate ops. (Traefik equivalent if preferred; Caddy is les
 
 **Backups — the only thing that can actually kill you.** Nightly `pg_dump -Fc` + copy of `keystore.enc` (it's on `node-data`) → **off-VM** object storage (EU region, versioned bucket, 30-day retention) — a 10-line cron script; the passphrase is *not* stored beside the dump. Redis/NATS are cache/replayable — exclude. **Monthly restore drill** on a scratch VM: restore dump + keystore → boot → old passport still resolves + verifies; target <1h (the S-4 gate). An untested backup is a hypothesis.
 
-**Monitoring (pilot-appropriate, ~€0).** External uptime probe (UptimeRobot-class free tier) on `https://dpp.<domain>/health`-equivalent public route + the resolver of a known passport; assert not just 200 but the JSON: expected `trust_mode` values — **a config regression that silently flips a port's trust tier must page you** (that's your honesty invariant, monitored). On-VM: Prometheus scrape of `127.0.0.1:9464` or, simpler for one VM, a cron that greps the metrics endpoint and mails on: `signing_failures_total > 0`, `registry_outbox_stalled > 0`, `ruleset_load_failures_total > 0`, disk >80%. Full Grafana/Loki stack is H3 — do not build it for one operator.
+**Monitoring (pilot-appropriate, ~€0).** Split it by what each probe can actually see.
 
-**Upgrades — the ritual.** (1) backup first; (2) bump the pinned `ODAL_VERSION` on the **staging** VM (your own demo VM is staging), run §2.6 smoke; (3) same on prod; (4) migrations apply at boot (forward-only — **rollback = restore from backup**, so step 1 is the rollback plan); (5) post-deploy: §2.6 items 1–3 minimum + diff `/health.ruleset.version`. Log every upgrade in the operator record (BUILD-LOG habit, operator-facing).
+*External* (UptimeRobot-class free tier), on `https://dpp.<domain>/health` + the resolver of a known passport: **liveness only** — 200 and `{"status":"ok"}`. It cannot assert trust tiers. That endpoint deliberately carries nothing else (which ports are degraded is a targeting signal), and the endpoint that does carry them needs a credential — which is not something to hand a third-party uptime SaaS, since even a read-scoped key reads every passport.
+
+*On-VM*, where a credential never leaves the box, is where the honesty invariant is monitored — and it needs no credential at all, because **`trust_mode` is already a labelled gauge on the metrics listener** (`0` ghost, `1` sandbox, `2` live, one series per port). Prometheus scrape of `127.0.0.1:9464`, or simpler for one VM, a cron that greps the metrics endpoint and mails on: any `trust_mode{port=…}` **below its expected value** — *a config regression that silently flips a port's trust tier must page you* — plus `signing_failures_total > 0`, `registry_outbox_stalled > 0`, `ruleset_load_failures_total > 0`, disk >80%. Full Grafana/Loki stack is H3 — do not build it for one operator.
+
+**Upgrades — the ritual.** (1) backup first; (2) bump the pinned `ODAL_VERSION` on the **staging** VM (your own demo VM is staging), run §2.6 smoke; (3) same on prod; (4) migrations apply at boot (forward-only — **rollback = restore from backup**, so step 1 is the rollback plan); (5) post-deploy: §2.6 items 1–3 minimum + diff `rulesetVersion` on `/vault/api/v1/node/state`. Log every upgrade in the operator record (BUILD-LOG habit, operator-facing).
 
 **Key rotation.** The identity service supports rotation. The `kid`-based verification fix has landed (`dpp-crypto::jws::verifier::extract_key_by_fingerprint` resolves any archived key by its `kid` fingerprint, not just the primary) and has a green rotation regression test (`dpp-identity::handlers::rotate_key::tests::signature_signed_before_rotation_still_verifies_after`) confirming a JWS signed before rotation still verifies afterwards. Follow `rotate_key_handler`'s doc comment for the archive-then-generate ordering.
 
@@ -108,4 +113,4 @@ The most efficient production shape for Odal today is **the shipped compose stac
 **Do-next order:** provision a demo VM as the permanent staging environment (§2 end-to-end, once) → after that, each operator VM is a 30-minute repeat with a filled-in checklist.
 
 ## 5. Go-live checklist (print per operator)
-DNS + DID origin decided ✚ VM hardened, loopback bindings ✚ TLS live ✚ `.env` complete, `chmod 600`, secrets in manager + sealed copy ✚ versions pinned (ODAL_VERSION + postgres digest) ✚ first boot green ✚ §2.6 smoke ×7 recorded ✚ backup cron live + first restore drill dated ✚ monitoring probes asserting trust_mode ✚ upgrade ritual + custody mode written into the operator record.
+DNS + DID origin decided ✚ VM hardened, loopback bindings ✚ TLS live ✚ `.env` complete, `chmod 600`, secrets in manager + sealed copy ✚ versions pinned (ODAL_VERSION + postgres digest) ✚ first boot green ✚ §2.6 smoke ×7 recorded ✚ backup cron live + first restore drill dated ✚ external probe on `/health` for liveness + on-VM alarm on the `trust_mode` gauge ✚ upgrade ritual + custody mode written into the operator record.

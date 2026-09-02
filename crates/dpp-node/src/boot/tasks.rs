@@ -503,3 +503,33 @@ pub async fn spawn_snapshot_refresh(outbox: Arc<dyn SnapshotOutbox>) {
         }
     });
 }
+
+/// Spawn the signed-ruleset poller: re-read the configured channel on
+/// `interval` and hot-swap anything that verifies and is current.
+///
+/// This is what makes "adopting a new ruleset does not need a restart" true for
+/// an unattended node — the admin route covers the operator who is watching,
+/// this covers the fleet that is not. Every refusal is fail-closed and lands on
+/// `ruleset_load_failures_total`, which the per-VM self-check already alarms on,
+/// so a channel serving bad bytes is visible without new monitoring.
+///
+/// No-op when no channel is configured, or when the operator set
+/// `RULESET_POLL_INTERVAL_SECS=0` to leave the admin route as the only trigger.
+pub fn spawn_ruleset_poll(
+    active: Arc<dpp_node::infra::ruleset::ActiveRuleset>,
+    interval: Option<std::time::Duration>,
+) {
+    let Some(interval) = interval.filter(|_| active.has_channel()) else {
+        return;
+    };
+    tracing::info!(
+        interval_secs = interval.as_secs(),
+        "compliance-current ruleset poller started"
+    );
+    tokio::spawn(async move {
+        loop {
+            tokio::time::sleep(interval).await;
+            dpp_node::infra::ruleset::reload_and_report(&active, false).await;
+        }
+    });
+}

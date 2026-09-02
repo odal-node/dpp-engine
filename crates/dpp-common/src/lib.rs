@@ -10,6 +10,7 @@ pub mod mtls;
 pub mod outbound;
 pub mod plugin_admin;
 pub mod request_id;
+pub mod ruleset_admin;
 pub mod scan;
 pub mod telemetry;
 pub mod url_guard;
