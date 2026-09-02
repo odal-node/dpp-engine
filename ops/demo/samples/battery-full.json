@@ -1,12 +1,14 @@
 {
   "productName": "Odal Reference Battery LFP-48",
-  "productCategory": "BATTERY",
+  "productGroup": "battery",
   "batchId": "BATCH-2026-Q2-007",
   "manufacturer": {
     "name": "GreenCell GmbH",
     "address": "Prenzlauer Berg 12, 10405 Berlin, DE",
     "didWebUrl": "https://greencell.example/.well-known/did.json"
   },
+  "placedOnMarketDate": "2026-06-01",
+  "commodityCode": "85076000",
   "materials": [
     { "name": "Lithium Iron Phosphate", "weightKg": 1.20, "recycledPct": 12.5, "countryOfOrigin": "CN" },
     { "name": "Graphite", "weightKg": 0.40, "recycledPct": 5.0, "countryOfOrigin": "DE" },
@@ -14,19 +16,94 @@
   ],
   "co2ePerUnit": 45.2,
   "repairabilityScore": 7.5,
-  "schemaVersion": "1.0.0",
-  "sectorData": {
-    "sector": "battery",
+  "productGroupData": {
+    "productGroup": "battery",
     "gtin": "09506000134352",
+    "batteryType": "industrial",
     "batteryChemistry": "LFP",
-    "nominalVoltageV": 48.0,
-    "nominalCapacityAh": 100.0,
-    "expectedLifetimeCycles": 3000,
     "co2ePerUnitKg": 45.2,
+    "batteryPassportNumber": "URN:ODL:BATT:09506000134352:BATCH-2026-Q2-007",
+    "batteryModelId": "GC-REF-LFP48-100",
+    "manufacturingPlace": "Berlin, DE (plant BLN-1)",
+    "manufacturingDate": "2026-04-15T00:00:00Z",
+    "batteryWeightKg": 48.0,
+    "nominalVoltageV": 48.0,
+    "minimalVoltageV": 40.0,
+    "maximumVoltageV": 54.75,
+    "nominalCapacityAh": 100.0,
+    "ratedCapacityKwh": 4.8,
+    "ratedEnergyWh": 4800.0,
+    "originalPowerCapabilityW": 4800.0,
+    "powerLimitMinW": 150.0,
+    "powerLimitMaxW": 6500.0,
+    "renewableContentPct": 20.0,
     "recycledContentCobaltPct": 0.0,
     "recycledContentLithiumPct": 12.5,
     "recycledContentNickelPct": 0.0,
-    "stateOfHealthPct": 100.0,
-    "ratedCapacityKwh": 4.8
+    "recycledContentLeadPct": 0.0,
+    "recycledContentReportingYear": 2026,
+    "expectedLifetimeCycles": 3000,
+    "expectedLifetimeReferenceTest": "IEC 61427-1:2013, 25 degC, 80% DoD",
+    "initialRoundTripEfficiencyPct": 95.0,
+    "roundTripEfficiencyAtHalfCycleLifePct": 90.0,
+    "cycleLifeTestCRate": 0.5,
+    "internalCellResistanceMohm": 0.7,
+    "internalPackResistanceMohm": 11.0,
+    "operatingTempMinC": -20.0,
+    "operatingTempMaxC": 60.0,
+    "notInUseTemperatureRange": { "minC": -20.0, "maxC": 45.0 },
+    "notInUseTemperatureReferenceTest": "IEC 62660-1:2018 storage profile",
+    "commercialWarrantyPeriodMonths": 120,
+    "hazardSymbol": null,
+    "hazardousSubstances": [
+      { "name": "Lithium hexafluorophosphate", "casNumber": "21324-40-3", "concentrationPct": 0.8 }
+    ],
+    "usableExtinguishingAgent": "Water mist or ABC dry powder; do not use CO2",
+    "criticalRawMaterials": [
+      { "name": "Lithium", "casNumber": "7439-93-2", "weightGrams": 2200.0, "countryOfOrigin": "CL" },
+      { "name": "Natural graphite", "casNumber": "7782-42-5", "weightGrams": 4000.0, "countryOfOrigin": "CN" }
+    ],
+    "cathodeMaterial": [
+      { "name": "LiFePO4", "weightPct": 95.0, "casNumber": "15365-14-7" },
+      { "name": "PVDF binder", "weightPct": 3.0, "casNumber": "24937-79-9" },
+      { "name": "Conductive carbon black", "weightPct": 2.0, "casNumber": "1333-86-4" }
+    ],
+    "anodeMaterial": [
+      { "name": "Graphite", "weightPct": 96.0, "casNumber": "7782-42-5" },
+      { "name": "SBR/CMC binder", "weightPct": 4.0, "casNumber": "9003-55-8" }
+    ],
+    "electrolyteMaterial": [
+      { "name": "Ethylene carbonate", "weightPct": 40.0, "casNumber": "96-49-1" },
+      { "name": "Dimethyl carbonate", "weightPct": 47.0, "casNumber": "616-38-6" },
+      { "name": "Lithium hexafluorophosphate", "weightPct": 13.0, "casNumber": "21324-40-3" }
+    ],
+    "componentPartNumbers": ["GC-CELL-32700-LFP", "GC-BMS-16S-V3", "GC-PACK-ENCL-100"],
+    "sparePartsContacts": "spares@greencell.example; +49 30 5550 1200",
+    "disassemblyInstructionsUrl": "https://greencell.example/service/ref-lfp48/disassembly",
+    "safetyMeasures": "De-energise and wait 15 min before opening. Class 0 gloves. No conductive tools.",
+    "testReportResults": "IEC 62619:2022 pass; UN 38.3 pass; report GC-TR-2026-0407",
+    "markingInformation": "Separate-collection symbol (crossed-out wheeled bin) per Art. 13(4); capacity 100 Ah / 4.8 kWh",
+    "euDeclarationOfConformity": "EU-DoC GC-2026-IND-0088 dated 2026-04-20, per Regulation (EU) 2023/1542 Art. 18",
+    "wasteBatteryInformation": "Return to an authorised collection point or installer. Do not shred. Contains lithium; fire risk if damaged. Producer registration DE-BATT-00123.",
+    "batteryStatus": "original",
+    "dynamicPerformance": {
+      "ratedCapacityAh": 99.5,
+      "capacityFadePct": 0.5,
+      "internalResistanceMohm": 11.1,
+      "roundTripEfficiencyPct": 94.8,
+      "expectedLifetimeCycles": 2990
+    },
+    "stateOfHealth": {
+      "parameterSet": "stationaryOrLmt",
+      "remainingCapacityPct": 99.5,
+      "remainingPowerCapabilityPct": 99.2,
+      "remainingRoundTripEfficiencyPct": 98.9,
+      "selfDischargeRatePctPerMonth": 1.8,
+      "ohmicResistanceMohm": 11.1
+    },
+    "usageHistory": {
+      "chargeDischargeCycles": 10,
+      "negativeEvents": []
+    }
   }
 }

@@ -1,0 +1,106 @@
+{
+  "productName": "Odal Stationary Storage Battery LFP-51.2",
+  "batchId": "ODL-IND-LFP-2026-Q2-014",
+  "manufacturer": {
+    "name": "GreenCell GmbH",
+    "address": "Prenzlauer Berg 12, 10405 Berlin, DE",
+    "didWebUrl": "https://greencell.example/.well-known/did.json"
+  },
+  "placedOnMarketDate": "2026-05-20",
+  "commodityCode": "85076000",
+  "materials": [
+    { "name": "Lithium Iron Phosphate", "weightKg": 22.0, "recycledPct": 8.0, "countryOfOrigin": "DE" },
+    { "name": "Graphite", "weightKg": 9.5, "recycledPct": 6.0, "countryOfOrigin": "DE" },
+    { "name": "Steel enclosure", "weightKg": 12.0, "recycledPct": 82.0, "countryOfOrigin": "DE" }
+  ],
+  "repairabilityScore": 8.1,
+  "productGroupData": {
+    "productGroup": "battery",
+    "gtin": "09590000000021",
+    "batteryType": "industrial",
+    "batteryChemistry": "LFP",
+    "co2ePerUnitKg": 33.4,
+    "batteryPassportNumber": "URN:ODL:BATT:09590000000021:ODL-IND-LFP-2026-Q2-014",
+    "batteryModelId": "GC-ESS-LFP512-100",
+    "manufacturingPlace": "Berlin, DE (plant BLN-2)",
+    "manufacturingDate": "2026-03-02T00:00:00Z",
+    "batteryWeightKg": 46.5,
+    "nominalVoltageV": 51.2,
+    "minimalVoltageV": 40.0,
+    "maximumVoltageV": 58.4,
+    "nominalCapacityAh": 100.0,
+    "ratedCapacityKwh": 5.12,
+    "ratedEnergyWh": 5120.0,
+    "originalPowerCapabilityW": 5000.0,
+    "powerLimitMinW": 150.0,
+    "powerLimitMaxW": 7500.0,
+    "renewableContentPct": 22.0,
+    "recycledContentCobaltPct": 0.0,
+    "recycledContentLithiumPct": 7.5,
+    "recycledContentNickelPct": 0.0,
+    "recycledContentLeadPct": 0.0,
+    "recycledContentReportingYear": 2026,
+    "expectedLifetimeCycles": 6000,
+    "expectedLifetimeReferenceTest": "IEC 61427-1:2013, 25 degC, 90% DoD",
+    "initialRoundTripEfficiencyPct": 96.5,
+    "roundTripEfficiencyAtHalfCycleLifePct": 92.0,
+    "cycleLifeTestCRate": 0.33,
+    "internalCellResistanceMohm": 0.6,
+    "internalPackResistanceMohm": 9.0,
+    "notInUseTemperatureRange": { "minC": -10.0, "maxC": 50.0 },
+    "notInUseTemperatureReferenceTest": "IEC 62660-1:2018 storage profile",
+    "commercialWarrantyPeriodMonths": 144,
+    "hazardSymbol": null,
+    "hazardousSubstances": [
+      { "name": "Lithium hexafluorophosphate", "casNumber": "21324-40-3", "concentrationPct": 0.7 }
+    ],
+    "usableExtinguishingAgent": "Water or ABC dry powder; large volumes of water for thermal runaway",
+    "criticalRawMaterials": [
+      { "name": "Lithium", "casNumber": "7439-93-2", "weightGrams": 2600.0, "countryOfOrigin": "AU" },
+      { "name": "Natural graphite", "casNumber": "7782-42-5", "weightGrams": 9500.0, "countryOfOrigin": "CN" }
+    ],
+    "cathodeMaterial": [
+      { "name": "LiFePO4", "weightPct": 95.0, "casNumber": "15365-14-7" },
+      { "name": "PVDF binder", "weightPct": 3.0, "casNumber": "24937-79-9" },
+      { "name": "Conductive carbon black", "weightPct": 2.0, "casNumber": "1333-86-4" }
+    ],
+    "anodeMaterial": [
+      { "name": "Graphite", "weightPct": 96.0, "casNumber": "7782-42-5" },
+      { "name": "SBR/CMC binder", "weightPct": 3.0, "casNumber": "9003-55-8" },
+      { "name": "Conductive carbon black", "weightPct": 1.0, "casNumber": "1333-86-4" }
+    ],
+    "electrolyteMaterial": [
+      { "name": "Ethylene carbonate", "weightPct": 38.0, "casNumber": "96-49-1" },
+      { "name": "Ethyl methyl carbonate", "weightPct": 49.0, "casNumber": "623-53-0" },
+      { "name": "Lithium hexafluorophosphate", "weightPct": 13.0, "casNumber": "21324-40-3" }
+    ],
+    "componentPartNumbers": ["GC-CELL-32700-LFP", "GC-BMS-16S-V2", "GC-ESS-ENCL-512"],
+    "sparePartsContacts": "spares@greencell.example; +49 30 5550 1200",
+    "disassemblyInstructionsUrl": "https://greencell.example/service/ess-lfp512/disassembly",
+    "safetyMeasures": "Isolate DC breaker before servicing. Insulated tools only. Ventilate enclosure before opening.",
+    "testReportResults": "IEC 62619:2022 pass; IEC 63056:2020 pass; UN 38.3 pass; report GC-TR-2026-0301",
+    "markingInformation": "Separate-collection symbol per Art. 13(4); capacity 100 Ah / 5.12 kWh; chemistry LFP",
+    "euDeclarationOfConformity": "EU-DoC GC-2026-IND-0067 dated 2026-03-10, per Regulation (EU) 2023/1542 Art. 18",
+    "wasteBatteryInformation": "Return to an authorised collection point. Do not incinerate or shred. Producer registration DE-BATT-00123.",
+    "batteryStatus": "original",
+    "dynamicPerformance": {
+      "ratedCapacityAh": 99.6,
+      "capacityFadePct": 0.4,
+      "internalResistanceMohm": 9.1,
+      "roundTripEfficiencyPct": 96.2,
+      "expectedLifetimeCycles": 5980
+    },
+    "stateOfHealth": {
+      "parameterSet": "stationaryOrLmt",
+      "remainingCapacityPct": 99.6,
+      "remainingPowerCapabilityPct": 99.4,
+      "remainingRoundTripEfficiencyPct": 99.1,
+      "selfDischargeRatePctPerMonth": 1.4,
+      "ohmicResistanceMohm": 9.1
+    },
+    "usageHistory": {
+      "chargeDischargeCycles": 5,
+      "negativeEvents": []
+    }
+  }
+}

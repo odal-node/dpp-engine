@@ -1,0 +1,102 @@
+{
+  "productName": "Voltex e-Bike Battery 36V 14Ah",
+  "batchId": "VBX-LMT-2026-0188",
+  "manufacturer": {
+    "name": "Voltex Battery GmbH",
+    "address": "Werkstrasse 5, 85055 Ingolstadt, DE",
+    "didWebUrl": "https://voltex.example/.well-known/did.json"
+  },
+  "placedOnMarketDate": "2026-06-15",
+  "commodityCode": "85076000",
+  "materials": [
+    { "name": "Lithium Iron Phosphate", "weightKg": 1.4, "recycledPct": 7.0, "countryOfOrigin": "DE" },
+    { "name": "Graphite", "weightKg": 0.6, "recycledPct": 3.0, "countryOfOrigin": "DE" },
+    { "name": "ABS/PC housing", "weightKg": 0.5, "recycledPct": 30.0, "countryOfOrigin": "DE" }
+  ],
+  "repairabilityScore": 6.0,
+  "productGroupData": {
+    "productGroup": "battery",
+    "gtin": "09590000000052",
+    "batteryType": "lmt",
+    "batteryChemistry": "LFP",
+    "co2ePerUnitKg": 9.4,
+    "batteryPassportNumber": "URN:ODL:BATT:09590000000052:VBX-LMT-2026-0188",
+    "batteryModelId": "VBX-LMT36-14-10S",
+    "manufacturingPlace": "Ingolstadt, DE (plant ING-2)",
+    "manufacturingDate": "2026-05-05T00:00:00Z",
+    "batteryWeightKg": 2.6,
+    "nominalVoltageV": 36.0,
+    "minimalVoltageV": 30.0,
+    "maximumVoltageV": 42.0,
+    "nominalCapacityAh": 14.0,
+    "ratedCapacityKwh": 0.504,
+    "ratedEnergyWh": 504.0,
+    "originalPowerCapabilityW": 500.0,
+    "powerLimitMinW": 10.0,
+    "powerLimitMaxW": 750.0,
+    "renewableContentPct": 12.0,
+    "recycledContentCobaltPct": 0.0,
+    "recycledContentLithiumPct": 6.0,
+    "recycledContentNickelPct": 0.0,
+    "recycledContentLeadPct": 0.0,
+    "recycledContentReportingYear": 2026,
+    "expectedLifetimeCycles": 1000,
+    "expectedLifetimeReferenceTest": "EN 50604-1:2016, 25 degC, 100% DoD",
+    "initialRoundTripEfficiencyPct": 95.0,
+    "roundTripEfficiencyAtHalfCycleLifePct": 90.0,
+    "cycleLifeTestCRate": 1.0,
+    "internalCellResistanceMohm": 8.0,
+    "internalPackResistanceMohm": 95.0,
+    "notInUseTemperatureRange": { "minC": -10.0, "maxC": 45.0 },
+    "notInUseTemperatureReferenceTest": "EN 50604-1:2016 storage clause",
+    "commercialWarrantyPeriodMonths": 24,
+    "hazardSymbol": null,
+    "hazardousSubstances": [
+      { "name": "Lithium hexafluorophosphate", "casNumber": "21324-40-3", "concentrationPct": 0.6 }
+    ],
+    "usableExtinguishingAgent": "Water or ABC dry powder; submerge in water if safe to do so",
+    "criticalRawMaterials": [
+      { "name": "Lithium", "casNumber": "7439-93-2", "weightGrams": 165.0, "countryOfOrigin": "AU" },
+      { "name": "Natural graphite", "casNumber": "7782-42-5", "weightGrams": 600.0, "countryOfOrigin": "CN" }
+    ],
+    "cathodeMaterial": [
+      { "name": "LiFePO4", "weightPct": 95.0, "casNumber": "15365-14-7" },
+      { "name": "PVDF binder", "weightPct": 3.0, "casNumber": "24937-79-9" },
+      { "name": "Conductive carbon black", "weightPct": 2.0, "casNumber": "1333-86-4" }
+    ],
+    "anodeMaterial": [
+      { "name": "Graphite", "weightPct": 96.0, "casNumber": "7782-42-5" },
+      { "name": "SBR/CMC binder", "weightPct": 4.0, "casNumber": "9003-55-8" }
+    ],
+    "electrolyteMaterial": [
+      { "name": "Ethylene carbonate", "weightPct": 38.0, "casNumber": "96-49-1" },
+      { "name": "Dimethyl carbonate", "weightPct": 49.0, "casNumber": "616-38-6" },
+      { "name": "Lithium hexafluorophosphate", "weightPct": 13.0, "casNumber": "21324-40-3" }
+    ],
+    "componentPartNumbers": ["VBX-CELL-21700-LFP", "VBX-BMS-10S-V2", "VBX-LMT-ENCL-36"],
+    "sparePartsContacts": "spares@voltex.example; +49 841 5550 410",
+    "disassemblyInstructionsUrl": "https://voltex.example/service/lmt36-14/disassembly",
+    "safetyMeasures": "Do not open the pack. Replace via authorised dealer. Keep away from heat above 60 degC.",
+    "testReportResults": "EN 50604-1:2016 pass; UN 38.3 pass; report VBX-TR-2026-0311",
+    "markingInformation": "Separate-collection symbol per Art. 13(4); capacity 14 Ah / 504 Wh; 36 V LMT",
+    "euDeclarationOfConformity": "EU-DoC VBX-2026-LMT-0088 dated 2026-05-12, per Regulation (EU) 2023/1542 Art. 18",
+    "wasteBatteryInformation": "Return the LMT battery to any bicycle retailer or municipal collection point. Do not place in household waste. Producer registration DE-BATT-00981.",
+    "batteryStatus": "original",
+    "dynamicPerformance": {
+      "ratedCapacityAh": 13.9,
+      "capacityFadePct": 0.7,
+      "internalResistanceMohm": 95.4,
+      "roundTripEfficiencyPct": 94.7,
+      "expectedLifetimeCycles": 995
+    },
+    "stateOfHealth": {
+      "parameterSet": "stationaryOrLmt",
+      "remainingCapacityPct": 99.3,
+      "remainingPowerCapabilityPct": 98.8,
+      "selfDischargeRatePctPerMonth": 3.0
+    },
+    "usageHistory": {
+      "chargeDischargeCycles": 6
+    }
+  }
+}

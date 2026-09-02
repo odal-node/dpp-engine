@@ -3,17 +3,21 @@
 mod evidence;
 mod export;
 mod import;
+mod inspect;
 mod lifecycle;
 mod list;
 mod publish;
 mod stats;
+mod transfer;
 mod validate;
 
 pub use evidence::action_evidence;
 pub use export::action_export;
 pub use import::action_import;
+pub use inspect::{action_eol, action_find_by_identity, action_lint, action_verify_tree};
 pub use lifecycle::{action_archive, action_history, action_suspend};
 pub use list::{action_get, action_list};
 pub use publish::action_publish;
 pub use stats::{action_operator_stats, action_passport_stats};
+pub use transfer::{action_transfer_initiate, action_transfer_resolve};
 pub use validate::{action_validate, action_validate_body};

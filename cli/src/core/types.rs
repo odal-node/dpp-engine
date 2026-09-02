@@ -123,6 +123,123 @@ pub struct PassportAuditEntry {
     pub actor: String,
 }
 
+// ── Transfer of responsibility ───────────────────────────────────────────────
+
+pub struct TransferInitiateParams {
+    pub id: String,
+    pub from_did: String,
+    pub from_name: String,
+    pub from_role: String,
+    pub from_country: String,
+    pub to_did: String,
+    pub to_name: String,
+    pub to_role: String,
+    pub to_country: String,
+    pub reason: String,
+    pub notes: Option<String>,
+}
+
+/// Every field optional: the transition has already succeeded by the time this
+/// is built, so a body that omits a display field must not be reported as a
+/// failed transfer.
+pub struct TransferOutcome {
+    pub status: Option<String>,
+    pub from: Option<String>,
+    pub to: Option<String>,
+    pub reason: Option<String>,
+}
+
+// ── Plausibility lint ────────────────────────────────────────────────────────
+
+pub struct LintReport {
+    pub pack_version: Option<String>,
+    pub assessed_at: Option<String>,
+    pub findings: Vec<LintFinding>,
+}
+
+pub struct LintFinding {
+    pub severity: String,
+    pub field: String,
+    pub message: String,
+}
+
+// ── Component (BOM) tree ─────────────────────────────────────────────────────
+
+pub struct TreeReport {
+    pub verified: bool,
+    pub nodes_checked: Option<u64>,
+    /// Root-to-node path naming where the walk broke, when it did.
+    pub failures: Vec<String>,
+}
+
+// ── Regulatory catalog ───────────────────────────────────────────────────────
+
+pub struct ProductGroupObligation {
+    pub product_group: String,
+    /// `None` where an act reaches the key but no catalog descriptor names it —
+    /// the case this endpoint exists for, not an error.
+    pub title: Option<String>,
+    pub required: bool,
+    pub from: Option<String>,
+    /// Whether that date traces to an adopted text (`sourced`) or is a reading
+    /// (`assumed`). Never rendered without it.
+    pub from_basis: Option<String>,
+    pub determinable: bool,
+    pub granularity: Option<String>,
+    /// How long records must be kept, with the basis of that figure — carried
+    /// together for the same reason as the date: a compound retention floor is
+    /// `sourced` only when every figure behind it is.
+    pub retention_years: Option<i64>,
+    pub retention_basis: Option<String>,
+    pub instruments: Vec<InstrumentSummary>,
+}
+
+pub struct InstrumentSummary {
+    /// The instrument's catalog id. The endpoint serves no separate title, so
+    /// this is the only handle a reader gets for the act.
+    pub instrument: String,
+    pub instrument_status: Option<String>,
+    pub binding_status: Option<String>,
+}
+
+pub struct SchemaRow {
+    pub product_group: String,
+    pub current: String,
+    /// Every version the node can still read, oldest first. The ones behind
+    /// `current` are what the upcast lens chain covers.
+    pub versions: Vec<String>,
+}
+
+// ── EU registry sync ─────────────────────────────────────────────────────────
+
+pub struct RegistryStatusReport {
+    /// Present for a single passport's record, absent for the rollup.
+    pub passport_id: Option<String>,
+    pub status: Option<String>,
+    pub registry_id: Option<String>,
+    /// The registry's own words on the last attempt, when it said anything.
+    pub message: Option<String>,
+    /// Whether this node has a registry connection configured at all. `None`
+    /// when the view did not say.
+    pub configured: Option<bool>,
+    /// The queue has stopped retrying and needs an operator.
+    pub stalled: bool,
+    pub attempts: Option<u64>,
+    /// Rollup counts, keyed by status. Empty when the node has no registry
+    /// queues — omitted rather than a row of zeros, which would read as
+    /// "everything is registered".
+    pub totals: Vec<(String, u64)>,
+}
+
+// ── Provenance trails ────────────────────────────────────────────────────────
+
+pub struct ProvenanceEntry {
+    pub timestamp: String,
+    pub action: String,
+    pub actor: String,
+    pub detail: Option<String>,
+}
+
 // ── Export ───────────────────────────────────────────────────────────────────
 
 pub struct ExportParams {

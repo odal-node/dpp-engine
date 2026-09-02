@@ -1,4 +1,4 @@
-productName,sector,gtin,manufacturerName,manufacturerCountry,batchId,fibreComposition,countryOfOrigin,careInstructions,chemicalComplianceStandard
+productName,productGroup,gtin,manufacturerName,manufacturerCountry,batchId,fibreComposition,countryOfOrigin,careInstructions,chemicalComplianceStandard
 Glamor GTIN Too Short,textile,380123,Glamor Clothing,DE,BATCH-GTIN-001,"[{""fibre"":""cotton"",""pct"":100.0}]",DE,Machine wash 40°C.,OEKO-TEX Standard 100
 Glamor GTIN Too Long,textile,38012345678901234,Glamor Clothing,DE,BATCH-GTIN-002,"[{""fibre"":""cotton"",""pct"":100.0}]",DE,Machine wash 40°C.,OEKO-TEX Standard 100
 Glamor GTIN With Letters,textile,0380ABC4567890,Glamor Clothing,DE,BATCH-GTIN-003,"[{""fibre"":""cotton"",""pct"":100.0}]",DE,Machine wash 40°C.,OEKO-TEX Standard 100

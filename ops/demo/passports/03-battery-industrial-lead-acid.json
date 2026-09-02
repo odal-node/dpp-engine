@@ -1,0 +1,82 @@
+{
+  "productName": "Odal Industrial Standby Battery 12V-200Ah (VRLA)",
+  "batchId": "ODL-IND-PB-2026-Q1-007",
+  "manufacturer": {
+    "name": "Rheinpower Batterien GmbH",
+    "address": "Industriestrasse 8, 47059 Duisburg, DE",
+    "didWebUrl": "https://rheinpower.example/.well-known/did.json"
+  },
+  "placedOnMarketDate": "2026-02-10",
+  "commodityCode": "85072000",
+  "materials": [
+    { "name": "Lead", "weightKg": 38.0, "recycledPct": 82.0, "countryOfOrigin": "DE" },
+    { "name": "Sulfuric acid electrolyte", "weightKg": 9.0, "recycledPct": 0.0, "countryOfOrigin": "DE" },
+    { "name": "Polypropylene case", "weightKg": 3.2, "recycledPct": 45.0, "countryOfOrigin": "DE" }
+  ],
+  "repairabilityScore": 3.0,
+  "productGroupData": {
+    "productGroup": "battery",
+    "gtin": "09590000000038",
+    "batteryType": "industrial",
+    "batteryChemistry": "lead-acid",
+    "co2ePerUnitKg": 28.9,
+    "batteryPassportNumber": "URN:ODL:BATT:09590000000038:ODL-IND-PB-2026-Q1-007",
+    "batteryModelId": "RP-VRLA-12-200",
+    "manufacturingPlace": "Duisburg, DE (plant DU-3)",
+    "manufacturingDate": "2026-01-08T00:00:00Z",
+    "batteryWeightKg": 52.0,
+    "nominalVoltageV": 12.0,
+    "minimalVoltageV": 10.5,
+    "maximumVoltageV": 14.4,
+    "nominalCapacityAh": 200.0,
+    "ratedCapacityKwh": 2.4,
+    "ratedEnergyWh": 2400.0,
+    "originalPowerCapabilityW": 1800.0,
+    "powerLimitMinW": 50.0,
+    "powerLimitMaxW": 2400.0,
+    "renewableContentPct": 2.0,
+    "recycledContentCobaltPct": 0.0,
+    "recycledContentLithiumPct": 0.0,
+    "recycledContentNickelPct": 0.0,
+    "recycledContentLeadPct": 82.0,
+    "recycledContentReportingYear": 2026,
+    "expectedLifetimeCycles": 1200,
+    "expectedLifetimeReferenceTest": "IEC 60896-21/22, 25 degC, 50% DoD",
+    "initialRoundTripEfficiencyPct": 82.0,
+    "roundTripEfficiencyAtHalfCycleLifePct": 74.0,
+    "cycleLifeTestCRate": 0.1,
+    "internalCellResistanceMohm": 3.5,
+    "internalPackResistanceMohm": 4.2,
+    "notInUseTemperatureRange": { "minC": -15.0, "maxC": 40.0 },
+    "notInUseTemperatureReferenceTest": "IEC 60896-21:2004 storage clause",
+    "commercialWarrantyPeriodMonths": 60,
+    "hazardSymbol": "lead",
+    "hazardousSubstances": [
+      { "name": "Lead", "casNumber": "7439-92-1", "concentrationPct": 68.0 },
+      { "name": "Sulfuric acid", "casNumber": "7664-93-9", "concentrationPct": 17.0 }
+    ],
+    "usableExtinguishingAgent": "CO2, ABC dry powder, or water; neutralise acid spills with soda ash",
+    "criticalRawMaterials": [
+      { "name": "Antimony", "casNumber": "7440-36-0", "weightGrams": 380.0, "countryOfOrigin": "CN" }
+    ],
+    "cathodeMaterial": [
+      { "name": "Lead dioxide (positive active material)", "weightPct": 100.0, "casNumber": "1309-60-0" }
+    ],
+    "anodeMaterial": [
+      { "name": "Sponge lead (negative active material)", "weightPct": 100.0, "casNumber": "7439-92-1" }
+    ],
+    "electrolyteMaterial": [
+      { "name": "Sulfuric acid (aqueous, ~37%)", "weightPct": 37.0, "casNumber": "7664-93-9" },
+      { "name": "Water", "weightPct": 63.0, "casNumber": "7732-18-5" }
+    ],
+    "componentPartNumbers": ["RP-PLATE-POS-200", "RP-PLATE-NEG-200", "RP-CASE-12-200", "RP-VALVE-VRLA"],
+    "sparePartsContacts": "service@rheinpower.example; +49 203 5550 800",
+    "disassemblyInstructionsUrl": "https://rheinpower.example/service/vrla-12-200/disassembly",
+    "safetyMeasures": "Acid hazard. Face shield and acid-resistant gloves. Do not tip. Vent hydrogen before servicing.",
+    "testReportResults": "IEC 60896-21/22:2004 pass; UN 2800 (non-spillable) pass; report RP-TR-2026-0021",
+    "markingInformation": "Separate-collection symbol per Art. 13(4); Pb symbol per Art. 13(5); capacity 200 Ah / 12 V",
+    "euDeclarationOfConformity": "EU-DoC RP-2026-IND-0014 dated 2026-01-20, per Regulation (EU) 2023/1542 Art. 18",
+    "wasteBatteryInformation": "Lead-acid battery - return to retailer or authorised collector for recycling. Never dispose in household waste. Producer registration DE-BATT-00457.",
+    "batteryStatus": "original"
+  }
+}
