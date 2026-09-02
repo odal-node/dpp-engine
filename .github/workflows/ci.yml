@@ -23,11 +23,24 @@ name: CI
 #
 # `develop` is gone from `pull_request` because no such branch exists; it was
 # dead config that read as though a second integration branch were gated.
+#
+# `pull_request` carries **no branch filter**, and that is load-bearing rather
+# than an omission. The filter names the branch a PR is *merging into*, so
+# `branches: [main]` silently excluded every stacked PR — a PR opened against
+# another feature branch matched nothing and ran no CI at all. Retargeting it to
+# `main` later does not help: that fires `edited`, which is not in this trigger's
+# default types (`opened`, `synchronize`, `reopened`).
+#
+# The failure mode is worse than an absent run, because `gh pr checks` reads as
+# **green**: the required jobs are simply missing, while `Codacy` and `PR title`
+# report and pass. Only the ruleset refusing to merge reveals it. Stacked PRs are
+# how work lands here, so the branch filter cost coverage exactly where review is
+# already hardest and bought nothing — the double-run it looked like it was
+# preventing came from `push: ["**"]`, which is fixed above and stays fixed.
 on:
   push:
     branches: [main]
   pull_request:
-    branches: [main]
   workflow_dispatch:
 
 env:

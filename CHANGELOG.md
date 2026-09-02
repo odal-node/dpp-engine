@@ -174,6 +174,25 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   the shared server, and a wrong endpoint fails all four loudly rather than
   falling back to containers and passing slowly.
 
+- **Stacked pull requests ran no CI at all, and reported as green.** The
+  `pull_request` trigger had just been narrowed to `branches: [main]` (the
+  one-run-per-change entry below). That filter names the branch a PR *merges
+  into*, so a PR opened against another feature branch matched nothing and no job
+  ran. Retargeting it to `main` afterwards did not recover: that fires `edited`,
+  which is not among the trigger's default types.
+
+  The absence was not visible where anyone looks for it. `gh pr checks` reported
+  such a PR as passing, because the twelve required jobs were simply missing
+  while `Codacy` and `PR title` reported and passed. Only the branch ruleset
+  refusing the merge revealed that nothing had been tested — so the check list,
+  the one artefact a reviewer trusts to mean "this was verified", said the
+  opposite of the truth.
+
+  `pull_request` now carries no branch filter. The double-run it appeared to
+  guard against came from `push: ["**"]`, which is fixed separately and stays
+  fixed; the base filter bought nothing and cost coverage on exactly the shape of
+  change — a PR stacked on another PR — where review is already hardest.
+
 - **Every push to a branch with an open PR ran the whole suite twice.**
   `push: ["**"]` and `pull_request` both fired, on two runners, for the same
   commit. Beyond the double spend, it took two independent samples of every
