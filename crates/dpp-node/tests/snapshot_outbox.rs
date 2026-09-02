@@ -526,12 +526,12 @@ async fn one_bad_row_does_not_stall_the_rest_of_the_pass() {
 fn the_drain_interval_is_the_suspend_lag_sla() {
     // The static tier's integrity guarantee is bounded by how often the drain
     // runs: a passport that leaves the public tier stops being served within one
-    // cycle. This value is quoted to operators in the contract (04-LEGAL §3.7),
-    // so it is pinned against the real constant the loop uses — changing it is a
-    // contract change, not a tuning tweak.
+    // cycle. That makes this the suspend lag an operator is owed a number for,
+    // so it is pinned against the real constant the loop uses rather than left
+    // to drift with whoever last tuned a loop.
     assert_eq!(
         dpp_node::infra::drain::DRAIN_INTERVAL.as_secs(),
         30,
-        "suspend lag is stated to operators; update 04-LEGAL §3.7 before changing it"
+        "this is the suspend lag operators are quoted — move the statement of it with the constant"
     );
 }
