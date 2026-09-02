@@ -1,7 +1,8 @@
 //! S3/MinIO adapter implementing `SnapshotStore` — the static continuity tier.
 //!
-//! Writes the byte-identical public passport view to a **public** bucket under
-//! `{dpp_id}/public.json`, so a CDN or bucket-website can serve it under a stable
+//! Writes the passport's signed public view, bounded by its own `asOf` /
+//! `validUntil` proof, to a **public** bucket under `{dpp_id}/public.json`, so a
+//! CDN or bucket-website can serve it under a stable
 //! path when the live node is unreachable. This bucket is deliberately separate
 //! from the (private) ESPR Art. 13 archive bucket: snapshots are public by
 //! design, archives are not — never colocate them.
@@ -26,7 +27,7 @@ use aws_sdk_s3::{
     primitives::ByteStream,
 };
 use dpp_domain::error::DppError;
-use dpp_types::snapshot::SnapshotStore;
+use dpp_types::snapshot::{SnapshotMeta, SnapshotStore};
 
 pub struct S3SnapshotConfig {
     pub endpoint: Option<String>,
@@ -101,33 +102,77 @@ impl S3SnapshotStore {
     fn html_key(dpp_id: &str) -> String {
         format!("{dpp_id}/public.html")
     }
+
+    /// Apply the staleness headers every snapshot object carries.
+    ///
+    /// The signed `validUntil` inside the payload is the claim that matters;
+    /// this is the part of it a *direct* reader gets. Until now the only
+    /// staleness signal was a header the reverse proxy added on its own path,
+    /// which meant a reader who went to the object store — the copy is public,
+    /// so anyone can — received no signal at all.
+    ///
+    /// `Cache-Control` comes from the refresh cadence rather than the validity
+    /// window: a newer object exists after one refresh cycle, so authorising a
+    /// cache to hold this one for the full week would let it serve a copy the
+    /// node has already replaced, including one it replaced with a deletion.
+    ///
+    /// The `x-amz-meta-*` pair keeps `asOf`/`validUntil` legible to anything
+    /// that inspects the object rather than parsing the body. Neither is
+    /// covered by a signature, and neither is offered as if it were.
+    fn with_snapshot_meta(
+        req: aws_sdk_s3::operation::put_object::builders::PutObjectFluentBuilder,
+        meta: SnapshotMeta,
+    ) -> aws_sdk_s3::operation::put_object::builders::PutObjectFluentBuilder {
+        let rfc3339 =
+            |t: chrono::DateTime<chrono::Utc>| t.to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+        req.cache_control(format!("public, max-age={}", meta.max_age.as_secs()))
+            .metadata("odal-snapshot", "true")
+            .metadata("odal-as-of", rfc3339(meta.as_of))
+            .metadata("odal-valid-until", rfc3339(meta.valid_until))
+    }
 }
 
 #[async_trait]
 impl SnapshotStore for S3SnapshotStore {
-    async fn put_public_json(&self, dpp_id: &str, bytes: &[u8]) -> Result<(), DppError> {
-        self.client
-            .put_object()
-            .bucket(&self.bucket)
-            .key(Self::key(dpp_id))
-            .body(ByteStream::from(bytes.to_vec()))
-            .content_type("application/json")
-            .send()
-            .await
-            .map_err(|e| DppError::Internal(format!("snapshot S3 PUT failed: {e}")))?;
+    async fn put_public_json(
+        &self,
+        dpp_id: &str,
+        bytes: &[u8],
+        meta: SnapshotMeta,
+    ) -> Result<(), DppError> {
+        Self::with_snapshot_meta(
+            self.client
+                .put_object()
+                .bucket(&self.bucket)
+                .key(Self::key(dpp_id))
+                .body(ByteStream::from(bytes.to_vec()))
+                .content_type("application/json"),
+            meta,
+        )
+        .send()
+        .await
+        .map_err(|e| DppError::Internal(format!("snapshot S3 PUT failed: {e}")))?;
         Ok(())
     }
 
-    async fn put_public_html(&self, dpp_id: &str, bytes: &[u8]) -> Result<(), DppError> {
-        self.client
-            .put_object()
-            .bucket(&self.bucket)
-            .key(Self::html_key(dpp_id))
-            .body(ByteStream::from(bytes.to_vec()))
-            .content_type("text/html; charset=utf-8")
-            .send()
-            .await
-            .map_err(|e| DppError::Internal(format!("snapshot S3 PUT (html) failed: {e}")))?;
+    async fn put_public_html(
+        &self,
+        dpp_id: &str,
+        bytes: &[u8],
+        meta: SnapshotMeta,
+    ) -> Result<(), DppError> {
+        Self::with_snapshot_meta(
+            self.client
+                .put_object()
+                .bucket(&self.bucket)
+                .key(Self::html_key(dpp_id))
+                .body(ByteStream::from(bytes.to_vec()))
+                .content_type("text/html; charset=utf-8"),
+            meta,
+        )
+        .send()
+        .await
+        .map_err(|e| DppError::Internal(format!("snapshot S3 PUT (html) failed: {e}")))?;
         Ok(())
     }
 

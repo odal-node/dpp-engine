@@ -113,6 +113,15 @@ impl SnapshotOutbox for InMemorySnapshotOutbox {
         // Postgres in `dpp-dal`'s pg_integration suite.
         Ok(0)
     }
+    async fn enqueue_stale(
+        &self,
+        _older_than: chrono::Duration,
+        _limit: i64,
+    ) -> Result<u64, DppError> {
+        // Same as the sweep above: the refresh pass is a query, pinned against
+        // real Postgres rather than modelled here.
+        Ok(0)
+    }
     async fn mark_reconciled(&self, _id: uuid::Uuid) -> Result<(), DppError> {
         Ok(())
     }

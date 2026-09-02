@@ -1,14 +1,20 @@
 //! One drain pass over the continuity-snapshot reconcile outbox.
 //!
 //! Fetches due rows and makes the static tier match the database for each
-//! passport: `Published` passports get their byte-identical public view mirrored
-//! to object storage, everything else gets its snapshot retired. Extracted from
-//! the node's background loop so the convergence semantics are unit-testable
-//! with in-memory doubles — the loop in `main` just calls this on a timer.
+//! passport: `Published` passports get their public view mirrored to object
+//! storage under a freshly signed time bound, everything else gets its snapshot
+//! retired. Extracted from the node's background loop so the convergence
+//! semantics are unit-testable with in-memory doubles — the loop in `main` just
+//! calls this on a timer.
 //!
 //! Structurally mirrors `webhook_drain`/`registry_drain`: never panics, never
 //! propagates — a per-row failure is recorded (`mark_*`) and the pass continues,
 //! so one bad row cannot stall the queue.
+//!
+//! The bound makes signing part of the store path, so a signing outage now stops
+//! snapshots being written. That is the intended direction of failure: the
+//! copies already out there run down their remaining validity and lapse, rather
+//! than being extended by a node that cannot currently prove anything.
 //!
 //! # Why the row carries no action
 //!
@@ -22,9 +28,14 @@
 
 use std::sync::Arc;
 
-use dpp_domain::{ports::passport_repo::PassportRepository, status::PassportStatus};
+use chrono::SubsecRound as _;
+use dpp_domain::{
+    ports::identity::IdentityPort, ports::passport_repo::PassportRepository, status::PassportStatus,
+};
 use dpp_types::SnapshotOutbox;
-use dpp_types::snapshot::SnapshotStore;
+use dpp_types::snapshot::{SnapshotMeta, SnapshotStore};
+
+use super::drain::{SNAPSHOT_REFRESH_INTERVAL, SNAPSHOT_VALIDITY};
 
 /// Max reconcile attempts before a row is terminally `exhausted`.
 pub const MAX_ATTEMPTS: i32 = 8;
@@ -69,6 +80,7 @@ pub async fn drain_once(
     outbox: &Arc<dyn SnapshotOutbox>,
     repo: &Arc<dyn PassportRepository>,
     store: &Arc<dyn SnapshotStore>,
+    identity: &Arc<dyn IdentityPort>,
     resolver_base_url: &str,
     batch: i64,
 ) -> DrainStats {
@@ -107,7 +119,7 @@ pub async fn drain_once(
         let started = std::time::Instant::now();
         let outcome = match &passport {
             Some(p) if p.status == PassportStatus::Published => {
-                store_published(store, &dpp_id, p, resolver_base_url)
+                store_published(store, identity, &dpp_id, p, resolver_base_url)
                     .await
                     .map(|()| Action::Stored)
             }
@@ -149,14 +161,41 @@ pub async fn drain_once(
 /// Both go through the renderers the live surfaces use — `public_view` for the
 /// JSON, `dpp_render` for the page — because a second implementation of either
 /// is precisely how the static tier would drift from what the node serves.
+///
+/// One `as_of` is taken here and used for the JSON, the page and the object
+/// metadata. Reading the clock once per representation would let a copy state
+/// three slightly different ages for one snapshot — small, and exactly the kind
+/// of discrepancy that reads as tampering to someone comparing them.
 async fn store_published(
     store: &Arc<dyn SnapshotStore>,
+    identity: &Arc<dyn IdentityPort>,
     dpp_id: &str,
     passport: &dpp_domain::passport::Passport,
     resolver_base_url: &str,
 ) -> Result<(), dpp_domain::DppError> {
-    let json = dpp_vault::public_view::render_public_snapshot(passport)?;
-    store.put_public_json(dpp_id, &json).await?;
+    // Truncated to the second at the source. The payload states its timestamps
+    // in RFC 3339 seconds, so keeping sub-second precision on the copy handed
+    // to the object metadata would have the header and the signed claim
+    // disagree about the same instant — a discrepancy that reads as tampering
+    // to whoever compares them, for no gain.
+    let as_of = chrono::Utc::now().trunc_subsecs(0);
+    let valid_until = as_of
+        + chrono::Duration::from_std(SNAPSHOT_VALIDITY)
+            .expect("SNAPSHOT_VALIDITY is a small constant");
+    let meta = SnapshotMeta {
+        as_of,
+        valid_until,
+        max_age: SNAPSHOT_REFRESH_INTERVAL,
+    };
+
+    let json = dpp_vault::public_view::render_public_snapshot(
+        identity.as_ref(),
+        passport,
+        as_of,
+        valid_until,
+    )
+    .await?;
+    store.put_public_json(dpp_id, &json, meta).await?;
 
     // Render the page from the same public view the JSON carries, never from
     // the full passport — the static tier must not become a confidential-data
@@ -167,9 +206,9 @@ async fn store_published(
         dpp_id,
         &view,
         resolver_base_url,
-        dpp_render::SnapshotNotice::AsOf(chrono::Utc::now()),
+        dpp_render::SnapshotNotice::Snapshot { as_of, valid_until },
     );
-    store.put_public_html(dpp_id, html.as_bytes()).await
+    store.put_public_html(dpp_id, html.as_bytes(), meta).await
 }
 
 /// Which way a reconcile resolved, so the tally can distinguish the two.

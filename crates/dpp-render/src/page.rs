@@ -11,18 +11,31 @@ use crate::esc::esc;
 use crate::sections;
 
 /// Whether this render is the live page or a snapshot, and if a snapshot, when
-/// it was taken.
+/// it was taken and how long it stands.
 ///
 /// The static tier serves a copy that is authentic and signed but possibly
 /// stale. Availability must not be bought by pretending the staleness away, so
 /// a snapshot render states its age on the page itself rather than leaving the
 /// reader to infer it from a header they will never see.
+///
+/// It states the expiry for the same reason. The page is written once and never
+/// revisited, so it cannot notice its own lapse and change what it says; naming
+/// the date is the only way a reader who arrives afterwards can tell. A page
+/// that only said how old it was would keep reading as merely slightly stale
+/// forever.
 #[derive(Debug, Clone, Copy)]
 pub enum SnapshotNotice {
     /// Rendered live from the node — no banner.
     Live,
-    /// Rendered into the continuity tier at this instant.
-    AsOf(DateTime<Utc>),
+    /// Rendered into the continuity tier at `as_of`, vouching for itself until
+    /// `valid_until`.
+    Snapshot {
+        /// When this copy was taken.
+        as_of: DateTime<Utc>,
+        /// When it stops vouching for itself — the same instant the signed
+        /// payload carries as `validUntil`.
+        valid_until: DateTime<Utc>,
+    },
 }
 
 impl SnapshotNotice {
@@ -30,9 +43,10 @@ impl SnapshotNotice {
     fn banner_html(self) -> String {
         match self {
             Self::Live => String::new(),
-            Self::AsOf(ts) => format!(
-                r#"<div class="snapshot-note" role="status">This is a saved copy of this passport as of {} UTC. The live service is temporarily unavailable, so some details may have changed since. The copy is still signed and can be verified.</div>"#,
-                ts.format("%Y-%m-%d %H:%M")
+            Self::Snapshot { as_of, valid_until } => format!(
+                r#"<div class="snapshot-note" role="status">This is a saved copy of this passport as of {} UTC. The live service is temporarily unavailable, so some details may have changed since. The copy is signed and can be verified until {} UTC; after that date it is out of date and should not be relied on.</div>"#,
+                as_of.format("%Y-%m-%d %H:%M"),
+                valid_until.format("%Y-%m-%d %H:%M")
             ),
         }
     }
@@ -253,17 +267,25 @@ mod tests {
         );
     }
 
+    /// A reader arriving after the copy has lapsed has only the page to go on —
+    /// it cannot re-render itself to say so — so the expiry has to be printed
+    /// beside the age rather than implied by it.
     #[test]
-    fn snapshot_render_shows_dated_banner() {
-        let ts = Utc.with_ymd_and_hms(2026, 7, 19, 12, 30, 0).unwrap();
+    fn snapshot_render_shows_both_its_age_and_its_expiry() {
+        let as_of = Utc.with_ymd_and_hms(2026, 7, 19, 12, 30, 0).unwrap();
+        let valid_until = Utc.with_ymd_and_hms(2026, 7, 26, 12, 30, 0).unwrap();
         let html = render_page(
             DPP_ID,
             &unredacted_passport(),
             "https://id.odal-node.io",
-            SnapshotNotice::AsOf(ts),
+            SnapshotNotice::Snapshot { as_of, valid_until },
         );
         assert!(html.contains("snapshot-note"));
         assert!(html.contains("2026-07-19 12:30"));
+        assert!(
+            html.contains("2026-07-26 12:30"),
+            "the banner must name the date the copy stops standing: {html}"
+        );
     }
 
     #[test]
