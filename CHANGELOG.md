@@ -193,6 +193,25 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   fixed; the base filter bought nothing and cost coverage on exactly the shape of
   change — a PR stacked on another PR — where review is already hardest.
 
+- **`wasmtime` 47.0.3 → 47.0.4**, clearing RUSTSEC-2026-0268 (guest-controlled
+  host heap allocation through WASIp3 streams) and RUSTSEC-2026-0269 (filesystem
+  sandbox escape when paths or symlinks carry trailing slashes). Both concern
+  the sandbox sector plugins run inside; the `cap-*` family the second advisory
+  covers is that sandbox's filesystem layer. The existing `wasmtime = "47"`
+  requirement already permitted the patch, so no manifest changed.
+
+  Recorded after the fact, because the bump reached `main` inside #222 — a
+  change about `.env` breaking credential tests — rather than through the PR
+  opened to make it. #222's 68-line fix carried 188 lines of lockfile with it,
+  and its own description named the other PR as the fix for these advisories
+  while shipping that fix itself. So the advisories were cleared with no
+  security review and no entry here, and the PR that would have supplied both
+  was closed as a no-op against a `main` that already had its content.
+
+  Nothing to do: `main` has been on 47.0.4 since #222. This entry exists because
+  a cleared advisory that no changelog records is indistinguishable, later, from
+  one nobody noticed.
+
 - **Every push to a branch with an open PR ran the whole suite twice.**
   `push: ["**"]` and `pull_request` both fired, on two runners, for the same
   commit. Beyond the double spend, it took two independent samples of every
