@@ -11,5 +11,19 @@
 # Concretely: the `BasicAuth` security scheme has been on main since long before
 # the bundle existed and is deliberate — it is the operator's bootstrap
 # credential and the lockout-recovery path, documented as such in the spec.
+
+# The only SQL analyser Codacy runs here is TSQLLint, which checks Microsoft
+# T-SQL. `ops/pg/*.sql` is PostgreSQL, so its findings are wrong by
+# construction rather than merely noisy: the first one raised was "expected SET
+# QUOTED_IDENTIFIER ON near top of file", a SQL Server directive that is a
+# syntax error in PostgreSQL. No migration had been added since Codacy was
+# enabled, so the first one to arrive met the rule and failed the new-issue
+# gate for following the dialect the database actually speaks.
+#
+# The migrations are not unreviewed as a result: `just migrations-check` refuses
+# edits to an applied file, `just grants-check` gates the app role's privileges
+# against `ops/pg/README.md`, and the Postgres test tier exercises the schema
+# they produce.
 exclude_paths:
   - "api/openapi.bundled.yaml"
+  - "ops/pg/**"
