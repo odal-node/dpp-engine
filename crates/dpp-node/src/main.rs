@@ -413,11 +413,16 @@ async fn main() -> anyhow::Result<()> {
             db.snapshot_outbox.clone(),
             db.passport_repo.clone(),
             store,
+            identity.clone(),
             cfg.resolver_base_url.clone(),
         )
         .await;
         // Repair sweep: covers reconciles the event-driven path never queued.
         boot::tasks::spawn_snapshot_sweep(db.snapshot_outbox.clone());
+        // Refresh pass: re-signs published snapshots before the bound they
+        // carry runs out. Without it every snapshot expires and the tier goes
+        // dark one validity window after boot.
+        boot::tasks::spawn_snapshot_refresh(db.snapshot_outbox.clone()).await;
     }
 
     // ── Metrics: dedicated private listener (never the public API port) ────────

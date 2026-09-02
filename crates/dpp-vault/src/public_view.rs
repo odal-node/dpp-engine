@@ -143,23 +143,68 @@ pub fn audience_view(
     view
 }
 
-/// Render the byte-identical public-view JSON for a passport — exactly what the
-/// public read serves (and what `publicJwsSignature` is signed over), so a stored
-/// continuity snapshot matches the live view and carries the public JWS.
+/// Render the continuity-snapshot JSON for a passport: the public view the live
+/// read serves, plus the bound that makes it safe to serve from a copy.
 ///
-/// Lives beside [`public_view`] rather than in the service so the snapshot drain
-/// (`dpp-node`) renders through the *same* source of truth the live read uses;
-/// a second renderer is exactly how the static tier would silently drift.
-/// Delegates to [`signed_public_view`] — not a raw [`public_view`] re-derivation
-/// — for the same reason: the live route serves the frozen signed payload, so a
-/// snapshot built any other way would drift from it the moment a Public field
-/// mutates after publish.
+/// The passport fields and `publicJwsSignature` are exactly the live view's —
+/// same source of truth, byte for byte, because a second renderer is precisely
+/// how the static tier would silently drift. Delegating to
+/// [`signed_public_view`] rather than re-deriving [`public_view`] is part of
+/// that: the live route serves the frozen signed payload, so a snapshot built
+/// any other way would diverge the moment a Public field mutates after publish.
+///
+/// # The bound, and why it needs a second proof
+///
+/// `publicJwsSignature` is frozen at publish and never re-signed. That is
+/// load-bearing elsewhere — a passport can be referenced by the hash of that
+/// exact JWS, and the evidence dossier recovers the payload it covered — so it
+/// cannot carry a time bound that has to move. Re-signing it on a refresh
+/// cadence would fork the passport's public proof: two valid signed public
+/// views, and no way for a verifier to say which is the passport's.
+///
+/// So the bound travels in its own proof. `asOf` and `validUntil` are added to
+/// the document and `snapshotJwsSignature` is taken over **the whole document
+/// except itself** — which includes `publicJwsSignature`. The two nest rather
+/// than compete: the inner proof attests the passport's content and never
+/// expires, the outer one attests *this copy, taken then, good until then*.
+/// Coverage is unambiguous because the outer proof covers everything else, so
+/// there is no field a reader has to be told which signature vouches for it.
+///
+/// A refresh re-signs only the outer proof. Withdrawal is then the absence of
+/// that: stop refreshing, and the copy lapses wherever it has got to.
 ///
 /// # Errors
-/// Returns whatever [`signed_public_view`] returns, plus
-/// [`DppError::Serialisation`] if the decoded view cannot be re-serialised.
-pub fn render_public_snapshot(passport: &Passport) -> Result<Vec<u8>, DppError> {
-    let view = signed_public_view(passport)?;
+/// Returns whatever [`signed_public_view`] returns, plus [`DppError::Signing`]
+/// (propagated) if the snapshot proof cannot be produced, and
+/// [`DppError::Serialisation`] if the document cannot be serialised. Signing is
+/// fail-closed on purpose: an unbounded snapshot is the defect this exists to
+/// remove, so no bound means no write, and the existing copy expires on its own
+/// while the drain retries.
+pub async fn render_public_snapshot(
+    identity: &dyn dpp_domain::ports::identity::IdentityPort,
+    passport: &Passport,
+    as_of: chrono::DateTime<chrono::Utc>,
+    valid_until: chrono::DateTime<chrono::Utc>,
+) -> Result<Vec<u8>, DppError> {
+    let mut view = signed_public_view(passport)?;
+    let obj = view.as_object_mut().ok_or_else(|| {
+        DppError::Internal("public signature payload is not a JSON object".to_owned())
+    })?;
+    let rfc3339 =
+        |t: chrono::DateTime<chrono::Utc>| t.to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+    obj.insert("asOf".to_owned(), Value::String(rfc3339(as_of)));
+    obj.insert("validUntil".to_owned(), Value::String(rfc3339(valid_until)));
+
+    // Signed over the document as it now stands — public view, publish-time
+    // proof, and both timestamps — so a consumer who checks this one signature
+    // has checked everything it will read. `snapshotJwsSignature` is absent at
+    // signing time and inserted after, the same way the public proof never
+    // signs over itself.
+    let proof = identity.sign_passport(passport.id, &view).await?;
+    view.as_object_mut()
+        .expect("view was an object above")
+        .insert("snapshotJwsSignature".to_owned(), Value::String(proof.jws));
+
     serde_json::to_vec(&view).map_err(|e| DppError::Serialisation(e.to_string()))
 }
 
@@ -360,6 +405,176 @@ pub(crate) mod tests {
         let b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD
             .encode(serde_json::to_vec(payload).unwrap());
         format!("aGVhZGVy.{b64}.c2ln")
+    }
+
+    /// A real Ed25519 signer standing in for the identity service.
+    ///
+    /// Signs exactly as production does — EdDSA over the RFC 8785 canonical
+    /// bytes — because the property the snapshot proof has to have is content
+    /// binding, and a double that echoed the payload without signing it could
+    /// not tell a bound document from an unbound one.
+    ///
+    /// Shared rather than re-declared per test module: the crate already
+    /// carries one drifting family of hand-rolled signing helpers, and this is
+    /// the seam where a second would start.
+    pub(crate) struct StubSigner {
+        key: ed25519_dalek::SigningKey,
+    }
+
+    impl StubSigner {
+        pub(crate) fn new() -> Self {
+            Self {
+                key: ed25519_dalek::SigningKey::from_bytes(&[7u8; 32]),
+            }
+        }
+
+        /// The verifying key, base64url-encoded for `dpp_crypto::jws::verify_jws`.
+        pub(crate) fn public_key_b64(&self) -> String {
+            base64::engine::general_purpose::URL_SAFE_NO_PAD
+                .encode(self.key.verifying_key().to_bytes())
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl dpp_domain::ports::identity::IdentityPort for StubSigner {
+        async fn sign_passport(
+            &self,
+            passport_id: dpp_domain::PassportId,
+            payload: &Value,
+        ) -> Result<dpp_domain::credential::SignedCredential, DppError> {
+            use ed25519_dalek::Signer as _;
+            let b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD;
+            let canonical = dpp_crypto::jws::canonicalize(payload)
+                .map_err(|e| DppError::Signing(e.to_string()))?;
+            let signing_input = format!(
+                "{}.{}",
+                b64.encode(br#"{"alg":"EdDSA"}"#),
+                b64.encode(&canonical)
+            );
+            let sig = self.key.sign(signing_input.as_bytes());
+            Ok(dpp_domain::credential::SignedCredential {
+                credential: dpp_domain::credential::PassportCredential::new(
+                    "did:web:example".to_owned(),
+                    dpp_domain::credential::PassportCredentialSubject {
+                        id: format!("urn:uuid:{passport_id}"),
+                        payload_hash: String::new(),
+                    },
+                ),
+                jws: format!("{signing_input}.{}", b64.encode(sig.to_bytes())),
+                issuer_did: "did:web:example".to_owned(),
+            })
+        }
+
+        async fn verify_signature(&self, _jws: &str, _payload: &Value) -> Result<bool, DppError> {
+            unimplemented!("the snapshot path only signs")
+        }
+
+        async fn own_did_document(&self) -> Result<Value, DppError> {
+            unimplemented!("the snapshot path only signs")
+        }
+    }
+
+    /// The snapshot's own proof must cover the time bound, or the bound is a
+    /// comment: anyone could rewrite `validUntil` on a copy and the passport's
+    /// publish-time proof would still check out over the fields it covers.
+    ///
+    /// Covering *the whole document except the proof itself* is what removes the
+    /// question "which signature vouches for this field" — there is exactly one
+    /// field the outer proof does not cover, and it is the outer proof.
+    #[tokio::test]
+    async fn the_snapshot_proof_covers_the_time_bound_and_the_publish_proof() {
+        let signer = StubSigner::new();
+        let mut passport = stub_passport();
+        let published = json!({
+            "id": passport.id.to_string(),
+            "productName": "Widget",
+        });
+        let public_jws = jws_over(&published);
+        passport.public_jws_signature = Some(public_jws.clone());
+
+        let as_of = chrono::Utc::now();
+        let valid_until = as_of + chrono::Duration::days(7);
+        let bytes = render_public_snapshot(&signer, &passport, as_of, valid_until)
+            .await
+            .expect("render");
+        let doc: Value = serde_json::from_slice(&bytes).expect("snapshot is JSON");
+
+        // The publish-time proof travels untouched: it is pinned by hash
+        // elsewhere and re-signing it would fork the passport's public proof.
+        assert_eq!(doc["publicJwsSignature"], json!(public_jws));
+        assert!(
+            doc.get("jwsSignature").is_none(),
+            "the confidential full-view JWS must never reach the static tier: {doc}"
+        );
+
+        let proof = doc["snapshotJwsSignature"]
+            .as_str()
+            .expect("the snapshot carries its own proof")
+            .to_owned();
+        assert!(
+            dpp_crypto::jws::verify_jws(&proof, &signer.public_key_b64()).unwrap(),
+            "the snapshot proof does not verify against the signing key"
+        );
+
+        // Content binding: what the proof covers is the document minus itself,
+        // timestamps and publish-time proof included.
+        let mut covered = doc.clone();
+        covered
+            .as_object_mut()
+            .expect("object")
+            .remove("snapshotJwsSignature");
+        assert_eq!(
+            jws_payload(&proof),
+            covered,
+            "the snapshot proof covers something other than the document it is attached to"
+        );
+        assert!(covered.get("asOf").is_some() && covered.get("validUntil").is_some());
+    }
+
+    /// A snapshot that cannot be bound must not be written at all. Falling back
+    /// to an unbound copy would reintroduce exactly the claim this removes, and
+    /// would do it precisely when the node is least able to notice.
+    #[tokio::test]
+    async fn a_snapshot_is_not_rendered_when_it_cannot_be_signed() {
+        struct RefusesToSign;
+
+        #[async_trait::async_trait]
+        impl dpp_domain::ports::identity::IdentityPort for RefusesToSign {
+            async fn sign_passport(
+                &self,
+                _passport_id: dpp_domain::PassportId,
+                _payload: &Value,
+            ) -> Result<dpp_domain::credential::SignedCredential, DppError> {
+                Err(DppError::Signing("identity service unreachable".to_owned()))
+            }
+            async fn verify_signature(
+                &self,
+                _jws: &str,
+                _payload: &Value,
+            ) -> Result<bool, DppError> {
+                unimplemented!()
+            }
+            async fn own_did_document(&self) -> Result<Value, DppError> {
+                unimplemented!()
+            }
+        }
+
+        let mut passport = stub_passport();
+        passport.public_jws_signature = Some(jws_over(&json!({ "id": passport.id.to_string() })));
+        let as_of = chrono::Utc::now();
+
+        let err = render_public_snapshot(
+            &RefusesToSign,
+            &passport,
+            as_of,
+            as_of + chrono::Duration::days(7),
+        )
+        .await
+        .expect_err("an unsignable snapshot must not render");
+        assert!(
+            matches!(err, DppError::Signing(_)),
+            "unexpected error: {err}"
+        );
     }
 
     /// The public route must serve what the proof signed, not the live row.

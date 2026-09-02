@@ -12,6 +12,35 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ### Added
 
+- **A continuity snapshot now says how long it stands, under its own signature.**
+  Each snapshot written to object storage carries `asOf`, `validUntil` and a
+  `snapshotJwsSignature` over the whole document — the passport's public view,
+  its publish-time `publicJwsSignature`, and both timestamps. The node re-signs
+  published snapshots every 24 hours; the bound runs for seven days.
+
+  The tier existed to keep a passport reachable when the node is not, and that
+  is exactly the state in which a withdrawal could not propagate: the reconcile
+  queue lives in the node's own database, so suspending a passport while the
+  node was unreachable left the snapshot answering `active` — under a signature
+  that verified, indefinitely, to anyone holding a copy from any source. The
+  only staleness signal was an HTTP header the reverse proxy added on its own
+  path, which is neither signed nor able to survive being cached or copied.
+
+  Withdrawal is now the *absence* of a refresh. That works on a node that is
+  switched off, and it reaches a copy nobody can reach — a cache, a mirror, a
+  file someone kept — because the copy expires on its own. The publish-time
+  proof is untouched and never re-signed: it is pinned by hash elsewhere, so
+  re-signing it would fork the passport's public proof rather than date it.
+
+  The snapshot page states its expiry date beside its age (it is written once
+  and cannot notice its own lapse), and uploads now set `Cache-Control` and
+  `x-amz-meta-*` so a reader who goes straight to the object store gets the
+  dates too. Neither replaces the signed bound.
+
+  **A verifier that ignores `validUntil` still treats an expired snapshot as
+  valid.** Enforcement lands separately, in the verifier; until then the bound
+  is stated and dated but not refused.
+
 - **The seal route names who declared the content it covers.**
   `GET /api/v1/dpp/{dppId}/seal` gains `declaredBy`, carrying the manufacturer
   and Annex III(k) operator identifier frozen at publish, a

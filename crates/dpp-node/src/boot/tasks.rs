@@ -3,6 +3,7 @@
 
 use std::sync::Arc;
 
+use dpp_domain::ports::identity::IdentityPort;
 use dpp_domain::ports::passport_repo::PassportRepository;
 use dpp_domain::ports::registry_sync::RegistrySyncPort;
 use dpp_domain::ports::seal::SealPort;
@@ -52,7 +53,9 @@ pub fn spawn_job_cleanup(store: Arc<dyn JobStore>) {
     });
 }
 
-use dpp_node::infra::drain::{DRAIN_INTERVAL, SWEEP_INTERVAL};
+use dpp_node::infra::drain::{
+    DRAIN_INTERVAL, SNAPSHOT_REFRESH_INTERVAL, SNAPSHOT_REFRESH_SCAN_INTERVAL, SWEEP_INTERVAL,
+};
 
 const DRAIN_BATCH: i64 = 50;
 /// Per-sweep cap. Larger than `DRAIN_BATCH` because a sweep only enqueues rows
@@ -257,6 +260,7 @@ pub async fn spawn_snapshot_drain(
     outbox: Arc<dyn SnapshotOutbox>,
     repo: Arc<dyn PassportRepository>,
     store: Arc<dyn SnapshotStore>,
+    identity: Arc<dyn IdentityPort>,
     resolver_base_url: String,
 ) {
     match outbox.status_counts().await {
@@ -279,6 +283,7 @@ pub async fn spawn_snapshot_drain(
                 &outbox,
                 &repo,
                 &store,
+                &identity,
                 &resolver_base_url,
                 DRAIN_BATCH,
             )
@@ -424,6 +429,76 @@ pub fn spawn_snapshot_sweep(outbox: Arc<dyn SnapshotOutbox>) {
                     );
                 }
                 Err(e) => tracing::warn!(error = %e, "continuity snapshot sweep failed"),
+            }
+        }
+    });
+}
+
+/// How many snapshots one refresh scan may re-arm.
+///
+/// With [`SNAPSHOT_REFRESH_SCAN_INTERVAL`] this sets the corpus the tier can
+/// keep renewed: `REFRESH_BATCH × (SNAPSHOT_REFRESH_INTERVAL /
+/// SNAPSHOT_REFRESH_SCAN_INTERVAL)` snapshots per refresh window. Beyond that
+/// the pass falls behind and snapshots begin to lapse while their passports are
+/// still published, which is why [`spawn_snapshot_refresh`] says so at boot
+/// rather than leaving it to be discovered.
+const REFRESH_BATCH: i64 = 500;
+
+/// How many published snapshots can be renewed within one refresh window.
+fn refresh_capacity() -> u64 {
+    let scans_per_window =
+        SNAPSHOT_REFRESH_INTERVAL.as_secs() / SNAPSHOT_REFRESH_SCAN_INTERVAL.as_secs().max(1);
+    REFRESH_BATCH.unsigned_abs() * scans_per_window
+}
+
+/// Spawn the continuity tier's refresh pass.
+///
+/// A snapshot vouches for itself only until the `validUntil` signed into it, so
+/// a published passport's copy has to be re-signed before that window closes.
+/// This loop re-arms the reconciles that do it; the drain then re-renders,
+/// re-signs and re-uploads through the same convergent path everything else
+/// uses — which is what makes a refresh safe. If the passport was withdrawn
+/// while the node was down, the "refresh" the drain performs is a `remove()`.
+///
+/// Withdrawal itself needs none of this. It is the *absence* of a refresh, so
+/// it takes effect on a node that is switched off, and on a copy nobody can
+/// reach — the two cases every other mechanism here misses.
+///
+/// Kept apart from [`spawn_snapshot_sweep`] deliberately. That loop's non-zero
+/// result is a defect signal; this one's is the normal state of a healthy
+/// deployment. Sharing a counter would bury the first under the second.
+pub async fn spawn_snapshot_refresh(outbox: Arc<dyn SnapshotOutbox>) {
+    let capacity = refresh_capacity();
+    if let Ok(c) = outbox.status_counts().await {
+        let tracked = c.pending + c.reconciled + c.exhausted;
+        if tracked as u64 > capacity {
+            // Not fatal, and not silently survivable either: past this point
+            // some published passport's snapshot expires every cycle, and the
+            // tier goes on reporting success while doing it.
+            tracing::warn!(
+                tracked,
+                capacity,
+                "continuity refresh cannot cover the corpus — snapshots will expire while published; raise the refresh batch or scan more often"
+            );
+        }
+    }
+    metrics::gauge!("snapshot_refresh_capacity").set(capacity as f64);
+
+    tokio::spawn(async move {
+        let older_than = chrono::Duration::from_std(SNAPSHOT_REFRESH_INTERVAL)
+            .expect("SNAPSHOT_REFRESH_INTERVAL is a small constant");
+        loop {
+            tokio::time::sleep(SNAPSHOT_REFRESH_SCAN_INTERVAL).await;
+            match outbox.enqueue_stale(older_than, REFRESH_BATCH).await {
+                Ok(0) => tracing::debug!("continuity snapshot refresh: nothing due"),
+                Ok(n) => {
+                    metrics::counter!("snapshot_refresh_requeued_total").increment(n);
+                    tracing::debug!(requeued = n, "continuity snapshot refresh queued renewals");
+                }
+                // Worth a warning where the sweep's failure is not: a refresh
+                // that stops running expires every published snapshot in the
+                // deployment once the validity window runs out.
+                Err(e) => tracing::warn!(error = %e, "continuity snapshot refresh failed"),
             }
         }
     });

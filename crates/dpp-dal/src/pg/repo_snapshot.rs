@@ -99,6 +99,52 @@ impl SnapshotOutbox for PgSnapshotOutboxRepo {
         Ok(res.rows_affected())
     }
 
+    async fn enqueue_stale(
+        &self,
+        older_than: chrono::Duration,
+        limit: i64,
+    ) -> Result<u64, DppError> {
+        // An UPDATE rather than the upsert `enqueue_divergent` uses: every row
+        // this can match already exists (it is selected *from* the outbox), so
+        // an INSERT ... ON CONFLICT would describe a case that cannot arise.
+        //
+        // `p.status = 'active'` — the DB spelling of `Published` — is what keeps
+        // the pass bounded. Without it every suspended, archived and
+        // deactivated passport would be re-armed on every cycle for the rest of
+        // the deployment's life, and each one would drive a `remove()` against
+        // an object that is already gone. The set of passports needing renewal
+        // is exactly the set with something in the public tier to renew.
+        //
+        // Ordering by `reconciled_at` renews the closest to expiry first. That
+        // only matters when the corpus is larger than one batch — which is
+        // precisely when getting it wrong would let a snapshot lapse.
+        let res = sqlx::query(
+            r#"UPDATE odal.snapshot_outbox SET
+                 status = 'pending',
+                 attempts = 0,
+                 next_attempt_at = now(),
+                 message = NULL,
+                 reconciled_at = NULL,
+                 updated_at = now()
+               WHERE id IN (
+                 SELECT s.id
+                 FROM odal.snapshot_outbox s
+                 JOIN odal.passport p ON p.id = s.passport_id
+                 WHERE s.status = 'reconciled'
+                   AND s.reconciled_at < now() - ($1::bigint * interval '1 second')
+                   AND p.status = 'active'
+                 ORDER BY s.reconciled_at ASC
+                 LIMIT $2
+               )"#,
+        )
+        .bind(older_than.num_seconds())
+        .bind(limit)
+        .execute(self.dal.pool())
+        .await
+        .map_err(db_err)?;
+        Ok(res.rows_affected())
+    }
+
     async fn due(&self, limit: i64) -> Result<Vec<SnapshotReconcileRow>, DppError> {
         let rows = sqlx::query(
             r#"SELECT id, passport_id, attempts

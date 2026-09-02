@@ -16,7 +16,7 @@
 //!   T1 roundtrip parity · T3 retention trigger immutability
 //!   T4 audit append-only trigger · T5 key-prefix uniqueness · T6 patch_fields merge
 //!   T13 snapshot reconcile outbox upsert/re-arm/due-filter
-//!   T14 snapshot repair sweep selectivity
+//!   T14 snapshot repair sweep selectivity · T18 snapshot refresh selectivity
 //!   T15 snapshot outbox mark-* methods fail closed on an unknown row id
 //!   T16 PgDal::connect refuses a superuser role
 
@@ -28,7 +28,7 @@ use dpp_dal::pg::{
     PgApiKeyRepo, PgAuditRepo, PgDal, PgEvidenceDossierRepo, PgPassportRepo, PgScanTelemetryRepo,
     PgSnapshotOutboxRepo, sqlx,
 };
-use dpp_dal::test_harness::start_pg;
+use dpp_dal::test_harness::{TestPg, start_pg};
 use dpp_domain::{
     identifier::gtin::Gtin,
     passport::{FacilitySnapshot, ManufacturerInfo, Passport, PassportId},
@@ -993,6 +993,100 @@ async fn t14_snapshot_sweep_requeues_only_divergent_passports() {
         outbox.due(500).await.expect("due").is_empty(),
         "the backed-off row must stay backed off after a sweep"
     );
+}
+
+// T18 — the continuity tier's refresh pass: which snapshots it renews, and which
+// it must not touch. A snapshot carries a signed expiry, so this pass is the only
+// thing standing between a live passport and going dark — while renewing the
+// wrong set is how it would grow without bound.
+#[tokio::test]
+async fn t18_snapshot_refresh_renews_only_live_stale_snapshots() {
+    let pg = start_pg().await;
+    let passport_repo = PgPassportRepo::new(pg.dal.clone());
+    let outbox = PgSnapshotOutboxRepo::new(pg.dal.clone());
+
+    // Two published passports with reconciled snapshots, one of them stale.
+    let mut ids = Vec::new();
+    for _ in 0..2 {
+        let mut p = make_passport();
+        p.id = PassportId::new();
+        p.status = PassportStatus::Published;
+        let p = passport_repo.create(p).await.expect("create");
+        sqlx::query(
+            "UPDATE odal.passport SET status = 'active', published_at = now() WHERE id = $1",
+        )
+        .bind(p.id.0)
+        .execute(pg.dal.pool())
+        .await
+        .expect("mark published");
+        outbox.enqueue(p.id).await.expect("enqueue");
+        let row = outbox.due(500).await.expect("due");
+        let row = row.iter().find(|r| r.passport_id == p.id).expect("row");
+        outbox.mark_reconciled(row.id).await.expect("reconcile");
+        ids.push(p.id);
+    }
+    let (stale, fresh) = (ids[0], ids[1]);
+    age_snapshot(&pg, stale, 26).await;
+
+    let renewed = outbox
+        .enqueue_stale(chrono::Duration::hours(24), 500)
+        .await
+        .expect("refresh");
+    assert_eq!(renewed, 1, "only the snapshot past its refresh threshold");
+    let due = outbox.due(500).await.expect("due");
+    assert_eq!(due.len(), 1);
+    assert_eq!(due[0].passport_id, stale);
+    assert!(
+        !due.iter().any(|r| r.passport_id == fresh),
+        "a snapshot renewed recently must not be renewed again"
+    );
+
+    // A pending row belongs to the drain. Re-arming it here would reset its
+    // backoff every scan, exactly as it would in the divergence sweep.
+    assert_eq!(
+        outbox
+            .enqueue_stale(chrono::Duration::hours(24), 500)
+            .await
+            .expect("refresh"),
+        0,
+        "a row already pending must be left to the drain"
+    );
+
+    // The bounded-corpus property, and the one most easily lost: a withdrawn
+    // passport has nothing in the public tier to renew. Without the status
+    // filter every suspended, archived and deactivated passport would be
+    // re-armed on every scan for the life of the deployment, each one driving a
+    // delete against an object that is already gone.
+    outbox.mark_reconciled(due[0].id).await.expect("reconcile");
+    sqlx::query("UPDATE odal.passport SET status = 'suspended' WHERE id = $1")
+        .bind(stale.0)
+        .execute(pg.dal.pool())
+        .await
+        .expect("suspend");
+    age_snapshot(&pg, stale, 26).await;
+    assert_eq!(
+        outbox
+            .enqueue_stale(chrono::Duration::hours(24), 500)
+            .await
+            .expect("refresh"),
+        0,
+        "a withdrawn passport must not be renewed forever"
+    );
+}
+
+/// Push a reconciled snapshot row's `reconciled_at` back by `hours`, so the
+/// refresh pass sees it as stale without the test having to wait.
+async fn age_snapshot(pg: &TestPg, passport_id: PassportId, hours: i64) {
+    sqlx::query(
+        "UPDATE odal.snapshot_outbox
+         SET reconciled_at = now() - ($2::bigint * interval '1 hour')
+         WHERE passport_id = $1",
+    )
+    .bind(passport_id.0)
+    .bind(hours)
+    .execute(pg.dal.pool())
+    .await
+    .expect("age the snapshot");
 }
 
 /// Scan telemetry: upsert accumulation, per-passport and operator aggregates,
