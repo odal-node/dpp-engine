@@ -5,6 +5,7 @@ get:
     Serves the operator's `did:web` DID document. Public, unauthenticated.
   tags:
     - Identity
+  security: []
   responses:
     '200':
       description: The DID document.

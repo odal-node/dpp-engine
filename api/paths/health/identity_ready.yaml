@@ -1,8 +1,22 @@
 get:
   operationId: identityReady
   summary: Identity readiness check
+  description: |
+    Readiness: **always `200`**, and that is the honest answer rather than a
+    stub.
+
+    The identity service has no external dependency to check. Its signing key
+    store is opened at startup, so a process that is serving at all has already
+    loaded everything it needs — there is no state in which it is live but not
+    ready. Reporting anything conditional here would invent a distinction the
+    service does not have.
+
+    So this is useful as a probe target that answers, not as a signal that
+    anything was verified. `/vault/ready` is the probe that actually checks a
+    dependency.
   tags:
     - Health
+  security: []
   responses:
     '200':
-      description: Service is ready.
+      description: Serving. Nothing is checked, because there is nothing to check.

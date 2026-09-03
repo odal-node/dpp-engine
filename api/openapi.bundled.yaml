@@ -1032,7 +1032,22 @@ paths:
     get:
       operationId: listDppEvidence
       summary: List stored evidence dossiers for a passport
-      description: Summaries only (no document body), newest first.
+      description: |
+        Every evidence dossier generated for this passport, newest first.
+
+        Summaries only — each row carries the dossier's id, when it was generated
+        and what it covers, but not the document itself. Dossiers embed full-view
+        passport data and both signature chains, so they are large and are fetched
+        one at a time through `GET /api/v1/evidence/{id}`.
+
+        A passport can have several: a dossier is a snapshot of the proof chain at
+        the moment it was generated, so one taken before a transfer and one taken
+        after are both valid and describe different states. Nothing here is
+        superseded by anything else here, which is why the list is not filtered
+        down to a latest.
+
+        Empty for a passport that has never been published — there is no signature
+        to attest to before then.
       tags:
         - Evidence Dossiers
       security:
@@ -2005,6 +2020,7 @@ paths:
         service internally. Returns 404 for drafts, 410 for suspended.
       tags:
         - Public (Vault)
+      security: []
       parameters:
         - name: dppId
           in: path
@@ -2050,10 +2066,24 @@ paths:
       operationId: publicGetDppByGtin
       summary: Public read of a published DPP by GTIN
       description: |
-        Unauthenticated read of the published passport for a GS1 GTIN-14.
-        Returns 404 if no published passport matches the GTIN.
+        Unauthenticated read of the published passport for a GS1 GTIN-14 — the
+        same signed public view the by-id route serves, found by trade item
+        instead of by passport id.
+
+        **A withdrawn passport answers `410`, not `404`.** That distinction is the
+        point of this route rather than a detail of it: `404` means no passport for
+        this GTIN was ever published here, while `410` means one was and has since
+        been suspended. Only the second is a recall signal, and a consumer who
+        scanned a product needs to be able to tell them apart. `422` is a
+        structurally invalid GTIN-14 — a bad check digit or wrong length — which is
+        a malformed request rather than an answer about any product.
+
+        Only the passport's `public` audience view is returned, carrying the
+        publish-time `publicJwsSignature` that covers exactly those bytes.
+        Restricted fields are not present at all.
       tags:
         - Public (Vault)
+      security: []
       parameters:
         - name: gtin
           in: path
@@ -2102,6 +2132,7 @@ paths:
         is not configured on this node.
       tags:
         - Credentialed Access
+      security: []
       parameters:
         - name: dppId
           in: path
@@ -2249,6 +2280,7 @@ paths:
         record (`versions`). Unauthenticated.
       tags:
         - Integrator
+      security: []
       responses:
         '200':
           description: The available product group schemas.
@@ -2294,6 +2326,7 @@ paths:
         can pre-validate a body and get the verdict the create route would give.
       tags:
         - Integrator
+      security: []
       parameters:
         - name: productGroup
           in: path
@@ -2326,6 +2359,7 @@ paths:
         Descriptions are omitted, as on the current-schema route.
       tags:
         - Integrator
+      security: []
       parameters:
         - name: productGroup
           in: path
@@ -2368,6 +2402,7 @@ paths:
         a spreadsheet app). Unauthenticated.
       tags:
         - Integrator
+      security: []
       parameters:
         - name: productGroup
           in: path
@@ -2497,6 +2532,7 @@ paths:
         Serves the operator's `did:web` DID document. Public, unauthenticated.
       tags:
         - Identity
+      security: []
       responses:
         '200':
           description: The DID document.
@@ -2625,6 +2661,7 @@ paths:
         Responses carry `Vary: Accept`.
       tags:
         - Public Resolver
+      security: []
       parameters:
         - name: dppId
           in: path
@@ -2712,6 +2749,7 @@ paths:
         This endpoint is on the **resolver** service (port 8003).
       tags:
         - Public Resolver
+      security: []
       parameters:
         - name: dppId
           in: path
@@ -2743,6 +2781,7 @@ paths:
           RFC 9264 linkset
       tags:
         - Public Resolver
+      security: []
       parameters:
         - name: gtin
           in: path
@@ -2780,6 +2819,7 @@ paths:
         otherwise (`linkType` / `Accept` negotiation).
       tags:
         - Public Resolver
+      security: []
       parameters:
         - name: gtin
           in: path
@@ -2821,6 +2861,7 @@ paths:
         (`linkType` / `Accept` negotiation).
       tags:
         - Public Resolver
+      security: []
       parameters:
         - name: gtin
           in: path
@@ -2862,6 +2903,7 @@ paths:
         `/01/{gtin}` otherwise (`linkType` / `Accept` negotiation).
       tags:
         - Public Resolver
+      security: []
       parameters:
         - name: gtin
           in: path
@@ -2902,32 +2944,76 @@ paths:
     get:
       operationId: vaultHealth
       summary: Vault health check
+      description: |
+        Liveness: the vault process is running and serving. On the node (port 8001)
+        this is mounted at `/vault/health`.
+
+        It checks nothing beyond itself — no database, no object storage, no
+        upstream. A `200` here means the process is up, not that it can do useful
+        work; use `/vault/ready` for that. Wiring a restart policy to this endpoint
+        and expecting it to catch a lost database will never restart anything.
+
+        The body carries the service name, its version, and the `dpp-core` version
+        it was built against, which is the quickest way to tell two deployments
+        apart when their behaviour differs.
       tags:
         - Health
+      security: []
       responses:
         '200':
-          description: Service is up.
+          description: |
+            The process is serving. Body carries `status`, `service`, `version` and
+            `coreVersion`.
   /vault/ready:
     get:
       operationId: vaultReady
       summary: Vault readiness check
+      description: |
+        Readiness: the vault can reach the database it needs to answer requests. On
+        the node (port 8001) this is mounted at `/vault/ready`.
+
+        **This is the only readiness probe in the API that checks a dependency.**
+        It pings PostgreSQL and answers `503` when that fails, so it is the one to
+        put behind a load balancer or a deployment gate. The identity and resolver
+        readiness probes answer `200` unconditionally, because neither has an
+        external dependency to check.
+
+        Every call records the ping latency and its outcome as metrics, so a
+        scrape of this endpoint doubles as a continuous database-latency signal
+        rather than only a yes/no.
       tags:
         - Health
+      security: []
       responses:
         '200':
-          description: Service is ready (DB connection verified).
+          description: The database answered; the vault can serve requests.
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
   /vault/api/v1/info:
     get:
       operationId: vaultInfo
       summary: Service info
-      description: Returns version and build information.
+      description: |
+        What this build is and what it supports — for a client deciding which
+        features to offer before it has authenticated.
+
+        Carries four things: the vault's own `version`, the `dpp-core` version it
+        was compiled against, the authentication methods it accepts, and the
+        feature flags it reports. A dashboard reads this to know whether an
+        endpoint is worth calling, rather than calling it and interpreting a `404`.
+
+        Unauthenticated on purpose: a client needs to know how to authenticate
+        before it can, and the values here are properties of the build rather than
+        of the operator or their data.
+
+        `coreVersion` is the useful one when two deployments disagree — the vault
+        version alone does not tell you which regulatory rules were compiled in.
       tags:
         - Health
+      security: []
       responses:
         '200':
-          description: Service info.
+          description: Build metadata, authentication methods and feature flags.
           content:
             application/json:
               schema:
@@ -2936,47 +3022,113 @@ paths:
     get:
       operationId: identityHealth
       summary: Identity health check
+      description: |
+        Liveness: the identity service is running and serving. Mounted at
+        `/identity/health` on the node (port 8001), and at `/health` when identity
+        runs as its own deployable (port 8002).
+
+        Checks nothing beyond itself. The signing key store is opened at startup, so
+        a process that is serving has already loaded it — which is why the readiness
+        probe beside this one has nothing further to verify.
+
+        The body carries the service name and version.
       tags:
         - Health
+      security: []
       responses:
         '200':
-          description: Service is up.
+          description: The process is serving. Body carries `status`, `service` and `version`.
   /identity/ready:
     get:
       operationId: identityReady
       summary: Identity readiness check
+      description: |
+        Readiness: **always `200`**, and that is the honest answer rather than a
+        stub.
+
+        The identity service has no external dependency to check. Its signing key
+        store is opened at startup, so a process that is serving at all has already
+        loaded everything it needs — there is no state in which it is live but not
+        ready. Reporting anything conditional here would invent a distinction the
+        service does not have.
+
+        So this is useful as a probe target that answers, not as a signal that
+        anything was verified. `/vault/ready` is the probe that actually checks a
+        dependency.
       tags:
         - Health
+      security: []
       responses:
         '200':
-          description: Service is ready.
+          description: Serving. Nothing is checked, because there is nothing to check.
   /integrator/health:
     get:
       operationId: integratorHealth
       summary: Integrator health check
+      description: |
+        Liveness: the bulk-import service is running and serving. On the node
+        (port 8001) this is mounted at `/integrator/health`.
+
+        Checks nothing beyond itself, and in particular says nothing about whether
+        an import currently in flight is progressing — an import is a job, and
+        `GET /integrator/api/v1/imports/{job_id}` is what reports on one.
+
+        The body carries the service name and version.
       tags:
         - Health
+      security: []
       responses:
         '200':
-          description: Service is up.
+          description: The process is serving. Body carries `status`, `service` and `version`.
   /health:
     get:
       operationId: resolverHealth
       summary: Resolver health check
+      description: |
+        Liveness: the public resolver is running and serving. This endpoint is on
+        the **resolver** service (port 8003), which is a separate deployable from
+        the node.
+
+        Checks nothing beyond itself — not Redis, not the vault it reads passports
+        from. A `200` means the process answers; it does not mean a scan will
+        resolve.
+
+        The node has its own `/health` on port 8001, and it is deliberately bare:
+        it returns `{"status":"ok"}` and nothing else. The node's profile, per-port
+        trust modes and ruleset version are **not** there — they are on the
+        authenticated `GET /vault/api/v1/node/state`, because an unauthenticated
+        endpoint that publishes a node's trust posture tells an unauthenticated
+        reader more than it should. An external uptime probe pointed at either
+        `/health` can assert liveness and nothing more.
       tags:
         - Health
+      security: []
       responses:
         '200':
-          description: Resolver is up.
+          description: The process is serving. Body carries `status`, `service` and `version`.
   /ready:
     get:
       operationId: resolverReady
       summary: Resolver readiness check
+      description: |
+        Readiness: **always `200`**, on the **resolver** service (port 8003).
+
+        Like the identity service's readiness probe, this checks nothing, and that
+        is the honest answer rather than a stub. The resolver's dependencies — the
+        vault it reads passports from, and its Redis cache — are consulted per
+        request and degrade per request: a cache miss falls through to the vault,
+        and a vault it cannot reach produces a `502` on that read rather than a
+        process that should be taken out of rotation.
+
+        So there is no state in which the resolver is live but categorically not
+        ready, and reporting one would invent a distinction it does not have.
+        `/vault/ready` is the probe in this API that actually verifies a dependency.
       tags:
         - Health
+      security: []
       responses:
         '200':
-          description: Resolver is ready.
+          description: Serving. Nothing is checked, because there is nothing to check.
 components:
   securitySchemes:
     BearerApiKey:

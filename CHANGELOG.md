@@ -208,6 +208,61 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ### Fixed
 
+- **Twenty-two public routes were indistinguishable from routes nobody had
+  thought about.** `security-defined` fires when an operation declares no
+  `security` and there is no global block — which is the same shape whether a
+  route is open on purpose or open by omission. All twenty-two were deliberate:
+  the public passport reads, the health and readiness probes, `did.json`, the
+  CSV templates and schema listings, and the resolver's Digital Link routes.
+
+  They now carry `security: []`, which states it in the description rather than
+  in a linter baseline, so a reader and the rendered API reference both see
+  "no authentication required" instead of silence. The convention already
+  existed on the two `product-groups` routes; it is now on all of them. The
+  linter baseline drops from **37 entries to 17**, and the twenty-two are gone
+  from it because they are no longer exceptions, not because they were
+  suppressed harder.
+
+  What remains is what the linter is wrong about, and the file now says so per
+  group: eleven `operation-4xx-response` on endpoints that cannot produce a
+  `4XX` (`/vault/ready` documents a `503`, which is a 5xx and does not satisfy
+  that rule), and six `no-server-example.com` on a server list that is a
+  template an operator edits.
+
+- **Eight operations had no description at all, and one of them hid a
+  distinction operators need.** The six health probes, the resolver's readiness
+  probe, and `/vault/api/v1/info` (which said only "Returns version and build
+  information"). Every one of the API's 81 operations now carries both a summary
+  and a description.
+
+  Writing them surfaced something the API had never stated: **`/vault/ready` is
+  the only readiness probe here that checks a dependency.** It pings PostgreSQL
+  and answers `503`. The identity and resolver readiness probes answer `200`
+  unconditionally — not as stubs, but because neither has an external dependency
+  that can be unhealthy while the process serves. Three endpoints named `ready`
+  behaved in two different ways and nothing said which was which, so an operator
+  wiring a load-balancer probe had to read the source to find out.
+
+  The public `/health` now also records why it is bare: profile, per-port trust
+  modes and ruleset version are on the authenticated
+  `GET /vault/api/v1/node/state`, because an unauthenticated endpoint publishing
+  a node's trust posture tells an unauthenticated reader more than it should.
+
+- **`GET /vault/public/dpp/by-gtin/{gtin}` did not mention that a withdrawn
+  passport answers `410`.** The response was documented; the prose said only
+  "Returns 404 if no published passport matches the GTIN". That is the one
+  distinction the route exists to draw — `404` means nothing was ever published
+  for this GTIN, `410` means something was and has been suspended, and only the
+  second is a recall signal a scanner must act on. Its by-id sibling already
+  said so, so the two neighbouring routes described the same behaviour
+  differently.
+
+- **`GET /vault/api/v1/dpp/{dppId}/evidence` said only "Summaries only (no
+  document body), newest first."** It now says what a dossier is, why one
+  passport has several (each is a snapshot of the proof chain at a moment, so
+  one taken before a transfer and one after are both valid and neither
+  supersedes the other), and why the list is empty before first publish.
+
 - **Four `s3_archive` tests booted a MinIO container each, and sat 0.4s from
   failing CI.** Around eight seconds apiece was container startup, which the test
   body does not control — so the four crossed the ten-second slow-test budget

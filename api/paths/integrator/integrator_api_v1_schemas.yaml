@@ -7,6 +7,7 @@ get:
     record (`versions`). Unauthenticated.
   tags:
     - Integrator
+  security: []
   responses:
     '200':
       description: The available product group schemas.
