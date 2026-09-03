@@ -126,13 +126,13 @@ pub async fn import_file(
     mut multipart: Multipart,
 ) -> impl IntoResponse {
     // Validate product group early
-    if !validate::SUPPORTED_SECTORS.contains(&product_group.as_str()) {
+    if !validate::SUPPORTED_PRODUCT_GROUPS.contains(&product_group.as_str()) {
         metrics::counter!("import_rejections_total", "reason" => "unknown_product_group")
             .increment(1);
         return Problem::new(StatusCode::NOT_FOUND, "Not Found")
             .with_detail(format!(
                 "Unknown product_group: '{product_group}'. Valid values: {}.",
-                validate::SUPPORTED_SECTORS.join(", ")
+                validate::SUPPORTED_PRODUCT_GROUPS.join(", ")
             ))
             .into_response();
     }
@@ -275,7 +275,7 @@ pub async fn import_file(
                     });
                 }
             }
-            // The pre-upload SUPPORTED_SECTORS check above already rejected any
+            // The pre-upload SUPPORTED_PRODUCT_GROUPS check above already rejected any
             // product group that would land here — kept as a real, typed branch rather
             // than `unreachable!()` so this stays correct if the two checks
             // ever move apart.

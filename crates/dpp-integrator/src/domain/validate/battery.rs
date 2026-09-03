@@ -17,6 +17,26 @@ use crate::domain::fields::{
 };
 use crate::domain::request::{CreatePassportRequest, RowError};
 
+use super::Column;
+
+/// The columns this validator reads, in template order. Envelope columns
+/// (`placedOnMarketDate`, `commodityCode`) are appended by `columns_for`.
+pub(super) const COLUMNS: &[Column] = &[
+    Column::required("productName"),
+    Column::required("gtin"),
+    Column::required("batchId"),
+    Column::required("manufacturerName"),
+    Column::required("manufacturerCountry"),
+    Column::required("batteryChemistry"),
+    Column::required("batteryType"),
+    Column::required("nominalVoltageV"),
+    Column::required("nominalCapacityAh"),
+    Column::required("expectedLifetimeCycles"),
+    Column::required("co2ePerUnitKg"),
+    Column::optional("recycledContentPct"),
+    Column::optional("repairabilityScore"),
+];
+
 /// Validate a single battery row and convert it to a vault `CreatePassportRequest`.
 pub fn validate_battery_row(
     row: &HashMap<String, String>,

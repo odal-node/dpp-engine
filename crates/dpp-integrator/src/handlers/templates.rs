@@ -7,12 +7,40 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 
+use crate::domain::validate;
+
 // Templates are embedded at compile time — zero runtime I/O on the hot path.
 const BATTERY_TEMPLATE: &str = include_str!("../../templates/battery-v1.csv");
 const TEXTILE_TEMPLATE: &str = include_str!("../../templates/textile-v1.csv");
 const STEEL_TEMPLATE: &str = include_str!("../../templates/steel-v1.csv");
 const ALUMINIUM_TEMPLATE: &str = include_str!("../../templates/aluminium-v1.csv");
 const TYRE_TEMPLATE: &str = include_str!("../../templates/tyre-v1.csv");
+const MATTRESS_TEMPLATE: &str = include_str!("../../templates/mattress-v1.csv");
+const FURNITURE_TEMPLATE: &str = include_str!("../../templates/furniture-v1.csv");
+const TOY_TEMPLATE: &str = include_str!("../../templates/toy-v1.csv");
+const CONSTRUCTION_TEMPLATE: &str = include_str!("../../templates/construction-v1.csv");
+
+/// The committed CSV template for a product group, or `None` where there is no
+/// row validator for it.
+///
+/// Separate from the handler so the drift test in `domain::validate` can compare
+/// each committed header against the columns its validator declares. A template
+/// nobody can read from a test is a template nothing can check.
+#[must_use]
+pub fn template_for(product_group: &str) -> Option<&'static str> {
+    match product_group {
+        "battery" => Some(BATTERY_TEMPLATE),
+        "textile" => Some(TEXTILE_TEMPLATE),
+        "steel" => Some(STEEL_TEMPLATE),
+        "aluminium" => Some(ALUMINIUM_TEMPLATE),
+        "tyre" => Some(TYRE_TEMPLATE),
+        "mattress" => Some(MATTRESS_TEMPLATE),
+        "furniture" => Some(FURNITURE_TEMPLATE),
+        "toy" => Some(TOY_TEMPLATE),
+        "construction" => Some(CONSTRUCTION_TEMPLATE),
+        _ => None,
+    }
+}
 
 /// Query parameters for the template download endpoint.
 #[derive(Debug, Deserialize, Serialize)]
@@ -40,23 +68,17 @@ pub async fn get_template(
             .into_response();
     }
 
-    let (content, filename): (&str, &str) = match product_group.as_str() {
-        "battery" => (BATTERY_TEMPLATE, "odal-battery-template.csv"),
-        "textile" => (TEXTILE_TEMPLATE, "odal-textile-template.csv"),
-        "steel" => (STEEL_TEMPLATE, "odal-steel-template.csv"),
-        "aluminium" => (ALUMINIUM_TEMPLATE, "odal-aluminium-template.csv"),
-        "tyre" => (TYRE_TEMPLATE, "odal-tyre-template.csv"),
-        _ => {
-            return (
-                StatusCode::NOT_FOUND,
-                format!(
-                    "No template available for product_group: '{product_group}'. Valid values: battery, \
-                     textile, steel, aluminium, tyre."
-                ),
-            )
-                .into_response();
-        }
+    let Some(content) = template_for(&product_group) else {
+        return (
+            StatusCode::NOT_FOUND,
+            format!(
+                "No template available for product_group: '{product_group}'. Valid values: {}.",
+                validate::SUPPORTED_PRODUCT_GROUPS.join(", ")
+            ),
+        )
+            .into_response();
     };
+    let filename = format!("odal-{product_group}-template.csv");
 
     let mut headers = HeaderMap::new();
     headers.insert(

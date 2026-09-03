@@ -13,6 +13,24 @@ use crate::domain::fields::{
 };
 use crate::domain::request::{CreatePassportRequest, RowError};
 
+use super::Column;
+
+/// The columns this validator reads, in template order. Envelope columns
+/// (`placedOnMarketDate`, `commodityCode`) are appended by `columns_for`.
+pub(super) const COLUMNS: &[Column] = &[
+    Column::required("productName"),
+    Column::required("gtin"),
+    Column::optional("batchId"),
+    Column::required("manufacturerName"),
+    Column::required("manufacturerCountry"),
+    Column::required("alloyGrade"),
+    Column::required("productionRoute"),
+    Column::required("co2ePerTonneKg"),
+    Column::required("recycledContentPct"),
+    Column::required("countryOfOrigin"),
+    Column::optional("annualProductionTonnes"),
+];
+
 /// Validate a single aluminium row and convert it to a vault `CreatePassportRequest`.
 ///
 /// Expected CSV columns: `productName`, `batchId` (opt), `manufacturerName`,
