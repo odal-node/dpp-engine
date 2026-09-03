@@ -634,7 +634,38 @@ async fn draining_the_same_row_twice_is_a_no_op() {
     drain_once(&o, &r, &s, &i, TEST_RESOLVER_BASE, 50).await;
     let second = store.get(&p.id.to_string()).expect("still mirrored");
 
-    assert_eq!(first, second, "a replayed reconcile must be byte-identical");
+    assert_eq!(
+        without_freshness(&first),
+        without_freshness(&second),
+        "a replayed reconcile must converge on the same content"
+    );
+}
+
+/// A snapshot minus the two fields that say *when it was taken*.
+///
+/// The drain stamps `as_of` from the wall clock, truncated to the second
+/// (`snapshot_drain.rs`), and derives `valid_until` from it. Comparing whole
+/// snapshots therefore asserted that two drains happen within the same second —
+/// true in microseconds locally, and false often enough on a loaded CI runner to
+/// fail this test with "a replayed reconcile must be byte-identical".
+///
+/// That was the assertion being too strong, not the code being wrong: a
+/// freshness marker is *supposed* to move. Convergence is a claim about the
+/// content, so the content is what this compares.
+///
+/// `snapshotJwsSignature` goes with them, and dropping the timestamps without it
+/// would fix nothing: the outer proof is taken over the whole document *except
+/// itself*, so it covers `asOf` and moves whenever `asOf` moves. What remains is
+/// the passport content and `publicJwsSignature`, the inner proof that is frozen
+/// at publish — which is exactly the pair a replay must not disturb.
+fn without_freshness(snapshot: &[u8]) -> serde_json::Value {
+    let mut v: serde_json::Value = serde_json::from_slice(snapshot).expect("a snapshot is JSON");
+    if let Some(o) = v.as_object_mut() {
+        o.remove("asOf");
+        o.remove("validUntil");
+        o.remove("snapshotJwsSignature");
+    }
+    v
 }
 
 #[tokio::test]
