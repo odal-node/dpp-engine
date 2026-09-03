@@ -208,6 +208,36 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ### Fixed
 
+- **The registry back-up URL pointed one path segment away from the snapshot it
+  named.** The snapshot store writes `{dppId}/public.json`; `publish` declared
+  the back-up at `{dppId}.json`, and `.env.example` documented that second shape
+  — so the code and its documentation agreed with each other and disagreed with
+  the only thing that writes an object. Any operator who set
+  `SNAPSHOT_PUBLIC_BASE_URL` published a link that fetches nothing.
+
+  Nothing could catch it. `RegistrationRequest::validate` checks that the URL is
+  HTTPS and stops, because `https://host/dpp/{id}.json` is well formed and simply
+  addresses nothing; reachability is the registry's check, so the first party to
+  discover it would have been the registry, on a live registration. No test
+  covered the relationship either — the registry suite only ever exercised
+  `backup_url: None`, which is the default.
+
+  The path now comes from `snapshot_json_key` in `dpp-types`, which is what the
+  store writes and what the declaration reads. One definition, visible to both
+  crates, is what stops them drifting apart again; a test asserts the declared
+  URL ends with the key the store writes, and fails with both halves named when
+  it does not. A trailing slash on the configured base no longer produces a
+  double slash, which is a different path to most static servers.
+
+  Latent rather than live: `SNAPSHOT_PUBLIC_BASE_URL` is unset by default and
+  commented out in `.env.example`, so no back-up link was being declared at all.
+  The defect surfaced the moment an operator did what the documentation said.
+
+  `.env.example` now states that whatever serves the base must expose the
+  bucket's own layout rather than a flattened one. The rendered HTML sibling is
+  deliberately not what the back-up points at: that link is consumed by machines,
+  and the JSON view carries the signatures a verifier needs.
+
 - **Four `s3_archive` tests booted a MinIO container each, and sat 0.4s from
   failing CI.** Around eight seconds apiece was container startup, which the test
   body does not control — so the four crossed the ten-second slow-test budget

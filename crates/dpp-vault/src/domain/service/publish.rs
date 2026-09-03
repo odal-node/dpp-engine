@@ -12,7 +12,10 @@ use dpp_domain::{
     product_group::ProductGroupData,
     status::PassportStatus,
 };
-use dpp_types::{STANDALONE_OPERATOR_ID, audit::PassportAuditEntry, auth::AuthContext};
+use dpp_types::{
+    STANDALONE_OPERATOR_ID, audit::PassportAuditEntry, auth::AuthContext,
+    snapshot::snapshot_json_key,
+};
 
 use super::{PassportService, retention_years_for};
 use super::{catalog, schema_registry};
@@ -362,10 +365,11 @@ impl PassportService {
                 // Declare the back-up only where this deployment actually
                 // publishes one. The snapshot tier writing to object storage is
                 // not enough — the registry has to be able to fetch it.
+                //
                 let backup_url = self
                     .snapshot_public_base_url
                     .as_ref()
-                    .map(|base| format!("{base}/{}.json", passport.id));
+                    .map(|base| snapshot_backup_url(base, &passport.id.to_string()));
                 let mut reg_req = RegistrationRequest::from_published_passport(
                     &passport,
                     RegisteringOperator {
@@ -520,6 +524,26 @@ fn validate_schema_for_publish(product_group_data: &ProductGroupData) -> Result<
         .map_err(DppError::from)
 }
 
+/// The independently-hosted back-up URL declared to the EU registry.
+///
+/// The path is [`snapshot_json_key`], which is the same definition the snapshot
+/// store writes its object at. That is the whole point of this function
+/// existing: the two were formatted independently, and disagreed — the store
+/// wrote `{id}/public.json` while this declared `{id}.json`, so any operator who
+/// set `SNAPSHOT_PUBLIC_BASE_URL` published a link one path segment away from
+/// the file. Nothing could catch it, because
+/// `RegistrationRequest::validate` checks the scheme and stops, and
+/// `https://host/dpp/{id}.json` is a well-formed HTTPS URL that addresses
+/// nothing. The registry would have been the first to find out, on a live
+/// registration.
+fn snapshot_backup_url(base: &str, dpp_id: &str) -> String {
+    format!(
+        "{}/{}",
+        base.trim_end_matches('/'),
+        snapshot_json_key(dpp_id)
+    )
+}
+
 /// Build the carrier (QR / Data Matrix) URL a passport should encode, on the
 /// node's configured resolver base.
 ///
@@ -599,7 +623,9 @@ mod rejection_reasons {
 
 #[cfg(test)]
 mod tests {
-    use super::{build_carrier_url, validate_schema_for_publish};
+    use super::{
+        build_carrier_url, snapshot_backup_url, snapshot_json_key, validate_schema_for_publish,
+    };
     use chrono::Utc;
     use dpp_domain::{
         error::DppError,
@@ -704,5 +730,40 @@ mod tests {
             .expect("an untagged payload has no typed variant");
         let err = validate_schema_for_publish(&sd).unwrap_err();
         assert!(matches!(err, DppError::Validation(_)));
+    }
+
+    /// The declared URL must end with the key the store writes. This is the
+    /// assertion the defect needed and did not have: both sides formatted the
+    /// path independently, so they could — and did — disagree while every test
+    /// and every validator stayed green.
+    #[test]
+    fn the_declared_backup_url_ends_with_the_key_the_store_writes() {
+        let id = "01a06300-571f-7993-a59a-3ca9bb80db56";
+        let url = snapshot_backup_url("https://backup.example.com/dpp", id);
+        assert!(
+            url.ends_with(&snapshot_json_key(id)),
+            "the registry back-up URL must address the object the snapshot store \
+             writes; declared `{url}`, store writes `{}`",
+            snapshot_json_key(id)
+        );
+        assert_eq!(
+            url,
+            format!("https://backup.example.com/dpp/{id}/public.json")
+        );
+    }
+
+    /// A base with a trailing slash is the same base. Left unhandled it produces
+    /// a double slash, which is a different path to most static servers.
+    #[test]
+    fn a_trailing_slash_on_the_base_does_not_double_up() {
+        let id = "01a06300-571f-7993-a59a-3ca9bb80db56";
+        assert_eq!(
+            snapshot_backup_url("https://backup.example.com/dpp/", id),
+            snapshot_backup_url("https://backup.example.com/dpp", id),
+        );
+        assert!(
+            !snapshot_backup_url("https://backup.example.com/dpp/", id).contains("//dpp"),
+            "no empty path segment"
+        );
     }
 }
