@@ -3,7 +3,6 @@
 //! `cancel`.
 
 use axum::{
-    Json,
     extract::{Extension, Path, State},
     http::StatusCode,
     response::IntoResponse,
@@ -17,6 +16,7 @@ use super::error::{
     conflict_error, field_validation_error, internal_error, not_found_error, parse_passport_id,
     require_write, validation_error,
 };
+use crate::extract::Json;
 use crate::middleware::scope::RequireWrite;
 
 /// Body for initiating a transfer: the outgoing and incoming operators and the

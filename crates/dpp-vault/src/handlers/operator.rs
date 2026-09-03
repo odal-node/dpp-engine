@@ -1,10 +1,11 @@
-use axum::{Json, extract::State, http::StatusCode, response::IntoResponse};
+use axum::{extract::State, http::StatusCode, response::IntoResponse};
 
 use dpp_types::{STANDALONE_OPERATOR_ID, operator::UpdateOperatorConfig};
 
 use crate::state::AppState;
 
 use super::error::{api_error, internal_error};
+use crate::extract::Json;
 use crate::middleware::scope::RequireAdmin;
 
 /// `GET /api/v1/operator` — returns the node's operator config.

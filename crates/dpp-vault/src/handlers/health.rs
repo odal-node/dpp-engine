@@ -5,11 +5,12 @@ use std::time::Instant;
 use axum::{
     extract::State,
     http::StatusCode,
-    response::{IntoResponse, Json, Response},
+    response::{IntoResponse, Response},
 };
 use dpp_common::http_problem::Problem;
 use serde_json::{Value, json};
 
+use crate::extract::Json;
 use crate::state::AppState;
 
 /// Liveness probe. Returns `200 OK` with service name and version.

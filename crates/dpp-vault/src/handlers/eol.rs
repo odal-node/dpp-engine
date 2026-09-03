@@ -1,7 +1,6 @@
 //! `POST /api/v1/dpp/{dppId}/eol` — declare a passport end-of-life.
 
 use axum::{
-    Json,
     extract::{Path, State},
     http::StatusCode,
     response::IntoResponse,
@@ -12,6 +11,7 @@ use serde::{Deserialize, Serialize};
 use crate::state::AppState;
 
 use super::error::{conflict_error, internal_error, not_found_error, parse_passport_id};
+use crate::extract::Json;
 use crate::middleware::scope::RequireWrite;
 
 /// EOL request body: the typed reason plus optional circularity data. The

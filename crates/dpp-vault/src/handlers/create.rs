@@ -1,10 +1,6 @@
 //! `POST /api/v1/dpp` — create a new passport in `Draft` status.
 
-use axum::{
-    extract::{Json, State},
-    http::StatusCode,
-    response::IntoResponse,
-};
+use axum::{extract::State, http::StatusCode, response::IntoResponse};
 
 use chrono::Utc;
 use dpp_common::url_guard::validate_public_https_url;
@@ -22,6 +18,7 @@ use uuid::Uuid;
 use crate::{middleware::scope::RequireWrite, state::AppState};
 
 use super::error::{api_error, internal_error};
+use crate::extract::Json;
 
 /// Request body for passport creation.
 ///

@@ -7,7 +7,6 @@
 //! unauthenticated writer here could inflate an operator's resolution counts.
 
 use axum::{
-    Json,
     extract::{Request, State},
     http::StatusCode,
     middleware::Next,
@@ -20,6 +19,7 @@ use dpp_domain::{DppError, passport::PassportId};
 use dpp_types::scan::{QrRenderIncrement, ScanIncrement, ScanTelemetryRepository};
 
 use super::error::internal_error;
+use crate::extract::Json;
 use crate::state::AppState;
 
 /// The client-certificate common name the resolver presents when flushing.

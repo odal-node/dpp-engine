@@ -1,8 +1,7 @@
 use std::sync::OnceLock;
 
 use axum::{
-    Json,
-    extract::{Path, Query, State},
+    extract::{Path, State},
     http::StatusCode,
     response::IntoResponse,
 };
@@ -16,6 +15,7 @@ use crate::public_view::signed_public_view;
 use crate::state::AppState;
 
 use super::error::{api_error, internal_error, not_found_error, parse_passport_id};
+use crate::extract::{Json, Query};
 
 /// Query params for the public read. `schema_view` requests a read-time upcast
 /// of the product group data to a newer schema version, served *alongside* the

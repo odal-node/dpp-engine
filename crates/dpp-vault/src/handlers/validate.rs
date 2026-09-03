@@ -1,15 +1,12 @@
 //! `POST /api/v1/dpp/validate` — would this body be accepted, without creating anything.
 
-use axum::{
-    extract::{Json, State},
-    http::StatusCode,
-    response::IntoResponse,
-};
+use axum::{extract::State, http::StatusCode, response::IntoResponse};
 use serde::Serialize;
 
 use crate::state::AppState;
 
 use super::create::CreatePassportRequest;
+use crate::extract::Json;
 use crate::middleware::scope::RequireWrite;
 
 /// The dry-run verdict.

@@ -5,8 +5,7 @@
 //! render is label production, not a resolution.
 
 use axum::{
-    Json,
-    extract::{Extension, Path, Query, State},
+    extract::{Extension, Path, State},
     http::StatusCode,
     response::IntoResponse,
 };
@@ -15,6 +14,7 @@ use serde::{Deserialize, Serialize};
 use crate::{middleware::auth::AuthContext, state::AppState};
 
 use super::error::{internal_error, parse_passport_id};
+use crate::extract::{Json, Query};
 
 /// Default trailing window when the caller gives none — the "this month" view.
 const DEFAULT_WINDOW_DAYS: i64 = 30;

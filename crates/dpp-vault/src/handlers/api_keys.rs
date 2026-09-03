@@ -1,5 +1,4 @@
 use axum::{
-    Json,
     extract::{Extension, Path, State},
     http::StatusCode,
     response::IntoResponse,
@@ -14,6 +13,7 @@ use crate::{middleware::auth::AuthContext, state::AppState};
 use super::error::{
     api_error, field_validation_error, internal_error, not_found_error, require_admin,
 };
+use crate::extract::Json;
 use crate::middleware::scope::RequireAdmin;
 
 /// Self-lockout guard: a key may not revoke *itself*. Revoking the very
