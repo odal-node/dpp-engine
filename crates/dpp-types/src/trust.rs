@@ -179,7 +179,9 @@ impl NodeTrustReport {
             NodeProfile::Development => "development",
         };
         Err(format!(
-            "NODE_PROFILE={profile} refuses to boot: required trust port(s) [{}] resolved below              `{}`. Configure a real adapter, or run a profile that admits the tier you have.",
+            "NODE_PROFILE={profile} refuses to boot: required trust port(s) [{}] resolved \
+             below `{}`. Configure a real adapter, or run a profile that admits the tier \
+             you have.",
             below.join(", "),
             minimum.as_str()
         ))
