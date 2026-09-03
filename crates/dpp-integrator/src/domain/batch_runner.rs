@@ -15,20 +15,35 @@ use crate::{
 // ─── Result types ─────────────────────────────────────────────────────────────
 
 /// A successfully created passport entry in the batch result.
+///
+/// Serialised `camelCase` like every other wire type here. These two were the
+/// exception, and they are not internal: they are persisted as the import job's
+/// `result` and served verbatim by `GET /api/v1/imports/{jobId}`, so the same
+/// passport came back as `passportId` from the synchronous import response and
+/// `passport_id` from the job poll. The `alias` keeps rows written before this
+/// readable — `PgJobStore` deserialises the stored result and discards a parse
+/// failure with `.ok()`, so without it an in-flight job's result would silently
+/// become `null`.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct CreatedItem {
     /// 1-based row number from the uploaded file.
     pub row: usize,
     /// The `id` returned by the vault for the newly created passport.
+    #[serde(alias = "passport_id")]
     pub passport_id: String,
 }
 
 /// A successfully updated draft passport entry in the batch result.
+///
+/// `camelCase` and the back-compatible alias, for the reason on [`CreatedItem`].
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct UpdatedItem {
     /// 1-based row number from the uploaded file.
     pub row: usize,
     /// The matched passport's id.
+    #[serde(alias = "passport_id")]
     pub passport_id: String,
 }
 
@@ -236,4 +251,45 @@ async fn retry_update(
     }
 
     Err(VaultClientError::RateLimit)
+}
+
+#[cfg(test)]
+mod result_wire_shape {
+    use super::{BatchResult, CreatedItem};
+
+    /// The job poll and the synchronous import response must name the same
+    /// field the same way. They did not: this type had no `rename_all`, so a
+    /// caller polling `GET /imports/{jobId}` got `passport_id` for the record
+    /// the POST had just called `passportId`.
+    #[test]
+    fn a_created_item_serialises_camel_case() {
+        let v = serde_json::to_value(CreatedItem {
+            row: 1,
+            passport_id: "p1".into(),
+        })
+        .expect("serialises");
+        assert_eq!(v["passportId"], "p1");
+        assert!(
+            v.get("passport_id").is_none(),
+            "the snake_case spelling must be gone from the wire, got {v}"
+        );
+    }
+
+    /// Rows written before the rename must still load.
+    ///
+    /// `PgJobStore` reads the stored result with `serde_json::from_value(..).ok()`,
+    /// so a deserialisation failure is not an error — it silently becomes
+    /// `None`, and an in-flight job's result would vanish from its status.
+    /// The alias is what stops that, so it is asserted rather than assumed.
+    #[test]
+    fn a_result_stored_before_the_rename_still_deserialises() {
+        let stored = serde_json::json!({
+            "created": [{ "row": 1, "passport_id": "p1" }],
+            "updated": [],
+            "errors": []
+        });
+        let parsed: BatchResult =
+            serde_json::from_value(stored).expect("the pre-rename spelling must still load");
+        assert_eq!(parsed.created[0].passport_id, "p1");
+    }
 }
