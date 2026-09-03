@@ -1,7 +1,7 @@
 //! `POST /api/v1/dpp` — create a new passport in `Draft` status.
 
 use axum::{
-    extract::{Extension, Json, State},
+    extract::{Json, State},
     http::StatusCode,
     response::IntoResponse,
 };
@@ -19,9 +19,9 @@ use dpp_domain::{
 use std::sync::OnceLock;
 use uuid::Uuid;
 
-use crate::{middleware::auth::AuthContext, state::AppState};
+use crate::{middleware::scope::RequireWrite, state::AppState};
 
-use super::error::{api_error, internal_error, require_write};
+use super::error::{api_error, internal_error};
 
 /// Request body for passport creation.
 ///
@@ -41,12 +41,12 @@ pub use dpp_types::CreatePassportRequest;
 /// fails to parse. See the `gtin_boundary` tests.
 pub async fn create_handler(
     State(state): State<AppState>,
-    Extension(auth): Extension<AuthContext>,
+    // The gate is an extractor, and it precedes `Json` deliberately: axum runs
+    // body-less extractors first, so a wrong-scope caller is refused before the
+    // body is buffered or parsed. See `middleware::scope`.
+    RequireWrite(auth): RequireWrite,
     Json(body): Json<CreatePassportRequest>,
 ) -> impl IntoResponse {
-    if let Some(resp) = require_write(&auth, "Creating a passport") {
-        return resp;
-    }
     // Every check below is shared with `POST /api/v1/dpp/validate`, which runs
     // it without persisting. One implementation, so a dry-run verdict and the
     // real create can never disagree.

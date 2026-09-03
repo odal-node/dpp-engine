@@ -1,15 +1,11 @@
-use axum::{
-    Json,
-    extract::{Extension, State},
-    http::StatusCode,
-    response::IntoResponse,
-};
+use axum::{Json, extract::State, http::StatusCode, response::IntoResponse};
 
 use dpp_types::{STANDALONE_OPERATOR_ID, operator::UpdateOperatorConfig};
 
-use crate::{middleware::auth::AuthContext, state::AppState};
+use crate::state::AppState;
 
-use super::error::{api_error, internal_error, require_admin};
+use super::error::{api_error, internal_error};
+use crate::middleware::scope::RequireAdmin;
 
 /// `GET /api/v1/operator` — returns the node's operator config.
 ///
@@ -30,12 +26,12 @@ pub async fn operator_get_handler(State(state): State<AppState>) -> impl IntoRes
 /// authenticated caller.)
 pub async fn operator_patch_handler(
     State(state): State<AppState>,
-    Extension(auth): Extension<AuthContext>,
+    // The gate is an extractor, and it precedes the body extractor
+    // deliberately: axum runs body-less extractors first, so a wrong-scope
+    // caller is refused before the body is buffered or parsed.
+    RequireAdmin(_auth): RequireAdmin,
     Json(patch): Json<UpdateOperatorConfig>,
 ) -> impl IntoResponse {
-    if let Some(resp) = require_admin(&auth, "Updating operator config") {
-        return resp;
-    }
     if let Err(msg) = patch.validate() {
         return api_error(StatusCode::BAD_REQUEST, "INVALID_CONFIG", &msg);
     }
