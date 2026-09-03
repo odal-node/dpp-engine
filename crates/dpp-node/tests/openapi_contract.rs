@@ -3187,6 +3187,10 @@ mod fixtures {
 
     pub fn passport_scan_stats() -> PassportScanStats {
         PassportScanStats {
+            // A measured window: telemetry arriving, so a zero here would be a
+            // real zero. The unmeasured case is the one the flag exists for.
+            ingesting: true,
+            last_ingest_at: Some(ts()),
             window_days: 30,
             total_scans: 128,
             scans_html: 96,
@@ -3198,6 +3202,8 @@ mod fixtures {
 
     pub fn operator_scan_stats() -> OperatorScanStats {
         OperatorScanStats {
+            ingesting: true,
+            last_ingest_at: Some(ts()),
             window_days: 30,
             total_scans: 1024,
             total_qr_renders: 64,

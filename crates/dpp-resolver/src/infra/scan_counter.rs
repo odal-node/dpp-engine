@@ -141,7 +141,28 @@ impl ScanCounter {
 
     /// Hold `batch` for the next tick after a flush that may or may not have
     /// been applied.
+    ///
+    /// **An empty batch is never held.** Since an idle window is now sent as a
+    /// liveness heartbeat rather than skipped, every failure path can be handed
+    /// one, and holding it would stop this module counting: [`Self::next_flush`]
+    /// returns a held batch in preference to draining, so an empty batch parked
+    /// here would be re-sent on every tick forever while real scans accumulated
+    /// behind it and were never drained.
+    ///
+    /// The guard is here rather than at the three call sites deliberately. The
+    /// invariant `next_flush` relies on — a held batch is never empty — was true
+    /// only incidentally before, because empty windows were never sent at all.
+    /// Making the heartbeat real removed that accident, so the invariant is now
+    /// enforced where it is depended upon, and no future failure path can
+    /// forget it.
+    ///
+    /// Dropping a heartbeat is free: it is at-most-once by nature and the next
+    /// tick sends another. Dropping counts would not be, which is why they are
+    /// what the hold exists for.
     pub fn hold(&self, batch: KeyedBatch) {
+        if batch.batch.is_empty() {
+            return;
+        }
         *self.pending.lock().unwrap() = Some(batch);
     }
 
@@ -167,17 +188,37 @@ impl ScanCounter {
 ///
 /// A transient failure (`5xx`, or the request itself failing) holds the batch
 /// for the next tick; a `4xx` is a permanent rejection and is dropped rather
-/// than retried forever. An empty window is a no-op.
+/// than retried forever.
 ///
 /// Broken out from the loop so it is testable against a mock ingest server
 /// without waiting on a timer.
+///
+/// # An empty window is still sent
+///
+/// It used to return early with nothing to say, which meant the node heard from
+/// the resolver only when somebody had scanned something. The node cannot read
+/// `SCAN_INGEST_URL` — it is this process's configuration, not the node's — so
+/// silence was indistinguishable between "telemetry is switched off" (the
+/// default) and "telemetry is on and nobody scanned". The node reported `0`
+/// either way, and an operator could not tell a real zero from an unmeasured
+/// one.
+///
+/// So an empty batch is a heartbeat: it costs one small request per flush
+/// interval and it is the only thing that makes the node's `ingesting` flag
+/// mean anything.
+///
+/// # Where the heartbeat and the hold meet
+///
+/// These two rules are in direct tension and the resolution lives in
+/// [`ScanCounter::hold`], which refuses an empty batch. A heartbeat is
+/// **at-most-once** — losing one costs nothing, the next tick sends another. A
+/// count is **at-least-once** — losing one is a permanently wrong number. Held
+/// batches are the at-least-once machinery, and parking a heartbeat in it would
+/// starve the counter outright: `next_flush` returns a held batch in preference
+/// to draining, so an empty batch held once is re-sent forever while real scans
+/// pile up behind it and are never drained.
 async fn flush_once(counter: &ScanCounter, client: &reqwest::Client, ingest_url: &str) {
     let keyed = counter.next_flush();
-    if keyed.batch.is_empty() {
-        // Nothing to say. A held batch is never empty, so this can only be a
-        // fresh drain of an idle window, and there is nothing to clear.
-        return;
-    }
 
     let result = client
         .post(ingest_url)

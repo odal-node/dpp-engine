@@ -35,6 +35,11 @@ pub async fn scan_ingest_handler(
     State(state): State<AppState>,
     Json(batch): Json<ScanBatch>,
 ) -> impl IntoResponse {
+    // Recorded before the rows are stored, and for an empty batch too: this is
+    // the heartbeat that lets `GET /stats` tell "nobody scanned" from "nothing
+    // is counting". A window with no counts still proves a resolver is there.
+    crate::infra::scan_liveness::record_ingest();
+
     match ingest_batch(state.scan_repo.as_ref(), batch).await {
         Ok(()) => StatusCode::NO_CONTENT.into_response(),
         Err(e) => internal_error(e),
