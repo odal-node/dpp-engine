@@ -208,6 +208,29 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ### Fixed
 
+- **Fourteen model groups rendered as API sections with an empty Operations
+  heading.** `Errors`, `Passport`, … `Regulatory Catalog` were declared as tags
+  and 109 schemas pointed at them with `x-tags`. That is a Redoc grouping
+  convention, but Scalar — which renders the published reference — treats
+  `x-tags` as a tag assignment, so each of the fourteen became a top-level
+  section shaped like an API tag: a heading, an **Operations** list with nothing
+  in it, and schemas below. Fourteen of those sat as siblings of the twenty-one
+  real operation tags.
+
+  Both the `x-tagGroups` block and the fourteen pseudo-tags are gone. Scalar now
+  renders the twenty-one operation tags flat and appends its own single
+  collapsible **Models** node holding every schema, which is what the grouping
+  was reaching for and could not express: its models node takes a flat list of
+  children and has no nested-group concept, so the fourteen could only ever have
+  been siblings *beside* the operations, never sections *inside* Models.
+
+  The cost lands where nothing ships. `x-tagGroups` and `x-tags` shaped
+  `api/openapi.html`, a git-ignored artifact built on demand by
+  `just openapi-html`; the reference operators actually read is the Scalar one.
+  Nothing was added to fill the empty Operations sections, because content
+  invented to justify a section that should not exist is worse than the empty
+  section.
+
 - **Twenty-two public routes were indistinguishable from routes nobody had
   thought about.** `security-defined` fires when an operation declares no
   `security` and there is no global block — which is the same shape whether a
