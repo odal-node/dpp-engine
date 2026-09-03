@@ -1,31 +1,68 @@
 {
-  "id": "019f3aa5-579d-73c1-a3e6-a8002df5e077",
-  "sector": "toy",
-  "status": "draft",
-  "batchId": "TY-2026-BATCH-01",
-  "version": 1,
-  "createdAt": "2026-08-01T09:00:00.000000000Z",
-  "materials": [],
-  "qrCodeUrl": null,
-  "updatedAt": "2026-08-01T09:00:00.000000000Z",
-  "sectorData": {
-    "sector": "toy",
-    "gtin": "09506000134352",
-    "ageGroup": "3-6",
-    "primaryMaterial": "plastic",
-    "ceMarking": true,
-    "countryOfOrigin": "CZ"
-  },
+  "applicableInstruments": [
+    {
+      "instrument": "toy-safety-2025-2509",
+      "recorded": "catalog"
+    }
+  ],
+  "batchId": null,
   "co2ePerUnit": null,
-  "productName": "Example Building Blocks Set",
-  "publishedAt": null,
-  "jwsSignature": null,
-  "manufacturer": {
-    "name": "Example Toys s.r.o.",
-    "address": "CZ",
-    "didWebUrl": null
+  "complianceResult": {
+    "assessedAt": "2026-09-02T23:53:07.617839500Z",
+    "co2eScore": null,
+    "complianceStatus": "PASSTHROUGH_NO_VALIDATION",
+    "recycledContentPct": null,
+    "repairabilityIndex": null
   },
+  "createdAt": "2026-09-02T23:53:07.611136400Z",
+  "disclosureSignatures": {
+    "public+restricted+conformity": "test-header.eyJhcHBsaWNhYmxlSW5zdHJ1bWVudHMiOlt7Imluc3RydW1lbnQiOiJ0b3ktc2FmZXR5LTIwMjUtMjUwOSIsInJlY29yZGVkIjoiY2F0YWxvZyJ9XSwiYmF0Y2hJZCI6bnVsbCwiY28yZVBlclVuaXQiOm51bGwsImNvbXBsaWFuY2VSZXN1bHQiOnsiYXNzZXNzZWRBdCI6IjIwMjYtMDktMDJUMjM6NTM6MDcuNjE3ODM5NTAwWiIsImNvMmVTY29yZSI6bnVsbCwiY29tcGxpYW5jZVN0YXR1cyI6IlBBU1NUSFJPVUdIX05PX1ZBTElEQVRJT04iLCJyZWN5Y2xlZENvbnRlbnRQY3QiOm51bGwsInJlcGFpcmFiaWxpdHlJbmRleCI6bnVsbH0sImNyZWF0ZWRBdCI6IjIwMjYtMDktMDJUMjM6NTM6MDcuNjExMTM2NDAwWiIsImZhY2lsaXR5Ijp7ImNvdW50cnkiOiJERSIsIm5hbWUiOiJTZWVkIFBsYW50Iiwic2NoZW1lIjoiZ2xuIiwidmFsdWUiOiI0MDEyMzQ1MDAwMDA5In0sImlkIjoiMDFhMDY0OGEtNjkxYi03NDgzLThkZTktMDkwMzJiMTBkZGI4IiwibGludFJlc3VsdCI6eyJhc3Nlc3NlZEF0IjoiMjAyNi0wOS0wMlQyMzo1MzowNy42MTc4NDM2MDBaIiwicGFja1ZlcnNpb24iOiIxLjAuMCJ9LCJtYW51ZmFjdHVyZXIiOnsiYWRkcmVzcyI6IlNwaWVsc3RyYXNzZSA1LCA5MDc2MiBGdWVydGgsIERFIiwiZGlkV2ViVXJsIjpudWxsLCJuYW1lIjoiU2FtcGxlIFNwaWVsd2FyZW4gR21iSCJ9LCJtYXRlcmlhbHMiOlt7ImNvdW50cnlPZk9yaWdpbiI6bnVsbCwibmFtZSI6IkJlZWNoIiwicmVjeWNsZWRQY3QiOm51bGwsIndlaWdodEtnIjowLjR9XSwib3BlcmF0b3JJZGVudGlmaWVyIjoiREUxMjM0NTY3ODkiLCJwcm9kdWN0R3JvdXAiOiJ0b3kiLCJwcm9kdWN0R3JvdXBEYXRhIjp7ImFnZUdyb3VwIjoiMC0zIiwiY2VNYXJraW5nIjp0cnVlLCJjb3VudHJ5T2ZPcmlnaW4iOiJERSIsImd0aW4iOiIwOTUwNjAwMDIwMDA3MSIsInByaW1hcnlNYXRlcmlhbCI6Indvb2QiLCJwcm9kdWN0R3JvdXAiOiJ0b3kifSwicHJvZHVjdE5hbWUiOiJXb29kZW4gU3RhY2tpbmcgUmluZ3MiLCJwdWJsaXNoZWRBdCI6IjIwMjYtMDktMDJUMjM6NTM6MDcuNjQ5ODMxNjAwWiIsInFyQ29kZVVybCI6Imh0dHBzOi8vaWQub2RhbC1ub2RlLmlvLzAxLzA5NTA2MDAwMjAwMDcxLzIxLzc0ODM4ZGU5MDkwMzJiMTBkZGI4IiwicmVwYWlyYWJpbGl0eVNjb3JlIjpudWxsLCJyZXRlbnRpb25Mb2NrZWQiOnRydWUsInJldGVudGlvblVudGlsIjoiMjAzNi0wOC0zMFQyMzo1MzowNy42NDk4MzE2MDBaIiwic2NoZW1hVmVyc2lvbiI6IjEuMS4wIiwic3RhdHVzIjoiYWN0aXZlIiwidXBkYXRlZEF0IjoiMjAyNi0wOS0wMlQyMzo1MzowNy42NDk4MzE2MDBaIiwidmVyc2lvbiI6MX0.test-sig",
+    "public+restricted+individual": "test-header.eyJhcHBsaWNhYmxlSW5zdHJ1bWVudHMiOlt7Imluc3RydW1lbnQiOiJ0b3ktc2FmZXR5LTIwMjUtMjUwOSIsInJlY29yZGVkIjoiY2F0YWxvZyJ9XSwiYmF0Y2hJZCI6bnVsbCwiY28yZVBlclVuaXQiOm51bGwsImNvbXBsaWFuY2VSZXN1bHQiOnsiYXNzZXNzZWRBdCI6IjIwMjYtMDktMDJUMjM6NTM6MDcuNjE3ODM5NTAwWiIsImNvMmVTY29yZSI6bnVsbCwiY29tcGxpYW5jZVN0YXR1cyI6IlBBU1NUSFJPVUdIX05PX1ZBTElEQVRJT04iLCJyZWN5Y2xlZENvbnRlbnRQY3QiOm51bGwsInJlcGFpcmFiaWxpdHlJbmRleCI6bnVsbH0sImNyZWF0ZWRBdCI6IjIwMjYtMDktMDJUMjM6NTM6MDcuNjExMTM2NDAwWiIsImZhY2lsaXR5Ijp7ImNvdW50cnkiOiJERSIsIm5hbWUiOiJTZWVkIFBsYW50Iiwic2NoZW1lIjoiZ2xuIiwidmFsdWUiOiI0MDEyMzQ1MDAwMDA5In0sImlkIjoiMDFhMDY0OGEtNjkxYi03NDgzLThkZTktMDkwMzJiMTBkZGI4IiwibGludFJlc3VsdCI6eyJhc3Nlc3NlZEF0IjoiMjAyNi0wOS0wMlQyMzo1MzowNy42MTc4NDM2MDBaIiwicGFja1ZlcnNpb24iOiIxLjAuMCJ9LCJtYW51ZmFjdHVyZXIiOnsiYWRkcmVzcyI6IlNwaWVsc3RyYXNzZSA1LCA5MDc2MiBGdWVydGgsIERFIiwiZGlkV2ViVXJsIjpudWxsLCJuYW1lIjoiU2FtcGxlIFNwaWVsd2FyZW4gR21iSCJ9LCJtYXRlcmlhbHMiOlt7ImNvdW50cnlPZk9yaWdpbiI6bnVsbCwibmFtZSI6IkJlZWNoIiwicmVjeWNsZWRQY3QiOm51bGwsIndlaWdodEtnIjowLjR9XSwib3BlcmF0b3JJZGVudGlmaWVyIjoiREUxMjM0NTY3ODkiLCJwcm9kdWN0R3JvdXAiOiJ0b3kiLCJwcm9kdWN0R3JvdXBEYXRhIjp7ImFnZUdyb3VwIjoiMC0zIiwiY2VNYXJraW5nIjp0cnVlLCJjb3VudHJ5T2ZPcmlnaW4iOiJERSIsImd0aW4iOiIwOTUwNjAwMDIwMDA3MSIsInByaW1hcnlNYXRlcmlhbCI6Indvb2QiLCJwcm9kdWN0R3JvdXAiOiJ0b3kifSwicHJvZHVjdE5hbWUiOiJXb29kZW4gU3RhY2tpbmcgUmluZ3MiLCJwdWJsaXNoZWRBdCI6IjIwMjYtMDktMDJUMjM6NTM6MDcuNjQ5ODMxNjAwWiIsInFyQ29kZVVybCI6Imh0dHBzOi8vaWQub2RhbC1ub2RlLmlvLzAxLzA5NTA2MDAwMjAwMDcxLzIxLzc0ODM4ZGU5MDkwMzJiMTBkZGI4IiwicmVwYWlyYWJpbGl0eVNjb3JlIjpudWxsLCJyZXRlbnRpb25VbnRpbCI6IjIwMzYtMDgtMzBUMjM6NTM6MDcuNjQ5ODMxNjAwWiIsInNjaGVtYVZlcnNpb24iOiIxLjEuMCIsInN0YXR1cyI6ImFjdGl2ZSIsInVwZGF0ZWRBdCI6IjIwMjYtMDktMDJUMjM6NTM6MDcuNjQ5ODMxNjAwWiIsInZlcnNpb24iOjF9.test-sig"
+  },
+  "facility": {
+    "country": "DE",
+    "name": "Seed Plant",
+    "scheme": "gln",
+    "value": "4012345000009"
+  },
+  "id": "01a0648a-691b-7483-8de9-09032b10ddb8",
+  "jwsSignature": "test-header.eyJhcHBsaWNhYmxlSW5zdHJ1bWVudHMiOlt7Imluc3RydW1lbnQiOiJ0b3ktc2FmZXR5LTIwMjUtMjUwOSIsInJlY29yZGVkIjoiY2F0YWxvZyJ9XSwiYmF0Y2hJZCI6bnVsbCwiY28yZVBlclVuaXQiOm51bGwsImNvbXBsaWFuY2VSZXN1bHQiOnsiYXNzZXNzZWRBdCI6IjIwMjYtMDktMDJUMjM6NTM6MDcuNjE3ODM5NTAwWiIsImNvMmVTY29yZSI6bnVsbCwiY29tcGxpYW5jZVN0YXR1cyI6IlBBU1NUSFJPVUdIX05PX1ZBTElEQVRJT04iLCJyZWN5Y2xlZENvbnRlbnRQY3QiOm51bGwsInJlcGFpcmFiaWxpdHlJbmRleCI6bnVsbH0sImNyZWF0ZWRBdCI6IjIwMjYtMDktMDJUMjM6NTM6MDcuNjExMTM2NDAwWiIsImZhY2lsaXR5Ijp7ImNvdW50cnkiOiJERSIsIm5hbWUiOiJTZWVkIFBsYW50Iiwic2NoZW1lIjoiZ2xuIiwidmFsdWUiOiI0MDEyMzQ1MDAwMDA5In0sImlkIjoiMDFhMDY0OGEtNjkxYi03NDgzLThkZTktMDkwMzJiMTBkZGI4IiwiandzU2lnbmF0dXJlIjpudWxsLCJsaW50UmVzdWx0Ijp7ImFzc2Vzc2VkQXQiOiIyMDI2LTA5LTAyVDIzOjUzOjA3LjYxNzg0MzYwMFoiLCJwYWNrVmVyc2lvbiI6IjEuMC4wIn0sIm1hbnVmYWN0dXJlciI6eyJhZGRyZXNzIjoiU3BpZWxzdHJhc3NlIDUsIDkwNzYyIEZ1ZXJ0aCwgREUiLCJkaWRXZWJVcmwiOm51bGwsIm5hbWUiOiJTYW1wbGUgU3BpZWx3YXJlbiBHbWJIIn0sIm1hdGVyaWFscyI6W3siY291bnRyeU9mT3JpZ2luIjpudWxsLCJuYW1lIjoiQmVlY2giLCJyZWN5Y2xlZFBjdCI6bnVsbCwid2VpZ2h0S2ciOjAuNH1dLCJvcGVyYXRvcklkZW50aWZpZXIiOiJERTEyMzQ1Njc4OSIsInByb2R1Y3RHcm91cCI6InRveSIsInByb2R1Y3RHcm91cERhdGEiOnsiYWdlR3JvdXAiOiIwLTMiLCJjZU1hcmtpbmciOnRydWUsImNvdW50cnlPZk9yaWdpbiI6IkRFIiwiZ3RpbiI6IjA5NTA2MDAwMjAwMDcxIiwicHJpbWFyeU1hdGVyaWFsIjoid29vZCIsInByb2R1Y3RHcm91cCI6InRveSJ9LCJwcm9kdWN0TmFtZSI6Ildvb2RlbiBTdGFja2luZyBSaW5ncyIsInB1Ymxpc2hlZEF0IjoiMjAyNi0wOS0wMlQyMzo1MzowNy42NDk4MzE2MDBaIiwicXJDb2RlVXJsIjoiaHR0cHM6Ly9pZC5vZGFsLW5vZGUuaW8vMDEvMDk1MDYwMDAyMDAwNzEvMjEvNzQ4MzhkZTkwOTAzMmIxMGRkYjgiLCJyZXBhaXJhYmlsaXR5U2NvcmUiOm51bGwsInJldGVudGlvbkxvY2tlZCI6dHJ1ZSwicmV0ZW50aW9uVW50aWwiOiIyMDM2LTA4LTMwVDIzOjUzOjA3LjY0OTgzMTYwMFoiLCJzY2hlbWFWZXJzaW9uIjoiMS4xLjAiLCJzdGF0dXMiOiJhY3RpdmUiLCJ1cGRhdGVkQXQiOiIyMDI2LTA5LTAyVDIzOjUzOjA3LjY0OTgzMTYwMFoiLCJ2ZXJzaW9uIjoxfQ.test-sig",
+  "lintResult": {
+    "assessedAt": "2026-09-02T23:53:07.617843600Z",
+    "packVersion": "1.0.0"
+  },
+  "manufacturer": {
+    "address": "Spielstrasse 5, 90762 Fuerth, DE",
+    "didWebUrl": null,
+    "name": "Sample Spielwaren GmbH"
+  },
+  "materials": [
+    {
+      "countryOfOrigin": null,
+      "name": "Beech",
+      "recycledPct": null,
+      "weightKg": 0.4
+    }
+  ],
+  "operatorIdentifier": "DE123456789",
+  "productGroup": "toy",
+  "productGroupData": {
+    "ageGroup": "0-3",
+    "ceMarking": true,
+    "countryOfOrigin": "DE",
+    "gtin": "09506000200071",
+    "primaryMaterial": "wood",
+    "productGroup": "toy"
+  },
+  "productName": "Wooden Stacking Rings",
+  "publicJwsSignature": "test-header.eyJhcHBsaWNhYmxlSW5zdHJ1bWVudHMiOlt7Imluc3RydW1lbnQiOiJ0b3ktc2FmZXR5LTIwMjUtMjUwOSIsInJlY29yZGVkIjoiY2F0YWxvZyJ9XSwiY28yZVBlclVuaXQiOm51bGwsImNvbXBsaWFuY2VSZXN1bHQiOnsiYXNzZXNzZWRBdCI6IjIwMjYtMDktMDJUMjM6NTM6MDcuNjE3ODM5NTAwWiIsImNvMmVTY29yZSI6bnVsbCwiY29tcGxpYW5jZVN0YXR1cyI6IlBBU1NUSFJPVUdIX05PX1ZBTElEQVRJT04iLCJyZWN5Y2xlZENvbnRlbnRQY3QiOm51bGwsInJlcGFpcmFiaWxpdHlJbmRleCI6bnVsbH0sImNyZWF0ZWRBdCI6IjIwMjYtMDktMDJUMjM6NTM6MDcuNjExMTM2NDAwWiIsImZhY2lsaXR5Ijp7ImNvdW50cnkiOiJERSIsIm5hbWUiOiJTZWVkIFBsYW50Iiwic2NoZW1lIjoiZ2xuIiwidmFsdWUiOiI0MDEyMzQ1MDAwMDA5In0sImlkIjoiMDFhMDY0OGEtNjkxYi03NDgzLThkZTktMDkwMzJiMTBkZGI4IiwibWFudWZhY3R1cmVyIjp7ImFkZHJlc3MiOiJTcGllbHN0cmFzc2UgNSwgOTA3NjIgRnVlcnRoLCBERSIsImRpZFdlYlVybCI6bnVsbCwibmFtZSI6IlNhbXBsZSBTcGllbHdhcmVuIEdtYkgifSwibWF0ZXJpYWxzIjpbeyJjb3VudHJ5T2ZPcmlnaW4iOm51bGwsIm5hbWUiOiJCZWVjaCIsInJlY3ljbGVkUGN0IjpudWxsLCJ3ZWlnaHRLZyI6MC40fV0sIm9wZXJhdG9ySWRlbnRpZmllciI6IkRFMTIzNDU2Nzg5IiwicHJvZHVjdEdyb3VwIjoidG95IiwicHJvZHVjdEdyb3VwRGF0YSI6eyJhZ2VHcm91cCI6IjAtMyIsImNlTWFya2luZyI6dHJ1ZSwiY291bnRyeU9mT3JpZ2luIjoiREUiLCJndGluIjoiMDk1MDYwMDAyMDAwNzEiLCJwcmltYXJ5TWF0ZXJpYWwiOiJ3b29kIiwicHJvZHVjdEdyb3VwIjoidG95In0sInByb2R1Y3ROYW1lIjoiV29vZGVuIFN0YWNraW5nIFJpbmdzIiwicHVibGlzaGVkQXQiOiIyMDI2LTA5LTAyVDIzOjUzOjA3LjY0OTgzMTYwMFoiLCJxckNvZGVVcmwiOiJodHRwczovL2lkLm9kYWwtbm9kZS5pby8wMS8wOTUwNjAwMDIwMDA3MS8yMS83NDgzOGRlOTA5MDMyYjEwZGRiOCIsInJlcGFpcmFiaWxpdHlTY29yZSI6bnVsbCwicmV0ZW50aW9uVW50aWwiOiIyMDM2LTA4LTMwVDIzOjUzOjA3LjY0OTgzMTYwMFoiLCJzY2hlbWFWZXJzaW9uIjoiMS4xLjAiLCJzdGF0dXMiOiJhY3RpdmUiLCJ1cGRhdGVkQXQiOiIyMDI2LTA5LTAyVDIzOjUzOjA3LjY0OTgzMTYwMFoiLCJ2ZXJzaW9uIjoxfQ.test-sig",
+  "publishedAt": "2026-09-02T23:53:07.649831600Z",
+  "qrCodeUrl": "https://id.odal-node.io/01/09506000200071/21/74838de909032b10ddb8",
+  "repairabilityScore": null,
+  "retentionLocked": true,
+  "retentionUntil": "2036-08-30T23:53:07.649831600Z",
   "schemaVersion": "1.1.0",
-  "retentionLocked": false,
-  "repairabilityScore": null
+  "status": "active",
+  "updatedAt": "2026-09-02T23:53:07.649831600Z",
+  "version": 1
 }
