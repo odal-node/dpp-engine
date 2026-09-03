@@ -54,7 +54,28 @@ pub async fn public_read_handler(
 
     // We look up by ID only (no operator filter) and check status afterwards.
     match state.service.find_by_id_any_status(passport_id).await {
-        Ok(Some(p)) if p.status == PassportStatus::Published => {
+        // Served for a **deactivated** passport as well as a published one.
+        //
+        // Deactivation is end of life for the *product*, not for the passport:
+        // core's own status doc says the record "is retained (the DPP outlives
+        // the product, EN 18221)", and this node enforces that on the write
+        // side — it refuses to archive before `retention_until`, which for a
+        // battery is ten years out. Answering `404` meanwhile made the retained
+        // record unreachable and indistinguishable from one that never existed,
+        // which is the opposite of retaining it.
+        //
+        // ESPR Art. 10(4)(i) is the basis: the passport is to "remain
+        // available" for a period corresponding to "at least the expected
+        // lifetime of a specific product". A recycler or authority scanning the
+        // carrier on an end-of-life product is precisely the reader that
+        // requirement exists for.
+        //
+        // Only the public-facing surface is served — the same
+        // `signed_public_view` a published passport gets, filtered by the same
+        // disclosure lens. End of life widens nothing.
+        Ok(Some(p))
+            if p.status == PassportStatus::Published || p.status == PassportStatus::Deactivated =>
+        {
             // Serve the payload the public proof was computed over, not the live
             // row: the two diverge for any Public field that changes after
             // publish, and only the former verifies against the attached

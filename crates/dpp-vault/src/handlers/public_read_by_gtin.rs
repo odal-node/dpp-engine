@@ -31,7 +31,12 @@ pub async fn public_read_by_gtin_handler(
     Query(query): Query<PublicReadQuery>,
 ) -> impl IntoResponse {
     match state.service.find_by_gtin_any_status(&gtin).await {
-        Ok(Some(p)) if p.status == PassportStatus::Published => {
+        // Deactivated serves too — see the reasoning on `public_read`, which
+        // this route must not diverge from: the same passport reached by GTIN
+        // rather than by id cannot answer differently.
+        Ok(Some(p))
+            if p.status == PassportStatus::Published || p.status == PassportStatus::Deactivated =>
+        {
             // Same signed payload the by-id route serves. Previously this
             // handler re-derived the redaction inline, which also skipped
             // `public_view`'s unknown-product group backstop; both routes now read the
