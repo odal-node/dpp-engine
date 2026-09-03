@@ -330,6 +330,28 @@ fn object_cases() -> Vec<ObjectCase> {
     case!("ComplianceFinding", fixtures::compliance_finding());
     case!("LintResult", fixtures::lint_result());
 
+    // Publish-readiness, reported by `POST /dpp/{dppId}/lint`. Registered from
+    // the handler's own types rather than a hand-written literal, so the
+    // published shape is gated against what the route actually serves.
+    case!(
+        "PublishReadiness",
+        dpp_vault::handlers::lint::PublishReadiness {
+            ready: false,
+            blockers: vec![dpp_vault::handlers::lint::PublishBlocker {
+                field: "/productGroupData/batteryModelId".to_owned(),
+                message: "'batteryModelId' is mandatory for an 'ev' battery and is absent"
+                    .to_owned(),
+            }],
+        }
+    );
+    case!(
+        "PublishBlocker",
+        dpp_vault::handlers::lint::PublishBlocker {
+            field: "/productGroupData/batteryModelId".to_owned(),
+            message: "'batteryModelId' is mandatory for an 'ev' battery and is absent".to_owned(),
+        }
+    );
+
     // The obligation endpoint. Served as declared types rather than assembled
     // JSON, so this gate has something to check the published shape against.
     //

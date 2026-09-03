@@ -12,6 +12,12 @@ post:
     re-checking does not retroactively affect the passport's JWS
     signature, which is frozen over whatever `lintResult` looked like at
     publish time. No request body is required.
+
+    The response also reports **`publishReadiness`**: whether this passport
+    would clear the category mandatory-content gate and the product-group
+    data/schema gates. That is the gate that most often refuses a battery, and
+    asking it here is the only way to learn the answer without attempting the
+    publish.
   tags:
     - DPP Management
   security:
@@ -25,11 +31,21 @@ post:
         $ref: ../../components/schemas/passport/DppId.yaml
   responses:
     '200':
-      description: Lint findings refreshed. Returns the full passport record.
+      description: |
+        Lint findings refreshed. Returns the full passport record, plus
+        `publishReadiness` — whether this passport would clear the publish gates
+        that can be answered without attempting the transition.
       content:
         application/json:
           schema:
-            $ref: ../../components/schemas/passport/PassportResponse.yaml
+            allOf:
+              - $ref: ../../components/schemas/passport/PassportResponse.yaml
+              - type: object
+                required:
+                  - publishReadiness
+                properties:
+                  publishReadiness:
+                    $ref: ../../components/schemas/passport/PublishReadiness.yaml
     '401':
       $ref: ../../components/responses/Unauthorized.yaml
     '404':

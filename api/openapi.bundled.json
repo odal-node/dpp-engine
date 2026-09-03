@@ -545,7 +545,7 @@
       "post": {
         "operationId": "relintDpp",
         "summary": "Re-check plausibility-lint findings",
-        "description": "Recomputes the `dpp-rules` plausibility lint pack against the DPP's\ncurrent product group data and persists the refreshed `lintResult` (pack\nversion, findings, assessed-at timestamp). Findings are non-binding —\narithmetic and physical-plausibility checks distinct from binding\ncompliance rules — and never gate publish or any other transition.\n\nWorks regardless of DPP status, including `active` (published):\nre-checking does not retroactively affect the passport's JWS\nsignature, which is frozen over whatever `lintResult` looked like at\npublish time. No request body is required.\n",
+        "description": "Recomputes the `dpp-rules` plausibility lint pack against the DPP's\ncurrent product group data and persists the refreshed `lintResult` (pack\nversion, findings, assessed-at timestamp). Findings are non-binding —\narithmetic and physical-plausibility checks distinct from binding\ncompliance rules — and never gate publish or any other transition.\n\nWorks regardless of DPP status, including `active` (published):\nre-checking does not retroactively affect the passport's JWS\nsignature, which is frozen over whatever `lintResult` looked like at\npublish time. No request body is required.\n\nThe response also reports **`publishReadiness`**: whether this passport\nwould clear the category mandatory-content gate and the product-group\ndata/schema gates. That is the gate that most often refuses a battery, and\nasking it here is the only way to learn the answer without attempting the\npublish.\n",
         "tags": [
           "DPP Management"
         ],
@@ -569,11 +569,26 @@
         ],
         "responses": {
           "200": {
-            "description": "Lint findings refreshed. Returns the full passport record.",
+            "description": "Lint findings refreshed. Returns the full passport record, plus\n`publishReadiness` — whether this passport would clear the publish gates\nthat can be answered without attempting the transition.\n",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/PassportResponse"
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/PassportResponse"
+                    },
+                    {
+                      "type": "object",
+                      "required": [
+                        "publishReadiness"
+                      ],
+                      "properties": {
+                        "publishReadiness": {
+                          "$ref": "#/components/schemas/PublishReadiness"
+                        }
+                      }
+                    }
+                  ]
                 }
               }
             }
@@ -7494,6 +7509,46 @@
         ],
         "description": "Whether an act's obligations bind **a given product group** — a different\nquestion from whether the act exists, which is `InstrumentStatus`.\n\n`in_force` — the act creates binding obligations for this product group that\ncan be determined now. A future applicability date is *not* this status.\n\n`provisional` — the act exists or is anticipated, but nothing is bindingly\ndeterminable for this product group yet. Any obligation reported alongside\nthis status is a reading, not a determination.\n\n`watch` — tracked, but this act imposes nothing on this product group. A\nwatching brief rather than a duty, and never determinable.\n\n**Read this before acting on `passport.required`.** The obligation is a fold\nacross every act reaching the product group, so `required: true` says an act\nimposes a passport — not that the act binds this group today. Where every\nreaching act is `provisional` or `watch`, the requirement is a reading of\ninstruments that have not yet bound anything.\n",
         "example": "provisional"
+      },
+      "PublishBlocker": {
+        "type": "object",
+        "description": "One reason a publish would be refused, addressed to the field that causes it.\n\nAddressed rather than prose: the mandatory-content gate names every missing\nfield at once, and a caller completing a draft wants to attach each message to\nthe input it belongs to.\n",
+        "required": [
+          "field",
+          "message"
+        ],
+        "properties": {
+          "field": {
+            "type": "string",
+            "description": "Path of the offending field.",
+            "example": "/productGroupData/batteryModelId"
+          },
+          "message": {
+            "type": "string",
+            "description": "Why this field blocks the publish."
+          }
+        }
+      },
+      "PublishReadiness": {
+        "type": "object",
+        "description": "Whether the passport would clear the publish gates that can be answered\nwithout attempting the transition: the category **mandatory-content** gate and\nthe product-group data/schema gates.\n\nDeliberately not the whole of publish. The registry-identity requirement is\noperator state rather than passport state, and the binding-compliance gate\nneeds a determination this route does not run — so `ready: true` means \"these\ngates pass\", not \"publish will certainly succeed\".\n\nThe mandatory-content half is the reason this exists. It is the gate that most\noften refuses a battery (38 fields for an electric-vehicle one) and it could\nnot previously be previewed anywhere: it is reachable only from a stored\npassport, and the only dry-run the API offered takes an unsaved request body.\n",
+        "required": [
+          "ready",
+          "blockers"
+        ],
+        "properties": {
+          "ready": {
+            "type": "boolean",
+            "description": "True when no blocker below applies."
+          },
+          "blockers": {
+            "type": "array",
+            "description": "Every blocking field, named individually. Empty when `ready`.",
+            "items": {
+              "$ref": "#/components/schemas/PublishBlocker"
+            }
+          }
+        }
       },
       "RulesetReload": {
         "type": "object",

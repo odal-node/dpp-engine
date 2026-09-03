@@ -414,6 +414,12 @@ paths:
         re-checking does not retroactively affect the passport's JWS
         signature, which is frozen over whatever `lintResult` looked like at
         publish time. No request body is required.
+
+        The response also reports **`publishReadiness`**: whether this passport
+        would clear the category mandatory-content gate and the product-group
+        data/schema gates. That is the gate that most often refuses a battery, and
+        asking it here is the only way to learn the answer without attempting the
+        publish.
       tags:
         - DPP Management
       security:
@@ -427,11 +433,21 @@ paths:
             $ref: '#/components/schemas/DppId'
       responses:
         '200':
-          description: Lint findings refreshed. Returns the full passport record.
+          description: |
+            Lint findings refreshed. Returns the full passport record, plus
+            `publishReadiness` — whether this passport would clear the publish gates
+            that can be answered without attempting the transition.
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/PassportResponse'
+                allOf:
+                  - $ref: '#/components/schemas/PassportResponse'
+                  - type: object
+                    required:
+                      - publishReadiness
+                    properties:
+                      publishReadiness:
+                        $ref: '#/components/schemas/PublishReadiness'
         '400':
           $ref: '#/components/responses/BadRequest'
         '401':
@@ -5954,6 +5970,53 @@ components:
         reaching act is `provisional` or `watch`, the requirement is a reading of
         instruments that have not yet bound anything.
       example: provisional
+    PublishBlocker:
+      type: object
+      description: |
+        One reason a publish would be refused, addressed to the field that causes it.
+
+        Addressed rather than prose: the mandatory-content gate names every missing
+        field at once, and a caller completing a draft wants to attach each message to
+        the input it belongs to.
+      required:
+        - field
+        - message
+      properties:
+        field:
+          type: string
+          description: Path of the offending field.
+          example: /productGroupData/batteryModelId
+        message:
+          type: string
+          description: Why this field blocks the publish.
+    PublishReadiness:
+      type: object
+      description: |
+        Whether the passport would clear the publish gates that can be answered
+        without attempting the transition: the category **mandatory-content** gate and
+        the product-group data/schema gates.
+
+        Deliberately not the whole of publish. The registry-identity requirement is
+        operator state rather than passport state, and the binding-compliance gate
+        needs a determination this route does not run — so `ready: true` means "these
+        gates pass", not "publish will certainly succeed".
+
+        The mandatory-content half is the reason this exists. It is the gate that most
+        often refuses a battery (38 fields for an electric-vehicle one) and it could
+        not previously be previewed anywhere: it is reachable only from a stored
+        passport, and the only dry-run the API offered takes an unsaved request body.
+      required:
+        - ready
+        - blockers
+      properties:
+        ready:
+          type: boolean
+          description: True when no blocker below applies.
+        blockers:
+          type: array
+          description: Every blocking field, named individually. Empty when `ready`.
+          items:
+            $ref: '#/components/schemas/PublishBlocker'
     RulesetReload:
       type: object
       description: The outcome of re-reading the signed compliance-ruleset channel.
