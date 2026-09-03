@@ -1,8 +1,22 @@
 get:
   operationId: resolverReady
   summary: Resolver readiness check
+  description: |
+    Readiness: **always `200`**, on the **resolver** service (port 8003).
+
+    Like the identity service's readiness probe, this checks nothing, and that
+    is the honest answer rather than a stub. The resolver's dependencies — the
+    vault it reads passports from, and its Redis cache — are consulted per
+    request and degrade per request: a cache miss falls through to the vault,
+    and a vault it cannot reach produces a `502` on that read rather than a
+    process that should be taken out of rotation.
+
+    So there is no state in which the resolver is live but categorically not
+    ready, and reporting one would invent a distinction it does not have.
+    `/vault/ready` is the probe in this API that actually verifies a dependency.
   tags:
     - Health
+  security: []
   responses:
     '200':
-      description: Resolver is ready.
+      description: Serving. Nothing is checked, because there is nothing to check.

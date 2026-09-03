@@ -113,62 +113,6 @@
     {
       "name": "Health",
       "description": "Health and readiness probes, plus the vault's build metadata — every deployable's unauthenticated liveness surface in one place."
-    },
-    {
-      "name": "Errors",
-      "description": "The one error shape every endpoint returns. Documented once here rather than restated per operation."
-    },
-    {
-      "name": "Passport",
-      "description": "The passport record and every shape embedded in it. These are what the signature covers, so a change here changes what a published passport means."
-    },
-    {
-      "name": "Passport Requests",
-      "description": "Bodies accepted by the create, update, and lifecycle-transition routes."
-    },
-    {
-      "name": "Passport Reports",
-      "description": "Derived reads over a passport — paging, dry-run validation, audit history, and component-tree verification. Computed on request, never signed."
-    },
-    {
-      "name": "Transfer of Responsibility",
-      "description": "The dual-signed handover record and the operators named in it (ESPR \"responsible economic operator\")."
-    },
-    {
-      "name": "Seals",
-      "description": "The eIDAS seal as served, with what this node did and did not check. The seal envelope itself lives on the passport — see `SealedEnvelope`."
-    },
-    {
-      "name": "Evidence & Verification",
-      "description": "The dossier document, its members, and the verdict a verifier returns for one. Distinct from `Seals`: a dossier is what an authority is handed, a seal is one member of it."
-    },
-    {
-      "name": "EU Registry State",
-      "description": "Projections of the registry queues — what is registered, what is owed, and whether the operator's own verification is still current. Queue state, not passport content."
-    },
-    {
-      "name": "Scan Counters",
-      "description": "Both directions of scan telemetry: the rows the resolver flushes inward, and the aggregates the vault serves outward."
-    },
-    {
-      "name": "Operator Profile",
-      "description": "Operator configuration and the registry identities stamped onto new passports — facilities (Annex III) and economic-operator identifiers (Art. 13), with their append-only audit record."
-    },
-    {
-      "name": "Access & Integrations",
-      "description": "Credentials, outbound delivery, plugins, and what the node reports about itself."
-    },
-    {
-      "name": "Node Identity",
-      "description": "The published DID document, and the bodies of the mTLS-only signing surface. These use snake_case — they are an internal contract, not part of the public API's camelCase surface."
-    },
-    {
-      "name": "Bulk Import",
-      "description": "Import results and async job state."
-    },
-    {
-      "name": "Regulatory Catalog",
-      "description": "What this build knows about which acts reach which product groups, and from when. Every date and period carries the provenance of the reading — a qualified reading served unqualified is a different claim."
     }
   ],
   "paths": {
@@ -1358,7 +1302,7 @@
       "get": {
         "operationId": "listDppEvidence",
         "summary": "List stored evidence dossiers for a passport",
-        "description": "Summaries only (no document body), newest first.",
+        "description": "Every evidence dossier generated for this passport, newest first.\n\nSummaries only — each row carries the dossier's id, when it was generated\nand what it covers, but not the document itself. Dossiers embed full-view\npassport data and both signature chains, so they are large and are fetched\none at a time through `GET /api/v1/evidence/{id}`.\n\nA passport can have several: a dossier is a snapshot of the proof chain at\nthe moment it was generated, so one taken before a transfer and one taken\nafter are both valid and describe different states. Nothing here is\nsuperseded by anything else here, which is why the list is not filtered\ndown to a latest.\n\nEmpty for a passport that has never been published — there is no signature\nto attest to before then.\n",
         "tags": [
           "Evidence Dossiers"
         ],
@@ -2800,6 +2744,7 @@
         "tags": [
           "Public (Vault)"
         ],
+        "security": [],
         "parameters": [
           {
             "name": "dppId",
@@ -2871,10 +2816,11 @@
       "get": {
         "operationId": "publicGetDppByGtin",
         "summary": "Public read of a published DPP by GTIN",
-        "description": "Unauthenticated read of the published passport for a GS1 GTIN-14.\nReturns 404 if no published passport matches the GTIN.\n",
+        "description": "Unauthenticated read of the published passport for a GS1 GTIN-14 — the\nsame signed public view the by-id route serves, found by trade item\ninstead of by passport id.\n\n**A withdrawn passport answers `410`, not `404`.** That distinction is the\npoint of this route rather than a detail of it: `404` means no passport for\nthis GTIN was ever published here, while `410` means one was and has since\nbeen suspended. Only the second is a recall signal, and a consumer who\nscanned a product needs to be able to tell them apart. `422` is a\nstructurally invalid GTIN-14 — a bad check digit or wrong length — which is\na malformed request rather than an answer about any product.\n\nOnly the passport's `public` audience view is returned, carrying the\npublish-time `publicJwsSignature` that covers exactly those bytes.\nRestricted fields are not present at all.\n",
         "tags": [
           "Public (Vault)"
         ],
+        "security": [],
         "parameters": [
           {
             "name": "gtin",
@@ -2935,6 +2881,7 @@
         "tags": [
           "Credentialed Access"
         ],
+        "security": [],
         "parameters": [
           {
             "name": "dppId",
@@ -3106,6 +3053,7 @@
         "tags": [
           "Integrator"
         ],
+        "security": [],
         "responses": {
           "200": {
             "description": "The available product group schemas.",
@@ -3159,6 +3107,7 @@
         "tags": [
           "Integrator"
         ],
+        "security": [],
         "parameters": [
           {
             "name": "productGroup",
@@ -3202,6 +3151,7 @@
         "tags": [
           "Integrator"
         ],
+        "security": [],
         "parameters": [
           {
             "name": "productGroup",
@@ -3264,6 +3214,7 @@
         "tags": [
           "Integrator"
         ],
+        "security": [],
         "parameters": [
           {
             "name": "productGroup",
@@ -3446,6 +3397,7 @@
         "tags": [
           "Identity"
         ],
+        "security": [],
         "responses": {
           "200": {
             "description": "The DID document.",
@@ -3609,6 +3561,7 @@
         "tags": [
           "Public Resolver"
         ],
+        "security": [],
         "parameters": [
           {
             "name": "dppId",
@@ -3659,6 +3612,7 @@
         "tags": [
           "Public Resolver"
         ],
+        "security": [],
         "parameters": [
           {
             "name": "dppId",
@@ -3698,6 +3652,7 @@
         "tags": [
           "Public Resolver"
         ],
+        "security": [],
         "parameters": [
           {
             "name": "gtin",
@@ -3746,6 +3701,7 @@
         "tags": [
           "Public Resolver"
         ],
+        "security": [],
         "parameters": [
           {
             "name": "gtin",
@@ -3803,6 +3759,7 @@
         "tags": [
           "Public Resolver"
         ],
+        "security": [],
         "parameters": [
           {
             "name": "gtin",
@@ -3860,6 +3817,7 @@
         "tags": [
           "Public Resolver"
         ],
+        "security": [],
         "parameters": [
           {
             "name": "gtin",
@@ -3922,12 +3880,14 @@
       "get": {
         "operationId": "vaultHealth",
         "summary": "Vault health check",
+        "description": "Liveness: the vault process is running and serving. On the node (port 8001)\nthis is mounted at `/vault/health`.\n\nIt checks nothing beyond itself — no database, no object storage, no\nupstream. A `200` here means the process is up, not that it can do useful\nwork; use `/vault/ready` for that. Wiring a restart policy to this endpoint\nand expecting it to catch a lost database will never restart anything.\n\nThe body carries the service name, its version, and the `dpp-core` version\nit was built against, which is the quickest way to tell two deployments\napart when their behaviour differs.\n",
         "tags": [
           "Health"
         ],
+        "security": [],
         "responses": {
           "200": {
-            "description": "Service is up."
+            "description": "The process is serving. Body carries `status`, `service`, `version` and\n`coreVersion`.\n"
           }
         }
       }
@@ -3936,12 +3896,14 @@
       "get": {
         "operationId": "vaultReady",
         "summary": "Vault readiness check",
+        "description": "Readiness: the vault can reach the database it needs to answer requests. On\nthe node (port 8001) this is mounted at `/vault/ready`.\n\n**This is the only readiness probe in the API that checks a dependency.**\nIt pings PostgreSQL and answers `503` when that fails, so it is the one to\nput behind a load balancer or a deployment gate. The identity and resolver\nreadiness probes answer `200` unconditionally, because neither has an\nexternal dependency to check.\n\nEvery call records the ping latency and its outcome as metrics, so a\nscrape of this endpoint doubles as a continuous database-latency signal\nrather than only a yes/no.\n",
         "tags": [
           "Health"
         ],
+        "security": [],
         "responses": {
           "200": {
-            "description": "Service is ready (DB connection verified)."
+            "description": "The database answered; the vault can serve requests."
           },
           "503": {
             "$ref": "#/components/responses/ServiceUnavailable"
@@ -3953,13 +3915,14 @@
       "get": {
         "operationId": "vaultInfo",
         "summary": "Service info",
-        "description": "Returns version and build information.",
+        "description": "What this build is and what it supports — for a client deciding which\nfeatures to offer before it has authenticated.\n\nCarries four things: the vault's own `version`, the `dpp-core` version it\nwas compiled against, the authentication methods it accepts, and the\nfeature flags it reports. A dashboard reads this to know whether an\nendpoint is worth calling, rather than calling it and interpreting a `404`.\n\nUnauthenticated on purpose: a client needs to know how to authenticate\nbefore it can, and the values here are properties of the build rather than\nof the operator or their data.\n\n`coreVersion` is the useful one when two deployments disagree — the vault\nversion alone does not tell you which regulatory rules were compiled in.\n",
         "tags": [
           "Health"
         ],
+        "security": [],
         "responses": {
           "200": {
-            "description": "Service info.",
+            "description": "Build metadata, authentication methods and feature flags.",
             "content": {
               "application/json": {
                 "schema": {
@@ -3975,12 +3938,14 @@
       "get": {
         "operationId": "identityHealth",
         "summary": "Identity health check",
+        "description": "Liveness: the identity service is running and serving. Mounted at\n`/identity/health` on the node (port 8001), and at `/health` when identity\nruns as its own deployable (port 8002).\n\nChecks nothing beyond itself. The signing key store is opened at startup, so\na process that is serving has already loaded it — which is why the readiness\nprobe beside this one has nothing further to verify.\n\nThe body carries the service name and version.\n",
         "tags": [
           "Health"
         ],
+        "security": [],
         "responses": {
           "200": {
-            "description": "Service is up."
+            "description": "The process is serving. Body carries `status`, `service` and `version`."
           }
         }
       }
@@ -3989,12 +3954,14 @@
       "get": {
         "operationId": "identityReady",
         "summary": "Identity readiness check",
+        "description": "Readiness: **always `200`**, and that is the honest answer rather than a\nstub.\n\nThe identity service has no external dependency to check. Its signing key\nstore is opened at startup, so a process that is serving at all has already\nloaded everything it needs — there is no state in which it is live but not\nready. Reporting anything conditional here would invent a distinction the\nservice does not have.\n\nSo this is useful as a probe target that answers, not as a signal that\nanything was verified. `/vault/ready` is the probe that actually checks a\ndependency.\n",
         "tags": [
           "Health"
         ],
+        "security": [],
         "responses": {
           "200": {
-            "description": "Service is ready."
+            "description": "Serving. Nothing is checked, because there is nothing to check."
           }
         }
       }
@@ -4003,12 +3970,14 @@
       "get": {
         "operationId": "integratorHealth",
         "summary": "Integrator health check",
+        "description": "Liveness: the bulk-import service is running and serving. On the node\n(port 8001) this is mounted at `/integrator/health`.\n\nChecks nothing beyond itself, and in particular says nothing about whether\nan import currently in flight is progressing — an import is a job, and\n`GET /integrator/api/v1/imports/{job_id}` is what reports on one.\n\nThe body carries the service name and version.\n",
         "tags": [
           "Health"
         ],
+        "security": [],
         "responses": {
           "200": {
-            "description": "Service is up."
+            "description": "The process is serving. Body carries `status`, `service` and `version`."
           }
         }
       }
@@ -4017,12 +3986,14 @@
       "get": {
         "operationId": "resolverHealth",
         "summary": "Resolver health check",
+        "description": "Liveness: the public resolver is running and serving. This endpoint is on\nthe **resolver** service (port 8003), which is a separate deployable from\nthe node.\n\nChecks nothing beyond itself — not Redis, not the vault it reads passports\nfrom. A `200` means the process answers; it does not mean a scan will\nresolve.\n\nThe node has its own `/health` on port 8001, and it is deliberately bare:\nit returns `{\"status\":\"ok\"}` and nothing else. The node's profile, per-port\ntrust modes and ruleset version are **not** there — they are on the\nauthenticated `GET /vault/api/v1/node/state`, because an unauthenticated\nendpoint that publishes a node's trust posture tells an unauthenticated\nreader more than it should. An external uptime probe pointed at either\n`/health` can assert liveness and nothing more.\n",
         "tags": [
           "Health"
         ],
+        "security": [],
         "responses": {
           "200": {
-            "description": "Resolver is up."
+            "description": "The process is serving. Body carries `status`, `service` and `version`."
           }
         }
       }
@@ -4031,12 +4002,14 @@
       "get": {
         "operationId": "resolverReady",
         "summary": "Resolver readiness check",
+        "description": "Readiness: **always `200`**, on the **resolver** service (port 8003).\n\nLike the identity service's readiness probe, this checks nothing, and that\nis the honest answer rather than a stub. The resolver's dependencies — the\nvault it reads passports from, and its Redis cache — are consulted per\nrequest and degrade per request: a cache miss falls through to the vault,\nand a vault it cannot reach produces a `502` on that read rather than a\nprocess that should be taken out of rotation.\n\nSo there is no state in which the resolver is live but categorically not\nready, and reporting one would invent a distinction it does not have.\n`/vault/ready` is the probe in this API that actually verifies a dependency.\n",
         "tags": [
           "Health"
         ],
+        "security": [],
         "responses": {
           "200": {
-            "description": "Resolver is ready."
+            "description": "Serving. Nothing is checked, because there is nothing to check."
           }
         }
       }
@@ -4061,9 +4034,6 @@
     },
     "schemas": {
       "Problem": {
-        "x-tags": [
-          "Errors"
-        ],
         "type": "object",
         "description": "RFC 7807 / RFC 9457 problem details. The shape\n`dpp-common::http_problem::Problem` produces, served as\n`application/problem+json`.\n\n`type` is derived from `title`, so each distinct `title` used across the\ncodebase is a stable catalogue key that clients may depend on.\n",
         "required": [
@@ -4108,9 +4078,6 @@
         }
       },
       "ProblemFieldError": {
-        "x-tags": [
-          "Errors"
-        ],
         "type": "object",
         "description": "One field's failure inside a `Problem`.\n\nPresent only on problems that are about specific members of the request\ndocument — a validation rejection, most often. `field` is a JSON Pointer into\nthat document, so a client can address the offending member directly instead\nof parsing it back out of `detail`.\n",
         "required": [
@@ -4131,9 +4098,6 @@
         }
       },
       "PassportResponse": {
-        "x-tags": [
-          "Passport"
-        ],
         "type": "object",
         "description": "The canonical Digital Product Passport record. Fields marked required are emitted on every read; the rest are omitted when unset rather than sent as null, so a consumer must treat absence and null as the same thing.",
         "required": [
@@ -4362,18 +4326,12 @@
         }
       },
       "DppId": {
-        "x-tags": [
-          "Passport"
-        ],
         "type": "string",
         "format": "uuid",
         "description": "UUID v7 identifier assigned on creation. Embedded in QR codes and public URLs.",
         "example": "019723f4-1a2b-7c3d-8e4f-5a6b7c8d9e0f"
       },
       "PassportStatus": {
-        "x-tags": [
-          "Passport"
-        ],
         "type": "string",
         "enum": [
           "draft",
@@ -4386,9 +4344,6 @@
         "description": "DPP lifecycle state. The domain model uses `Published` internally;\nthe wire format uses `active`. Deserialization accepts both.\n- `draft`: under construction; not publicly resolvable\n- `active`: published and signed; publicly resolvable via QR\n- `suspended`: temporarily hidden (recall, dispute); JWS preserved\n- `archived`: end-of-life; immutable; retained for regulatory record-keeping\n- `superseded`: replaced by a newer passport version; terminal\n- `deactivated`: end-of-life declared (recycled, destroyed under a\n  derogation, exported, or lost); terminal. The typed reason is carried by\n  the EOL event, not this field\n\nValid transitions:\ndraft → active, draft → archived,\nactive → suspended, active → archived, active → superseded,\nactive → deactivated,\nsuspended → active, suspended → archived, suspended → deactivated.\n\n`archived`, `superseded` and `deactivated` are terminal.\n"
       },
       "Granularity": {
-        "x-tags": [
-          "Passport"
-        ],
         "type": "string",
         "enum": [
           "model",
@@ -4399,9 +4354,6 @@
         "example": "item"
       },
       "ManufacturerInfo": {
-        "x-tags": [
-          "Passport"
-        ],
         "type": "object",
         "required": [
           "name",
@@ -4425,9 +4377,6 @@
         }
       },
       "FacilitySnapshot": {
-        "x-tags": [
-          "Passport"
-        ],
         "type": "object",
         "description": "Annex III facility details copied by value into the passport at create time. Self-contained on purpose: the signed passport stays a complete record even after the operator retires the facility from their mutable registry.",
         "required": [
@@ -4460,9 +4409,6 @@
         }
       },
       "MaterialEntry": {
-        "x-tags": [
-          "Passport"
-        ],
         "type": "object",
         "required": [
           "name",
@@ -4495,9 +4441,6 @@
         }
       },
       "ProductGroupData": {
-        "x-tags": [
-          "Passport"
-        ],
         "type": "object",
         "description": "Product group-specific data, **internally tagged** by a `productGroup`\ndiscriminator — e.g.\n`{ \"productGroup\": \"battery\", \"gtin\": \"…\", \"batteryChemistry\": \"LFP\", … }`.\nThe remaining fields are product group-specific and validated against the\nproduct group's versioned JSON schema. Product groups include `battery`, `textile`,\n`steel`, `aluminium`, `tyre`, `electronics`, and others.\n\nThe tag is **open**. A product group this build does not model round-trips its\ntag and payload verbatim instead of failing to parse, so a group added to the\ncatalog does not require a client release. That is why the server does not\nderive this shape with `#[serde(tag = …)]`, which would close the set at\ncompile time.\n",
         "required": [
@@ -4524,9 +4467,6 @@
         }
       },
       "PassportRef": {
-        "x-tags": [
-          "Passport"
-        ],
         "type": "object",
         "required": [
           "uri",
@@ -4548,9 +4488,6 @@
         }
       },
       "CarbonFootprint": {
-        "x-tags": [
-          "Passport"
-        ],
         "type": "object",
         "description": "A CO₂-equivalent figure with the LCA context needed to read it. A bare number is not comparable across products — the lifecycle stage and system boundary are what make two figures mean the same thing.",
         "required": [
@@ -4596,9 +4533,6 @@
         }
       },
       "RepairabilityScore": {
-        "x-tags": [
-          "Passport"
-        ],
         "type": "object",
         "description": "Repairability as a **non-regulatory heuristic**. Deliberately not an EN 45554 or Regulation (EU) 2023/1669 index — those have prescribed methodologies this does not implement, and presenting a heuristic as either would misstate it.",
         "required": [
@@ -4621,9 +4555,6 @@
         }
       },
       "RepairCriterion": {
-        "x-tags": [
-          "Passport"
-        ],
         "type": "object",
         "description": "One weighted criterion contributing to a repairability score.",
         "required": [
@@ -4645,9 +4576,6 @@
         }
       },
       "ComplianceResult": {
-        "x-tags": [
-          "Passport"
-        ],
         "type": "object",
         "description": "The computed compliance determination. Part of the signed passport payload and immutable after retention lock. Absent until a determination has been computed — for example on a product group with no plugin loaded.",
         "required": [
@@ -4710,9 +4638,6 @@
         }
       },
       "ComplianceStatus": {
-        "x-tags": [
-          "Passport"
-        ],
         "type": "string",
         "description": "Overall compliance determination. `PASSTHROUGH_NO_VALIDATION` means no product group plugin was loaded and nothing was assessed — it is not a pass.",
         "enum": [
@@ -4724,9 +4649,6 @@
         ]
       },
       "ComplianceFinding": {
-        "x-tags": [
-          "Passport"
-        ],
         "type": "object",
         "description": "A single compliance finding. Severity is encoded by which array it lands in on `ComplianceResult` — `violations` bind, `warnings` advise — so there is no separate severity field.",
         "required": [
@@ -4750,9 +4672,6 @@
         }
       },
       "LintResult": {
-        "x-tags": [
-          "Passport"
-        ],
         "type": "object",
         "description": "Non-binding plausibility findings — arithmetic and physical-plausibility checks, distinct from binding compliance rules. Never gates publish, and may be recomputed at any time after publish via `POST /dpp/{dppId}/lint` (unlike `complianceResult`, which is frozen into the signed payload).",
         "required": [
@@ -4778,9 +4697,6 @@
         }
       },
       "LintFinding": {
-        "x-tags": [
-          "Passport"
-        ],
         "type": "object",
         "required": [
           "code",
@@ -4806,9 +4722,6 @@
         }
       },
       "LintSeverity": {
-        "x-tags": [
-          "Passport"
-        ],
         "type": "string",
         "description": "Severity of a plausibility finding. Neither value blocks publish — lint is advisory by construction, unlike a compliance violation.",
         "enum": [
@@ -4817,9 +4730,6 @@
         ]
       },
       "InstrumentRef": {
-        "x-tags": [
-          "Passport"
-        ],
         "type": "object",
         "description": "One legal instrument recorded on a passport as applicable to it, and who\nasserted that it applies.\n\nFixed when the product was placed on the market and never recomputed. Carries\nno status, deliberately: a passport freezes its applicable set at issuance, and\nre-deriving how far along an act is would misstate what governed the product at\nthat moment. The obligation endpoint's `ReachingInstrument` answers the live\nquestion and does carry status.\n",
         "properties": {
@@ -4840,9 +4750,6 @@
         "additionalProperties": false
       },
       "RecordedBasis": {
-        "x-tags": [
-          "Passport"
-        ],
         "type": "string",
         "enum": [
           "catalog",
@@ -4852,9 +4759,6 @@
         "example": "catalog"
       },
       "SealedEnvelope": {
-        "x-tags": [
-          "Passport"
-        ],
         "type": "object",
         "description": "An eIDAS electronic seal over the passport's full-payload signature. Check `placeholder` before treating it as evidence — a placeholder envelope is produced when no QTSP is configured and carries no legal validity.",
         "required": [
@@ -4886,9 +4790,6 @@
         }
       },
       "SealFormat": {
-        "x-tags": [
-          "Passport"
-        ],
         "type": "string",
         "description": "AdES format of a seal value.",
         "enum": [
@@ -4899,9 +4800,6 @@
         ]
       },
       "CreatePassportRequest": {
-        "x-tags": [
-          "Passport Requests"
-        ],
         "type": "object",
         "required": [
           "productName",
@@ -4986,9 +4884,6 @@
         }
       },
       "SuspendRequest": {
-        "x-tags": [
-          "Passport Requests"
-        ],
         "type": "object",
         "description": "Optional body for suspending a published passport.\n\nThe body itself is optional — `POST` with no body suspends without a recorded\nreason. Where a reason is supplied it is appended to the audit entry, not\nstored on the passport, so it is not part of the signed document.\n",
         "properties": {
@@ -5000,9 +4895,6 @@
         }
       },
       "EolRequest": {
-        "x-tags": [
-          "Passport Requests"
-        ],
         "type": "object",
         "required": [
           "reason"
@@ -5035,9 +4927,6 @@
         }
       },
       "DeactivationReason": {
-        "x-tags": [
-          "Passport Requests"
-        ],
         "description": "Why a passport reached end-of-life, internally tagged by `kind`. Destruction alone requires a `derogation` citing the lawful basis.",
         "oneOf": [
           {
@@ -5106,9 +4995,6 @@
         }
       },
       "DerogationRef": {
-        "x-tags": [
-          "Passport Requests"
-        ],
         "type": "object",
         "required": [
           "category"
@@ -5130,9 +5016,6 @@
         }
       },
       "TransferInitiateRequest": {
-        "x-tags": [
-          "Passport Requests"
-        ],
         "type": "object",
         "required": [
           "fromOperator",
@@ -5168,9 +5051,6 @@
         }
       },
       "TransferReason": {
-        "x-tags": [
-          "Passport Requests"
-        ],
         "type": "string",
         "description": "The reason for a transfer of DPP responsibility.",
         "enum": [
@@ -5184,9 +5064,6 @@
         ]
       },
       "PassportListResponse": {
-        "x-tags": [
-          "Passport Reports"
-        ],
         "type": "object",
         "description": "One page of passports, with the totals needed to page through them.",
         "required": [
@@ -5217,9 +5094,6 @@
         }
       },
       "ValidateResponse": {
-        "x-tags": [
-          "Passport Reports"
-        ],
         "type": "object",
         "description": "The dry-run verdict. Two booleans rather than one, because create and publish deliberately differ: a body can be creatable as a draft and not yet publishable, and collapsing that into a single flag would hide the gap until the caller tried to publish.",
         "required": [
@@ -5248,9 +5122,6 @@
         }
       },
       "PassportAuditEntry": {
-        "x-tags": [
-          "Passport Reports"
-        ],
         "type": "object",
         "required": [
           "id",
@@ -5314,9 +5185,6 @@
         }
       },
       "TreeReport": {
-        "x-tags": [
-          "Passport Reports"
-        ],
         "type": "object",
         "required": [
           "verified",
@@ -5337,9 +5205,6 @@
         }
       },
       "TreeNodeReport": {
-        "x-tags": [
-          "Passport Reports"
-        ],
         "type": "object",
         "required": [
           "path",
@@ -5375,9 +5240,6 @@
         }
       },
       "TransferRecord": {
-        "x-tags": [
-          "Transfer of Responsibility"
-        ],
         "type": "object",
         "required": [
           "transferId",
@@ -5454,9 +5316,6 @@
         }
       },
       "ResponsibleOperator": {
-        "x-tags": [
-          "Transfer of Responsibility"
-        ],
         "type": "object",
         "required": [
           "did",
@@ -5499,9 +5358,6 @@
         }
       },
       "OperatorRole": {
-        "x-tags": [
-          "Transfer of Responsibility"
-        ],
         "type": "string",
         "description": "The role of an economic operator in the DPP supply chain.",
         "enum": [
@@ -5517,9 +5373,6 @@
         ]
       },
       "SealResponse": {
-        "x-tags": [
-          "Seals"
-        ],
         "type": "object",
         "description": "The eIDAS seal, plus what is needed to check it — and an explicit statement of what this node did **not** check.",
         "required": [
@@ -5586,9 +5439,6 @@
         }
       },
       "SealSummaryResponse": {
-        "x-tags": [
-          "Seals"
-        ],
         "type": "object",
         "description": "Operator-wide sealing state. Read `sealingConfigured` first: when it is false every count is `0` because this node has no outbox, **not** because nothing is outstanding.",
         "required": [
@@ -5619,9 +5469,6 @@
         }
       },
       "SealDeclarer": {
-        "x-tags": [
-          "Seals"
-        ],
         "type": "object",
         "description": "Who declared the content a seal covers, which is not who sealed it.\n\nA seal proves a document came from whoever holds the certificate. It carries no\nstatement about *scope*: \"we vouch for this content\" and \"we transmitted this\nintact\" look identical. A response that serves a seal and names no declaring\nparty invites the reader to collapse the two, whatever anyone intended.\n\nEvery audience view strips the seal, so this is the only surface where that\ncollapse is reachable — and its readers being authenticated and technical makes\nthem more likely to build on the assumption, not less.\n",
         "required": [
@@ -5654,9 +5501,6 @@
         }
       },
       "SealCoverage": {
-        "x-tags": [
-          "Seals"
-        ],
         "type": "string",
         "description": "Whether the stored seal covers the passport's current signature. Answered from this node's record of what it *asked* to be sealed — weaker than a validator's verdict, stronger than nothing: it cannot confirm the CAdES, but a passport re-published after sealing is knowable without any AdES tooling.",
         "enum": [
@@ -5666,9 +5510,6 @@
         ]
       },
       "EvidenceDossier": {
-        "x-tags": [
-          "Evidence & Verification"
-        ],
         "type": "object",
         "description": "A self-contained, signed snapshot of a passport's full proof chain,\npersisted by the node at generation time. Verification\n(`POST /evidence/{id}/verify`) is an integrity check of the stored\ndossier against its own signatures and hash chains. See\n`docs/architecture/EVIDENCE-DOSSIER.md` for the full specification,\nincluding why `calcReceipts`/`checkpoint` are always empty/`null` in\nformat v1.\n",
         "required": [
@@ -5758,9 +5599,6 @@
         }
       },
       "DossierManifest": {
-        "x-tags": [
-          "Evidence & Verification"
-        ],
         "type": "object",
         "description": "Signed metadata binding every dossier member into one atomic,\ntamper-evident unit.\n",
         "required": [
@@ -5812,9 +5650,6 @@
         }
       },
       "SignedLayer": {
-        "x-tags": [
-          "Evidence & Verification"
-        ],
         "type": "object",
         "description": "A JWS alongside the exact JSON payload it was signed over — embedded\ndirectly rather than left for a verifier to reconstruct.\n",
         "required": [
@@ -5832,9 +5667,6 @@
         }
       },
       "QualifiedSealMember": {
-        "x-tags": [
-          "Evidence & Verification"
-        ],
         "type": "object",
         "description": "The passport's eIDAS qualified seal as carried inside an evidence dossier:\nthe seal envelope plus the JWS it was computed over and that payload's hash,\nso a verifier holding only the dossier has both the CAdES and the preimage to\ncheck it against.\n\nIncluded because a dossier is what an authority is handed, and the seal is its\none member carrying an Art. 35(2) presumption — and because it is unreachable\notherwise: the seal is stripped from `fullView` and `publicView` alike, since\nit covers the full-payload signature rather than any redaction. Bound into\n`contentHashes` like every other member.\n\n⚠️ **This shape is described here but not enforced anywhere.** The field is\nheld as untyped JSON on the dossier record, so no Rust type declares these\nthree members and the OpenAPI contract test has nothing to compare them\nagainst. Treat the property list as documentation of intent, not as a\nguarantee. Giving the dossier a real type for this member would close that,\nand is the only thing that would.\n",
         "properties": {
@@ -5854,9 +5686,6 @@
         }
       },
       "EvidenceDossierRecord": {
-        "x-tags": [
-          "Evidence & Verification"
-        ],
         "type": "object",
         "description": "A stored dossier snapshot — the dossier plus its persistence envelope.",
         "required": [
@@ -5894,9 +5723,6 @@
         }
       },
       "EvidenceDossierSummary": {
-        "x-tags": [
-          "Evidence & Verification"
-        ],
         "type": "object",
         "description": "Listing projection of a stored dossier — everything but the document.",
         "required": [
@@ -5928,9 +5754,6 @@
         }
       },
       "VerificationReport": {
-        "x-tags": [
-          "Evidence & Verification"
-        ],
         "type": "object",
         "required": [
           "trustAnchorNote",
@@ -5950,9 +5773,6 @@
         }
       },
       "CheckResult": {
-        "x-tags": [
-          "Evidence & Verification"
-        ],
         "type": "object",
         "description": "Outcome of a single named verification check.",
         "required": [
@@ -5979,9 +5799,6 @@
         }
       },
       "PassportRegistryView": {
-        "x-tags": [
-          "EU Registry State"
-        ],
         "type": "object",
         "description": "EU-registry state for one passport. `configured: false` means this deployment has no registry queues at all — reported instead of a row of zeros, which would read as \"everything is registered\".",
         "required": [
@@ -6021,9 +5838,6 @@
         }
       },
       "RegistryRollupView": {
-        "x-tags": [
-          "EU Registry State"
-        ],
         "type": "object",
         "description": "Operator-wide EU-registry state. `configured: false` means this deployment has no registry queues; the counts are then omitted rather than reported as zero.",
         "required": [
@@ -6046,9 +5860,6 @@
         }
       },
       "RegistrationView": {
-        "x-tags": [
-          "EU Registry State"
-        ],
         "type": "object",
         "description": "One passport's registration, as the EU-registry queue holds it.",
         "required": [
@@ -6089,9 +5900,6 @@
         }
       },
       "RegistrationCounts": {
-        "x-tags": [
-          "EU Registry State"
-        ],
         "type": "object",
         "required": [
           "pending",
@@ -6134,9 +5942,6 @@
         }
       },
       "TransferNotificationView": {
-        "x-tags": [
-          "EU Registry State"
-        ],
         "type": "object",
         "description": "One transfer-of-responsibility notification owed to the registry.",
         "required": [
@@ -6173,9 +5978,6 @@
         }
       },
       "TransferNotificationCounts": {
-        "x-tags": [
-          "EU Registry State"
-        ],
         "type": "object",
         "required": [
           "pending",
@@ -6199,9 +6001,6 @@
         }
       },
       "RegistryVerificationView": {
-        "x-tags": [
-          "EU Registry State"
-        ],
         "type": "object",
         "description": "The operator's verified-registry standing. Verified status ends when the electronic identification means used expire, and at the latest three years after verification; an operator that lets it lapse cannot register or amend anything until it verifies again. Reported whether or not the queues are configured.",
         "required": [
@@ -6229,9 +6028,6 @@
         }
       },
       "CurrentOperatorView": {
-        "x-tags": [
-          "EU Registry State"
-        ],
         "type": "object",
         "description": "The operator responsible for a passport **today**, derived from its transfer chain. Reported separately from the passport's own `operatorIdentifier`, which is the operator that *published* it — frozen at publish and covered by the signature, so a transfer does not rewrite it. For a passport that has changed hands the two differ, and that difference is a fact about the product.",
         "required": [
@@ -6257,9 +6053,6 @@
         }
       },
       "PassportScanStats": {
-        "x-tags": [
-          "Scan Counters"
-        ],
         "type": "object",
         "description": "Per-passport scan aggregates over a trailing window. `totalScans` and `qrRenders` sit side by side and are never combined — a QR render is label production, not a resolution. Nothing about the scanner (IP, agent, session) is collected or returned; the counters carry no such fields.",
         "required": [
@@ -6296,9 +6089,6 @@
         }
       },
       "OperatorScanStats": {
-        "x-tags": [
-          "Scan Counters"
-        ],
         "type": "object",
         "description": "Operator-wide scan rollup over a trailing window.",
         "required": [
@@ -6323,9 +6113,6 @@
         }
       },
       "DailyScanCount": {
-        "x-tags": [
-          "Scan Counters"
-        ],
         "type": "object",
         "required": [
           "day",
@@ -6342,9 +6129,6 @@
         }
       },
       "ScanBatch": {
-        "x-tags": [
-          "Scan Counters"
-        ],
         "type": "object",
         "required": [
           "scans",
@@ -6367,9 +6151,6 @@
         }
       },
       "ScanBatchEntry": {
-        "x-tags": [
-          "Scan Counters"
-        ],
         "type": "object",
         "required": [
           "dppId",
@@ -6397,9 +6178,6 @@
         }
       },
       "QrRenderBatchEntry": {
-        "x-tags": [
-          "Scan Counters"
-        ],
         "type": "object",
         "required": [
           "dppId",
@@ -6422,9 +6200,6 @@
         }
       },
       "ScanVariant": {
-        "x-tags": [
-          "Scan Counters"
-        ],
         "type": "string",
         "enum": [
           "html",
@@ -6432,9 +6207,6 @@
         ]
       },
       "OperatorConfig": {
-        "x-tags": [
-          "Operator Profile"
-        ],
         "type": "object",
         "required": [
           "operatorId",
@@ -6555,9 +6327,6 @@
         }
       },
       "UpdateOperatorConfig": {
-        "x-tags": [
-          "Operator Profile"
-        ],
         "type": "object",
         "description": "Merge-patch update — only supply fields being changed.",
         "properties": {
@@ -6617,9 +6386,6 @@
         }
       },
       "Facility": {
-        "x-tags": [
-          "Operator Profile"
-        ],
         "type": "object",
         "required": [
           "id",
@@ -6672,9 +6438,6 @@
         }
       },
       "CreateFacilityRequest": {
-        "x-tags": [
-          "Operator Profile"
-        ],
         "type": "object",
         "required": [
           "name",
@@ -6715,9 +6478,6 @@
         }
       },
       "OperatorIdentifier": {
-        "x-tags": [
-          "Operator Profile"
-        ],
         "type": "object",
         "required": [
           "id",
@@ -6758,9 +6518,6 @@
         }
       },
       "CreateOperatorIdentifierRequest": {
-        "x-tags": [
-          "Operator Profile"
-        ],
         "type": "object",
         "required": [
           "scheme",
@@ -6791,9 +6548,6 @@
         }
       },
       "RegistryIdentityAuditEntry": {
-        "x-tags": [
-          "Operator Profile"
-        ],
         "type": "object",
         "required": [
           "id",
@@ -6851,9 +6605,6 @@
         }
       },
       "ApiKey": {
-        "x-tags": [
-          "Access & Integrations"
-        ],
         "type": "object",
         "required": [
           "id",
@@ -6904,9 +6655,6 @@
         }
       },
       "ApiKeyScope": {
-        "x-tags": [
-          "Access & Integrations"
-        ],
         "type": "string",
         "description": "What an API key authorises. `admin` is the default when a key is minted without an explicit scope, so a key issued to an integration should name `read` or `write` deliberately.",
         "enum": [
@@ -6916,9 +6664,6 @@
         ]
       },
       "CreateApiKeyRequest": {
-        "x-tags": [
-          "Access & Integrations"
-        ],
         "type": "object",
         "required": [
           "name"
@@ -6948,9 +6693,6 @@
         }
       },
       "CreatedApiKeyResponse": {
-        "x-tags": [
-          "Access & Integrations"
-        ],
         "type": "object",
         "required": [
           "key",
@@ -6968,9 +6710,6 @@
         }
       },
       "WebhookSubscription": {
-        "x-tags": [
-          "Access & Integrations"
-        ],
         "type": "object",
         "description": "A receiver subscription, redacted. The signing secret is never carried here — it is returned exactly once from the create call and otherwise stays server-side.",
         "required": [
@@ -7019,9 +6758,6 @@
         }
       },
       "CreateWebhookRequest": {
-        "x-tags": [
-          "Access & Integrations"
-        ],
         "type": "object",
         "description": "Input for creating a subscription. The signing secret is generated server-side and is never client-supplied, so it is not part of this body.",
         "required": [
@@ -7046,9 +6782,6 @@
         }
       },
       "CreatedWebhookResponse": {
-        "x-tags": [
-          "Access & Integrations"
-        ],
         "description": "The created subscription's fields, inlined, plus the signing secret. The secret is shown **once** — it is not recoverable from any later read.",
         "allOf": [
           {
@@ -7069,9 +6802,6 @@
         ]
       },
       "InstalledPlugin": {
-        "x-tags": [
-          "Access & Integrations"
-        ],
         "type": "object",
         "description": "What the node installed, reported back after a successful hot-swap.",
         "required": [
@@ -7092,9 +6822,6 @@
         }
       },
       "NodeState": {
-        "x-tags": [
-          "Access & Integrations"
-        ],
         "type": "object",
         "required": [
           "bootstrapped",
@@ -7142,9 +6869,6 @@
         }
       },
       "WhoamiResponse": {
-        "x-tags": [
-          "Access & Integrations"
-        ],
         "type": "object",
         "description": "What the presented credential is. Reports only what the caller already sent — it reveals nothing about any other key, and the key's secret is never stored in a recoverable form.",
         "required": [
@@ -7167,9 +6891,6 @@
         }
       },
       "VaultInfo": {
-        "x-tags": [
-          "Access & Integrations"
-        ],
         "type": "object",
         "required": [
           "version",
@@ -7212,9 +6933,6 @@
         }
       },
       "DidDocument": {
-        "x-tags": [
-          "Node Identity"
-        ],
         "type": "object",
         "description": "A W3C DID Core `did:web` document. Lists the operator's Ed25519\nverification methods; rotated keys are retained (so historical\nsignatures still verify) and revoked keys are omitted.\n",
         "example": {
@@ -7244,9 +6962,6 @@
         }
       },
       "InternalSignRequest": {
-        "x-tags": [
-          "Node Identity"
-        ],
         "type": "object",
         "required": [
           "operator_id",
@@ -7271,9 +6986,6 @@
         }
       },
       "InternalSignResponse": {
-        "x-tags": [
-          "Node Identity"
-        ],
         "type": "object",
         "required": [
           "jws_signature"
@@ -7286,9 +6998,6 @@
         }
       },
       "InternalVerifyRequest": {
-        "x-tags": [
-          "Node Identity"
-        ],
         "type": "object",
         "required": [
           "operator_id",
@@ -7312,9 +7021,6 @@
         }
       },
       "InternalVerifyResponse": {
-        "x-tags": [
-          "Node Identity"
-        ],
         "type": "object",
         "required": [
           "valid"
@@ -7327,9 +7033,6 @@
         }
       },
       "InternalRotateKeyRequest": {
-        "x-tags": [
-          "Node Identity"
-        ],
         "type": "object",
         "required": [
           "operator_id"
@@ -7342,9 +7045,6 @@
         }
       },
       "InternalRotateKeyResponse": {
-        "x-tags": [
-          "Node Identity"
-        ],
         "type": "object",
         "required": [
           "operator_id",
@@ -7374,9 +7074,6 @@
         }
       },
       "ImportSyncResponse": {
-        "x-tags": [
-          "Bulk Import"
-        ],
         "type": "object",
         "required": [
           "jobId",
@@ -7428,9 +7125,6 @@
         }
       },
       "ImportAsyncResponse": {
-        "x-tags": [
-          "Bulk Import"
-        ],
         "type": "object",
         "required": [
           "jobId",
@@ -7453,9 +7147,6 @@
         }
       },
       "ImportCreatedEntry": {
-        "x-tags": [
-          "Bulk Import"
-        ],
         "type": "object",
         "required": [
           "row",
@@ -7477,9 +7168,6 @@
         }
       },
       "ImportUpdatedEntry": {
-        "x-tags": [
-          "Bulk Import"
-        ],
         "type": "object",
         "description": "One row that matched an existing passport and updated it.",
         "required": [
@@ -7498,9 +7186,6 @@
         }
       },
       "ImportErrorEntry": {
-        "x-tags": [
-          "Bulk Import"
-        ],
         "type": "object",
         "required": [
           "row",
@@ -7521,9 +7206,6 @@
         }
       },
       "JobStatusResponse": {
-        "x-tags": [
-          "Bulk Import"
-        ],
         "type": "object",
         "required": [
           "jobId",
@@ -7564,9 +7246,6 @@
         }
       },
       "JobProgress": {
-        "x-tags": [
-          "Bulk Import"
-        ],
         "type": "object",
         "description": "How far through its rows an import job has got.",
         "properties": {
@@ -7589,9 +7268,6 @@
         ]
       },
       "ProductGroupObligationList": {
-        "x-tags": [
-          "Regulatory Catalog"
-        ],
         "type": "object",
         "description": "Every product group this build models, with its passport obligation.",
         "properties": {
@@ -7607,9 +7283,6 @@
         ]
       },
       "ProductGroupObligation": {
-        "x-tags": [
-          "Regulatory Catalog"
-        ],
         "type": "object",
         "description": "What this node knows about one product group's digital product passport\nobligation, drawn from the embedded instrument catalog.\n",
         "properties": {
@@ -7676,9 +7349,6 @@
         ]
       },
       "PassportObligation": {
-        "x-tags": [
-          "Regulatory Catalog"
-        ],
         "type": "object",
         "description": "Whether a passport is required for a product group, and from when.\n\nThe obligation is split from its date so `required` can be answered where\nnothing fixes a date — which is most of the catalog.\n",
         "properties": {
@@ -7705,9 +7375,6 @@
         ]
       },
       "ObligationDate": {
-        "x-tags": [
-          "Regulatory Catalog"
-        ],
         "type": "object",
         "description": "The date a passport obligation applies from, with the provenance of that date.\n\nOne object rather than two loose fields so a date cannot be served without its\nbasis. Most of the catalog is undated, and of the dates that exist some trace\nto an adopted text and some are a reading — a date presented bare turns a\nqualified reading into an unqualified claim.\n",
         "properties": {
@@ -7728,9 +7395,6 @@
         ]
       },
       "DateBasis": {
-        "x-tags": [
-          "Regulatory Catalog"
-        ],
         "type": "string",
         "enum": [
           "sourced",
@@ -7740,9 +7404,6 @@
         "example": "sourced"
       },
       "RetentionPeriod": {
-        "x-tags": [
-          "Regulatory Catalog"
-        ],
         "type": "object",
         "description": "How long records must be kept, with the provenance of that figure.\n\nThe figure is the maximum across every act reaching the product group, because\nretention periods are floors and a record kept long enough for the longest\nsatisfies them all. The basis is `sourced` only when every contributing figure\nis sourced — one assumption anywhere makes the compound figure an assumption,\nwhichever act supplied the maximum.\n",
         "properties": {
@@ -7763,9 +7424,6 @@
         ]
       },
       "RetentionBasis": {
-        "x-tags": [
-          "Regulatory Catalog"
-        ],
         "type": "string",
         "enum": [
           "sourced",
@@ -7775,9 +7433,6 @@
         "example": "sourced"
       },
       "ReachingInstrument": {
-        "x-tags": [
-          "Regulatory Catalog"
-        ],
         "type": "object",
         "description": "One act the catalog records as reaching a product group, with how far along\nthe act itself is and whether it binds *this* group.\n\nDistinct from the entries recorded on a passport, which carry no status: a\npassport freezes its applicable set at issuance and re-deriving status later\nwould misstate what governed the product when it was placed on the market.\nHere nothing is frozen — the question is what the catalog holds now — so the\nstatuses are what let a caller tell an adopted duty from a reading.\n",
         "properties": {
@@ -7807,9 +7462,6 @@
         ]
       },
       "InstrumentStatus": {
-        "x-tags": [
-          "Regulatory Catalog"
-        ],
         "type": "string",
         "enum": [
           "adopted",
@@ -7820,9 +7472,6 @@
         "example": "adopted"
       },
       "RegulatoryStatus": {
-        "x-tags": [
-          "Regulatory Catalog"
-        ],
         "type": "string",
         "enum": [
           "in_force",
@@ -7833,9 +7482,6 @@
         "example": "provisional"
       },
       "RulesetReload": {
-        "x-tags": [
-          "Access & Integrations"
-        ],
         "type": "object",
         "description": "The outcome of re-reading the signed compliance-ruleset channel.",
         "required": [
@@ -8002,62 +7648,5 @@
         }
       }
     }
-  },
-  "x-tagGroups": [
-    {
-      "name": "Vault",
-      "tags": [
-        "DPP Management",
-        "DPP Lifecycle",
-        "Evidence Dossiers",
-        "Registry",
-        "Scan Telemetry",
-        "Operator",
-        "Facilities",
-        "Operator Identifiers",
-        "API Keys",
-        "Webhooks",
-        "Plugins",
-        "Ruleset",
-        "Node",
-        "Public (Vault)",
-        "Credentialed Access",
-        "Vault (internal)"
-      ]
-    },
-    {
-      "name": "Integrator & Identity",
-      "tags": [
-        "Integrator",
-        "Identity",
-        "Identity (internal)"
-      ]
-    },
-    {
-      "name": "Resolver & Health",
-      "tags": [
-        "Public Resolver",
-        "Health"
-      ]
-    },
-    {
-      "name": "Models",
-      "tags": [
-        "Errors",
-        "Passport",
-        "Passport Requests",
-        "Passport Reports",
-        "Transfer of Responsibility",
-        "Seals",
-        "Evidence & Verification",
-        "EU Registry State",
-        "Scan Counters",
-        "Operator Profile",
-        "Access & Integrations",
-        "Node Identity",
-        "Bulk Import",
-        "Regulatory Catalog"
-      ]
-    }
-  ]
+  }
 }

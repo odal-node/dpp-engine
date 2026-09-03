@@ -1,10 +1,24 @@
 get:
   operationId: vaultReady
   summary: Vault readiness check
+  description: |
+    Readiness: the vault can reach the database it needs to answer requests. On
+    the node (port 8001) this is mounted at `/vault/ready`.
+
+    **This is the only readiness probe in the API that checks a dependency.**
+    It pings PostgreSQL and answers `503` when that fails, so it is the one to
+    put behind a load balancer or a deployment gate. The identity and resolver
+    readiness probes answer `200` unconditionally, because neither has an
+    external dependency to check.
+
+    Every call records the ping latency and its outcome as metrics, so a
+    scrape of this endpoint doubles as a continuous database-latency signal
+    rather than only a yes/no.
   tags:
     - Health
+  security: []
   responses:
     '200':
-      description: Service is ready (DB connection verified).
+      description: The database answered; the vault can serve requests.
     '503':
       $ref: ../../components/responses/ServiceUnavailable.yaml

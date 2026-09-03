@@ -6,6 +6,7 @@ get:
     service internally. Returns 404 for drafts, 410 for suspended.
   tags:
     - Public (Vault)
+  security: []
   parameters:
     - name: dppId
       in: path

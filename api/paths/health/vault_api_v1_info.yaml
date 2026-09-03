@@ -1,12 +1,27 @@
 get:
   operationId: vaultInfo
   summary: Service info
-  description: Returns version and build information.
+  description: |
+    What this build is and what it supports — for a client deciding which
+    features to offer before it has authenticated.
+
+    Carries four things: the vault's own `version`, the `dpp-core` version it
+    was compiled against, the authentication methods it accepts, and the
+    feature flags it reports. A dashboard reads this to know whether an
+    endpoint is worth calling, rather than calling it and interpreting a `404`.
+
+    Unauthenticated on purpose: a client needs to know how to authenticate
+    before it can, and the values here are properties of the build rather than
+    of the operator or their data.
+
+    `coreVersion` is the useful one when two deployments disagree — the vault
+    version alone does not tell you which regulatory rules were compiled in.
   tags:
     - Health
+  security: []
   responses:
     '200':
-      description: Service info.
+      description: Build metadata, authentication methods and feature flags.
       content:
         application/json:
           schema:

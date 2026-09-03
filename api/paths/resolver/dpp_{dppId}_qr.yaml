@@ -8,6 +8,7 @@ get:
     This endpoint is on the **resolver** service (port 8003).
   tags:
     - Public Resolver
+  security: []
   parameters:
     - name: dppId
       in: path

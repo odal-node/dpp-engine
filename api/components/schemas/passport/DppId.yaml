@@ -1,5 +1,3 @@
-x-tags:
-  - Passport
 type: string
 format: uuid
 description: UUID v7 identifier assigned on creation. Embedded in QR codes and public URLs.

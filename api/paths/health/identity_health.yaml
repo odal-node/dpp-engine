@@ -1,8 +1,19 @@
 get:
   operationId: identityHealth
   summary: Identity health check
+  description: |
+    Liveness: the identity service is running and serving. Mounted at
+    `/identity/health` on the node (port 8001), and at `/health` when identity
+    runs as its own deployable (port 8002).
+
+    Checks nothing beyond itself. The signing key store is opened at startup, so
+    a process that is serving has already loaded it — which is why the readiness
+    probe beside this one has nothing further to verify.
+
+    The body carries the service name and version.
   tags:
     - Health
+  security: []
   responses:
     '200':
-      description: Service is up.
+      description: The process is serving. Body carries `status`, `service` and `version`.
