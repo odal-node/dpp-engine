@@ -139,8 +139,15 @@ impl PassportService {
             ));
         }
 
+        // Signed over `acceptance_payload`, not over `payload` (the initiation
+        // bytes the outgoing operator already signed). Re-signing those made
+        // this attestation byte-identical to `from_signature` whenever the node
+        // key and the from-operator key are the same one — which is every
+        // single-operator node — so the "acceptance" could be produced by
+        // copying a field that predates the acceptance.
+        let attestation = crate::domain::verify::acceptance_payload(&chain.transfers[idx]);
         chain.transfers[idx].node_acceptance_attestation =
-            Some(self.identity.sign_passport(id, &payload).await?.jws);
+            Some(self.identity.sign_passport(id, &attestation).await?.jws);
         chain.transfers[idx]
             .complete()
             .map_err(|e| DppError::Validation(e.to_string().into()))?;

@@ -3,15 +3,49 @@
 //! Nothing else in the engine verifies a whole [`TransferChain`] standalone —
 //! signature checking normally happens inline, one record at a time, as
 //! part of accepting a transfer. This is the "verify the whole chain
-//! after the fact" implementation; it reuses `TransferRecord::signing_payload`
-//! (the exact bytes both operators sign) and the same JWS verification used
-//! everywhere else, just applied per-record.
+//! after the fact" implementation, using the same JWS verification as
+//! everywhere else, applied per-record: `TransferRecord::signing_payload` for
+//! the outgoing operator's signature, and [`acceptance_payload`] for the
+//! hosting node's attestation.
 
 use std::collections::BTreeMap;
 
 use dpp_domain::transfer::TransferChain;
 
 use super::jws::{resolve_public_key, verify_jws_content};
+
+/// The bytes the hosting node signs to attest that it ran the acceptance step.
+///
+/// Deliberately **not** `TransferRecord::signing_payload()`. That is the
+/// initiation payload, and the outgoing operator has already signed it — so
+/// re-signing it says nothing the record did not already carry, and on a node
+/// where the signer and the from-operator are the same key it produces a JWS
+/// byte-identical to `from_signature`. An attestation that can be produced by
+/// copying a field which existed *before* the step it attests is not evidence
+/// of that step.
+///
+/// So the payload is discriminated (`attests: "acceptance"`) and binds the
+/// terms being accepted, not merely the record's identity: accepting transfer
+/// `X` is a statement about the operators and reason in `X`, and an attestation
+/// that named only the id would still verify if those changed.
+///
+/// It carries no timestamp. `TransferRecord::complete()` refuses until the
+/// attestation exists — the attestation is what moves the record to `Accepted`
+/// — so `completed_at` is not yet set when these bytes are signed. Binding a
+/// second, separately-generated time would put two answers for one fact in the
+/// record; the chain's honest claim is *that* this node accepted, and `when` is
+/// `completed_at`'s job.
+pub fn acceptance_payload(record: &dpp_domain::transfer::TransferRecord) -> serde_json::Value {
+    serde_json::json!({
+        "attests": "acceptance",
+        "transferId": record.transfer_id,
+        "passportId": record.passport_id,
+        "fromOperator": record.from_operator,
+        "toOperator": record.to_operator,
+        "reason": record.reason,
+        "initiatedAt": record.initiated_at,
+    })
+}
 
 /// Which signature(s) on a transfer record failed to verify.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -20,12 +54,12 @@ pub enum TransferSignatureIssue {
     /// their DID document was not available to check against.
     From(String),
     /// The hosting node's acceptance attestation is missing from a completed
-    /// transfer.
+    /// transfer, or failed to verify against that node's key.
     ///
-    /// Only ever "missing" — never "failed to verify". The attestation is
-    /// produced by the node, not by the incoming operator, so there is no
-    /// counterparty key it could be checked against. See
-    /// [`verify_transfer_chain`].
+    /// It is checked against the **node's** DID, never the incoming operator's:
+    /// the node produces it, and checking it against a counterparty would
+    /// re-assert the two-party proof this crate deliberately stopped claiming.
+    /// See [`verify_transfer_chain`] and [`acceptance_payload`].
     Acceptance(String),
 }
 
@@ -46,14 +80,18 @@ pub struct TransferChainBreak {
 /// "nothing to verify", so a record a producing node marked completed without
 /// signing can never pass with zero checks.
 ///
-/// **Only the outgoing operator's signature is verified cryptographically.**
-/// The acceptance attestation is checked for presence alone: the node signs it
-/// with its own key, so there is no counterparty key to check it against, and
-/// verifying it against `to_operator.did` — as this function used to — claimed
-/// a two-party proof nobody produced. A tampered attestation is therefore *not*
-/// detected here, which is the honest position: it never carried evidentiary
-/// weight about the incoming operator, and the authority on who holds the
-/// obligations is the EU registry.
+/// **Both signatures are verified, against different parties.** The outgoing
+/// operator's is checked against `from_operator.did`; the acceptance
+/// attestation is checked against `node_did` — the hosting node, which is what
+/// produces it. Checking the latter against `to_operator.did`, as this function
+/// once did, claimed a two-party proof nobody produced; checking it against the
+/// node claims only what is true, and the authority on who holds the
+/// obligations remains the EU registry.
+///
+/// `node_did` is the dossier's `issuer_did`, which an evidence dossier always
+/// carries — the generator inserts its own DID document before any
+/// counterparty's, so the key needed for this check is never the one that is
+/// missing.
 ///
 /// A still-`Initiated` record's not-yet-present signature is skipped. A record
 /// whose signer's DID document is missing from `did_documents` fails closed
@@ -66,6 +104,7 @@ pub struct TransferChainBreak {
 pub fn verify_transfer_chain(
     chain: &TransferChain,
     did_documents: &BTreeMap<String, serde_json::Value>,
+    node_did: &str,
 ) -> Result<(), TransferChainBreak> {
     for (index, record) in chain.transfers.iter().enumerate() {
         // A completed transfer must be fully signed by both parties.
@@ -95,26 +134,43 @@ pub fn verify_transfer_chain(
             None => {}
         }
 
-        // The acceptance attestation is checked for presence and nothing else.
+        // The acceptance attestation is the hosting node's, so it is verified
+        // against `node_did` — never against `to_operator.did`, which this
+        // function used to do and which asserted a two-party proof nobody
+        // produced. The core type is named `node_acceptance_attestation` for
+        // that reason, and that correction stands.
         //
-        // It used to be verified against `to_operator.did`, as though the
-        // incoming operator had signed it. They did not: the hosting node
-        // signs it with its own key, so checking it against a counterparty's
-        // DID asserted a two-party proof that was never produced. The core
-        // type is named `node_acceptance_attestation` for that reason.
+        // What changed is that the bit it carries is now actually carried.
+        // Presence alone was the check, and the value was
+        // `signing_payload()` — the *initiation* payload, which the outgoing
+        // operator has already signed. On a single-operator node the node key
+        // and the from-operator key are the same key, so the attestation came
+        // out byte-identical to `from_signature`: 896 bytes, both, verified in
+        // Postgres. Anything holding the initiated record could therefore
+        // produce the "acceptance" by copying a field that existed before the
+        // acceptance happened, and presence-checking it would pass.
         //
-        // What remains is one bit — the acceptance step ran — and that bit is
-        // still worth failing closed on, because a node that marked a transfer
-        // completed without running it should not verify. Who actually holds
-        // the obligations is a question for the EU registry under Impl. Reg.
-        // (EU) 2026/1778 Art. 6a, not for this chain.
-        if record.node_acceptance_attestation.is_none() && is_completed {
-            return Err(TransferChainBreak {
-                index,
-                issue: TransferSignatureIssue::Acceptance(
-                    "completed transfer is missing the node's acceptance attestation".into(),
-                ),
-            });
+        // Signing a distinct payload is what makes the bit unforgeable from
+        // data that predates the step. Who actually holds the obligations
+        // remains a question for the EU registry under Impl. Reg. (EU)
+        // 2026/1778 Art. 6a, not for this chain.
+        match &record.node_acceptance_attestation {
+            Some(sig) => {
+                check_signature(node_did, sig, &acceptance_payload(record), did_documents)
+                    .map_err(|reason| TransferChainBreak {
+                        index,
+                        issue: TransferSignatureIssue::Acceptance(reason),
+                    })?;
+            }
+            None if is_completed => {
+                return Err(TransferChainBreak {
+                    index,
+                    issue: TransferSignatureIssue::Acceptance(
+                        "completed transfer is missing the node's acceptance attestation".into(),
+                    ),
+                });
+            }
+            None => {}
         }
     }
     Ok(())
@@ -187,9 +243,14 @@ mod tests {
         format!("{signing_input}.{}", b64.encode(sig.to_bytes()))
     }
 
+    /// The DID of the node hosting the chain — the party whose key signs the
+    /// acceptance attestation. Distinct from `to_operator`, which signs nothing:
+    /// that separation is the whole point of `node_acceptance_attestation`.
+    const NODE_DID: &str = "did:web:node.example";
+
     fn record_with_signatures(
         from_key: &SigningKey,
-        to_key: &SigningKey,
+        node_key: &SigningKey,
         from_did: &str,
         to_did: &str,
     ) -> TransferRecord {
@@ -207,19 +268,18 @@ mod tests {
             cancelled_at: None,
             notes: None,
         };
-        let payload = record.signing_payload();
-        record.from_signature = Some(sign(from_key, &payload));
-        record.node_acceptance_attestation = Some(sign(to_key, &payload));
+        record.from_signature = Some(sign(from_key, &record.signing_payload()));
+        record.node_acceptance_attestation = Some(sign(node_key, &acceptance_payload(&record)));
         record
     }
 
     #[test]
     fn intact_chain_verifies() {
         let from_key = SigningKey::from_bytes(&[1u8; 32]);
-        let to_key = SigningKey::from_bytes(&[2u8; 32]);
+        let node_key = SigningKey::from_bytes(&[2u8; 32]);
         let record = record_with_signatures(
             &from_key,
-            &to_key,
+            &node_key,
             "did:web:from.example",
             "did:web:to.example",
         );
@@ -230,18 +290,18 @@ mod tests {
         };
         let mut docs = BTreeMap::new();
         docs.insert("did:web:from.example".to_string(), did_doc_for(&from_key));
-        docs.insert("did:web:to.example".to_string(), did_doc_for(&to_key));
+        docs.insert(NODE_DID.to_string(), did_doc_for(&node_key));
 
-        assert!(verify_transfer_chain(&chain, &docs).is_ok());
+        assert!(verify_transfer_chain(&chain, &docs, NODE_DID).is_ok());
     }
 
     #[test]
-    fn a_tampered_acceptance_attestation_is_not_detected() {
+    fn a_tampered_acceptance_attestation_is_detected() {
         let from_key = SigningKey::from_bytes(&[1u8; 32]);
-        let to_key = SigningKey::from_bytes(&[2u8; 32]);
+        let node_key = SigningKey::from_bytes(&[2u8; 32]);
         let mut record = record_with_signatures(
             &from_key,
-            &to_key,
+            &node_key,
             "did:web:from.example",
             "did:web:to.example",
         );
@@ -255,34 +315,60 @@ mod tests {
         };
         let mut docs = BTreeMap::new();
         docs.insert("did:web:from.example".to_string(), did_doc_for(&from_key));
-        docs.insert("did:web:to.example".to_string(), did_doc_for(&to_key));
+        docs.insert(NODE_DID.to_string(), did_doc_for(&node_key));
 
-        // Deliberately NOT detected, and pinned so nobody assumes otherwise.
+        // This assertion has now been both ways, and the previous comment asked
+        // for exactly this moment: it said that if verification were
+        // reintroduced "against the node's own identity, where it would be
+        // truthful — this test fails and the decision gets made again rather
+        // than drifting back silently." It failed. This is that decision.
         //
-        // This assertion was the reverse until the acceptance attestation
-        // stopped being verified against `to_operator.did`. That check read as
-        // tamper-evidence for the incoming operator's authorisation, but the
-        // node signs this value with its own key — so what it really proved was
-        // that a node's own signature matched a DID that, in a single-operator
-        // deployment, resolves to that same node.
-        //
-        // If verification is ever reintroduced — against the node's own
-        // identity, where it would be truthful — this test fails and the
-        // decision gets made again rather than drifting back silently.
+        // What was wrong before was the *party*, not the checking. Verifying
+        // against `to_operator.did` claimed the incoming operator had signed
+        // something they never did. Verifying against the node claims only what
+        // the node itself did, which is all this value has ever been.
+        let brk = verify_transfer_chain(&chain, &docs, NODE_DID)
+            .expect_err("a tampered attestation must not verify against the node key");
         assert!(
-            verify_transfer_chain(&chain, &docs).is_ok(),
-            "the attestation is checked for presence only; there is no \
-             counterparty key it could be verified against"
+            matches!(brk.issue, TransferSignatureIssue::Acceptance(_)),
+            "expected an Acceptance issue, got {:?}",
+            brk.issue
+        );
+    }
+
+    /// The defect that motivated verifying this at all.
+    ///
+    /// When the node key and the from-operator key are the same — every
+    /// single-operator deployment — signing the *initiation* payload for both
+    /// produced two byte-identical JWS values. Anyone holding the initiated
+    /// record could then produce the "acceptance" by copying `from_signature`,
+    /// and a presence check would accept it.
+    ///
+    /// Signing a discriminated payload is what breaks that equality, so this
+    /// asserts on the one key where the old code could not tell them apart.
+    #[test]
+    fn the_attestation_differs_from_the_from_signature_under_one_key() {
+        let one_key = SigningKey::from_bytes(&[3u8; 32]);
+        let record = record_with_signatures(
+            &one_key,
+            &one_key,
+            "did:web:solo.example",
+            "did:web:to.example",
+        );
+
+        assert_ne!(
+            record.from_signature, record.node_acceptance_attestation,
+            "one key signing both payloads must still yield two distinct signatures,              or the acceptance is copyable from the initiation"
         );
     }
 
     #[test]
     fn missing_did_document_fails_closed() {
         let from_key = SigningKey::from_bytes(&[1u8; 32]);
-        let to_key = SigningKey::from_bytes(&[2u8; 32]);
+        let node_key = SigningKey::from_bytes(&[2u8; 32]);
         let record = record_with_signatures(
             &from_key,
-            &to_key,
+            &node_key,
             "did:web:from.example",
             "did:web:to.example",
         );
@@ -301,9 +387,9 @@ mod tests {
         // acceptance attestation stopped being verified against the incoming
         // operator's DID — no `to` document is consulted at all now.
         let mut docs = BTreeMap::new();
-        docs.insert("did:web:to.example".to_string(), did_doc_for(&to_key));
+        docs.insert(NODE_DID.to_string(), did_doc_for(&node_key));
 
-        let brk = verify_transfer_chain(&chain, &docs).expect_err("must fail closed");
+        let brk = verify_transfer_chain(&chain, &docs, NODE_DID).expect_err("must fail closed");
         assert!(matches!(brk.issue, TransferSignatureIssue::From(_)));
     }
 
@@ -316,10 +402,10 @@ mod tests {
         // and therefore stops at `From`, so it never exercised this branch —
         // which meant the acceptance check had no test at all.
         let from_key = SigningKey::from_bytes(&[7u8; 32]);
-        let to_key = SigningKey::from_bytes(&[8u8; 32]);
+        let node_key = SigningKey::from_bytes(&[8u8; 32]);
         let mut record = record_with_signatures(
             &from_key,
-            &to_key,
+            &node_key,
             "did:web:from.example",
             "did:web:to.example",
         );
@@ -334,7 +420,7 @@ mod tests {
         let mut docs = BTreeMap::new();
         docs.insert("did:web:from.example".to_string(), did_doc_for(&from_key));
 
-        let brk = verify_transfer_chain(&chain, &docs)
+        let brk = verify_transfer_chain(&chain, &docs, NODE_DID)
             .expect_err("a completed transfer must carry the node's acceptance attestation");
         assert_eq!(brk.index, 0);
         assert!(
@@ -349,10 +435,10 @@ mod tests {
         // The mirror of the above, and the reason the check is conditioned on
         // completion: a transfer awaiting acceptance legitimately has none.
         let from_key = SigningKey::from_bytes(&[7u8; 32]);
-        let to_key = SigningKey::from_bytes(&[8u8; 32]);
+        let node_key = SigningKey::from_bytes(&[8u8; 32]);
         let mut record = record_with_signatures(
             &from_key,
-            &to_key,
+            &node_key,
             "did:web:from.example",
             "did:web:to.example",
         );
@@ -366,7 +452,7 @@ mod tests {
         let mut docs = BTreeMap::new();
         docs.insert("did:web:from.example".to_string(), did_doc_for(&from_key));
 
-        assert!(verify_transfer_chain(&chain, &docs).is_ok());
+        assert!(verify_transfer_chain(&chain, &docs, NODE_DID).is_ok());
     }
 
     #[test]
@@ -393,7 +479,7 @@ mod tests {
             transfers: vec![record],
         };
         // No DID docs needed — it must fail on the missing signature first.
-        let brk = verify_transfer_chain(&chain, &BTreeMap::new())
+        let brk = verify_transfer_chain(&chain, &BTreeMap::new(), NODE_DID)
             .expect_err("a completed but unsigned record must fail closed");
         assert_eq!(brk.index, 0);
         assert!(matches!(brk.issue, TransferSignatureIssue::From(_)));
@@ -428,7 +514,7 @@ mod tests {
         let mut docs = BTreeMap::new();
         docs.insert("did:web:from.example".to_string(), did_doc_for(&from_key));
         assert!(
-            verify_transfer_chain(&chain, &docs).is_ok(),
+            verify_transfer_chain(&chain, &docs, NODE_DID).is_ok(),
             "an initiated (uncompleted) record must not fail on its pending countersignature"
         );
     }
