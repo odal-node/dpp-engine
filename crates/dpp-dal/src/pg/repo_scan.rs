@@ -118,6 +118,10 @@ impl ScanTelemetryRepository for PgScanTelemetryRepo {
         .map_err(db_err)?;
 
         Ok(PassportScanStats {
+            // Liveness is not the database's to know — the handler overlays it
+            // from what this process has actually received. See `scan_liveness`.
+            ingesting: false,
+            last_ingest_at: None,
             window_days,
             total_scans: totals.get("total"),
             scans_html: totals.get("html"),
@@ -157,6 +161,8 @@ impl ScanTelemetryRepository for PgScanTelemetryRepo {
         .map_err(db_err)?;
 
         Ok(OperatorScanStats {
+            ingesting: false,
+            last_ingest_at: None,
             window_days,
             total_scans: row.get("total"),
             total_qr_renders: total_qr,

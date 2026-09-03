@@ -100,14 +100,24 @@ impl ScanCounter {
 /// Drain the counter once and POST the batch to the node's internal ingest
 /// endpoint. A transient failure (5xx, or the request itself failing) is
 /// merged back so no window is lost; a 4xx is a permanent rejection of this
-/// payload and is dropped rather than retried forever. An empty counter is a
-/// no-op. Broken out from the loop so it is testable against a mock ingest
-/// server without waiting on a timer.
+/// payload and is dropped rather than retried forever. Broken out from the loop
+/// so it is testable against a mock ingest server without waiting on a timer.
+///
+/// # An empty window is still sent
+///
+/// It used to return early with nothing to say, which meant the node heard from
+/// the resolver only when somebody had scanned something. The node cannot read
+/// `SCAN_INGEST_URL` — it is this process's configuration, not the node's — so
+/// silence was indistinguishable between "telemetry is switched off" (the
+/// default) and "telemetry is on and nobody scanned". The node reported `0`
+/// either way, and an operator could not tell a real zero from an unmeasured
+/// one.
+///
+/// So an empty batch is a heartbeat: it costs one small request per flush
+/// interval and it is the only thing that makes the node's `ingesting` flag
+/// mean anything.
 async fn flush_once(counter: &ScanCounter, client: &reqwest::Client, ingest_url: &str) {
     let batch = counter.drain();
-    if batch.is_empty() {
-        return;
-    }
     match client.post(ingest_url).json(&batch).send().await {
         Ok(resp) if resp.status().is_success() => {}
         Ok(resp) if resp.status().is_client_error() => {
