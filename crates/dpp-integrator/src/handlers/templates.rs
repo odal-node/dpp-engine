@@ -8,12 +8,15 @@ use axum::{
 use dpp_common::http_problem;
 use serde::{Deserialize, Serialize};
 
+use crate::domain::validate;
+
 // Templates are embedded at compile time — zero runtime I/O on the hot path.
 //
-// One table, because this list had three homes and they disagreed: the `match`
-// below, a hand-written "Valid values:" sentence inside its own 404, and the API
-// description (which named two of the five). Lookup and message now both read
-// from here, so adding a template is one edit and the refusal cannot go stale.
+// One table, because this list had three homes and they disagreed: the lookup,
+// a hand-written "Valid values:" sentence inside its own 404, and the API
+// description (which named two of the five). Lookup, refusal message and
+// `template_for` now all read from here, so adding a template is one edit and
+// none of the three can go stale.
 const TEMPLATES: &[(&str, &str, &str)] = &[
     (
         "battery",
@@ -40,6 +43,26 @@ const TEMPLATES: &[(&str, &str, &str)] = &[
         include_str!("../../templates/tyre-v1.csv"),
         "odal-tyre-template.csv",
     ),
+    (
+        "mattress",
+        include_str!("../../templates/mattress-v1.csv"),
+        "odal-mattress-template.csv",
+    ),
+    (
+        "furniture",
+        include_str!("../../templates/furniture-v1.csv"),
+        "odal-furniture-template.csv",
+    ),
+    (
+        "toy",
+        include_str!("../../templates/toy-v1.csv"),
+        "odal-toy-template.csv",
+    ),
+    (
+        "construction",
+        include_str!("../../templates/construction-v1.csv"),
+        "odal-construction-template.csv",
+    ),
 ];
 
 /// The product groups this endpoint serves, for the refusal message. Derived,
@@ -50,6 +73,24 @@ fn served_keys() -> String {
         .map(|(k, _, _)| *k)
         .collect::<Vec<_>>()
         .join(", ")
+}
+
+/// The committed CSV template for a product group, or `None` where there is no
+/// row validator for it.
+///
+/// Separate from the handler so the drift test in `domain::validate` can compare
+/// each committed header against the columns its validator declares. A template
+/// nobody can read from a test is a template nothing can check.
+///
+/// Reads [`TEMPLATES`] rather than carrying its own `match`. The table exists
+/// because this list previously had three homes that disagreed; a second lookup
+/// beside it would have re-created the problem the table was introduced to end.
+#[must_use]
+pub fn template_for(product_group: &str) -> Option<&'static str> {
+    TEMPLATES
+        .iter()
+        .find(|(key, _, _)| *key == product_group)
+        .map(|(_, content, _)| *content)
 }
 
 /// Query parameters for the template download endpoint.
