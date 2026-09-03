@@ -64,6 +64,27 @@ pub fn field_conflict_error(errors: &dpp_domain::ValidationErrors) -> Response {
     problem_with_field_errors(StatusCode::CONFLICT, errors)
 }
 
+/// Render `errors` as a problem document, carrying only the failures that
+/// actually name a field.
+///
+/// `errors` is an **addressable** array: its purpose is to let a client attach a
+/// message to the input that caused it. A great many of this crate's validation
+/// failures are built from a plain string — `DppError::Validation("…".into())`
+/// routes through `ValidationErrors::message`, which sets `field` to `""` — and
+/// for those the array carried one entry with no address whose `message` was
+/// byte-identical to `detail`. A client rendering both showed the same sentence
+/// twice, with nothing to attach the second copy to.
+///
+/// So an unaddressed failure is left to `detail`, which already carries every
+/// message (`to_display` joins them). When nothing is addressable the member is
+/// omitted entirely rather than emitted empty — `with_field_errors` does that
+/// for an empty vector.
+///
+/// This deliberately does **not** try to invent field paths. Where a failure
+/// genuinely knows its field — the mandatory-content gate reports
+/// `/productGroupData/<field>` — it is passed through unchanged and is exactly
+/// as useful as before. Giving the string-built call sites real paths is a
+/// separate improvement to those call sites, not something this function can do.
 fn problem_with_field_errors(
     status: StatusCode,
     errors: &dpp_domain::ValidationErrors,
@@ -74,6 +95,7 @@ fn problem_with_field_errors(
             errors
                 .errors
                 .iter()
+                .filter(|e| !e.field.is_empty())
                 .map(|e| http_problem::ProblemFieldError {
                     field: e.field.clone(),
                     message: e.message.clone(),
@@ -173,6 +195,80 @@ mod guard_tests {
         assert_eq!(
             validation_error("x").status(),
             StatusCode::UNPROCESSABLE_ENTITY
+        );
+    }
+}
+
+#[cfg(test)]
+mod field_error_rendering {
+    use super::*;
+    use dpp_domain::field_error::{FieldError, ValidationErrors};
+
+    async fn body_of(resp: Response) -> serde_json::Value {
+        let bytes = axum::body::to_bytes(resp.into_body(), 64 * 1024)
+            .await
+            .expect("body");
+        serde_json::from_slice(&bytes).expect("problem document")
+    }
+
+    /// The finding: a string-built failure produced one `errors` entry with no
+    /// field whose message repeated `detail` verbatim.
+    #[tokio::test]
+    async fn an_unaddressed_failure_carries_no_errors_array() {
+        let errors: ValidationErrors = "the operator identity is incomplete".into();
+        let doc = body_of(field_validation_error(&errors)).await;
+
+        assert_eq!(doc["detail"], "the operator identity is incomplete");
+        assert!(
+            doc.get("errors").is_none(),
+            "an array of field errors with no field is not field errors, got {doc}"
+        );
+    }
+
+    /// And the half that must not regress: a failure that does name a field is
+    /// still addressable, which is what the array is for.
+    #[tokio::test]
+    async fn an_addressed_failure_is_still_carried() {
+        let errors = ValidationErrors {
+            errors: vec![FieldError {
+                field: "/productGroupData/capacityThresholdForExhaustionPct".to_owned(),
+                message: "is mandatory for an 'ev' battery".to_owned(),
+            }],
+        };
+        let doc = body_of(field_validation_error(&errors)).await;
+
+        assert_eq!(
+            doc["errors"][0]["field"],
+            "/productGroupData/capacityThresholdForExhaustionPct"
+        );
+    }
+
+    /// A mix keeps the addressable half and leaves the rest to `detail`, which
+    /// joins every message regardless.
+    #[tokio::test]
+    async fn a_mixed_failure_keeps_only_what_can_be_addressed() {
+        let errors = ValidationErrors {
+            errors: vec![
+                FieldError {
+                    field: String::new(),
+                    message: "something general".to_owned(),
+                },
+                FieldError {
+                    field: "/gtin".to_owned(),
+                    message: "bad check digit".to_owned(),
+                },
+            ],
+        };
+        let doc = body_of(field_validation_error(&errors)).await;
+
+        assert_eq!(doc["errors"].as_array().expect("array").len(), 1);
+        assert_eq!(doc["errors"][0]["field"], "/gtin");
+        assert!(
+            doc["detail"]
+                .as_str()
+                .expect("detail")
+                .contains("something general"),
+            "the unaddressed message must survive in detail, got {doc}"
         );
     }
 }
