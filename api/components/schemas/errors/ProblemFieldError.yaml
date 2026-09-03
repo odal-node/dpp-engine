@@ -1,3 +1,5 @@
+x-tags:
+  - Errors
 type: object
 description: |
   One field's failure inside a `Problem`.

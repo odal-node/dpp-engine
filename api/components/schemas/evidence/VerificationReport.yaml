@@ -1,3 +1,5 @@
+x-tags:
+  - Evidence & Verification
 type: object
 required:
   - trustAnchorNote

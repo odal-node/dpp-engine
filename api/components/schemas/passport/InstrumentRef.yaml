@@ -1,3 +1,5 @@
+x-tags:
+  - Passport
 type: object
 description: |
   One legal instrument recorded on a passport as applicable to it, and who

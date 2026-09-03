@@ -1,3 +1,5 @@
+x-tags:
+  - Passport Reports
 type: object
 description: >-
   The dry-run verdict. Two booleans rather than one, because create and publish

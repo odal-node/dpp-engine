@@ -1,3 +1,5 @@
+x-tags:
+  - Regulatory Catalog
 type: object
 description: |
   Whether a passport is required for a product group, and from when.

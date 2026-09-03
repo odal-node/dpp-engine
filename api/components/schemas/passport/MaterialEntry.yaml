@@ -1,3 +1,5 @@
+x-tags:
+  - Passport
 type: object
 required:
   - name

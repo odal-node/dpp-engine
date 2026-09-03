@@ -1,3 +1,5 @@
+x-tags:
+  - Passport
 type: object
 description: >-
   Annex III facility details copied by value into the passport at create time.

@@ -1,3 +1,5 @@
+x-tags:
+  - Node Identity
 type: object
 required:
   - valid

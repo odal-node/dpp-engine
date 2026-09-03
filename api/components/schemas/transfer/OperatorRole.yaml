@@ -1,3 +1,5 @@
+x-tags:
+  - Transfer of Responsibility
 type: string
 description: The role of an economic operator in the DPP supply chain.
 enum:

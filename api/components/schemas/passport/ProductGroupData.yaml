@@ -1,3 +1,5 @@
+x-tags:
+  - Passport
 type: object
 description: |
   Product group-specific data, **internally tagged** by a `productGroup`

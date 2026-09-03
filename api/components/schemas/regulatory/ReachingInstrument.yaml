@@ -1,3 +1,5 @@
+x-tags:
+  - Regulatory Catalog
 type: object
 description: |
   One act the catalog records as reaching a product group, with how far along

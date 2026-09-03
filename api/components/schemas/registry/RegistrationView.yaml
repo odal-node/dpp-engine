@@ -1,3 +1,5 @@
+x-tags:
+  - EU Registry State
 type: object
 description: One passport's registration, as the EU-registry queue holds it.
 required:

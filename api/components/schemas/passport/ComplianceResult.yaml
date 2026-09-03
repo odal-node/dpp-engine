@@ -1,3 +1,5 @@
+x-tags:
+  - Passport
 type: object
 description: >-
   The computed compliance determination. Part of the signed passport payload and

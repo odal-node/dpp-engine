@@ -1,3 +1,5 @@
+x-tags:
+  - Access & Integrations
 type: object
 description: >-
   The outcome of re-reading the signed compliance-ruleset channel.

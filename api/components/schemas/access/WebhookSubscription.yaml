@@ -1,3 +1,5 @@
+x-tags:
+  - Access & Integrations
 type: object
 description: >-
   A receiver subscription, redacted. The signing secret is never carried here —

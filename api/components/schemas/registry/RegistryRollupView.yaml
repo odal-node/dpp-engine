@@ -1,3 +1,5 @@
+x-tags:
+  - EU Registry State
 type: object
 description: >-
   Operator-wide EU-registry state. `configured: false` means this deployment has

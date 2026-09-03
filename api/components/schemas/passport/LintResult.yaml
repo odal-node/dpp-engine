@@ -1,3 +1,5 @@
+x-tags:
+  - Passport
 type: object
 description: >-
   Non-binding plausibility findings — arithmetic and physical-plausibility

@@ -1,3 +1,5 @@
+x-tags:
+  - Access & Integrations
 type: object
 description: What the node installed, reported back after a successful hot-swap.
 required:

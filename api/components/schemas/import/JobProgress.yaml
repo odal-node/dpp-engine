@@ -1,3 +1,5 @@
+x-tags:
+  - Bulk Import
 type: object
 description: How far through its rows an import job has got.
 properties:

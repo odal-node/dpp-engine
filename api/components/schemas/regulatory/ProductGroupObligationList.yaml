@@ -1,3 +1,5 @@
+x-tags:
+  - Regulatory Catalog
 type: object
 description: Every product group this build models, with its passport obligation.
 properties:

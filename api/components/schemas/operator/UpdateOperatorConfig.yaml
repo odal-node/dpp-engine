@@ -1,3 +1,5 @@
+x-tags:
+  - Operator Profile
 type: object
 description: Merge-patch update — only supply fields being changed.
 properties:

@@ -1,3 +1,5 @@
+x-tags:
+  - Access & Integrations
 type: object
 description: >-
   Input for creating a subscription. The signing secret is generated

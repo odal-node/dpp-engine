@@ -517,3 +517,121 @@ tags:
     description: >-
       Health and readiness probes, plus the vault's build metadata — every
       deployable's unauthenticated liveness surface in one place.
+  - name: Errors
+    description: >-
+      The one error shape every endpoint returns. Documented once here rather
+      than restated per operation.
+  - name: Passport
+    description: >-
+      The passport record and every shape embedded in it. These are what the
+      signature covers, so a change here changes what a published passport
+      means.
+  - name: Passport Requests
+    description: Bodies accepted by the create, update, and lifecycle-transition routes.
+  - name: Passport Reports
+    description: >-
+      Derived reads over a passport — paging, dry-run validation, audit history,
+      and component-tree verification. Computed on request, never signed.
+  - name: Transfer of Responsibility
+    description: >-
+      The dual-signed handover record and the operators named in it (ESPR
+      "responsible economic operator").
+  - name: Seals
+    description: >-
+      The eIDAS seal as served, with what this node did and did not check. The
+      seal envelope itself lives on the passport — see `SealedEnvelope`.
+  - name: Evidence & Verification
+    description: >-
+      The dossier document, its members, and the verdict a verifier returns for
+      one. Distinct from `Seals`: a dossier is what an authority is handed, a
+      seal is one member of it.
+  - name: EU Registry State
+    description: >-
+      Projections of the registry queues — what is registered, what is owed, and
+      whether the operator's own verification is still current. Queue state, not
+      passport content.
+  - name: Scan Counters
+    description: >-
+      Both directions of scan telemetry: the rows the resolver flushes inward,
+      and the aggregates the vault serves outward.
+  - name: Operator Profile
+    description: >-
+      Operator configuration and the registry identities stamped onto new
+      passports — facilities (Annex III) and economic-operator identifiers
+      (Art. 13), with their append-only audit record.
+  - name: Access & Integrations
+    description: >-
+      Credentials, outbound delivery, plugins, and what the node reports about
+      itself.
+  - name: Node Identity
+    description: >-
+      The published DID document, and the bodies of the mTLS-only signing
+      surface. These use snake_case — they are an internal contract, not part of
+      the public API's camelCase surface.
+  - name: Bulk Import
+    description: Import results and async job state.
+  - name: Regulatory Catalog
+    description: >-
+      What this build knows about which acts reach which product groups, and
+      from when. Every date and period carries the provenance of the reading —
+      a qualified reading served unqualified is a different claim.
+x-tagGroups:
+  # Grouped by what a reader is trying to do, not by which deployable serves it.
+  #
+  # The previous grouping was service-first — everything on the node, then the
+  # integrator and identity, then the resolver. That is an accurate fact about
+  # the deployment and a poor answer to the question a reader actually arrives
+  # with, which is never "what is on port 8001". Ordering the whole list flat
+  # was worse still: twenty-one sibling tags with no shape to them.
+  #
+  # No group for models. Their tags were removed along with `x-tags` on the
+  # schemas, so Scalar builds its own models node instead — one collapsible
+  # section holding every schema. A group named "Models" would render as a
+  # static label and take that collapsing away.
+  - name: Passports
+    tags:
+      - DPP Management
+      - DPP Lifecycle
+      - Evidence Dossiers
+      - Registry
+      - Scan Telemetry
+  - name: Operator setup
+    tags:
+      - Operator
+      - Facilities
+      - Operator Identifiers
+      - API Keys
+      - Webhooks
+      - Plugins
+      - Ruleset
+      - Node
+  - name: Public surfaces
+    tags:
+      - Public (Vault)
+      - Credentialed Access
+      - Public Resolver
+      - Health
+  - name: Bulk import & identity
+    tags:
+      - Integrator
+      - Identity
+  - name: Internal (mTLS)
+    tags:
+      - Vault (internal)
+      - Identity (internal)
+  - name: Models
+    tags:
+      - Errors
+      - Passport
+      - Passport Requests
+      - Passport Reports
+      - Transfer of Responsibility
+      - Seals
+      - Evidence & Verification
+      - EU Registry State
+      - Scan Counters
+      - Operator Profile
+      - Access & Integrations
+      - Node Identity
+      - Bulk Import
+      - Regulatory Catalog

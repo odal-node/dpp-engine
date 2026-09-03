@@ -1,3 +1,5 @@
+x-tags:
+  - Passport
 type: string
 description: >-
   Severity of a plausibility finding. Neither value blocks publish — lint is

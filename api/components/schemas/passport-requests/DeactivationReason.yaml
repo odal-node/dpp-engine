@@ -1,3 +1,5 @@
+x-tags:
+  - Passport Requests
 description: >-
   Why a passport reached end-of-life, internally tagged by `kind`. Destruction
   alone requires a `derogation` citing the lawful basis.

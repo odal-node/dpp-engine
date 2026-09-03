@@ -1,3 +1,5 @@
+x-tags:
+  - Bulk Import
 type: object
 required:
   - jobId

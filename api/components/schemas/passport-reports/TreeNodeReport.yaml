@@ -1,3 +1,5 @@
+x-tags:
+  - Passport Reports
 type: object
 required:
   - path
