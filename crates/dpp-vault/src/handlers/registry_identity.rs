@@ -18,6 +18,7 @@ use crate::{middleware::auth::AuthContext, state::AppState};
 use super::error::{
     api_error, field_validation_error, internal_error, not_found_error, require_admin,
 };
+use crate::middleware::scope::RequireAdmin;
 
 // ── Facilities ───────────────────────────────────────────────────────────────
 
@@ -38,12 +39,12 @@ pub async fn facilities_list_handler(
 /// `POST /api/v1/facilities` — add a facility (validated GLN/country).
 pub async fn facilities_create_handler(
     State(state): State<AppState>,
-    Extension(auth): Extension<AuthContext>,
+    // The gate is an extractor, and it precedes the body extractor
+    // deliberately: axum runs body-less extractors first, so a wrong-scope
+    // caller is refused before the body is buffered or parsed.
+    RequireAdmin(auth): RequireAdmin,
     Json(body): Json<CreateFacilityRequest>,
 ) -> impl IntoResponse {
-    if let Some(resp) = require_admin(&auth, "Registry-identity management") {
-        return resp;
-    }
     match state
         .registry_identity_service
         .add_facility(body, &auth.user_id)
@@ -165,12 +166,12 @@ pub async fn operator_ids_list_handler(
 /// `POST /api/v1/operator-identifiers` — add an identifier (validated LEI/VAT/…).
 pub async fn operator_ids_create_handler(
     State(state): State<AppState>,
-    Extension(auth): Extension<AuthContext>,
+    // The gate is an extractor, and it precedes the body extractor
+    // deliberately: axum runs body-less extractors first, so a wrong-scope
+    // caller is refused before the body is buffered or parsed.
+    RequireAdmin(auth): RequireAdmin,
     Json(body): Json<CreateOperatorIdentifierRequest>,
 ) -> impl IntoResponse {
-    if let Some(resp) = require_admin(&auth, "Registry-identity management") {
-        return resp;
-    }
     // The identifier itself carries no per-entry country (an Art. 13 economic-
     // operator identifier belongs to the operator, not a location) — reuse the
     // operator's own registered country for the `dpp-registry` validation.

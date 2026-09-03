@@ -14,6 +14,7 @@ use crate::{middleware::auth::AuthContext, state::AppState};
 use super::error::{
     api_error, field_validation_error, internal_error, not_found_error, require_admin,
 };
+use crate::middleware::scope::RequireAdmin;
 
 /// Self-lockout guard: a key may not revoke *itself*. Revoking the very
 /// credential used for this request would lock out the caller (and every client
@@ -52,12 +53,12 @@ pub async fn api_keys_list_handler(
 /// secret ONCE. Subsequent listings only expose the prefix.
 pub async fn api_keys_create_handler(
     State(state): State<AppState>,
-    Extension(auth): Extension<AuthContext>,
+    // The gate is an extractor, and it precedes the body extractor
+    // deliberately: axum runs body-less extractors first, so a wrong-scope
+    // caller is refused before the body is buffered or parsed.
+    RequireAdmin(_auth): RequireAdmin,
     Json(body): Json<CreateApiKeyRequest>,
 ) -> impl IntoResponse {
-    if let Some(resp) = require_admin(&auth, "API key management") {
-        return resp;
-    }
     // Omitted scope defaults to Admin (backward compatible). Operators should
     // pass `"write"`/`"read"` for least-privilege integration keys.
     let scope = body.scope.unwrap_or_default();

@@ -7,15 +7,16 @@
 
 use axum::{
     Json,
-    extract::{Extension, Multipart, State},
+    extract::{Multipart, State},
     http::StatusCode,
     response::{IntoResponse, Response},
 };
 use dpp_common::plugin_admin::PluginInstallError;
 
-use crate::{middleware::auth::AuthContext, state::AppState};
+use crate::state::AppState;
 
-use super::error::{api_error, require_admin};
+use super::error::api_error;
+use crate::middleware::scope::RequireAdmin;
 
 /// `POST /api/v1/plugins` — verify, persist, and hot-swap a signed product group plugin.
 ///
@@ -28,13 +29,12 @@ use super::error::{api_error, require_admin};
 ///   the `wasm` part's filename (`product-group-<key>.wasm`).
 pub async fn install_plugin_handler(
     State(state): State<AppState>,
-    Extension(auth): Extension<AuthContext>,
+    // The gate is an extractor, and it precedes the body extractor
+    // deliberately: axum runs body-less extractors first, so a wrong-scope
+    // caller is refused before the body is buffered or parsed.
+    RequireAdmin(_auth): RequireAdmin,
     mut multipart: Multipart,
 ) -> Response {
-    if let Some(resp) = require_admin(&auth, "Installing a plugin") {
-        return resp;
-    }
-
     let Some(admin) = state.plugin_admin.clone() else {
         return api_error(
             StatusCode::NOT_IMPLEMENTED,
