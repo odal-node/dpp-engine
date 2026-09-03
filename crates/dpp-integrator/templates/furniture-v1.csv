@@ -1,0 +1,3 @@
+productName [REQUIRED],gtin [REQUIRED],batchId [OPTIONAL],manufacturerName [REQUIRED],manufacturerCountry [REQUIRED],productType [REQUIRED],primaryMaterial [REQUIRED],countryOfOrigin [REQUIRED],recycledContentPct [OPTIONAL],repairabilityScore [OPTIONAL],co2ePerUnitKg [OPTIONAL],disassemblyInstructionsUrl [OPTIONAL],endOfLifeInstructions [OPTIONAL],placedOnMarketDate [OPTIONAL],commodityCode [OPTIONAL]
+Oak Dining Chair,09506000300030,BATCH-F-2026-001,Sample Mobler ApS,DK,chair,solid-wood,DK,15.0,8.1,22.4,https://example.com/chair/disassembly,Return to a wood recycling point,2026-02-10,94016100
+Steel Shelf Unit,09506000300047,,Sample Mobler ApS,DK,shelf,metal,DK,60.0,,41.0,,,2026-05-20,94037000

@@ -162,6 +162,20 @@ openapi-html:
 # fixture captured after the bump can only catch the bump after next. It refuses
 # to overwrite an existing fixture, because a frozen document that gets rewritten
 # has stopped being evidence about the release that produced it.
+# Rewrite each CSV import template's header from its validator's column list.
+#
+# The header is generated; the example rows below it are not, and are preserved.
+# Their value is that a person chose plausible values — a generated row would be
+# placeholders, teaching an operator nothing about what a real value looks like.
+#
+# Run after changing a column list, then commit the result. The committed files
+# stay committed (the handler embeds them with `include_str!`), and
+# `every_template_header_matches_its_validator_columns` proves they still match:
+# the same arrangement `openapi-check` uses for the API bundle.
+regenerate-templates:
+    cargo test -p dpp-integrator --test regenerate_templates \
+        -- --ignored --exact regenerate_templates --nocapture
+
 capture-fixture SECTOR:
     cargo test -p dpp-vault --features integration-tests \
         --test capture_doc_fixture capture_{{SECTOR}} -- --ignored --exact --nocapture

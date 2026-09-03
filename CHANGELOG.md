@@ -12,6 +12,33 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ### Added
 
+- **Bulk import and CSV templates reach nine product groups, up from five.**
+  `mattress`, `furniture`, `toy` and `construction` gain a row validator and a
+  template. Each carries its schema's required set plus the optional fields the
+  typed data model holds, because an importer that silently dropped a column an
+  operator filled in would be worse than one that never offered it.
+
+  Three product groups are still out, and the reason is recorded next to the
+  list rather than left as silence. `detergent` requires `surfactants`, a
+  variable-length list of `{name, biodegradable, concentrationBand}` records —
+  flattening that into fixed columns means inventing a delimiter convention or a
+  column-per-index cap, and both are formats an operator has to be taught.
+  `unsold-goods` is not a product row at all: an Art. 24 disclosure is one
+  undertaking, one financial year and N discard lines, which is a different
+  document with a header section rather than a passport per row. `electronics`
+  is out for a smaller reason — its `productCategory` and
+  `energyEfficiencyClass` are typed enums in `dpp-domain` with no string parse
+  path, so a validator would have to invent one, which is a core-shaped
+  decision.
+
+- **A boolean column type.** `require_bool` / `optional_bool` accept the
+  spellings a spreadsheet actually produces — `true`/`false`, `yes`/`no`, `1`/`0`,
+  case-insensitively — because Excel writes `TRUE` from a checkbox and a person
+  writes `yes`. An unrecognised value is an error rather than a silent `false`:
+  `false` is a positive claim (a toy without CE marking is a different product,
+  not a missing field), and guessing it would put a conformity statement on a
+  passport the operator never made.
+
 - **A continuity snapshot now says how long it stands, under its own signature.**
   Each snapshot written to object storage carries `asOf`, `validUntil` and a
   `snapshotJwsSignature` over the whole document — the passport's public view,
@@ -207,6 +234,34 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   turns into method names. Two prose examples carried it too.
 
 ### Fixed
+
+- **A CSV template's header and the validator behind it were two hand-written
+  lists.** The importer reads columns imperatively and the template served to
+  operators repeated the same names in a checked-in header. Checked column by
+  column, every one of them was correct — but nothing said so, and a column
+  renamed on one side produces an operator downloading a template their own
+  importer rejects, with no test between them and that outcome.
+
+  Each product group now declares its columns once, the template header is
+  generated from that list by `just regenerate-templates`, and a test asserts
+  the committed file still matches — the same arrangement `openapi-check` uses
+  for the API bundle. Regenerating the five pre-existing templates produced them
+  byte for byte, which is the evidence that the extracted lists are faithful
+  rather than merely plausible.
+
+  A second test parses each template's example rows with the importer's own
+  reader and runs them through the product group's validator, so a template
+  cannot ship an example row the importer rejects. That one earned its place
+  immediately: written with a naive comma split it failed on textile's
+  `fibreComposition`, which is a quoted JSON array containing commas.
+
+  The envelope columns (`placedOnMarketDate`, `commodityCode`) are appended
+  centrally rather than repeated per product group — a list that has to remember
+  them is a list that can forget them.
+
+- **`SUPPORTED_SECTORS` was renamed to `SUPPORTED_PRODUCT_GROUPS`**, the last
+  residue of that rename in this crate.
+
 
 - **Four `s3_archive` tests booted a MinIO container each, and sat 0.4s from
   failing CI.** Around eight seconds apiece was container startup, which the test
