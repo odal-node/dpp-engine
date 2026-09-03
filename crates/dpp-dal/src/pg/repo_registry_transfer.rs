@@ -141,6 +141,25 @@ impl RegistryTransferOutbox for PgRegistryTransferRepo {
         require_updated(&res, "registry_transfer row", transfer_id)
     }
 
+    /// See the trait. `attempts` is untouched and the retry delay is a short
+    /// fixed one — the row is waiting on another row, not backing off from a
+    /// failing endpoint, so there is nothing for exponential backoff to protect.
+    async fn mark_deferred(&self, transfer_id: Uuid, message: String) -> Result<(), DppError> {
+        let res = sqlx::query(
+            r#"UPDATE odal.registry_transfer SET
+                 message = $2,
+                 last_attempt_at = now(),
+                 next_attempt_at = now() + interval '60 seconds'
+               WHERE transfer_id = $1"#,
+        )
+        .bind(transfer_id)
+        .bind(&message)
+        .execute(self.dal.pool())
+        .await
+        .map_err(db_err)?;
+        require_updated(&res, "registry_transfer row", transfer_id)
+    }
+
     async fn mark_attempt_failed(
         &self,
         transfer_id: Uuid,
