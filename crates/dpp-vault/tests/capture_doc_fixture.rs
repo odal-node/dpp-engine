@@ -83,8 +83,14 @@ async fn capture(product_group: &str, body: Value) {
 
     let resp = client.post_json("/api/v1/dpp", body).await;
     let status = resp.status();
-    let created: Value = resp.json().await.expect("create returned JSON");
-    assert_eq!(status, 201, "create failed: {created}");
+    // Read the body as text and assert the status *before* parsing. Parsing
+    // first turns any non-JSON error response into "expected value at line 1
+    // column 1", which says nothing about what the node refused — and a create
+    // that fails is the normal way this harness fails.
+    let raw = resp.text().await.unwrap_or_default();
+    assert_eq!(status, 201, "create failed ({status}): {raw}");
+    let created: Value = serde_json::from_str(&raw)
+        .unwrap_or_else(|e| panic!("create returned non-JSON: {e}: {raw}"));
     let id = created["id"].as_str().expect("created passport has an id");
 
     let resp = client
@@ -279,6 +285,279 @@ async fn capture_electronics() {
                 "standbyPowerW": 0.15,
                 "expectedLifetimeYears": 7,
                 "firmwareUpdateUntil": "2033-09-01T00:00:00Z"
+            }
+        }),
+    )
+    .await;
+}
+
+// ─── The remaining shipped product groups ────────────────────────────────────
+//
+// One per product group the catalog ships, because
+// `every_shipped_product_group_has_a_fixture_for_its_current_version` requires
+// one and there is no way to satisfy it except by capturing a real document.
+// Each body carries the schema's required set with plausible values; a fixture
+// is evidence about the *envelope* the write path produces, so what matters is
+// that a real create and publish accepted it, not that the numbers are
+// interesting.
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "writes a fixture into the source tree; run via `just capture-fixture`"]
+async fn capture_aluminium() {
+    capture(
+        "aluminium",
+        json!({
+            "productName": "Rolled Aluminium Coil 1050A",
+            "manufacturer": {
+                "name": "Sample Light Metals AS",
+                "address": "Havnegata 4, 6600 Sunndalsora, NO"
+            },
+            "materials": [{"name": "Aluminium", "weightKg": 1000.0}],
+            "productGroupData": {
+                "productGroup": "aluminium",
+                "gtin": "09506000200019",
+                "alloyGrade": "1050A",
+                "productionRoute": "secondary-recycled",
+                "co2ePerTonneKg": 4200.0,
+                "recycledContentPct": 75.0,
+                "countryOfOrigin": "NO"
+            }
+        }),
+    )
+    .await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "writes a fixture into the source tree; run via `just capture-fixture`"]
+async fn capture_construction() {
+    capture(
+        "construction",
+        json!({
+            "productName": "CEM II/A-S 42,5 N Cement",
+            "manufacturer": {
+                "name": "Sample Baustoffe GmbH",
+                "address": "Industriestrasse 8, 45307 Essen, DE"
+            },
+            "materials": [{"name": "Clinker", "weightKg": 800.0}],
+            "productGroupData": {
+                "productGroup": "construction",
+                "gtin": "09506000200026",
+                "productFamily": "cement",
+                "countryOfOrigin": "DE",
+                "co2ePerFunctionalUnitKg": 620.0,
+                "functionalUnit": "1 tonne of cement"
+            }
+        }),
+    )
+    .await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "writes a fixture into the source tree; run via `just capture-fixture`"]
+async fn capture_detergent() {
+    capture(
+        "detergent",
+        json!({
+            "productName": "Concentrated Laundry Liquid 1.5L",
+            "manufacturer": {
+                "name": "Sample Home Care SA",
+                "address": "Rue de Nivelles 22, 1400 Nivelles, BE"
+            },
+            "materials": [{"name": "Water", "weightKg": 1.1}],
+            "productGroupData": {
+                "productGroup": "detergent",
+                "gtin": "09506000200033",
+                "productType": "laundry",
+                "format": "liquid",
+                // Every surfactant must be readily biodegradable — `false` is a
+                // NON_COMPLIANT trigger, so a compliant fixture cannot carry one.
+                "surfactants": [
+                    {
+                        "name": "Sodium Laureth Sulfate",
+                        "biodegradable": true,
+                        "concentrationBand": "5-15%"
+                    },
+                    {
+                        "name": "Cocamidopropyl Betaine",
+                        "biodegradable": true,
+                        "concentrationBand": "<5%"
+                    }
+                ],
+                "countryOfOrigin": "BE"
+            }
+        }),
+    )
+    .await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "writes a fixture into the source tree; run via `just capture-fixture`"]
+async fn capture_furniture() {
+    capture(
+        "furniture",
+        json!({
+            "productName": "Oak Dining Chair",
+            "manufacturer": {
+                "name": "Sample Mobler ApS",
+                "address": "Havnevej 3, 7100 Vejle, DK"
+            },
+            "materials": [{"name": "Oak", "weightKg": 6.4}],
+            "productGroupData": {
+                "productGroup": "furniture",
+                "gtin": "09506000200040",
+                "productType": "chair",
+                "primaryMaterial": "solid-wood",
+                "countryOfOrigin": "DK"
+            }
+        }),
+    )
+    .await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "writes a fixture into the source tree; run via `just capture-fixture`"]
+async fn capture_mattress() {
+    capture(
+        "mattress",
+        json!({
+            "productName": "Pocket Sprung Mattress 160x200",
+            "manufacturer": {
+                "name": "Sample Sleep Systems Oy",
+                "address": "Tehtaankatu 12, 15140 Lahti, FI"
+            },
+            "materials": [{"name": "Steel springs", "weightKg": 14.0}],
+            "productGroupData": {
+                "productGroup": "mattress",
+                "gtin": "09506000200057",
+                "primaryMaterial": "mixed",
+                "countryOfOrigin": "FI"
+            }
+        }),
+    )
+    .await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "writes a fixture into the source tree; run via `just capture-fixture`"]
+async fn capture_steel() {
+    capture(
+        "steel",
+        json!({
+            "productName": "Hot Rolled Coil S235JR",
+            "manufacturer": {
+                "name": "Sample Stal AB",
+                "address": "Jarnvagsgatan 1, 613 31 Oxelosund, SE"
+            },
+            "materials": [{"name": "Steel", "weightKg": 1000.0}],
+            "productGroupData": {
+                "productGroup": "steel",
+                "gtin": "09506000200064",
+                "co2ePerTonneSteel": 1850.0,
+                "recycledScrapContentPct": 42.0,
+                "productCategory": "flat",
+                "countryOfOrigin": "SE",
+                "productionRoute": "electric-arc"
+            }
+        }),
+    )
+    .await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "writes a fixture into the source tree; run via `just capture-fixture`"]
+async fn capture_toy() {
+    capture(
+        "toy",
+        json!({
+            "productName": "Wooden Stacking Rings",
+            "manufacturer": {
+                "name": "Sample Spielwaren GmbH",
+                "address": "Spielstrasse 5, 90762 Fuerth, DE"
+            },
+            "materials": [{"name": "Beech", "weightKg": 0.4}],
+            "productGroupData": {
+                "productGroup": "toy",
+                "gtin": "09506000200071",
+                "ageGroup": "0-3",
+                "primaryMaterial": "wood",
+                "ceMarking": true,
+                "countryOfOrigin": "DE"
+            }
+        }),
+    )
+    .await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "writes a fixture into the source tree; run via `just capture-fixture`"]
+async fn capture_tyre() {
+    capture(
+        "tyre",
+        json!({
+            "productName": "205/55 R16 91V Summer Tyre",
+            "manufacturer": {
+                "name": "Sample Pneumatici SpA",
+                "address": "Via Gomma 40, 20126 Milano, IT"
+            },
+            "materials": [{"name": "Natural rubber", "weightKg": 3.1}],
+            "productGroupData": {
+                "productGroup": "tyre",
+                "gtin": "09506000200088",
+                "tyreClass": "C1",
+                "fuelEfficiencyClass": "B",
+                "wetGripClass": "A",
+                "externalRollingNoiseDb": 69.0
+            }
+        }),
+    )
+    .await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "writes a fixture into the source tree; run via `just capture-fixture`"]
+async fn capture_unsold_goods() {
+    // Shaped unlike every other product group: an Art. 24 disclosure is about an
+    // undertaking's financial year, not a product, so there is no GTIN and the
+    // payload is the Annex I return itself.
+    capture(
+        "unsold-goods",
+        json!({
+            "productName": "Unsold consumer goods disclosure FY2026",
+            "manufacturer": {
+                "name": "Sample Retail Group NV",
+                "address": "Keizersgracht 100, 1015 CS Amsterdam, NL"
+            },
+            "materials": [],
+            "productGroupData": {
+                "productGroup": "unsold-goods",
+                "entity": {
+                    "name": "Sample Retail Group NV",
+                    "identifier": {"type": "euid", "value": "NLNHR.12345678"},
+                    "scope": {"type": "standalone"}
+                },
+                "financialYear": {"start": "2026-01-01", "end": "2026-12-31"},
+                "lines": [
+                    {
+                        "cnCategories": ["6109"],
+                        "description": "Cotton T-shirts, returned and unsellable",
+                        "unitsDiscarded": {"value": 1240},
+                        "weightKg": {"value": 248},
+                        "packagingIncluded": false,
+                        "reason": "damagedOrContaminated",
+                        // Whole percentages: the Rust field is a `u8`, and the
+                        // five must sum to 100 — total destruction is derived
+                        // from recycling + other recovery + disposal, not filed.
+                        "treatment": {
+                            "preparingForReusePct": 10,
+                            "recyclingPct": 60,
+                            "otherRecoveryPct": 20,
+                            "disposalPct": 5,
+                            "unknownPct": 5
+                        }
+                    }
+                ],
+                "measuresTaken": "Donation agreements with two national charities; returns triaged for resale before disposal.",
+                "measuresPlanned": "Extend the donation route to all seasonal lines and introduce repair for damaged returns."
             }
         }),
     )

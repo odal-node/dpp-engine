@@ -208,6 +208,52 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ### Fixed
 
+- **The stored-document compatibility guard passed without reading a single
+  document.** `passport_doc_compat.rs` freezes a real stored `doc` per product
+  group and asserts it still deserialises, so a change that silently breaks
+  stored passports fails the build. All nineteen fixtures predated the `sector`
+  → `productGroup` envelope rename and were therefore listed in
+  `UNREADABLE_FIXTURES`: the suite was green because every failure was
+  documented, not because the read path worked. The file said so itself.
+
+  Twelve current-shape documents — one per shipped product group — are now
+  captured from real creates, and the nine rows the rename had put on paths that
+  are still current are gone. Ten exemptions remain and all are genuine: six
+  battery breaks (no `batteryType`, or no lens path) and four older pre-rename
+  versions whose files stay on disk as the record of what the break was.
+
+  Verified by breaking it: deleting `productGroup` from a captured fixture now
+  fails the guard with `missing field productGroup`. The same corruption passed
+  silently before.
+
+- **A product group with no frozen document was invisible to that guard.**
+  `collect_fixtures` walks the fixtures directory, so coverage was whatever
+  happened to be on disk — a product group with nothing there was never
+  iterated rather than reported, and could break completely without any test
+  saying so. Three had already fallen through: `mattress` shipped with no
+  fixture directory at all, `furniture` moved to v1.2.0 while its only fixture
+  stayed at v1.1.0, and `unsold-goods` carried a v1.0.0 fixture for a version the
+  catalog no longer ships.
+
+  `every_shipped_product_group_has_a_fixture_for_its_current_version` now reads
+  the catalog rather than the directory, so the question is "does every shipped
+  product group have one" instead of "does everything present still read". The
+  two fail in opposite directions, which is what keeps the list from quietly
+  growing to cover everything again.
+
+- **`just capture-fixture unsold-goods` could not run.** The recipe interpolated
+  the catalog key straight into a Rust function name, and `capture_unsold-goods`
+  is not an identifier — so the one product group whose key carries a hyphen was
+  the one that could never be captured. The key is now substituted before use.
+
+- **A failing capture reported `expected value at line 1 column 1`.** The harness
+  parsed the create response as JSON before checking its status, so any non-JSON
+  refusal surfaced as a decode error that said nothing about what the node
+  refused — and a rejected create is the normal way that harness fails. It now
+  asserts the status against the raw body first, which turned an opaque decode
+  error into `invalid type: floating point 5.0, expected u8` and located two
+  wrong field types in seconds.
+
 - **Four `s3_archive` tests booted a MinIO container each, and sat 0.4s from
   failing CI.** Around eight seconds apiece was container startup, which the test
   body does not control — so the four crossed the ten-second slow-test budget

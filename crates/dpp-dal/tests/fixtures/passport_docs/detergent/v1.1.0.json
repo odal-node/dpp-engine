@@ -1,37 +1,79 @@
 {
-  "id": "019f3aa5-579d-73c1-a3e6-a8002df5e073",
-  "sector": "detergent",
-  "status": "draft",
-  "batchId": "DT-2026-BATCH-01",
-  "version": 1,
-  "createdAt": "2026-08-01T09:00:00.000000000Z",
-  "materials": [],
-  "qrCodeUrl": null,
-  "updatedAt": "2026-08-01T09:00:00.000000000Z",
-  "sectorData": {
-    "sector": "detergent",
-    "gtin": "09506000134352",
-    "productType": "laundry",
+  "applicableInstruments": [
+    {
+      "instrument": "detergents-2026-405",
+      "recorded": "catalog"
+    }
+  ],
+  "batchId": null,
+  "co2ePerUnit": null,
+  "complianceResult": {
+    "assessedAt": "2026-09-02T23:52:18.138515500Z",
+    "co2eScore": null,
+    "complianceStatus": "PASSTHROUGH_NO_VALIDATION",
+    "recycledContentPct": null,
+    "repairabilityIndex": null
+  },
+  "createdAt": "2026-09-02T23:52:18.133161600Z",
+  "disclosureSignatures": {
+    "public+restricted+conformity": "test-header.eyJhcHBsaWNhYmxlSW5zdHJ1bWVudHMiOlt7Imluc3RydW1lbnQiOiJkZXRlcmdlbnRzLTIwMjYtNDA1IiwicmVjb3JkZWQiOiJjYXRhbG9nIn1dLCJiYXRjaElkIjpudWxsLCJjbzJlUGVyVW5pdCI6bnVsbCwiY29tcGxpYW5jZVJlc3VsdCI6eyJhc3Nlc3NlZEF0IjoiMjAyNi0wOS0wMlQyMzo1MjoxOC4xMzg1MTU1MDBaIiwiY28yZVNjb3JlIjpudWxsLCJjb21wbGlhbmNlU3RhdHVzIjoiUEFTU1RIUk9VR0hfTk9fVkFMSURBVElPTiIsInJlY3ljbGVkQ29udGVudFBjdCI6bnVsbCwicmVwYWlyYWJpbGl0eUluZGV4IjpudWxsfSwiY3JlYXRlZEF0IjoiMjAyNi0wOS0wMlQyMzo1MjoxOC4xMzMxNjE2MDBaIiwiZmFjaWxpdHkiOnsiY291bnRyeSI6IkRFIiwibmFtZSI6IlNlZWQgUGxhbnQiLCJzY2hlbWUiOiJnbG4iLCJ2YWx1ZSI6IjQwMTIzNDUwMDAwMDkifSwiaWQiOiIwMWEwNjQ4OS1hN2Q1LTdmMDMtYWNhNS1mN2NhOWFjZTc5NjEiLCJsaW50UmVzdWx0Ijp7ImFzc2Vzc2VkQXQiOiIyMDI2LTA5LTAyVDIzOjUyOjE4LjEzODUyMDIwMFoiLCJwYWNrVmVyc2lvbiI6IjEuMC4wIn0sIm1hbnVmYWN0dXJlciI6eyJhZGRyZXNzIjoiUnVlIGRlIE5pdmVsbGVzIDIyLCAxNDAwIE5pdmVsbGVzLCBCRSIsImRpZFdlYlVybCI6bnVsbCwibmFtZSI6IlNhbXBsZSBIb21lIENhcmUgU0EifSwibWF0ZXJpYWxzIjpbeyJjb3VudHJ5T2ZPcmlnaW4iOm51bGwsIm5hbWUiOiJXYXRlciIsInJlY3ljbGVkUGN0IjpudWxsLCJ3ZWlnaHRLZyI6MS4xfV0sIm9wZXJhdG9ySWRlbnRpZmllciI6IkRFMTIzNDU2Nzg5IiwicHJvZHVjdEdyb3VwIjoiZGV0ZXJnZW50IiwicHJvZHVjdEdyb3VwRGF0YSI6eyJjb3VudHJ5T2ZPcmlnaW4iOiJCRSIsImZvcm1hdCI6ImxpcXVpZCIsImd0aW4iOiIwOTUwNjAwMDIwMDAzMyIsInByb2R1Y3RHcm91cCI6ImRldGVyZ2VudCIsInByb2R1Y3RUeXBlIjoibGF1bmRyeSIsInN1cmZhY3RhbnRzIjpbeyJiaW9kZWdyYWRhYmxlIjp0cnVlLCJjb25jZW50cmF0aW9uQmFuZCI6IjUtMTUlIiwibmFtZSI6IlNvZGl1bSBMYXVyZXRoIFN1bGZhdGUifSx7ImJpb2RlZ3JhZGFibGUiOnRydWUsImNvbmNlbnRyYXRpb25CYW5kIjoiPDUlIiwibmFtZSI6IkNvY2FtaWRvcHJvcHlsIEJldGFpbmUifV19LCJwcm9kdWN0TmFtZSI6IkNvbmNlbnRyYXRlZCBMYXVuZHJ5IExpcXVpZCAxLjVMIiwicHVibGlzaGVkQXQiOiIyMDI2LTA5LTAyVDIzOjUyOjE4LjE3OTUzOTcwMFoiLCJxckNvZGVVcmwiOiJodHRwczovL2lkLm9kYWwtbm9kZS5pby8wMS8wOTUwNjAwMDIwMDAzMy8yMS83ZjAzYWNhNWY3Y2E5YWNlNzk2MSIsInJlcGFpcmFiaWxpdHlTY29yZSI6bnVsbCwicmV0ZW50aW9uTG9ja2VkIjp0cnVlLCJyZXRlbnRpb25VbnRpbCI6IjIwMzYtMDgtMzBUMjM6NTI6MTguMTc5NTM5NzAwWiIsInNjaGVtYVZlcnNpb24iOiIxLjEuMCIsInN0YXR1cyI6ImFjdGl2ZSIsInVwZGF0ZWRBdCI6IjIwMjYtMDktMDJUMjM6NTI6MTguMTc5NTM5NzAwWiIsInZlcnNpb24iOjF9.test-sig",
+    "public+restricted+individual": "test-header.eyJhcHBsaWNhYmxlSW5zdHJ1bWVudHMiOlt7Imluc3RydW1lbnQiOiJkZXRlcmdlbnRzLTIwMjYtNDA1IiwicmVjb3JkZWQiOiJjYXRhbG9nIn1dLCJiYXRjaElkIjpudWxsLCJjbzJlUGVyVW5pdCI6bnVsbCwiY29tcGxpYW5jZVJlc3VsdCI6eyJhc3Nlc3NlZEF0IjoiMjAyNi0wOS0wMlQyMzo1MjoxOC4xMzg1MTU1MDBaIiwiY28yZVNjb3JlIjpudWxsLCJjb21wbGlhbmNlU3RhdHVzIjoiUEFTU1RIUk9VR0hfTk9fVkFMSURBVElPTiIsInJlY3ljbGVkQ29udGVudFBjdCI6bnVsbCwicmVwYWlyYWJpbGl0eUluZGV4IjpudWxsfSwiY3JlYXRlZEF0IjoiMjAyNi0wOS0wMlQyMzo1MjoxOC4xMzMxNjE2MDBaIiwiZmFjaWxpdHkiOnsiY291bnRyeSI6IkRFIiwibmFtZSI6IlNlZWQgUGxhbnQiLCJzY2hlbWUiOiJnbG4iLCJ2YWx1ZSI6IjQwMTIzNDUwMDAwMDkifSwiaWQiOiIwMWEwNjQ4OS1hN2Q1LTdmMDMtYWNhNS1mN2NhOWFjZTc5NjEiLCJsaW50UmVzdWx0Ijp7ImFzc2Vzc2VkQXQiOiIyMDI2LTA5LTAyVDIzOjUyOjE4LjEzODUyMDIwMFoiLCJwYWNrVmVyc2lvbiI6IjEuMC4wIn0sIm1hbnVmYWN0dXJlciI6eyJhZGRyZXNzIjoiUnVlIGRlIE5pdmVsbGVzIDIyLCAxNDAwIE5pdmVsbGVzLCBCRSIsImRpZFdlYlVybCI6bnVsbCwibmFtZSI6IlNhbXBsZSBIb21lIENhcmUgU0EifSwibWF0ZXJpYWxzIjpbeyJjb3VudHJ5T2ZPcmlnaW4iOm51bGwsIm5hbWUiOiJXYXRlciIsInJlY3ljbGVkUGN0IjpudWxsLCJ3ZWlnaHRLZyI6MS4xfV0sIm9wZXJhdG9ySWRlbnRpZmllciI6IkRFMTIzNDU2Nzg5IiwicHJvZHVjdEdyb3VwIjoiZGV0ZXJnZW50IiwicHJvZHVjdEdyb3VwRGF0YSI6eyJjb3VudHJ5T2ZPcmlnaW4iOiJCRSIsImZvcm1hdCI6ImxpcXVpZCIsImd0aW4iOiIwOTUwNjAwMDIwMDAzMyIsInByb2R1Y3RHcm91cCI6ImRldGVyZ2VudCIsInByb2R1Y3RUeXBlIjoibGF1bmRyeSIsInN1cmZhY3RhbnRzIjpbeyJiaW9kZWdyYWRhYmxlIjp0cnVlLCJjb25jZW50cmF0aW9uQmFuZCI6IjUtMTUlIiwibmFtZSI6IlNvZGl1bSBMYXVyZXRoIFN1bGZhdGUifSx7ImJpb2RlZ3JhZGFibGUiOnRydWUsImNvbmNlbnRyYXRpb25CYW5kIjoiPDUlIiwibmFtZSI6IkNvY2FtaWRvcHJvcHlsIEJldGFpbmUifV19LCJwcm9kdWN0TmFtZSI6IkNvbmNlbnRyYXRlZCBMYXVuZHJ5IExpcXVpZCAxLjVMIiwicHVibGlzaGVkQXQiOiIyMDI2LTA5LTAyVDIzOjUyOjE4LjE3OTUzOTcwMFoiLCJxckNvZGVVcmwiOiJodHRwczovL2lkLm9kYWwtbm9kZS5pby8wMS8wOTUwNjAwMDIwMDAzMy8yMS83ZjAzYWNhNWY3Y2E5YWNlNzk2MSIsInJlcGFpcmFiaWxpdHlTY29yZSI6bnVsbCwicmV0ZW50aW9uVW50aWwiOiIyMDM2LTA4LTMwVDIzOjUyOjE4LjE3OTUzOTcwMFoiLCJzY2hlbWFWZXJzaW9uIjoiMS4xLjAiLCJzdGF0dXMiOiJhY3RpdmUiLCJ1cGRhdGVkQXQiOiIyMDI2LTA5LTAyVDIzOjUyOjE4LjE3OTUzOTcwMFoiLCJ2ZXJzaW9uIjoxfQ.test-sig"
+  },
+  "facility": {
+    "country": "DE",
+    "name": "Seed Plant",
+    "scheme": "gln",
+    "value": "4012345000009"
+  },
+  "id": "01a06489-a7d5-7f03-aca5-f7ca9ace7961",
+  "jwsSignature": "test-header.eyJhcHBsaWNhYmxlSW5zdHJ1bWVudHMiOlt7Imluc3RydW1lbnQiOiJkZXRlcmdlbnRzLTIwMjYtNDA1IiwicmVjb3JkZWQiOiJjYXRhbG9nIn1dLCJiYXRjaElkIjpudWxsLCJjbzJlUGVyVW5pdCI6bnVsbCwiY29tcGxpYW5jZVJlc3VsdCI6eyJhc3Nlc3NlZEF0IjoiMjAyNi0wOS0wMlQyMzo1MjoxOC4xMzg1MTU1MDBaIiwiY28yZVNjb3JlIjpudWxsLCJjb21wbGlhbmNlU3RhdHVzIjoiUEFTU1RIUk9VR0hfTk9fVkFMSURBVElPTiIsInJlY3ljbGVkQ29udGVudFBjdCI6bnVsbCwicmVwYWlyYWJpbGl0eUluZGV4IjpudWxsfSwiY3JlYXRlZEF0IjoiMjAyNi0wOS0wMlQyMzo1MjoxOC4xMzMxNjE2MDBaIiwiZmFjaWxpdHkiOnsiY291bnRyeSI6IkRFIiwibmFtZSI6IlNlZWQgUGxhbnQiLCJzY2hlbWUiOiJnbG4iLCJ2YWx1ZSI6IjQwMTIzNDUwMDAwMDkifSwiaWQiOiIwMWEwNjQ4OS1hN2Q1LTdmMDMtYWNhNS1mN2NhOWFjZTc5NjEiLCJqd3NTaWduYXR1cmUiOm51bGwsImxpbnRSZXN1bHQiOnsiYXNzZXNzZWRBdCI6IjIwMjYtMDktMDJUMjM6NTI6MTguMTM4NTIwMjAwWiIsInBhY2tWZXJzaW9uIjoiMS4wLjAifSwibWFudWZhY3R1cmVyIjp7ImFkZHJlc3MiOiJSdWUgZGUgTml2ZWxsZXMgMjIsIDE0MDAgTml2ZWxsZXMsIEJFIiwiZGlkV2ViVXJsIjpudWxsLCJuYW1lIjoiU2FtcGxlIEhvbWUgQ2FyZSBTQSJ9LCJtYXRlcmlhbHMiOlt7ImNvdW50cnlPZk9yaWdpbiI6bnVsbCwibmFtZSI6IldhdGVyIiwicmVjeWNsZWRQY3QiOm51bGwsIndlaWdodEtnIjoxLjF9XSwib3BlcmF0b3JJZGVudGlmaWVyIjoiREUxMjM0NTY3ODkiLCJwcm9kdWN0R3JvdXAiOiJkZXRlcmdlbnQiLCJwcm9kdWN0R3JvdXBEYXRhIjp7ImNvdW50cnlPZk9yaWdpbiI6IkJFIiwiZm9ybWF0IjoibGlxdWlkIiwiZ3RpbiI6IjA5NTA2MDAwMjAwMDMzIiwicHJvZHVjdEdyb3VwIjoiZGV0ZXJnZW50IiwicHJvZHVjdFR5cGUiOiJsYXVuZHJ5Iiwic3VyZmFjdGFudHMiOlt7ImJpb2RlZ3JhZGFibGUiOnRydWUsImNvbmNlbnRyYXRpb25CYW5kIjoiNS0xNSUiLCJuYW1lIjoiU29kaXVtIExhdXJldGggU3VsZmF0ZSJ9LHsiYmlvZGVncmFkYWJsZSI6dHJ1ZSwiY29uY2VudHJhdGlvbkJhbmQiOiI8NSUiLCJuYW1lIjoiQ29jYW1pZG9wcm9weWwgQmV0YWluZSJ9XX0sInByb2R1Y3ROYW1lIjoiQ29uY2VudHJhdGVkIExhdW5kcnkgTGlxdWlkIDEuNUwiLCJwdWJsaXNoZWRBdCI6IjIwMjYtMDktMDJUMjM6NTI6MTguMTc5NTM5NzAwWiIsInFyQ29kZVVybCI6Imh0dHBzOi8vaWQub2RhbC1ub2RlLmlvLzAxLzA5NTA2MDAwMjAwMDMzLzIxLzdmMDNhY2E1ZjdjYTlhY2U3OTYxIiwicmVwYWlyYWJpbGl0eVNjb3JlIjpudWxsLCJyZXRlbnRpb25Mb2NrZWQiOnRydWUsInJldGVudGlvblVudGlsIjoiMjAzNi0wOC0zMFQyMzo1MjoxOC4xNzk1Mzk3MDBaIiwic2NoZW1hVmVyc2lvbiI6IjEuMS4wIiwic3RhdHVzIjoiYWN0aXZlIiwidXBkYXRlZEF0IjoiMjAyNi0wOS0wMlQyMzo1MjoxOC4xNzk1Mzk3MDBaIiwidmVyc2lvbiI6MX0.test-sig",
+  "lintResult": {
+    "assessedAt": "2026-09-02T23:52:18.138520200Z",
+    "packVersion": "1.0.0"
+  },
+  "manufacturer": {
+    "address": "Rue de Nivelles 22, 1400 Nivelles, BE",
+    "didWebUrl": null,
+    "name": "Sample Home Care SA"
+  },
+  "materials": [
+    {
+      "countryOfOrigin": null,
+      "name": "Water",
+      "recycledPct": null,
+      "weightKg": 1.1
+    }
+  ],
+  "operatorIdentifier": "DE123456789",
+  "productGroup": "detergent",
+  "productGroupData": {
+    "countryOfOrigin": "BE",
     "format": "liquid",
+    "gtin": "09506000200033",
+    "productGroup": "detergent",
+    "productType": "laundry",
     "surfactants": [
       {
-        "name": "Sodium Laureth Sulfate",
         "biodegradable": true,
-        "concentrationBand": "5-15%"
+        "concentrationBand": "5-15%",
+        "name": "Sodium Laureth Sulfate"
+      },
+      {
+        "biodegradable": true,
+        "concentrationBand": "<5%",
+        "name": "Cocamidopropyl Betaine"
       }
-    ],
-    "countryOfOrigin": "NL"
+    ]
   },
-  "co2ePerUnit": null,
-  "productName": "Example Laundry Liquid 1.5L",
-  "publishedAt": null,
-  "jwsSignature": null,
-  "manufacturer": {
-    "name": "Example Cleaning Products BV",
-    "address": "NL",
-    "didWebUrl": null
-  },
+  "productName": "Concentrated Laundry Liquid 1.5L",
+  "publicJwsSignature": "test-header.eyJhcHBsaWNhYmxlSW5zdHJ1bWVudHMiOlt7Imluc3RydW1lbnQiOiJkZXRlcmdlbnRzLTIwMjYtNDA1IiwicmVjb3JkZWQiOiJjYXRhbG9nIn1dLCJjbzJlUGVyVW5pdCI6bnVsbCwiY29tcGxpYW5jZVJlc3VsdCI6eyJhc3Nlc3NlZEF0IjoiMjAyNi0wOS0wMlQyMzo1MjoxOC4xMzg1MTU1MDBaIiwiY28yZVNjb3JlIjpudWxsLCJjb21wbGlhbmNlU3RhdHVzIjoiUEFTU1RIUk9VR0hfTk9fVkFMSURBVElPTiIsInJlY3ljbGVkQ29udGVudFBjdCI6bnVsbCwicmVwYWlyYWJpbGl0eUluZGV4IjpudWxsfSwiY3JlYXRlZEF0IjoiMjAyNi0wOS0wMlQyMzo1MjoxOC4xMzMxNjE2MDBaIiwiZmFjaWxpdHkiOnsiY291bnRyeSI6IkRFIiwibmFtZSI6IlNlZWQgUGxhbnQiLCJzY2hlbWUiOiJnbG4iLCJ2YWx1ZSI6IjQwMTIzNDUwMDAwMDkifSwiaWQiOiIwMWEwNjQ4OS1hN2Q1LTdmMDMtYWNhNS1mN2NhOWFjZTc5NjEiLCJtYW51ZmFjdHVyZXIiOnsiYWRkcmVzcyI6IlJ1ZSBkZSBOaXZlbGxlcyAyMiwgMTQwMCBOaXZlbGxlcywgQkUiLCJkaWRXZWJVcmwiOm51bGwsIm5hbWUiOiJTYW1wbGUgSG9tZSBDYXJlIFNBIn0sIm1hdGVyaWFscyI6W3siY291bnRyeU9mT3JpZ2luIjpudWxsLCJuYW1lIjoiV2F0ZXIiLCJyZWN5Y2xlZFBjdCI6bnVsbCwid2VpZ2h0S2ciOjEuMX1dLCJvcGVyYXRvcklkZW50aWZpZXIiOiJERTEyMzQ1Njc4OSIsInByb2R1Y3RHcm91cCI6ImRldGVyZ2VudCIsInByb2R1Y3RHcm91cERhdGEiOnsiY291bnRyeU9mT3JpZ2luIjoiQkUiLCJmb3JtYXQiOiJsaXF1aWQiLCJndGluIjoiMDk1MDYwMDAyMDAwMzMiLCJwcm9kdWN0R3JvdXAiOiJkZXRlcmdlbnQiLCJwcm9kdWN0VHlwZSI6ImxhdW5kcnkiLCJzdXJmYWN0YW50cyI6W3siYmlvZGVncmFkYWJsZSI6dHJ1ZSwiY29uY2VudHJhdGlvbkJhbmQiOiI1LTE1JSIsIm5hbWUiOiJTb2RpdW0gTGF1cmV0aCBTdWxmYXRlIn0seyJiaW9kZWdyYWRhYmxlIjp0cnVlLCJjb25jZW50cmF0aW9uQmFuZCI6Ijw1JSIsIm5hbWUiOiJDb2NhbWlkb3Byb3B5bCBCZXRhaW5lIn1dfSwicHJvZHVjdE5hbWUiOiJDb25jZW50cmF0ZWQgTGF1bmRyeSBMaXF1aWQgMS41TCIsInB1Ymxpc2hlZEF0IjoiMjAyNi0wOS0wMlQyMzo1MjoxOC4xNzk1Mzk3MDBaIiwicXJDb2RlVXJsIjoiaHR0cHM6Ly9pZC5vZGFsLW5vZGUuaW8vMDEvMDk1MDYwMDAyMDAwMzMvMjEvN2YwM2FjYTVmN2NhOWFjZTc5NjEiLCJyZXBhaXJhYmlsaXR5U2NvcmUiOm51bGwsInJldGVudGlvblVudGlsIjoiMjAzNi0wOC0zMFQyMzo1MjoxOC4xNzk1Mzk3MDBaIiwic2NoZW1hVmVyc2lvbiI6IjEuMS4wIiwic3RhdHVzIjoiYWN0aXZlIiwidXBkYXRlZEF0IjoiMjAyNi0wOS0wMlQyMzo1MjoxOC4xNzk1Mzk3MDBaIiwidmVyc2lvbiI6MX0.test-sig",
+  "publishedAt": "2026-09-02T23:52:18.179539700Z",
+  "qrCodeUrl": "https://id.odal-node.io/01/09506000200033/21/7f03aca5f7ca9ace7961",
+  "repairabilityScore": null,
+  "retentionLocked": true,
+  "retentionUntil": "2036-08-30T23:52:18.179539700Z",
   "schemaVersion": "1.1.0",
-  "retentionLocked": false,
-  "repairabilityScore": null
+  "status": "active",
+  "updatedAt": "2026-09-02T23:52:18.179539700Z",
+  "version": 1
 }

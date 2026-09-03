@@ -162,9 +162,12 @@ openapi-html:
 # fixture captured after the bump can only catch the bump after next. It refuses
 # to overwrite an existing fixture, because a frozen document that gets rewritten
 # has stopped being evidence about the release that produced it.
-capture-fixture SECTOR:
+# The argument is a catalog key, so it may contain a hyphen (`unsold-goods`),
+# which a Rust function name cannot — hence the substitution.
+capture-fixture PRODUCT_GROUP:
     cargo test -p dpp-vault --features integration-tests \
-        --test capture_doc_fixture capture_{{SECTOR}} -- --ignored --exact --nocapture
+        --test capture_doc_fixture capture_{{replace(PRODUCT_GROUP, "-", "_")}} \
+        -- --ignored --exact --nocapture
 
 # Format all code
 fmt:
