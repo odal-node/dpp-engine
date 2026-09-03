@@ -180,6 +180,41 @@ pub async fn fetch_json(client: &Client, url: &str, max_bytes: usize) -> Result<
     read_capped_json(resp, max_bytes).await
 }
 
+/// Guard `url`, then hand back a client that can only reach the addresses the
+/// guard approved.
+///
+/// [`fetch_json`] is the whole story for a `GET` that returns JSON. This exists
+/// for the callers that are not that: a webhook delivery is a `POST` carrying
+/// signed headers and an opaque body, so it cannot borrow `fetch_json`'s request
+/// — but it needs exactly the same binding between the address that was checked
+/// and the address that is connected to.
+///
+/// Without this, such a caller's only option was [`url_guard::assert_public_target`],
+/// which resolves, approves and *discards*; the client then resolves the name a
+/// second time to connect, and a zero-TTL record alternating a public and an
+/// internal answer passes the first resolution and connects on the second. That
+/// is the gap this closes, and it is the one the guard's own documentation
+/// names.
+///
+/// `shared` is returned as-is when the host is an IP literal — there is no name
+/// to rebind, so the caller keeps its connection pool. For a named host the
+/// returned client is per-call and does not pool; see [`pinned_client`] for why
+/// that cost is accepted.
+///
+/// # Errors
+///
+/// [`FetchError::Refused`] when the guard rejects the target, or when a pinned
+/// client cannot be built.
+pub async fn pinned_client_for(shared: &Client, url: &str) -> Result<Client, FetchError> {
+    let target = url_guard::resolve_public_target(url)
+        .await
+        .map_err(FetchError::Refused)?;
+    if target.is_literal() {
+        return Ok(shared.clone());
+    }
+    pinned_client(&target)
+}
+
 /// A client that can only connect to the addresses the guard already approved.
 ///
 /// `resolve_to_addrs` overrides resolution for this one host, so the connection
