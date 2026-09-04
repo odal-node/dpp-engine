@@ -324,6 +324,7 @@ async fn start_vault_with_identity(
         local_auth_provider: None,
         credential_directory: credentials.as_ref().map(|(d, _)| d.clone()),
         trusted_issuers: credentials.as_ref().map(|(_, t)| t.clone()),
+        credential_issuer: None,
         cors_allowed_origins: Vec::new(),
         scan_repo,
         plugin_admin: None,

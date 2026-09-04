@@ -282,6 +282,10 @@ const UNCHECKED: &[(&str, &str)] = &[
          the only thing that would actually close it",
     ),
     (
+        "CredentialRole",
+        "a `oneOf` of a string enum and an externally-tagged object (`Custom`),          which neither checker can express: `enum_cases` requires every variant          to serialise to a string, and `object_cases` requires an object with a          property list. The wire form of each variant is pinned instead by          `the_issuable_roles_serialise_as_documented` in          `dpp-vault/src/handlers/credentials.rs`, which is where a drift would          actually be caught",
+    ),
+    (
         "ProductGroupData",
         "deliberately open (`additionalProperties: true`, discriminated by \
          `productGroup`). The per-product-group payloads are described by the versioned JSON \
@@ -388,6 +392,11 @@ fn object_cases() -> Vec<ObjectCase> {
     case!("ApiKey", fixtures::api_key());
     case!("CreatedApiKeyResponse", fixtures::new_api_key());
     case!("CreateApiKeyRequest", fixtures::create_api_key_request());
+    case!(
+        "IssueCredentialRequest",
+        fixtures::issue_credential_request()
+    );
+    case!("IssuedCredential", fixtures::issued_credential());
     case!("PassportAuditEntry", fixtures::audit_entry());
     case!("Facility", fixtures::facility());
     case!("CreateFacilityRequest", fixtures::create_facility_request());
@@ -1696,6 +1705,7 @@ fn every_route_is_documented_and_every_documented_path_exists() {
 mod handler_sources {
     pub const VAULT: &[&str] = &[
         include_str!("../../dpp-vault/src/handlers/api_keys.rs"),
+        include_str!("../../dpp-vault/src/handlers/credentials.rs"),
         include_str!("../../dpp-vault/src/handlers/archive.rs"),
         include_str!("../../dpp-vault/src/handlers/audience_read.rs"),
         include_str!("../../dpp-vault/src/handlers/create.rs"),
@@ -2506,6 +2516,37 @@ mod fixtures {
             name: "CI pipeline".into(),
             expires_at: Some(ts()),
             scope: Some(ApiKeyScope::Admin),
+        }
+    }
+
+    pub fn issue_credential_request() -> dpp_vault::handlers::credentials::IssueCredentialRequest {
+        dpp_vault::handlers::credentials::IssueCredentialRequest {
+            holder_did: "did:web:repairs.example".into(),
+            holder_name: "Nord Repair GmbH".into(),
+            role: dpp_vc::CredentialRole::AuthorisedRepairer,
+            country: "DE".into(),
+            product_groups: vec!["battery".into()],
+            valid_for_days: Some(30),
+        }
+    }
+
+    pub fn issued_credential() -> dpp_vault::handlers::credentials::IssuedCredential {
+        let credential = dpp_vc::CredentialBuilder::new(
+            "did:web:operator.example".into(),
+            dpp_vc::DppCredentialSubject {
+                id: "did:web:repairs.example".into(),
+                name: "Nord Repair GmbH".into(),
+                role: dpp_vc::CredentialRole::AuthorisedRepairer,
+                country: "DE".into(),
+                product_groups: vec!["battery".into()],
+                product_categories: Vec::new(),
+            },
+        )
+        .expires_in_days(30)
+        .build();
+        dpp_vault::handlers::credentials::IssuedCredential {
+            credential_jws: "eyJhbGciOiJFZERTQSJ9.eyJ9.c2ln".into(),
+            credential,
         }
     }
 

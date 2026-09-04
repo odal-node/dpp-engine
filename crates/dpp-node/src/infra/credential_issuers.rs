@@ -20,12 +20,26 @@
 //!
 //! # The operator as its own issuer
 //!
-//! `CREDENTIAL_ISSUERS_SELF` trusts the node's own operator DID for every
-//! audience. That is the first trust anchor that exists in practice: no EU
-//! register of authorised repairers has been established, and the DPP registry
-//! registers operators and passports rather than repairer credentials. An
-//! operator vouching for its own authorised repair network is a real and
-//! defensible model, and it is deliberately opt-in rather than implied.
+//! `CREDENTIAL_ISSUERS_SELF` trusts the node's own operator DID for a
+//! **legitimate interest**, and for nothing above it. That is the first trust
+//! anchor that exists in practice: no EU register of authorised repairers has
+//! been established, and the DPP registry registers operators and passports
+//! rather than repairer credentials. An operator vouching for its own
+//! authorised repair network is a real and defensible model, and it is
+//! deliberately opt-in rather than implied.
+//!
+//! It used to grant `authority` as well, which nothing above argues for and
+//! which is not the operator's to grant. Authority status under Art. 77(2)(b)
+//! is conferred by a member state; an operator that adds its own DID to the
+//! authority bucket has written itself a market-surveillance credential, and the
+//! credential-verified read path would honour it. Trusting an authority is what
+//! `CREDENTIAL_ISSUERS_AUTHORITY` is for, where naming the issuer is an explicit
+//! act rather than a side effect of a switch about repairers.
+//!
+//! `dpp-vc` reaches the same split from the other side: it says a node signing
+//! its own access credentials "has attested nothing to anyone", which is true of
+//! the claim no operator can make about itself and not of the one only the
+//! operator can make.
 
 use dpp_types::trust::TrustMode;
 use dpp_vc::StaticTrustedIssuers;
@@ -34,7 +48,8 @@ use dpp_vc::StaticTrustedIssuers;
 const ENV_LEGITIMATE_INTEREST: &str = "CREDENTIAL_ISSUERS_LEGITIMATE_INTEREST";
 /// Comma-separated issuer DIDs trusted to attest an authority.
 const ENV_AUTHORITY: &str = "CREDENTIAL_ISSUERS_AUTHORITY";
-/// When `true`, the node's own operator DID is trusted for every audience.
+/// When `true`, the node's own operator DID is trusted to attest a legitimate
+/// interest — and nothing above it. See the module header.
 const ENV_SELF: &str = "CREDENTIAL_ISSUERS_SELF";
 
 /// Trust is matched against `credential.issuer` by exact string equality, so an
@@ -88,16 +103,16 @@ fn dids_from(var: &str) -> Vec<String> {
 /// `CREDENTIAL_ISSUERS_SELF` to grant anything.
 pub fn from_env(operator_did: Option<&str>) -> (StaticTrustedIssuers, TrustMode) {
     let mut legitimate_interest = dids_from(ENV_LEGITIMATE_INTEREST);
-    let mut authority = dids_from(ENV_AUTHORITY);
+    let authority = dids_from(ENV_AUTHORITY);
 
     let trust_self = std::env::var(ENV_SELF)
         .map(|v| v.eq_ignore_ascii_case("true"))
         .unwrap_or(false);
     if trust_self && let Some(did) = operator_did.filter(|d| !d.is_empty()) {
-        for d in keep_dids(ENV_SELF, vec![did.to_owned()]) {
-            legitimate_interest.push(d.clone());
-            authority.push(d);
-        }
+        // Legitimate interest only — see the module header. An operator that
+        // genuinely needs to trust an authority names it in `ENV_AUTHORITY`,
+        // where it is a decision rather than a consequence.
+        legitimate_interest.extend(keep_dids(ENV_SELF, vec![did.to_owned()]));
     }
 
     if legitimate_interest.is_empty() && authority.is_empty() {
@@ -208,7 +223,53 @@ mod tests {
         unsafe { std::env::set_var(ENV_SELF, "true") };
         let (registry, mode) = from_env(Some(did));
         assert_eq!(mode, TrustMode::Live);
-        assert!(registry.is_trusted_for_audience(did, Audience::Authority));
+        assert!(registry.is_trusted_for_audience(did, Audience::LegitimateInterest));
+        clear();
+    }
+
+    /// Self-trust stops at a legitimate interest.
+    ///
+    /// The switch used to push the operator's DID into the authority bucket
+    /// too, which let an operator write itself a market-surveillance credential
+    /// that the credential-verified read path would honour. Authority status is
+    /// a member state's to confer; `ENV_AUTHORITY` is where an operator names
+    /// one, deliberately.
+    #[test]
+    #[serial]
+    fn self_trust_never_reaches_the_authority_audience() {
+        clear();
+        let did = "did:web:operator.example";
+        unsafe { std::env::set_var(ENV_SELF, "true") };
+        let (registry, _) = from_env(Some(did));
+
+        assert!(
+            registry.is_trusted_for_audience(did, Audience::LegitimateInterest),
+            "the repair-network model is the whole point of the switch"
+        );
+        assert!(
+            !registry.is_trusted_for_audience(did, Audience::Authority),
+            "an operator cannot make itself a market surveillance authority"
+        );
+        clear();
+    }
+
+    /// And the switch composes with an explicitly named authority rather than
+    /// replacing it: an operator that has a real authority to trust still gets
+    /// it, and still does not become one itself.
+    #[test]
+    #[serial]
+    fn a_named_authority_is_unaffected_by_self_trust() {
+        clear();
+        let did = "did:web:operator.example";
+        unsafe { std::env::set_var(ENV_SELF, "true") };
+        unsafe { std::env::set_var(ENV_AUTHORITY, "did:web:bundesnetzagentur.example") };
+        let (registry, _) = from_env(Some(did));
+
+        assert!(
+            registry
+                .is_trusted_for_audience("did:web:bundesnetzagentur.example", Audience::Authority)
+        );
+        assert!(!registry.is_trusted_for_audience(did, Audience::Authority));
         clear();
     }
 
@@ -227,10 +288,16 @@ mod tests {
             TrustMode::Ghost,
             "a non-DID self entry must leave the node Ghost, not falsely Live"
         );
-        assert!(!registry.is_trusted_for_audience("http://localhost:8001", Audience::Authority));
+        assert!(
+            !registry
+                .is_trusted_for_audience("http://localhost:8001", Audience::LegitimateInterest)
+        );
         // The DID that credential subjects actually carry is likewise untrusted,
         // because the base URL never became one.
-        assert!(!registry.is_trusted_for_audience("did:web:localhost%3A8001", Audience::Authority));
+        assert!(
+            !registry
+                .is_trusted_for_audience("did:web:localhost%3A8001", Audience::LegitimateInterest)
+        );
         clear();
     }
 
@@ -265,7 +332,6 @@ mod tests {
         unsafe { std::env::set_var(ENV_SELF, "true") };
         let (registry, mode) = from_env(Some(did));
         assert_eq!(mode, TrustMode::Live);
-        assert!(registry.is_trusted_for_audience(did, Audience::Authority));
         assert!(registry.is_trusted_for_audience(did, Audience::LegitimateInterest));
         clear();
     }

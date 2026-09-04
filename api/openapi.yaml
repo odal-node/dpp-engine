@@ -228,6 +228,12 @@ components:
       $ref: components/schemas/access/ApiKeyScope.yaml
     CreateApiKeyRequest:
       $ref: components/schemas/access/CreateApiKeyRequest.yaml
+    CredentialRole:
+      $ref: components/schemas/access/CredentialRole.yaml
+    IssueCredentialRequest:
+      $ref: components/schemas/access/IssueCredentialRequest.yaml
+    IssuedCredential:
+      $ref: components/schemas/access/IssuedCredential.yaml
     CreatedApiKeyResponse:
       $ref: components/schemas/access/CreatedApiKeyResponse.yaml
     WebhookSubscription:
@@ -369,6 +375,8 @@ paths:
     $ref: paths/vault/vault_api_v1_api-keys.yaml
   /vault/api/v1/api-keys/{id}:
     $ref: paths/vault/vault_api_v1_api-keys_{id}.yaml
+  /vault/api/v1/credentials:
+    $ref: paths/vault/vault_api_v1_credentials.yaml
   /vault/api/v1/webhooks:
     $ref: paths/vault/vault_api_v1_webhooks.yaml
   /vault/api/v1/webhooks/{id}:

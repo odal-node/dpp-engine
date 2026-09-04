@@ -163,6 +163,9 @@ async fn main() -> anyhow::Result<()> {
         local_auth_provider,
         credential_directory: None,
         trusted_issuers: None,
+        // The standalone vault reaches no key store, so it cannot mint a
+        // credential; the issuance route answers 501 rather than pretending.
+        credential_issuer: None,
         cors_allowed_origins: cfg.cors_allowed_origins.clone(),
         scan_repo,
         // The standalone vault binary hosts no Wasm plugin engine; runtime

@@ -2447,6 +2447,75 @@
         }
       }
     },
+    "/vault/api/v1/credentials": {
+      "post": {
+        "operationId": "issueCredential",
+        "summary": "Issue an access credential",
+        "description": "Mints a DPP access credential signed with this node's own key, and returns\nit as a compact VC-JWT the holder presents in the `X-DPP-Credential` header\non `GET /vault/credential/dpp/{dppId}`.\n\n**Only a legitimate interest, never an authority.** An operator naming its\nown authorised repairer attests something no one else can — membership of\nthat network is a fact the operator alone holds, and no EU register of\nauthorised repairers exists to hold it instead. An operator naming itself a\nmarket surveillance authority attests nothing, because the standing being\nclaimed is conferred by a member state. The three authority roles are\nrefused with `422`.\n\n**Issuing is not trusting.** A credential minted here is honoured by *this*\nnode only if the node also trusts its own DID (`CREDENTIAL_ISSUERS_SELF`).\nAn operator running more than one node ordinarily mints on one and honours\nit on another, so issuance is available regardless of that switch.\n\n**Revocation is expiry.** This node fetches W3C status lists but publishes\nnone, so a credential it mints carries no `credentialStatus` and cannot be\nwithdrawn before it lapses. `validForDays` is therefore capped rather than\nopen-ended, and defaults to less than the cap.\n",
+        "tags": [
+          "Access"
+        ],
+        "security": [
+          {
+            "BearerApiKey": []
+          },
+          {
+            "BasicAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/IssueCredentialRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Credential issued.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IssuedCredential"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "422": {
+            "description": "The request cannot produce a usable credential — an authority role, a\n`holderDid` that is not a DID, a `country` that is not alpha-2, or a\n`validForDays` outside 1–90.\n",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "501": {
+            "description": "This deployment reaches no key store, so it cannot sign. The standalone\nvault binary answers this; the fused node does not.\n",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/vault/api/v1/webhooks": {
       "get": {
         "operationId": "listWebhooks",
@@ -6814,6 +6883,106 @@
               }
             ],
             "description": "Defaults to `admin` when omitted. Name `read` or `write` explicitly for a key issued to an integration."
+          }
+        }
+      },
+      "CredentialRole": {
+        "description": "The access role granted.\n\nOnly roles carrying a **legitimate interest** may be issued here.\n`market_surveillance_authority`, `customs_authority` and `notified_body` map\nto the authority audience under Art. 77(2)(b) and are refused with `422`:\nauthority status is conferred by a member state, so an operator signing itself\none has attested nothing. An authority presents a credential from its own\nissuer, named in `CREDENTIAL_ISSUERS_AUTHORITY`.\n\nA product-group-specific role that none of the named ones fit uses the object\nform — the variant is externally tagged, so it is an object where the rest are\nstrings. It carries a legitimate interest like the others.\n",
+        "oneOf": [
+          {
+            "type": "string",
+            "title": "Named role",
+            "enum": [
+              "authorised_repairer",
+              "recycler",
+              "remanufacturer",
+              "preparer_for_reuse",
+              "distributor"
+            ]
+          },
+          {
+            "type": "object",
+            "title": "Custom role",
+            "required": [
+              "custom"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "custom": {
+                "type": "string",
+                "description": "Free-form role label, e.g. a product-group-specific one."
+              }
+            }
+          }
+        ],
+        "example": "authorised_repairer"
+      },
+      "IssueCredentialRequest": {
+        "type": "object",
+        "description": "Ask this node to vouch for a holder.\n\nThe node signs with its own key, so the credential says \"this operator\nattests that this party holds this role\". That is a claim an operator is\nuniquely placed to make about its own authorised network, and one it has no\nstanding to make about authority status — see `role`.\n",
+        "required": [
+          "holderDid",
+          "holderName",
+          "role",
+          "country"
+        ],
+        "properties": {
+          "holderDid": {
+            "type": "string",
+            "description": "DID of the party being vouched for. A verifier matches it exactly, so a\nname or a URL here produces a credential nothing can present.\n",
+            "example": "did:web:repairs.example"
+          },
+          "holderName": {
+            "type": "string",
+            "description": "Legal name of the holder, carried in the credential for an auditor.",
+            "example": "Nord Repair GmbH"
+          },
+          "role": {
+            "$ref": "#/components/schemas/CredentialRole"
+          },
+          "country": {
+            "type": "string",
+            "minLength": 2,
+            "maxLength": 2,
+            "description": "ISO 3166-1 alpha-2 country of the holder's registration.",
+            "example": "DE"
+          },
+          "productGroups": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Product groups the credential covers. Omit or leave empty to cover every\nproduct group this operator publishes.\n",
+            "example": [
+              "battery"
+            ]
+          },
+          "validForDays": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 90,
+            "default": 30,
+            "description": "Lifetime in days.\n\nNothing can withdraw a credential once issued — this node fetches W3C\nstatus lists but publishes none, so a credential it mints carries no\n`credentialStatus` — which makes the expiry the only control there is.\nThat is why the ceiling is 90 rather than open-ended, and why the default\nis shorter still. Re-issuing is cheap.\n",
+            "example": 30
+          }
+        }
+      },
+      "IssuedCredential": {
+        "type": "object",
+        "description": "The minted credential, in both the forms a caller needs: the wire value the\nholder presents, and the same claims readable without decoding it.\n",
+        "required": [
+          "credentialJws",
+          "credential"
+        ],
+        "properties": {
+          "credentialJws": {
+            "type": "string",
+            "description": "Compact VC-JWT — the value the holder sends as the `X-DPP-Credential`\nheader. This is the credential; `credential` below is the same claims in\nreadable form, not a second artefact.\n"
+          },
+          "credential": {
+            "type": "object",
+            "description": "The credential document, so a caller can show the holder what it says\nwithout decoding the JWS. Shape follows W3C VC Data Model v2.0.\n",
+            "additionalProperties": true
           }
         }
       },

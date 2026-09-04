@@ -75,9 +75,16 @@ fn missing_context() -> Response {
 }
 
 fn forbidden(scope: &str) -> Response {
+    // "a admin" — the article is the scope's, not the sentence's. Only two
+    // scopes reach here, so this is a lookup rather than an English-language
+    // heuristic that would be wrong the first time a third one appears.
+    let article = match scope {
+        "admin" => "an",
+        _ => "a",
+    };
     http_problem::Problem::new(StatusCode::FORBIDDEN, "Forbidden")
         .with_detail(format!(
-            "This operation requires a {scope}-scoped credential."
+            "This operation requires {article} {scope}-scoped credential."
         ))
         .into_response()
 }
@@ -124,6 +131,32 @@ mod tests {
     #[allow(dead_code)]
     struct Payload {
         name: String,
+    }
+
+    /// Both refusals read as English. `admin` takes "an" and the sentence was
+    /// built with a hardcoded "a", so every admin-gated route answered "requires
+    /// a admin-scoped credential" — a message an operator reads on their first
+    /// permissions problem.
+    #[tokio::test]
+    async fn each_scope_gets_the_right_article() {
+        async fn detail(resp: Response) -> String {
+            let bytes = axum::body::to_bytes(resp.into_body(), 64 * 1024)
+                .await
+                .expect("body");
+            serde_json::from_slice::<serde_json::Value>(&bytes).expect("problem document")["detail"]
+                .as_str()
+                .expect("detail")
+                .to_owned()
+        }
+
+        assert_eq!(
+            detail(forbidden("admin")).await,
+            "This operation requires an admin-scoped credential."
+        );
+        assert_eq!(
+            detail(forbidden("write")).await,
+            "This operation requires a write-scoped credential."
+        );
     }
 
     fn app() -> Router {

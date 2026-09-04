@@ -22,6 +22,7 @@ use crate::{
         api_keys::{api_keys_create_handler, api_keys_delete_handler, api_keys_list_handler},
         archive::archive_handler,
         create::create_handler,
+        credentials::issue_credential_handler,
         eol::eol_handler,
         evidence::{
             generate_evidence_handler, get_evidence_handler, list_evidence_handler,
@@ -154,6 +155,7 @@ pub fn build(state: AppState) -> Router {
             get(api_keys_list_handler).post(api_keys_create_handler),
         )
         .route("/api-keys/{id}", delete(api_keys_delete_handler))
+        .route("/credentials", post(issue_credential_handler))
         // ── Plugins (signed product group-plugin hot-install) ────────────────
         .route("/plugins", post(install_plugin_handler))
         // ── Compliance Current (signed ruleset channel hot-reload) ──────────

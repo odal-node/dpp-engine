@@ -330,6 +330,18 @@ async fn main() -> anyhow::Result<()> {
         }),
         trusted_issuers: credentials_live
             .then(|| Arc::new(trusted_issuers) as Arc<dyn dpp_vc::TrustedIssuerRegistry>),
+        // Unconditional, and deliberately not gated on `credentials_live`:
+        // issuing is not the same act as trusting. An operator running two
+        // nodes mints on one and honours on the other, and gating issuance on
+        // this node also trusting itself would make that ordinary arrangement
+        // impossible to set up.
+        credential_issuer: Some(Arc::new(
+            dpp_node::infra::credential_issuance::KeyStoreCredentialIssuer::new(
+                key_store.clone(),
+                ISSUER_KEY_ID.to_owned(),
+                cfg.did_web_base_url.clone(),
+            ),
+        )),
         cors_allowed_origins: cfg.cors_allowed_origins.clone(),
         scan_repo: db.scan_repo.clone(),
         plugin_admin: Some(plugin_admin),
