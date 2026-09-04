@@ -27,6 +27,7 @@ use dpp_vault::{
             local_provider::LocalAuthProvider,
         },
         identity_client::IdentityHttpClient,
+        request_stamped_audit::RequestStampedAudit,
     },
     router,
     state::{AppState, DbPing},
@@ -59,7 +60,11 @@ async fn main() -> anyhow::Result<()> {
         .context("Failed to connect to PostgreSQL")?;
 
     let passport_repo = Arc::new(PgPassportRepo::new(dal.clone()));
-    let audit_repo = Arc::new(PgAuditRepo::new(dal.clone()));
+    // Wrapped, not bare: the decorator is what stamps `request_id` onto every
+    // audit entry. See `infra::request_stamped_audit`.
+    let audit_repo = Arc::new(RequestStampedAudit::new(Arc::new(PgAuditRepo::new(
+        dal.clone(),
+    ))));
     let operator_repo = Arc::new(PgOperatorConfigRepo::new(dal.clone()));
     let api_key_repo = Arc::new(PgApiKeyRepo::new(dal.clone()));
     let registry_repo = Arc::new(PgRegistryIdentityRepo::new(dal.clone()));

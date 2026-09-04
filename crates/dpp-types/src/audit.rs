@@ -37,6 +37,31 @@ pub struct PassportAuditEntry {
     pub metadata: Option<serde_json::Value>,
     /// Wall-clock timestamp of the operation (UUIDv7 source; sub-millisecond ordered).
     pub timestamp: DateTime<Utc>,
+    /// The `x-request-id` of the HTTP request that produced this entry, when
+    /// there was one. Stamped by the storage layer on append, like the two
+    /// hash columns below; `None` for an entry written outside a request (a
+    /// background sweep) or built in memory and not yet persisted.
+    ///
+    /// # Why it is not in [`chain_hash`]
+    ///
+    /// Two reasons, and either alone would be enough.
+    ///
+    /// The column predates this field by thirty migrations — `0005` declared
+    /// `request_id TEXT` and nothing ever wrote it — so every entry already on
+    /// disk has `NULL` here. Folding it into the hash would change the input
+    /// for entries whose `entry_hash` is already committed, and
+    /// [`verify_audit_chain`] would report every existing chain as tampered.
+    ///
+    /// And it is not a claim about the passport. The chain exists to make a
+    /// *state change* tamper-evident; a correlation handle for a support
+    /// conversation is diagnostic metadata about the transport that carried it.
+    /// Signing it would assert something the audit trail does not mean.
+    ///
+    /// `skip_serializing_if` is load-bearing for the same reason: an entry read
+    /// back with `NULL` here serialises byte-identically to one written before
+    /// this field existed, so no evidence dossier's content hash moves.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub request_id: Option<String>,
     /// Hash-chain link to the previous entry in this passport's chain.
     /// `""`/`None` for the genesis entry. Set by the storage layer on append.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -72,6 +97,7 @@ impl PassportAuditEntry {
             new_status: new_status.map(|s| s.to_owned()),
             metadata: None,
             timestamp: Utc::now(),
+            request_id: None,
             prev_hash: None,
             entry_hash: None,
         }
@@ -83,10 +109,24 @@ impl PassportAuditEntry {
         self
     }
 
+    /// Stamp the request id that produced this entry (builder-style).
+    ///
+    /// A `None` argument leaves the field alone rather than clearing it, so a
+    /// caller outside a request context can pass the ambient value through
+    /// unconditionally without erasing one an earlier layer already set.
+    #[must_use]
+    pub fn with_request_id(mut self, request_id: Option<String>) -> Self {
+        if let Some(id) = request_id {
+            self.request_id = Some(id);
+        }
+        self
+    }
+
     /// The chain hash for this entry given its predecessor's hash: SHA-256 (hex)
     /// over the JCS-canonicalised content **and** `prev_hash`. Excludes the
     /// `prev_hash`/`entry_hash` columns themselves (prev is folded in as
-    /// `prevHash`). Deterministic — the same content + prev always hashes equal.
+    /// `prevHash`), and excludes `request_id` — see that field for why.
+    /// Deterministic — the same content + prev always hashes equal.
     #[must_use]
     pub fn chain_hash(&self, prev_hash: &str) -> String {
         let canonical = serde_json::json!({
@@ -206,12 +246,29 @@ mod tests {
             new_status: Some("active".into()),
             metadata: None,
             timestamp: "2026-07-20T10:19:53.888797800Z".parse().unwrap(),
+            // Deliberately `Some`, against a golden value computed before this
+            // field existed: the assertion below is what proves `request_id`
+            // stays out of the hash. Set it to `None` and the test still
+            // passes while asserting nothing.
+            request_id: Some("019f7f0a-1077-7de0-b6c2-f03168422cbd".into()),
             prev_hash: None,
             entry_hash: None,
         };
         assert_eq!(
             fixed.chain_hash(GENESIS_PREV_HASH),
             "0592182c5db2456feb341752f9fb1e8f667ca1a8c25784f52d4bb005d0a05347"
+        );
+    }
+
+    /// The wire shape of an unstamped entry is byte-identical to the shape that
+    /// existed before `request_id` did — which is what keeps every already-signed
+    /// evidence dossier verifying.
+    #[test]
+    fn an_unstamped_entry_does_not_serialise_the_field() {
+        let json = serde_json::to_value(entry("created")).unwrap();
+        assert!(
+            json.get("requestId").is_none(),
+            "a `None` request id must be omitted, not emitted as null"
         );
     }
 
@@ -225,6 +282,7 @@ mod tests {
             new_status: None,
             metadata: None,
             timestamp: Utc::now(),
+            request_id: None,
             prev_hash: None,
             entry_hash: None,
         }

@@ -4,4 +4,5 @@ pub mod auth;
 pub mod credential_directory;
 pub mod db;
 pub mod identity_client;
+pub mod request_stamped_audit;
 pub mod status_list;
