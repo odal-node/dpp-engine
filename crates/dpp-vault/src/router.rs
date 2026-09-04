@@ -22,6 +22,7 @@ use crate::{
         api_keys::{api_keys_create_handler, api_keys_delete_handler, api_keys_list_handler},
         archive::archive_handler,
         create::create_handler,
+        credentials::issue_credential_handler,
         eol::eol_handler,
         evidence::{
             generate_evidence_handler, get_evidence_handler, list_evidence_handler,
@@ -51,11 +52,13 @@ use crate::{
         scan_ingest::{scan_ingest_handler, scan_ingest_mtls},
         seal::{seal_handler, seal_summary_handler},
         stats::{operator_stats_handler, passport_stats_handler},
+        supersede::supersede_handler,
         suspend::suspend_handler,
         transfer::{
             transfer_accept_handler, transfer_cancel_handler, transfer_initiate_handler,
             transfer_reject_handler,
         },
+        unsold_goods::{unsold_goods_create_handler, unsold_goods_list_handler},
         update::update_handler,
         validate::validate_handler,
         verify_tree::verify_tree_handler,
@@ -90,6 +93,9 @@ pub fn build(state: AppState) -> Router {
         .route("/dpp/{dppId}/lint", post(lint_handler))
         .route("/dpp/{dppId}/suspend", post(suspend_handler))
         .route("/dpp/{dppId}/archive", post(archive_handler))
+        // Terminal, and the only path to `Superseded` — a status the model, the
+        // database and the API description all carried while nothing produced it.
+        .route("/dpp/{dppId}/supersede", post(supersede_handler))
         .route("/dpp/{dppId}/eol", post(eol_handler))
         .route(
             "/dpp/{dppId}/transfer/initiate",
@@ -150,6 +156,11 @@ pub fn build(state: AppState) -> Router {
             get(api_keys_list_handler).post(api_keys_create_handler),
         )
         .route("/api-keys/{id}", delete(api_keys_delete_handler))
+        .route("/credentials", post(issue_credential_handler))
+        .route(
+            "/unsold-goods",
+            get(unsold_goods_list_handler).post(unsold_goods_create_handler),
+        )
         // ── Plugins (signed product group-plugin hot-install) ────────────────
         .route("/plugins", post(install_plugin_handler))
         // ── Compliance Current (signed ruleset channel hot-reload) ──────────

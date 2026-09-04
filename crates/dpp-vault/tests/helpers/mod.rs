@@ -312,6 +312,7 @@ async fn start_vault_with_identity(
     ));
     let auth_provider: Arc<dyn dpp_types::auth::AuthProvider> = Arc::new(TestAuthProvider);
     let scan_repo = Arc::new(PgScanTelemetryRepo::new(dal.clone()));
+    let unsold_goods_repo = Arc::new(dpp_dal::pg::PgUnsoldGoodsRepo::new(dal.clone()));
 
     let state = AppState {
         service,
@@ -324,8 +325,10 @@ async fn start_vault_with_identity(
         local_auth_provider: None,
         credential_directory: credentials.as_ref().map(|(d, _)| d.clone()),
         trusted_issuers: credentials.as_ref().map(|(_, t)| t.clone()),
+        credential_issuer: None,
         cors_allowed_origins: Vec::new(),
         scan_repo,
+        unsold_goods_repo,
         plugin_admin: None,
         // These tests exercise the vault in isolation, with no composition
         // root resolving trust ports or a ruleset.

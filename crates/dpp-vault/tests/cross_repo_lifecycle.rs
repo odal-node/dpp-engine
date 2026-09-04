@@ -271,3 +271,248 @@ async fn draft_to_suspended_rejected() {
         "Draft → Suspended should be rejected by dpp-core state machine"
     );
 }
+
+/// Supersession: the successor declares the link at create, and the route
+/// merely confirms it before retiring the predecessor.
+///
+/// The ordering is the point, and it is why the link is *checked* here rather
+/// than written. Writing it during the transition would leave, on a failure
+/// between the two writes, a retired passport with nothing pointing at its
+/// replacement — the one state a reader cannot recover from. Requiring the
+/// successor to already carry `supersedesId` makes that unreachable, so this
+/// test pins both halves: the accepted path, and the refusal when the
+/// successor never declared the link.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_successor_must_declare_the_link_before_it_can_replace_anything() {
+    let pg = start_postgres().await;
+    let base_url = start_vault(pg.dal.clone()).await;
+    seed_complete_operator(&pg.dal).await;
+    let token = make_jwt("00000000-0000-0000-0000-000000000099");
+    let client = TestClient::new(&base_url, &token);
+
+    // Two published passports. `supersedes` is what the second one declares.
+    let publish = async |gtin: &str, supersedes: Option<&str>| {
+        let mut body = serde_json::json!({
+            "productName": "Supersession Cell",
+            "manufacturer": {
+                "name": "LifecycleTest GmbH",
+                "address": "Munich, DE",
+                "didWebUrl": "https://lifecycle.example.com/.well-known/did.json"
+            },
+            "materials": [
+                {"name": "Lithium", "weightKg": 0.8, "recycledPct": 30.0, "countryOfOrigin": "CL"}
+            ],
+            "productGroupData": {
+                "productGroup": "battery",
+                "gtin": gtin,
+                "batteryChemistry": "NMC",
+                "batteryType": "portable",
+                "nominalVoltageV": 3.7,
+                "nominalCapacityAh": 50.0,
+                "expectedLifetimeCycles": 2000,
+                "co2ePerUnitKg": 65.0,
+                "ratedCapacityKwh": 18.5,
+                "stateOfHealthPct": 100.0
+            }
+        });
+        if let Some(predecessor) = supersedes {
+            body["supersedesId"] = serde_json::json!(predecessor);
+        }
+        let resp = client.post_json("/api/v1/dpp", body).await;
+        assert_eq!(resp.status(), 201);
+        let id = resp.json::<serde_json::Value>().await.unwrap()["id"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let resp = client
+            .post_json(&format!("/api/v1/dpp/{id}/publish"), serde_json::json!({}))
+            .await;
+        assert_eq!(resp.status(), 200, "publish should succeed");
+        id
+    };
+
+    let predecessor = publish("09506000134352", None).await;
+    let unrelated = publish("09506000134369", None).await;
+    let successor = publish("09506000134376", Some(&predecessor)).await;
+
+    // A published successor that never named this predecessor is refused, and
+    // nothing is written — the predecessor is still live afterwards.
+    let resp = client
+        .post_json(
+            &format!("/api/v1/dpp/{predecessor}/supersede"),
+            serde_json::json!({"supersededBy": unrelated}),
+        )
+        .await;
+    assert_eq!(resp.status(), 422, "an undeclared link must be refused");
+    let resp = client.get(&format!("/api/v1/dpp/{predecessor}")).await;
+    assert_eq!(
+        resp.json::<serde_json::Value>().await.unwrap()["status"],
+        "active",
+        "a refused supersession must leave the predecessor untouched"
+    );
+
+    // The declared link is accepted.
+    let resp = client
+        .post_json(
+            &format!("/api/v1/dpp/{predecessor}/supersede"),
+            serde_json::json!({"supersededBy": successor}),
+        )
+        .await;
+    assert_eq!(resp.status(), 200, "a declared link should be accepted");
+    assert_eq!(
+        resp.json::<serde_json::Value>().await.unwrap()["status"],
+        "superseded"
+    );
+
+    // The transition is in the audit trail. This is the half that a `CHECK`
+    // constraint silently blocked: the status write committed and the audit
+    // append failed the allowlist, so a retired passport carried no entry
+    // saying who retired it.
+    let resp = client
+        .get(&format!("/api/v1/dpp/{predecessor}/history"))
+        .await;
+    assert_eq!(resp.status(), 200);
+    let history: serde_json::Value = resp.json().await.unwrap();
+    assert!(
+        history
+            .as_array()
+            .or_else(|| history["entries"].as_array())
+            .expect("audit entries")
+            .iter()
+            .any(|e| e["action"] == "superseded"),
+        "the supersession must appear in the audit trail: {history}"
+    );
+
+    // Terminal: it cannot be superseded twice.
+    let resp = client
+        .post_json(
+            &format!("/api/v1/dpp/{predecessor}/supersede"),
+            serde_json::json!({"supersededBy": successor}),
+        )
+        .await;
+    assert_eq!(resp.status(), 409, "superseded is terminal");
+
+    // And a passport cannot replace itself.
+    let resp = client
+        .post_json(
+            &format!("/api/v1/dpp/{successor}/supersede"),
+            serde_json::json!({"supersededBy": successor}),
+        )
+        .await;
+    assert_eq!(resp.status(), 422, "self-supersession must be refused");
+}
+
+/// The ESPR Art. 24 disclosure line, and the Art. 25 rule that guards it.
+///
+/// Art. 25 prohibits destroying unsold consumer products listed in Annex VII
+/// from 19 July 2026, so `exemptDestruction` is the one destination recording an
+/// act that is otherwise forbidden and it has to say which exemption it relies
+/// on. The converse matters as much: a justification attached to a donation
+/// describes nothing, and a field that is sometimes meaningful and sometimes
+/// ignored is how a reviewer stops reading it.
+///
+/// Nothing here is a passport — the subject of Art. 24 is an operator over a
+/// financial year — which is why this exercises the operator-scoped routes and
+/// creates no DPP at all.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_recorded_destruction_must_name_its_exemption() {
+    let pg = start_postgres().await;
+    let base_url = start_vault(pg.dal.clone()).await;
+    seed_complete_operator(&pg.dal).await;
+    let token = make_jwt("00000000-0000-0000-0000-000000000099");
+    let client = TestClient::new(&base_url, &token);
+
+    let line = |destination: &str, justification: Option<&str>| {
+        let mut body = serde_json::json!({
+            "reportingPeriod": "2026",
+            "unitCount": 1240,
+            "volumeKg": 860.5,
+            "productCategory": "apparel",
+            "reason": "endOfSeason",
+            "destination": destination,
+            "countryOfDisposal": "de",
+        });
+        if let Some(j) = justification {
+            body["destructionJustification"] = serde_json::json!(j);
+        }
+        body
+    };
+
+    // A destruction with no exemption stated is refused.
+    let resp = client
+        .post_json("/api/v1/unsold-goods", line("exemptDestruction", None))
+        .await;
+    assert_eq!(resp.status(), 422, "a destruction must name its exemption");
+    let detail = resp.text().await.unwrap_or_default();
+    assert!(
+        detail.contains("Art. 25"),
+        "the refusal should cite the ban it enforces: {detail}"
+    );
+
+    // And a justification on something that was not destroyed is refused too.
+    let resp = client
+        .post_json(
+            "/api/v1/unsold-goods",
+            line("donation", Some("not applicable")),
+        )
+        .await;
+    assert_eq!(
+        resp.status(),
+        422,
+        "a justification on a donation explains nothing"
+    );
+
+    // The two valid shapes are accepted.
+    let resp = client
+        .post_json(
+            "/api/v1/unsold-goods",
+            line("exemptDestruction", Some("Contaminated stock, Art. 25(5)")),
+        )
+        .await;
+    assert_eq!(resp.status(), 201);
+    let stored: serde_json::Value = resp.json().await.unwrap();
+    // Art. 24(1)(a) asks for the number *and* the weight. `0008` had a column
+    // for only one of them, so this is the half that had to be added.
+    assert_eq!(stored["unitCount"], 1240);
+    assert_eq!(stored["volumeKg"], 860.5);
+    // Normalised, and the operator is the node's own rather than the caller's.
+    assert_eq!(stored["countryOfDisposal"], "DE");
+    assert!(
+        stored["operatorName"].is_string(),
+        "the disclosure names the operator it is about: {stored}"
+    );
+
+    let resp = client
+        .post_json("/api/v1/unsold-goods", line("recycling", None))
+        .await;
+    assert_eq!(resp.status(), 201);
+
+    // Both come back, and the period filter narrows rather than empties.
+    let resp = client
+        .get("/api/v1/unsold-goods?reportingPeriod=2026")
+        .await;
+    assert_eq!(resp.status(), 200);
+    let rows: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(rows.as_array().expect("array").len(), 2);
+
+    let resp = client
+        .get("/api/v1/unsold-goods?reportingPeriod=2025")
+        .await;
+    assert_eq!(resp.status(), 200);
+    assert!(
+        resp.json::<serde_json::Value>()
+            .await
+            .unwrap()
+            .as_array()
+            .expect("array")
+            .is_empty(),
+        "a different year holds nothing"
+    );
+
+    // A period that is not a financial year is refused rather than matching
+    // nothing — Art. 24(1) discloses a year, annually.
+    let resp = client
+        .get("/api/v1/unsold-goods?reportingPeriod=2026-01")
+        .await;
+    assert_eq!(resp.status(), 422);
+}

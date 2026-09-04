@@ -116,7 +116,11 @@ pub fn verify_dossier(dossier: &DossierV1) -> VerificationReport {
         name: "transfer_chain".into(),
         status: match &dossier.transfer_chain {
             None => CheckStatus::Absent("no transfer chain on this passport".into()),
-            Some(chain) => match verify_transfer_chain(chain, &dossier.did_documents) {
+            Some(chain) => match verify_transfer_chain(
+                chain,
+                &dossier.did_documents,
+                &dossier.manifest.issuer_did,
+            ) {
                 Ok(()) => CheckStatus::Pass,
                 Err(brk) => {
                     CheckStatus::Fail(format!("broken at transfer {}: {:?}", brk.index, brk.issue))
@@ -306,6 +310,7 @@ fn layer_check(
 
 #[cfg(test)]
 mod tests {
+    use super::super::transfer_chain::acceptance_payload;
     use super::*;
     use base64::Engine;
     use chrono::Utc;
@@ -647,7 +652,12 @@ mod tests {
         };
         let payload = record.signing_payload();
         record.from_signature = Some(sign(&from_key, &payload));
-        record.node_acceptance_attestation = Some(sign(&to_key, &payload));
+        // Signed by the dossier's *issuer* — the hosting node — over the
+        // acceptance payload, which is what the verifier now checks it against.
+        // Signing it with `to_key` over the initiation payload, as this once
+        // did, is the shape that made the attestation indistinguishable from a
+        // copy of `from_signature`.
+        record.node_acceptance_attestation = Some(sign(&signing_key, &acceptance_payload(&record)));
 
         dossier.transfer_chain = Some(TransferChain {
             passport_id: record.passport_id,
@@ -672,11 +682,11 @@ mod tests {
         // Tamper the outgoing operator's signature, then re-sign the manifest so
         // only the transfer-chain check (not content_integrity) is isolated.
         //
-        // This used to tamper `node_acceptance_attestation`, which no longer
-        // detects anything: that value is the hosting node's attestation, not a
-        // counterparty signature, and is checked for presence alone. The
-        // property under test — a broken transfer signature flips this check and
-        // no other — is unchanged, so it moves to the signature still verified.
+        // Either signature would now do — both are verified, against different
+        // parties — but this stays on `from_signature` so the test keeps
+        // isolating the property it was written for: a broken transfer
+        // signature flips this check and no other. The acceptance half has its
+        // own tamper test in `transfer_chain`.
         if let Some(chain) = &mut dossier.transfer_chain {
             chain.transfers[0].from_signature = chain.transfers[0]
                 .from_signature

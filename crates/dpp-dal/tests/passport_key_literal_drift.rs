@@ -10,6 +10,15 @@
 //! for every row. No error, no failing test, no log line — the column just
 //! becomes empty.
 //!
+//! The same document is addressed two ways, and both are scanned. On read it is
+//! the `doc` column; on write it is the **bound JSONB parameter** (`$2->>'x'`),
+//! which is how the INSERT and UPDATE mirror a handful of keys into their own
+//! scalar columns. Keying the scan on `doc` alone left every one of those write
+//! mirrors unguarded — a rename in core would have made the INSERT write NULL
+//! into `product_group`, `published_at` or `supersedes_id`, which is precisely
+//! the silent failure described above, on the write side where it also destroys
+//! the row rather than merely misreading it.
+//!
 //! SQL cannot read a Rust constant, so these literals cannot be replaced by
 //! consumption. What they *can* do is check themselves against the vocabulary
 //! core publishes as [`dpp_domain::PASSPORT_WIRE_KEYS`], which core proves
@@ -46,8 +55,30 @@ const SUPERSEDED_MIGRATIONS: &[(&str, &str)] = &[(
      `sectorData`.",
 )];
 
-/// Every first-hop `doc->`/`doc->>` key literal found under a directory, mapped
-/// to the files it appears in.
+/// True when the text to the left of a `->`/`->>` is the passport document
+/// itself — the `doc` column, or a bind parameter carrying it.
+///
+/// Anything else is a deeper hop (`…->'productGroupData'->>'gtin'`), whose keys
+/// belong to the product group payload and travel through the lens chain, which
+/// is a different contract with its own machinery.
+fn addresses_the_document(before: &str) -> bool {
+    let before = before.trim_end();
+    // `$1`, `$2`, … — the bound JSONB document on the write paths.
+    let without_digits = before.trim_end_matches(|c: char| c.is_ascii_digit());
+    if without_digits.len() < before.len() && without_digits.ends_with('$') {
+        return true;
+    }
+    // The `doc` column, as a whole word — `mydoc->` is something else.
+    before.strip_suffix("doc").is_some_and(|head| {
+        !head
+            .chars()
+            .next_back()
+            .is_some_and(|c| c.is_alphanumeric() || c == '_')
+    })
+}
+
+/// Every first-hop key literal found under a directory, mapped to the files it
+/// appears in.
 fn key_literals_under(dir: &Path, extension: &str) -> BTreeMap<String, Vec<String>> {
     let mut found: BTreeMap<String, Vec<String>> = BTreeMap::new();
     let mut stack = vec![dir.to_path_buf()];
@@ -77,26 +108,34 @@ fn key_literals_under(dir: &Path, extension: &str) -> BTreeMap<String, Vec<Strin
             .to_string_lossy()
             .into_owned();
 
-        // Scan for `doc->` / `doc->>` followed by a single-quoted key.
-        let mut rest = body.as_str();
-        while let Some(at) = rest.find("doc->") {
-            rest = &rest[at + "doc->".len()..];
-            let rest_trimmed = rest.strip_prefix('>').unwrap_or(rest);
-            let Some(open) = rest_trimmed.find('\'') else {
+        // Scan for `->` / `->>` applied directly to the passport document,
+        // followed by a single-quoted key.
+        let mut cursor = 0usize;
+        while let Some(at) = body[cursor..].find("->") {
+            let arrow = cursor + at;
+            cursor = arrow + "->".len();
+            if body[cursor..].starts_with('>') {
+                cursor += 1;
+            }
+            if !addresses_the_document(&body[..arrow]) {
+                continue;
+            }
+            let after_arrow = &body[cursor..];
+            let Some(open) = after_arrow.find('\'') else {
                 break;
             };
             // Only whitespace may sit between the arrow and the literal;
             // anything else means this was not a direct key access.
-            if !rest_trimmed[..open].trim().is_empty() {
+            if !after_arrow[..open].trim().is_empty() {
                 continue;
             }
-            let after = &rest_trimmed[open + 1..];
+            let after = &after_arrow[open + 1..];
             let Some(close) = after.find('\'') else { break };
             let key = after[..close].to_owned();
             if !key.is_empty() {
                 found.entry(key).or_default().push(name.clone());
             }
-            rest = &after[close..];
+            cursor += open + 1 + close;
         }
     }
     found
@@ -120,7 +159,7 @@ fn every_passport_key_literal_is_a_real_wire_key() {
 
     assert!(
         !all.is_empty(),
-        "found no doc->'key' literals at all — the scanner is matching nothing, \
+        "found no key literals at all — the scanner is matching nothing, \
          which is indistinguishable from a passing gate"
     );
 

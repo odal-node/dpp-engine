@@ -1,15 +1,13 @@
 //! `POST /api/v1/dpp/validate` — would this body be accepted, without creating anything.
 
-use axum::{
-    extract::{Extension, Json, State},
-    http::StatusCode,
-    response::IntoResponse,
-};
+use axum::{extract::State, http::StatusCode, response::IntoResponse};
 use serde::Serialize;
 
-use crate::{middleware::auth::AuthContext, state::AppState};
+use crate::state::AppState;
 
-use super::{create::CreatePassportRequest, error::require_write};
+use super::create::CreatePassportRequest;
+use crate::extract::Json;
+use crate::middleware::scope::RequireWrite;
 
 /// The dry-run verdict.
 ///
@@ -50,13 +48,12 @@ pub struct ValidateResponse {
 /// work a read-only credential has no reason to be able to commission.
 pub async fn validate_handler(
     State(state): State<AppState>,
-    Extension(auth): Extension<AuthContext>,
+    // The gate is an extractor, and it precedes the body extractor
+    // deliberately: axum runs body-less extractors first, so a wrong-scope
+    // caller is refused before the body is buffered or parsed.
+    RequireWrite(_auth): RequireWrite,
     Json(body): Json<CreatePassportRequest>,
 ) -> impl IntoResponse {
-    if let Some(resp) = require_write(&auth, "Validating a passport body") {
-        return resp;
-    }
-
     // The create gate, exactly as `POST /api/v1/dpp` applies it — and on
     // failure, byte-for-byte the response create would have sent.
     if let Some(rejection) = super::create::validate_create_request(&body) {

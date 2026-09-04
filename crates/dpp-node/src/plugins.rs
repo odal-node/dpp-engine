@@ -23,11 +23,24 @@ pub fn boot(plugins_dir: &str) -> Result<Arc<WasmPluginHost>> {
 
     // If PLUGIN_SIGNING_KEY is set, it must be a valid 64-char hex Ed25519 public key.
     // A malformed key aborts startup rather than silently disabling signature verification.
-    let trusted_key: Option<ed25519_dalek::VerifyingKey> = match std::env::var("PLUGIN_SIGNING_KEY")
-    {
-        Err(_) => None,
-        Ok(hex_key) => {
-            let bytes = hex::decode(hex_key.trim())
+    //
+    // An **empty** value is "unset", not "malformed". Blanking a variable is the ordinary
+    // way to disable one, and every other optional variable this node reads is normalised
+    // that way (`NATS_URL`, the admin credentials — see `config.rs`); only this one turned
+    // `PLUGIN_SIGNING_KEY=` into `hex::decode("")` → zero bytes → "must be exactly 32
+    // bytes", which reads as a corrupt key rather than an absent one.
+    //
+    // This does not weaken the fail-closed posture, it routes to the other half of it:
+    // with no key configured, `ensure_signing_policy` below refuses to load unsigned
+    // plugins unless `ALLOW_UNSIGNED_PLUGINS` is explicitly set.
+    let configured_key = std::env::var("PLUGIN_SIGNING_KEY")
+        .ok()
+        .map(|k| k.trim().to_owned())
+        .filter(|k| !k.is_empty());
+    let trusted_key: Option<ed25519_dalek::VerifyingKey> = match configured_key {
+        None => None,
+        Some(hex_key) => {
+            let bytes = hex::decode(&hex_key)
                 .map_err(|e| anyhow::anyhow!("PLUGIN_SIGNING_KEY is not valid hex: {e}"))?;
             let arr: [u8; 32] = bytes.try_into().map_err(|_| {
                 anyhow::anyhow!("PLUGIN_SIGNING_KEY must be exactly 32 bytes (64 hex chars)")

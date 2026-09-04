@@ -83,8 +83,12 @@ pub async fn drain_once(
             .and_then(|r| r.registry_id)
             .filter(|id| !id.trim().is_empty());
         let Some(registry_id) = registry_id else {
+            // Deferred, not failed — see `mark_deferred`. This row is waiting on
+            // the passport's registration, which is the drain working, and
+            // `stats.deferred` below has always counted it as such; the
+            // distinction used to be lost at the persistence boundary.
             let _ = outbox
-                .mark_attempt_failed(
+                .mark_deferred(
                     tid,
                     "awaiting the passport's own registry registration".into(),
                 )
@@ -190,6 +194,9 @@ mod tests {
         notified: Mutex<Vec<Uuid>>,
         rejected: Mutex<Vec<String>>,
         failed: Mutex<Vec<String>>,
+        /// Rows held pending a precondition. Separate from `failed` because the
+        /// whole point of `mark_deferred` is that the two are different things.
+        deferred: Mutex<Vec<String>>,
     }
 
     #[async_trait]
@@ -215,6 +222,10 @@ mod tests {
         }
         async fn mark_attempt_failed(&self, _id: Uuid, message: String) -> Result<(), DppError> {
             self.failed.lock().unwrap().push(message);
+            Ok(())
+        }
+        async fn mark_deferred(&self, _id: Uuid, message: String) -> Result<(), DppError> {
+            self.deferred.lock().unwrap().push(message);
             Ok(())
         }
         async fn rows_for(
@@ -450,9 +461,13 @@ mod tests {
             "nothing may reach the registry before the passport is registered"
         );
         assert_eq!(
-            outbox.failed.lock().unwrap().len(),
+            outbox.deferred.lock().unwrap().len(),
             1,
-            "the row is backed off, so it stays pending and is retried"
+            "the row is held for re-check, so it stays pending"
+        );
+        assert!(
+            outbox.failed.lock().unwrap().is_empty(),
+            "waiting on a precondition is not a failed attempt: recording it as one              consumed the retry budget, pinned the row at the backoff cap, and pushed              it past the threshold the rollup reports as stalled"
         );
         assert!(
             outbox.rejected.lock().unwrap().is_empty(),

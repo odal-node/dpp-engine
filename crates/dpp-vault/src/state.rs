@@ -26,6 +26,39 @@ pub trait DbPing: Send + Sync {
     async fn ping(&self) -> anyhow::Result<()>;
 }
 
+/// Minting an access credential with this node's own key.
+///
+/// A port for the same reason as [`DbPing`]: signing needs the key store, and
+/// the key store belongs to the composition root. Two methods rather than one
+/// because the credential's `issuer` and the key that signs it must be the same
+/// identity — a handler builds the document from [`Self::issuer_did`] and then
+/// hands it back to [`Self::sign`], so the two cannot be sourced separately.
+///
+/// # What a node may and may not attest
+///
+/// Only [`dpp_domain::Audience::LegitimateInterest`]. An operator naming its own
+/// authorised repairer is making a claim it is uniquely placed to make — nobody
+/// else knows who is in that network. An operator naming itself a market
+/// surveillance authority is making a claim it has no standing to make at all,
+/// and `dpp-vc` says so at the signing helper: a node signing its own access
+/// credentials "has attested nothing to anyone". The audience split is what
+/// makes both statements true at once, and the handler enforces it.
+#[async_trait]
+pub trait CredentialIssuer: Send + Sync {
+    /// This node's own DID — the `issuer` value a credential it mints carries,
+    /// and the document a verifier resolves to find the signing key.
+    ///
+    /// # Errors
+    /// Propagates key-store failures from building the DID document.
+    async fn issuer_did(&self) -> anyhow::Result<String>;
+
+    /// Sign `credential` into compact VC-JWT form.
+    ///
+    /// # Errors
+    /// Propagates key-store and signing failures.
+    async fn sign(&self, credential: &dpp_vc::DppAccessCredential) -> anyhow::Result<String>;
+}
+
 /// Shared Axum application state — cloned cheaply per-request.
 #[derive(Clone)]
 pub struct AppState {
@@ -52,6 +85,15 @@ pub struct AppState {
     /// Which issuers may attest which audience. `None` alongside
     /// `credential_directory`; the node reports the capability absent.
     pub trusted_issuers: Option<std::sync::Arc<dyn dpp_vc::TrustedIssuerRegistry>>,
+    /// Minting access credentials with this node's own key. `None` on
+    /// deployments with no key store in reach (the standalone vault binary),
+    /// where the issuance route answers `501`.
+    ///
+    /// Independent of `trusted_issuers`: issuing is not the same act as
+    /// trusting. A node can mint a credential that it will not itself honour
+    /// (`CREDENTIAL_ISSUERS_SELF` unset), which is the ordinary case where the
+    /// holder presents it to a *different* node in the same operator's fleet.
+    pub credential_issuer: Option<Arc<dyn CredentialIssuer>>,
     /// Basic-scheme auth provider — the local admin bootstrap credential.
     /// Only tried for `Authorization: Basic`; kept separate from
     /// `auth_provider` so a Bearer token can never authenticate as local
@@ -62,6 +104,9 @@ pub struct AppState {
     /// counts. A bare port (like `db_ping`): the stats/ingest handlers call it
     /// directly, there is no orchestration to wrap in a service.
     pub scan_repo: Arc<dyn ScanTelemetryRepository>,
+    /// ESPR Art. 24 unsold-goods disclosure lines. A bare port like `scan_repo`
+    /// — a row is written once and read back, with no lifecycle to orchestrate.
+    pub unsold_goods_repo: Arc<dyn dpp_types::UnsoldGoodsStore>,
     /// Origins allowed for CORS requests (empty = CORS disabled).
     pub cors_allowed_origins: Vec<String>,
     /// Runtime plugin administration (the Wasm plugin host). `None` on

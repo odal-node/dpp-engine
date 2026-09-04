@@ -1,0 +1,67 @@
+type: object
+description: |
+  One line of an ESPR Art. 24 disclosure: a category of unsold consumer products
+  discarded in a financial year, with the reason and where it went.
+
+  A disclosure is many of these, not one row. Art. 24(1) asks for the figures
+  "differentiated per type or category of products", and separately per reason
+  and destination — which a single aggregate cannot express.
+
+  The operator is **not** part of the request. The report is about this node's
+  own operator, taken from its operator config; there is no second operator on a
+  single-tenant node for it to legitimately be.
+required:
+  - reportingPeriod
+  - unitCount
+  - volumeKg
+  - productCategory
+  - reason
+  - destination
+  - countryOfDisposal
+properties:
+  reportingPeriod:
+    type: string
+    pattern: '^[0-9]{4}$'
+    description: |
+      The financial year the goods were discarded in. Art. 24(1) discloses "the
+      preceding financial year", annually, so this is a year and not a month or
+      a quarter.
+    example: '2026'
+  unitCount:
+    type: integer
+    format: int64
+    minimum: 0
+    description: |
+      How many products. Art. 24(1)(a) asks for the number **and** the weight;
+      both are required here because a disclosure carrying only one cannot
+      satisfy it.
+    example: 1240
+  volumeKg:
+    type: number
+    format: double
+    minimum: 0
+    description: Their total weight in kilograms.
+    example: 860.5
+  productCategory:
+    $ref: ./UnsoldProductCategory.yaml
+  reason:
+    $ref: ./UnsoldDiscardReason.yaml
+  destination:
+    $ref: ./UnsoldDestination.yaml
+  destructionJustification:
+    type: string
+    description: |
+      Which Art. 25 exemption the destruction relies on.
+
+      **Required** when `destination` is `exemptDestruction`, and **refused**
+      otherwise. ESPR Art. 25 prohibits destroying unsold consumer products
+      listed in Annex VII from 19 July 2026, so a recorded destruction has to say
+      why it was permitted; a justification attached to a donation describes
+      nothing.
+    example: Contaminated stock unfit for use under Art. 25(5)
+  countryOfDisposal:
+    type: string
+    minLength: 2
+    maxLength: 2
+    description: ISO 3166-1 alpha-2 country the goods were disposed of in.
+    example: DE

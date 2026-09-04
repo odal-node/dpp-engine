@@ -1,0 +1,19 @@
+type: object
+description: |
+  Which passport replaces the one being retired.
+
+  Supersession is a **link between two passports that already exist**, not a
+  create-and-retire in one call: a successor is an ordinary passport with its own
+  content and its own publish gates, so it goes through the normal create and
+  publish routes and is only then named here.
+required:
+  - supersededBy
+properties:
+  supersededBy:
+    allOf:
+      - $ref: ../passport/DppId.yaml
+    description: |
+      The successor, which must already be **published** and must already carry
+      `supersedesId` pointing back at the passport named in the path. That link
+      is set when the successor is created; this call confirms the two agree
+      before retiring anything, and refuses with `422` if they do not.

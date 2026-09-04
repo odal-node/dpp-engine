@@ -5,6 +5,7 @@ required:
   - totalScans
   - totalQrRenders
   - distinctPassportsScanned
+  - ingesting
 properties:
   windowDays:
     type: integer
@@ -14,3 +15,23 @@ properties:
     type: integer
   distinctPassportsScanned:
     type: integer
+  ingesting:
+    type: boolean
+    description: |
+      Whether scan telemetry is actually reaching this node.
+
+      `false` alongside `totalScans: 0` means the number is **unmeasured**, not
+      zero — and that is the shipped default, since `SCAN_INGEST_URL` is unset
+      unless an operator configures it.
+
+      The node cannot answer this from its own configuration: `SCAN_INGEST_URL`
+      belongs to the resolver, a separate deployable. What it reports is whether
+      a resolver has flushed to it, which the resolver makes possible by sending
+      an empty batch each interval even with nothing to count.
+
+      Resets on restart — this is liveness, not history — so a freshly booted
+      node reports `false` until the next flush, at most one interval.
+  lastIngestAt:
+    type: string
+    format: date-time
+    description: When a resolver last flushed to this node. Absent if none has.

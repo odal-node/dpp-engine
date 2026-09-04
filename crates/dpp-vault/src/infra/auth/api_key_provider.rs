@@ -21,6 +21,14 @@ pub struct ApiKeyAuthProvider {
     repo: Arc<dyn ApiKeyRepository>,
 }
 
+/// How precisely `last_used_at` is tracked.
+///
+/// It answers "is anyone still using this key", which is a revocation question,
+/// not an audit-trail one — the audit trail is `passport_audit`. Five minutes
+/// keeps the answer useful while bounding the auth path to one row write per
+/// key per five minutes instead of one per request.
+const LAST_USED_RESOLUTION: chrono::Duration = chrono::Duration::minutes(5);
+
 impl ApiKeyAuthProvider {
     /// Construct with the given API key repository.
     pub fn new(repo: Arc<dyn ApiKeyRepository>) -> Self {
@@ -74,6 +82,24 @@ impl AuthProvider for ApiKeyAuthProvider {
             return Err(AuthError::Invalid("invalid API key".to_owned()));
         }
 
+        // Best-effort, after the credential is proven and never on the failure
+        // paths above — recording a use for a key that did not authenticate
+        // would make `last_used_at` a record of attempts rather than of use.
+        // A failure here is logged and dropped: the caller presented a valid
+        // key, and refusing them over a bookkeeping write would trade a real
+        // capability for a diagnostic one.
+        if let Err(e) = self
+            .repo
+            .touch_last_used(record.key.id, LAST_USED_RESOLUTION)
+            .await
+        {
+            tracing::debug!(
+                key_prefix = %prefix,
+                error = %e,
+                "could not record API key use; authentication stands"
+            );
+        }
+
         Ok(AuthContext {
             user_id: "api-key".to_owned(),
             // Carry the key's stored scope so admin-only routes can reject
@@ -95,13 +121,26 @@ mod tests {
     use sha2::{Digest, Sha256};
     use uuid::Uuid;
 
+    #[derive(Default)]
     struct MockRepo {
         // ApiKeyRecord doesn't impl Clone, so store parts separately.
         record: Option<(ApiKey, String)>,
+        /// Key ids this repo was asked to mark as used — the observable the
+        /// `last_used_at` tests assert on.
+        touched: std::sync::Mutex<Vec<Uuid>>,
     }
 
     #[async_trait::async_trait]
     impl dpp_types::api_key::ApiKeyRepository for MockRepo {
+        async fn touch_last_used(
+            &self,
+            id: Uuid,
+            _not_within: chrono::Duration,
+        ) -> Result<(), DppError> {
+            self.touched.lock().unwrap().push(id);
+            Ok(())
+        }
+
         async fn list_active(&self) -> Result<Vec<ApiKey>, DppError> {
             Ok(vec![])
         }
@@ -151,6 +190,7 @@ mod tests {
         let (key, hash) = record_for(secret);
         let repo = Arc::new(MockRepo {
             record: Some((key, hash)),
+            ..Default::default()
         });
         let ctx = ApiKeyAuthProvider::new(repo)
             .authenticate(secret)
@@ -166,6 +206,7 @@ mod tests {
         let wrong = hex::encode([0u8; 32]);
         let repo = Arc::new(MockRepo {
             record: Some((key, wrong)),
+            ..Default::default()
         });
         assert!(matches!(
             ApiKeyAuthProvider::new(repo).authenticate(secret).await,
@@ -175,12 +216,63 @@ mod tests {
 
     #[tokio::test]
     async fn unknown_prefix_rejected() {
-        let repo = Arc::new(MockRepo { record: None });
+        let repo = Arc::new(MockRepo {
+            record: None,
+            ..Default::default()
+        });
         assert!(matches!(
             ApiKeyAuthProvider::new(repo)
                 .authenticate("odal_sk_unknown000000000000")
                 .await,
             Err(AuthError::Invalid(_))
         ));
+    }
+    /// `last_used_at` was returned by the API and never written — the column was
+    /// read in three queries, set to `None` at every construction site, and the
+    /// only `UPDATE` on the table deactivates a key. An operator revoking stale
+    /// credentials had the field they would revoke on permanently `null`.
+    #[tokio::test]
+    async fn a_successful_authentication_records_the_key_as_used() {
+        let secret = "odal_sk_testkey000000000000";
+        let (key, hash) = record_for(secret);
+        let id = key.id;
+        let repo = Arc::new(MockRepo {
+            record: Some((key, hash)),
+            ..Default::default()
+        });
+        let provider = ApiKeyAuthProvider::new(repo.clone());
+
+        provider.authenticate(secret).await.expect("valid key");
+
+        assert_eq!(
+            repo.touched.lock().unwrap().as_slice(),
+            &[id],
+            "a successful authentication must record the key as used"
+        );
+    }
+
+    /// The other half, and the one that decides what the field *means*: a key
+    /// that failed to authenticate must not be recorded as used, or
+    /// `last_used_at` becomes a log of attempts and an operator can no longer
+    /// read it as "someone is still using this".
+    #[tokio::test]
+    async fn a_failed_authentication_records_nothing() {
+        let secret = "odal_sk_testkey000000000000";
+        let (key, _) = record_for(secret);
+        let repo = Arc::new(MockRepo {
+            record: Some((key, hex::encode([0u8; 32]))),
+            ..Default::default()
+        });
+        let provider = ApiKeyAuthProvider::new(repo.clone());
+
+        provider
+            .authenticate(secret)
+            .await
+            .expect_err("the hash must not match");
+
+        assert!(
+            repo.touched.lock().unwrap().is_empty(),
+            "a rejected credential must not be recorded as used"
+        );
     }
 }

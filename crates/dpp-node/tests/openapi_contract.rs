@@ -282,6 +282,10 @@ const UNCHECKED: &[(&str, &str)] = &[
          the only thing that would actually close it",
     ),
     (
+        "CredentialRole",
+        "a `oneOf` of a string enum and an externally-tagged object (`Custom`),          which neither checker can express: `enum_cases` requires every variant          to serialise to a string, and `object_cases` requires an object with a          property list. The wire form of each variant is pinned instead by          `the_issuable_roles_serialise_as_documented` in          `dpp-vault/src/handlers/credentials.rs`, which is where a drift would          actually be caught",
+    ),
+    (
         "ProductGroupData",
         "deliberately open (`additionalProperties: true`, discriminated by \
          `productGroup`). The per-product-group payloads are described by the versioned JSON \
@@ -329,6 +333,34 @@ fn object_cases() -> Vec<ObjectCase> {
     case!("ComplianceResult", fixtures::compliance_result());
     case!("ComplianceFinding", fixtures::compliance_finding());
     case!("LintResult", fixtures::lint_result());
+    case!(
+        "SupersedeRequest",
+        dpp_vault::handlers::supersede::SupersedeRequest {
+            superseded_by: uuid::Uuid::now_v7().to_string(),
+        }
+    );
+
+    // Publish-readiness, reported by `POST /dpp/{dppId}/lint`. Registered from
+    // the handler's own types rather than a hand-written literal, so the
+    // published shape is gated against what the route actually serves.
+    case!(
+        "PublishReadiness",
+        dpp_vault::handlers::lint::PublishReadiness {
+            ready: false,
+            blockers: vec![dpp_vault::handlers::lint::PublishBlocker {
+                field: "/productGroupData/batteryModelId".to_owned(),
+                message: "'batteryModelId' is mandatory for an 'ev' battery and is absent"
+                    .to_owned(),
+            }],
+        }
+    );
+    case!(
+        "PublishBlocker",
+        dpp_vault::handlers::lint::PublishBlocker {
+            field: "/productGroupData/batteryModelId".to_owned(),
+            message: "'batteryModelId' is mandatory for an 'ev' battery and is absent".to_owned(),
+        }
+    );
 
     // The obligation endpoint. Served as declared types rather than assembled
     // JSON, so this gate has something to check the published shape against.
@@ -360,6 +392,16 @@ fn object_cases() -> Vec<ObjectCase> {
     case!("ApiKey", fixtures::api_key());
     case!("CreatedApiKeyResponse", fixtures::new_api_key());
     case!("CreateApiKeyRequest", fixtures::create_api_key_request());
+    case!(
+        "IssueCredentialRequest",
+        fixtures::issue_credential_request()
+    );
+    case!("IssuedCredential", fixtures::issued_credential());
+    case!(
+        "CreateUnsoldGoodsEntry",
+        fixtures::create_unsold_goods_entry()
+    );
+    case!("UnsoldGoodsEntry", fixtures::unsold_goods_entry());
     case!("PassportAuditEntry", fixtures::audit_entry());
     case!("Facility", fixtures::facility());
     case!("CreateFacilityRequest", fixtures::create_facility_request());
@@ -468,6 +510,18 @@ fn enum_cases() -> Vec<EnumCase> {
             variants: wire(&fixtures::all_passport_statuses()),
         },
         EnumCase {
+            name: "UnsoldProductCategory",
+            variants: wire(&fixtures::all_unsold_product_categories()),
+        },
+        EnumCase {
+            name: "UnsoldDiscardReason",
+            variants: wire(&fixtures::all_unsold_discard_reasons()),
+        },
+        EnumCase {
+            name: "UnsoldDestination",
+            variants: wire(&fixtures::all_unsold_destinations()),
+        },
+        EnumCase {
             name: "OperatorRole",
             variants: wire(&fixtures::all_operator_roles()),
         },
@@ -567,6 +621,11 @@ fn query_cases() -> Vec<QueryCase> {
     }
 
     case!("get", "/vault/api/v1/dpps", fixtures::list_query());
+    case!(
+        "get",
+        "/vault/api/v1/unsold-goods",
+        fixtures::unsold_goods_list_query()
+    );
     case!(
         "get",
         "/vault/api/v1/dpp/by-identity",
@@ -1668,10 +1727,13 @@ fn every_route_is_documented_and_every_documented_path_exists() {
 mod handler_sources {
     pub const VAULT: &[&str] = &[
         include_str!("../../dpp-vault/src/handlers/api_keys.rs"),
+        include_str!("../../dpp-vault/src/handlers/credentials.rs"),
+        include_str!("../../dpp-vault/src/handlers/unsold_goods.rs"),
         include_str!("../../dpp-vault/src/handlers/archive.rs"),
         include_str!("../../dpp-vault/src/handlers/audience_read.rs"),
         include_str!("../../dpp-vault/src/handlers/create.rs"),
         include_str!("../../dpp-vault/src/handlers/eol.rs"),
+        include_str!("../../dpp-vault/src/handlers/supersede.rs"),
         include_str!("../../dpp-vault/src/handlers/evidence.rs"),
         include_str!("../../dpp-vault/src/handlers/find_by_identity.rs"),
         include_str!("../../dpp-vault/src/handlers/health.rs"),
@@ -2480,6 +2542,110 @@ mod fixtures {
         }
     }
 
+    pub fn all_unsold_product_categories() -> Vec<dpp_types::ProductCategory> {
+        use dpp_types::ProductCategory as C;
+        vec![
+            C::Apparel,
+            C::Footwear,
+            C::HomeTextile,
+            C::Accessories,
+            C::Other,
+        ]
+    }
+
+    pub fn all_unsold_discard_reasons() -> Vec<dpp_types::DiscardReason> {
+        use dpp_types::DiscardReason as R;
+        vec![
+            R::EndOfSeason,
+            R::QualityDefect,
+            R::PackagingDefect,
+            R::OverProduction,
+            R::CustomerReturn,
+            R::Other,
+        ]
+    }
+
+    pub fn all_unsold_destinations() -> Vec<dpp_types::Destination> {
+        use dpp_types::Destination as D;
+        vec![
+            D::Donation,
+            D::Recycling,
+            D::Repurposing,
+            D::SupplierReturn,
+            D::ExemptDestruction,
+        ]
+    }
+
+    pub fn create_unsold_goods_entry() -> dpp_types::CreateUnsoldGoodsEntry {
+        dpp_types::CreateUnsoldGoodsEntry {
+            reporting_period: "2026".into(),
+            unit_count: 1240,
+            volume_kg: 860.5,
+            product_category: dpp_types::ProductCategory::Apparel,
+            reason: dpp_types::DiscardReason::EndOfSeason,
+            destination: dpp_types::Destination::ExemptDestruction,
+            destruction_justification: Some(
+                "Contaminated stock unfit for use under Art. 25(5)".into(),
+            ),
+            country_of_disposal: "DE".into(),
+        }
+    }
+
+    pub fn unsold_goods_entry() -> dpp_types::UnsoldGoodsEntry {
+        dpp_types::UnsoldGoodsEntry {
+            id: uuid(),
+            reporting_period: "2026".into(),
+            unit_count: Some(1240),
+            volume_kg: 860.5,
+            product_category: "apparel".into(),
+            reason: "endOfSeason".into(),
+            destination: "exemptDestruction".into(),
+            destruction_justification: Some(
+                "Contaminated stock unfit for use under Art. 25(5)".into(),
+            ),
+            country_of_disposal: "DE".into(),
+            operator_name: Some("Nord Textiles GmbH".into()),
+            created_at: ts(),
+        }
+    }
+
+    pub fn unsold_goods_list_query() -> dpp_vault::handlers::unsold_goods::ListQuery {
+        dpp_vault::handlers::unsold_goods::ListQuery {
+            reporting_period: Some("2026".into()),
+        }
+    }
+
+    pub fn issue_credential_request() -> dpp_vault::handlers::credentials::IssueCredentialRequest {
+        dpp_vault::handlers::credentials::IssueCredentialRequest {
+            holder_did: "did:web:repairs.example".into(),
+            holder_name: "Nord Repair GmbH".into(),
+            role: dpp_vc::CredentialRole::AuthorisedRepairer,
+            country: "DE".into(),
+            product_groups: vec!["battery".into()],
+            valid_for_days: Some(30),
+        }
+    }
+
+    pub fn issued_credential() -> dpp_vault::handlers::credentials::IssuedCredential {
+        let credential = dpp_vc::CredentialBuilder::new(
+            "did:web:operator.example".into(),
+            dpp_vc::DppCredentialSubject {
+                id: "did:web:repairs.example".into(),
+                name: "Nord Repair GmbH".into(),
+                role: dpp_vc::CredentialRole::AuthorisedRepairer,
+                country: "DE".into(),
+                product_groups: vec!["battery".into()],
+                product_categories: Vec::new(),
+            },
+        )
+        .expires_in_days(30)
+        .build();
+        dpp_vault::handlers::credentials::IssuedCredential {
+            credential_jws: "eyJhbGciOiJFZERTQSJ9.eyJ9.c2ln".into(),
+            credential,
+        }
+    }
+
     pub fn audit_entry() -> PassportAuditEntry {
         PassportAuditEntry {
             id: uuid(),
@@ -2741,6 +2907,7 @@ mod fixtures {
 
     pub fn create_request() -> CreatePassportRequest {
         CreatePassportRequest {
+            supersedes_id: Some(dpp_domain::passport::PassportId::new()),
             product_name: "EcoCell Pro 48V".into(),
             product_group: Some(ProductGroup::Textile),
             manufacturer: manufacturer(),
@@ -2890,6 +3057,7 @@ mod fixtures {
     /// would be measuring the wrong rule.
     pub fn minimal_create_request() -> CreatePassportRequest {
         CreatePassportRequest {
+            supersedes_id: Some(dpp_domain::passport::PassportId::new()),
             product_name: "EcoCell Pro 48V".into(),
             product_group: None,
             manufacturer: manufacturer(),
@@ -2940,6 +3108,10 @@ mod fixtures {
 
     pub fn passport_scan_stats() -> PassportScanStats {
         PassportScanStats {
+            // A measured window: telemetry arriving, so a zero here would be a
+            // real zero. The unmeasured case is the one the flag exists for.
+            ingesting: true,
+            last_ingest_at: Some(ts()),
             window_days: 30,
             total_scans: 128,
             scans_html: 96,
@@ -2951,6 +3123,8 @@ mod fixtures {
 
     pub fn operator_scan_stats() -> OperatorScanStats {
         OperatorScanStats {
+            ingesting: true,
+            last_ingest_at: Some(ts()),
             window_days: 30,
             total_scans: 1024,
             total_qr_renders: 64,

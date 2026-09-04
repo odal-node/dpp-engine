@@ -22,6 +22,7 @@ pub mod repo_scan;
 pub mod repo_seal;
 pub mod repo_snapshot;
 pub mod repo_transfer;
+pub mod repo_unsold_goods;
 pub mod repo_webhook;
 
 pub use pool::PgDal;
@@ -38,6 +39,7 @@ pub use repo_scan::PgScanTelemetryRepo;
 pub use repo_seal::PgSealOutboxRepo;
 pub use repo_snapshot::PgSnapshotOutboxRepo;
 pub use repo_transfer::PgTransferRepo;
+pub use repo_unsold_goods::PgUnsoldGoodsRepo;
 pub use repo_webhook::PgWebhookRepo;
 /// Re-export so downstream crates (dpp-node's PgJobStore) can use the same
 /// sqlx version without declaring their own dependency.

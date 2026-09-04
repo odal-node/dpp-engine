@@ -179,7 +179,7 @@ impl PassportRepository for PgPassportRepo {
         sqlx::query(
             r#"INSERT INTO odal.passport
                  (id, product_group, status, retention_locked, schema_version,
-                  created_at, updated_at, published_at, doc)
+                  created_at, updated_at, published_at, supersedes_id, doc)
                VALUES ($1,
                        $2->>'productGroup',
                        COALESCE($2->>'status','draft'),
@@ -187,6 +187,13 @@ impl PassportRepository for PgPassportRepo {
                        COALESCE($2->>'schemaVersion','1.0.0'),
                        now(), now(),
                        NULLIF($2->>'publishedAt','')::timestamptz,
+                       -- Mirrored like the other scalars, and this one carries
+                       -- a foreign key to `passport(id)` plus its own index:
+                       -- both were built for "what replaced this?" and neither
+                       -- had anything to answer, because nothing ever wrote the
+                       -- column. The FK is the point — it makes a successor
+                       -- pointing at a passport that does not exist unstorable.
+                       NULLIF($2->>'supersedesId','')::uuid,
                        $2)"#,
         )
         .bind(Self::uuid_of(passport.id))

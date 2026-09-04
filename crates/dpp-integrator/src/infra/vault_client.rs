@@ -265,6 +265,7 @@ mod tests {
 
     fn sample_request() -> CreatePassportRequest {
         CreatePassportRequest {
+            supersedes_id: None,
             product_name: "Test Widget".into(),
             product_group: None,
             manufacturer: ManufacturerInfo {

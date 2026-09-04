@@ -2,9 +2,11 @@ get:
   operationId: getImportTemplate
   summary: Download a CSV import template
   description: |
-    Returns the canonical CSV import template for a product group (`battery`,
-    `textile`). `?format=xlsx` returns 501 (download the CSV and open it in
-    a spreadsheet app). Unauthenticated.
+    Returns the canonical CSV import template for a product group. Templates
+    exist for `battery`, `textile`, `steel`, `aluminium` and `tyre`; any other
+    product group returns 404 naming the ones that are served.
+    `?format=xlsx` returns 501 (download the CSV and open it in a spreadsheet
+    app). Unauthenticated.
   tags:
     - Integrator
   security: []
@@ -32,5 +34,13 @@ get:
             type: string
     '404':
       description: No template for this product group.
+      content:
+        application/problem+json:
+          schema:
+            $ref: ../../components/schemas/errors/Problem.yaml
     '501':
       description: XLSX export not yet implemented.
+      content:
+        application/problem+json:
+          schema:
+            $ref: ../../components/schemas/errors/Problem.yaml

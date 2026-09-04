@@ -47,18 +47,36 @@ fn signature_header(secret: &str, timestamp: i64, body: &str) -> String {
     format!("t={timestamp},v1={digest}")
 }
 
-/// Delivery-time SSRF re-check, skipped when `allow_private`.
+/// Delivery-time SSRF check, returning the client the delivery must use.
 ///
-/// The check itself is `url_guard::assert_public_target`, shared with every
-/// other outbound fetch so there is one implementation of the rule. The
-/// `allow_private` opt-out is webhook-specific and stays here: a self-hosting
-/// operator may legitimately deliver to their *own* internal receiver, which is
-/// a target they chose. It must never be extended to a target a caller supplies.
-async fn assert_public_target(url_str: &str, allow_private: bool) -> Result<(), String> {
+/// This used to call `url_guard::assert_public_target` and then hand the *URL*
+/// to the shared client. Those are two independent resolutions with nothing
+/// binding them: the guard approves one answer, and the client resolves the name
+/// again to connect — so a zero-TTL record alternating a public and an internal
+/// address passes the check and connects internally. The guard's own
+/// documentation says exactly this and names the remedy, and every other
+/// outbound path here already took it. This was the last one that had not, and
+/// the only one whose target is supplied entirely by an operator.
+///
+/// So the check now yields a **pinned** client rather than a verdict: it can
+/// only reach the addresses that were approved, and nothing between the check
+/// and the connection can change the destination.
+///
+/// The `allow_private` opt-out is webhook-specific and stays here: a
+/// self-hosting operator may legitimately deliver to their *own* internal
+/// receiver, which is a target they chose. It must never be extended to a target
+/// a caller supplies.
+async fn client_for_target(
+    shared: &reqwest::Client,
+    url_str: &str,
+    allow_private: bool,
+) -> Result<reqwest::Client, String> {
     if allow_private {
-        return Ok(());
+        return Ok(shared.clone());
     }
-    dpp_common::url_guard::assert_public_target(url_str).await
+    dpp_common::outbound::pinned_client_for(shared, url_str)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 /// Record a transient failure: back off and retry, unless the attempt cap is
@@ -101,15 +119,20 @@ pub async fn drain_once(
     for row in due {
         let id = row.delivery_id;
 
-        if let Err(reason) = assert_public_target(&row.url, allow_private).await {
-            tracing::warn!(delivery_id = %id, reason = %reason, "webhook target blocked");
-            let _ = outbox
-                .mark_exhausted(id, format!("blocked target: {reason}"))
-                .await;
-            metrics::counter!("webhook_delivery_total", "outcome" => "blocked").increment(1);
-            stats.exhausted += 1;
-            continue;
-        }
+        // The delivery uses the client this returns, never the shared one: it is
+        // pinned to the addresses the guard approved.
+        let delivery_client = match client_for_target(client, &row.url, allow_private).await {
+            Ok(c) => c,
+            Err(reason) => {
+                tracing::warn!(delivery_id = %id, reason = %reason, "webhook target blocked");
+                let _ = outbox
+                    .mark_exhausted(id, format!("blocked target: {reason}"))
+                    .await;
+                metrics::counter!("webhook_delivery_total", "outcome" => "blocked").increment(1);
+                stats.exhausted += 1;
+                continue;
+            }
+        };
 
         let ts = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -118,7 +141,7 @@ pub async fn drain_once(
         let signature = signature_header(&row.secret, ts, &row.body);
 
         let started = std::time::Instant::now();
-        let resp = client
+        let resp = delivery_client
             .post(&row.url)
             .header("Content-Type", "application/json")
             .header("X-Odal-Signature", signature)
@@ -173,33 +196,51 @@ mod tests {
 
     #[tokio::test]
     async fn blocks_loopback_and_metadata_targets_by_default() {
+        let shared = reqwest::Client::new();
         assert!(
-            assert_public_target("https://127.0.0.1/hook", false)
+            client_for_target(&shared, "https://127.0.0.1/hook", false)
                 .await
                 .is_err()
         );
         assert!(
-            assert_public_target("https://169.254.169.254/latest", false)
+            client_for_target(&shared, "https://169.254.169.254/latest", false)
                 .await
                 .is_err()
         );
         // Bracketed IPv6 loopback must be caught (host_str keeps the brackets).
         assert!(
-            assert_public_target("https://[::1]/hook", false)
+            client_for_target(&shared, "https://[::1]/hook", false)
                 .await
                 .is_err()
         );
         // Opt-in permits a private literal.
         assert!(
-            assert_public_target("https://127.0.0.1/hook", true)
+            client_for_target(&shared, "https://127.0.0.1/hook", true)
                 .await
                 .is_ok()
         );
         // Non-https is always refused.
         assert!(
-            assert_public_target("http://example.com/hook", false)
+            client_for_target(&shared, "http://example.com/hook", false)
                 .await
                 .is_err()
+        );
+    }
+
+    /// The point of the change: a refused target yields **no client at all**, so
+    /// a delivery cannot be attempted against it.
+    ///
+    /// The previous shape returned a verdict and left the caller holding a
+    /// client that could still reach anywhere — which is what let the check and
+    /// the connection disagree. Asserting on the returned value rather than on a
+    /// boolean is what pins that.
+    #[tokio::test]
+    async fn a_refused_target_yields_no_client() {
+        let shared = reqwest::Client::new();
+        let refused = client_for_target(&shared, "https://169.254.169.254/latest", false).await;
+        assert!(
+            refused.is_err(),
+            "the metadata endpoint must not produce a usable client"
         );
     }
 }

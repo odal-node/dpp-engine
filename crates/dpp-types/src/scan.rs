@@ -20,7 +20,7 @@
 //! They are never summed — a QR render is not a resolution.
 
 use async_trait::async_trait;
-use chrono::NaiveDate;
+use chrono::{DateTime, NaiveDate, Utc};
 use serde::Serialize;
 
 use dpp_domain::{DppError, passport::PassportId};
@@ -79,6 +79,27 @@ pub struct PassportScanStats {
     pub daily: Vec<DailyScanCount>,
     /// QR-image renders in the window — label production, not resolution.
     pub qr_renders: i64,
+    /// Whether scan telemetry is actually reaching this node.
+    ///
+    /// `false` with `totalScans: 0` means the number is unmeasured, not zero.
+    /// The distinction matters and the node cannot infer it from configuration:
+    /// `SCAN_INGEST_URL` belongs to the **resolver**, a separate deployable, so
+    /// the node has no view of whether telemetry was ever switched on. What it
+    /// can observe is whether a resolver has flushed to it, which is what this
+    /// reports — the resolver sends an empty batch each interval precisely so
+    /// the answer exists with nothing to count.
+    ///
+    /// The same rule as `SealSummaryResponse.sealing_configured`, which exists so
+    /// a reader "cannot mistake 'not sealing' for 'all sealed'". A zero here was
+    /// making exactly that mistake available.
+    pub ingesting: bool,
+    /// When a resolver last flushed to this node, if ever.
+    ///
+    /// Resets when the node restarts: this is liveness, held in memory, not a
+    /// persisted record. A node that has just booted reports `false` until the
+    /// next flush arrives — at most one interval.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_ingest_at: Option<DateTime<Utc>>,
 }
 
 /// Operator-wide rollup over a trailing window — the "your passports were
@@ -94,6 +115,27 @@ pub struct OperatorScanStats {
     pub total_qr_renders: i64,
     /// How many distinct passports were scanned at least once in the window.
     pub distinct_passports_scanned: i64,
+    /// Whether scan telemetry is actually reaching this node.
+    ///
+    /// `false` with `totalScans: 0` means the number is unmeasured, not zero.
+    /// The distinction matters and the node cannot infer it from configuration:
+    /// `SCAN_INGEST_URL` belongs to the **resolver**, a separate deployable, so
+    /// the node has no view of whether telemetry was ever switched on. What it
+    /// can observe is whether a resolver has flushed to it, which is what this
+    /// reports — the resolver sends an empty batch each interval precisely so
+    /// the answer exists with nothing to count.
+    ///
+    /// The same rule as `SealSummaryResponse.sealing_configured`, which exists so
+    /// a reader "cannot mistake 'not sealing' for 'all sealed'". A zero here was
+    /// making exactly that mistake available.
+    pub ingesting: bool,
+    /// When a resolver last flushed to this node, if ever.
+    ///
+    /// Resets when the node restarts: this is liveness, held in memory, not a
+    /// persisted record. A node that has just booted reports `false` until the
+    /// next flush arrives — at most one interval.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_ingest_at: Option<DateTime<Utc>>,
 }
 
 /// How many rows a retention prune removed, per table.

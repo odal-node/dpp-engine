@@ -24,7 +24,7 @@ pub async fn publish_handler(
     Extension(auth): Extension<AuthContext>,
     Path(dpp_id): Path<String>,
 ) -> impl IntoResponse {
-    if let Some(resp) = require_write(&auth, "Publishing a passport") {
+    if let Some(resp) = require_write(&auth) {
         return resp;
     }
     let passport_id = match parse_passport_id(&dpp_id) {

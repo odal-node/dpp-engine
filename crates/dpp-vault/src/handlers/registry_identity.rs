@@ -2,7 +2,6 @@
 //! endpoints. Admin-scoped: these are operator-config mutations.
 
 use axum::{
-    Json,
     extract::{Extension, Path, State},
     http::StatusCode,
     response::IntoResponse,
@@ -18,6 +17,8 @@ use crate::{middleware::auth::AuthContext, state::AppState};
 use super::error::{
     api_error, field_validation_error, internal_error, not_found_error, require_admin,
 };
+use crate::extract::Json;
+use crate::middleware::scope::RequireAdmin;
 
 // ── Facilities ───────────────────────────────────────────────────────────────
 
@@ -26,7 +27,7 @@ pub async fn facilities_list_handler(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthContext>,
 ) -> impl IntoResponse {
-    if let Some(resp) = require_admin(&auth, "Registry-identity management") {
+    if let Some(resp) = require_admin(&auth) {
         return resp;
     }
     match state.registry_identity_service.list_facilities().await {
@@ -38,12 +39,12 @@ pub async fn facilities_list_handler(
 /// `POST /api/v1/facilities` — add a facility (validated GLN/country).
 pub async fn facilities_create_handler(
     State(state): State<AppState>,
-    Extension(auth): Extension<AuthContext>,
+    // The gate is an extractor, and it precedes the body extractor
+    // deliberately: axum runs body-less extractors first, so a wrong-scope
+    // caller is refused before the body is buffered or parsed.
+    RequireAdmin(auth): RequireAdmin,
     Json(body): Json<CreateFacilityRequest>,
 ) -> impl IntoResponse {
-    if let Some(resp) = require_admin(&auth, "Registry-identity management") {
-        return resp;
-    }
     match state
         .registry_identity_service
         .add_facility(body, &auth.user_id)
@@ -61,7 +62,7 @@ pub async fn facilities_set_default_handler(
     Extension(auth): Extension<AuthContext>,
     Path(id): Path<String>,
 ) -> impl IntoResponse {
-    if let Some(resp) = require_admin(&auth, "Registry-identity management") {
+    if let Some(resp) = require_admin(&auth) {
         return resp;
     }
     let parsed = match Uuid::parse_str(&id) {
@@ -92,7 +93,7 @@ pub async fn facilities_delete_handler(
     Extension(auth): Extension<AuthContext>,
     Path(id): Path<String>,
 ) -> impl IntoResponse {
-    if let Some(resp) = require_admin(&auth, "Registry-identity management") {
+    if let Some(resp) = require_admin(&auth) {
         return resp;
     }
     let parsed = match Uuid::parse_str(&id) {
@@ -123,7 +124,7 @@ pub async fn facilities_audit_handler(
     Extension(auth): Extension<AuthContext>,
     Path(id): Path<String>,
 ) -> impl IntoResponse {
-    if let Some(resp) = require_admin(&auth, "Registry-identity management") {
+    if let Some(resp) = require_admin(&auth) {
         return resp;
     }
     let parsed = match Uuid::parse_str(&id) {
@@ -149,7 +150,7 @@ pub async fn operator_ids_list_handler(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthContext>,
 ) -> impl IntoResponse {
-    if let Some(resp) = require_admin(&auth, "Registry-identity management") {
+    if let Some(resp) = require_admin(&auth) {
         return resp;
     }
     match state
@@ -165,12 +166,12 @@ pub async fn operator_ids_list_handler(
 /// `POST /api/v1/operator-identifiers` — add an identifier (validated LEI/VAT/…).
 pub async fn operator_ids_create_handler(
     State(state): State<AppState>,
-    Extension(auth): Extension<AuthContext>,
+    // The gate is an extractor, and it precedes the body extractor
+    // deliberately: axum runs body-less extractors first, so a wrong-scope
+    // caller is refused before the body is buffered or parsed.
+    RequireAdmin(auth): RequireAdmin,
     Json(body): Json<CreateOperatorIdentifierRequest>,
 ) -> impl IntoResponse {
-    if let Some(resp) = require_admin(&auth, "Registry-identity management") {
-        return resp;
-    }
     // The identifier itself carries no per-entry country (an Art. 13 economic-
     // operator identifier belongs to the operator, not a location) — reuse the
     // operator's own registered country for the `dpp-registry` validation.
@@ -195,7 +196,7 @@ pub async fn operator_ids_set_primary_handler(
     Extension(auth): Extension<AuthContext>,
     Path(id): Path<String>,
 ) -> impl IntoResponse {
-    if let Some(resp) = require_admin(&auth, "Registry-identity management") {
+    if let Some(resp) = require_admin(&auth) {
         return resp;
     }
     let parsed = match Uuid::parse_str(&id) {
@@ -226,7 +227,7 @@ pub async fn operator_ids_delete_handler(
     Extension(auth): Extension<AuthContext>,
     Path(id): Path<String>,
 ) -> impl IntoResponse {
-    if let Some(resp) = require_admin(&auth, "Registry-identity management") {
+    if let Some(resp) = require_admin(&auth) {
         return resp;
     }
     let parsed = match Uuid::parse_str(&id) {
@@ -257,7 +258,7 @@ pub async fn operator_ids_audit_handler(
     Extension(auth): Extension<AuthContext>,
     Path(id): Path<String>,
 ) -> impl IntoResponse {
-    if let Some(resp) = require_admin(&auth, "Registry-identity management") {
+    if let Some(resp) = require_admin(&auth) {
         return resp;
     }
     let parsed = match Uuid::parse_str(&id) {

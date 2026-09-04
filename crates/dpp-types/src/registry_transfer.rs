@@ -141,6 +141,24 @@ pub trait RegistryTransferOutbox: Send + Sync {
     /// audit — a human investigates, it is never deleted.
     async fn mark_rejected(&self, transfer_id: Uuid, message: String) -> Result<(), DppError>;
 
+    /// **Deferred, not failed**: the row's precondition is not met yet, so
+    /// re-check shortly without touching `attempts`.
+    ///
+    /// A handover cannot be notified until the passport's own registration has
+    /// an id, and the drain holds the row until it does. That is the row working
+    /// correctly, but it was persisted with [`Self::mark_attempt_failed`] —
+    /// documented as a *transient failure* — which had two visible costs. The
+    /// row crossed the stall threshold and the operator rollup reported it as
+    /// stalled, whose own constant means "not going to succeed without someone
+    /// looking at it"; and the exponential backoff pinned it at the one-hour cap,
+    /// so the notification would wait up to an hour after the registration it was
+    /// waiting for finally landed. On a node with no registry credentials —
+    /// today's default — every accepted transfer ended there permanently.
+    ///
+    /// `message` still records *what* it is waiting for, so the row explains
+    /// itself; only the failure accounting is dropped.
+    async fn mark_deferred(&self, transfer_id: Uuid, message: String) -> Result<(), DppError>;
+
     /// Transient failure: increment `attempts`, push `next_attempt_at` out by an
     /// exponential backoff (with jitter), keep the row `pending`.
     async fn mark_attempt_failed(&self, transfer_id: Uuid, message: String)

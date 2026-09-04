@@ -38,6 +38,7 @@ pub struct DbComponents {
     pub snapshot_outbox: Arc<dyn SnapshotOutbox>,
     pub seal_outbox: Arc<dyn SealOutbox>,
     pub scan_repo: Arc<dyn ScanTelemetryRepository>,
+    pub unsold_goods_repo: Arc<dyn dpp_types::UnsoldGoodsStore>,
     pub job_store: Arc<dyn JobStore>,
     pub db_ping: Arc<dyn DbPing>,
 }
@@ -106,6 +107,7 @@ pub async fn init_db(cfg: &NodeConfig) -> anyhow::Result<DbComponents> {
         snapshot_outbox: Arc::new(PgSnapshotOutboxRepo::new(dal.clone())),
         seal_outbox: Arc::new(PgSealOutboxRepo::new(dal.clone())),
         scan_repo: Arc::new(PgScanTelemetryRepo::new(dal.clone())),
+        unsold_goods_repo: Arc::new(dpp_dal::pg::PgUnsoldGoodsRepo::new(dal.clone())),
         job_store: Arc::new(PgJobStore::new(dal.clone())),
         db_ping: Arc::new(PgPing(dal)),
     })

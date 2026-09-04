@@ -5,8 +5,7 @@
 //! render is label production, not a resolution.
 
 use axum::{
-    Json,
-    extract::{Extension, Path, Query, State},
+    extract::{Extension, Path, State},
     http::StatusCode,
     response::IntoResponse,
 };
@@ -15,6 +14,7 @@ use serde::{Deserialize, Serialize};
 use crate::{middleware::auth::AuthContext, state::AppState};
 
 use super::error::{internal_error, parse_passport_id};
+use crate::extract::{Json, Query};
 
 /// Default trailing window when the caller gives none — the "this month" view.
 const DEFAULT_WINDOW_DAYS: i64 = 30;
@@ -51,7 +51,14 @@ pub async fn passport_stats_handler(
         .passport_stats(passport_id, clamp_window(q.days))
         .await
     {
-        Ok(stats) => (StatusCode::OK, Json(stats)).into_response(),
+        Ok(mut stats) => {
+            // The database counts; only this process knows whether anything is
+            // still feeding it. Without this a `0` is unreadable — see
+            // `infra::scan_liveness`.
+            stats.last_ingest_at = crate::infra::scan_liveness::last_ingest();
+            stats.ingesting = stats.last_ingest_at.is_some();
+            (StatusCode::OK, Json(stats)).into_response()
+        }
         Err(e) => internal_error(e),
     }
 }
@@ -63,7 +70,14 @@ pub async fn operator_stats_handler(
     Query(q): Query<StatsQuery>,
 ) -> impl IntoResponse {
     match state.scan_repo.operator_stats(clamp_window(q.days)).await {
-        Ok(stats) => (StatusCode::OK, Json(stats)).into_response(),
+        Ok(mut stats) => {
+            // The database counts; only this process knows whether anything is
+            // still feeding it. Without this a `0` is unreadable — see
+            // `infra::scan_liveness`.
+            stats.last_ingest_at = crate::infra::scan_liveness::last_ingest();
+            stats.ingesting = stats.last_ingest_at.is_some();
+            (StatusCode::OK, Json(stats)).into_response()
+        }
         Err(e) => internal_error(e),
     }
 }
