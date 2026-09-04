@@ -536,14 +536,21 @@ async fn retiring_a_snapshot_removes_the_page_too() {
     );
 }
 
+/// The continuity tier retires exactly what the live public read refuses.
+///
+/// These two used to be decided separately — `== Published` here, a list of
+/// statuses in the handler — and they had already diverged: a deactivated
+/// passport was served live while its snapshot was removed, so the tier that
+/// exists to stand in for the node when the node is down answered `404` for a
+/// record the node itself was serving. A disagreement between them is invisible
+/// until precisely the moment it matters.
+///
+/// Both now read `dpp_vault::public_view::serves_publicly`. This test pins the
+/// half that retires; `drain_keeps_a_retired_passport_that_still_serves` pins
+/// the other half, and the two lists together must cover every status.
 #[tokio::test]
 async fn drain_retires_a_passport_that_left_the_public_tier() {
-    for status in [
-        PassportStatus::Suspended,
-        PassportStatus::Archived,
-        PassportStatus::Deactivated,
-        PassportStatus::Draft,
-    ] {
+    for status in [PassportStatus::Suspended, PassportStatus::Draft] {
         let (outbox, repo, store) = (
             FakeOutbox::default(),
             InMemoryPassportRepo::default(),
@@ -569,6 +576,72 @@ async fn drain_retires_a_passport_that_left_the_public_tier() {
         assert!(
             store.get(&p.id.to_string()).is_none(),
             "{status:?} must not keep being served from the static tier"
+        );
+    }
+}
+
+/// The two lists above cover every status this build models.
+///
+/// The doc comments claim it; without this they only claim it. A status added
+/// to `dpp-domain` and left out of both lists would be exercised by neither
+/// test, and would take whatever the wildcard arm in `serves_publicly` gives it
+/// — silently, which is how three terminal states came to share one `404`.
+#[test]
+fn the_two_halves_account_for_every_status() {
+    const RETIRED: &[PassportStatus] = &[PassportStatus::Suspended, PassportStatus::Draft];
+    const SERVED: &[PassportStatus] = &[
+        PassportStatus::Published,
+        PassportStatus::Archived,
+        PassportStatus::Superseded,
+        PassportStatus::Deactivated,
+    ];
+
+    for status in PassportStatus::ALL {
+        let retired = RETIRED.contains(status);
+        let served = SERVED.contains(status);
+        assert!(
+            retired ^ served,
+            "{status:?} is in neither list or in both — decide whether the public              tier serves it, then add it to exactly one"
+        );
+        assert_eq!(
+            served,
+            dpp_vault::public_view::serves_publicly(status),
+            "{status:?} is listed on one side and treated as the other"
+        );
+    }
+}
+
+/// Retiring the *record* does not retire the products in the field.
+///
+/// `Archived`, `Superseded` and `Deactivated` all keep serving publicly — ESPR
+/// Art. 10(4)(i) asks the passport to remain available for at least the
+/// product's expected lifetime, and the goods bearing the data carrier outlive
+/// the status change. So the snapshot has to be refreshed rather than removed:
+/// the stored copy must come to carry the new status, not disappear.
+#[tokio::test]
+async fn drain_keeps_a_retired_passport_that_still_serves() {
+    for status in [
+        PassportStatus::Archived,
+        PassportStatus::Superseded,
+        PassportStatus::Deactivated,
+    ] {
+        let (outbox, repo, store) = (
+            FakeOutbox::default(),
+            InMemoryPassportRepo::default(),
+            InMemorySnapshotStore::default(),
+        );
+        let p = passport(status.clone());
+        repo.create(p.clone()).await.unwrap();
+        outbox.enqueue(p.id).await.unwrap();
+
+        let (o, r, s, i) = ports(&outbox, &repo, &store);
+        let stats = drain_once(&o, &r, &s, &i, TEST_RESOLVER_BASE, 50).await;
+
+        assert_eq!(stats.removed, 0, "{status:?} must not be retired");
+        assert_eq!(stats.stored, 1, "{status:?} must be refreshed instead");
+        assert!(
+            store.get(&p.id.to_string()).is_some(),
+            "{status:?} must keep being served from the static tier"
         );
     }
 }

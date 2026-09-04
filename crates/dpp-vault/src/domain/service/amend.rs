@@ -233,9 +233,13 @@ impl PassportService {
         )
         .await;
 
-        // The static continuity tier still holds the predecessor rendered as
-        // `active`. Same reconcile `suspend` and `archive` do, and non-fatal for
-        // the same reason: the database is the source of truth.
+        // A superseded passport keeps serving publicly, like an archived or
+        // deactivated one — products made under the old specification are still
+        // in the field carrying carriers that resolve to it. The reconcile is
+        // still needed, and for the opposite reason to a withdrawal: the stored
+        // snapshot has to be refreshed to carry the new status rather than the
+        // old one, not removed. Same reconcile `suspend` and `archive` do, and
+        // non-fatal for the same reason: the database is the source of truth.
         self.enqueue_snapshot_reconcile(superseded.id).await;
 
         // Deliberately *not* enqueued: a registry status intent for the
