@@ -30,6 +30,7 @@ pub mod stats;
 pub mod supersede;
 pub mod suspend;
 pub mod transfer;
+pub mod unsold_goods;
 pub mod update;
 pub mod validate;
 pub mod verify_tree;

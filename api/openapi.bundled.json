@@ -2516,6 +2516,124 @@
         }
       }
     },
+    "/vault/api/v1/unsold-goods": {
+      "get": {
+        "operationId": "listUnsoldGoods",
+        "summary": "List unsold-goods disclosure lines",
+        "description": "Every recorded ESPR Art. 24 disclosure line, newest first, optionally\nnarrowed to one financial year.\n\nAdmin rather than write: these are the operator's own annual figures, and\nreading them back is an administrative act rather than part of producing\npassports.\n",
+        "tags": [
+          "Unsold goods"
+        ],
+        "security": [
+          {
+            "BearerApiKey": []
+          },
+          {
+            "BasicAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "reportingPeriod",
+            "in": "query",
+            "required": false,
+            "description": "Financial year as `YYYY`. Omit for every period.",
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9]{4}$"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The disclosure lines.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/UnsoldGoodsEntry"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "422": {
+            "description": "`reportingPeriod` is not a four-digit year.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "operationId": "recordUnsoldGoods",
+        "summary": "Record an unsold-goods disclosure line",
+        "description": "Records one line of the ESPR Art. 24 disclosure of unsold consumer products\ndiscarded in a financial year.\n\n**This is not a passport.** There is no digital product passport anywhere in\nArt. 24 or Art. 25: the subject is an *operator over a financial year*, the\nmedium is the operator's own website, and the trigger is discarding unsold\nstock — none of which is a product placed on the market. These routes\ntherefore sit beside the other operator-scoped ones, and no `unsold-goods`\nproduct group carries passports.\n\n**Destruction must be justified.** Art. 25 prohibits destroying unsold\nconsumer products listed in Annex VII from 19 July 2026, so\n`destination: exemptDestruction` requires `destructionJustification` and is\nrefused with `422` without it. The converse is refused too: a justification\non any other destination describes nothing.\n\n**Annex VII scope is not decided here.** That is a CN-code prefix test, and\nthe goods in a disclosure line do not arrive carrying CN codes.\n`productCategory` is the operator's own categorisation for Art. 24(1)(a).\n",
+        "tags": [
+          "Unsold goods"
+        ],
+        "security": [
+          {
+            "BearerApiKey": []
+          },
+          {
+            "BasicAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateUnsoldGoodsEntry"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The recorded line.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UnsoldGoodsEntry"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "422": {
+            "description": "The line cannot be recorded — a `reportingPeriod` that is not a\nfour-digit year, a negative count or weight, a `countryOfDisposal` that\nis not alpha-2, a destruction with no justification, or a justification\non something that was not destroyed.\n",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/vault/api/v1/webhooks": {
       "get": {
         "operationId": "listWebhooks",
@@ -6985,6 +7103,164 @@
             "additionalProperties": true
           }
         }
+      },
+      "CreateUnsoldGoodsEntry": {
+        "type": "object",
+        "description": "One line of an ESPR Art. 24 disclosure: a category of unsold consumer products\ndiscarded in a financial year, with the reason and where it went.\n\nA disclosure is many of these, not one row. Art. 24(1) asks for the figures\n\"differentiated per type or category of products\", and separately per reason\nand destination — which a single aggregate cannot express.\n\nThe operator is **not** part of the request. The report is about this node's\nown operator, taken from its operator config; there is no second operator on a\nsingle-tenant node for it to legitimately be.\n",
+        "required": [
+          "reportingPeriod",
+          "unitCount",
+          "volumeKg",
+          "productCategory",
+          "reason",
+          "destination",
+          "countryOfDisposal"
+        ],
+        "properties": {
+          "reportingPeriod": {
+            "type": "string",
+            "pattern": "^[0-9]{4}$",
+            "description": "The financial year the goods were discarded in. Art. 24(1) discloses \"the\npreceding financial year\", annually, so this is a year and not a month or\na quarter.\n",
+            "example": "2026"
+          },
+          "unitCount": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0,
+            "description": "How many products. Art. 24(1)(a) asks for the number **and** the weight;\nboth are required here because a disclosure carrying only one cannot\nsatisfy it.\n",
+            "example": 1240
+          },
+          "volumeKg": {
+            "type": "number",
+            "format": "double",
+            "minimum": 0,
+            "description": "Their total weight in kilograms.",
+            "example": 860.5
+          },
+          "productCategory": {
+            "$ref": "#/components/schemas/UnsoldProductCategory"
+          },
+          "reason": {
+            "$ref": "#/components/schemas/UnsoldDiscardReason"
+          },
+          "destination": {
+            "$ref": "#/components/schemas/UnsoldDestination"
+          },
+          "destructionJustification": {
+            "type": "string",
+            "description": "Which Art. 25 exemption the destruction relies on.\n\n**Required** when `destination` is `exemptDestruction`, and **refused**\notherwise. ESPR Art. 25 prohibits destroying unsold consumer products\nlisted in Annex VII from 19 July 2026, so a recorded destruction has to say\nwhy it was permitted; a justification attached to a donation describes\nnothing.\n",
+            "example": "Contaminated stock unfit for use under Art. 25(5)"
+          },
+          "countryOfDisposal": {
+            "type": "string",
+            "minLength": 2,
+            "maxLength": 2,
+            "description": "ISO 3166-1 alpha-2 country the goods were disposed of in.",
+            "example": "DE"
+          }
+        }
+      },
+      "UnsoldGoodsEntry": {
+        "type": "object",
+        "description": "A stored ESPR Art. 24 disclosure line.",
+        "required": [
+          "id",
+          "reportingPeriod",
+          "volumeKg",
+          "productCategory",
+          "reason",
+          "destination",
+          "countryOfDisposal",
+          "createdAt"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "reportingPeriod": {
+            "type": "string",
+            "example": "2026"
+          },
+          "unitCount": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Null only for a row written before the count had a column — the write path\nrequires it, so anything recorded through this API carries one.\n"
+          },
+          "volumeKg": {
+            "type": "number",
+            "format": "double"
+          },
+          "productCategory": {
+            "$ref": "#/components/schemas/UnsoldProductCategory"
+          },
+          "reason": {
+            "$ref": "#/components/schemas/UnsoldDiscardReason"
+          },
+          "destination": {
+            "$ref": "#/components/schemas/UnsoldDestination"
+          },
+          "destructionJustification": {
+            "type": "string",
+            "description": "Present only for `exemptDestruction`."
+          },
+          "countryOfDisposal": {
+            "type": "string",
+            "minLength": 2,
+            "maxLength": 2
+          },
+          "operatorName": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The operator the disclosure is about — this node's own legal name at the\ntime the line was recorded. Report content, not a tenant key.\n"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "UnsoldProductCategory": {
+        "type": "string",
+        "description": "The operator's own categorisation of the discarded goods, for Art. 24(1)(a)'s\n\"differentiated per type or category of products\" — which prescribes no\nvocabulary.\n\nThis is **not** Annex VII ban scope. Annex VII gives two *code-valued*\nheadings — apparel and clothing accessories (`4203`, `61`, `62`, `6504`,\n`6505`) and footwear (`6401`–`6405`) — matched by CN **prefix**, with clothing\naccessories inside the first heading rather than beside it. Reading this list\nas those headings gets both their count and their shape wrong.\n",
+        "enum": [
+          "apparel",
+          "footwear",
+          "homeTextile",
+          "accessories",
+          "other"
+        ],
+        "example": "apparel"
+      },
+      "UnsoldDiscardReason": {
+        "type": "string",
+        "description": "Why the goods went unsold, for Art. 24(1)(b).",
+        "enum": [
+          "endOfSeason",
+          "qualityDefect",
+          "packagingDefect",
+          "overProduction",
+          "customerReturn",
+          "other"
+        ],
+        "example": "endOfSeason"
+      },
+      "UnsoldDestination": {
+        "type": "string",
+        "description": "Where the goods went, for Art. 24(1)(c).\n\n`exemptDestruction` is the only value recording an act that is otherwise\nprohibited, and the only one that requires `destructionJustification`.\n",
+        "enum": [
+          "donation",
+          "recycling",
+          "repurposing",
+          "supplierReturn",
+          "exemptDestruction"
+        ],
+        "example": "recycling"
       },
       "CreatedApiKeyResponse": {
         "type": "object",

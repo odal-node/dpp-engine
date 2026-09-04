@@ -401,3 +401,118 @@ async fn a_successor_must_declare_the_link_before_it_can_replace_anything() {
         .await;
     assert_eq!(resp.status(), 422, "self-supersession must be refused");
 }
+
+/// The ESPR Art. 24 disclosure line, and the Art. 25 rule that guards it.
+///
+/// Art. 25 prohibits destroying unsold consumer products listed in Annex VII
+/// from 19 July 2026, so `exemptDestruction` is the one destination recording an
+/// act that is otherwise forbidden and it has to say which exemption it relies
+/// on. The converse matters as much: a justification attached to a donation
+/// describes nothing, and a field that is sometimes meaningful and sometimes
+/// ignored is how a reviewer stops reading it.
+///
+/// Nothing here is a passport — the subject of Art. 24 is an operator over a
+/// financial year — which is why this exercises the operator-scoped routes and
+/// creates no DPP at all.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_recorded_destruction_must_name_its_exemption() {
+    let pg = start_postgres().await;
+    let base_url = start_vault(pg.dal.clone()).await;
+    seed_complete_operator(&pg.dal).await;
+    let token = make_jwt("00000000-0000-0000-0000-000000000099");
+    let client = TestClient::new(&base_url, &token);
+
+    let line = |destination: &str, justification: Option<&str>| {
+        let mut body = serde_json::json!({
+            "reportingPeriod": "2026",
+            "unitCount": 1240,
+            "volumeKg": 860.5,
+            "productCategory": "apparel",
+            "reason": "endOfSeason",
+            "destination": destination,
+            "countryOfDisposal": "de",
+        });
+        if let Some(j) = justification {
+            body["destructionJustification"] = serde_json::json!(j);
+        }
+        body
+    };
+
+    // A destruction with no exemption stated is refused.
+    let resp = client
+        .post_json("/api/v1/unsold-goods", line("exemptDestruction", None))
+        .await;
+    assert_eq!(resp.status(), 422, "a destruction must name its exemption");
+    let detail = resp.text().await.unwrap_or_default();
+    assert!(
+        detail.contains("Art. 25"),
+        "the refusal should cite the ban it enforces: {detail}"
+    );
+
+    // And a justification on something that was not destroyed is refused too.
+    let resp = client
+        .post_json(
+            "/api/v1/unsold-goods",
+            line("donation", Some("not applicable")),
+        )
+        .await;
+    assert_eq!(
+        resp.status(),
+        422,
+        "a justification on a donation explains nothing"
+    );
+
+    // The two valid shapes are accepted.
+    let resp = client
+        .post_json(
+            "/api/v1/unsold-goods",
+            line("exemptDestruction", Some("Contaminated stock, Art. 25(5)")),
+        )
+        .await;
+    assert_eq!(resp.status(), 201);
+    let stored: serde_json::Value = resp.json().await.unwrap();
+    // Art. 24(1)(a) asks for the number *and* the weight. `0008` had a column
+    // for only one of them, so this is the half that had to be added.
+    assert_eq!(stored["unitCount"], 1240);
+    assert_eq!(stored["volumeKg"], 860.5);
+    // Normalised, and the operator is the node's own rather than the caller's.
+    assert_eq!(stored["countryOfDisposal"], "DE");
+    assert!(
+        stored["operatorName"].is_string(),
+        "the disclosure names the operator it is about: {stored}"
+    );
+
+    let resp = client
+        .post_json("/api/v1/unsold-goods", line("recycling", None))
+        .await;
+    assert_eq!(resp.status(), 201);
+
+    // Both come back, and the period filter narrows rather than empties.
+    let resp = client
+        .get("/api/v1/unsold-goods?reportingPeriod=2026")
+        .await;
+    assert_eq!(resp.status(), 200);
+    let rows: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(rows.as_array().expect("array").len(), 2);
+
+    let resp = client
+        .get("/api/v1/unsold-goods?reportingPeriod=2025")
+        .await;
+    assert_eq!(resp.status(), 200);
+    assert!(
+        resp.json::<serde_json::Value>()
+            .await
+            .unwrap()
+            .as_array()
+            .expect("array")
+            .is_empty(),
+        "a different year holds nothing"
+    );
+
+    // A period that is not a financial year is refused rather than matching
+    // nothing — Art. 24(1) discloses a year, annually.
+    let resp = client
+        .get("/api/v1/unsold-goods?reportingPeriod=2026-01")
+        .await;
+    assert_eq!(resp.status(), 422);
+}

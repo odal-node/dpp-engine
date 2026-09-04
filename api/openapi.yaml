@@ -234,6 +234,16 @@ components:
       $ref: components/schemas/access/IssueCredentialRequest.yaml
     IssuedCredential:
       $ref: components/schemas/access/IssuedCredential.yaml
+    CreateUnsoldGoodsEntry:
+      $ref: components/schemas/unsold-goods/CreateUnsoldGoodsEntry.yaml
+    UnsoldGoodsEntry:
+      $ref: components/schemas/unsold-goods/UnsoldGoodsEntry.yaml
+    UnsoldProductCategory:
+      $ref: components/schemas/unsold-goods/UnsoldProductCategory.yaml
+    UnsoldDiscardReason:
+      $ref: components/schemas/unsold-goods/UnsoldDiscardReason.yaml
+    UnsoldDestination:
+      $ref: components/schemas/unsold-goods/UnsoldDestination.yaml
     CreatedApiKeyResponse:
       $ref: components/schemas/access/CreatedApiKeyResponse.yaml
     WebhookSubscription:
@@ -377,6 +387,8 @@ paths:
     $ref: paths/vault/vault_api_v1_api-keys_{id}.yaml
   /vault/api/v1/credentials:
     $ref: paths/vault/vault_api_v1_credentials.yaml
+  /vault/api/v1/unsold-goods:
+    $ref: paths/vault/vault_api_v1_unsold-goods.yaml
   /vault/api/v1/webhooks:
     $ref: paths/vault/vault_api_v1_webhooks.yaml
   /vault/api/v1/webhooks/{id}:

@@ -362,6 +362,8 @@ Background cleanup task runs every 6 hours, deleting completed/failed jobs older
 | GET | `/vault/api/v1/api-keys` | Bearer (admin) | List API keys |
 | POST | `/vault/api/v1/api-keys` | Bearer (admin) | Create API key |
 | DELETE | `/vault/api/v1/api-keys/{id}` | Bearer (admin) | Revoke API key |
+| POST | `/vault/api/v1/unsold-goods` | Bearer **(write)** | Record an ESPR Art. 24 disclosure line for unsold consumer products discarded in a financial year. Not a passport — Art. 24's subject is an operator over a year. `exemptDestruction` requires a justification (Art. 25 bans the destruction outright from 19 July 2026); any other destination refuses one |
+| GET | `/vault/api/v1/unsold-goods` | Bearer (admin) | List those lines, newest first, optionally filtered by financial year |
 | POST | `/vault/api/v1/credentials` | Bearer (admin) | Issue a DPP access credential signed with this node's key. **Legitimate-interest roles only** — an authority's standing is conferred by a member state, so the three authority roles are refused. No revocation list is published, so the lifetime is capped |
 | POST | `/vault/api/v1/plugins` | Bearer (admin) | Install a **signed** product group plugin and hot-swap it |
 | POST | `/vault/api/v1/ruleset/reload` | Bearer (admin) | Re-read the **signed** compliance-ruleset channel and hot-swap a verified bundle |

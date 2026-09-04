@@ -104,6 +104,9 @@ pub struct AppState {
     /// counts. A bare port (like `db_ping`): the stats/ingest handlers call it
     /// directly, there is no orchestration to wrap in a service.
     pub scan_repo: Arc<dyn ScanTelemetryRepository>,
+    /// ESPR Art. 24 unsold-goods disclosure lines. A bare port like `scan_repo`
+    /// — a row is written once and read back, with no lifecycle to orchestrate.
+    pub unsold_goods_repo: Arc<dyn dpp_types::UnsoldGoodsStore>,
     /// Origins allowed for CORS requests (empty = CORS disabled).
     pub cors_allowed_origins: Vec<String>,
     /// Runtime plugin administration (the Wasm plugin host). `None` on

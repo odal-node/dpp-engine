@@ -1,0 +1,13 @@
+type: string
+description: |
+  Where the goods went, for Art. 24(1)(c).
+
+  `exemptDestruction` is the only value recording an act that is otherwise
+  prohibited, and the only one that requires `destructionJustification`.
+enum:
+  - donation
+  - recycling
+  - repurposing
+  - supplierReturn
+  - exemptDestruction
+example: recycling

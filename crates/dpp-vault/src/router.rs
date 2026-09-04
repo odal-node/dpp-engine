@@ -58,6 +58,7 @@ use crate::{
             transfer_accept_handler, transfer_cancel_handler, transfer_initiate_handler,
             transfer_reject_handler,
         },
+        unsold_goods::{unsold_goods_create_handler, unsold_goods_list_handler},
         update::update_handler,
         validate::validate_handler,
         verify_tree::verify_tree_handler,
@@ -156,6 +157,10 @@ pub fn build(state: AppState) -> Router {
         )
         .route("/api-keys/{id}", delete(api_keys_delete_handler))
         .route("/credentials", post(issue_credential_handler))
+        .route(
+            "/unsold-goods",
+            get(unsold_goods_list_handler).post(unsold_goods_create_handler),
+        )
         // ── Plugins (signed product group-plugin hot-install) ────────────────
         .route("/plugins", post(install_plugin_handler))
         // ── Compliance Current (signed ruleset channel hot-reload) ──────────

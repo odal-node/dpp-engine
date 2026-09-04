@@ -1,0 +1,52 @@
+type: object
+description: A stored ESPR Art. 24 disclosure line.
+required:
+  - id
+  - reportingPeriod
+  - volumeKg
+  - productCategory
+  - reason
+  - destination
+  - countryOfDisposal
+  - createdAt
+properties:
+  id:
+    type: string
+    format: uuid
+  reportingPeriod:
+    type: string
+    example: '2026'
+  unitCount:
+    type:
+      - integer
+      - 'null'
+    format: int64
+    description: |
+      Null only for a row written before the count had a column — the write path
+      requires it, so anything recorded through this API carries one.
+  volumeKg:
+    type: number
+    format: double
+  productCategory:
+    $ref: ./UnsoldProductCategory.yaml
+  reason:
+    $ref: ./UnsoldDiscardReason.yaml
+  destination:
+    $ref: ./UnsoldDestination.yaml
+  destructionJustification:
+    type: string
+    description: Present only for `exemptDestruction`.
+  countryOfDisposal:
+    type: string
+    minLength: 2
+    maxLength: 2
+  operatorName:
+    type:
+      - string
+      - 'null'
+    description: |
+      The operator the disclosure is about — this node's own legal name at the
+      time the line was recorded. Report content, not a tenant key.
+  createdAt:
+    type: string
+    format: date-time

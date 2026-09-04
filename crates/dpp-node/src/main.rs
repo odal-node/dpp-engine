@@ -344,6 +344,7 @@ async fn main() -> anyhow::Result<()> {
         )),
         cors_allowed_origins: cfg.cors_allowed_origins.clone(),
         scan_repo: db.scan_repo.clone(),
+        unsold_goods_repo: db.unsold_goods_repo.clone(),
         plugin_admin: Some(plugin_admin),
         // Reported on the authenticated `/vault/api/v1/node/state`, not on the
         // public `/health` — see `dpp_node::router::node_health`.

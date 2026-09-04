@@ -183,6 +183,7 @@ async fn start_node_with_ruleset(
     ));
     let auth_provider: Arc<dyn dpp_types::auth::AuthProvider> = Arc::new(TestAuthProvider);
     let scan_repo = Arc::new(PgScanTelemetryRepo::new(dal.clone()));
+    let unsold_goods_repo = Arc::new(dpp_dal::pg::PgUnsoldGoodsRepo::new(dal.clone()));
     // Declared before the vault state, which now carries the trust posture so
     // the authenticated node-state route can report it.
     let trust = std::sync::Arc::new(dpp_types::trust::NodeTrustReport::new(
@@ -207,6 +208,7 @@ async fn start_node_with_ruleset(
         credential_issuer: None,
         cors_allowed_origins: Vec::new(),
         scan_repo,
+        unsold_goods_repo,
         plugin_admin: None,
         // The trust posture is asserted through the authenticated node-state
         // route, not the public probe.

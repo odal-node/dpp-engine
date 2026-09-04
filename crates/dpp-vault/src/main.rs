@@ -66,6 +66,7 @@ async fn main() -> anyhow::Result<()> {
     let evidence_repo = Arc::new(PgEvidenceDossierRepo::new(dal.clone()));
     let webhook_repo = Arc::new(PgWebhookRepo::new(dal.clone()));
     let scan_repo = Arc::new(PgScanTelemetryRepo::new(dal.clone()));
+    let unsold_goods_repo = Arc::new(dpp_dal::pg::PgUnsoldGoodsRepo::new(dal.clone()));
 
     let identity = Arc::new(IdentityHttpClient::new(cfg.identity_service_url.clone()));
     let compliance = Arc::new(PassthroughRegistry::new());
@@ -168,6 +169,7 @@ async fn main() -> anyhow::Result<()> {
         credential_issuer: None,
         cors_allowed_origins: cfg.cors_allowed_origins.clone(),
         scan_repo,
+        unsold_goods_repo,
         // The standalone vault binary hosts no Wasm plugin engine; runtime
         // plugin install is available only on the fused node.
         plugin_admin: None,
