@@ -5,6 +5,41 @@ use anyhow::Result;
 use base64::Engine;
 use reqwest::{Client, StatusCode, header::AUTHORIZATION};
 
+/// The `--idempotency-key` value for this invocation, set once from the parsed
+/// arguments in `main`.
+///
+/// A process global rather than a threaded parameter, following
+/// `config::set_active_profile_override`: `load_client()` has forty-odd call
+/// sites and takes no arguments, and a flag that is fixed for the life of the
+/// process is exactly what that idiom is for.
+static IDEMPOTENCY_KEY: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
+
+/// Record the `--idempotency-key` flag. Called once, from `main`.
+pub fn set_idempotency_key(key: Option<String>) {
+    let _ = IDEMPOTENCY_KEY.set(key.filter(|s| !s.trim().is_empty()));
+}
+
+/// The key for this invocation, if one was given.
+fn idempotency_key() -> Option<&'static str> {
+    IDEMPOTENCY_KEY.get()?.as_deref()
+}
+
+/// The key for one item of a multi-item command, or `None` when no key was
+/// given.
+///
+/// A bulk import creates many passports from one invocation, and sending the
+/// same key for each would be wrong twice over: the second row would be refused
+/// as a reused key with a different body, and if it were not, every row after
+/// the first would replay row one's response. Suffixing the index makes each
+/// row its own idempotent request — so re-running a partially-failed import
+/// skips exactly the rows that landed.
+///
+/// This relies on the row order being stable across runs, which it is: rows are
+/// created in file order.
+fn indexed_idempotency_key(index: usize) -> Option<String> {
+    idempotency_key().map(|k| format!("{k}#{index}"))
+}
+
 /// Shared HTTP client wrapper that authenticates with the vault via an
 /// `Authorization` header.
 ///
@@ -78,6 +113,55 @@ impl OdalClient {
         Ok((status, body))
     }
 
+    /// POST JSON `payload` to a route that **creates** something, carrying the
+    /// invocation's `--idempotency-key` when one was given.
+    ///
+    /// Deliberately a separate method rather than a flag on [`Self::post_json`].
+    /// The node refuses a key on a route that is idempotent by shape — a `400`,
+    /// not a silent no-op — so sending it on every POST would break `validate`,
+    /// `publish` and every lifecycle transition. Which routes accept one is a
+    /// property of the route, so the call site is where it belongs.
+    pub async fn post_json_creating(
+        &self,
+        url: &str,
+        payload: &serde_json::Value,
+    ) -> Result<(StatusCode, String)> {
+        self.post_json_keyed(url, payload, idempotency_key().map(str::to_owned))
+            .await
+    }
+
+    /// As [`Self::post_json_creating`], for one item of a multi-item command —
+    /// each row of a bulk import gets its own derived key.
+    pub async fn post_json_creating_indexed(
+        &self,
+        url: &str,
+        payload: &serde_json::Value,
+        index: usize,
+    ) -> Result<(StatusCode, String)> {
+        self.post_json_keyed(url, payload, indexed_idempotency_key(index))
+            .await
+    }
+
+    async fn post_json_keyed(
+        &self,
+        url: &str,
+        payload: &serde_json::Value,
+        key: Option<String>,
+    ) -> Result<(StatusCode, String)> {
+        let mut request = self
+            .inner
+            .post(url)
+            .header(AUTHORIZATION, &self.authorization)
+            .json(payload);
+        if let Some(key) = key {
+            request = request.header("Idempotency-Key", key);
+        }
+        let resp = request.send().await?;
+        let status = resp.status();
+        let body = resp.text().await?;
+        Ok((status, body))
+    }
+
     /// POST raw JSON `bytes` to `url` with the client's credential, sent verbatim (no
     /// reserialisation) — so a server-side content check sees exactly what
     /// was on disk.
@@ -144,6 +228,18 @@ impl OdalClient {
     /// the client's credential — the shape the integrator's
     /// `POST /api/v1/import/{product group}` expects. The filename is preserved so the
     /// server can detect CSV vs XLSX.
+    ///
+    /// # No `Idempotency-Key`, deliberately
+    ///
+    /// The route accepts one, but this client cannot usefully send it.
+    /// `reqwest::multipart::Form` mints a fresh boundary per request, and the
+    /// node fingerprints the **raw** body — so two attempts at the same upload
+    /// differ in bytes and the retry would be refused as a reused key with a
+    /// different body. Attaching one here would turn a retryable failure into a
+    /// guaranteed `422`.
+    ///
+    /// A client that controls its own encoding can reuse a boundary and get the
+    /// protection; this one cannot without hand-rolling multipart.
     pub async fn upload_file(
         &self,
         url: &str,
@@ -321,6 +417,45 @@ fn shared_trailing_clause(errors: &[ProblemFieldError]) -> Option<String> {
         last(&e.message).as_deref() == Some(candidate.as_str()) && e.message.len() > candidate.len()
     });
     holds.then_some(candidate)
+}
+
+#[cfg(test)]
+mod idempotency_key_derivation {
+    //! The derivation is tested rather than the global, because a `OnceLock`
+    //! can only be set once per process and every test shares one.
+
+    /// Mirrors [`super::indexed_idempotency_key`] for a known base, so the rule
+    /// itself is asserted without touching the global.
+    fn derive(base: &str, index: usize) -> String {
+        format!("{base}#{index}")
+    }
+
+    /// The property a bulk import depends on: every row gets a distinct key.
+    /// One key for the whole loop would be refused at row two as a reuse with a
+    /// different body — and if it were not, every row would replay row one.
+    #[test]
+    fn each_row_gets_its_own_key() {
+        let keys: Vec<String> = (0..5).map(|i| derive("run-1", i)).collect();
+        let unique: std::collections::BTreeSet<&String> = keys.iter().collect();
+        assert_eq!(unique.len(), keys.len(), "row keys must not collide");
+    }
+
+    /// And the same row of the same run derives the same key, which is what
+    /// makes re-running a partially failed import skip the rows that landed.
+    #[test]
+    fn the_same_row_of_the_same_run_is_stable() {
+        assert_eq!(derive("run-1", 3), derive("run-1", 3));
+        assert_ne!(derive("run-1", 3), derive("run-2", 3));
+        assert_ne!(derive("run-1", 3), derive("run-1", 4));
+    }
+
+    /// A base carrying the separator must not let one run's row collide with
+    /// another's. `#` is not valid in the bases we generate, but the keys are
+    /// user-supplied, so this records what happens rather than assuming.
+    #[test]
+    fn a_separator_in_the_base_still_yields_distinct_row_keys() {
+        assert_ne!(derive("a#1", 2), derive("a", 12));
+    }
 }
 
 #[cfg(test)]

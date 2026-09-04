@@ -6041,6 +6041,11 @@ components:
         different member order or whitespace counts as a different request and is
         refused with `422`. Use a fresh key whenever the body changes.
 
+        On a `multipart/form-data` route this includes the **boundary**: the whole
+        encoded body is what is hashed. Most HTTP clients generate a fresh boundary
+        per request, which makes the retry differ in bytes and be refused. Either
+        pin the boundary across attempts, or omit the key on multipart uploads.
+
         Keys are scoped to the authenticated caller and to this route, so the same
         key may safely be reused across different operations, and one caller can
         never observe another's. A key is honoured for **24 hours**; after that the

@@ -90,6 +90,25 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   former spawns no purge task and the latter has no database, and a key store
   that only grows, or that forgets on restart, is worse than none.
 
+- **`odal --idempotency-key <KEY>`** sends that key on the commands that create
+  something, so a script can re-run one after a network error without risking a
+  duplicate. It is global rather than per-command, and applied at the call sites
+  that hit keyed routes rather than to every `POST` — the node refuses a key on
+  a route that is idempotent by shape, so a blanket flag would have broken
+  `validate`, `publish` and every lifecycle transition.
+
+  A bulk import derives a **per-row** key (`<KEY>#<index>`). One key for the
+  whole loop would be refused at row two as a reuse with a different body, and
+  had it not been, every row would have replayed row one's response. Per-row
+  keys mean re-running a partially failed import re-creates exactly the rows
+  that did not land.
+
+  Multipart uploads — file import and plugin install — deliberately send **no**
+  key, even though the routes accept one. `reqwest` mints a fresh boundary per
+  request and the node fingerprints the raw body, so a retry would differ in
+  bytes and be refused; attaching a key there would turn a retryable failure
+  into a guaranteed `422`. The API description now says this for any client.
+
 - **A continuity snapshot now says how long it stands, under its own signature.**
   Each snapshot written to object storage carries `asOf`, `validUntil` and a
   `snapshotJwsSignature` over the whole document — the passport's public view,
