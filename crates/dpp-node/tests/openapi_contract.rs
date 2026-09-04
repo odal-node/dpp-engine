@@ -1656,6 +1656,53 @@ fn every_route_is_documented_and_every_documented_path_exists() {
     );
 }
 
+/// Every route the idempotency policy claims to key must be a route the node
+/// actually serves.
+///
+/// This gate exists because the first draft of the policy table listed
+/// `POST /vault/api/v1/credentials` and `POST /vault/api/v1/unsold-goods` —
+/// routes that exist on an unmerged branch and not on `main`. Nothing would
+/// have failed: `policy_for` would simply never match them, the middleware
+/// would never fire, and the table would have read as protection that was not
+/// there. A policy entry naming a route nobody serves is worse than a missing
+/// one, because it is silent.
+///
+/// The reverse direction is deliberately **not** checked. Most routes are
+/// correctly unkeyed, so "every route appears in the policy" would be false by
+/// design; which routes are keyed is the decision recorded in `policy.rs`.
+#[test]
+fn every_keyed_route_is_a_route_the_node_serves() {
+    let served = node_surface();
+
+    // Parsed out of the policy source rather than imported, for the same reason
+    // the routers above are: the assertion must be against the file that ships,
+    // not against a value this test could be handed.
+    let policy = include_str!("../../dpp-common/src/idempotency/policy.rs");
+    let table = section(policy, "const KEYED:", Some("/// The policy for"));
+
+    let keyed: BTreeSet<String> = table
+        .lines()
+        .filter_map(|l| l.trim().strip_prefix('"'))
+        .filter_map(|l| l.split('"').next())
+        .filter(|l| l.starts_with('/'))
+        .map(str::to_owned)
+        .collect();
+
+    assert!(
+        !keyed.is_empty(),
+        "no keyed routes were parsed out of policy.rs — the parse broke, and a \
+         gate that reads nothing passes by not looking"
+    );
+
+    let phantom: BTreeSet<String> = keyed.difference(&served).cloned().collect();
+    assert!(
+        phantom.is_empty(),
+        "the idempotency policy keys routes nothing serves, so those requests \
+         are silently unprotected: {}",
+        joined(&phantom)
+    );
+}
+
 // ── Documented error codes ─────────────────────────────────────────────────
 //
 // Handler sources, embedded like the routers above so they cannot go stale

@@ -5,6 +5,7 @@ pub mod config;
 pub mod event;
 pub mod event_codes;
 pub mod http_problem;
+pub mod idempotency;
 pub mod metrics;
 pub mod mtls;
 pub mod outbound;

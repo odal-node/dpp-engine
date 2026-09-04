@@ -17,6 +17,8 @@ post:
   security:
     - BearerApiKey: []
     - BasicAuth: []
+  parameters:
+    - $ref: ../../components/parameters/IdempotencyKey.yaml
   requestBody:
     required: true
     content:
@@ -62,5 +64,7 @@ post:
       description: >-
         The artifact was rejected — bad signature, incompatible ABI, or a
         non-instantiable/incompatible module.
+    '409':
+      $ref: ../../components/responses/IdempotentRequestInFlight.yaml
     '501':
       description: This node has no plugin host configured; runtime install is unavailable.

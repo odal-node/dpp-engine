@@ -89,4 +89,14 @@ pub struct AppState {
     /// being true the moment a swap can happen. `None` on deployments with no
     /// ruleset channel wired (e.g. the standalone vault binary).
     pub ruleset_admin: Option<Arc<dyn RulesetAdmin>>,
+    /// Where client-supplied idempotency keys are claimed and their outcomes
+    /// held for replay (migration 0036).
+    ///
+    /// Optional for the same reason the ports above are: a suite that builds an
+    /// `AppState` by hand has no Postgres, and requiring the port would make
+    /// every one of them carry a stub for a feature it is not testing. `None`
+    /// means the middleware is not mounted at all — a keyed route then behaves
+    /// exactly as it did before this existed, rather than pretending to protect
+    /// a retry it is not recording.
+    pub idempotency: Option<Arc<dyn dpp_common::idempotency::IdempotencyStore>>,
 }

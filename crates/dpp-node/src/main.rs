@@ -340,6 +340,7 @@ async fn main() -> anyhow::Result<()> {
         // force at the moment it is asked, and `POST /ruleset/reload` reaches
         // the same channel this booted from.
         ruleset_admin: Some(active_ruleset.clone()),
+        idempotency: Some(db.idempotency.clone()),
     };
 
     // ── Integrator service state ────────────────────────────────────────────────
@@ -349,10 +350,12 @@ async fn main() -> anyhow::Result<()> {
         vault_client,
         job_store: db.job_store.clone(),
         batch_concurrency: cfg.batch_concurrency,
+        idempotency: Some(db.idempotency.clone()),
     };
 
     // ── Background tasks: expired-import-job cleanup + registry outbox drain ──
     boot::tasks::spawn_job_cleanup(db.job_store.clone());
+    boot::tasks::spawn_idempotency_purge(db.idempotency.clone());
     boot::tasks::spawn_scan_prune(db.scan_repo.clone());
     boot::tasks::spawn_ruleset_poll(active_ruleset.clone(), ruleset_wiring.poll_interval);
     boot::tasks::spawn_registry_drain(

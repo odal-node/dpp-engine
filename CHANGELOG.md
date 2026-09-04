@@ -12,6 +12,55 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ### Added
 
+- **Eight write endpoints now accept a client-supplied `Idempotency-Key`.**
+  Send the same key with the same body and the first outcome is returned rather
+  than a second resource being created. The replay carries
+  `Idempotency-Replayed: true`, so a client can tell a retry that worked from
+  one that duplicated without comparing anything.
+
+  Which routes get a key is decided by **effect, not verb**: the test is whether
+  a replay creates a second thing, or spends something that cannot be un-spent.
+  That is `POST /dpp`, evidence generation, plugin install, and the five creates
+  behind API keys, webhooks, facilities, operator identifiers and bulk import.
+  `PUT` and every lifecycle transition are deliberately excluded — they converge
+  on their own — and a key sent to one of them is a `400`, not a silent no-op.
+  Accepting the header where nothing records it would advertise a protection
+  that is not there.
+
+  The key is bound to a SHA-256 of the **raw** request body. Not of a
+  canonicalised form: canonicalising would invent a normalisation this API does
+  not otherwise have, and a client that re-serialises with different member
+  order has changed its request. Reusing a key with a different body is
+  refused with `422` under its own problem type
+  (`.../idempotency-key-reuse`) — built directly rather than through the shared
+  helper, which derives the type URI from the status reason and would have made
+  it indistinguishable from every other validation failure.
+
+  Keys are scoped to the authenticated caller and the matched route template,
+  honoured for 24 hours, and swept hourly. A concurrent duplicate gets `409`
+  with `Retry-After`; a claim orphaned by a crash is reclaimed after 60 seconds.
+  If the key store is unreachable the write is **refused**, not run: executing
+  with no record produces exactly the outcome the caller asked to be protected
+  from.
+
+  Two carve-outs, both deliberate and both documented on the routes themselves.
+  `POST /api-keys` and `POST /webhooks` return a secret once, so the secret is
+  never stored — their replay returns the created resource with
+  `"secretAlreadyDelivered": true` in place of it. That is the only shape
+  divergence in the set; the alternative was parking a live credential in a
+  table for a day.
+
+  One honest limitation, recorded rather than hidden: the middleware cannot
+  commit its record inside the handler's transaction, because the repository
+  ports beneath it are per-operation. If a write commits and its record does
+  not, a later retry re-executes. That is today's behaviour, so the mechanism
+  is never a regression — but it is why this is a `warn!` in the logs and a
+  paragraph here.
+
+  Standalone `dpp-vault` and standalone `dpp-integrator` do not mount it: the
+  former spawns no purge task and the latter has no database, and a key store
+  that only grows, or that forgets on restart, is worse than none.
+
 - **A continuity snapshot now says how long it stands, under its own signature.**
   Each snapshot written to object storage carries `asOf`, `validUntil` and a
   `snapshotJwsSignature` over the whole document — the passport's public view,
