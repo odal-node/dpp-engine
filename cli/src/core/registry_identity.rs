@@ -103,7 +103,7 @@ pub async fn action_facility_add(
     if let Some(addr) = &params.address {
         payload["address"] = json!(addr);
     }
-    let (status, body) = client.post_json(&url, &payload).await?;
+    let (status, body) = client.post_json_creating(&url, &payload).await?;
     if !status.is_success() {
         bail!(
             "facility creation failed: {}",
@@ -188,7 +188,7 @@ pub async fn action_operator_id_add(
     if let Some(label) = &params.label {
         payload["label"] = json!(label);
     }
-    let (status, body) = client.post_json(&url, &payload).await?;
+    let (status, body) = client.post_json_creating(&url, &payload).await?;
     if !status.is_success() {
         bail!(
             "operator-identifier creation failed: {}",
