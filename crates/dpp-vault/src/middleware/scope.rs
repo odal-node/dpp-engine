@@ -28,11 +28,16 @@
 //!
 //! # The message
 //!
-//! `require_write` interpolates a per-route action ("Creating a passport
-//! requires a write-scoped credential"). An extractor takes no arguments, so
-//! these say "This operation requires …" instead. The trade is deliberate: the
-//! action string is a hand-maintained duplicate of what the route already says,
-//! and the wording is an example in the API description rather than a contract.
+//! One sentence, built in [`forbidden`], for every scope refusal in the service.
+//!
+//! `require_admin`/`require_write` in `handlers::error` used to interpolate a
+//! per-route action ("Registry-identity management requires an admin-scoped
+//! credential") while these extractors, which take no arguments, said "This
+//! operation requires …". Two shapes on one API, and the twenty action strings
+//! were hand-maintained duplicates of what the route already says — a caller
+//! knows which endpoint they called, and the actionable half of the message is
+//! the scope. The helpers now delegate here, so there is one string rather than
+//! twenty-one that can drift apart.
 
 use axum::{
     extract::FromRequestParts,
@@ -74,7 +79,7 @@ fn missing_context() -> Response {
         .into_response()
 }
 
-fn forbidden(scope: &str) -> Response {
+pub(crate) fn forbidden(scope: &str) -> Response {
     // "a admin" — the article is the scope's, not the sentence's. Only two
     // scopes reach here, so this is a lookup rather than an English-language
     // heuristic that would be wrong the first time a third one appears.

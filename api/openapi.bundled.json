@@ -8147,7 +8147,7 @@
         }
       },
       "Forbidden": {
-        "description": "The credential is authenticated but lacks the required scope — e.g. a\n`write`/`read` key attempting an admin-only action (registry identity).\n",
+        "description": "The credential is authenticated but lacks the required scope — e.g. a\n`write`/`read` key attempting an admin-only action.\n\nEvery scope refusal in the service answers this one sentence, naming the scope\nrequired rather than the route. The route is what the caller just addressed;\nthe scope is the part they have to act on.\n",
         "content": {
           "application/problem+json": {
             "schema": {
@@ -8157,7 +8157,7 @@
               "type": "https://problems.odal-node.io/forbidden",
               "title": "Forbidden",
               "status": 403,
-              "detail": "Registry-identity management requires an admin-scoped credential."
+              "detail": "This operation requires an admin-scoped credential."
             }
           }
         }

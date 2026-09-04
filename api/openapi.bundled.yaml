@@ -6629,7 +6629,11 @@ components:
     Forbidden:
       description: |
         The credential is authenticated but lacks the required scope — e.g. a
-        `write`/`read` key attempting an admin-only action (registry identity).
+        `write`/`read` key attempting an admin-only action.
+
+        Every scope refusal in the service answers this one sentence, naming the scope
+        required rather than the route. The route is what the caller just addressed;
+        the scope is the part they have to act on.
       content:
         application/problem+json:
           schema:
@@ -6638,7 +6642,7 @@ components:
             type: https://problems.odal-node.io/forbidden
             title: Forbidden
             status: 403
-            detail: Registry-identity management requires an admin-scoped credential.
+            detail: This operation requires an admin-scoped credential.
     ValidationError:
       description: One or more fields failed validation.
       content:

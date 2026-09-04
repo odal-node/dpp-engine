@@ -114,33 +114,26 @@ pub fn parse_passport_id(s: &str) -> Result<dpp_domain::passport::PassportId, Re
         .map_err(|_| http_problem::bad_request("Invalid dppId").into_response())
 }
 
-/// Require an admin-scoped credential, or short-circuit with a 403. `action`
-/// names the operation being gated (e.g. `"Webhook management"`) and is
-/// interpolated into the detail message.
-pub fn require_admin(auth: &AuthContext, action: &str) -> Option<Response> {
+/// Require an admin-scoped credential, or short-circuit with a 403.
+///
+/// The message is [`crate::middleware::scope::forbidden`]'s, so an in-handler
+/// gate and an extractor gate are indistinguishable to a caller. This used to
+/// take an `action` to interpolate; see that module on why naming the route in
+/// the sentence was twenty duplicates of something the caller already knows.
+pub fn require_admin(auth: &AuthContext) -> Option<Response> {
     if auth.scope.is_admin() {
         None
     } else {
-        Some(api_error(
-            StatusCode::FORBIDDEN,
-            "FORBIDDEN",
-            &format!("{action} requires an admin-scoped credential."),
-        ))
+        Some(crate::middleware::scope::forbidden("admin"))
     }
 }
 
 /// Require a write-scoped (or admin) credential, or short-circuit with a 403.
-/// `action` names the operation being gated (e.g. `"Creating a passport"`) and
-/// is interpolated into the detail message.
-pub fn require_write(auth: &AuthContext, action: &str) -> Option<Response> {
+pub fn require_write(auth: &AuthContext) -> Option<Response> {
     if auth.scope.can_write() {
         None
     } else {
-        Some(api_error(
-            StatusCode::FORBIDDEN,
-            "FORBIDDEN",
-            &format!("{action} requires a write-scoped credential."),
-        ))
+        Some(crate::middleware::scope::forbidden("write"))
     }
 }
 
@@ -159,25 +152,56 @@ mod guard_tests {
 
     #[test]
     fn require_admin_allows_admin_scope_only() {
-        assert!(require_admin(&ctx(ApiKeyScope::Admin), "X").is_none());
+        assert!(require_admin(&ctx(ApiKeyScope::Admin)).is_none());
         for scope in [ApiKeyScope::Write, ApiKeyScope::Read] {
-            let resp = require_admin(&ctx(scope), "X").expect("non-admin must be blocked");
+            let resp = require_admin(&ctx(scope)).expect("non-admin must be blocked");
             assert_eq!(resp.status(), StatusCode::FORBIDDEN);
         }
     }
 
     #[test]
     fn require_write_allows_write_and_admin_scope() {
-        assert!(require_write(&ctx(ApiKeyScope::Admin), "X").is_none());
-        assert!(require_write(&ctx(ApiKeyScope::Write), "X").is_none());
-        let resp = require_write(&ctx(ApiKeyScope::Read), "X").expect("read must be blocked");
+        assert!(require_write(&ctx(ApiKeyScope::Admin)).is_none());
+        assert!(require_write(&ctx(ApiKeyScope::Write)).is_none());
+        let resp = require_write(&ctx(ApiKeyScope::Read)).expect("read must be blocked");
         assert_eq!(resp.status(), StatusCode::FORBIDDEN);
     }
 
-    #[test]
-    fn detail_message_interpolates_the_action() {
-        let resp = require_admin(&ctx(ApiKeyScope::Read), "Widget management").unwrap();
-        assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+    /// The two gates are indistinguishable to a caller.
+    ///
+    /// A route gated in the handler and a route gated by an extractor answer
+    /// the same refusal, byte for byte. They used to answer two different
+    /// sentences — one naming the route, one saying "This operation" — which
+    /// made one API look like two, and put the naming half in twenty
+    /// hand-maintained strings. Comparing them here is what keeps the single
+    /// builder single: reintroducing a per-call-site message fails this.
+    #[tokio::test]
+    async fn both_gates_refuse_in_the_same_words() {
+        async fn detail(resp: Response) -> String {
+            let bytes = axum::body::to_bytes(resp.into_body(), 64 * 1024)
+                .await
+                .expect("body");
+            serde_json::from_slice::<serde_json::Value>(&bytes).expect("problem document")["detail"]
+                .as_str()
+                .expect("detail")
+                .to_owned()
+        }
+
+        let from_helper = detail(require_admin(&ctx(ApiKeyScope::Read)).unwrap()).await;
+        let from_extractor = detail(crate::middleware::scope::forbidden("admin")).await;
+        assert_eq!(from_helper, from_extractor);
+        assert_eq!(
+            from_helper,
+            "This operation requires an admin-scoped credential."
+        );
+
+        let from_helper = detail(require_write(&ctx(ApiKeyScope::Read)).unwrap()).await;
+        let from_extractor = detail(crate::middleware::scope::forbidden("write")).await;
+        assert_eq!(from_helper, from_extractor);
+        assert_eq!(
+            from_helper,
+            "This operation requires a write-scoped credential."
+        );
     }
 
     #[test]
