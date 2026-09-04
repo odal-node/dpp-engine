@@ -7,6 +7,26 @@
 //! pure function over values core already owns, so moving it is a lift rather
 //! than a rewrite.
 //!
+//! # Not `dpp_domain::instrument::PassportObligation`
+//!
+//! Core already has a type with a similar name, and they answer different
+//! questions at different granularities. Keeping them apart is the point of the
+//! name here.
+//!
+//! - Core's [`PassportObligation`](dpp_domain::instrument::PassportObligation)
+//!   is about an **act and a product group**: does Reg. (EU) 2023/1542 require a
+//!   passport for batteries at all, and from when. Its answers are `Required`,
+//!   `NotRequired` and `DisplacedBy`.
+//! - [`PassportScope`] here is about **one record**: given that the obligation
+//!   exists, does Art. 77(1) reach *this* battery, whose type and capacity
+//!   decide it.
+//!
+//! They compose rather than compete — core says the duty exists for batteries
+//! from 18 February 2027, and this says a portable one is not inside it. Naming
+//! both "obligation" would have made a reader assume one was the other, which is
+//! the same two-names-one-concept mistake the `sector`/`productGroup` rename was
+//! paid for.
+//!
 //! # The article
 //!
 //! > **Art. 77(1)** — "From 18 February 2027 each LMT battery, each industrial
@@ -60,7 +80,7 @@ use dpp_domain::product_group::{BatteryType, ProductGroupData};
 
 /// Whether this node's passport-content gate is something the law asks for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PassportObligation {
+pub enum PassportScope {
     /// Art. 77(1) requires a battery passport for this record.
     Required,
     /// Art. 77(1) does not reach this record. A passport may still be published
@@ -72,7 +92,7 @@ pub enum PassportObligation {
     NotApplicable,
 }
 
-impl PassportObligation {
+impl PassportScope {
     /// Whether the article requires the passport.
     #[must_use]
     pub fn is_required(self) -> bool {
@@ -85,21 +105,21 @@ pub const INDUSTRIAL_THRESHOLD_KWH: f64 = 2.0;
 
 /// Apply Art. 77(1) to a passport's product-group data.
 #[must_use]
-pub fn passport_obligation(data: Option<&ProductGroupData>) -> PassportObligation {
+pub fn scope_of(data: Option<&ProductGroupData>) -> PassportScope {
     let Some(ProductGroupData::Battery(battery)) = data else {
-        return PassportObligation::NotApplicable;
+        return PassportScope::NotApplicable;
     };
     match &battery.battery_type {
         // Named by the article without qualification.
-        BatteryType::Lmt | BatteryType::Ev => PassportObligation::Required,
+        BatteryType::Lmt | BatteryType::Ev => PassportScope::Required,
         // Named with a threshold. Undeclared capacity is not "small" — see the
         // module header on which way to be wrong.
         BatteryType::Industrial => match battery.rated_capacity_kwh {
-            Some(kwh) if kwh <= INDUSTRIAL_THRESHOLD_KWH => PassportObligation::Voluntary,
-            _ => PassportObligation::Required,
+            Some(kwh) if kwh <= INDUSTRIAL_THRESHOLD_KWH => PassportScope::Voluntary,
+            _ => PassportScope::Required,
         },
         // Outside the article entirely.
-        BatteryType::Portable | BatteryType::Sli => PassportObligation::Voluntary,
+        BatteryType::Portable | BatteryType::Sli => PassportScope::Voluntary,
         // `BatteryType` is `#[non_exhaustive]`, so a newer `dpp-domain` can add a
         // category this build has never heard of. It is treated as in scope, for
         // the same reason an undeclared capacity is: exempting on an unknown is
@@ -111,7 +131,7 @@ pub fn passport_obligation(data: Option<&ProductGroupData>) -> PassportObligatio
                 "battery category not recognised by this build; applying the Art. 77(1) \
                  obligation rather than assuming it is out of scope"
             );
-            PassportObligation::Required
+            PassportScope::Required
         }
     }
 }
@@ -123,16 +143,13 @@ pub fn passport_obligation(data: Option<&ProductGroupData>) -> PassportObligatio
 /// applies core's content gate whatever this says, and pretending otherwise
 /// would be the more confusing answer.
 #[must_use]
-pub fn obligation_note(
-    obligation: PassportObligation,
-    data: Option<&ProductGroupData>,
-) -> Option<String> {
+pub fn scope_note(obligation: PassportScope, data: Option<&ProductGroupData>) -> Option<String> {
     let Some(ProductGroupData::Battery(battery)) = data else {
         return None;
     };
     match obligation {
-        PassportObligation::NotApplicable => None,
-        PassportObligation::Required => match &battery.battery_type {
+        PassportScope::NotApplicable => None,
+        PassportScope::Required => match &battery.battery_type {
             BatteryType::Industrial if battery.rated_capacity_kwh.is_none() => Some(
                 "Art. 77(1) requires a battery passport for an industrial battery with a \
                  capacity greater than 2 kWh. This record does not declare \
@@ -143,7 +160,7 @@ pub fn obligation_note(
             ),
             _ => None,
         },
-        PassportObligation::Voluntary => Some(match &battery.battery_type {
+        PassportScope::Voluntary => Some(match &battery.battery_type {
             BatteryType::Portable | BatteryType::Sli => format!(
                 "Art. 77(1) requires a battery passport for LMT, electric-vehicle and \
                  industrial batteries above 2 kWh. A {} battery is outside it, so this \
@@ -196,8 +213,8 @@ mod tests {
         for t in [BatteryType::Lmt, BatteryType::Ev] {
             for capacity in [None, Some(0.5), Some(2.0), Some(100.0)] {
                 assert_eq!(
-                    passport_obligation(Some(&battery(t.clone(), capacity))),
-                    PassportObligation::Required,
+                    scope_of(Some(&battery(t.clone(), capacity))),
+                    PassportScope::Required,
                     "{t:?} at {capacity:?} kWh is named by Art. 77(1) with no threshold"
                 );
             }
@@ -210,8 +227,8 @@ mod tests {
         for t in [BatteryType::Portable, BatteryType::Sli] {
             for capacity in [None, Some(0.5), Some(500.0)] {
                 assert_eq!(
-                    passport_obligation(Some(&battery(t.clone(), capacity))),
-                    PassportObligation::Voluntary,
+                    scope_of(Some(&battery(t.clone(), capacity))),
+                    PassportScope::Voluntary,
                     "{t:?} is outside Art. 77(1) at any capacity"
                 );
             }
@@ -222,28 +239,28 @@ mod tests {
     /// one thing a threshold gets wrong.
     #[test]
     fn the_industrial_threshold_is_strictly_greater_than_two_kwh() {
-        let at = |kwh: f64| passport_obligation(Some(&battery(BatteryType::Industrial, Some(kwh))));
-        assert_eq!(at(1.999), PassportObligation::Voluntary);
+        let at = |kwh: f64| scope_of(Some(&battery(BatteryType::Industrial, Some(kwh))));
+        assert_eq!(at(1.999), PassportScope::Voluntary);
         assert_eq!(
             at(2.0),
-            PassportObligation::Voluntary,
+            PassportScope::Voluntary,
             "the article says *greater than* 2 kWh, so 2.0 is outside it"
         );
-        assert_eq!(at(2.001), PassportObligation::Required);
-        assert_eq!(at(64.0), PassportObligation::Required);
+        assert_eq!(at(2.001), PassportScope::Required);
+        assert_eq!(at(64.0), PassportScope::Required);
     }
 
     /// An undeclared capacity is in scope, and the note says how to leave it.
     #[test]
     fn an_industrial_battery_with_no_declared_capacity_stays_in_scope() {
         let data = battery(BatteryType::Industrial, None);
-        let obligation = passport_obligation(Some(&data));
+        let obligation = scope_of(Some(&data));
         assert_eq!(
             obligation,
-            PassportObligation::Required,
+            PassportScope::Required,
             "an unknown capacity must not exempt a battery from a statutory gate"
         );
-        let note = obligation_note(obligation, Some(&data)).expect("a note explains the default");
+        let note = scope_note(obligation, Some(&data)).expect("a note explains the default");
         assert!(note.contains("ratedCapacityKwh"), "{note}");
     }
 
@@ -251,11 +268,11 @@ mod tests {
     #[test]
     fn a_non_battery_is_not_applicable_rather_than_voluntary() {
         assert_eq!(
-            passport_obligation(None),
-            PassportObligation::NotApplicable,
+            scope_of(None),
+            PassportScope::NotApplicable,
             "Art. 77(1) is a battery article; absence of a battery is not exemption"
         );
-        assert!(obligation_note(PassportObligation::NotApplicable, None).is_none());
+        assert!(scope_note(PassportScope::NotApplicable, None).is_none());
     }
 
     /// A voluntary passport is named as such, and the industrial case says the
@@ -264,12 +281,12 @@ mod tests {
     #[test]
     fn a_voluntary_passport_is_named_and_the_stricter_gate_is_admitted() {
         let portable = battery(BatteryType::Portable, None);
-        let note = obligation_note(PassportObligation::Voluntary, Some(&portable)).expect("note");
+        let note = scope_note(PassportScope::Voluntary, Some(&portable)).expect("note");
         assert!(note.contains("voluntary"), "{note}");
         assert!(note.contains("portable"), "{note}");
 
         let small = battery(BatteryType::Industrial, Some(1.0));
-        let note = obligation_note(PassportObligation::Voluntary, Some(&small)).expect("note");
+        let note = scope_note(PassportScope::Voluntary, Some(&small)).expect("note");
         assert!(
             note.contains("stricter"),
             "the over-demand has to be admitted, not hidden: {note}"
@@ -283,8 +300,8 @@ mod tests {
         data.battery_type = BatteryType::Portable;
         data.battery_chemistry = BatteryChemistry::LeadAcid;
         assert_eq!(
-            passport_obligation(Some(&ProductGroupData::Battery(Box::new(data)))),
-            PassportObligation::Voluntary
+            scope_of(Some(&ProductGroupData::Battery(Box::new(data)))),
+            PassportScope::Voluntary
         );
     }
 }

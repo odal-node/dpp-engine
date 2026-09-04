@@ -545,7 +545,7 @@
       "post": {
         "operationId": "relintDpp",
         "summary": "Re-check plausibility-lint findings",
-        "description": "Recomputes the `dpp-rules` plausibility lint pack against the DPP's\ncurrent product group data and persists the refreshed `lintResult` (pack\nversion, findings, assessed-at timestamp). Findings are non-binding —\narithmetic and physical-plausibility checks distinct from binding\ncompliance rules — and never gate publish or any other transition.\n\nWorks regardless of DPP status, including `active` (published):\nre-checking does not retroactively affect the passport's JWS\nsignature, which is frozen over whatever `lintResult` looked like at\npublish time. No request body is required.\n\nThe response also reports **`publishReadiness`**: whether this passport\nwould clear the category mandatory-content gate and the product-group\ndata/schema gates. That is the gate that most often refuses a battery, and\nasking it here is the only way to learn the answer without attempting the\npublish.\n\n`publishReadiness.passportObligation` answers a different question from the\nblockers: whether Art. 77(1) requires a battery passport for this record at\nall. The Regulation defines five battery categories and that article reaches\nthree — LMT, electric-vehicle, and industrial above 2 kWh — so a portable or\nSLI passport is voluntary. This node applies the content gate either way,\nwhich for a voluntary passport is stricter than the article requires; the\n`note` says so rather than leaving the caller to wonder why they are being\nasked.\n",
+        "description": "Recomputes the `dpp-rules` plausibility lint pack against the DPP's\ncurrent product group data and persists the refreshed `lintResult` (pack\nversion, findings, assessed-at timestamp). Findings are non-binding —\narithmetic and physical-plausibility checks distinct from binding\ncompliance rules — and never gate publish or any other transition.\n\nWorks regardless of DPP status, including `active` (published):\nre-checking does not retroactively affect the passport's JWS\nsignature, which is frozen over whatever `lintResult` looked like at\npublish time. No request body is required.\n\nThe response also reports **`publishReadiness`**: whether this passport\nwould clear the category mandatory-content gate and the product-group\ndata/schema gates. That is the gate that most often refuses a battery, and\nasking it here is the only way to learn the answer without attempting the\npublish.\n\n`publishReadiness.passportScope` answers a different question from the\nblockers: whether Art. 77(1) requires a battery passport for this record at\nall. The Regulation defines five battery categories and that article reaches\nthree — LMT, electric-vehicle, and industrial above 2 kWh — so a portable or\nSLI passport is voluntary. This node applies the content gate either way,\nwhich for a voluntary passport is stricter than the article requires; the\n`note` says so rather than leaving the caller to wonder why they are being\nasked.\n",
         "tags": [
           "DPP Management"
         ],
@@ -8070,7 +8070,7 @@
           }
         }
       },
-      "PassportObligationReport": {
+      "PassportScopeReport": {
         "type": "object",
         "description": "Whether Reg. (EU) 2023/1542 Art. 77(1) requires a battery passport for this\nrecord at all.\n\n> \"From 18 February 2027 each LMT battery, each industrial battery with a\n> capacity greater than 2 kWh and each electric vehicle battery placed on the\n> market or put into service shall have an electronic record ('battery\n> passport').\"\n\nThe Regulation defines five battery categories; this article reaches three.\nPortable and SLI batteries bear no passport obligation, so a passport for one\nis the operator's own artefact rather than a discharged duty.\n\nReported **beside** the gates, never instead of them. This node applies the\ncategory content gate whatever this says, and for a voluntary passport that\nmakes it stricter than the article requires — which the `note` admits rather\nthan hides.\n\nTwo details the article turns on: the threshold is **energy** (kWh), not the\nampere-hour \"rated capacity\" defined for the purposes of an annex; and unlike\nArts. 7 and 8 it carries no `rechargeable` qualifier.\n",
         "required": [
@@ -8099,7 +8099,7 @@
         "required": [
           "ready",
           "blockers",
-          "passportObligation"
+          "passportScope"
         ],
         "properties": {
           "ready": {
@@ -8113,8 +8113,8 @@
               "$ref": "#/components/schemas/PublishBlocker"
             }
           },
-          "passportObligation": {
-            "$ref": "#/components/schemas/PassportObligationReport"
+          "passportScope": {
+            "$ref": "#/components/schemas/PassportScopeReport"
           }
         }
       },

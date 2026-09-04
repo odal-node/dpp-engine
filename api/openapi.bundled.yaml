@@ -421,7 +421,7 @@ paths:
         asking it here is the only way to learn the answer without attempting the
         publish.
 
-        `publishReadiness.passportObligation` answers a different question from the
+        `publishReadiness.passportScope` answers a different question from the
         blockers: whether Art. 77(1) requires a battery passport for this record at
         all. The Regulation defines five battery categories and that article reaches
         three — LMT, electric-vehicle, and industrial above 2 kWh — so a portable or
@@ -6596,7 +6596,7 @@ components:
         message:
           type: string
           description: Why this field blocks the publish.
-    PassportObligationReport:
+    PassportScopeReport:
       type: object
       description: |
         Whether Reg. (EU) 2023/1542 Art. 77(1) requires a battery passport for this
@@ -6660,7 +6660,7 @@ components:
       required:
         - ready
         - blockers
-        - passportObligation
+        - passportScope
       properties:
         ready:
           type: boolean
@@ -6670,8 +6670,8 @@ components:
           description: Every blocking field, named individually. Empty when `ready`.
           items:
             $ref: '#/components/schemas/PublishBlocker'
-        passportObligation:
-          $ref: '#/components/schemas/PassportObligationReport'
+        passportScope:
+          $ref: '#/components/schemas/PassportScopeReport'
     SupersedeRequest:
       type: object
       description: |

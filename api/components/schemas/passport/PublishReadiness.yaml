@@ -16,7 +16,7 @@ description: |
 required:
   - ready
   - blockers
-  - passportObligation
+  - passportScope
 properties:
   ready:
     type: boolean
@@ -26,5 +26,5 @@ properties:
     description: Every blocking field, named individually. Empty when `ready`.
     items:
       $ref: PublishBlocker.yaml
-  passportObligation:
-    $ref: PassportObligationReport.yaml
+  passportScope:
+    $ref: PassportScopeReport.yaml

@@ -51,13 +51,13 @@ pub struct PublishReadiness {
     /// asks for them, and an operator publishing a portable battery deserves to
     /// know the record is their own artefact rather than a discharged duty —
     /// neither of which the blocker list can say.
-    pub passport_obligation: PassportObligationReport,
+    pub passport_scope: PassportScopeReport,
 }
 
 /// The Art. 77(1) answer, and a sentence when it is worth explaining.
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct PassportObligationReport {
+pub struct PassportScopeReport {
     /// `required`, `voluntary`, or `notApplicable` for a non-battery.
     pub status: &'static str,
     /// Present when the answer needs justifying: an industrial battery with no
@@ -89,17 +89,17 @@ fn readiness_of(passport: &dpp_domain::passport::Passport) -> PublishReadiness {
         }));
     }
 
-    let obligation = passport_scope::passport_obligation(passport.product_group_data.as_ref());
+    let obligation = passport_scope::scope_of(passport.product_group_data.as_ref());
     PublishReadiness {
         ready: blockers.is_empty(),
         blockers,
-        passport_obligation: PassportObligationReport {
+        passport_scope: PassportScopeReport {
             status: match obligation {
-                passport_scope::PassportObligation::Required => "required",
-                passport_scope::PassportObligation::Voluntary => "voluntary",
-                passport_scope::PassportObligation::NotApplicable => "notApplicable",
+                passport_scope::PassportScope::Required => "required",
+                passport_scope::PassportScope::Voluntary => "voluntary",
+                passport_scope::PassportScope::NotApplicable => "notApplicable",
             },
-            note: passport_scope::obligation_note(obligation, passport.product_group_data.as_ref()),
+            note: passport_scope::scope_note(obligation, passport.product_group_data.as_ref()),
         },
     }
 }
