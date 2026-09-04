@@ -117,6 +117,25 @@ const KEYED: &[(Method, &str, RoutePolicy)] = &[
         "/integrator/api/v1/import/{productGroup}",
         RoutePolicy::verbatim(),
     ),
+    // ── The one keyed route that creates nothing ─────────────────────────────
+    //
+    // Scan ingest is an *additive* write —
+    // `count = odal.scan_telemetry.count + EXCLUDED.count` — so a re-sent
+    // window is added twice. That is not "a second resource" but it is the same
+    // harm under the same test: a replay spends something that cannot be
+    // un-spent, because there is no way to subtract a count nobody knows was
+    // double-added.
+    //
+    // It is also the only route with a caller that actually retries today. The
+    // resolver holds a failed window and re-sends it byte-for-byte under a
+    // stable key; before that it folded the window back into its live counters,
+    // which double-counted every request the node committed but never managed
+    // to acknowledge.
+    (
+        Method::POST,
+        "/vault/internal/scan-batch",
+        RoutePolicy::verbatim(),
+    ),
 ];
 
 /// The policy for `method` + `template`, or `None` when the route is not keyed.
@@ -163,12 +182,13 @@ mod tests {
     /// and `dpp-node`'s `idempotency_policy` suite asserts every template here
     /// is a route the assembled node actually serves.
     ///
-    /// Eight, not the ten the design note first counted: `POST /credentials`
-    /// and `POST /unsold-goods` do not exist on `main`. They are on an unmerged
-    /// branch, and both are creates, so both belong here the day it lands.
+    /// Eight creates plus the additive scan ingest. Not the ten the design note
+    /// first counted: `POST /credentials` and `POST /unsold-goods` do not exist
+    /// on `main`. They are on an unmerged branch, and both are creates, so both
+    /// belong here the day it lands.
     #[test]
-    fn the_keyed_set_is_eight_routes() {
-        assert_eq!(KEYED.len(), 8);
+    fn the_keyed_set_is_nine_routes() {
+        assert_eq!(KEYED.len(), 9);
     }
 
     /// Two entries for the same operation would make `policy_for` depend on
