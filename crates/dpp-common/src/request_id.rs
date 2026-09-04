@@ -21,6 +21,29 @@ fn is_json_content_type(content_type: &str) -> bool {
     content_type.contains("application/json") || content_type.contains("+json")
 }
 
+tokio::task_local! {
+    /// The `x-request-id` of the request being served on this task, scoped by
+    /// [`inject_request_id`] for the lifetime of the handler call.
+    static CURRENT_REQUEST_ID: String;
+}
+
+/// The `x-request-id` of the request currently being served, when there is one.
+///
+/// This is the read side of a task-local the HTTP middleware sets, and it
+/// exists so a write deep in the service layer can be correlated back to the
+/// request that caused it without threading an id through every signature
+/// between the two. It is deliberately the *only* ambient value in this
+/// codebase: a request id is diagnostic, so a caller that silently gets `None`
+/// loses a support handle and nothing else. Never make a decision on it.
+///
+/// Returns `None` outside a request — a background sweep, a test calling a
+/// service directly, or **any work moved to another task with
+/// `tokio::spawn`**, since a task-local does not cross a spawn boundary.
+#[must_use]
+pub fn current() -> Option<String> {
+    CURRENT_REQUEST_ID.try_with(Clone::clone).ok()
+}
+
 /// Generates a UUIDv7-based request ID for `SetRequestIdLayer`.
 #[derive(Clone, Default)]
 pub struct UuidRequestId;
@@ -45,7 +68,12 @@ pub async fn inject_request_id(request: Request, next: Next) -> impl IntoRespons
         .and_then(|id| id.header_value().to_str().ok())
         .map(|s| s.to_owned());
 
-    let response = next.run(request).await;
+    // Scope the id for the handler call, so a write in the service layer can
+    // stamp it without every intervening signature carrying it. See [`current`].
+    let response = match request_id.clone() {
+        Some(id) => CURRENT_REQUEST_ID.scope(id, next.run(request)).await,
+        None => next.run(request).await,
+    };
 
     let Some(id) = request_id else {
         return response;
@@ -130,5 +158,35 @@ mod tests {
         // Non-JSON must not match.
         assert!(!is_json_content_type("text/html"));
         assert!(!is_json_content_type("text/plain; charset=utf-8"));
+    }
+
+    /// Outside a request there is no id, and asking for one must not panic —
+    /// `try_with` on an unset task-local returns `Err`, `with` would abort.
+    #[test]
+    fn current_is_none_outside_a_request() {
+        assert_eq!(current(), None);
+    }
+
+    #[tokio::test]
+    async fn current_reads_the_scoped_id() {
+        let seen = CURRENT_REQUEST_ID
+            .scope("req-1".to_owned(), async { current() })
+            .await;
+        assert_eq!(seen.as_deref(), Some("req-1"));
+        // And the scope is closed again once the future completes.
+        assert_eq!(current(), None);
+    }
+
+    /// The documented limitation, asserted rather than only described: a
+    /// task-local does not cross `tokio::spawn`, so anything moved onto another
+    /// task stamps nothing.
+    #[tokio::test]
+    async fn current_does_not_cross_a_spawn() {
+        let seen = CURRENT_REQUEST_ID
+            .scope("req-1".to_owned(), async {
+                tokio::spawn(async { current() }).await.unwrap()
+            })
+            .await;
+        assert_eq!(seen, None);
     }
 }

@@ -305,6 +305,7 @@ async fn t4_audit_append_only() {
         new_status: Some("draft".into()),
         metadata: None,
         timestamp: chrono::Utc::now(),
+        request_id: None,
         prev_hash: None,
         entry_hash: None,
     };
@@ -345,6 +346,7 @@ async fn t7_audit_hash_chain_detects_tamper() {
         new_status: Some(new.to_owned()),
         metadata: None,
         timestamp: chrono::Utc::now(),
+        request_id: None,
         prev_hash: None,
         entry_hash: None,
     };

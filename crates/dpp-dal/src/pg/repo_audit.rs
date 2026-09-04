@@ -63,8 +63,9 @@ impl AuditRepository for PgAuditRepo {
         sqlx::query(
             r#"INSERT INTO odal.passport_audit
                  (id, passport_id, actor, action,
-                  previous_status, new_status, metadata, ts, prev_hash, entry_hash)
-               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)"#,
+                  previous_status, new_status, metadata, ts, request_id,
+                  prev_hash, entry_hash)
+               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)"#,
         )
         .bind(entry.id)
         .bind(&entry.passport_id)
@@ -74,6 +75,10 @@ impl AuditRepository for PgAuditRepo {
         .bind(&entry.new_status)
         .bind(&entry.metadata)
         .bind(entry.timestamp)
+        // Written after `entry_hash` is computed, and not an input to it: the
+        // column has been `NULL` on every row since 0005, so hashing it would
+        // invalidate every chain already on disk. See `PassportAuditEntry`.
+        .bind(&entry.request_id)
         .bind(&prev_hash)
         .bind(&entry_hash)
         .execute(&mut *tx)
@@ -90,7 +95,8 @@ impl AuditRepository for PgAuditRepo {
         let mut tx = self.dal.begin().await?;
         let rows = sqlx::query(
             r#"SELECT id, passport_id, actor, action,
-                      previous_status, new_status, metadata, ts, prev_hash, entry_hash
+                      previous_status, new_status, metadata, ts, request_id,
+                      prev_hash, entry_hash
                FROM odal.passport_audit
                WHERE passport_id = $1
                ORDER BY ts ASC, id ASC"#,
@@ -111,6 +117,7 @@ impl AuditRepository for PgAuditRepo {
                 new_status: r.get("new_status"),
                 metadata: r.get("metadata"),
                 timestamp: r.get("ts"),
+                request_id: r.get("request_id"),
                 prev_hash: r.get("prev_hash"),
                 entry_hash: r.get("entry_hash"),
             })
