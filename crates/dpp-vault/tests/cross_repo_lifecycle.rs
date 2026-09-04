@@ -775,7 +775,7 @@ async fn a_battery_outside_article_77_is_voluntary_and_still_gated() {
     // Below the threshold: outside the article, still gated.
     let small = lint(create("09506000134352", "industrial", Some(1.5))).await;
     let readiness = &small["publishReadiness"];
-    assert_eq!(readiness["passportObligation"]["status"], "voluntary");
+    assert_eq!(readiness["passportScope"]["status"], "voluntary");
     assert!(
         !readiness["blockers"]
             .as_array()
@@ -785,7 +785,7 @@ async fn a_battery_outside_article_77_is_voluntary_and_still_gated() {
          update the note that admits it: {readiness}"
     );
     assert!(
-        readiness["passportObligation"]["note"]
+        readiness["passportScope"]["note"]
             .as_str()
             .expect("a voluntary passport explains itself")
             .contains("stricter"),
@@ -795,7 +795,7 @@ async fn a_battery_outside_article_77_is_voluntary_and_still_gated() {
     // Above it: the same gate, now because the article asks for it.
     let large = lint(create("09506000134369", "industrial", Some(64.0))).await;
     assert_eq!(
-        large["publishReadiness"]["passportObligation"]["status"],
+        large["publishReadiness"]["passportScope"]["status"],
         "required"
     );
 
@@ -805,7 +805,7 @@ async fn a_battery_outside_article_77_is_voluntary_and_still_gated() {
     // worth reporting at all.
     let portable = lint(create("09506000134376", "portable", None)).await;
     let readiness = &portable["publishReadiness"];
-    assert_eq!(readiness["passportObligation"]["status"], "voluntary");
+    assert_eq!(readiness["passportScope"]["status"], "voluntary");
     assert!(
         readiness["blockers"]
             .as_array()
