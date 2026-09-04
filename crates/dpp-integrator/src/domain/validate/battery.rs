@@ -11,6 +11,11 @@ use dpp_domain::{
     },
 };
 
+use crate::domain::battery_fields::{
+    parse_battery_status, parse_component_part_numbers, parse_composition,
+    parse_critical_raw_materials, parse_dynamic_performance, parse_hazardous_substances,
+    parse_state_of_health, parse_temperature_range,
+};
 use crate::domain::fields::{
     aliased, optional_commodity_code, optional_date, optional_f64, optional_str, parse_materials,
     require_aliased, require_f64, require_str, require_u32,
@@ -123,6 +128,59 @@ pub fn validate_battery_row(
     let placed_on_market_date = optional_date(row, "placedOnMarketDate", row_num, &mut errors);
     let commodity_code = optional_commodity_code(row, "commodityCode", row_num, &mut errors);
 
+    // The Annex VI Part A / Annex XIII columns the per-category templates carry.
+    //
+    // Read here, above the guard, rather than inline in the struct below: a
+    // malformed number has to reach `errors` while `errors` is still checked. A
+    // parse further down would push into a vector nothing looks at again, and
+    // the bad cell would import as an absent value — the silent data loss this
+    // whole change exists to stop.
+    let manufacturing_date = optional_date(row, "manufacturingDate", row_num, &mut errors);
+    let minimal_voltage = optional_f64(row, "minimalVoltageV", row_num, &mut errors);
+    let maximum_voltage = optional_f64(row, "maximumVoltageV", row_num, &mut errors);
+    let original_power = optional_f64(row, "originalPowerCapabilityW", row_num, &mut errors);
+    let power_limit_min = optional_f64(row, "powerLimitMinW", row_num, &mut errors);
+    let power_limit_max = optional_f64(row, "powerLimitMaxW", row_num, &mut errors);
+    let renewable_content = optional_f64(row, "renewableContentPct", row_num, &mut errors);
+    let internal_cell_resistance =
+        optional_f64(row, "internalCellResistanceMohm", row_num, &mut errors);
+    let internal_pack_resistance =
+        optional_f64(row, "internalPackResistanceMohm", row_num, &mut errors);
+    let initial_rte = optional_f64(row, "initialRoundTripEfficiencyPct", row_num, &mut errors);
+    let rte_half_life = optional_f64(
+        row,
+        "roundTripEfficiencyAtHalfCycleLifePct",
+        row_num,
+        &mut errors,
+    );
+    let cycle_life_c_rate = optional_f64(row, "cycleLifeTestCRate", row_num, &mut errors);
+    let capacity_threshold = optional_f64(
+        row,
+        "capacityThresholdForExhaustionPct",
+        row_num,
+        &mut errors,
+    );
+    let cathode = parse_composition(row, "cathode", row_num, &mut errors);
+    let anode = parse_composition(row, "anode", row_num, &mut errors);
+    let electrolyte = parse_composition(row, "electrolyte", row_num, &mut errors);
+    let critical_raw = parse_critical_raw_materials(row, row_num, &mut errors);
+    let hazardous_substances = parse_hazardous_substances(row, row_num, &mut errors);
+    let not_in_use_temperature_range = parse_temperature_range(row, row_num, &mut errors);
+    let dynamic_performance = parse_dynamic_performance(row, row_num, &mut errors);
+    // Named for the block, not the percentage: `state_of_health` above is the
+    // legacy `stateOfHealthPct` scalar and shadowing it silently swapped the two.
+    let state_of_health_block = match parse_state_of_health(row, row_num, &mut errors) {
+        Ok(soh) => soh,
+        Err(message) => {
+            errors.push(RowError {
+                row: row_num,
+                field: "stateOfHealth".to_owned(),
+                message: message.to_owned(),
+            });
+            None
+        }
+    };
+
     if !errors.is_empty() {
         return Err(errors);
     }
@@ -157,70 +215,88 @@ pub fn validate_battery_row(
         operating_temp_min_c,
         operating_temp_max_c,
         round_trip_efficiency_pct,
-        cathode_material: None,
-        anode_material: None,
-        electrolyte_material: None,
-        critical_raw_materials: None,
-        disassembly_instructions_url: None,
+        cathode_material: cathode,
+        anode_material: anode,
+        electrolyte_material: electrolyte,
+        critical_raw_materials: critical_raw,
+        disassembly_instructions_url: optional_str(row, "disassemblyInstructionsUrl"),
+        // No column, deliberately: the methodology behind a state-of-health
+        // figure is prose an operator publishes per model, not per row, and the
+        // guidance does not ask for it as a data point.
         soh_methodology: None,
-        // Added in dpp-core 0.11.0, all optional and none of them carried by the
-        // CSV contract: Annex VII state-of-health / expected-lifetime blocks, the
-        // ruleset the carbon-footprint class was computed under, the Art. 8(1)
-        // reporting year, and the placed-on-market date. Left None until the
-        // template gains columns for them.
+        // Still without a column, deliberately: none is mandatory or conditional
+        // for any category, and a column an operator cannot answer is a column
+        // they will fill with something.
         placed_on_market_date: None,
         carbon_footprint_class_ruleset_id: None,
         carbon_footprint_class_ruleset_version: None,
         recycled_content_reporting_year: None,
-        state_of_health: None,
         expected_lifetime: None,
         rated_energy_wh: None,
         internal_resistance_mohm: None,
-        manufacturing_date: None,
-        manufacturing_place: None,
-        battery_model_id: None,
-        battery_passport_number: None,
-        // Added in dpp-core 0.17.0: the remainder of Annex VI Part A and the
-        // Annex XIII point 1–3 tiers. All optional, and none of them carried by
-        // the CSV contract, so every one is `None` until the template gains a
-        // column for it.
+        state_of_health: state_of_health_block,
+        // A manufacturing *date* in the CSV, a timestamp on the model. Anchored
+        // at midnight UTC rather than at the moment of import: the operator
+        // stated a day, and inventing a time of day would be data they did not
+        // supply — one that would also differ between two imports of the same row.
+        manufacturing_date: manufacturing_date
+            .and_then(|d| d.and_hms_opt(0, 0, 0))
+            .map(|naive| naive.and_utc()),
+        manufacturing_place: optional_str(row, "manufacturingPlace"),
+        battery_model_id: optional_str(row, "batteryModelId"),
+        battery_passport_number: optional_str(row, "batteryPassportNumber"),
+        // The remainder of Annex VI Part A and the Annex XIII point 1–3 tiers.
+        //
+        // These were every one `None` "until the template gains a column", and
+        // the template never did — which is why a battery imported from the
+        // first-party template could be created and then never published. The
+        // per-category templates carry them now; `domain::battery_template` is
+        // the contract, and a test there proves it covers `mandatory_fields`.
         //
         // Listed individually rather than defaulted because `BatteryData` derives
         // no `Default` — deliberately, since the same release made `battery_type`
         // required and closed. That means a future Annex field cannot slip into
         // an import as an unnoticed `None`: it breaks this literal, and someone
         // has to decide whether the template should carry it.
-        battery_status: None,
-        capacity_threshold_for_exhaustion_pct: None,
-        commercial_warranty_period_months: None,
-        component_part_numbers: None,
-        cycle_life_test_c_rate: None,
-        dynamic_performance: None,
-        eu_declaration_of_conformity: None,
-        expected_lifetime_reference_test: None,
+        battery_status: parse_battery_status(row),
+        capacity_threshold_for_exhaustion_pct: capacity_threshold,
+        component_part_numbers: parse_component_part_numbers(row),
+        cycle_life_test_c_rate: cycle_life_c_rate,
+        dynamic_performance,
+        eu_declaration_of_conformity: optional_str(row, "euDeclarationOfConformity"),
+        expected_lifetime_reference_test: optional_str(row, "expectedLifetimeReferenceTest"),
+        hazardous_substances,
+        initial_round_trip_efficiency_pct: initial_rte,
+        internal_cell_resistance_mohm: internal_cell_resistance,
+        internal_pack_resistance_mohm: internal_pack_resistance,
+        marking_information: optional_str(row, "markingInformation"),
+        maximum_voltage_v: maximum_voltage,
+        minimal_voltage_v: minimal_voltage,
+        not_in_use_temperature_range,
+        not_in_use_temperature_reference_test: optional_str(
+            row,
+            "notInUseTemperatureReferenceTest",
+        ),
+        original_power_capability_w: original_power,
+        power_limit_max_w: power_limit_max,
+        power_limit_min_w: power_limit_min,
+        renewable_content_pct: renewable_content,
+        round_trip_efficiency_at_half_cycle_life_pct: rte_half_life,
+        safety_measures: optional_str(row, "safetyMeasures"),
+        spare_parts_contacts: optional_str(row, "sparePartsContacts"),
+        test_report_results: optional_str(row, "testReportResults"),
+        usable_extinguishing_agent: optional_str(row, "usableExtinguishingAgent"),
+        waste_battery_information: optional_str(row, "wasteBatteryInformation"),
+        // Still without a column, deliberately. `hazardSymbol` is the Art. 13(5)
+        // cadmium/lead marking, which `markingInformation` already carries as
+        // prose; the two temperature ranges beyond not-in-use and the commercial
+        // warranty are not mandatory for any category; and usage history is
+        // per-battery telemetry no import row can hold.
         hazard_symbol: None,
-        hazardous_substances: None,
-        initial_round_trip_efficiency_pct: None,
-        internal_cell_resistance_mohm: None,
-        internal_pack_resistance_mohm: None,
-        marking_information: None,
-        maximum_voltage_v: None,
-        minimal_voltage_v: None,
-        not_in_use_temperature_range: None,
-        not_in_use_temperature_reference_test: None,
-        original_power_capability_w: None,
-        power_limit_max_w: None,
-        power_limit_min_w: None,
+        commercial_warranty_period_months: None,
         power_temperature_range: None,
-        renewable_content_pct: None,
-        round_trip_efficiency_at_half_cycle_life_pct: None,
-        safety_measures: None,
-        spare_parts_contacts: None,
-        test_report_results: None,
-        usable_extinguishing_agent: None,
         usage_history: None,
         voltage_temperature_range: None,
-        waste_battery_information: None,
     }));
 
     Ok(CreatePassportRequest {
