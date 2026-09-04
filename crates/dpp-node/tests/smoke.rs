@@ -204,6 +204,7 @@ async fn start_node_with_ruleset(
         local_auth_provider: None,
         credential_directory: None,
         trusted_issuers: None,
+        credential_issuer: None,
         cors_allowed_origins: Vec::new(),
         scan_repo,
         plugin_admin: None,

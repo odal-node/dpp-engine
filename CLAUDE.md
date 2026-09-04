@@ -379,6 +379,7 @@ unprotected one. Read the table in the code.
 | POST | `/vault/api/v1/dpp/{dppId}/supersede` | Bearer **(write)** | Retire this passport in favour of an **already-published** successor named in `supersededBy`, which must already carry `supersedesId` back to this id (declared on `POST /dpp`; this route only checks it). Returns `200` with **the retired passport** — the opposite subject from `amend`, which mints its successor and returns that. Use this when the replacement was created independently: a newer schema version, an imported record, a successor issued after a transfer |
 | POST | `/vault/api/v1/dpp/{dppId}/suspend` | Bearer | Suspend |
 | POST | `/vault/api/v1/dpp/{dppId}/archive` | Bearer | Archive |
+| POST | `/vault/api/v1/dpp/{dppId}/supersede` | Bearer **(write)** | Retire a DPP in favour of a newer one. The successor must already be published **and** already carry `supersedesId` pointing back — the link is checked here, never written, so a failure cannot leave a retired passport with nothing pointing at its replacement |
 | POST | `/vault/api/v1/dpp/{dppId}/lint` | Bearer (write) | Re-run the plausibility lint pack — **persists** `lintResult` |
 | POST | `/vault/api/v1/dpp/{dppId}/eol` | Bearer (write) | Declare end of life |
 | POST | `/vault/api/v1/dpp/{dppId}/transfer/initiate` | Bearer (write) | Sign a pending transfer of responsibility |
@@ -407,6 +408,7 @@ unprotected one. Read the table in the code.
 | GET | `/vault/api/v1/api-keys` | Bearer (admin) | List API keys |
 | POST | `/vault/api/v1/api-keys` | Bearer (admin) | Create API key |
 | DELETE | `/vault/api/v1/api-keys/{id}` | Bearer (admin) | Revoke API key |
+| POST | `/vault/api/v1/credentials` | Bearer (admin) | Issue a DPP access credential signed with this node's key. **Legitimate-interest roles only** — an authority's standing is conferred by a member state, so the three authority roles are refused. No revocation list is published, so the lifetime is capped |
 | POST | `/vault/api/v1/plugins` | Bearer (admin) | Install a **signed** product group plugin and hot-swap it |
 | POST | `/vault/api/v1/ruleset/reload` | Bearer (admin) | Re-read the **signed** compliance-ruleset channel and hot-swap a verified bundle |
 | GET | `/vault/api/v1/webhooks` | Bearer (admin) | List webhook subscriptions |
