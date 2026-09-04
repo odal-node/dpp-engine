@@ -3480,7 +3480,7 @@
       "get": {
         "operationId": "getImportTemplate",
         "summary": "Download a CSV import template",
-        "description": "Returns the canonical CSV import template for a product group. Templates\nexist for `battery`, `textile`, `steel`, `aluminium` and `tyre`; any other\nproduct group returns 404 naming the ones that are served.\n`?format=xlsx` returns 501 (download the CSV and open it in a spreadsheet\napp). Unauthenticated.\n",
+        "description": "Returns the canonical CSV import template for a product group. Templates\nexist for `textile`, `steel`, `aluminium`, `tyre`, and — per battery\ncategory — `battery-ev`, `battery-lmt` and `battery-industrial`. Any other\nvalue returns 404 naming the ones that are served.\n\n**There is no bare `battery` template.** What a battery passport must carry\nis decided per category: an electric-vehicle battery owes forty-six\nmandatory data points, an LMT battery forty-five and an industrial one\nthirty-eight, and the state-of-health parameters are two disjoint sets under\nAnnex VII Part A — an EV battery reports state of certified energy alone,\nwhile stationary and LMT batteries report a five-parameter list. One file\ncannot carry three obligations without offering columns some categories must\nnot fill.\n\n**Three categories, not five.** Reg. (EU) 2023/1542 defines five battery\ncategories, but Art. 77(1) gives a battery passport only to \"each LMT\nbattery, each industrial battery with a capacity greater than 2 kWh and each\nelectric vehicle battery\". Portable and SLI batteries bear no passport\nobligation, so there is no template for them. The industrial template is for\nbatteries above the 2 kWh threshold.\n\nAll three battery templates are **generated** from the same rules table the\npublish-time content gate reads, so a template cannot fall behind the\nobligation it exists to satisfy. Their rows import under the `battery`\nproduct group — the category is carried by the row's own `batteryType`\ncolumn, not by a product group of its own.\n\nStructured data points use four flat-file conventions: repeating groups\n(`cathode_1_name`, `cathode_1_weightPct`, …), nested blocks\n(`dynamicPerformance_ratedCapacityAh`, …), a two-column range\n(`notInUseTemperatureMinC`/`MaxC`), and a semicolon-delimited list\n(`componentPartNumbers`).\n\n`?format=xlsx` returns 501 (download the CSV and open it in a spreadsheet\napp). Unauthenticated.\n",
         "tags": [
           "Integrator"
         ],
@@ -3492,7 +3492,7 @@
             "required": true,
             "schema": {
               "type": "string",
-              "example": "battery"
+              "example": "battery-ev"
             }
           },
           {
@@ -3546,7 +3546,7 @@
       "post": {
         "operationId": "importFile",
         "summary": "Bulk-import passports from a file",
-        "description": "Upload a CSV or XLSX file to create draft passports for a product group\n(`battery`, `textile`, `steel`, `aluminium`, `tyre`). The caller's\n`Authorization: Bearer` token is validated and forwarded to the vault.\n\n- ≤ 100 valid rows → processed synchronously, `200` with results.\n- `> 100` valid rows → an async job is queued, `202` with a `jobId`.\n- `mode=dry_run` → validate only, `200` with the would-be results.\n\nEvery import — dry-run or apply, sync or async — mints a job id and\npersists a row-addressed report retrievable via the job-status\nendpoint, even when this endpoint's own response is synchronous.\n",
+        "description": "Upload a CSV or XLSX file to create draft passports for a product group\n(`battery`, `textile`, `steel`, `aluminium`, `tyre`). The caller's\n`Authorization: Bearer` token is validated and forwarded to the vault.\n\nA battery **template** key is accepted here too — `battery-ev`,\n`battery-lmt` and `battery-industrial` all import as `battery`, since the\ncategory is carried by the row's own `batteryType` column rather than being\na product group of its own. An operator who downloads `battery-ev` can post\nit back to `battery-ev` without translating the name.\n\n- ≤ 100 valid rows → processed synchronously, `200` with results.\n- `> 100` valid rows → an async job is queued, `202` with a `jobId`.\n- `mode=dry_run` → validate only, `200` with the would-be results.\n\nEvery import — dry-run or apply, sync or async — mints a job id and\npersists a row-addressed report retrievable via the job-status\nendpoint, even when this endpoint's own response is synchronous.\n",
         "tags": [
           "Integrator"
         ],

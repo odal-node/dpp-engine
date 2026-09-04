@@ -3,8 +3,38 @@ get:
   summary: Download a CSV import template
   description: |
     Returns the canonical CSV import template for a product group. Templates
-    exist for `battery`, `textile`, `steel`, `aluminium` and `tyre`; any other
-    product group returns 404 naming the ones that are served.
+    exist for `textile`, `steel`, `aluminium`, `tyre`, and — per battery
+    category — `battery-ev`, `battery-lmt` and `battery-industrial`. Any other
+    value returns 404 naming the ones that are served.
+
+    **There is no bare `battery` template.** What a battery passport must carry
+    is decided per category: an electric-vehicle battery owes forty-six
+    mandatory data points, an LMT battery forty-five and an industrial one
+    thirty-eight, and the state-of-health parameters are two disjoint sets under
+    Annex VII Part A — an EV battery reports state of certified energy alone,
+    while stationary and LMT batteries report a five-parameter list. One file
+    cannot carry three obligations without offering columns some categories must
+    not fill.
+
+    **Three categories, not five.** Reg. (EU) 2023/1542 defines five battery
+    categories, but Art. 77(1) gives a battery passport only to "each LMT
+    battery, each industrial battery with a capacity greater than 2 kWh and each
+    electric vehicle battery". Portable and SLI batteries bear no passport
+    obligation, so there is no template for them. The industrial template is for
+    batteries above the 2 kWh threshold.
+
+    All three battery templates are **generated** from the same rules table the
+    publish-time content gate reads, so a template cannot fall behind the
+    obligation it exists to satisfy. Their rows import under the `battery`
+    product group — the category is carried by the row's own `batteryType`
+    column, not by a product group of its own.
+
+    Structured data points use four flat-file conventions: repeating groups
+    (`cathode_1_name`, `cathode_1_weightPct`, …), nested blocks
+    (`dynamicPerformance_ratedCapacityAh`, …), a two-column range
+    (`notInUseTemperatureMinC`/`MaxC`), and a semicolon-delimited list
+    (`componentPartNumbers`).
+
     `?format=xlsx` returns 501 (download the CSV and open it in a spreadsheet
     app). Unauthenticated.
   tags:
@@ -16,7 +46,7 @@ get:
       required: true
       schema:
         type: string
-        example: battery
+        example: battery-ev
     - name: format
       in: query
       schema:

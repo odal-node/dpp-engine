@@ -2340,6 +2340,7 @@ dependencies = [
  "dotenvy",
  "dpp-common",
  "dpp-domain",
+ "dpp-rules",
  "dpp-types",
  "futures",
  "hex",

@@ -19,6 +19,7 @@ path = "src/main.rs"
 
 [dependencies]
 dpp-domain  = { workspace = true }
+dpp-rules   = { workspace = true }
 dpp-common  = { path = "../dpp-common" }
 dpp-types  = { path = "../dpp-types" }
 
