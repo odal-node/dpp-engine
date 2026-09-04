@@ -739,8 +739,12 @@ paths:
         is not published has nothing to retire.
 
         Terminal and irreversible: a superseded passport accepts no further
-        transitions, and the successor is what a reader follows forward. Like an
-        archived one, it leaves the public tier.
+        transitions, and the successor is what a reader follows forward.
+
+        It keeps serving on the public tier. Superseding replaces the *record*, not
+        the goods: products made under the old specification are still in the field
+        carrying data carriers that resolve to it, and ESPR Art. 10(4)(i) asks the
+        passport to remain available for at least the product's expected lifetime.
       tags:
         - DPP Lifecycle
       security:

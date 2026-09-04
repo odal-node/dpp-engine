@@ -194,7 +194,11 @@ impl PassportService {
         )
         .await;
 
-        // A superseded passport leaves the public tier, like an archived one.
+        // A superseded passport keeps serving publicly, like an archived or
+        // deactivated one — products made under the old specification are still
+        // in the field carrying carriers that resolve to it. The reconcile is
+        // still needed: the stored snapshot has to be refreshed to carry the new
+        // status rather than the old one.
         self.enqueue_snapshot_reconcile(updated.id).await;
 
         Ok(updated)
