@@ -331,6 +331,9 @@ async fn start_vault_with_identity(
         // root resolving trust ports or a ruleset.
         trust: None,
         ruleset_admin: None,
+        // Off by default: these suites exercise handlers, not retry semantics.
+        // `dpp-common`'s `idempotency_flow` suite drives the middleware itself.
+        idempotency: None,
     };
 
     let app = router::build(state);

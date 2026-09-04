@@ -28,11 +28,16 @@ post:
   description: |
     Add a facility. The identifier is validated by scheme — a `gln` must
     pass the GS1 mod-10 check digit. Requires an admin-scoped key.
+
+    Facilities are retired, never deleted, so a duplicate created by a retried
+    request cannot be cleaned up afterwards. Send an `Idempotency-Key`.
   tags:
     - Facilities
   security:
     - BearerApiKey: []
     - BasicAuth: []
+  parameters:
+    - $ref: ../../components/parameters/IdempotencyKey.yaml
   requestBody:
     required: true
     content:
@@ -52,3 +57,5 @@ post:
       $ref: ../../components/responses/Forbidden.yaml
     '422':
       $ref: ../../components/responses/ValidationError.yaml
+    '409':
+      $ref: ../../components/responses/IdempotentRequestInFlight.yaml

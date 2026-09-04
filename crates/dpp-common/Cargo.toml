@@ -31,6 +31,8 @@ url                 = { workspace = true }
 tokio               = { workspace = true }
 reqwest             = { workspace = true }
 futures             = { workspace = true }
+sha2                = { workspace = true }
+hex                 = { workspace = true }
 
 [dev-dependencies]
 tokio               = { workspace = true }

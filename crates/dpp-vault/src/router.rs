@@ -13,6 +13,7 @@ use tower_http::{
 };
 
 use dpp_common::{
+    idempotency::idempotency_middleware,
     metrics::http_metrics_middleware,
     request_id::{UuidRequestId, inject_request_id},
 };
@@ -65,7 +66,7 @@ use crate::{
         },
         whoami::whoami_handler,
     },
-    middleware::auth::auth_middleware,
+    middleware::{auth::auth_middleware, idempotency::idempotency_state},
     state::AppState,
 };
 
@@ -188,11 +189,27 @@ pub fn build(state: AppState) -> Router {
         .route(
             "/operator-identifiers/{id}/primary",
             post(operator_ids_set_primary_handler),
-        )
-        .route_layer(middleware::from_fn_with_state(
-            state.clone(),
-            auth_middleware,
-        ));
+        );
+
+    // Idempotency sits *between* auth and the handlers, and the layer order
+    // below is what puts it there: the last `route_layer` added runs first, so
+    // auth resolves the caller and only then does this read it. Reversing them
+    // would key an unauthenticated request to a principal that does not exist
+    // yet.
+    //
+    // Mounted only when a store is wired — see `AppState::idempotency`.
+    let authenticated = match &state.idempotency {
+        Some(store) => authenticated.route_layer(middleware::from_fn_with_state(
+            idempotency_state(store.clone()),
+            idempotency_middleware,
+        )),
+        None => authenticated,
+    };
+
+    let authenticated = authenticated.route_layer(middleware::from_fn_with_state(
+        state.clone(),
+        auth_middleware,
+    ));
 
     // Internal service-to-service tree: not public, not Bearer-authenticated.
     // The resolver (which holds no operator API key) flushes scan telemetry here,

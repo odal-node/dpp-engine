@@ -28,11 +28,20 @@ post:
   description: |
     Generate a new API key. The response includes the full plain-text
     `secret` — this is the only time it will be shown. Store it securely.
+
+    **A replayed request does not return the secret.** This route accepts an
+    `Idempotency-Key`, but the secret is never stored, so a retry that finds a
+    completed key answers with the key record and
+    `"secretAlreadyDelivered": true` in place of `secret`. That is the honest
+    answer: the credential exists and was handed to the first attempt. If that
+    response was lost, revoke the key and create another.
   tags:
     - API Keys
   security:
     - BearerApiKey: []
     - BasicAuth: []
+  parameters:
+    - $ref: ../../components/parameters/IdempotencyKey.yaml
   requestBody:
     required: true
     content:
@@ -52,3 +61,5 @@ post:
       $ref: ../../components/responses/ValidationError.yaml
     '403':
       $ref: ../../components/responses/Forbidden.yaml
+    '409':
+      $ref: ../../components/responses/IdempotentRequestInFlight.yaml

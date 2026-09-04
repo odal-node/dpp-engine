@@ -30,11 +30,19 @@ post:
     unless the node sets WEBHOOK_ALLOW_PRIVATE_TARGETS). The response includes
     the `secret` — shown ONCE — used to verify the `X-Odal-Signature` header
     on every delivery. Admin-scoped.
+
+    **A replayed request does not return the secret.** This route accepts an
+    `Idempotency-Key`, but the signing secret is never stored, so a retry that
+    finds a completed key answers with the subscription and
+    `"secretAlreadyDelivered": true` in place of `secret`. If the first
+    response was lost, delete the subscription and create another.
   tags:
     - Webhooks
   security:
     - BearerApiKey: []
     - BasicAuth: []
+  parameters:
+    - $ref: ../../components/parameters/IdempotencyKey.yaml
   requestBody:
     required: true
     content:
@@ -54,3 +62,5 @@ post:
       $ref: ../../components/responses/ValidationError.yaml
     '403':
       $ref: ../../components/responses/Forbidden.yaml
+    '409':
+      $ref: ../../components/responses/IdempotentRequestInFlight.yaml

@@ -869,6 +869,7 @@ mod tests {
             vault_client: Arc::new(VaultHttpClient::new(&base_url)),
             job_store: Arc::new(InMemoryJobStore::new()),
             batch_concurrency: 4,
+            idempotency: None,
         };
         (state, mock_state)
     }
@@ -1411,6 +1412,7 @@ mod tests {
             vault_client: Arc::new(VaultHttpClient::new("http://127.0.0.1:1")),
             job_store: Arc::new(InMemoryJobStore::new()),
             batch_concurrency: 1,
+            idempotency: None,
         };
         let app = build_router(state);
 

@@ -1,0 +1,33 @@
+name: Idempotency-Key
+in: header
+required: false
+description: |
+  An opaque, client-minted string that makes this write safe to retry.
+
+  Send the same key with the same body and the first outcome is returned
+  instead of a second resource being created. The replayed response carries
+  `Idempotency-Replayed: true`, so a client can tell a replay from a first
+  execution without comparing anything.
+
+  Only the routes that document this parameter accept it. Sending it to any
+  other route is a `400` rather than being ignored — a route that is idempotent
+  by shape records nothing, and silently accepting the header would suggest a
+  protection that is not there.
+
+  **A retry must resend byte-identical bytes.** The key is bound to a SHA-256
+  of the raw request body, not of a canonicalised form, so re-serialising with
+  different member order or whitespace counts as a different request and is
+  refused with `422`. Use a fresh key whenever the body changes.
+
+  Keys are scoped to the authenticated caller and to this route, so the same
+  key may safely be reused across different operations, and one caller can
+  never observe another's. A key is honoured for **24 hours**; after that the
+  same key starts a new request.
+
+  While a first attempt is still running, a duplicate receives `409` with
+  `Retry-After`.
+schema:
+  type: string
+  minLength: 1
+  maxLength: 255
+example: 6f2a1c40-2f6f-4b8a-9a3e-1f4c9b2d7e51

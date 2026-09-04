@@ -7,9 +7,10 @@ use anyhow::Context;
 use async_trait::async_trait;
 
 use dpp_dal::pg::{
-    PgApiKeyRepo, PgAuditRepo, PgDal, PgEvidenceDossierRepo, PgOperatorConfigRepo, PgPassportRepo,
-    PgRegistryIdentityRepo, PgRegistrySyncRepo, PgRegistryTransferRepo, PgScanTelemetryRepo,
-    PgSealOutboxRepo, PgSnapshotOutboxRepo, PgTransferRepo, PgWebhookRepo,
+    PgApiKeyRepo, PgAuditRepo, PgDal, PgEvidenceDossierRepo, PgIdempotencyRepo,
+    PgOperatorConfigRepo, PgPassportRepo, PgRegistryIdentityRepo, PgRegistrySyncRepo,
+    PgRegistryTransferRepo, PgScanTelemetryRepo, PgSealOutboxRepo, PgSnapshotOutboxRepo,
+    PgTransferRepo, PgWebhookRepo,
 };
 use dpp_domain::{DppError, ports::passport_repo::PassportRepository};
 use dpp_integrator::infra::job_store::JobStore;
@@ -40,6 +41,7 @@ pub struct DbComponents {
     pub scan_repo: Arc<dyn ScanTelemetryRepository>,
     pub job_store: Arc<dyn JobStore>,
     pub db_ping: Arc<dyn DbPing>,
+    pub idempotency: Arc<dyn dpp_common::idempotency::IdempotencyStore>,
 }
 
 pub async fn init_db(cfg: &NodeConfig) -> anyhow::Result<DbComponents> {
@@ -107,6 +109,7 @@ pub async fn init_db(cfg: &NodeConfig) -> anyhow::Result<DbComponents> {
         seal_outbox: Arc::new(PgSealOutboxRepo::new(dal.clone())),
         scan_repo: Arc::new(PgScanTelemetryRepo::new(dal.clone())),
         job_store: Arc::new(PgJobStore::new(dal.clone())),
+        idempotency: Arc::new(PgIdempotencyRepo::new(dal.clone())),
         db_ping: Arc::new(PgPing(dal)),
     })
 }

@@ -211,6 +211,7 @@ async fn start_node_with_ruleset(
         // route, not the public probe.
         trust: Some(trust.clone()),
         ruleset_admin: Some(ruleset.clone()),
+        idempotency: None,
     };
 
     let identity_state = IdentityState {
@@ -223,6 +224,7 @@ async fn start_node_with_ruleset(
         vault_client,
         job_store,
         batch_concurrency: 4,
+        idempotency: None,
     };
 
     let app = dpp_node::router::build(vault_state, identity_state, integrator_state);

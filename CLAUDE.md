@@ -314,6 +314,14 @@ Background cleanup task runs every 6 hours, deleting completed/failed jobs older
 > in the handler, not by the middleware**, so they are the column most likely to
 > go stale — verify against the handler's first lines before relying on a row.
 
+**Which routes accept an `Idempotency-Key` is deliberately not a column here.**
+That set is decided in one place —
+`dpp_common::idempotency::policy`'s `KEYED` table — and asserted against the
+live routers by `every_keyed_route_is_a_route_the_node_serves` in
+`crates/dpp-node/tests/openapi_contract.rs`. A second copy in this table would
+be a second thing to drift, and a keyed route missing from it would read as an
+unprotected one. Read the table in the code.
+
 ### MVP Node (port 8001)
 
 | Method | Path | Auth | Handler |

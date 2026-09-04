@@ -172,6 +172,11 @@ async fn main() -> anyhow::Result<()> {
         // binary reports neither rather than inventing a posture for them.
         trust: None,
         ruleset_admin: None,
+        // The standalone vault has a database, so it *could* carry keys — but
+        // nothing here spawns the purge task the fused node runs, and a store
+        // that only ever grows is worse than none. Idempotent writes are a
+        // property of the node.
+        idempotency: None,
     };
 
     let app = router::build(state);

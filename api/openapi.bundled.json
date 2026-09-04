@@ -132,6 +132,11 @@
             "BasicAuth": []
           }
         ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          }
+        ],
         "requestBody": {
           "required": true,
           "content": {
@@ -177,6 +182,9 @@
           },
           "403": {
             "$ref": "#/components/responses/Forbidden"
+          },
+          "409": {
+            "$ref": "#/components/responses/IdempotentRequestInFlight"
           },
           "422": {
             "$ref": "#/components/responses/ValidationError"
@@ -1269,6 +1277,9 @@
             "schema": {
               "$ref": "#/components/schemas/DppId"
             }
+          },
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
           }
         ],
         "responses": {
@@ -1798,7 +1809,7 @@
       "post": {
         "operationId": "addFacility",
         "summary": "Add a facility",
-        "description": "Add a facility. The identifier is validated by scheme — a `gln` must\npass the GS1 mod-10 check digit. Requires an admin-scoped key.\n",
+        "description": "Add a facility. The identifier is validated by scheme — a `gln` must\npass the GS1 mod-10 check digit. Requires an admin-scoped key.\n\nFacilities are retired, never deleted, so a duplicate created by a retried\nrequest cannot be cleaned up afterwards. Send an `Idempotency-Key`.\n",
         "tags": [
           "Facilities"
         ],
@@ -1808,6 +1819,11 @@
           },
           {
             "BasicAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
           }
         ],
         "requestBody": {
@@ -1836,6 +1852,9 @@
           },
           "403": {
             "$ref": "#/components/responses/Forbidden"
+          },
+          "409": {
+            "$ref": "#/components/responses/IdempotentRequestInFlight"
           },
           "422": {
             "$ref": "#/components/responses/ValidationError"
@@ -2032,7 +2051,7 @@
       "post": {
         "operationId": "addOperatorIdentifier",
         "summary": "Add an operator identifier",
-        "description": "Add an economic-operator identifier. Validated by scheme — LEI uses\nISO 7064 MOD 97-10; DUNS is 9 digits; EORI/VAT require a country prefix.\nRequires an admin-scoped key.\n",
+        "description": "Add an economic-operator identifier. Validated by scheme — LEI uses\nISO 7064 MOD 97-10; DUNS is 9 digits; EORI/VAT require a country prefix.\nRequires an admin-scoped key.\n\nOperator identifiers are retired, never deleted, so a duplicate created by\na retried request cannot be cleaned up afterwards. Send an\n`Idempotency-Key`.\n",
         "tags": [
           "Operator Identifiers"
         ],
@@ -2042,6 +2061,11 @@
           },
           {
             "BasicAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
           }
         ],
         "requestBody": {
@@ -2070,6 +2094,9 @@
           },
           "403": {
             "$ref": "#/components/responses/Forbidden"
+          },
+          "409": {
+            "$ref": "#/components/responses/IdempotentRequestInFlight"
           },
           "422": {
             "$ref": "#/components/responses/ValidationError"
@@ -2266,7 +2293,7 @@
       "post": {
         "operationId": "createApiKey",
         "summary": "Create a new API key",
-        "description": "Generate a new API key. The response includes the full plain-text\n`secret` — this is the only time it will be shown. Store it securely.\n",
+        "description": "Generate a new API key. The response includes the full plain-text\n`secret` — this is the only time it will be shown. Store it securely.\n\n**A replayed request does not return the secret.** This route accepts an\n`Idempotency-Key`, but the secret is never stored, so a retry that finds a\ncompleted key answers with the key record and\n`\"secretAlreadyDelivered\": true` in place of `secret`. That is the honest\nanswer: the credential exists and was handed to the first attempt. If that\nresponse was lost, revoke the key and create another.\n",
         "tags": [
           "API Keys"
         ],
@@ -2276,6 +2303,11 @@
           },
           {
             "BasicAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
           }
         ],
         "requestBody": {
@@ -2304,6 +2336,9 @@
           },
           "403": {
             "$ref": "#/components/responses/Forbidden"
+          },
+          "409": {
+            "$ref": "#/components/responses/IdempotentRequestInFlight"
           },
           "422": {
             "$ref": "#/components/responses/ValidationError"
@@ -2405,7 +2440,7 @@
       "post": {
         "operationId": "createWebhook",
         "summary": "Create a webhook subscription",
-        "description": "Register a receiver URL (must be https and resolve to a public host,\nunless the node sets WEBHOOK_ALLOW_PRIVATE_TARGETS). The response includes\nthe `secret` — shown ONCE — used to verify the `X-Odal-Signature` header\non every delivery. Admin-scoped.\n",
+        "description": "Register a receiver URL (must be https and resolve to a public host,\nunless the node sets WEBHOOK_ALLOW_PRIVATE_TARGETS). The response includes\nthe `secret` — shown ONCE — used to verify the `X-Odal-Signature` header\non every delivery. Admin-scoped.\n\n**A replayed request does not return the secret.** This route accepts an\n`Idempotency-Key`, but the signing secret is never stored, so a retry that\nfinds a completed key answers with the subscription and\n`\"secretAlreadyDelivered\": true` in place of `secret`. If the first\nresponse was lost, delete the subscription and create another.\n",
         "tags": [
           "Webhooks"
         ],
@@ -2415,6 +2450,11 @@
           },
           {
             "BasicAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
           }
         ],
         "requestBody": {
@@ -2443,6 +2483,9 @@
           },
           "403": {
             "$ref": "#/components/responses/Forbidden"
+          },
+          "409": {
+            "$ref": "#/components/responses/IdempotentRequestInFlight"
           },
           "422": {
             "$ref": "#/components/responses/ValidationError"
@@ -2565,6 +2608,11 @@
             "BasicAuth": []
           }
         ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          }
+        ],
         "requestBody": {
           "required": true,
           "content": {
@@ -2615,6 +2663,9 @@
           },
           "403": {
             "description": "A non-admin credential attempted to install a plugin."
+          },
+          "409": {
+            "$ref": "#/components/responses/IdempotentRequestInFlight"
           },
           "422": {
             "description": "The artifact was rejected — bad signature, incompatible ABI, or a non-instantiable/incompatible module."
@@ -3280,6 +3331,9 @@
               "type": "string",
               "example": "battery"
             }
+          },
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
           }
         ],
         "requestBody": {
@@ -3335,6 +3389,9 @@
           },
           "404": {
             "description": "Unknown product group."
+          },
+          "409": {
+            "$ref": "#/components/responses/IdempotentRequestInFlight"
           },
           "422": {
             "$ref": "#/components/responses/ValidationError"
@@ -7502,6 +7559,20 @@
         }
       }
     },
+    "parameters": {
+      "IdempotencyKey": {
+        "name": "Idempotency-Key",
+        "in": "header",
+        "required": false,
+        "description": "An opaque, client-minted string that makes this write safe to retry.\n\nSend the same key with the same body and the first outcome is returned\ninstead of a second resource being created. The replayed response carries\n`Idempotency-Replayed: true`, so a client can tell a replay from a first\nexecution without comparing anything.\n\nOnly the routes that document this parameter accept it. Sending it to any\nother route is a `400` rather than being ignored — a route that is idempotent\nby shape records nothing, and silently accepting the header would suggest a\nprotection that is not there.\n\n**A retry must resend byte-identical bytes.** The key is bound to a SHA-256\nof the raw request body, not of a canonicalised form, so re-serialising with\ndifferent member order or whitespace counts as a different request and is\nrefused with `422`. Use a fresh key whenever the body changes.\n\nKeys are scoped to the authenticated caller and to this route, so the same\nkey may safely be reused across different operations, and one caller can\nnever observe another's. A key is honoured for **24 hours**; after that the\nsame key starts a new request.\n\nWhile a first attempt is still running, a duplicate receives `409` with\n`Retry-After`.\n",
+        "schema": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 255
+        },
+        "example": "6f2a1c40-2f6f-4b8a-9a3e-1f4c9b2d7e51"
+      }
+    },
     "responses": {
       "Unauthorized": {
         "description": "Missing or invalid authentication credentials.",
@@ -7531,6 +7602,31 @@
               "title": "Forbidden",
               "status": 403,
               "detail": "Registry-identity management requires an admin-scoped credential."
+            }
+          }
+        }
+      },
+      "IdempotentRequestInFlight": {
+        "description": "An earlier attempt carrying this `Idempotency-Key` is still running.\n\nReturned instead of letting a duplicate execute alongside it. Retry shortly\nwith the same key and the same body; `Retry-After` carries the suggested\ndelay.\n\nA claim left behind by a process that died mid-request is reclaimed\nautomatically after 60 seconds, so this can never wedge a key permanently.\n",
+        "headers": {
+          "Retry-After": {
+            "description": "Seconds to wait before retrying.",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        },
+        "content": {
+          "application/problem+json": {
+            "schema": {
+              "$ref": "#/components/schemas/Problem"
+            },
+            "example": {
+              "type": "https://problems.odal-node.io/idempotent-request-in-flight",
+              "title": "Idempotent Request In Flight",
+              "status": 409,
+              "detail": "An earlier attempt with this `Idempotency-Key` is still running. Retry shortly; do not change the body."
             }
           }
         }
