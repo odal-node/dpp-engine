@@ -34,10 +34,10 @@
 //!
 //! Note the qualifier the industrial limb carries: **greater than 2 kWh**. The
 //! `battery-industrial` template is for those; an industrial battery at or below
-//! the threshold has no passport obligation. Nothing in the node enforces that
-//! scope today — a small industrial battery is held to the full thirty-eight
-//! points, and a portable one is held to none — which is recorded separately
-//! rather than decided here.
+//! the threshold has no passport obligation. That scope is modelled in
+//! `dpp_vault::domain::passport_scope` and reported on `POST /dpp/{id}/lint`,
+//! which is where an operator finds out whether the content they are being asked
+//! for is content the article actually requires.
 //!
 //! # Why this is a table and not three CSV files
 //!

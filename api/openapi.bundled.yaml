@@ -420,6 +420,15 @@ paths:
         data/schema gates. That is the gate that most often refuses a battery, and
         asking it here is the only way to learn the answer without attempting the
         publish.
+
+        `publishReadiness.passportScope` answers a different question from the
+        blockers: whether Art. 77(1) requires a battery passport for this record at
+        all. The Regulation defines five battery categories and that article reaches
+        three — LMT, electric-vehicle, and industrial above 2 kWh — so a portable or
+        SLI passport is voluntary. This node applies the content gate either way,
+        which for a voluntary passport is stricter than the article requires; the
+        `note` says so rather than leaving the caller to wonder why they are being
+        asked.
       tags:
         - DPP Management
       security:
@@ -6587,6 +6596,51 @@ components:
         message:
           type: string
           description: Why this field blocks the publish.
+    PassportScopeReport:
+      type: object
+      description: |
+        Whether Reg. (EU) 2023/1542 Art. 77(1) requires a battery passport for this
+        record at all.
+
+        > "From 18 February 2027 each LMT battery, each industrial battery with a
+        > capacity greater than 2 kWh and each electric vehicle battery placed on the
+        > market or put into service shall have an electronic record ('battery
+        > passport')."
+
+        The Regulation defines five battery categories; this article reaches three.
+        Portable and SLI batteries bear no passport obligation, so a passport for one
+        is the operator's own artefact rather than a discharged duty.
+
+        Reported **beside** the gates, never instead of them. This node applies the
+        category content gate whatever this says, and for a voluntary passport that
+        makes it stricter than the article requires — which the `note` admits rather
+        than hides.
+
+        Two details the article turns on: the threshold is **energy** (kWh), not the
+        ampere-hour "rated capacity" defined for the purposes of an annex; and unlike
+        Arts. 7 and 8 it carries no `rechargeable` qualifier.
+      required:
+        - status
+      properties:
+        status:
+          type: string
+          enum:
+            - required
+            - voluntary
+            - notApplicable
+          description: |
+            `required` — Art. 77(1) reaches this record.
+            `voluntary` — it does not; a passport is still permitted.
+            `notApplicable` — not a battery, so this article has nothing to say. Other
+            instruments may still require a passport.
+          example: required
+        note:
+          type: string
+          description: |
+            Present when the answer needs justifying — an industrial battery that
+            declares no `ratedCapacityKwh` (treated as in scope, because an undeclared
+            capacity is not evidence of a small one), or a voluntary passport this node
+            nonetheless gates.
     PublishReadiness:
       type: object
       description: |
@@ -6606,6 +6660,7 @@ components:
       required:
         - ready
         - blockers
+        - passportScope
       properties:
         ready:
           type: boolean
@@ -6615,6 +6670,8 @@ components:
           description: Every blocking field, named individually. Empty when `ready`.
           items:
             $ref: '#/components/schemas/PublishBlocker'
+        passportScope:
+          $ref: '#/components/schemas/PassportScopeReport'
     SupersedeRequest:
       type: object
       description: |

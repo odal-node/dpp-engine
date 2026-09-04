@@ -7,6 +7,7 @@ use axum::{
 };
 use serde::Serialize;
 
+use crate::domain::passport_scope;
 use crate::{extract::Json, middleware::scope::RequireWrite, state::AppState};
 
 use super::error::{internal_error, not_found_error, parse_passport_id};
@@ -43,6 +44,26 @@ pub struct PublishReadiness {
     pub ready: bool,
     /// Every blocking field, named individually. Empty when `ready`.
     pub blockers: Vec<PublishBlocker>,
+    /// Whether Art. 77(1) requires a passport for this record at all.
+    ///
+    /// Reported beside the gates rather than instead of them. A caller being
+    /// asked for thirty-eight data points deserves to know whether the article
+    /// asks for them, and an operator publishing a portable battery deserves to
+    /// know the record is their own artefact rather than a discharged duty —
+    /// neither of which the blocker list can say.
+    pub passport_scope: PassportScopeReport,
+}
+
+/// The Art. 77(1) answer, and a sentence when it is worth explaining.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PassportScopeReport {
+    /// `required`, `voluntary`, or `notApplicable` for a non-battery.
+    pub status: &'static str,
+    /// Present when the answer needs justifying: an industrial battery with no
+    /// declared capacity, or a voluntary passport this node still gates.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
 }
 
 /// The lint response: the passport, plus what publishing it would say.
@@ -68,9 +89,18 @@ fn readiness_of(passport: &dpp_domain::passport::Passport) -> PublishReadiness {
         }));
     }
 
+    let obligation = passport_scope::scope_of(passport.product_group_data.as_ref());
     PublishReadiness {
         ready: blockers.is_empty(),
         blockers,
+        passport_scope: PassportScopeReport {
+            status: match obligation {
+                passport_scope::PassportScope::Required => "required",
+                passport_scope::PassportScope::Voluntary => "voluntary",
+                passport_scope::PassportScope::NotApplicable => "notApplicable",
+            },
+            note: passport_scope::scope_note(obligation, passport.product_group_data.as_ref()),
+        },
     }
 }
 
