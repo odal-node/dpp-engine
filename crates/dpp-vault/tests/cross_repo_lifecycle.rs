@@ -516,3 +516,108 @@ async fn a_recorded_destruction_must_name_its_exemption() {
         .await;
     assert_eq!(resp.status(), 422);
 }
+
+/// A voluntary passport is named as voluntary, and the node's stricter gate is
+/// admitted rather than left to puzzle the operator.
+///
+/// Art. 77(1) reaches industrial batteries **above** 2 kWh. One at 1.5 kWh is
+/// outside it entirely — and this node still asks for the full category content,
+/// because that gate lives in `dpp-core`'s `transition_to` and fires on first
+/// publish regardless of scope. The engine cannot relax it from here.
+///
+/// So this pins both halves: the obligation is reported as `voluntary`, and the
+/// blockers are non-empty anyway. If core ever narrows the gate to the article's
+/// scope, this test fails and the note that admits the discrepancy should go
+/// with it.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_battery_outside_article_77_is_voluntary_and_still_gated() {
+    let pg = start_postgres().await;
+    let base_url = start_vault(pg.dal.clone()).await;
+    seed_complete_operator(&pg.dal).await;
+    let token = make_jwt("00000000-0000-0000-0000-000000000099");
+    let client = TestClient::new(&base_url, &token);
+
+    let create = |gtin: &str, battery_type: &str, rated_capacity_kwh: Option<f64>| {
+        let mut data = serde_json::json!({
+            "productGroup": "battery",
+            "gtin": gtin,
+            "batteryChemistry": "NMC",
+            "batteryType": battery_type,
+            "nominalVoltageV": 48.0,
+            "nominalCapacityAh": 30.0,
+            "expectedLifetimeCycles": 2000,
+            "co2ePerUnitKg": 65.0,
+        });
+        if let Some(kwh) = rated_capacity_kwh {
+            data["ratedCapacityKwh"] = serde_json::json!(kwh);
+        }
+        serde_json::json!({
+            "productName": "Scope Test Cell",
+            "manufacturer": {
+                "name": "ScopeTest GmbH",
+                "address": "Munich, DE",
+                "didWebUrl": "https://scope.example.com/.well-known/did.json"
+            },
+            "materials": [
+                {"name": "Lithium", "weightKg": 0.8, "recycledPct": 30.0, "countryOfOrigin": "CL"}
+            ],
+            "productGroupData": data,
+        })
+    };
+
+    let lint = async |body: serde_json::Value| -> serde_json::Value {
+        let resp = client.post_json("/api/v1/dpp", body).await;
+        assert_eq!(resp.status(), 201);
+        let id = resp.json::<serde_json::Value>().await.unwrap()["id"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let resp = client
+            .post_json(&format!("/api/v1/dpp/{id}/lint"), serde_json::json!({}))
+            .await;
+        assert_eq!(resp.status(), 200);
+        resp.json().await.unwrap()
+    };
+
+    // Below the threshold: outside the article, still gated.
+    let small = lint(create("09506000134352", "industrial", Some(1.5))).await;
+    let readiness = &small["publishReadiness"];
+    assert_eq!(readiness["passportObligation"]["status"], "voluntary");
+    assert!(
+        !readiness["blockers"]
+            .as_array()
+            .expect("blockers")
+            .is_empty(),
+        "the node applies the content gate even outside Art. 77(1); if that changed, \
+         update the note that admits it: {readiness}"
+    );
+    assert!(
+        readiness["passportObligation"]["note"]
+            .as_str()
+            .expect("a voluntary passport explains itself")
+            .contains("stricter"),
+        "the discrepancy has to be stated, not hidden: {readiness}"
+    );
+
+    // Above it: the same gate, now because the article asks for it.
+    let large = lint(create("09506000134369", "industrial", Some(64.0))).await;
+    assert_eq!(
+        large["publishReadiness"]["passportObligation"]["status"],
+        "required"
+    );
+
+    // A portable battery is outside the article and, because the guidance names
+    // no data points for it, is not gated either — so it publishes essentially
+    // empty. That is the other half of the finding, and it is why the status is
+    // worth reporting at all.
+    let portable = lint(create("09506000134376", "portable", None)).await;
+    let readiness = &portable["publishReadiness"];
+    assert_eq!(readiness["passportObligation"]["status"], "voluntary");
+    assert!(
+        readiness["blockers"]
+            .as_array()
+            .expect("blockers")
+            .is_empty(),
+        "no data points are defined for a portable battery, so nothing blocks it"
+    );
+}

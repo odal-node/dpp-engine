@@ -352,6 +352,21 @@ fn object_cases() -> Vec<ObjectCase> {
                 message: "'batteryModelId' is mandatory for an 'ev' battery and is absent"
                     .to_owned(),
             }],
+            passport_obligation: dpp_vault::handlers::lint::PassportObligationReport {
+                status: "required",
+                note: None,
+            },
+        }
+    );
+    case!(
+        "PassportObligationReport",
+        dpp_vault::handlers::lint::PassportObligationReport {
+            status: "voluntary",
+            note: Some(
+                "Art. 77(1) requires a battery passport for LMT, electric-vehicle and \
+                 industrial batteries above 2 kWh."
+                    .to_owned()
+            ),
         }
     );
     case!(

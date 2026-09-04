@@ -3,6 +3,7 @@
 pub mod api_key_service;
 pub mod compliance;
 pub mod operator_service;
+pub mod passport_scope;
 pub mod registry_identity_service;
 pub mod service;
 pub mod verify;

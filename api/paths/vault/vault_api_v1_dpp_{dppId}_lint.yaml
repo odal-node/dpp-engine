@@ -18,6 +18,15 @@ post:
     data/schema gates. That is the gate that most often refuses a battery, and
     asking it here is the only way to learn the answer without attempting the
     publish.
+
+    `publishReadiness.passportObligation` answers a different question from the
+    blockers: whether Art. 77(1) requires a battery passport for this record at
+    all. The Regulation defines five battery categories and that article reaches
+    three — LMT, electric-vehicle, and industrial above 2 kWh — so a portable or
+    SLI passport is voluntary. This node applies the content gate either way,
+    which for a voluntary passport is stricter than the article requires; the
+    `note` says so rather than leaving the caller to wonder why they are being
+    asked.
   tags:
     - DPP Management
   security:

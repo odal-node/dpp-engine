@@ -1,0 +1,44 @@
+type: object
+description: |
+  Whether Reg. (EU) 2023/1542 Art. 77(1) requires a battery passport for this
+  record at all.
+
+  > "From 18 February 2027 each LMT battery, each industrial battery with a
+  > capacity greater than 2 kWh and each electric vehicle battery placed on the
+  > market or put into service shall have an electronic record ('battery
+  > passport')."
+
+  The Regulation defines five battery categories; this article reaches three.
+  Portable and SLI batteries bear no passport obligation, so a passport for one
+  is the operator's own artefact rather than a discharged duty.
+
+  Reported **beside** the gates, never instead of them. This node applies the
+  category content gate whatever this says, and for a voluntary passport that
+  makes it stricter than the article requires — which the `note` admits rather
+  than hides.
+
+  Two details the article turns on: the threshold is **energy** (kWh), not the
+  ampere-hour "rated capacity" defined for the purposes of an annex; and unlike
+  Arts. 7 and 8 it carries no `rechargeable` qualifier.
+required:
+  - status
+properties:
+  status:
+    type: string
+    enum:
+      - required
+      - voluntary
+      - notApplicable
+    description: |
+      `required` — Art. 77(1) reaches this record.
+      `voluntary` — it does not; a passport is still permitted.
+      `notApplicable` — not a battery, so this article has nothing to say. Other
+      instruments may still require a passport.
+    example: required
+  note:
+    type: string
+    description: |
+      Present when the answer needs justifying — an industrial battery that
+      declares no `ratedCapacityKwh` (treated as in scope, because an undeclared
+      capacity is not evidence of a small one), or a voluntary passport this node
+      nonetheless gates.
