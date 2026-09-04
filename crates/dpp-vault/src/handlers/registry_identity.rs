@@ -27,7 +27,7 @@ pub async fn facilities_list_handler(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthContext>,
 ) -> impl IntoResponse {
-    if let Some(resp) = require_admin(&auth, "Registry-identity management") {
+    if let Some(resp) = require_admin(&auth) {
         return resp;
     }
     match state.registry_identity_service.list_facilities().await {
@@ -62,7 +62,7 @@ pub async fn facilities_set_default_handler(
     Extension(auth): Extension<AuthContext>,
     Path(id): Path<String>,
 ) -> impl IntoResponse {
-    if let Some(resp) = require_admin(&auth, "Registry-identity management") {
+    if let Some(resp) = require_admin(&auth) {
         return resp;
     }
     let parsed = match Uuid::parse_str(&id) {
@@ -93,7 +93,7 @@ pub async fn facilities_delete_handler(
     Extension(auth): Extension<AuthContext>,
     Path(id): Path<String>,
 ) -> impl IntoResponse {
-    if let Some(resp) = require_admin(&auth, "Registry-identity management") {
+    if let Some(resp) = require_admin(&auth) {
         return resp;
     }
     let parsed = match Uuid::parse_str(&id) {
@@ -124,7 +124,7 @@ pub async fn facilities_audit_handler(
     Extension(auth): Extension<AuthContext>,
     Path(id): Path<String>,
 ) -> impl IntoResponse {
-    if let Some(resp) = require_admin(&auth, "Registry-identity management") {
+    if let Some(resp) = require_admin(&auth) {
         return resp;
     }
     let parsed = match Uuid::parse_str(&id) {
@@ -150,7 +150,7 @@ pub async fn operator_ids_list_handler(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthContext>,
 ) -> impl IntoResponse {
-    if let Some(resp) = require_admin(&auth, "Registry-identity management") {
+    if let Some(resp) = require_admin(&auth) {
         return resp;
     }
     match state
@@ -196,7 +196,7 @@ pub async fn operator_ids_set_primary_handler(
     Extension(auth): Extension<AuthContext>,
     Path(id): Path<String>,
 ) -> impl IntoResponse {
-    if let Some(resp) = require_admin(&auth, "Registry-identity management") {
+    if let Some(resp) = require_admin(&auth) {
         return resp;
     }
     let parsed = match Uuid::parse_str(&id) {
@@ -227,7 +227,7 @@ pub async fn operator_ids_delete_handler(
     Extension(auth): Extension<AuthContext>,
     Path(id): Path<String>,
 ) -> impl IntoResponse {
-    if let Some(resp) = require_admin(&auth, "Registry-identity management") {
+    if let Some(resp) = require_admin(&auth) {
         return resp;
     }
     let parsed = match Uuid::parse_str(&id) {
@@ -258,7 +258,7 @@ pub async fn operator_ids_audit_handler(
     Extension(auth): Extension<AuthContext>,
     Path(id): Path<String>,
 ) -> impl IntoResponse {
-    if let Some(resp) = require_admin(&auth, "Registry-identity management") {
+    if let Some(resp) = require_admin(&auth) {
         return resp;
     }
     let parsed = match Uuid::parse_str(&id) {

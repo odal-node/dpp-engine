@@ -39,7 +39,7 @@ pub async fn webhooks_list_handler(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthContext>,
 ) -> impl IntoResponse {
-    if let Some(resp) = require_admin(&auth, "Webhook management") {
+    if let Some(resp) = require_admin(&auth) {
         return resp;
     }
     match state.webhook_service.list().await {
@@ -78,7 +78,7 @@ pub async fn webhooks_delete_handler(
     Extension(auth): Extension<AuthContext>,
     Path(id): Path<String>,
 ) -> impl IntoResponse {
-    if let Some(resp) = require_admin(&auth, "Webhook management") {
+    if let Some(resp) = require_admin(&auth) {
         return resp;
     }
     let parsed = match Uuid::parse_str(&id) {
@@ -98,7 +98,7 @@ pub async fn webhooks_test_handler(
     Extension(auth): Extension<AuthContext>,
     Path(id): Path<String>,
 ) -> impl IntoResponse {
-    if let Some(resp) = require_admin(&auth, "Webhook management") {
+    if let Some(resp) = require_admin(&auth) {
         return resp;
     }
     let parsed = match Uuid::parse_str(&id) {

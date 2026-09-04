@@ -94,7 +94,7 @@ pub async fn transfer_accept_handler(
     Extension(auth): Extension<AuthContext>,
     Path(dpp_id): Path<String>,
 ) -> impl IntoResponse {
-    if let Some(resp) = require_write(&auth, "Accepting a transfer") {
+    if let Some(resp) = require_write(&auth) {
         return resp;
     }
     let id = match parse_passport_id(&dpp_id) {
@@ -127,7 +127,7 @@ pub async fn transfer_reject_handler(
     Extension(auth): Extension<AuthContext>,
     Path(dpp_id): Path<String>,
 ) -> impl IntoResponse {
-    if let Some(resp) = require_write(&auth, "Rejecting a transfer") {
+    if let Some(resp) = require_write(&auth) {
         return resp;
     }
     let id = match parse_passport_id(&dpp_id) {
@@ -155,7 +155,7 @@ pub async fn transfer_cancel_handler(
     Extension(auth): Extension<AuthContext>,
     Path(dpp_id): Path<String>,
 ) -> impl IntoResponse {
-    if let Some(resp) = require_write(&auth, "Cancelling a transfer") {
+    if let Some(resp) = require_write(&auth) {
         return resp;
     }
     let id = match parse_passport_id(&dpp_id) {
