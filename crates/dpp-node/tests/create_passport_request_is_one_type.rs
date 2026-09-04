@@ -24,6 +24,7 @@ fn the_importer_builds_the_very_type_the_vault_accepts() {
     // these were two structurally-identical types this would not compile.
     let from_importer: dpp_integrator::domain::request::CreatePassportRequest =
         dpp_types::CreatePassportRequest {
+            supersedes_id: None,
             product_name: "Shared shape".to_owned(),
             product_group: None,
             manufacturer: dpp_domain::passport::ManufacturerInfo {

@@ -147,7 +147,7 @@ pub async fn create_handler(
         batch_id: body.batch_id,
         retention_locked: false,
         version: 1,
-        supersedes_id: None,
+        supersedes_id: body.supersedes_id,
         parent_passport_ref: body.parent_passport_ref,
         component_refs: body.component_refs,
         retention_until: None,

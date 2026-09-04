@@ -81,6 +81,9 @@ pub mod subjects {
     pub const PASSPORT_SUSPENDED: &str = "dpp.passport.suspended";
     pub const PASSPORT_ARCHIVED: &str = "dpp.passport.archived";
     pub const PASSPORT_DEACTIVATED: &str = "dpp.passport.deactivated";
+    /// A published passport was replaced by a newer version, which carries
+    /// `supersedesId` pointing back at it.
+    pub const PASSPORT_SUPERSEDED: &str = "dpp.passport.superseded";
     pub const PASSPORT_TRANSFERRED: &str = "dpp.passport.transferred";
     pub const PASSPORT_FAILED: &str = "dpp.passport.failed";
 

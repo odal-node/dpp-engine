@@ -104,3 +104,15 @@ properties:
       no separators). Registration data the EU registry verifies against the
       ranges its product group permits.
     example: '85076000'
+  supersedesId:
+    allOf:
+      - $ref: ../passport/DppId.yaml
+    description: |
+      The passport this one replaces, if it is a new version of an existing
+      record.
+
+      Declared here because `supersedesId` is protected: it is set by the write
+      that creates the whole record, never by a field patch. Recording the link
+      retires nothing — the predecessor is retired by
+      `POST /dpp/{dppId}/supersede` once this successor is published, and that
+      route checks the two agree.

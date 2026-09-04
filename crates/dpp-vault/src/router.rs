@@ -51,6 +51,7 @@ use crate::{
         scan_ingest::{scan_ingest_handler, scan_ingest_mtls},
         seal::{seal_handler, seal_summary_handler},
         stats::{operator_stats_handler, passport_stats_handler},
+        supersede::supersede_handler,
         suspend::suspend_handler,
         transfer::{
             transfer_accept_handler, transfer_cancel_handler, transfer_initiate_handler,
@@ -90,6 +91,9 @@ pub fn build(state: AppState) -> Router {
         .route("/dpp/{dppId}/lint", post(lint_handler))
         .route("/dpp/{dppId}/suspend", post(suspend_handler))
         .route("/dpp/{dppId}/archive", post(archive_handler))
+        // Terminal, and the only path to `Superseded` — a status the model, the
+        // database and the API description all carried while nothing produced it.
+        .route("/dpp/{dppId}/supersede", post(supersede_handler))
         .route("/dpp/{dppId}/eol", post(eol_handler))
         .route(
             "/dpp/{dppId}/transfer/initiate",

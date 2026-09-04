@@ -26,6 +26,7 @@ pub mod ruleset;
 pub mod scan_ingest;
 pub mod seal;
 pub mod stats;
+pub mod supersede;
 pub mod suspend;
 pub mod transfer;
 pub mod update;

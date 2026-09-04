@@ -715,6 +715,68 @@ paths:
           $ref: '#/components/responses/Conflict'
         '422':
           $ref: '#/components/responses/ValidationError'
+  /vault/api/v1/dpp/{dppId}/supersede:
+    post:
+      operationId: supersedeDpp
+      summary: Retire a DPP in favour of a newer one
+      description: |
+        Marks the DPP in the path `superseded`, retiring it in favour of the
+        replacement named in `supersededBy`.
+
+        **The link is checked here, not written.** The successor must already carry
+        `supersedesId` pointing back at this passport, set when it was created —
+        `supersedesId` is a protected field and no field patch can add it later. A
+        successor that does not declare the link is refused with `422`.
+
+        That ordering is deliberate. Writing the link during this transition would
+        leave, on a failure between the two writes, a retired passport with nothing
+        pointing at its replacement — the one state a reader cannot recover from.
+        Requiring the link to exist first makes that unreachable.
+
+        **Both must already be published.** A draft successor retiring a live
+        passport would leave the product with no servable record, and a
+        not-yet-published successor may still fail its own gates. A predecessor that
+        is not published has nothing to retire.
+
+        Terminal and irreversible: a superseded passport accepts no further
+        transitions, and the successor is what a reader follows forward. Like an
+        archived one, it leaves the public tier.
+      tags:
+        - DPP Lifecycle
+      security:
+        - BearerApiKey: []
+        - BasicAuth: []
+      parameters:
+        - name: dppId
+          in: path
+          required: true
+          schema:
+            $ref: '#/components/schemas/DppId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SupersedeRequest'
+      responses:
+        '200':
+          description: DPP superseded. Returns the retired passport's record.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PassportResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
   /vault/api/v1/dpp/{dppId}/eol:
     post:
       operationId: declareDppEol
@@ -3899,6 +3961,18 @@ components:
           type: string
           description: Customs tariff classification — HS-6, CN-8 or TARIC-10 (6, 8 or 10 digits, no separators). Registration data the EU registry verifies against the ranges its product group permits.
           example: '85076000'
+        supersedesId:
+          allOf:
+            - $ref: '#/components/schemas/DppId'
+          description: |
+            The passport this one replaces, if it is a new version of an existing
+            record.
+
+            Declared here because `supersedesId` is protected: it is set by the write
+            that creates the whole record, never by a field patch. Recording the link
+            retires nothing — the predecessor is retired by
+            `POST /dpp/{dppId}/supersede` once this successor is published, and that
+            route checks the two agree.
     SuspendRequest:
       type: object
       description: |
@@ -6059,6 +6133,26 @@ components:
           description: Every blocking field, named individually. Empty when `ready`.
           items:
             $ref: '#/components/schemas/PublishBlocker'
+    SupersedeRequest:
+      type: object
+      description: |
+        Which passport replaces the one being retired.
+
+        Supersession is a **link between two passports that already exist**, not a
+        create-and-retire in one call: a successor is an ordinary passport with its own
+        content and its own publish gates, so it goes through the normal create and
+        publish routes and is only then named here.
+      required:
+        - supersededBy
+      properties:
+        supersededBy:
+          allOf:
+            - $ref: '#/components/schemas/DppId'
+          description: |
+            The successor, which must already be **published** and must already carry
+            `supersedesId` pointing back at the passport named in the path. That link
+            is set when the successor is created; this call confirms the two agree
+            before retiring anything, and refuses with `422` if they do not.
     RulesetReload:
       type: object
       description: The outcome of re-reading the signed compliance-ruleset channel.

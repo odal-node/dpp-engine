@@ -329,6 +329,12 @@ fn object_cases() -> Vec<ObjectCase> {
     case!("ComplianceResult", fixtures::compliance_result());
     case!("ComplianceFinding", fixtures::compliance_finding());
     case!("LintResult", fixtures::lint_result());
+    case!(
+        "SupersedeRequest",
+        dpp_vault::handlers::supersede::SupersedeRequest {
+            superseded_by: uuid::Uuid::now_v7().to_string(),
+        }
+    );
 
     // Publish-readiness, reported by `POST /dpp/{dppId}/lint`. Registered from
     // the handler's own types rather than a hand-written literal, so the
@@ -1694,6 +1700,7 @@ mod handler_sources {
         include_str!("../../dpp-vault/src/handlers/audience_read.rs"),
         include_str!("../../dpp-vault/src/handlers/create.rs"),
         include_str!("../../dpp-vault/src/handlers/eol.rs"),
+        include_str!("../../dpp-vault/src/handlers/supersede.rs"),
         include_str!("../../dpp-vault/src/handlers/evidence.rs"),
         include_str!("../../dpp-vault/src/handlers/find_by_identity.rs"),
         include_str!("../../dpp-vault/src/handlers/health.rs"),
@@ -2763,6 +2770,7 @@ mod fixtures {
 
     pub fn create_request() -> CreatePassportRequest {
         CreatePassportRequest {
+            supersedes_id: Some(dpp_domain::passport::PassportId::new()),
             product_name: "EcoCell Pro 48V".into(),
             product_group: Some(ProductGroup::Textile),
             manufacturer: manufacturer(),
@@ -2912,6 +2920,7 @@ mod fixtures {
     /// would be measuring the wrong rule.
     pub fn minimal_create_request() -> CreatePassportRequest {
         CreatePassportRequest {
+            supersedes_id: Some(dpp_domain::passport::PassportId::new()),
             product_name: "EcoCell Pro 48V".into(),
             product_group: None,
             manufacturer: manufacturer(),

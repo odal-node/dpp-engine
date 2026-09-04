@@ -319,6 +319,8 @@ paths:
     $ref: paths/vault/vault_api_v1_dpp_{dppId}_suspend.yaml
   /vault/api/v1/dpp/{dppId}/archive:
     $ref: paths/vault/vault_api_v1_dpp_{dppId}_archive.yaml
+  /vault/api/v1/dpp/{dppId}/supersede:
+    $ref: paths/vault/vault_api_v1_dpp_{dppId}_supersede.yaml
   /vault/api/v1/dpp/{dppId}/eol:
     $ref: paths/vault/vault_api_v1_dpp_{dppId}_eol.yaml
   /vault/api/v1/dpp/{dppId}/transfer/initiate:

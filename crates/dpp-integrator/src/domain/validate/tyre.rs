@@ -50,6 +50,9 @@ pub fn validate_tyre_row(
     }
 
     Ok(CreatePassportRequest {
+        // An import creates originals, never replacements: a successor is
+        // declared deliberately by whoever knows what it replaces.
+        supersedes_id: None,
         product_name: product_name
             .expect("field verified present by errors.is_empty() guard above"),
         product_group: Some(ProductGroup::Tyre),
