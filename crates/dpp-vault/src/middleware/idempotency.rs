@@ -36,6 +36,26 @@ pub fn idempotency_state(store: Arc<dyn IdempotencyStore>) -> IdempotencyLayerSt
     }
 }
 
+/// The principal for the internal, certificate-gated tree.
+///
+/// A constant, not something read off the request. The route is wrapped by
+/// `scan_ingest_mtls`, which has already refused anything not presenting
+/// `CN=odal-resolver` from the internal CA — so by the time this runs the
+/// caller's identity is settled, and there is exactly one of them.
+///
+/// Deriving it from a header instead would be strictly worse: it would let a
+/// value the gate does not check decide which key namespace a request lands in.
+pub const RESOLVER_PRINCIPAL: &str = "mtls:odal-resolver";
+
+/// Build the middleware state for the internal scan-ingest route.
+#[must_use]
+pub fn resolver_idempotency_state(store: Arc<dyn IdempotencyStore>) -> IdempotencyLayerState {
+    IdempotencyLayerState {
+        store,
+        principal: Arc::new(|_| Some(RESOLVER_PRINCIPAL.to_owned())),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

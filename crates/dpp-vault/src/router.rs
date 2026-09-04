@@ -66,7 +66,10 @@ use crate::{
         },
         whoami::whoami_handler,
     },
-    middleware::{auth::auth_middleware, idempotency::idempotency_state},
+    middleware::{
+        auth::auth_middleware,
+        idempotency::{idempotency_state, resolver_idempotency_state},
+    },
     state::AppState,
 };
 
@@ -214,9 +217,20 @@ pub fn build(state: AppState) -> Router {
     // Internal service-to-service tree: not public, not Bearer-authenticated.
     // The resolver (which holds no operator API key) flushes scan telemetry here,
     // gated by client-certificate mTLS (`CN=odal-resolver`).
-    let internal = Router::new()
-        .route("/scan-batch", post(scan_ingest_handler))
-        .route_layer(middleware::from_fn(scan_ingest_mtls));
+    let internal = Router::new().route("/scan-batch", post(scan_ingest_handler));
+
+    // Same ordering rule as the authenticated tree: the mTLS gate is added last
+    // so it runs first, and idempotency only sees a request whose peer has
+    // already been verified.
+    let internal = match &state.idempotency {
+        Some(store) => internal.route_layer(middleware::from_fn_with_state(
+            resolver_idempotency_state(store.clone()),
+            idempotency_middleware,
+        )),
+        None => internal,
+    };
+
+    let internal = internal.route_layer(middleware::from_fn(scan_ingest_mtls));
 
     let cors_layer = build_cors(&state.cors_allowed_origins);
 
