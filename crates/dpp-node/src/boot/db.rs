@@ -21,7 +21,7 @@ use dpp_types::{
     scan::ScanTelemetryRepository, seal::SealOutbox, snapshot::SnapshotOutbox,
     transfer::TransferStore, webhook::WebhookOutbox, webhook::WebhookSubscriptionStore,
 };
-use dpp_vault::state::DbPing;
+use dpp_vault::{infra::request_stamped_audit::RequestStampedAudit, state::DbPing};
 
 pub struct DbComponents {
     pub passport_repo: Arc<dyn PassportRepository>,
@@ -93,7 +93,11 @@ pub async fn init_db(cfg: &NodeConfig) -> anyhow::Result<DbComponents> {
 
     Ok(DbComponents {
         passport_repo: Arc::new(PgPassportRepo::new(dal.clone())),
-        audit_repo: Arc::new(PgAuditRepo::new(dal.clone())),
+        // Wrapped, not bare: the decorator is what stamps `request_id` onto
+        // every audit entry. See `dpp_vault::infra::request_stamped_audit`.
+        audit_repo: Arc::new(RequestStampedAudit::new(Arc::new(PgAuditRepo::new(
+            dal.clone(),
+        )))),
         operator_repo: Arc::new(PgOperatorConfigRepo::new(dal.clone())),
         api_key_repo: Arc::new(PgApiKeyRepo::new(dal.clone())),
         registry_repo: Arc::new(PgRegistryIdentityRepo::new(dal.clone())),

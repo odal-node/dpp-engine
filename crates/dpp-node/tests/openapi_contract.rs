@@ -2490,6 +2490,7 @@ mod fixtures {
             new_status: Some("active".into()),
             metadata: Some(json!({ "note": "first publish" })),
             timestamp: ts(),
+            request_id: Some("019723f4-1a2b-7c3d-8e4f-5a6b7c8d9e0f".into()),
             prev_hash: Some("0".repeat(64)),
             entry_hash: Some("1".repeat(64)),
         }
