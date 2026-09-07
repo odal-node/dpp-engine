@@ -276,7 +276,7 @@ fn local_component_id(uri: &str) -> Option<PassportId> {
     Uuid::parse_str(tail).ok().map(PassportId)
 }
 
-fn apply_compliance(passport: &mut Passport, registry: &dyn ComplianceRegistry) {
+pub(super) fn apply_compliance(passport: &mut Passport, registry: &dyn ComplianceRegistry) {
     let Some(product_group_data) = passport.product_group_data.as_ref() else {
         return;
     };
@@ -314,7 +314,7 @@ fn apply_compliance(passport: &mut Passport, registry: &dyn ComplianceRegistry) 
 /// Unlike `apply_compliance`, always overwrites — the pack is cheap to
 /// re-run and freshness (not preserving a caller-supplied value) is the
 /// point. A no-op when the passport carries no product group data.
-fn apply_lint(passport: &mut Passport) {
+pub(super) fn apply_lint(passport: &mut Passport) {
     if let Some(product_group_data) = passport.product_group_data.as_ref() {
         passport.lint_result = Some(dpp_domain::LintResult::compute(product_group_data));
     }
@@ -387,7 +387,7 @@ fn delta_for(passport: &Passport, applied: &[&'static str]) -> serde_json::Map<S
 /// create by design. Refusing the request would break a real caller for sending
 /// a shape it has always sent. What must not happen is those fields *taking
 /// effect*, and building the delta from the allow-list is what prevents that.
-fn apply_patch(
+pub(super) fn apply_patch(
     passport: &mut Passport,
     patch: &serde_json::Value,
 ) -> Result<Vec<&'static str>, DppError> {

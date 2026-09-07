@@ -177,14 +177,23 @@ impl PassportRepository for PgPassportRepo {
         let doc = Self::to_doc(&passport)?;
         let mut tx = self.dal.begin().await?;
         sqlx::query(
+            // `version` and `supersedes_id` are extracted here rather than left
+            // to the doc alone because the version chain is queried by them:
+            // `idx_passport_supersedes` indexes the second, and "is this record
+            // still the head" is a predicate, not a document read. Both were
+            // reserved by the migration and never written until the amend path
+            // existed to produce a value other than the default.
             r#"INSERT INTO odal.passport
                  (id, product_group, status, retention_locked, schema_version,
+                  version, supersedes_id,
                   created_at, updated_at, published_at, doc)
                VALUES ($1,
                        $2->>'productGroup',
                        COALESCE($2->>'status','draft'),
                        COALESCE(($2->>'retentionLocked')::boolean, false),
                        COALESCE($2->>'schemaVersion','1.0.0'),
+                       COALESCE(($2->>'version')::integer, 1),
+                       NULLIF($2->>'supersedesId','')::uuid,
                        now(), now(),
                        NULLIF($2->>'publishedAt','')::timestamptz,
                        $2)"#,
