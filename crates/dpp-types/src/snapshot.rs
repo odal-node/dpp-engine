@@ -39,6 +39,40 @@
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
+/// The object key a passport's machine-readable snapshot is written at,
+/// relative to the bucket root and to whatever base URL serves it.
+///
+/// # Why this is not private to the store
+///
+/// Two places have to agree on it and they live in different crates: the store
+/// writes the object, and `publish` declares a back-up URL to the EU registry
+/// that has to point at the object the store wrote. They did not agree — the
+/// store wrote `{id}/public.json` while the declaration said `{id}.json`, so an
+/// operator who configured the feature published a link one path segment away
+/// from the file, and `.env.example` documented the wrong one of the two.
+///
+/// Nothing could catch that. The registry payload's own validation checks the
+/// scheme and stops, because `https://host/dpp/{id}.json` is a perfectly
+/// well-formed URL that happens to address nothing; reachability is the
+/// registry's check, so the first party to notice would have been the registry,
+/// on a live registration.
+///
+/// One definition, used by both, is what stops them drifting apart again.
+#[must_use]
+pub fn snapshot_json_key(dpp_id: &str) -> String {
+    format!("{dpp_id}/public.json")
+}
+
+/// The rendered HTML sibling of [`snapshot_json_key`].
+///
+/// Written for a human who reaches the static tier directly. Deliberately *not*
+/// what the registry back-up URL points at: that link is consumed by machines,
+/// and the JSON view is the one carrying the signatures a verifier needs.
+#[must_use]
+pub fn snapshot_html_key(dpp_id: &str) -> String {
+    format!("{dpp_id}/public.html")
+}
+
 use dpp_domain::{DppError, passport::PassportId};
 
 /// When a snapshot was taken and how long it vouches for itself, carried
