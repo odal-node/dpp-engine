@@ -321,7 +321,11 @@ mod tests {
         let mut buf = Vec::new();
         {
             let mut zw = zip::ZipWriter::new(Cursor::new(&mut buf));
-            let opts = zip::write::FileOptions::default()
+            // `SimpleFileOptions`, not `FileOptions`: zip 8 made the latter
+            // generic over its extended-data type, so a bare `default()` no
+            // longer infers. This alias is the no-extra-data case these
+            // fixtures want.
+            let opts = zip::write::SimpleFileOptions::default()
                 .compression_method(zip::CompressionMethod::Stored);
             for (name, data) in entries {
                 zw.start_file(*name, opts).unwrap();
