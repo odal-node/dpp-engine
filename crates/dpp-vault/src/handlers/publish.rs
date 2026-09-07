@@ -10,8 +10,8 @@ use axum::{
 use crate::{middleware::auth::AuthContext, state::AppState};
 
 use super::error::{
-    api_error, conflict_error, internal_error, not_found_error, parse_passport_id, require_write,
-    validation_error,
+    api_error, conflict_error, field_validation_error, internal_error, not_found_error,
+    parse_passport_id, require_write,
 };
 
 /// `POST /api/v1/dpp/{dppId}/publish` — Ed25519-sign and publish a draft passport.
@@ -63,7 +63,7 @@ pub async fn publish_handler(
         }
         // Publish-time gates (Annex III completeness, binding compliance
         // violations, product group-data validation) surface as client errors, not 500s.
-        Err(dpp_domain::DppError::Validation(msg)) => validation_error(&msg.to_string()),
+        Err(dpp_domain::DppError::Validation(msg)) => field_validation_error(&msg),
         Err(e) => internal_error(e),
     }
 }

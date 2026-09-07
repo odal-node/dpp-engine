@@ -10,8 +10,8 @@ use axum::{
 use crate::{middleware::auth::AuthContext, state::AppState};
 
 use super::error::{
-    conflict_error, internal_error, not_found_error, parse_passport_id, require_write,
-    validation_error,
+    conflict_error, field_validation_error, internal_error, not_found_error, parse_passport_id,
+    require_write,
 };
 
 /// `PUT /api/v1/dpp/{dppId}` — partial-update a draft passport.
@@ -37,7 +37,7 @@ pub async fn update_handler(
         Err(dpp_domain::DppError::InvalidTransition { .. }) => {
             conflict_error("DPP is not in a state that allows updates.")
         }
-        Err(dpp_domain::DppError::Validation(errs)) => validation_error(&errs.to_display()),
+        Err(dpp_domain::DppError::Validation(errs)) => field_validation_error(&errs),
         Err(e) => internal_error(e),
     }
 }

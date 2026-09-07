@@ -454,8 +454,16 @@ mod snapshot_render_tests {
         }
     }
 
-    #[test]
-    fn snapshot_is_byte_identical_to_signed_public_view_and_carries_jws() {
+    /// The snapshot adds a bound and changes nothing else.
+    ///
+    /// A second renderer for the static tier is how it would silently drift
+    /// from what the node serves, so the passport half of the document has to
+    /// stay exactly the live view — same fields, same values, same publish-time
+    /// proof. Only `asOf`, `validUntil` and the snapshot's own proof are new,
+    /// and this pins that list: a field added to one and not the other is the
+    /// drift, and it would be invisible without an exact comparison.
+    #[tokio::test]
+    async fn the_snapshot_is_the_live_public_view_plus_a_bound_and_nothing_else() {
         // id must match the stub's, since signed_public_view binds the proof
         // to the row it claims to belong to.
         let id = PassportId::new();
@@ -468,19 +476,32 @@ mod snapshot_render_tests {
         let jws = jws_over(&signed_at_publish);
         p.public_jws_signature = Some(jws.clone());
 
-        let bytes = render_public_snapshot(&p).expect("render");
+        let as_of = Utc::now();
+        let bytes = render_public_snapshot(
+            &crate::public_view::tests::StubSigner::new(),
+            &p,
+            as_of,
+            as_of + chrono::Duration::days(7),
+        )
+        .await
+        .expect("render");
 
-        // Byte-identical to exactly what the live public read serves — the
-        // decoded signed payload, not a fresh re-derivation.
-        let expected = serde_json::to_vec(&signed_public_view(&p).unwrap()).unwrap();
+        let mut v: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        let obj = v.as_object_mut().expect("object");
+        for added in ["asOf", "validUntil", "snapshotJwsSignature"] {
+            assert!(
+                obj.remove(added).is_some(),
+                "the snapshot must carry {added}"
+            );
+        }
         assert_eq!(
-            bytes, expected,
-            "snapshot must match the live public view byte-for-byte"
+            v,
+            signed_public_view(&p).unwrap(),
+            "the snapshot's passport half must be the live public view"
         );
 
         // The public JWS travels with the snapshot, so a stale copy is still
         // verifiably authentic — and the confidential full-view JWS never leaks.
-        let v: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(v["publicJwsSignature"], jws);
         assert!(
             v.get("jwsSignature").is_none(),

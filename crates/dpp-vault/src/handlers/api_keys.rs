@@ -11,7 +11,9 @@ use dpp_types::api_key::CreateApiKeyRequest;
 
 use crate::{middleware::auth::AuthContext, state::AppState};
 
-use super::error::{api_error, internal_error, not_found_error, require_admin, validation_error};
+use super::error::{
+    api_error, field_validation_error, internal_error, not_found_error, require_admin,
+};
 
 /// Self-lockout guard: a key may not revoke *itself*. Revoking the very
 /// credential used for this request would lock out the caller (and every client
@@ -65,7 +67,7 @@ pub async fn api_keys_create_handler(
         .await
     {
         Ok(key) => (StatusCode::CREATED, Json(key)).into_response(),
-        Err(DppError::Validation(msg)) => validation_error(&msg.to_string()),
+        Err(DppError::Validation(msg)) => field_validation_error(&msg),
         Err(e) => internal_error(e),
     }
 }

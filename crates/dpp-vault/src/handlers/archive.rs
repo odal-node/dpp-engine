@@ -10,8 +10,8 @@ use axum::{
 use crate::{middleware::auth::AuthContext, state::AppState};
 
 use super::error::{
-    conflict_error, internal_error, not_found_error, parse_passport_id, require_write,
-    validation_error,
+    conflict_error, field_validation_error, internal_error, not_found_error, parse_passport_id,
+    require_write,
 };
 
 /// `POST /api/v1/dpp/{dppId}/archive` — permanently archive a published or suspended passport.
@@ -39,7 +39,7 @@ pub async fn archive_handler(
         }
         // Business-rule rejection (e.g. the ESPR retention guard) — a client
         // error, not a server fault.
-        Err(e @ dpp_domain::DppError::Validation(_)) => validation_error(&e.to_string()),
+        Err(dpp_domain::DppError::Validation(errs)) => field_validation_error(&errs),
         Err(e) => internal_error(e),
     }
 }

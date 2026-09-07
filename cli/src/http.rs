@@ -235,14 +235,31 @@ pub fn load_client_unchecked() -> Result<(OdalClient, crate::config::Config)> {
 struct ProblemBody {
     title: String,
     detail: Option<String>,
+    /// The node's per-field extension member. Absent on older nodes and on
+    /// problems that are not about fields, which is why it defaults rather
+    /// than being required.
+    #[serde(default)]
+    errors: Vec<ProblemFieldError>,
+}
+
+#[derive(serde::Deserialize)]
+struct ProblemFieldError {
+    field: String,
+    message: String,
 }
 
 /// Render a non-2xx response as a human-readable message. Every node service
 /// (vault/identity/integrator/resolver) replies with an RFC 7807 problem body
 /// on error — this extracts `title`/`detail` from it. Falls back to the raw
 /// (truncated) body for anything that isn't that shape.
+///
+/// When the body carries the `errors` member, the per-field failures are
+/// rendered one per line instead of as `detail`'s semicolon-joined sentence.
+/// The result is multi-line: callers embedding it inside a wider line should
+/// pass it through [`crate::stateless::render::indent_continuation`].
 pub fn describe_error(status: StatusCode, body: &str) -> String {
     match serde_json::from_str::<ProblemBody>(body) {
+        Ok(p) if !p.errors.is_empty() => render_field_errors(&p),
         Ok(p) => match p.detail.filter(|d| !d.is_empty()) {
             Some(d) => format!("{} — {d}", p.title),
             None => p.title,
@@ -252,6 +269,58 @@ pub fn describe_error(status: StatusCode, body: &str) -> String {
             crate::stateless::render::truncate(body, 300)
         ),
     }
+}
+
+/// One line per rejected field, with any clause every message repeats lifted
+/// out and stated once.
+///
+/// The repetition is not incidental. A `FieldError` has to stand alone — the
+/// domain cannot know whether it will be read beside its siblings — so a rule
+/// that explains itself, like the Battery Regulation's mandatory-content
+/// check, appends the same justifying sentence to all thirty of its errors.
+/// Read as a list, that is thirty copies of one sentence; printing it once at
+/// the end says the same thing and leaves the per-field half legible.
+fn render_field_errors(p: &ProblemBody) -> String {
+    let shared = shared_trailing_clause(&p.errors);
+
+    let mut out = format!(
+        "{} — {} field{} rejected:",
+        p.title,
+        p.errors.len(),
+        if p.errors.len() == 1 { "" } else { "s" }
+    );
+    for e in &p.errors {
+        let message = shared
+            .as_deref()
+            .and_then(|s| e.message.strip_suffix(s))
+            .map_or(e.message.as_str(), |m| m.trim_end().trim_end_matches(';'));
+        if e.field.is_empty() {
+            out.push_str(&format!("\n  {message}"));
+        } else {
+            out.push_str(&format!("\n  {}  {message}", e.field));
+        }
+    }
+    if let Some(s) = shared {
+        out.push_str(&format!("\n  (each of the above: {s})"));
+    }
+    out
+}
+
+/// The final `"; "`-separated clause, when every message ends with the same
+/// one and has something else in front of it. `None` otherwise — including for
+/// a single error, where there is nothing to share.
+fn shared_trailing_clause(errors: &[ProblemFieldError]) -> Option<String> {
+    if errors.len() < 2 {
+        return None;
+    }
+    let last = |m: &str| m.rsplit("; ").next().map(str::to_owned);
+    let candidate = last(&errors[0].message)?;
+    // A message that is *only* the shared clause has no per-field half left to
+    // print, so lifting it out would lose information rather than tidy it.
+    let holds = errors.iter().all(|e| {
+        last(&e.message).as_deref() == Some(candidate.as_str()) && e.message.len() > candidate.len()
+    });
+    holds.then_some(candidate)
 }
 
 #[cfg(test)]
@@ -293,6 +362,81 @@ mod tests {
         let msg = describe_error(StatusCode::BAD_GATEWAY, "<html>502 Bad Gateway</html>");
         assert!(msg.starts_with("HTTP 502 Bad Gateway: "));
         assert!(msg.contains("<html>502 Bad Gateway</html>"));
+    }
+
+    /// The shape a battery publish rejection actually arrives in: many fields,
+    /// every message carrying the same justifying clause. One line per field,
+    /// the shared clause stated once — not a single four-thousand-character
+    /// line, which is what `detail` alone produced.
+    #[test]
+    fn field_errors_render_one_line_each_with_the_shared_clause_lifted_out() {
+        let clause = "a passport omitting it does not carry the content the Battery \
+                      Regulation requires of this category";
+        let fields = ["batteryModelId", "manufacturingPlace", "cathodeMaterial"];
+        let errors: Vec<_> = fields
+            .iter()
+            .map(|f| {
+                serde_json::json!({
+                    "field": format!("/productGroupData/{f}"),
+                    "message": format!(
+                        "'{f}' is mandatory for a 'industrial' battery and is absent; {clause}"
+                    ),
+                })
+            })
+            .collect();
+        let body = serde_json::json!({
+            "type": "https://problems.odal-node.io/unprocessable-entity",
+            "title": "Unprocessable Entity",
+            "status": 422,
+            "detail": "joined; sentence",
+            "errors": errors,
+        })
+        .to_string();
+
+        let msg = describe_error(StatusCode::UNPROCESSABLE_ENTITY, &body);
+        let lines: Vec<&str> = msg.lines().collect();
+
+        assert_eq!(lines[0], "Unprocessable Entity — 3 fields rejected:");
+        assert_eq!(
+            lines[1],
+            "  /productGroupData/batteryModelId  'batteryModelId' is mandatory for a 'industrial' battery and is absent"
+        );
+        assert_eq!(lines.len(), 5, "3 fields + header + shared clause: {msg}");
+        assert_eq!(lines[4], format!("  (each of the above: {clause})"));
+        assert!(
+            !lines[1].contains("does not carry"),
+            "the shared clause must not also be repeated per field"
+        );
+    }
+
+    /// One error has no sibling to share a clause with, so nothing is lifted —
+    /// pulling the tail off a lone message would only make it less complete.
+    #[test]
+    fn a_single_field_error_keeps_its_whole_message() {
+        let body = serde_json::json!({
+            "type": "https://problems.odal-node.io/unprocessable-entity",
+            "title": "Unprocessable Entity",
+            "status": 422,
+            "errors": [{ "field": "/gtin", "message": "check digit is wrong; recompute it" }],
+        })
+        .to_string();
+
+        let msg = describe_error(StatusCode::UNPROCESSABLE_ENTITY, &body);
+        assert_eq!(
+            msg,
+            "Unprocessable Entity — 1 field rejected:\n  /gtin  check digit is wrong; recompute it"
+        );
+    }
+
+    /// An older node, or any problem that is not about fields, must render
+    /// exactly as it did before the extension member existed.
+    #[test]
+    fn a_body_without_the_errors_member_renders_as_before() {
+        let body = r#"{"type":"https://problems.odal-node.io/not-found","title":"Not Found","status":404,"detail":"passport abc123 does not exist"}"#;
+        assert_eq!(
+            describe_error(StatusCode::NOT_FOUND, body),
+            "Not Found — passport abc123 does not exist"
+        );
     }
 
     #[test]

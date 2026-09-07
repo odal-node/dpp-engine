@@ -1,8 +1,23 @@
 get:
   operationId: vaultHealth
   summary: Vault health check
+  description: |
+    Liveness: the vault process is running and serving. On the node (port 8001)
+    this is mounted at `/vault/health`.
+
+    It checks nothing beyond itself — no database, no object storage, no
+    upstream. A `200` here means the process is up, not that it can do useful
+    work; use `/vault/ready` for that. Wiring a restart policy to this endpoint
+    and expecting it to catch a lost database will never restart anything.
+
+    The body carries the service name, its version, and the `dpp-core` version
+    it was built against, which is the quickest way to tell two deployments
+    apart when their behaviour differs.
   tags:
     - Health
+  security: []
   responses:
     '200':
-      description: Service is up.
+      description: |
+        The process is serving. Body carries `status`, `service`, `version` and
+        `coreVersion`.

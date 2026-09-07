@@ -1,0 +1,116 @@
+{
+  "productName": "Voltex EV Traction Battery 75 kWh",
+  "batchId": "VBX-EV-2026-0421",
+  "manufacturer": {
+    "name": "Voltex Battery GmbH",
+    "address": "Werkstrasse 5, 85055 Ingolstadt, DE",
+    "didWebUrl": "https://voltex.example/.well-known/did.json"
+  },
+  "placedOnMarketDate": "2026-07-01",
+  "commodityCode": "85076000",
+  "materials": [
+    { "name": "Lithium Nickel Manganese Cobalt Oxide (NMC 811)", "weightKg": 210.0, "recycledPct": 13.0, "countryOfOrigin": "DE" },
+    { "name": "Graphite/silicon anode", "weightKg": 95.0, "recycledPct": 4.0, "countryOfOrigin": "DE" },
+    { "name": "Aluminium pack housing", "weightKg": 85.0, "recycledPct": 71.0, "countryOfOrigin": "DE" }
+  ],
+  "repairabilityScore": 5.5,
+  "productGroupData": {
+    "productGroup": "battery",
+    "gtin": "09590000000045",
+    "batteryType": "ev",
+    "batteryChemistry": "NMC",
+    "co2ePerUnitKg": 61.2,
+    "batteryPassportNumber": "URN:ODL:BATT:09590000000045:VBX-EV-2026-0421",
+    "batteryModelId": "VBX-EV75-NMC811-P4S96",
+    "manufacturingPlace": "Ingolstadt, DE (plant ING-1)",
+    "manufacturingDate": "2026-05-11T00:00:00Z",
+    "batteryWeightKg": 468.0,
+    "nominalVoltageV": 355.0,
+    "minimalVoltageV": 270.0,
+    "maximumVoltageV": 403.2,
+    "nominalCapacityAh": 211.0,
+    "ratedCapacityKwh": 75.0,
+    "ratedEnergyWh": 75000.0,
+    "originalPowerCapabilityW": 150000.0,
+    "powerLimitMinW": 500.0,
+    "powerLimitMaxW": 220000.0,
+    "renewableContentPct": 16.0,
+    "recycledContentCobaltPct": 12.0,
+    "recycledContentLithiumPct": 9.0,
+    "recycledContentNickelPct": 11.0,
+    "recycledContentLeadPct": 0.0,
+    "recycledContentReportingYear": 2026,
+    "capacityThresholdForExhaustionPct": 70.0,
+    "expectedLifetimeCycles": 1800,
+    "expectedLifetimeReferenceTest": "UNECE GTR 22 / IEC 62660-1:2018, 25 degC",
+    "initialRoundTripEfficiencyPct": 94.0,
+    "roundTripEfficiencyAtHalfCycleLifePct": 88.0,
+    "cycleLifeTestCRate": 1.0,
+    "internalCellResistanceMohm": 1.1,
+    "internalPackResistanceMohm": 42.0,
+    "notInUseTemperatureRange": { "minC": -30.0, "maxC": 55.0 },
+    "notInUseTemperatureReferenceTest": "IEC 62660-1:2018 storage profile",
+    "commercialWarrantyPeriodMonths": 96,
+    "hazardSymbol": null,
+    "hazardousSubstances": [
+      { "name": "Nickel sulfate", "casNumber": "7786-81-4", "concentrationPct": 2.4 },
+      { "name": "Cobalt sulfate", "casNumber": "10124-43-3", "concentrationPct": 0.9 },
+      { "name": "Lithium hexafluorophosphate", "casNumber": "21324-40-3", "concentrationPct": 0.9 }
+    ],
+    "usableExtinguishingAgent": "Large volumes of water for cooling; do not use CO2 on cell fire",
+    "criticalRawMaterials": [
+      { "name": "Cobalt", "casNumber": "7440-48-4", "weightGrams": 5200.0, "countryOfOrigin": "CD" },
+      { "name": "Lithium", "casNumber": "7439-93-2", "weightGrams": 8100.0, "countryOfOrigin": "CL" },
+      { "name": "Nickel", "casNumber": "7440-02-0", "weightGrams": 32000.0, "countryOfOrigin": "ID" },
+      { "name": "Natural graphite", "casNumber": "7782-42-5", "weightGrams": 74000.0, "countryOfOrigin": "MZ" }
+    ],
+    "cathodeMaterial": [
+      { "name": "LiNi0.8Mn0.1Co0.1O2", "weightPct": 96.5, "casNumber": "346417-97-8" },
+      { "name": "PVDF binder", "weightPct": 2.0, "casNumber": "24937-79-9" },
+      { "name": "Conductive carbon black", "weightPct": 1.5, "casNumber": "1333-86-4" }
+    ],
+    "anodeMaterial": [
+      { "name": "Graphite", "weightPct": 90.0, "casNumber": "7782-42-5" },
+      { "name": "Silicon oxide", "weightPct": 6.0, "casNumber": "10097-28-6" },
+      { "name": "SBR/CMC binder", "weightPct": 4.0, "casNumber": "9003-55-8" }
+    ],
+    "electrolyteMaterial": [
+      { "name": "Ethylene carbonate", "weightPct": 30.0, "casNumber": "96-49-1" },
+      { "name": "Ethyl methyl carbonate", "weightPct": 55.0, "casNumber": "623-53-0" },
+      { "name": "Lithium hexafluorophosphate", "weightPct": 13.0, "casNumber": "21324-40-3" },
+      { "name": "Vinylene carbonate additive", "weightPct": 2.0, "casNumber": "872-36-6" }
+    ],
+    "componentPartNumbers": ["VBX-CELL-4680-NMC811", "VBX-MODULE-24S", "VBX-BMS-MASTER-V4", "VBX-PACK-HV-75"],
+    "sparePartsContacts": "hv-service@voltex.example; +49 841 5550 400 (certified HV workshops only)",
+    "disassemblyInstructionsUrl": "https://voltex.example/service/ev75/disassembly",
+    "safetyMeasures": "High-voltage (>60 V DC). HV-qualified personnel only. Service disconnect plug removed and locked out. Insulated PPE class 00.",
+    "testReportResults": "IEC 62660-2:2018 pass; ISO 6469-1:2019 pass; UN 38.3 pass; report VBX-TR-2026-0507",
+    "markingInformation": "Separate-collection symbol per Art. 13(4); capacity 75 kWh; HV warning label",
+    "euDeclarationOfConformity": "EU-DoC VBX-2026-EV-0142 dated 2026-05-18, per Regulation (EU) 2023/1542 Art. 18",
+    "wasteBatteryInformation": "EV battery - handled by the vehicle manufacturer take-back scheme. Do not open or discharge. Contact hv-service@voltex.example. Producer registration DE-BATT-00981.",
+    "batteryStatus": "original",
+    "dynamicPerformance": {
+      "ratedCapacityAh": 209.0,
+      "capacityFadePct": 0.9,
+      "powerW": 148000.0,
+      "powerFadePct": 0.6,
+      "internalResistanceMohm": 42.4,
+      "internalResistanceIncreasePct": 1.0,
+      "roundTripEfficiencyPct": 93.6,
+      "expectedLifetimeCycles": 1785,
+      "expectedLifetimeYears": 9.5
+    },
+    "stateOfHealth": {
+      "parameterSet": "electricVehicle",
+      "socePct": 99.1
+    },
+    "usageHistory": {
+      "chargeDischargeCycles": 8,
+      "negativeEvents": [],
+      "stateOfCharge": [
+        { "recordedAt": "2026-07-15T09:00:00Z", "stateOfChargePct": 82.0 },
+        { "recordedAt": "2026-07-22T09:00:00Z", "stateOfChargePct": 64.0 }
+      ]
+    }
+  }
+}

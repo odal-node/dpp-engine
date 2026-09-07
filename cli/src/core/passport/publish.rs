@@ -119,26 +119,25 @@ async fn publish_all(client: &OdalClient, vault_url: &str) -> Result<PublishSumm
                 published += 1;
             }
             Ok((status, resp_body)) => {
-                let err = format!("{name}: {}", describe_error(status, &resp_body));
-                errors.push(err.clone());
+                let described = describe_error(status, &resp_body);
+                errors.push(format!("{name}: {described}"));
                 items.push(PassportPublishResult {
                     id: id.to_owned(),
                     name: name.to_owned(),
                     success: false,
                     qr_url: None,
-                    error: Some(err),
+                    error: Some(described),
                 });
                 failed += 1;
             }
             Err(e) => {
-                let err = format!("{name}: {e}");
-                errors.push(err.clone());
+                errors.push(format!("{name}: {e}"));
                 items.push(PassportPublishResult {
                     id: id.to_owned(),
                     name: name.to_owned(),
                     success: false,
                     qr_url: None,
-                    error: Some(err),
+                    error: Some(e.to_string()),
                 });
                 failed += 1;
             }

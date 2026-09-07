@@ -129,7 +129,7 @@ Infrastructure dependencies that are optional use a NoOp implementation:
 
 **Why:** Self-hosted single-node deployments should work without NATS. The NoOp pattern means the code paths are identical — no `if nats_enabled { ... }` branches. The trait dispatch handles it.
 
-**The honesty rule on top:** every fallback reports its tier in `/health` (`trust_mode` per port), and a `NODE_PROFILE=production` node **refuses to boot** while a trust-critical port resolves to a ghost. Fallbacks keep development friction-free; they are never allowed to impersonate the real thing.
+**The honesty rule on top:** every fallback reports its tier per port — as `trustMode` on the authenticated `/vault/api/v1/node/state`, and as a `trust_mode` gauge on the private `/metrics` listener (not on the public `/health`, which answers liveness only: a degraded port is a targeting signal) — and a `NODE_PROFILE=production` node **refuses to boot** while a trust-critical port resolves to a ghost. Fallbacks keep development friction-free; they are never allowed to impersonate the real thing.
 
 ---
 

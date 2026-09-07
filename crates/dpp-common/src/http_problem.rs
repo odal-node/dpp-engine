@@ -36,6 +36,36 @@ pub struct Problem {
     /// URI reference that identifies this specific occurrence.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub instance: Option<String>,
+    /// The individual field failures behind this problem, when there are any.
+    ///
+    /// RFC 7807 §3.2 permits extension members, and this is one. It exists
+    /// because `detail` is a single string and a validation failure is not: a
+    /// battery rejected for missing Annex XIII content produces upwards of
+    /// thirty distinct field errors, and flattening them into one
+    /// semicolon-joined sentence is the difference between a client that can
+    /// point at `/productGroupData/batteryModelId` and a human squinting at a
+    /// four-thousand-character line.
+    ///
+    /// `detail` keeps the joined rendering, so a client written against the
+    /// older shape is unaffected. Absent for problems that are not about
+    /// fields.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub errors: Option<Vec<ProblemFieldError>>,
+}
+
+/// One field's failure inside a [`Problem`].
+///
+/// Deliberately a `dpp-common` type rather than a re-export of the domain's
+/// `FieldError`: this crate is infrastructure and carries no dependency on
+/// `dpp-domain`, and the wire shape should not move when the domain type does.
+/// The conversion lives with the caller that owns both.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ProblemFieldError {
+    /// JSON Pointer (RFC 6901) to the offending member — `/productGroupData/gtin`.
+    /// Empty when the failure is about the document as a whole.
+    pub field: String,
+    /// What is wrong with it, in one sentence.
+    pub message: String,
 }
 
 impl Problem {
@@ -51,12 +81,23 @@ impl Problem {
             status: status.as_u16(),
             detail: None,
             instance: None,
+            errors: None,
         }
     }
 
     /// Attach a human-readable explanation for this specific occurrence.
     pub fn with_detail(mut self, detail: impl Into<String>) -> Self {
         self.detail = Some(detail.into());
+        self
+    }
+
+    /// Attach the individual field failures behind this problem.
+    ///
+    /// An empty list is stored as absent rather than as `[]`, so a client can
+    /// read "the `errors` member is present" as "there is per-field detail
+    /// here" without also having to check its length.
+    pub fn with_field_errors(mut self, errors: Vec<ProblemFieldError>) -> Self {
+        self.errors = (!errors.is_empty()).then_some(errors);
         self
     }
 
@@ -125,5 +166,50 @@ mod tests {
     fn problem_type_uri_is_derived_from_title() {
         let p = Problem::new(StatusCode::BAD_REQUEST, "Bad Request");
         assert_eq!(p.problem_type, "https://problems.odal-node.io/bad-request");
+    }
+
+    fn field(f: &str, m: &str) -> ProblemFieldError {
+        ProblemFieldError {
+            field: f.to_owned(),
+            message: m.to_owned(),
+        }
+    }
+
+    /// The whole point of the extension member: a client can address one field
+    /// without parsing a sentence. Pins that `errors` survives serialisation
+    /// under that exact name, as an array of `{field, message}`.
+    #[test]
+    fn field_errors_reach_the_wire_as_an_addressable_array() {
+        let p = unprocessable("a; b").with_field_errors(vec![
+            field("/productGroupData/batteryModelId", "a"),
+            field("/productGroupData/manufacturingDate", "b"),
+        ]);
+        let v: serde_json::Value = serde_json::to_value(&p).expect("problem serialises");
+
+        let errors = v["errors"].as_array().expect("errors is an array");
+        assert_eq!(errors.len(), 2);
+        assert_eq!(errors[0]["field"], "/productGroupData/batteryModelId");
+        assert_eq!(errors[0]["message"], "a");
+        // `detail` keeps the joined rendering — an older client is unaffected.
+        assert_eq!(v["detail"], "a; b");
+    }
+
+    /// A problem that is not about fields must not grow an empty `errors` key:
+    /// a client should be able to read "the member is present" as "there is
+    /// per-field detail here" without also checking its length.
+    #[test]
+    fn a_problem_without_field_errors_omits_the_member_entirely() {
+        let plain: serde_json::Value = serde_json::to_value(not_found("no such passport")).unwrap();
+        assert!(
+            plain.get("errors").is_none(),
+            "a field-less problem must omit `errors`, got {plain}"
+        );
+
+        let emptied: serde_json::Value =
+            serde_json::to_value(unprocessable("x").with_field_errors(vec![])).unwrap();
+        assert!(
+            emptied.get("errors").is_none(),
+            "an empty list must serialise as absent, not as [], got {emptied}"
+        );
     }
 }

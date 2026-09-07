@@ -69,7 +69,11 @@ pub async fn node_state_handler(
             bootstrapped,
             operator_complete,
             trust: state.trust.as_ref().map(|t| t.posture_json()),
-            ruleset_version: state.ruleset_version.clone(),
+            // Read through the port on every request, never cached here. This
+            // was a `String` cloned once at boot, which was correct only while
+            // nothing could swap the ruleset — and reporting a stale version is
+            // the specific dishonesty this endpoint exists to prevent.
+            ruleset_version: state.ruleset_admin.as_ref().map(|r| r.active_version()),
         }),
     )
         .into_response()

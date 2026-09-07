@@ -98,6 +98,20 @@ impl DbPing for PgPing {
 }
 
 async fn start_node_with_dal(dal: PgDal) -> String {
+    start_node_with_ruleset(
+        dal,
+        Arc::new(dpp_node::infra::ruleset::ActiveRuleset::baseline()),
+    )
+    .await
+}
+
+/// As [`start_node_with_dal`], but with the ruleset the node serves supplied by
+/// the caller — so a test can wire a real signed channel and drive a hot swap
+/// through the HTTP surface.
+async fn start_node_with_ruleset(
+    dal: PgDal,
+    ruleset: Arc<dpp_node::infra::ruleset::ActiveRuleset>,
+) -> String {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
         .expect("bind failed");
@@ -179,8 +193,6 @@ async fn start_node_with_dal(dal: PgDal) -> String {
             required: true,
         }],
     ));
-    let ruleset = std::sync::Arc::new(dpp_node::infra::ruleset::ActiveRuleset::baseline());
-
     let vault_state = VaultState {
         service,
         operator_service,
@@ -198,7 +210,7 @@ async fn start_node_with_dal(dal: PgDal) -> String {
         // The trust posture is asserted through the authenticated node-state
         // route, not the public probe.
         trust: Some(trust.clone()),
-        ruleset_version: Some(ruleset.version().to_owned()),
+        ruleset_admin: Some(ruleset.clone()),
     };
 
     let identity_state = IdentityState {
@@ -288,6 +300,142 @@ async fn authenticated_node_state_reports_trust_modes() {
     assert_eq!(body["profile"], "development");
     assert_eq!(body["trustMode"]["registry_sync"], "ghost");
     assert_eq!(body["rulesetVersion"], "baseline");
+}
+
+/// The issue this route exists to close, end to end: a node that is up and
+/// serving adopts a newly published ruleset, and the version it reports moves.
+///
+/// It is worth paying for a container to assert this because the two halves
+/// were separately wrong and each looked fine on its own. The swap had no
+/// trigger — the only caller was a boot-time load, so "no restart needed" was
+/// false. And the version `/node/state` reported was a `String` cloned at boot,
+/// so even once a swap existed the node would have gone on reporting the ruleset
+/// it started with. Unit tests cover each half; only this covers the claim.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_running_node_adopts_a_newly_published_ruleset_without_a_restart() {
+    use dpp_node::infra::ruleset::{ActiveRuleset, FileRulesetSource, SignedBundle, sign_bundle};
+
+    // A throwaway publisher, exactly as `ruleset.rs`'s own tests build one: the
+    // node pins the public half and never sees the private key.
+    let key_dir = tempfile::tempdir().expect("temp dir");
+    let publisher = KeyStore::open_and_migrate(key_dir.path().join("publisher.enc"), "test-pass")
+        .expect("open publisher keystore");
+    let entry = publisher.generate_key("publisher").expect("generate key");
+    let pubkey =
+        base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(entry.verifying_key.as_bytes());
+
+    let drop_dir = tempfile::tempdir().expect("temp dir");
+    let bundle_path = drop_dir.path().join("ruleset.json");
+    let publish = |version: &str, threshold: i64, days_ago: i64| {
+        let bundle: SignedBundle = sign_bundle(
+            &publisher,
+            "publisher",
+            version,
+            chrono::Utc::now() - chrono::Duration::days(days_ago),
+            vec!["ESPR Art. 25".into()],
+            std::collections::BTreeMap::from([("textile".to_owned(), "2.0.0".to_owned())]),
+            serde_json::json!({ "textileFibreThreshold": threshold }),
+        )
+        .expect("sign bundle");
+        std::fs::write(
+            &bundle_path,
+            serde_json::to_vec(&bundle).expect("serialise bundle"),
+        )
+        .expect("write bundle");
+    };
+
+    // The node boots with a channel already carrying a bundle.
+    publish("2026-Q3.1", 5, 7);
+    let ruleset = Arc::new(
+        ActiveRuleset::baseline()
+            .with_channel(Box::new(FileRulesetSource::new(&bundle_path)), &pubkey),
+    );
+    dpp_node::infra::ruleset::reload_and_report(&ruleset, true).await;
+
+    let pg = start_pg().await;
+    let base = start_node_with_ruleset(pg.dal.clone(), ruleset).await;
+    let token = make_jwt("00000000-0000-0000-0000-000000000092");
+    let client = reqwest::Client::new();
+
+    let state_version = async || -> String {
+        let body: serde_json::Value = client
+            .get(format!("{base}/vault/api/v1/node/state"))
+            .bearer_auth(&token)
+            .send()
+            .await
+            .expect("GET node/state failed")
+            .json()
+            .await
+            .expect("node state is JSON");
+        body["rulesetVersion"].as_str().unwrap_or("").to_owned()
+    };
+    assert_eq!(state_version().await, "2026-Q3.1", "the booted bundle");
+
+    // A correction is published while the node keeps serving.
+    publish("2026-Q3.2", 7, 1);
+
+    let resp = client
+        .post(format!("{base}/vault/api/v1/ruleset/reload"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .expect("POST ruleset/reload failed");
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = resp.json().await.expect("reload report is JSON");
+    assert_eq!(body["rulesetVersion"], "2026-Q3.2");
+    assert_eq!(body["changed"], true);
+
+    assert_eq!(
+        state_version().await,
+        "2026-Q3.2",
+        "the node must report the ruleset in force, not the one it booted with"
+    );
+
+    // Re-reading an unchanged channel is a success that reports no change —
+    // what the poller sees on every quiet tick.
+    let body: serde_json::Value = client
+        .post(format!("{base}/vault/api/v1/ruleset/reload"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .expect("second reload failed")
+        .json()
+        .await
+        .expect("reload report is JSON");
+    assert_eq!(body["changed"], false);
+    assert_eq!(body["rulesetVersion"], "2026-Q3.2");
+
+    // An authentic but older bundle served on the channel is refused as a
+    // rollback, and the node keeps the ruleset it had.
+    publish("2026-Q3.0", 3, 30);
+    let resp = client
+        .post(format!("{base}/vault/api/v1/ruleset/reload"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .expect("rollback reload failed");
+    assert_eq!(
+        resp.status(),
+        422,
+        "a rollback must be refused, not adopted"
+    );
+    assert_eq!(state_version().await, "2026-Q3.2");
+}
+
+/// A node with no channel says so, rather than reporting a verification failure
+/// for bytes that never existed. `501` and `422` are different instructions: the
+/// first says this node has no channel, the second says distrust what arrived.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_baseline_node_reports_no_channel_rather_than_a_failed_reload() {
+    let (base, _c) = start_db_and_node().await;
+    let token = make_jwt("00000000-0000-0000-0000-000000000093");
+    let resp = reqwest::Client::new()
+        .post(format!("{base}/vault/api/v1/ruleset/reload"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .expect("POST ruleset/reload failed");
+    assert_eq!(resp.status(), 501);
 }
 
 #[tokio::test(flavor = "multi_thread")]

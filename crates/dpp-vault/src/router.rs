@@ -47,6 +47,7 @@ use crate::{
             operator_ids_set_primary_handler,
         },
         registry_status::{passport_registry_handler, registry_rollup_handler},
+        ruleset::reload_ruleset_handler,
         scan_ingest::{scan_ingest_handler, scan_ingest_mtls},
         seal::{seal_handler, seal_summary_handler},
         stats::{operator_stats_handler, passport_stats_handler},
@@ -151,6 +152,8 @@ pub fn build(state: AppState) -> Router {
         .route("/api-keys/{id}", delete(api_keys_delete_handler))
         // ── Plugins (signed product group-plugin hot-install) ────────────────
         .route("/plugins", post(install_plugin_handler))
+        // ── Compliance Current (signed ruleset channel hot-reload) ──────────
+        .route("/ruleset/reload", post(reload_ruleset_handler))
         // ── Webhooks (signed outbound delivery) ───────────────────────
         .route(
             "/webhooks",

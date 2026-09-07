@@ -18,6 +18,16 @@ use crate::core::types::{
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
+/// Re-indent every line after the first by `prefix`.
+///
+/// `describe_error` can return several lines — one per rejected field — and
+/// most call sites drop its result into the middle of a wider line. Without
+/// this the second line starts at column zero and the list stops reading as
+/// one message.
+pub(crate) fn indent_continuation(s: &str, prefix: &str) -> String {
+    s.replace('\n', &format!("\n{prefix}"))
+}
+
 /// Truncate to at most `max` characters (not bytes), appending `…` when cut.
 ///
 /// Counts and slices by `char` so a multi-byte UTF-8 sequence landing on the
@@ -231,9 +241,11 @@ pub fn render_passport_list(page: &PassportPage) {
         println!("No passports found.");
         return;
     }
+    // "GROUP", not "SECTOR": the field this column renders was renamed to
+    // `productGroup` and the header was left behind by the rename.
     println!(
         "{:<10} {:<32} {:<9} {:<18} UPDATED",
-        "STATUS", "PRODUCT", "SECTOR", "BATCH/REF"
+        "STATUS", "PRODUCT", "GROUP", "BATCH/REF"
     );
     println!("{}", "─".repeat(86));
     for r in &page.rows {
@@ -376,9 +388,9 @@ pub fn render_publish_summary(summary: &PublishSummary, single: bool) {
             }
         } else if !single {
             println!(
-                "  FAIL  {} ({})",
+                "  FAIL  {}\n        {}",
                 item.name,
-                item.error.as_deref().unwrap_or("-")
+                indent_continuation(item.error.as_deref().unwrap_or("-"), "        ")
             );
         }
     }
@@ -388,10 +400,15 @@ pub fn render_publish_summary(summary: &PublishSummary, single: bool) {
             summary.published, summary.failed
         );
     }
-    if !summary.errors.is_empty() {
+    // Only when `single`. The item loop above already printed every failure
+    // for a batch, and printing this block as well rendered the whole failure
+    // list twice — which reads as the node having said everything twice.
+    // A single publish takes the other branch, where the item loop prints
+    // nothing on failure, so this is that case's only output.
+    if single && !summary.errors.is_empty() {
         println!("\nErrors:");
         for err in &summary.errors {
-            eprintln!("  - {err}");
+            eprintln!("  - {}", indent_continuation(err, "    "));
         }
     }
 }

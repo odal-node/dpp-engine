@@ -1,8 +1,25 @@
 get:
   operationId: resolverHealth
   summary: Resolver health check
+  description: |
+    Liveness: the public resolver is running and serving. This endpoint is on
+    the **resolver** service (port 8003), which is a separate deployable from
+    the node.
+
+    Checks nothing beyond itself — not Redis, not the vault it reads passports
+    from. A `200` means the process answers; it does not mean a scan will
+    resolve.
+
+    The node has its own `/health` on port 8001, and it is deliberately bare:
+    it returns `{"status":"ok"}` and nothing else. The node's profile, per-port
+    trust modes and ruleset version are **not** there — they are on the
+    authenticated `GET /vault/api/v1/node/state`, because an unauthenticated
+    endpoint that publishes a node's trust posture tells an unauthenticated
+    reader more than it should. An external uptime probe pointed at either
+    `/health` can assert liveness and nothing more.
   tags:
     - Health
+  security: []
   responses:
     '200':
-      description: Resolver is up.
+      description: The process is serving. Body carries `status`, `service` and `version`.

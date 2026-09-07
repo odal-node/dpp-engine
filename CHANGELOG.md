@@ -12,6 +12,65 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ### Added
 
+- **A continuity snapshot now says how long it stands, under its own signature.**
+  Each snapshot written to object storage carries `asOf`, `validUntil` and a
+  `snapshotJwsSignature` over the whole document — the passport's public view,
+  its publish-time `publicJwsSignature`, and both timestamps. The node re-signs
+  published snapshots every 24 hours; the bound runs for seven days.
+
+  The tier existed to keep a passport reachable when the node is not, and that
+  is exactly the state in which a withdrawal could not propagate: the reconcile
+  queue lives in the node's own database, so suspending a passport while the
+  node was unreachable left the snapshot answering `active` — under a signature
+  that verified, indefinitely, to anyone holding a copy from any source. The
+  only staleness signal was an HTTP header the reverse proxy added on its own
+  path, which is neither signed nor able to survive being cached or copied.
+
+  Withdrawal is now the *absence* of a refresh. That works on a node that is
+  switched off, and it reaches a copy nobody can reach — a cache, a mirror, a
+  file someone kept — because the copy expires on its own. The publish-time
+  proof is untouched and never re-signed: it is pinned by hash elsewhere, so
+  re-signing it would fork the passport's public proof rather than date it.
+
+  The snapshot page states its expiry date beside its age (it is written once
+  and cannot notice its own lapse), and uploads now set `Cache-Control` and
+  `x-amz-meta-*` so a reader who goes straight to the object store gets the
+  dates too. Neither replaces the signed bound.
+
+  **A verifier that ignores `validUntil` still treats an expired snapshot as
+  valid.** Enforcement lands separately, in the verifier; until then the bound
+  is stated and dated but not refused.
+
+- **The node can actually hot-swap a ruleset now.** `POST /api/v1/ruleset/reload`
+  (admin, `odal ruleset reload`) re-reads the signed channel and swaps in a
+  verified bundle, and a poller does the same unattended every
+  `RULESET_POLL_INTERVAL_SECS` (default 300; `0` disables it).
+
+  The type was built to swap and said it did. Nothing performed one: the single
+  production caller was a boot-time load, so taking a new ruleset meant a
+  restart — precisely what the promise ruled out. Verification was never the gap
+  (authenticity, integrity, applicability and the rollback refusal were all
+  correct and reachable); the trigger was.
+
+  **The version reported on `/api/v1/node/state` is now read live.** It was a
+  `String` cloned once at boot, which was true only while nothing could change
+  it — the moment a swap became possible it would have gone stale and stayed
+  stale, and a stale ruleset version is exactly the dishonesty that endpoint
+  exists to prevent. The vault now holds a `RulesetAdmin` port, mirroring
+  `PluginAdmin`.
+
+  **Boot and reload are one code path**, so the trigger is exercised on every
+  start rather than living beside a second copy of read-verify-swap. Bundles
+  arrive through a `RulesetSource` seam — a local file today, which the
+  distribution design has always called the placeholder for an HTTP feed or an
+  OCI pull — so the transport can change without the swap path moving.
+
+  Every refusal stays fail-closed and keeps its own wire code: `RULESET_REJECTED`
+  (distrust the bytes), `RULESET_NOT_YET_EFFECTIVE` (hold and re-offer),
+  `RULESET_SUPERSEDED` (the rollback refusal). Refusals count on the existing
+  `ruleset_load_failures_total`, which fleet self-checks already alarm on;
+  adoptions count on `ruleset_swaps_total`.
+
 - **The seal route names who declared the content it covers.**
   `GET /api/v1/dpp/{dppId}/seal` gains `declaredBy`, carrying the manufacturer
   and Annex III(k) operator identifier frozen at publish, a
@@ -149,6 +208,84 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ### Fixed
 
+- **Fourteen model groups rendered as API sections with an empty Operations
+  heading.** `Errors`, `Passport`, … `Regulatory Catalog` were declared as tags
+  and 109 schemas pointed at them with `x-tags`. That is a Redoc grouping
+  convention, but Scalar — which renders the published reference — treats
+  `x-tags` as a tag assignment, so each of the fourteen became a top-level
+  section shaped like an API tag: a heading, an **Operations** list with nothing
+  in it, and schemas below. Fourteen of those sat as siblings of the twenty-one
+  real operation tags.
+
+  Both the `x-tagGroups` block and the fourteen pseudo-tags are gone. Scalar now
+  renders the twenty-one operation tags flat and appends its own single
+  collapsible **Models** node holding every schema, which is what the grouping
+  was reaching for and could not express: its models node takes a flat list of
+  children and has no nested-group concept, so the fourteen could only ever have
+  been siblings *beside* the operations, never sections *inside* Models.
+
+  The cost lands where nothing ships. `x-tagGroups` and `x-tags` shaped
+  `api/openapi.html`, a git-ignored artifact built on demand by
+  `just openapi-html`; the reference operators actually read is the Scalar one.
+  Nothing was added to fill the empty Operations sections, because content
+  invented to justify a section that should not exist is worse than the empty
+  section.
+
+- **Twenty-two public routes were indistinguishable from routes nobody had
+  thought about.** `security-defined` fires when an operation declares no
+  `security` and there is no global block — which is the same shape whether a
+  route is open on purpose or open by omission. All twenty-two were deliberate:
+  the public passport reads, the health and readiness probes, `did.json`, the
+  CSV templates and schema listings, and the resolver's Digital Link routes.
+
+  They now carry `security: []`, which states it in the description rather than
+  in a linter baseline, so a reader and the rendered API reference both see
+  "no authentication required" instead of silence. The convention already
+  existed on the two `product-groups` routes; it is now on all of them. The
+  linter baseline drops from **37 entries to 17**, and the twenty-two are gone
+  from it because they are no longer exceptions, not because they were
+  suppressed harder.
+
+  What remains is what the linter is wrong about, and the file now says so per
+  group: eleven `operation-4xx-response` on endpoints that cannot produce a
+  `4XX` (`/vault/ready` documents a `503`, which is a 5xx and does not satisfy
+  that rule), and six `no-server-example.com` on a server list that is a
+  template an operator edits.
+
+- **Eight operations had no description at all, and one of them hid a
+  distinction operators need.** The six health probes, the resolver's readiness
+  probe, and `/vault/api/v1/info` (which said only "Returns version and build
+  information"). Every one of the API's 81 operations now carries both a summary
+  and a description.
+
+  Writing them surfaced something the API had never stated: **`/vault/ready` is
+  the only readiness probe here that checks a dependency.** It pings PostgreSQL
+  and answers `503`. The identity and resolver readiness probes answer `200`
+  unconditionally — not as stubs, but because neither has an external dependency
+  that can be unhealthy while the process serves. Three endpoints named `ready`
+  behaved in two different ways and nothing said which was which, so an operator
+  wiring a load-balancer probe had to read the source to find out.
+
+  The public `/health` now also records why it is bare: profile, per-port trust
+  modes and ruleset version are on the authenticated
+  `GET /vault/api/v1/node/state`, because an unauthenticated endpoint publishing
+  a node's trust posture tells an unauthenticated reader more than it should.
+
+- **`GET /vault/public/dpp/by-gtin/{gtin}` did not mention that a withdrawn
+  passport answers `410`.** The response was documented; the prose said only
+  "Returns 404 if no published passport matches the GTIN". That is the one
+  distinction the route exists to draw — `404` means nothing was ever published
+  for this GTIN, `410` means something was and has been suspended, and only the
+  second is a recall signal a scanner must act on. Its by-id sibling already
+  said so, so the two neighbouring routes described the same behaviour
+  differently.
+
+- **`GET /vault/api/v1/dpp/{dppId}/evidence` said only "Summaries only (no
+  document body), newest first."** It now says what a dossier is, why one
+  passport has several (each is a snapshot of the proof chain at a moment, so
+  one taken before a transfer and one after are both valid and neither
+  supersedes the other), and why the list is empty before first publish.
+
 - **Four `s3_archive` tests booted a MinIO container each, and sat 0.4s from
   failing CI.** Around eight seconds apiece was container startup, which the test
   body does not control — so the four crossed the ten-second slow-test budget
@@ -192,6 +329,25 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   guard against came from `push: ["**"]`, which is fixed separately and stays
   fixed; the base filter bought nothing and cost coverage on exactly the shape of
   change — a PR stacked on another PR — where review is already hardest.
+
+- **`wasmtime` 47.0.3 → 47.0.4**, clearing RUSTSEC-2026-0268 (guest-controlled
+  host heap allocation through WASIp3 streams) and RUSTSEC-2026-0269 (filesystem
+  sandbox escape when paths or symlinks carry trailing slashes). Both concern
+  the sandbox sector plugins run inside; the `cap-*` family the second advisory
+  covers is that sandbox's filesystem layer. The existing `wasmtime = "47"`
+  requirement already permitted the patch, so no manifest changed.
+
+  Recorded after the fact, because the bump reached `main` inside #222 — a
+  change about `.env` breaking credential tests — rather than through the PR
+  opened to make it. #222's 68-line fix carried 188 lines of lockfile with it,
+  and its own description named the other PR as the fix for these advisories
+  while shipping that fix itself. So the advisories were cleared with no
+  security review and no entry here, and the PR that would have supplied both
+  was closed as a no-op against a `main` that already had its content.
+
+  Nothing to do: `main` has been on 47.0.4 since #222. This entry exists because
+  a cleared advisory that no changelog records is indistinguishable, later, from
+  one nobody noticed.
 
 - **Every push to a branch with an open PR ran the whole suite twice.**
   `push: ["**"]` and `pull_request` both fired, on two runners, for the same

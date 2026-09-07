@@ -1,4 +1,4 @@
-productName,sector,gtin,manufacturerName,manufacturerCountry,batchId,batteryChemistry,nominalVoltageV,nominalCapacityAh,expectedLifetimeCycles,co2ePerUnitKg,batteryType
+productName,productGroup,gtin,manufacturerName,manufacturerCountry,batchId,batteryChemistry,nominalVoltageV,nominalCapacityAh,expectedLifetimeCycles,co2ePerUnitKg,batteryType
 Voltex EV Module 75kWh,battery,49012345670014,Voltex Battery GmbH,DE,VB-2026-001,NMC811,400.0,188.0,2000,61.2,ev
 Voltex EV Module 100kWh,battery,49012345670021,Voltex Battery GmbH,DE,VB-2026-002,NMC811,400.0,250.0,2000,58.7,ev
 Voltex Industrial UPS 10kWh,battery,49012345670038,Voltex Battery GmbH,DE,VB-2026-003,LFP,51.2,200.0,5000,45.3,industrial

@@ -386,6 +386,7 @@ fn object_cases() -> Vec<ObjectCase> {
 
     // ── dpp-common ────────────────────────────────────────────────────────
     case!("Problem", fixtures::problem());
+    case!("ProblemFieldError", fixtures::problem_field_error());
     case!("ScanBatch", fixtures::scan_batch());
     case!("ScanBatchEntry", fixtures::scan_count());
     case!("QrRenderBatchEntry", fixtures::qr_render_count());
@@ -402,6 +403,7 @@ fn object_cases() -> Vec<ObjectCase> {
     case!("SealDeclarer", fixtures::seal_declarer());
     case!("SealSummaryResponse", fixtures::seal_summary_response());
     case!("InstalledPlugin", fixtures::installed_plugin());
+    case!("RulesetReload", fixtures::ruleset_reload());
     case!("WebhookSubscription", fixtures::webhook_subscription());
     case!("CreateWebhookRequest", fixtures::new_webhook_subscription());
     case!(
@@ -1686,6 +1688,7 @@ mod handler_sources {
         include_str!("../../dpp-vault/src/handlers/read.rs"),
         include_str!("../../dpp-vault/src/handlers/registry_identity.rs"),
         include_str!("../../dpp-vault/src/handlers/registry_status.rs"),
+        include_str!("../../dpp-vault/src/handlers/ruleset.rs"),
         include_str!("../../dpp-vault/src/handlers/scan_ingest.rs"),
         include_str!("../../dpp-vault/src/handlers/seal.rs"),
         include_str!("../../dpp-vault/src/handlers/stats.rs"),
@@ -2105,8 +2108,9 @@ mod fixtures {
     use super::*;
 
     use dpp_common::{
-        http_problem::Problem,
+        http_problem::{Problem, ProblemFieldError},
         plugin_admin::InstalledPlugin,
+        ruleset_admin::RulesetReload,
         scan::{QrRenderBatchEntry, ScanBatch, ScanBatchEntry, ScanVariant},
     };
     use dpp_domain::{
@@ -2486,6 +2490,7 @@ mod fixtures {
             new_status: Some("active".into()),
             metadata: Some(json!({ "note": "first publish" })),
             timestamp: ts(),
+            request_id: Some("019723f4-1a2b-7c3d-8e4f-5a6b7c8d9e0f".into()),
             prev_hash: Some("0".repeat(64)),
             entry_hash: Some("1".repeat(64)),
         }
@@ -2664,6 +2669,23 @@ mod fixtures {
             status: 422,
             detail: Some("productName must not be empty".into()),
             instance: Some("/vault/api/v1/dpp".into()),
+            // Two, not one: the member exists because a validation failure is
+            // usually plural, and a single-element fixture would let a spec
+            // that typed it as an object rather than an array pass.
+            errors: Some(vec![
+                problem_field_error(),
+                ProblemFieldError {
+                    field: "/productGroupData/gtin".into(),
+                    message: "check digit is wrong".into(),
+                },
+            ]),
+        }
+    }
+
+    pub fn problem_field_error() -> ProblemFieldError {
+        ProblemFieldError {
+            field: "/productName".into(),
+            message: "productName must not be empty".into(),
         }
     }
 
@@ -3151,6 +3173,13 @@ mod fixtures {
         InstalledPlugin {
             product_group: "battery".into(),
             abi_version: "1.0".into(),
+        }
+    }
+
+    pub fn ruleset_reload() -> RulesetReload {
+        RulesetReload {
+            ruleset_version: "2026-Q3.2".into(),
+            changed: true,
         }
     }
 

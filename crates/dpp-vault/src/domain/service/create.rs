@@ -67,6 +67,29 @@ impl PassportService {
             }
         }
 
+        // Core's own account of what must be true of a passport, run against the
+        // assembled record rather than restated over the request.
+        //
+        // `Passport::validate` and not `validate_passport`: core splits the two
+        // deliberately and says which caller wants which — the aggregate's own
+        // invariants need nothing but the record, while the schema half reaches
+        // a versioned registry and a blocking HTTP client. `publish` wants both
+        // and takes the combined one; `create` has already schema-checked the
+        // product group data on the request, so running it again here would
+        // double the cost of every create to re-derive an answer it has.
+        //
+        // `validate_create_request` re-types four of these invariants in
+        // request terms. That copy stays — it rejects a round-trip earlier and
+        // says `productName is required` rather than a JSON Pointer. What it
+        // could not do is *be* the rule: it is written in this repo, so core
+        // tightening an invariant changed nothing and nothing went red. The
+        // fifth, `schemaVersion` as strict semver, existed in core alone and
+        // ran nowhere — it is checked here now, immediately after the line
+        // above derives that value from the catalog, which is where an
+        // unparseable catalog version would otherwise pass into a record whose
+        // schema validation is then silently skipped downstream.
+        passport.validate()?;
+
         self.guard_component_graph(passport.id, &passport.component_refs)
             .await?;
 

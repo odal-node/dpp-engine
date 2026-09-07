@@ -23,6 +23,12 @@ secrets/
 # Encrypted Ed25519 key stores (KEY_STORE_PATH) — never commit signing keys
 dev-keystore.enc
 *-keystore.enc
+# Belt and braces for a KEY_STORE_PATH that holds a key instead of a path. The
+# node refuses to boot on that now (`ensure_key_store_path`), but the rules
+# above are extension-based and so match the *configured* path while missing
+# the misconfigured one — which is how key material reached the repository root
+# in the first place. Matches the shape `openssl rand -base64 32` emits.
+???????????????????????????????????????????=
 
 # -----------------------------------------------------------------------------
 # INFRASTRUCTURE (private repo only)

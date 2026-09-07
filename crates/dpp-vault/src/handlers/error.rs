@@ -37,8 +37,50 @@ pub fn conflict_error(detail: &str) -> Response {
 }
 
 /// 422 Unprocessable Entity — the standard response for a `DppError::Validation` case.
+///
+/// Prefer [`field_validation_error`] wherever the caller still holds the
+/// `ValidationErrors` itself: this one can only produce the joined sentence.
 pub fn validation_error(detail: &str) -> Response {
     api_error(StatusCode::UNPROCESSABLE_ENTITY, "VALIDATION_ERROR", detail)
+}
+
+/// 422 Unprocessable Entity carrying the per-field failures, not just their
+/// joined rendering.
+///
+/// `ValidationErrors` is a list, and `Display` collapses it with `"; "`. That
+/// collapse is lossy in the way that matters: publishing an industrial battery
+/// missing its Annex XIII content yields around thirty `FieldError`s, each
+/// repeating the same explanatory clause, and the joined string is a single
+/// unreadable line no client can index into. `detail` keeps that rendering for
+/// compatibility; `errors` carries the structure the domain actually produced.
+pub fn field_validation_error(errors: &dpp_domain::ValidationErrors) -> Response {
+    problem_with_field_errors(StatusCode::UNPROCESSABLE_ENTITY, errors)
+}
+
+/// 409 Conflict carrying per-field failures — the state-conflict twin of
+/// [`field_validation_error`], for the paths where a `DppError::Validation`
+/// means "the record is in the wrong state" rather than "the input is wrong".
+pub fn field_conflict_error(errors: &dpp_domain::ValidationErrors) -> Response {
+    problem_with_field_errors(StatusCode::CONFLICT, errors)
+}
+
+fn problem_with_field_errors(
+    status: StatusCode,
+    errors: &dpp_domain::ValidationErrors,
+) -> Response {
+    Problem::new(status, status.canonical_reason().unwrap_or("Error"))
+        .with_detail(errors.to_display())
+        .with_field_errors(
+            errors
+                .errors
+                .iter()
+                .map(|e| http_problem::ProblemFieldError {
+                    field: e.field.clone(),
+                    message: e.message.clone(),
+                })
+                .collect(),
+        )
+        .into_response()
 }
 
 /// Parse a UUID string into a `PassportId`, returning an RFC 7807 400 on failure.

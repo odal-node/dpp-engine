@@ -19,15 +19,20 @@ use chrono::Utc;
 use dpp_dal::in_memory_repo::InMemoryPassportRepo;
 use dpp_domain::{
     DppError,
+    credential::{PassportCredential, PassportCredentialSubject, SignedCredential},
     passport::{ManufacturerInfo, Passport, PassportId},
+    ports::identity::IdentityPort,
     ports::passport_repo::PassportRepository,
     product_group::ProductGroup,
     status::PassportStatus,
 };
 use dpp_types::snapshot::{
-    SnapshotOutbox, SnapshotOutboxCounts, SnapshotReconcileRow, SnapshotStore,
+    SnapshotMeta, SnapshotOutbox, SnapshotOutboxCounts, SnapshotReconcileRow, SnapshotStore,
 };
 
+use dpp_node::infra::drain::{
+    SNAPSHOT_REFRESH_INTERVAL, SNAPSHOT_REFRESH_SCAN_INTERVAL, SNAPSHOT_VALIDITY,
+};
 use dpp_node::infra::snapshot_drain::{MAX_ATTEMPTS, drain_once};
 
 // ---------------------------------------------------------------------------
@@ -39,12 +44,18 @@ use dpp_node::infra::snapshot_drain::{MAX_ATTEMPTS, drain_once};
 struct InMemorySnapshotStore {
     objects: Arc<Mutex<HashMap<String, Vec<u8>>>>,
     html: Arc<Mutex<HashMap<String, Vec<u8>>>>,
+    meta: Arc<Mutex<HashMap<String, SnapshotMeta>>>,
     fail: Arc<Mutex<bool>>,
 }
 
 #[async_trait]
 impl SnapshotStore for InMemorySnapshotStore {
-    async fn put_public_json(&self, dpp_id: &str, bytes: &[u8]) -> Result<(), DppError> {
+    async fn put_public_json(
+        &self,
+        dpp_id: &str,
+        bytes: &[u8],
+        meta: SnapshotMeta,
+    ) -> Result<(), DppError> {
         if *self.fail.lock().unwrap() {
             return Err(DppError::Internal("object store unavailable".into()));
         }
@@ -52,9 +63,15 @@ impl SnapshotStore for InMemorySnapshotStore {
             .lock()
             .unwrap()
             .insert(dpp_id.to_owned(), bytes.to_vec());
+        self.meta.lock().unwrap().insert(dpp_id.to_owned(), meta);
         Ok(())
     }
-    async fn put_public_html(&self, dpp_id: &str, bytes: &[u8]) -> Result<(), DppError> {
+    async fn put_public_html(
+        &self,
+        dpp_id: &str,
+        bytes: &[u8],
+        _meta: SnapshotMeta,
+    ) -> Result<(), DppError> {
         if *self.fail.lock().unwrap() {
             return Err(DppError::Internal("object store unavailable".into()));
         }
@@ -70,6 +87,7 @@ impl SnapshotStore for InMemorySnapshotStore {
         }
         self.objects.lock().unwrap().remove(dpp_id);
         self.html.lock().unwrap().remove(dpp_id);
+        self.meta.lock().unwrap().remove(dpp_id);
         Ok(())
     }
 }
@@ -85,8 +103,81 @@ impl InMemorySnapshotStore {
             .get(dpp_id)
             .map(|b| String::from_utf8_lossy(b).into_owned())
     }
+    fn get_meta(&self, dpp_id: &str) -> Option<SnapshotMeta> {
+        self.meta.lock().unwrap().get(dpp_id).copied()
+    }
     fn set_failing(&self, failing: bool) {
         *self.fail.lock().unwrap() = failing;
+    }
+}
+
+/// Metadata for a snapshot a test plants directly, standing in for one an
+/// earlier drain pass would have written.
+fn planted_meta() -> SnapshotMeta {
+    let as_of = Utc::now();
+    SnapshotMeta {
+        as_of,
+        valid_until: as_of + chrono::Duration::days(7),
+        max_age: std::time::Duration::from_secs(24 * 3600),
+    }
+}
+
+/// Signing double for the drain: a real Ed25519 key signing over RFC 8785
+/// canonical bytes, exactly as the identity service does, so the snapshot proof
+/// these tests read is a genuine one.
+struct StubSigner {
+    key: ed25519_dalek::SigningKey,
+}
+
+impl StubSigner {
+    fn new() -> Self {
+        Self {
+            key: ed25519_dalek::SigningKey::from_bytes(&[11u8; 32]),
+        }
+    }
+    fn public_key_b64(&self) -> String {
+        base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(self.key.verifying_key().to_bytes())
+    }
+}
+
+#[async_trait]
+impl IdentityPort for StubSigner {
+    async fn sign_passport(
+        &self,
+        passport_id: PassportId,
+        payload: &serde_json::Value,
+    ) -> Result<SignedCredential, DppError> {
+        use ed25519_dalek::Signer as _;
+        let b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD;
+        let canonical =
+            dpp_crypto::jws::canonicalize(payload).map_err(|e| DppError::Signing(e.to_string()))?;
+        let signing_input = format!(
+            "{}.{}",
+            b64.encode(br#"{"alg":"EdDSA"}"#),
+            b64.encode(&canonical)
+        );
+        let sig = self.key.sign(signing_input.as_bytes());
+        Ok(SignedCredential {
+            credential: PassportCredential::new(
+                "did:web:example".to_owned(),
+                PassportCredentialSubject {
+                    id: format!("urn:uuid:{passport_id}"),
+                    payload_hash: String::new(),
+                },
+            ),
+            jws: format!("{signing_input}.{}", b64.encode(sig.to_bytes())),
+            issuer_did: "did:web:example".to_owned(),
+        })
+    }
+    async fn verify_signature(
+        &self,
+        _jws: &str,
+        _payload: &serde_json::Value,
+    ) -> Result<bool, DppError> {
+        unimplemented!("the drain only signs")
+    }
+    async fn own_did_document(&self) -> Result<serde_json::Value, DppError> {
+        unimplemented!("the drain only signs")
     }
 }
 
@@ -119,6 +210,16 @@ impl SnapshotOutbox for FakeOutbox {
         // The repair sweep is a database-level query; these tests drive the
         // drain, which cannot tell a swept row from a lifecycle-queued one. Its
         // semantics are pinned against real Postgres in `dpp-dal`.
+        Ok(0)
+    }
+    async fn enqueue_stale(
+        &self,
+        _older_than: chrono::Duration,
+        _limit: i64,
+    ) -> Result<u64, DppError> {
+        // Likewise a query. What the drain does with a refreshed row is the
+        // subject of `a_refresh_of_a_withdrawn_passport_retires_it_instead`,
+        // which queues the row directly.
         Ok(0)
     }
     async fn mark_reconciled(&self, id: uuid::Uuid) -> Result<(), DppError> {
@@ -229,6 +330,7 @@ type Ports = (
     Arc<dyn SnapshotOutbox>,
     Arc<dyn PassportRepository>,
     Arc<dyn SnapshotStore>,
+    Arc<dyn IdentityPort>,
 );
 
 fn ports(outbox: &FakeOutbox, repo: &InMemoryPassportRepo, store: &InMemorySnapshotStore) -> Ports {
@@ -236,6 +338,7 @@ fn ports(outbox: &FakeOutbox, repo: &InMemoryPassportRepo, store: &InMemorySnaps
         Arc::new(outbox.clone()),
         Arc::new(repo.clone()),
         Arc::new(store.clone()),
+        Arc::new(StubSigner::new()),
     )
 }
 
@@ -254,8 +357,8 @@ async fn drain_mirrors_a_published_passport() {
     repo.create(p.clone()).await.unwrap();
     outbox.enqueue(p.id).await.unwrap();
 
-    let (o, r, s) = ports(&outbox, &repo, &store);
-    let stats = drain_once(&o, &r, &s, TEST_RESOLVER_BASE, 50).await;
+    let (o, r, s, i) = ports(&outbox, &repo, &store);
+    let stats = drain_once(&o, &r, &s, &i, TEST_RESOLVER_BASE, 50).await;
 
     assert_eq!(stats.stored, 1);
     assert_eq!(stats.removed, 0);
@@ -272,6 +375,78 @@ async fn drain_mirrors_a_published_passport() {
         p.public_jws_signature.clone().unwrap()
     );
     assert!(v.get("jwsSignature").is_none(), "full-view JWS leaked: {v}");
+}
+
+/// What reaches object storage has to state how long it stands, under a
+/// signature, or a copy of it is indistinguishable from a live answer forever.
+///
+/// Asserted end to end rather than only at the renderer because the two halves
+/// can disagree independently: the payload could carry a bound the object
+/// metadata contradicts, and a reader who trusts the wrong one is misled by
+/// exactly the mechanism meant to stop that.
+#[tokio::test]
+async fn a_stored_snapshot_states_and_signs_how_long_it_stands() {
+    let (outbox, repo, store) = (
+        FakeOutbox::default(),
+        InMemoryPassportRepo::default(),
+        InMemorySnapshotStore::default(),
+    );
+    let p = passport(PassportStatus::Published);
+    repo.create(p.clone()).await.unwrap();
+    outbox.enqueue(p.id).await.unwrap();
+
+    let signer = StubSigner::new();
+    let (o, r, s, i) = ports(&outbox, &repo, &store);
+    drain_once(&o, &r, &s, &i, TEST_RESOLVER_BASE, 50).await;
+
+    let bytes = store.get(&p.id.to_string()).expect("mirrored");
+    let v: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+
+    let as_of: chrono::DateTime<Utc> = v["asOf"].as_str().expect("asOf").parse().unwrap();
+    let valid_until: chrono::DateTime<Utc> = v["validUntil"]
+        .as_str()
+        .expect("validUntil")
+        .parse()
+        .unwrap();
+    assert_eq!(
+        valid_until - as_of,
+        chrono::Duration::from_std(SNAPSHOT_VALIDITY).unwrap(),
+        "the window written into the payload is not the one the node promises"
+    );
+
+    let proof = v["snapshotJwsSignature"].as_str().expect("proof");
+    assert!(
+        dpp_crypto::jws::verify_jws(proof, &signer.public_key_b64()).unwrap(),
+        "the bound is not signed, so anyone holding a copy could extend it"
+    );
+
+    // The unsigned echo on the object must agree with the signed claim inside
+    // it, and must expire at the refresh cadence rather than the validity one —
+    // a cache allowed to hold this for the full window would serve a copy the
+    // node has already replaced, including one replaced by a deletion.
+    let meta = store.get_meta(&p.id.to_string()).expect("meta recorded");
+    assert_eq!(meta.as_of, as_of);
+    assert_eq!(meta.valid_until, valid_until);
+    assert_eq!(meta.max_age, SNAPSHOT_REFRESH_INTERVAL);
+}
+
+/// The margin between the two constants is what keeps a *live* passport from
+/// expiring, so it is pinned rather than left to be adjusted by whoever next
+/// tunes a loop.
+///
+/// Bring them close together and one bad day — a signing outage, a database
+/// wedged for hours, an object store refusing writes — silently ends continuity
+/// for every passport in the deployment at once.
+#[test]
+fn the_validity_window_survives_several_failed_refreshes() {
+    assert!(
+        SNAPSHOT_VALIDITY >= SNAPSHOT_REFRESH_INTERVAL * 4,
+        "validity must outlast several consecutive refresh failures"
+    );
+    assert!(
+        SNAPSHOT_REFRESH_SCAN_INTERVAL < SNAPSHOT_REFRESH_INTERVAL,
+        "scanning less often than snapshots go stale renews nothing on time"
+    );
 }
 
 #[tokio::test]
@@ -293,8 +468,8 @@ async fn drain_stores_a_readable_page_beside_the_signed_json() {
     repo.create(p.clone()).await.unwrap();
     outbox.enqueue(p.id).await.unwrap();
 
-    let (o, r, s) = ports(&outbox, &repo, &store);
-    drain_once(&o, &r, &s, TEST_RESOLVER_BASE, 50).await;
+    let (o, r, s, i) = ports(&outbox, &repo, &store);
+    drain_once(&o, &r, &s, &i, TEST_RESOLVER_BASE, 50).await;
 
     let html = store
         .get_html(&p.id.to_string())
@@ -304,10 +479,19 @@ async fn drain_stores_a_readable_page_beside_the_signed_json() {
     assert!(html.contains("Drain Test Widget"), "product name missing");
 
     // The banner is the honesty requirement: a saved copy must say it is a
-    // saved copy, on the page, where a consumer will actually see it.
+    // saved copy, on the page, where a consumer will actually see it — and say
+    // when it stops standing, since the page is written once and can never
+    // notice its own lapse.
     assert!(
         html.contains("saved copy"),
         "a snapshot page must disclose that it is stale: {html}"
+    );
+    let expiry = (Utc::now() + chrono::Duration::from_std(SNAPSHOT_VALIDITY).unwrap())
+        .format("%Y-%m-%d")
+        .to_string();
+    assert!(
+        html.contains(&expiry),
+        "a snapshot page must name the date it stops being reliable: {html}"
     );
 
     // The page must be rendered from the redacted public view, never the full
@@ -332,15 +516,15 @@ async fn retiring_a_snapshot_removes_the_page_too() {
     repo.create(p.clone()).await.unwrap();
     outbox.enqueue(p.id).await.unwrap();
 
-    let (o, r, s) = ports(&outbox, &repo, &store);
-    drain_once(&o, &r, &s, TEST_RESOLVER_BASE, 50).await;
+    let (o, r, s, i) = ports(&outbox, &repo, &store);
+    drain_once(&o, &r, &s, &i, TEST_RESOLVER_BASE, 50).await;
     assert!(store.get_html(&p.id.to_string()).is_some());
 
     repo.update_status(p.id, PassportStatus::Suspended)
         .await
         .unwrap();
     outbox.push_row(p.id, 0);
-    drain_once(&o, &r, &s, TEST_RESOLVER_BASE, 50).await;
+    drain_once(&o, &r, &s, &i, TEST_RESOLVER_BASE, 50).await;
 
     assert!(
         store.get(&p.id.to_string()).is_none(),
@@ -369,13 +553,17 @@ async fn drain_retires_a_passport_that_left_the_public_tier() {
         repo.create(p.clone()).await.unwrap();
         // Pretend a snapshot is already live from an earlier publish.
         store
-            .put_public_json(&p.id.to_string(), b"{\"status\":\"published\"}")
+            .put_public_json(
+                &p.id.to_string(),
+                b"{\"status\":\"published\"}",
+                planted_meta(),
+            )
             .await
             .unwrap();
         outbox.enqueue(p.id).await.unwrap();
 
-        let (o, r, s) = ports(&outbox, &repo, &store);
-        let stats = drain_once(&o, &r, &s, TEST_RESOLVER_BASE, 50).await;
+        let (o, r, s, i) = ports(&outbox, &repo, &store);
+        let stats = drain_once(&o, &r, &s, &i, TEST_RESOLVER_BASE, 50).await;
 
         assert_eq!(stats.removed, 1, "{status:?} must retire the snapshot");
         assert!(
@@ -404,8 +592,8 @@ async fn a_stale_reconcile_never_resurrects_a_suspended_passport() {
     outbox.enqueue(p.id).await.unwrap();
 
     // First pass mirrors it — the passport really is public at this point.
-    let (o, r, s) = ports(&outbox, &repo, &store);
-    drain_once(&o, &r, &s, TEST_RESOLVER_BASE, 50).await;
+    let (o, r, s, i) = ports(&outbox, &repo, &store);
+    drain_once(&o, &r, &s, &i, TEST_RESOLVER_BASE, 50).await;
     assert!(store.get(&p.id.to_string()).is_some());
 
     // The passport is suspended. Queue a row that predates the suspension (the
@@ -415,7 +603,7 @@ async fn a_stale_reconcile_never_resurrects_a_suspended_passport() {
         .unwrap();
     outbox.push_row(p.id, 0);
 
-    let stats = drain_once(&o, &r, &s, TEST_RESOLVER_BASE, 50).await;
+    let stats = drain_once(&o, &r, &s, &i, TEST_RESOLVER_BASE, 50).await;
 
     assert_eq!(stats.stored, 0, "a stale row must never store");
     assert_eq!(stats.removed, 1);
@@ -438,12 +626,12 @@ async fn draining_the_same_row_twice_is_a_no_op() {
     repo.create(p.clone()).await.unwrap();
     outbox.enqueue(p.id).await.unwrap();
 
-    let (o, r, s) = ports(&outbox, &repo, &store);
-    drain_once(&o, &r, &s, TEST_RESOLVER_BASE, 50).await;
+    let (o, r, s, i) = ports(&outbox, &repo, &store);
+    drain_once(&o, &r, &s, &i, TEST_RESOLVER_BASE, 50).await;
     let first = store.get(&p.id.to_string()).expect("mirrored");
 
     outbox.push_row(p.id, 0);
-    drain_once(&o, &r, &s, TEST_RESOLVER_BASE, 50).await;
+    drain_once(&o, &r, &s, &i, TEST_RESOLVER_BASE, 50).await;
     let second = store.get(&p.id.to_string()).expect("still mirrored");
 
     assert_eq!(first, second, "a replayed reconcile must be byte-identical");
@@ -461,8 +649,8 @@ async fn a_failing_store_backs_off_and_leaves_the_row_pending() {
     outbox.enqueue(p.id).await.unwrap();
     store.set_failing(true);
 
-    let (o, r, s) = ports(&outbox, &repo, &store);
-    let stats = drain_once(&o, &r, &s, TEST_RESOLVER_BASE, 50).await;
+    let (o, r, s, i) = ports(&outbox, &repo, &store);
+    let stats = drain_once(&o, &r, &s, &i, TEST_RESOLVER_BASE, 50).await;
 
     assert_eq!(stats.retried, 1);
     assert_eq!(stats.stored, 0);
@@ -472,7 +660,7 @@ async fn a_failing_store_backs_off_and_leaves_the_row_pending() {
 
     // Once storage recovers, the same row converges.
     store.set_failing(false);
-    let stats = drain_once(&o, &r, &s, TEST_RESOLVER_BASE, 50).await;
+    let stats = drain_once(&o, &r, &s, &i, TEST_RESOLVER_BASE, 50).await;
     assert_eq!(stats.stored, 1);
     assert!(store.get(&p.id.to_string()).is_some());
 }
@@ -490,8 +678,8 @@ async fn a_row_at_the_attempt_cap_is_exhausted_not_retried_forever() {
     outbox.push_row(p.id, MAX_ATTEMPTS - 1);
     store.set_failing(true);
 
-    let (o, r, s) = ports(&outbox, &repo, &store);
-    let stats = drain_once(&o, &r, &s, TEST_RESOLVER_BASE, 50).await;
+    let (o, r, s, i) = ports(&outbox, &repo, &store);
+    let stats = drain_once(&o, &r, &s, &i, TEST_RESOLVER_BASE, 50).await;
 
     assert_eq!(stats.exhausted, 1);
     assert_eq!(stats.retried, 0);
@@ -514,8 +702,8 @@ async fn one_bad_row_does_not_stall_the_rest_of_the_pass() {
     outbox.push_row(PassportId::new(), 0);
     outbox.enqueue(good.id).await.unwrap();
 
-    let (o, r, s) = ports(&outbox, &repo, &store);
-    let stats = drain_once(&o, &r, &s, TEST_RESOLVER_BASE, 50).await;
+    let (o, r, s, i) = ports(&outbox, &repo, &store);
+    let stats = drain_once(&o, &r, &s, &i, TEST_RESOLVER_BASE, 50).await;
 
     assert_eq!(stats.removed, 1, "the absent passport is retired");
     assert_eq!(stats.stored, 1, "the good row still drained");

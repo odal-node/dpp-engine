@@ -168,6 +168,7 @@ impl NodeConfig {
         let allow_dev_credentials = std::env::var(ALLOW_DEV_CREDENTIALS)
             .map(|v| v.trim().eq_ignore_ascii_case("true"))
             .unwrap_or(false);
+        ensure_key_store_path(&key_store_path)?;
         ensure_bootstrap_credentials(
             admin_username.as_deref(),
             admin_password.as_deref(),
@@ -242,6 +243,48 @@ const SHIPPED_KEY_STORE_PASSPHRASE: &str = "dev-passphrase-change-in-prod";
 /// Escape hatch for the one legitimate case: a throwaway local node where the
 /// placeholder values are exactly what you want.
 const ALLOW_DEV_CREDENTIALS: &str = "ALLOW_DEV_CREDENTIALS";
+
+/// Refuse to boot when `KEY_STORE_PATH` holds a key rather than a path.
+///
+/// This is not hypothetical. `.env.example` documented the passphrase directly
+/// above `KEY_STORE_PATH` and ended with `openssl rand -base64 32`, so the
+/// instruction to generate a secret sat on the line *before* the path variable
+/// and two before the passphrase it referred to. Filling the template top-down
+/// puts the generated key in `KEY_STORE_PATH`, and the node then does exactly
+/// what it was told: it writes the encrypted signing key to a file of that
+/// name, in whatever directory it was started from.
+///
+/// That produced an unignored file of Ed25519 key material in the repository
+/// root of a public repo — the `.gitignore` rules are extension-based
+/// (`*.enc`, `*-keystore.enc`), so they match the configured path and miss the
+/// misconfigured one precisely because it does not look like a key store.
+///
+/// # Why this shape of check
+///
+/// Decoding is the test, not a guess at what a path looks like. A value that
+/// base64-decodes to exactly 32 bytes is an `openssl rand -base64 32` output;
+/// a filesystem path is not one, because standard base64 needs a length that is
+/// a multiple of four and paths do not carry `=` padding. Refusing on
+/// "no directory separator" or "no file extension" would have argued with
+/// legitimate configurations instead.
+fn ensure_key_store_path(key_store_path: &str) -> Result<()> {
+    use base64::Engine as _;
+
+    let looks_like_a_generated_key = base64::engine::general_purpose::STANDARD
+        .decode(key_store_path.trim())
+        .is_ok_and(|bytes| bytes.len() == 32);
+
+    if looks_like_a_generated_key {
+        anyhow::bail!(
+            "KEY_STORE_PATH is a 32-byte base64 value, which is a key and not a path — \
+             refusing to boot. It is where the encrypted key store file is written, so \
+             the node would create a file of that name in its working directory. You \
+             probably meant KEY_STORE_PASSPHRASE; set KEY_STORE_PATH to a location such \
+             as ./dev-keystore.enc."
+        );
+    }
+    Ok(())
+}
 
 /// Refuse to boot on the credential placeholders this repo used to ship.
 ///
@@ -342,6 +385,72 @@ mod bootstrap_credentials {
     use super::ensure_bootstrap_credentials;
 
     const GOOD_PASS: &str = "PmDq0aUu0kXwQ0nS+9kQ0Q==";
+
+    mod key_store_path {
+        use super::super::ensure_key_store_path;
+
+        /// A stand-in for the value found in a working `.env` on a developer
+        /// machine, which had written an Ed25519 key store to the repository
+        /// root.
+        ///
+        /// Deliberately all-zero rather than that value. What the guard reads is
+        /// the *shape* — 44 base64 characters decoding to 32 bytes — so a
+        /// synthetic value exercises it identically, and this repository is
+        /// public. The real one protected nothing (it sat in `KEY_STORE_PATH`
+        /// and so was never used to encrypt anything), but it is character for
+        /// character an `openssl rand -base64 32` output, which is
+        /// indistinguishable from a live key to every secret scanner that will
+        /// ever read this file.
+        const GENERATED_KEY: &str = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
+
+        #[test]
+        fn a_generated_key_in_the_path_variable_is_refused() {
+            let err = ensure_key_store_path(GENERATED_KEY)
+                .expect_err("a key in the path variable must not boot");
+            let msg = err.to_string();
+            assert!(msg.contains("KEY_STORE_PATH"), "{msg}");
+            assert!(
+                msg.contains("KEY_STORE_PASSPHRASE"),
+                "the message must name the variable it was meant for: {msg}"
+            );
+        }
+
+        /// Surrounding whitespace is the same mistake — `.env` parsers differ
+        /// on trimming and the value is no more a path for having a space.
+        #[test]
+        fn a_generated_key_is_refused_despite_whitespace() {
+            assert!(ensure_key_store_path(&format!("  {GENERATED_KEY}  ")).is_err());
+        }
+
+        /// The check has to be quiet about real paths, or it becomes the thing
+        /// people work around. These are all legitimate.
+        #[test]
+        fn real_paths_are_left_alone() {
+            for path in [
+                "./dev-keystore.enc",
+                "/var/lib/odal/keystore.enc",
+                "keystore.enc",
+                "C:\\ProgramData\\odal\\keystore.enc",
+                "../shared/dev-keystore.enc",
+                // No separator and no extension, but decodes to nothing like
+                // 32 bytes — a bare word is a poor location, not a key.
+                "keystore",
+            ] {
+                assert!(
+                    ensure_key_store_path(path).is_ok(),
+                    "{path} is a path and must be accepted"
+                );
+            }
+        }
+
+        /// A base64 value of some *other* length is not what `openssl rand
+        /// -base64 32` emits, so it is not the mistake being caught here.
+        #[test]
+        fn only_a_thirty_two_byte_value_is_treated_as_a_key() {
+            // 16 bytes.
+            assert!(ensure_key_store_path("YWJjZGVmZ2hpamtsbW5vcA==").is_ok());
+        }
+    }
 
     #[test]
     fn the_shipped_admin_pair_is_refused() {

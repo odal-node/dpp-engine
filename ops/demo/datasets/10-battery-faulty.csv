@@ -1,4 +1,4 @@
-productName,sector,gtin,manufacturerName,manufacturerCountry,batchId,batteryChemistry,nominalVoltageV,nominalCapacityAh,expectedLifetimeCycles,co2ePerUnitKg,batteryType
+productName,productGroup,gtin,manufacturerName,manufacturerCountry,batchId,batteryChemistry,nominalVoltageV,nominalCapacityAh,expectedLifetimeCycles,co2ePerUnitKg,batteryType
 No Chemistry Battery,battery,49012345671011,Voltex Battery GmbH,DE,VB-ERR-001,,400.0,188.0,2000,61.2,industrial
 Zero Voltage Battery,battery,49012345671028,Voltex Battery GmbH,DE,VB-ERR-002,NMC811,0.0,188.0,2000,61.2,industrial
 Negative Capacity Battery,battery,49012345671035,Voltex Battery GmbH,DE,VB-ERR-003,NMC811,400.0,-50.0,2000,61.2,industrial

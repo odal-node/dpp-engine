@@ -1,0 +1,43 @@
+{
+  "productName": "Odal Portable Power Pack AA NiMH (4-pack)",
+  "batchId": "ODL-PORT-2026-0342",
+  "manufacturer": {
+    "name": "Rheinpower Batterien GmbH",
+    "address": "Industriestrasse 8, 47059 Duisburg, DE",
+    "didWebUrl": "https://rheinpower.example/.well-known/did.json"
+  },
+  "placedOnMarketDate": "2026-04-01",
+  "commodityCode": "85073000",
+  "materials": [
+    { "name": "Nickel", "weightKg": 0.045, "recycledPct": 20.0, "countryOfOrigin": "DE" },
+    { "name": "Steel can", "weightKg": 0.030, "recycledPct": 60.0, "countryOfOrigin": "DE" }
+  ],
+  "repairabilityScore": 1.0,
+  "productGroupData": {
+    "productGroup": "battery",
+    "gtin": "09590000000069",
+    "batteryType": "portable",
+    "batteryChemistry": "NiMH",
+    "co2ePerUnitKg": 0.42,
+    "batteryModelId": "RP-AA-NIMH-2000-4",
+    "manufacturingPlace": "Duisburg, DE (plant DU-1)",
+    "manufacturingDate": "2026-02-20T00:00:00Z",
+    "batteryWeightKg": 0.12,
+    "nominalVoltageV": 1.2,
+    "nominalCapacityAh": 2.0,
+    "ratedEnergyWh": 2.4,
+    "operatingTempMinC": -10.0,
+    "operatingTempMaxC": 45.0,
+    "recycledContentCobaltPct": 0.0,
+    "recycledContentLithiumPct": 0.0,
+    "recycledContentNickelPct": 18.0,
+    "recycledContentLeadPct": 0.0,
+    "hazardousSubstances": [
+      { "name": "Potassium hydroxide", "casNumber": "1310-58-3", "concentrationPct": 3.0 }
+    ],
+    "usableExtinguishingAgent": "Water, CO2, or dry powder",
+    "markingInformation": "Separate-collection symbol per Art. 13(4); capacity 2000 mAh; rechargeable",
+    "wasteBatteryInformation": "Return spent cells to any retailer collection box. Do not incinerate. Producer registration DE-BATT-00457.",
+    "batteryStatus": "original"
+  }
+}

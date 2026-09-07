@@ -162,9 +162,21 @@ impl PassportService {
         // data) is the stricter completeness policy — deferred until the
         // integration fixtures that publish minimal passports are updated and a
         // Docker run confirms them (roadmap 1.3).
+        // `validate_passport`, not `validate_product_group_data`: core says the
+        // publish path is the caller that wants both halves — the aggregate's
+        // own invariants *and* schema conformance — and this path was taking
+        // only the second. A passport whose `productName` was emptied by a
+        // draft update, or whose `schemaVersion` is not semver, reached the
+        // signing key with nothing having asked.
+        //
+        // Product group data is still checked when present rather than
+        // required. Hard-requiring it at publish is the stricter completeness
+        // policy and is deferred separately; `validate_passport` already
+        // no-ops that half when the field is absent, so the reason code below
+        // still names what actually failed.
         if let Some(product_group_data) = passport.product_group_data.as_ref() {
-            dpp_domain::validate_product_group_data(product_group_data)
-                .map_err(|e| reject(REASON_SECTOR_DATA_INVALID, DppError::Validation(e)))?;
+            dpp_domain::validate_passport(&passport)
+                .map_err(|e| reject(REASON_SECTOR_DATA_INVALID, e))?;
 
             // JSON Schema gate (fail-closed): enum sets, string patterns, and
             // numeric ranges that the Rust types don't enforce. Runs after typed

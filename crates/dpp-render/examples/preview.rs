@@ -51,11 +51,15 @@ fn main() {
     std::fs::write(&live_path, live_html).expect("write live preview");
     println!("wrote {live_path}");
 
+    let as_of = chrono::Utc::now();
     let snapshot_html = render_page(
         dpp_id,
         &passport,
         "https://id.odal-node.io",
-        SnapshotNotice::AsOf(chrono::Utc::now()),
+        SnapshotNotice::Snapshot {
+            as_of,
+            valid_until: as_of + chrono::Duration::days(7),
+        },
     );
     let snapshot_path = format!("{out_dir}/dpp-render-preview-snapshot.html");
     std::fs::write(&snapshot_path, snapshot_html).expect("write snapshot preview");
