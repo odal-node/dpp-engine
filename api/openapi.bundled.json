@@ -3757,6 +3757,9 @@
           },
           "404": {
             "description": "No published DPP for this GTIN, or unknown link type."
+          },
+          "410": {
+            "$ref": "#/components/responses/Gone"
           }
         }
       }
@@ -3815,6 +3818,9 @@
           },
           "404": {
             "description": "No published DPP for this GTIN, or unknown link type."
+          },
+          "410": {
+            "$ref": "#/components/responses/Gone"
           }
         }
       }
@@ -3873,6 +3879,9 @@
           },
           "404": {
             "description": "No published DPP for this GTIN, or unknown link type."
+          },
+          "410": {
+            "$ref": "#/components/responses/Gone"
           }
         }
       }
@@ -3940,6 +3949,9 @@
           },
           "404": {
             "description": "No published DPP for this GTIN, or unknown link type."
+          },
+          "410": {
+            "$ref": "#/components/responses/Gone"
           }
         }
       }

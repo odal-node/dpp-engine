@@ -265,6 +265,29 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ### Fixed
 
+- **Scanning a recalled product's QR code answered `502 Bad Gateway`.**
+  The GS1 Digital Link routes now serve `410 Gone` with a withdrawal message
+  when the passport behind the code has been suspended.
+
+  The vault already did the right thing: `GET /vault/public/dpp/by-gtin/{gtin}`
+  branches on status and answers `410` for a suspended passport, deliberately,
+  because a suspension is a recall and the person scanning the code on a product
+  is precisely who must not be told "bad label".
+
+  The resolver then threw that away. `fetch_by_gtin` mapped `404` and `400` to
+  `404` and folded **everything else** non-2xx into `502` — so the one signal a
+  scanner of a recalled product needs arrived as a message about our
+  infrastructure. All four carrier shapes were affected, which is all of them.
+
+  A withdrawal and a GTIN this node never published now carry different wording,
+  and a genuinely failing vault still reports `502`. The three cases are pinned
+  by tests; the recall case was confirmed to fail (`502`) before the fix.
+
+  A stale comment beside the old behaviour claimed serving `410` here "needs the
+  lookup to stop folding that decision in, which is a `dpp-core` change". That
+  had already been done — the vault route reads through `find_by_gtin_any_status`
+  and branches locally. No core change was required.
+
 - **The stored-document compatibility guard passed without reading a single
   document.** `passport_doc_compat.rs` freezes a real stored `doc` per product
   group and asserts it still deserialises, so a change that silently breaks
