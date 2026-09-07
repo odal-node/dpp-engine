@@ -1,31 +1,68 @@
 {
-  "id": "019f3aa5-579d-73c1-a3e6-a8002df5e072",
-  "sector": "construction",
-  "status": "draft",
-  "batchId": "CN-2026-BATCH-01",
-  "version": 1,
-  "createdAt": "2026-08-01T09:00:00.000000000Z",
-  "materials": [],
-  "qrCodeUrl": null,
-  "updatedAt": "2026-08-01T09:00:00.000000000Z",
-  "sectorData": {
-    "sector": "construction",
-    "gtin": "09506000134352",
-    "productFamily": "cement",
-    "countryOfOrigin": "DE",
-    "co2ePerFunctionalUnitKg": 850.0,
-    "functionalUnit": "per tonne"
-  },
+  "applicableInstruments": [
+    {
+      "instrument": "cpr-2024-3110",
+      "recorded": "catalog"
+    }
+  ],
+  "batchId": null,
   "co2ePerUnit": null,
-  "productName": "Example Portland Cement CEM I",
-  "publishedAt": null,
-  "jwsSignature": null,
-  "manufacturer": {
-    "name": "Example Baustoffe GmbH",
-    "address": "DE",
-    "didWebUrl": null
+  "complianceResult": {
+    "assessedAt": "2026-09-02T23:52:09.433432900Z",
+    "co2eScore": null,
+    "complianceStatus": "PASSTHROUGH_NO_VALIDATION",
+    "recycledContentPct": null,
+    "repairabilityIndex": null
   },
+  "createdAt": "2026-09-02T23:52:09.424895700Z",
+  "disclosureSignatures": {
+    "public+restricted+conformity": "test-header.eyJhcHBsaWNhYmxlSW5zdHJ1bWVudHMiOlt7Imluc3RydW1lbnQiOiJjcHItMjAyNC0zMTEwIiwicmVjb3JkZWQiOiJjYXRhbG9nIn1dLCJiYXRjaElkIjpudWxsLCJjbzJlUGVyVW5pdCI6bnVsbCwiY29tcGxpYW5jZVJlc3VsdCI6eyJhc3Nlc3NlZEF0IjoiMjAyNi0wOS0wMlQyMzo1MjowOS40MzM0MzI5MDBaIiwiY28yZVNjb3JlIjpudWxsLCJjb21wbGlhbmNlU3RhdHVzIjoiUEFTU1RIUk9VR0hfTk9fVkFMSURBVElPTiIsInJlY3ljbGVkQ29udGVudFBjdCI6bnVsbCwicmVwYWlyYWJpbGl0eUluZGV4IjpudWxsfSwiY3JlYXRlZEF0IjoiMjAyNi0wOS0wMlQyMzo1MjowOS40MjQ4OTU3MDBaIiwiZmFjaWxpdHkiOnsiY291bnRyeSI6IkRFIiwibmFtZSI6IlNlZWQgUGxhbnQiLCJzY2hlbWUiOiJnbG4iLCJ2YWx1ZSI6IjQwMTIzNDUwMDAwMDkifSwiaWQiOiIwMWEwNjQ4OS04NWQwLTcyZjAtOTAzMC1lZjhiYzkzMzRmMjYiLCJsaW50UmVzdWx0Ijp7ImFzc2Vzc2VkQXQiOiIyMDI2LTA5LTAyVDIzOjUyOjA5LjQzMzQzNzMwMFoiLCJwYWNrVmVyc2lvbiI6IjEuMC4wIn0sIm1hbnVmYWN0dXJlciI6eyJhZGRyZXNzIjoiSW5kdXN0cmllc3RyYXNzZSA4LCA0NTMwNyBFc3NlbiwgREUiLCJkaWRXZWJVcmwiOm51bGwsIm5hbWUiOiJTYW1wbGUgQmF1c3RvZmZlIEdtYkgifSwibWF0ZXJpYWxzIjpbeyJjb3VudHJ5T2ZPcmlnaW4iOm51bGwsIm5hbWUiOiJDbGlua2VyIiwicmVjeWNsZWRQY3QiOm51bGwsIndlaWdodEtnIjo4MDAuMH1dLCJvcGVyYXRvcklkZW50aWZpZXIiOiJERTEyMzQ1Njc4OSIsInByb2R1Y3RHcm91cCI6ImNvbnN0cnVjdGlvbiIsInByb2R1Y3RHcm91cERhdGEiOnsiY28yZVBlckZ1bmN0aW9uYWxVbml0S2ciOjYyMC4wLCJjb3VudHJ5T2ZPcmlnaW4iOiJERSIsImZ1bmN0aW9uYWxVbml0IjoiMSB0b25uZSBvZiBjZW1lbnQiLCJndGluIjoiMDk1MDYwMDAyMDAwMjYiLCJwcm9kdWN0RmFtaWx5IjoiY2VtZW50IiwicHJvZHVjdEdyb3VwIjoiY29uc3RydWN0aW9uIn0sInByb2R1Y3ROYW1lIjoiQ0VNIElJL0EtUyA0Miw1IE4gQ2VtZW50IiwicHVibGlzaGVkQXQiOiIyMDI2LTA5LTAyVDIzOjUyOjA5LjQ2Njk0ODIwMFoiLCJxckNvZGVVcmwiOiJodHRwczovL2lkLm9kYWwtbm9kZS5pby8wMS8wOTUwNjAwMDIwMDAyNi8yMS83MmYwOTAzMGVmOGJjOTMzNGYyNiIsInJlcGFpcmFiaWxpdHlTY29yZSI6bnVsbCwicmV0ZW50aW9uTG9ja2VkIjp0cnVlLCJyZXRlbnRpb25VbnRpbCI6IjIwMzYtMDgtMzBUMjM6NTI6MDkuNDY2OTQ4MjAwWiIsInNjaGVtYVZlcnNpb24iOiIxLjEuMCIsInN0YXR1cyI6ImFjdGl2ZSIsInVwZGF0ZWRBdCI6IjIwMjYtMDktMDJUMjM6NTI6MDkuNDY2OTQ4MjAwWiIsInZlcnNpb24iOjF9.test-sig",
+    "public+restricted+individual": "test-header.eyJhcHBsaWNhYmxlSW5zdHJ1bWVudHMiOlt7Imluc3RydW1lbnQiOiJjcHItMjAyNC0zMTEwIiwicmVjb3JkZWQiOiJjYXRhbG9nIn1dLCJiYXRjaElkIjpudWxsLCJjbzJlUGVyVW5pdCI6bnVsbCwiY29tcGxpYW5jZVJlc3VsdCI6eyJhc3Nlc3NlZEF0IjoiMjAyNi0wOS0wMlQyMzo1MjowOS40MzM0MzI5MDBaIiwiY28yZVNjb3JlIjpudWxsLCJjb21wbGlhbmNlU3RhdHVzIjoiUEFTU1RIUk9VR0hfTk9fVkFMSURBVElPTiIsInJlY3ljbGVkQ29udGVudFBjdCI6bnVsbCwicmVwYWlyYWJpbGl0eUluZGV4IjpudWxsfSwiY3JlYXRlZEF0IjoiMjAyNi0wOS0wMlQyMzo1MjowOS40MjQ4OTU3MDBaIiwiZmFjaWxpdHkiOnsiY291bnRyeSI6IkRFIiwibmFtZSI6IlNlZWQgUGxhbnQiLCJzY2hlbWUiOiJnbG4iLCJ2YWx1ZSI6IjQwMTIzNDUwMDAwMDkifSwiaWQiOiIwMWEwNjQ4OS04NWQwLTcyZjAtOTAzMC1lZjhiYzkzMzRmMjYiLCJsaW50UmVzdWx0Ijp7ImFzc2Vzc2VkQXQiOiIyMDI2LTA5LTAyVDIzOjUyOjA5LjQzMzQzNzMwMFoiLCJwYWNrVmVyc2lvbiI6IjEuMC4wIn0sIm1hbnVmYWN0dXJlciI6eyJhZGRyZXNzIjoiSW5kdXN0cmllc3RyYXNzZSA4LCA0NTMwNyBFc3NlbiwgREUiLCJkaWRXZWJVcmwiOm51bGwsIm5hbWUiOiJTYW1wbGUgQmF1c3RvZmZlIEdtYkgifSwibWF0ZXJpYWxzIjpbeyJjb3VudHJ5T2ZPcmlnaW4iOm51bGwsIm5hbWUiOiJDbGlua2VyIiwicmVjeWNsZWRQY3QiOm51bGwsIndlaWdodEtnIjo4MDAuMH1dLCJvcGVyYXRvcklkZW50aWZpZXIiOiJERTEyMzQ1Njc4OSIsInByb2R1Y3RHcm91cCI6ImNvbnN0cnVjdGlvbiIsInByb2R1Y3RHcm91cERhdGEiOnsiY28yZVBlckZ1bmN0aW9uYWxVbml0S2ciOjYyMC4wLCJjb3VudHJ5T2ZPcmlnaW4iOiJERSIsImZ1bmN0aW9uYWxVbml0IjoiMSB0b25uZSBvZiBjZW1lbnQiLCJndGluIjoiMDk1MDYwMDAyMDAwMjYiLCJwcm9kdWN0RmFtaWx5IjoiY2VtZW50IiwicHJvZHVjdEdyb3VwIjoiY29uc3RydWN0aW9uIn0sInByb2R1Y3ROYW1lIjoiQ0VNIElJL0EtUyA0Miw1IE4gQ2VtZW50IiwicHVibGlzaGVkQXQiOiIyMDI2LTA5LTAyVDIzOjUyOjA5LjQ2Njk0ODIwMFoiLCJxckNvZGVVcmwiOiJodHRwczovL2lkLm9kYWwtbm9kZS5pby8wMS8wOTUwNjAwMDIwMDAyNi8yMS83MmYwOTAzMGVmOGJjOTMzNGYyNiIsInJlcGFpcmFiaWxpdHlTY29yZSI6bnVsbCwicmV0ZW50aW9uVW50aWwiOiIyMDM2LTA4LTMwVDIzOjUyOjA5LjQ2Njk0ODIwMFoiLCJzY2hlbWFWZXJzaW9uIjoiMS4xLjAiLCJzdGF0dXMiOiJhY3RpdmUiLCJ1cGRhdGVkQXQiOiIyMDI2LTA5LTAyVDIzOjUyOjA5LjQ2Njk0ODIwMFoiLCJ2ZXJzaW9uIjoxfQ.test-sig"
+  },
+  "facility": {
+    "country": "DE",
+    "name": "Seed Plant",
+    "scheme": "gln",
+    "value": "4012345000009"
+  },
+  "id": "01a06489-85d0-72f0-9030-ef8bc9334f26",
+  "jwsSignature": "test-header.eyJhcHBsaWNhYmxlSW5zdHJ1bWVudHMiOlt7Imluc3RydW1lbnQiOiJjcHItMjAyNC0zMTEwIiwicmVjb3JkZWQiOiJjYXRhbG9nIn1dLCJiYXRjaElkIjpudWxsLCJjbzJlUGVyVW5pdCI6bnVsbCwiY29tcGxpYW5jZVJlc3VsdCI6eyJhc3Nlc3NlZEF0IjoiMjAyNi0wOS0wMlQyMzo1MjowOS40MzM0MzI5MDBaIiwiY28yZVNjb3JlIjpudWxsLCJjb21wbGlhbmNlU3RhdHVzIjoiUEFTU1RIUk9VR0hfTk9fVkFMSURBVElPTiIsInJlY3ljbGVkQ29udGVudFBjdCI6bnVsbCwicmVwYWlyYWJpbGl0eUluZGV4IjpudWxsfSwiY3JlYXRlZEF0IjoiMjAyNi0wOS0wMlQyMzo1MjowOS40MjQ4OTU3MDBaIiwiZmFjaWxpdHkiOnsiY291bnRyeSI6IkRFIiwibmFtZSI6IlNlZWQgUGxhbnQiLCJzY2hlbWUiOiJnbG4iLCJ2YWx1ZSI6IjQwMTIzNDUwMDAwMDkifSwiaWQiOiIwMWEwNjQ4OS04NWQwLTcyZjAtOTAzMC1lZjhiYzkzMzRmMjYiLCJqd3NTaWduYXR1cmUiOm51bGwsImxpbnRSZXN1bHQiOnsiYXNzZXNzZWRBdCI6IjIwMjYtMDktMDJUMjM6NTI6MDkuNDMzNDM3MzAwWiIsInBhY2tWZXJzaW9uIjoiMS4wLjAifSwibWFudWZhY3R1cmVyIjp7ImFkZHJlc3MiOiJJbmR1c3RyaWVzdHJhc3NlIDgsIDQ1MzA3IEVzc2VuLCBERSIsImRpZFdlYlVybCI6bnVsbCwibmFtZSI6IlNhbXBsZSBCYXVzdG9mZmUgR21iSCJ9LCJtYXRlcmlhbHMiOlt7ImNvdW50cnlPZk9yaWdpbiI6bnVsbCwibmFtZSI6IkNsaW5rZXIiLCJyZWN5Y2xlZFBjdCI6bnVsbCwid2VpZ2h0S2ciOjgwMC4wfV0sIm9wZXJhdG9ySWRlbnRpZmllciI6IkRFMTIzNDU2Nzg5IiwicHJvZHVjdEdyb3VwIjoiY29uc3RydWN0aW9uIiwicHJvZHVjdEdyb3VwRGF0YSI6eyJjbzJlUGVyRnVuY3Rpb25hbFVuaXRLZyI6NjIwLjAsImNvdW50cnlPZk9yaWdpbiI6IkRFIiwiZnVuY3Rpb25hbFVuaXQiOiIxIHRvbm5lIG9mIGNlbWVudCIsImd0aW4iOiIwOTUwNjAwMDIwMDAyNiIsInByb2R1Y3RGYW1pbHkiOiJjZW1lbnQiLCJwcm9kdWN0R3JvdXAiOiJjb25zdHJ1Y3Rpb24ifSwicHJvZHVjdE5hbWUiOiJDRU0gSUkvQS1TIDQyLDUgTiBDZW1lbnQiLCJwdWJsaXNoZWRBdCI6IjIwMjYtMDktMDJUMjM6NTI6MDkuNDY2OTQ4MjAwWiIsInFyQ29kZVVybCI6Imh0dHBzOi8vaWQub2RhbC1ub2RlLmlvLzAxLzA5NTA2MDAwMjAwMDI2LzIxLzcyZjA5MDMwZWY4YmM5MzM0ZjI2IiwicmVwYWlyYWJpbGl0eVNjb3JlIjpudWxsLCJyZXRlbnRpb25Mb2NrZWQiOnRydWUsInJldGVudGlvblVudGlsIjoiMjAzNi0wOC0zMFQyMzo1MjowOS40NjY5NDgyMDBaIiwic2NoZW1hVmVyc2lvbiI6IjEuMS4wIiwic3RhdHVzIjoiYWN0aXZlIiwidXBkYXRlZEF0IjoiMjAyNi0wOS0wMlQyMzo1MjowOS40NjY5NDgyMDBaIiwidmVyc2lvbiI6MX0.test-sig",
+  "lintResult": {
+    "assessedAt": "2026-09-02T23:52:09.433437300Z",
+    "packVersion": "1.0.0"
+  },
+  "manufacturer": {
+    "address": "Industriestrasse 8, 45307 Essen, DE",
+    "didWebUrl": null,
+    "name": "Sample Baustoffe GmbH"
+  },
+  "materials": [
+    {
+      "countryOfOrigin": null,
+      "name": "Clinker",
+      "recycledPct": null,
+      "weightKg": 800.0
+    }
+  ],
+  "operatorIdentifier": "DE123456789",
+  "productGroup": "construction",
+  "productGroupData": {
+    "co2ePerFunctionalUnitKg": 620.0,
+    "countryOfOrigin": "DE",
+    "functionalUnit": "1 tonne of cement",
+    "gtin": "09506000200026",
+    "productFamily": "cement",
+    "productGroup": "construction"
+  },
+  "productName": "CEM II/A-S 42,5 N Cement",
+  "publicJwsSignature": "test-header.eyJhcHBsaWNhYmxlSW5zdHJ1bWVudHMiOlt7Imluc3RydW1lbnQiOiJjcHItMjAyNC0zMTEwIiwicmVjb3JkZWQiOiJjYXRhbG9nIn1dLCJjbzJlUGVyVW5pdCI6bnVsbCwiY29tcGxpYW5jZVJlc3VsdCI6eyJhc3Nlc3NlZEF0IjoiMjAyNi0wOS0wMlQyMzo1MjowOS40MzM0MzI5MDBaIiwiY28yZVNjb3JlIjpudWxsLCJjb21wbGlhbmNlU3RhdHVzIjoiUEFTU1RIUk9VR0hfTk9fVkFMSURBVElPTiIsInJlY3ljbGVkQ29udGVudFBjdCI6bnVsbCwicmVwYWlyYWJpbGl0eUluZGV4IjpudWxsfSwiY3JlYXRlZEF0IjoiMjAyNi0wOS0wMlQyMzo1MjowOS40MjQ4OTU3MDBaIiwiZmFjaWxpdHkiOnsiY291bnRyeSI6IkRFIiwibmFtZSI6IlNlZWQgUGxhbnQiLCJzY2hlbWUiOiJnbG4iLCJ2YWx1ZSI6IjQwMTIzNDUwMDAwMDkifSwiaWQiOiIwMWEwNjQ4OS04NWQwLTcyZjAtOTAzMC1lZjhiYzkzMzRmMjYiLCJtYW51ZmFjdHVyZXIiOnsiYWRkcmVzcyI6IkluZHVzdHJpZXN0cmFzc2UgOCwgNDUzMDcgRXNzZW4sIERFIiwiZGlkV2ViVXJsIjpudWxsLCJuYW1lIjoiU2FtcGxlIEJhdXN0b2ZmZSBHbWJIIn0sIm1hdGVyaWFscyI6W3siY291bnRyeU9mT3JpZ2luIjpudWxsLCJuYW1lIjoiQ2xpbmtlciIsInJlY3ljbGVkUGN0IjpudWxsLCJ3ZWlnaHRLZyI6ODAwLjB9XSwib3BlcmF0b3JJZGVudGlmaWVyIjoiREUxMjM0NTY3ODkiLCJwcm9kdWN0R3JvdXAiOiJjb25zdHJ1Y3Rpb24iLCJwcm9kdWN0R3JvdXBEYXRhIjp7ImNvMmVQZXJGdW5jdGlvbmFsVW5pdEtnIjo2MjAuMCwiY291bnRyeU9mT3JpZ2luIjoiREUiLCJmdW5jdGlvbmFsVW5pdCI6IjEgdG9ubmUgb2YgY2VtZW50IiwiZ3RpbiI6IjA5NTA2MDAwMjAwMDI2IiwicHJvZHVjdEZhbWlseSI6ImNlbWVudCIsInByb2R1Y3RHcm91cCI6ImNvbnN0cnVjdGlvbiJ9LCJwcm9kdWN0TmFtZSI6IkNFTSBJSS9BLVMgNDIsNSBOIENlbWVudCIsInB1Ymxpc2hlZEF0IjoiMjAyNi0wOS0wMlQyMzo1MjowOS40NjY5NDgyMDBaIiwicXJDb2RlVXJsIjoiaHR0cHM6Ly9pZC5vZGFsLW5vZGUuaW8vMDEvMDk1MDYwMDAyMDAwMjYvMjEvNzJmMDkwMzBlZjhiYzkzMzRmMjYiLCJyZXBhaXJhYmlsaXR5U2NvcmUiOm51bGwsInJldGVudGlvblVudGlsIjoiMjAzNi0wOC0zMFQyMzo1MjowOS40NjY5NDgyMDBaIiwic2NoZW1hVmVyc2lvbiI6IjEuMS4wIiwic3RhdHVzIjoiYWN0aXZlIiwidXBkYXRlZEF0IjoiMjAyNi0wOS0wMlQyMzo1MjowOS40NjY5NDgyMDBaIiwidmVyc2lvbiI6MX0.test-sig",
+  "publishedAt": "2026-09-02T23:52:09.466948200Z",
+  "qrCodeUrl": "https://id.odal-node.io/01/09506000200026/21/72f09030ef8bc9334f26",
+  "repairabilityScore": null,
+  "retentionLocked": true,
+  "retentionUntil": "2036-08-30T23:52:09.466948200Z",
   "schemaVersion": "1.1.0",
-  "retentionLocked": false,
-  "repairabilityScore": null
+  "status": "active",
+  "updatedAt": "2026-09-02T23:52:09.466948200Z",
+  "version": 1
 }

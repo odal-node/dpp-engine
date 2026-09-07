@@ -1,32 +1,69 @@
 {
-  "id": "019f3aa5-579d-73c1-a3e6-a8002df5e071",
-  "sector": "aluminium",
-  "status": "draft",
-  "batchId": "AL-2026-BATCH-01",
-  "version": 1,
-  "createdAt": "2026-08-01T09:00:00.000000000Z",
-  "materials": [],
-  "qrCodeUrl": null,
-  "updatedAt": "2026-08-01T09:00:00.000000000Z",
-  "sectorData": {
-    "sector": "aluminium",
-    "gtin": "09506000134352",
-    "alloyGrade": "6xxx",
-    "productionRoute": "primary",
-    "co2ePerTonneKg": 4200.0,
-    "recycledContentPct": 15.0,
-    "countryOfOrigin": "NO"
-  },
+  "applicableInstruments": [
+    {
+      "instrument": "espr",
+      "recorded": "catalog"
+    }
+  ],
+  "batchId": null,
   "co2ePerUnit": null,
-  "productName": "Example Aluminium Extrusion Profile",
-  "publishedAt": null,
-  "jwsSignature": null,
-  "manufacturer": {
-    "name": "Example Aluminium Works AS",
-    "address": "NO",
-    "didWebUrl": null
+  "complianceResult": {
+    "assessedAt": "2026-09-02T23:51:51.602686100Z",
+    "co2eScore": null,
+    "complianceStatus": "PASSTHROUGH_NO_VALIDATION",
+    "recycledContentPct": null,
+    "repairabilityIndex": null
   },
+  "createdAt": "2026-09-02T23:51:51.597247500Z",
+  "disclosureSignatures": {
+    "public+restricted+conformity": "test-header.eyJhcHBsaWNhYmxlSW5zdHJ1bWVudHMiOlt7Imluc3RydW1lbnQiOiJlc3ByIiwicmVjb3JkZWQiOiJjYXRhbG9nIn1dLCJiYXRjaElkIjpudWxsLCJjbzJlUGVyVW5pdCI6bnVsbCwiY29tcGxpYW5jZVJlc3VsdCI6eyJhc3Nlc3NlZEF0IjoiMjAyNi0wOS0wMlQyMzo1MTo1MS42MDI2ODYxMDBaIiwiY28yZVNjb3JlIjpudWxsLCJjb21wbGlhbmNlU3RhdHVzIjoiUEFTU1RIUk9VR0hfTk9fVkFMSURBVElPTiIsInJlY3ljbGVkQ29udGVudFBjdCI6bnVsbCwicmVwYWlyYWJpbGl0eUluZGV4IjpudWxsfSwiY3JlYXRlZEF0IjoiMjAyNi0wOS0wMlQyMzo1MTo1MS41OTcyNDc1MDBaIiwiZmFjaWxpdHkiOnsiY291bnRyeSI6IkRFIiwibmFtZSI6IlNlZWQgUGxhbnQiLCJzY2hlbWUiOiJnbG4iLCJ2YWx1ZSI6IjQwMTIzNDUwMDAwMDkifSwiaWQiOiIwMWEwNjQ4OS00MDJkLTc3NzItODYwZC1kYzM3ZDA3MTE0ZjUiLCJsaW50UmVzdWx0Ijp7ImFzc2Vzc2VkQXQiOiIyMDI2LTA5LTAyVDIzOjUxOjUxLjYwMjY4ODIwMFoiLCJwYWNrVmVyc2lvbiI6IjEuMC4wIn0sIm1hbnVmYWN0dXJlciI6eyJhZGRyZXNzIjoiSGF2bmVnYXRhIDQsIDY2MDAgU3VubmRhbHNvcmEsIE5PIiwiZGlkV2ViVXJsIjpudWxsLCJuYW1lIjoiU2FtcGxlIExpZ2h0IE1ldGFscyBBUyJ9LCJtYXRlcmlhbHMiOlt7ImNvdW50cnlPZk9yaWdpbiI6bnVsbCwibmFtZSI6IkFsdW1pbml1bSIsInJlY3ljbGVkUGN0IjpudWxsLCJ3ZWlnaHRLZyI6MTAwMC4wfV0sIm9wZXJhdG9ySWRlbnRpZmllciI6IkRFMTIzNDU2Nzg5IiwicHJvZHVjdEdyb3VwIjoiYWx1bWluaXVtIiwicHJvZHVjdEdyb3VwRGF0YSI6eyJhbGxveUdyYWRlIjoiMTA1MEEiLCJjbzJlUGVyVG9ubmVLZyI6NDIwMC4wLCJjb3VudHJ5T2ZPcmlnaW4iOiJOTyIsImd0aW4iOiIwOTUwNjAwMDIwMDAxOSIsInByb2R1Y3RHcm91cCI6ImFsdW1pbml1bSIsInByb2R1Y3Rpb25Sb3V0ZSI6InNlY29uZGFyeS1yZWN5Y2xlZCIsInJlY3ljbGVkQ29udGVudFBjdCI6NzUuMH0sInByb2R1Y3ROYW1lIjoiUm9sbGVkIEFsdW1pbml1bSBDb2lsIDEwNTBBIiwicHVibGlzaGVkQXQiOiIyMDI2LTA5LTAyVDIzOjUxOjUxLjYzNzY0OTUwMFoiLCJxckNvZGVVcmwiOiJodHRwczovL2lkLm9kYWwtbm9kZS5pby8wMS8wOTUwNjAwMDIwMDAxOS8yMS83NzcyODYwZGRjMzdkMDcxMTRmNSIsInJlcGFpcmFiaWxpdHlTY29yZSI6bnVsbCwicmV0ZW50aW9uTG9ja2VkIjp0cnVlLCJyZXRlbnRpb25VbnRpbCI6IjIwMzYtMDgtMzBUMjM6NTE6NTEuNjM3NjQ5NTAwWiIsInNjaGVtYVZlcnNpb24iOiIxLjEuMCIsInN0YXR1cyI6ImFjdGl2ZSIsInVwZGF0ZWRBdCI6IjIwMjYtMDktMDJUMjM6NTE6NTEuNjM3NjQ5NTAwWiIsInZlcnNpb24iOjF9.test-sig",
+    "public+restricted+individual": "test-header.eyJhcHBsaWNhYmxlSW5zdHJ1bWVudHMiOlt7Imluc3RydW1lbnQiOiJlc3ByIiwicmVjb3JkZWQiOiJjYXRhbG9nIn1dLCJiYXRjaElkIjpudWxsLCJjbzJlUGVyVW5pdCI6bnVsbCwiY29tcGxpYW5jZVJlc3VsdCI6eyJhc3Nlc3NlZEF0IjoiMjAyNi0wOS0wMlQyMzo1MTo1MS42MDI2ODYxMDBaIiwiY28yZVNjb3JlIjpudWxsLCJjb21wbGlhbmNlU3RhdHVzIjoiUEFTU1RIUk9VR0hfTk9fVkFMSURBVElPTiIsInJlY3ljbGVkQ29udGVudFBjdCI6bnVsbCwicmVwYWlyYWJpbGl0eUluZGV4IjpudWxsfSwiY3JlYXRlZEF0IjoiMjAyNi0wOS0wMlQyMzo1MTo1MS41OTcyNDc1MDBaIiwiZmFjaWxpdHkiOnsiY291bnRyeSI6IkRFIiwibmFtZSI6IlNlZWQgUGxhbnQiLCJzY2hlbWUiOiJnbG4iLCJ2YWx1ZSI6IjQwMTIzNDUwMDAwMDkifSwiaWQiOiIwMWEwNjQ4OS00MDJkLTc3NzItODYwZC1kYzM3ZDA3MTE0ZjUiLCJsaW50UmVzdWx0Ijp7ImFzc2Vzc2VkQXQiOiIyMDI2LTA5LTAyVDIzOjUxOjUxLjYwMjY4ODIwMFoiLCJwYWNrVmVyc2lvbiI6IjEuMC4wIn0sIm1hbnVmYWN0dXJlciI6eyJhZGRyZXNzIjoiSGF2bmVnYXRhIDQsIDY2MDAgU3VubmRhbHNvcmEsIE5PIiwiZGlkV2ViVXJsIjpudWxsLCJuYW1lIjoiU2FtcGxlIExpZ2h0IE1ldGFscyBBUyJ9LCJtYXRlcmlhbHMiOlt7ImNvdW50cnlPZk9yaWdpbiI6bnVsbCwibmFtZSI6IkFsdW1pbml1bSIsInJlY3ljbGVkUGN0IjpudWxsLCJ3ZWlnaHRLZyI6MTAwMC4wfV0sIm9wZXJhdG9ySWRlbnRpZmllciI6IkRFMTIzNDU2Nzg5IiwicHJvZHVjdEdyb3VwIjoiYWx1bWluaXVtIiwicHJvZHVjdEdyb3VwRGF0YSI6eyJhbGxveUdyYWRlIjoiMTA1MEEiLCJjbzJlUGVyVG9ubmVLZyI6NDIwMC4wLCJjb3VudHJ5T2ZPcmlnaW4iOiJOTyIsImd0aW4iOiIwOTUwNjAwMDIwMDAxOSIsInByb2R1Y3RHcm91cCI6ImFsdW1pbml1bSIsInByb2R1Y3Rpb25Sb3V0ZSI6InNlY29uZGFyeS1yZWN5Y2xlZCIsInJlY3ljbGVkQ29udGVudFBjdCI6NzUuMH0sInByb2R1Y3ROYW1lIjoiUm9sbGVkIEFsdW1pbml1bSBDb2lsIDEwNTBBIiwicHVibGlzaGVkQXQiOiIyMDI2LTA5LTAyVDIzOjUxOjUxLjYzNzY0OTUwMFoiLCJxckNvZGVVcmwiOiJodHRwczovL2lkLm9kYWwtbm9kZS5pby8wMS8wOTUwNjAwMDIwMDAxOS8yMS83NzcyODYwZGRjMzdkMDcxMTRmNSIsInJlcGFpcmFiaWxpdHlTY29yZSI6bnVsbCwicmV0ZW50aW9uVW50aWwiOiIyMDM2LTA4LTMwVDIzOjUxOjUxLjYzNzY0OTUwMFoiLCJzY2hlbWFWZXJzaW9uIjoiMS4xLjAiLCJzdGF0dXMiOiJhY3RpdmUiLCJ1cGRhdGVkQXQiOiIyMDI2LTA5LTAyVDIzOjUxOjUxLjYzNzY0OTUwMFoiLCJ2ZXJzaW9uIjoxfQ.test-sig"
+  },
+  "facility": {
+    "country": "DE",
+    "name": "Seed Plant",
+    "scheme": "gln",
+    "value": "4012345000009"
+  },
+  "id": "01a06489-402d-7772-860d-dc37d07114f5",
+  "jwsSignature": "test-header.eyJhcHBsaWNhYmxlSW5zdHJ1bWVudHMiOlt7Imluc3RydW1lbnQiOiJlc3ByIiwicmVjb3JkZWQiOiJjYXRhbG9nIn1dLCJiYXRjaElkIjpudWxsLCJjbzJlUGVyVW5pdCI6bnVsbCwiY29tcGxpYW5jZVJlc3VsdCI6eyJhc3Nlc3NlZEF0IjoiMjAyNi0wOS0wMlQyMzo1MTo1MS42MDI2ODYxMDBaIiwiY28yZVNjb3JlIjpudWxsLCJjb21wbGlhbmNlU3RhdHVzIjoiUEFTU1RIUk9VR0hfTk9fVkFMSURBVElPTiIsInJlY3ljbGVkQ29udGVudFBjdCI6bnVsbCwicmVwYWlyYWJpbGl0eUluZGV4IjpudWxsfSwiY3JlYXRlZEF0IjoiMjAyNi0wOS0wMlQyMzo1MTo1MS41OTcyNDc1MDBaIiwiZmFjaWxpdHkiOnsiY291bnRyeSI6IkRFIiwibmFtZSI6IlNlZWQgUGxhbnQiLCJzY2hlbWUiOiJnbG4iLCJ2YWx1ZSI6IjQwMTIzNDUwMDAwMDkifSwiaWQiOiIwMWEwNjQ4OS00MDJkLTc3NzItODYwZC1kYzM3ZDA3MTE0ZjUiLCJqd3NTaWduYXR1cmUiOm51bGwsImxpbnRSZXN1bHQiOnsiYXNzZXNzZWRBdCI6IjIwMjYtMDktMDJUMjM6NTE6NTEuNjAyNjg4MjAwWiIsInBhY2tWZXJzaW9uIjoiMS4wLjAifSwibWFudWZhY3R1cmVyIjp7ImFkZHJlc3MiOiJIYXZuZWdhdGEgNCwgNjYwMCBTdW5uZGFsc29yYSwgTk8iLCJkaWRXZWJVcmwiOm51bGwsIm5hbWUiOiJTYW1wbGUgTGlnaHQgTWV0YWxzIEFTIn0sIm1hdGVyaWFscyI6W3siY291bnRyeU9mT3JpZ2luIjpudWxsLCJuYW1lIjoiQWx1bWluaXVtIiwicmVjeWNsZWRQY3QiOm51bGwsIndlaWdodEtnIjoxMDAwLjB9XSwib3BlcmF0b3JJZGVudGlmaWVyIjoiREUxMjM0NTY3ODkiLCJwcm9kdWN0R3JvdXAiOiJhbHVtaW5pdW0iLCJwcm9kdWN0R3JvdXBEYXRhIjp7ImFsbG95R3JhZGUiOiIxMDUwQSIsImNvMmVQZXJUb25uZUtnIjo0MjAwLjAsImNvdW50cnlPZk9yaWdpbiI6Ik5PIiwiZ3RpbiI6IjA5NTA2MDAwMjAwMDE5IiwicHJvZHVjdEdyb3VwIjoiYWx1bWluaXVtIiwicHJvZHVjdGlvblJvdXRlIjoic2Vjb25kYXJ5LXJlY3ljbGVkIiwicmVjeWNsZWRDb250ZW50UGN0Ijo3NS4wfSwicHJvZHVjdE5hbWUiOiJSb2xsZWQgQWx1bWluaXVtIENvaWwgMTA1MEEiLCJwdWJsaXNoZWRBdCI6IjIwMjYtMDktMDJUMjM6NTE6NTEuNjM3NjQ5NTAwWiIsInFyQ29kZVVybCI6Imh0dHBzOi8vaWQub2RhbC1ub2RlLmlvLzAxLzA5NTA2MDAwMjAwMDE5LzIxLzc3NzI4NjBkZGMzN2QwNzExNGY1IiwicmVwYWlyYWJpbGl0eVNjb3JlIjpudWxsLCJyZXRlbnRpb25Mb2NrZWQiOnRydWUsInJldGVudGlvblVudGlsIjoiMjAzNi0wOC0zMFQyMzo1MTo1MS42Mzc2NDk1MDBaIiwic2NoZW1hVmVyc2lvbiI6IjEuMS4wIiwic3RhdHVzIjoiYWN0aXZlIiwidXBkYXRlZEF0IjoiMjAyNi0wOS0wMlQyMzo1MTo1MS42Mzc2NDk1MDBaIiwidmVyc2lvbiI6MX0.test-sig",
+  "lintResult": {
+    "assessedAt": "2026-09-02T23:51:51.602688200Z",
+    "packVersion": "1.0.0"
+  },
+  "manufacturer": {
+    "address": "Havnegata 4, 6600 Sunndalsora, NO",
+    "didWebUrl": null,
+    "name": "Sample Light Metals AS"
+  },
+  "materials": [
+    {
+      "countryOfOrigin": null,
+      "name": "Aluminium",
+      "recycledPct": null,
+      "weightKg": 1000.0
+    }
+  ],
+  "operatorIdentifier": "DE123456789",
+  "productGroup": "aluminium",
+  "productGroupData": {
+    "alloyGrade": "1050A",
+    "co2ePerTonneKg": 4200.0,
+    "countryOfOrigin": "NO",
+    "gtin": "09506000200019",
+    "productGroup": "aluminium",
+    "productionRoute": "secondary-recycled",
+    "recycledContentPct": 75.0
+  },
+  "productName": "Rolled Aluminium Coil 1050A",
+  "publicJwsSignature": "test-header.eyJhcHBsaWNhYmxlSW5zdHJ1bWVudHMiOlt7Imluc3RydW1lbnQiOiJlc3ByIiwicmVjb3JkZWQiOiJjYXRhbG9nIn1dLCJjbzJlUGVyVW5pdCI6bnVsbCwiY29tcGxpYW5jZVJlc3VsdCI6eyJhc3Nlc3NlZEF0IjoiMjAyNi0wOS0wMlQyMzo1MTo1MS42MDI2ODYxMDBaIiwiY28yZVNjb3JlIjpudWxsLCJjb21wbGlhbmNlU3RhdHVzIjoiUEFTU1RIUk9VR0hfTk9fVkFMSURBVElPTiIsInJlY3ljbGVkQ29udGVudFBjdCI6bnVsbCwicmVwYWlyYWJpbGl0eUluZGV4IjpudWxsfSwiY3JlYXRlZEF0IjoiMjAyNi0wOS0wMlQyMzo1MTo1MS41OTcyNDc1MDBaIiwiZmFjaWxpdHkiOnsiY291bnRyeSI6IkRFIiwibmFtZSI6IlNlZWQgUGxhbnQiLCJzY2hlbWUiOiJnbG4iLCJ2YWx1ZSI6IjQwMTIzNDUwMDAwMDkifSwiaWQiOiIwMWEwNjQ4OS00MDJkLTc3NzItODYwZC1kYzM3ZDA3MTE0ZjUiLCJtYW51ZmFjdHVyZXIiOnsiYWRkcmVzcyI6Ikhhdm5lZ2F0YSA0LCA2NjAwIFN1bm5kYWxzb3JhLCBOTyIsImRpZFdlYlVybCI6bnVsbCwibmFtZSI6IlNhbXBsZSBMaWdodCBNZXRhbHMgQVMifSwibWF0ZXJpYWxzIjpbeyJjb3VudHJ5T2ZPcmlnaW4iOm51bGwsIm5hbWUiOiJBbHVtaW5pdW0iLCJyZWN5Y2xlZFBjdCI6bnVsbCwid2VpZ2h0S2ciOjEwMDAuMH1dLCJvcGVyYXRvcklkZW50aWZpZXIiOiJERTEyMzQ1Njc4OSIsInByb2R1Y3RHcm91cCI6ImFsdW1pbml1bSIsInByb2R1Y3RHcm91cERhdGEiOnsiYWxsb3lHcmFkZSI6IjEwNTBBIiwiY28yZVBlclRvbm5lS2ciOjQyMDAuMCwiY291bnRyeU9mT3JpZ2luIjoiTk8iLCJndGluIjoiMDk1MDYwMDAyMDAwMTkiLCJwcm9kdWN0R3JvdXAiOiJhbHVtaW5pdW0iLCJwcm9kdWN0aW9uUm91dGUiOiJzZWNvbmRhcnktcmVjeWNsZWQiLCJyZWN5Y2xlZENvbnRlbnRQY3QiOjc1LjB9LCJwcm9kdWN0TmFtZSI6IlJvbGxlZCBBbHVtaW5pdW0gQ29pbCAxMDUwQSIsInB1Ymxpc2hlZEF0IjoiMjAyNi0wOS0wMlQyMzo1MTo1MS42Mzc2NDk1MDBaIiwicXJDb2RlVXJsIjoiaHR0cHM6Ly9pZC5vZGFsLW5vZGUuaW8vMDEvMDk1MDYwMDAyMDAwMTkvMjEvNzc3Mjg2MGRkYzM3ZDA3MTE0ZjUiLCJyZXBhaXJhYmlsaXR5U2NvcmUiOm51bGwsInJldGVudGlvblVudGlsIjoiMjAzNi0wOC0zMFQyMzo1MTo1MS42Mzc2NDk1MDBaIiwic2NoZW1hVmVyc2lvbiI6IjEuMS4wIiwic3RhdHVzIjoiYWN0aXZlIiwidXBkYXRlZEF0IjoiMjAyNi0wOS0wMlQyMzo1MTo1MS42Mzc2NDk1MDBaIiwidmVyc2lvbiI6MX0.test-sig",
+  "publishedAt": "2026-09-02T23:51:51.637649500Z",
+  "qrCodeUrl": "https://id.odal-node.io/01/09506000200019/21/7772860ddc37d07114f5",
+  "repairabilityScore": null,
+  "retentionLocked": true,
+  "retentionUntil": "2036-08-30T23:51:51.637649500Z",
   "schemaVersion": "1.1.0",
-  "retentionLocked": false,
-  "repairabilityScore": null
+  "status": "active",
+  "updatedAt": "2026-09-02T23:51:51.637649500Z",
+  "version": 1
 }
