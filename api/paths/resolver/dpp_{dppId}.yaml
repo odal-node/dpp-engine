@@ -24,6 +24,7 @@ get:
     Responses carry `Vary: Accept`.
   tags:
     - Public Resolver
+  security: []
   parameters:
     - name: dppId
       in: path

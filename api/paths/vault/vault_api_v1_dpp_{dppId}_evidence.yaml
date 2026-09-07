@@ -43,7 +43,22 @@ post:
 get:
   operationId: listDppEvidence
   summary: List stored evidence dossiers for a passport
-  description: Summaries only (no document body), newest first.
+  description: |
+    Every evidence dossier generated for this passport, newest first.
+
+    Summaries only — each row carries the dossier's id, when it was generated
+    and what it covers, but not the document itself. Dossiers embed full-view
+    passport data and both signature chains, so they are large and are fetched
+    one at a time through `GET /api/v1/evidence/{id}`.
+
+    A passport can have several: a dossier is a snapshot of the proof chain at
+    the moment it was generated, so one taken before a transfer and one taken
+    after are both valid and describe different states. Nothing here is
+    superseded by anything else here, which is why the list is not filtered
+    down to a latest.
+
+    Empty for a passport that has never been published — there is no signature
+    to attest to before then.
   tags:
     - Evidence Dossiers
   security:

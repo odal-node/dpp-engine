@@ -1,8 +1,18 @@
 get:
   operationId: integratorHealth
   summary: Integrator health check
+  description: |
+    Liveness: the bulk-import service is running and serving. On the node
+    (port 8001) this is mounted at `/integrator/health`.
+
+    Checks nothing beyond itself, and in particular says nothing about whether
+    an import currently in flight is progressing — an import is a job, and
+    `GET /integrator/api/v1/imports/{job_id}` is what reports on one.
+
+    The body carries the service name and version.
   tags:
     - Health
+  security: []
   responses:
     '200':
-      description: Service is up.
+      description: The process is serving. Body carries `status`, `service` and `version`.

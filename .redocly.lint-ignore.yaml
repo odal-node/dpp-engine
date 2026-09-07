@@ -1,5 +1,27 @@
 # This file instructs Redocly's linter to ignore the rules contained for specific parts of your API.
 # See https://redocly.com/docs/cli/ for more information.
+#
+# Shrink this file; never regenerate it. A baseline that is refreshed whenever it
+# complains stops being a record of accepted exceptions and becomes a record of
+# what the linter happened to find last time.
+#
+# It held 37 entries. Twenty-two were `security-defined` on routes that are
+# public **on purpose** — the rule fires when an operation has no `security` and
+# there is no global block, which cannot tell "open by design" from "nobody said".
+# Those routes now carry `security: []`, which says it in the description itself
+# rather than here, so a reader and the rendered reference both see it. The
+# convention was already in use on the two `product-groups` routes; it is now on
+# all of them.
+#
+# What is left is what the linter is wrong about, and each group says why:
+#
+# - `operation-4xx-response` (11) — health, readiness, info, `did.json`, and two
+#   parameterless list routes reading compiled-in catalogs. None can produce a
+#   `4XX`. `/vault/ready` does document its `503`, which is a 5xx and does not
+#   satisfy this rule. Adding a `4XX` to satisfy it would document a response the
+#   code cannot return.
+# - `no-server-example.com` (6) — the server list is a template an operator
+#   edits. `example.com` is the correct placeholder for a host we do not know.
 api/openapi.bundled.yaml:
   no-server-example.com:
     - '#/servers/0/url'
@@ -18,26 +40,10 @@ api/openapi.bundled.yaml:
     - '#/paths/~1integrator~1health/get/responses'
     - '#/paths/~1health/get/responses'
     - '#/paths/~1ready/get/responses'
-  security-defined:
-    - '#/paths/~1vault~1public~1dpp~1{dppId}/get'
-    - '#/paths/~1vault~1public~1dpp~1by-gtin~1{gtin}/get'
-    - '#/paths/~1vault~1credential~1dpp~1{dppId}/get'
-    - '#/paths/~1vault~1health/get'
-    - '#/paths/~1vault~1ready/get'
-    - '#/paths/~1vault~1api~1v1~1info/get'
-    - '#/paths/~1identity~1.well-known~1did.json/get'
-    - '#/paths/~1identity~1health/get'
-    - '#/paths/~1identity~1ready/get'
-    - '#/paths/~1integrator~1health/get'
-    - '#/paths/~1integrator~1api~1v1~1templates~1{productGroup}/get'
-    - '#/paths/~1integrator~1api~1v1~1schemas/get'
-    - '#/paths/~1integrator~1api~1v1~1schemas~1{productGroup}/get'
-    - '#/paths/~1integrator~1api~1v1~1schemas~1{productGroup}~1{version}/get'
-    - '#/paths/~1dpp~1{dppId}/get'
-    - '#/paths/~1dpp~1{dppId}~1qr/get'
-    - '#/paths/~101~1{gtin}/get'
-    - '#/paths/~101~1{gtin}~121~1{serial}/get'
-    - '#/paths/~101~1{gtin}~110~1{batch}/get'
-    - '#/paths/~101~1{gtin}~110~1{batch}~121~1{serial}/get'
-    - '#/paths/~1health/get'
-    - '#/paths/~1ready/get'
+    # These two take no parameters and read compiled-in catalogs, so they have
+    # no failure a caller can cause: `list_product_groups` and `list_schemas`
+    # both return `200` on every path through them. Documenting a `4XX` to
+    # satisfy the rule would put a response in the description that the code
+    # cannot produce, which is worse than the warning.
+    - '#/paths/~1integrator~1api~1v1~1product-groups/get/responses'
+    - '#/paths/~1integrator~1api~1v1~1schemas/get/responses'

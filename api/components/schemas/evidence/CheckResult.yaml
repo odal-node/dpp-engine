@@ -1,5 +1,3 @@
-x-tags:
-  - Evidence & Verification
 type: object
 description: Outcome of a single named verification check.
 required:

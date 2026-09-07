@@ -9,6 +9,7 @@ get:
     Descriptions are omitted, as on the current-schema route.
   tags:
     - Integrator
+  security: []
   parameters:
     - name: productGroup
       in: path

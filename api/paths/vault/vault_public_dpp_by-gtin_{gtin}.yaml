@@ -2,10 +2,24 @@ get:
   operationId: publicGetDppByGtin
   summary: Public read of a published DPP by GTIN
   description: |
-    Unauthenticated read of the published passport for a GS1 GTIN-14.
-    Returns 404 if no published passport matches the GTIN.
+    Unauthenticated read of the published passport for a GS1 GTIN-14 — the
+    same signed public view the by-id route serves, found by trade item
+    instead of by passport id.
+
+    **A withdrawn passport answers `410`, not `404`.** That distinction is the
+    point of this route rather than a detail of it: `404` means no passport for
+    this GTIN was ever published here, while `410` means one was and has since
+    been suspended. Only the second is a recall signal, and a consumer who
+    scanned a product needs to be able to tell them apart. `422` is a
+    structurally invalid GTIN-14 — a bad check digit or wrong length — which is
+    a malformed request rather than an answer about any product.
+
+    Only the passport's `public` audience view is returned, carrying the
+    publish-time `publicJwsSignature` that covers exactly those bytes.
+    Restricted fields are not present at all.
   tags:
     - Public (Vault)
+  security: []
   parameters:
     - name: gtin
       in: path
