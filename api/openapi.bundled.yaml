@@ -2778,6 +2778,8 @@ paths:
           description: Redirect to the DPP page (`Location` header).
         '404':
           description: No published DPP for this GTIN, or unknown link type.
+        '410':
+          $ref: '#/components/responses/Gone'
   /01/{gtin}/21/{serial}:
     get:
       operationId: resolveByGtinSerial
@@ -2822,6 +2824,8 @@ paths:
           description: Redirect to the DPP page (`Location` header).
         '404':
           description: No published DPP for this GTIN, or unknown link type.
+        '410':
+          $ref: '#/components/responses/Gone'
   /01/{gtin}/10/{batch}:
     get:
       operationId: resolveByGtinBatch
@@ -2864,6 +2868,8 @@ paths:
           description: Redirect to the DPP page (`Location` header).
         '404':
           description: No published DPP for this GTIN, or unknown link type.
+        '410':
+          $ref: '#/components/responses/Gone'
   /01/{gtin}/10/{batch}/21/{serial}:
     get:
       operationId: resolveByGtinBatchSerial
@@ -2912,6 +2918,8 @@ paths:
           description: Redirect to the DPP page (`Location` header).
         '404':
           description: No published DPP for this GTIN, or unknown link type.
+        '410':
+          $ref: '#/components/responses/Gone'
   /vault/health:
     get:
       operationId: vaultHealth

@@ -45,3 +45,5 @@ get:
       description: Redirect to the DPP page (`Location` header).
     '404':
       description: No published DPP for this GTIN, or unknown link type.
+    '410':
+      $ref: ../../components/responses/Gone.yaml
