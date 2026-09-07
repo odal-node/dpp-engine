@@ -116,7 +116,7 @@ jobs:
         with:
           workspaces: dpp-engine
       - name: Install cargo-nextest
-        uses: taiki-e/install-action@b6ff580856c41316412a0b9b60540fbc6f8c82cc # v2.86.7
+        uses: taiki-e/install-action@1ed6d7be6168f6c9046541087ff549b6bc581fdf # v2.87.2
         with:
           tool: nextest
       # Run first, and as its own step, so "the API description no longer
@@ -186,7 +186,7 @@ jobs:
         with:
           workspaces: dpp-engine
       - name: Install cargo-nextest
-        uses: taiki-e/install-action@b6ff580856c41316412a0b9b60540fbc6f8c82cc # v2.86.7
+        uses: taiki-e/install-action@1ed6d7be6168f6c9046541087ff549b6bc581fdf # v2.87.2
         with:
           tool: nextest
       - name: Create results dir
@@ -464,7 +464,7 @@ jobs:
         working-directory: dpp-engine
         run: bash scripts/check-audit-register.test.sh
       - name: Install cargo-deny
-        uses: taiki-e/install-action@b6ff580856c41316412a0b9b60540fbc6f8c82cc # v2.86.7
+        uses: taiki-e/install-action@1ed6d7be6168f6c9046541087ff549b6bc581fdf # v2.87.2
         with:
           tool: cargo-deny
       - name: cargo deny (bans, licenses, sources)
@@ -487,7 +487,7 @@ jobs:
         with:
           workspaces: dpp-engine
       - name: Install cargo-nextest
-        uses: taiki-e/install-action@b6ff580856c41316412a0b9b60540fbc6f8c82cc # v2.86.7
+        uses: taiki-e/install-action@1ed6d7be6168f6c9046541087ff549b6bc581fdf # v2.87.2
         with:
           tool: nextest
       - name: PostgreSQL integration tests (check + clippy + pg_integration)
