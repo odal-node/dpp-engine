@@ -247,3 +247,88 @@ async fn a_refused_amendment_leaves_the_predecessor_live() {
     );
     assert_eq!(after["productName"], "Live Battery");
 }
+
+/// After an amendment, two records carry the product's GTIN. These pin which
+/// one its code resolves to — the question the by-GTIN lookup could not answer
+/// deterministically until a superseded record was excluded from it.
+#[tokio::test(flavor = "multi_thread")]
+async fn an_amended_products_code_resolves_to_the_successor() {
+    let pg = start_postgres().await;
+    let vault_url = start_vault(pg.dal.clone()).await;
+    seed_complete_operator(&pg.dal).await;
+    let token = make_jwt("00000000-0000-0000-0000-000000000003");
+    let client = TestClient::new(&vault_url, &token);
+
+    let successor_id = publish_then_amend(&client, "Public Battery").await;
+
+    let resp = client.get("/public/dpp/by-gtin/09506000134352").await;
+    assert_eq!(resp.status(), 200);
+    let served: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(
+        served["id"], successor_id,
+        "the GTIN resolves to the live successor, not to the record it replaced"
+    );
+    assert_eq!(served["productName"], "Corrected Public Battery");
+}
+
+/// The recall signal has to survive an amendment.
+///
+/// The predecessor keeps the product's GTIN in its `qrCodeUrl` forever, so it
+/// matches the same lookup the successor does. While it could answer, an amended
+/// product that was later recalled reported `404` — "no such GTIN", the answer
+/// for a mistyped label — to the one person holding the recalled product.
+#[tokio::test(flavor = "multi_thread")]
+async fn an_amended_then_recalled_product_still_signals_the_recall() {
+    let pg = start_postgres().await;
+    let vault_url = start_vault(pg.dal.clone()).await;
+    seed_complete_operator(&pg.dal).await;
+    let token = make_jwt("00000000-0000-0000-0000-000000000003");
+    let client = TestClient::new(&vault_url, &token);
+
+    let successor_id = publish_then_amend(&client, "Recalled Battery").await;
+
+    let resp = client
+        .post_json(
+            &format!("/api/v1/dpp/{successor_id}/suspend"),
+            serde_json::json!({ "reason": "safety recall" }),
+        )
+        .await;
+    assert_eq!(
+        resp.status(),
+        200,
+        "the successor is the record that is recalled"
+    );
+
+    let resp = client.get("/public/dpp/by-gtin/09506000134352").await;
+    assert_eq!(
+        resp.status(),
+        410,
+        "the code on the product must report the recall, not report itself unknown"
+    );
+}
+
+/// Publish a passport and amend it, returning the successor's id.
+async fn publish_then_amend(client: &TestClient, product_name: &str) -> String {
+    let resp = client.post_json("/api/v1/dpp", draft(product_name)).await;
+    assert_eq!(resp.status(), 201);
+    let created: serde_json::Value = resp.json().await.unwrap();
+    let original_id = created["id"].as_str().unwrap().to_owned();
+
+    let resp = client
+        .post_json(
+            &format!("/api/v1/dpp/{original_id}/publish"),
+            serde_json::json!({}),
+        )
+        .await;
+    assert_eq!(resp.status(), 200);
+
+    let resp = client
+        .post_json(
+            &format!("/api/v1/dpp/{original_id}/amend"),
+            serde_json::json!({ "patch": { "productName": "Corrected Public Battery" } }),
+        )
+        .await;
+    assert_eq!(resp.status(), 201);
+    let successor: serde_json::Value = resp.json().await.unwrap();
+    successor["id"].as_str().unwrap().to_owned()
+}

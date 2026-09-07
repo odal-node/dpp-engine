@@ -36,11 +36,14 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
   - **The response is a different passport from the one in the path.** It is the
     successor, with its own id and its own signature. A `201` is deliberate.
-  - **The predecessor stays resolvable forever.** Superseding withdraws a
-    passport from being *current*, never from being *readable*: it keeps its
-    signatures, its seal and its retention lock, and reports `superseded`. The
-    audit entry carries the successor's id and the stated reason, so a reader
-    arriving at the old record can find what replaced it and why.
+  - **The predecessor is kept, never deleted.** Superseding withdraws a passport
+    from being *current*, never from being *stored*: it keeps its signatures, its
+    seal and its retention lock, and reports `superseded` on `/api/v1/dpp/{id}`.
+    The audit entry carries the successor's id and the stated reason, so a reader
+    arriving at the old record can find what replaced it and why. Its **public**
+    by-id URL answers `404`, as it does for every status that is neither
+    published nor suspended; the product's printed carrier addresses the GTIN and
+    keeps working, resolving on past the superseded record to the successor.
   - **The predecessor is superseded last.** If the correction is refused by the
     publish gates — schema, product-group validation, mandatory content, signing
     — nothing has been superseded and the product still has a live passport.
@@ -50,6 +53,14 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   passport to a newer schema is a separate act, and disclosure classes are read
   from the schema version, so advancing it silently would change who may see
   which field as a side effect of fixing a typo.
+
+  The by-GTIN public lookup now **excludes superseded records and orders the
+  rest**. One GTIN matched one row only while a product had one passport; an
+  amendment ends that, since the successor inherits the product group data the
+  GTIN comes from and both records carry it. With no ordering, `LIMIT 1` took
+  whichever row the scan reached first, and a superseded predecessor answering
+  for its successor turned a recall into `404` — "no such GTIN", the answer for a
+  mistyped label, served to the person holding the recalled product.
 
   Known gap, deliberately not guessed at: no registry status intent is enqueued
   for the superseded passport. `RegistryStatusIntent` has only `Suspended` and

@@ -270,6 +270,27 @@ impl PassportRepository for PgPassportRepo {
     /// Same numeric-only guard as `find_published_by_gtin`: a `%` or `_` in an
     /// untrusted value would otherwise widen the LIKE pattern and match an
     /// arbitrary passport.
+    ///
+    /// # Why a superseded record is excluded, and why the order is fixed
+    ///
+    /// One GTIN matches one row only while a product has one passport. An
+    /// amendment ends that: the successor inherits the product group data the
+    /// GTIN comes from, so predecessor and successor both carry `/01/{gtin}/`
+    /// in `qrCodeUrl` and both match. With no `ORDER BY`, `LIMIT 1` then took
+    /// whichever row the scan reached first.
+    ///
+    /// That is not a tie worth breaking, because a superseded record is never
+    /// the answer to "what does this product's code resolve to" — its successor
+    /// is, which is the whole point of superseding it. Excluding it says so.
+    /// Left in, it answered for its successor: a product amended and then
+    /// recalled reported `404 "no published DPP for this GTIN"` to the scanner
+    /// instead of the `410` that is the recall signal, because the predecessor
+    /// won the scan and its status is neither published nor suspended.
+    ///
+    /// `created_at DESC` then makes the remainder deterministic rather than
+    /// heap-ordered. It does not encode a rule about which of two live records
+    /// wins — nothing should produce two — it only stops the answer from
+    /// depending on physical row order if something ever does.
     async fn find_by_gtin_any_status(&self, gtin: &str) -> Result<Option<Passport>, DppError> {
         if gtin.is_empty() || !gtin.bytes().all(|b| b.is_ascii_digit()) {
             return Ok(None);
@@ -277,6 +298,8 @@ impl PassportRepository for PgPassportRepo {
         let row = sqlx::query(
             "SELECT doc FROM odal.passport \
              WHERE doc->>'qrCodeUrl' LIKE '%/01/' || $1 || '/%' \
+               AND status <> 'superseded' \
+             ORDER BY created_at DESC \
              LIMIT 1",
         )
         .bind(gtin)

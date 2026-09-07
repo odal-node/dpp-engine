@@ -5,7 +5,16 @@
 //! the bytes it was published with. Correcting one is therefore not an edit but
 //! an *issuance* — a new record carrying `supersedesId` back to the record it
 //! replaces, with the predecessor moved to the terminal `Superseded` state and
-//! left permanently resolvable.
+//! kept, never deleted.
+//!
+//! The product's printed carrier keeps working, because it addresses the GTIN
+//! and the by-GTIN lookup now resolves past a superseded record to the successor.
+//! The predecessor's own `/public/dpp/{id}` URL is a separate question and is
+//! **not** answered here: it serves `404`, as it does for every status that is
+//! neither published nor suspended. That matters only for a product with no
+//! GTIN, whose carrier is that URL — tracked separately, since the honest answer
+//! is a redirect to the successor rather than serving a signed view that still
+//! says `"status": "active"`.
 //!
 //! The mechanism this uses was modelled before it had a caller.
 //! `PassportStatus::Superseded`, `Passport::version`, `Passport::supersedes_id`
@@ -33,9 +42,10 @@ impl PassportService {
     /// Writes a new `Draft` derived from `id`, applies `patch` to it, runs it
     /// through the ordinary publish pipeline, and only then moves the
     /// predecessor to `Superseded`. The predecessor keeps its signatures, its
-    /// seal and its retention lock, and stays resolvable by its own id forever —
-    /// superseding a passport withdraws it from being *current*, never from
-    /// being *readable*.
+    /// seal and its retention lock, and stays readable on `/api/v1/dpp/{id}` and
+    /// in the audit trail — superseding a passport withdraws it from being
+    /// *current*, never from being *stored*. Its public by-id URL answers `404`;
+    /// see the module doc.
     ///
     /// # Ordering
     ///
