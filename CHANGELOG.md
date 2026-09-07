@@ -12,6 +12,63 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ### Added
 
+- **A published passport can now be corrected, by issuing a successor rather than
+  editing it.** `POST /vault/api/v1/dpp/{dppId}/amend` takes the same patch shape
+  the draft update takes, publishes a **new** passport carrying `supersedesId`
+  back to the one being corrected and `version` incremented, then moves the
+  predecessor to the terminal `superseded` state.
+
+  Until now there was no way to fix a mistake in a published passport at all. The
+  content is immutable by design — its signatures commit to its bytes and the
+  retention guard refuses every write outside a handful of status fields — so the
+  only options were to suspend the passport, which reads as a withdrawal, or to
+  leave the error standing. Neither is what the regulation expects of a record
+  that has to remain accurate for the product's lifetime.
+
+  The mechanism was modelled long before it had a caller: `Superseded` has been a
+  legal status since the first migration, `version` and `supersedesId` have been
+  fields on the passport and columns on the table, and the port documentation
+  already described an amendment as "a new passport version, not an in-place
+  edit". What was missing was the route. Both columns are now written, so
+  `idx_passport_supersedes` indexes something for the first time.
+
+  Three properties worth knowing before using it:
+
+  - **The response is a different passport from the one in the path.** It is the
+    successor, with its own id and its own signature. A `201` is deliberate.
+  - **The predecessor is kept, never deleted.** Superseding withdraws a passport
+    from being *current*, never from being *stored*: it keeps its signatures, its
+    seal and its retention lock, and reports `superseded` on `/api/v1/dpp/{id}`.
+    The audit entry carries the successor's id and the stated reason, so a reader
+    arriving at the old record can find what replaced it and why. Its **public**
+    by-id URL answers `404`, as it does for every status that is neither
+    published nor suspended; the product's printed carrier addresses the GTIN and
+    keeps working, resolving on past the superseded record to the successor.
+  - **The predecessor is superseded last.** If the correction is refused by the
+    publish gates — schema, product-group validation, mandatory content, signing
+    — nothing has been superseded and the product still has a live passport.
+
+  The successor **inherits its predecessor's schema version** rather than moving
+  to the product group's current one. An amendment corrects content; migrating a
+  passport to a newer schema is a separate act, and disclosure classes are read
+  from the schema version, so advancing it silently would change who may see
+  which field as a side effect of fixing a typo.
+
+  The by-GTIN public lookup now **excludes superseded records and orders the
+  rest**. One GTIN matched one row only while a product had one passport; an
+  amendment ends that, since the successor inherits the product group data the
+  GTIN comes from and both records carry it. With no ordering, `LIMIT 1` took
+  whichever row the scan reached first, and a superseded predecessor answering
+  for its successor turned a recall into `404` — "no such GTIN", the answer for a
+  mistyped label, served to the person holding the recalled product.
+
+  Known gap, deliberately not guessed at: no registry status intent is enqueued
+  for the superseded passport. `RegistryStatusIntent` has only `Suspended` and
+  `Deactivated`, and supersession is neither — the passport was not withdrawn and
+  the product was not retired. The successor's own registration happens inside
+  publish, so the registry holds both. What it *should* hold is a question about
+  the registry's contract, which is still unverified against the specification.
+
 - **A continuity snapshot now says how long it stands, under its own signature.**
   Each snapshot written to object storage carries `asOf`, `validUntil` and a
   `snapshotJwsSignature` over the whole document — the passport's public view,
