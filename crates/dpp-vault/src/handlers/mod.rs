@@ -1,5 +1,6 @@
 //! HTTP handler modules for the vault API.
 
+pub mod amend;
 pub mod api_keys;
 pub mod archive;
 pub mod audience_read;
