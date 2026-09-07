@@ -110,11 +110,25 @@ pub(crate) async fn update_passport_in_tx(
     let doc = serde_json::to_value(passport)
         .map_err(|e| DppError::Internal(format!("serialize: {e}")))?;
     let res = sqlx::query(
+        // The scalar columns re-projected from `$2`, each `COALESCE`d onto its
+        // stored value for the reason the doc comment above gives: an omitted
+        // key is absent, not null, so a column must keep what it has rather
+        // than be cleared by a partial document.
+        //
+        // `retention_until` is the one that matters most here — it is sealed at
+        // publish, so it is never present at create and would stay NULL forever
+        // if only the insert wrote it. `assessed_at` and `ruleset_version`
+        // change whenever the compliance determination is re-run.
         r#"UPDATE odal.passport SET
              product_group           = $2->>'productGroup',
              status           = COALESCE($2->>'status', status),
              retention_locked = COALESCE(($2->>'retentionLocked')::boolean, retention_locked),
              schema_version   = COALESCE($2->>'schemaVersion', schema_version),
+             granularity      = COALESCE($2->>'granularity', granularity),
+             retention_until  = COALESCE(NULLIF($2->>'retentionUntil','')::timestamptz, retention_until),
+             product_id       = COALESCE(NULLIF($2->>'productId','')::uuid, product_id),
+             assessed_at      = COALESCE(NULLIF($2->'complianceResult'->>'assessedAt','')::timestamptz, assessed_at),
+             ruleset_version  = COALESCE($2->'complianceResult'->>'rulesetVersion', ruleset_version),
              published_at     = COALESCE(NULLIF($2->>'publishedAt','')::timestamptz, published_at),
              doc              = doc || $2
            WHERE id = $1"#,
@@ -177,15 +191,27 @@ impl PassportRepository for PgPassportRepo {
         let doc = Self::to_doc(&passport)?;
         let mut tx = self.dal.begin().await?;
         sqlx::query(
-            // `version` and `supersedes_id` are extracted here rather than left
-            // to the doc alone because the version chain is queried by them:
+            // Every scalar column here is a **projection of `doc`**, never a
+            // second source of truth: the document is authoritative and these
+            // exist so a value can be filtered, indexed or reported on without
+            // reaching into JSONB. `passport_column_coverage.rs` fails the build
+            // if a column on this table is left out of both this statement and
+            // the update, which is how ten of them came to sit permanently NULL
+            // while reading as authoritative.
+            //
+            // `version` and `supersedes_id` carry the version chain —
             // `idx_passport_supersedes` indexes the second, and "is this record
-            // still the head" is a predicate, not a document read. Both were
-            // reserved by the migration and never written until the amend path
-            // existed to produce a value other than the default.
+            // still the head" is a predicate, not a document read.
+            //
+            // `assessed_at` and `ruleset_version` live one level down, inside
+            // `complianceResult`, because that is where the determination that
+            // produced them lives. A missing `complianceResult` yields SQL NULL
+            // through both arrows rather than an error.
             r#"INSERT INTO odal.passport
                  (id, product_group, status, retention_locked, schema_version,
                   version, supersedes_id,
+                  granularity, retention_until, product_id,
+                  assessed_at, ruleset_version,
                   created_at, updated_at, published_at, doc)
                VALUES ($1,
                        $2->>'productGroup',
@@ -194,6 +220,11 @@ impl PassportRepository for PgPassportRepo {
                        COALESCE($2->>'schemaVersion','1.0.0'),
                        COALESCE(($2->>'version')::integer, 1),
                        NULLIF($2->>'supersedesId','')::uuid,
+                       $2->>'granularity',
+                       NULLIF($2->>'retentionUntil','')::timestamptz,
+                       NULLIF($2->>'productId','')::uuid,
+                       NULLIF($2->'complianceResult'->>'assessedAt','')::timestamptz,
+                       $2->'complianceResult'->>'rulesetVersion',
                        now(), now(),
                        NULLIF($2->>'publishedAt','')::timestamptz,
                        $2)"#,

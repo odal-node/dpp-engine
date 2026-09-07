@@ -12,6 +12,46 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ### Added
 
+- **Eight reserved columns on the passport table are now written, two are gone,
+  and a gate stops the next one accumulating.** Migration `0035`.
+
+  `0004` reserved ten scalar columns for values that live in the `doc` JSONB and
+  no write path populated any of them. No data was lost — the document carried
+  all of it — but a column reads as authoritative whether or not anything writes
+  it, and these did not. `WHERE supersedes_id IS NULL` returned every row.
+  Ordering by `version` ordered by nothing. `retention_until` was computed at
+  publish and served on the API response while its own column sat NULL, so the
+  two disagreed and only one of them was right.
+
+  `granularity`, `retention_until`, `product_id`, `assessed_at` and
+  `ruleset_version` are now projected out of the document in both the insert and
+  the update. The last two are read from inside `complianceResult`, where the
+  determination that produced them lives. `retention_until` needed the update
+  path specifically: it is sealed at publish, never present at create, so an
+  insert-only projection would have left it NULL on every passport that has one.
+  `version` and `supersedes_id` were wired with the amend route.
+
+  `template_version` and `presentation_profile_id` are **dropped**. They
+  reference a product-template and presentation-profile model that exists
+  nowhere in the workspace — no field, no type, no handler, no reference outside
+  the migration that created them. Nothing has ever intended to write them, so
+  nothing is lost, and re-adding a column is a one-line migration on the day a
+  model needs one.
+
+  `serial_number` stays, unwritten and documented. It is reserved for an
+  item-level unit serial the core library does not carry: `Passport` has
+  `granularity`, which has an `item` level, but no serial to pair with it. The
+  AI 21 value in the GS1 carrier is derived from the passport id — deliberately,
+  so the printed label discloses nothing about the record — which makes it an
+  identifier for the passport and not for the product. Tracked upstream.
+
+  The gate is `passport_column_coverage.rs`. It inserts a passport with every
+  projected field populated, updates it, reads the row back with `to_jsonb`, and
+  fails on any column still NULL that is not in a documented exception list. It
+  asserts the *value* rather than grepping the source for the column name,
+  because `->>` on a missing key is SQL NULL rather than an error — a wrong JSON
+  path fails silently, and a name-matching gate would pass over it.
+
 - **A published passport can now be corrected, by issuing a successor rather than
   editing it.** `POST /vault/api/v1/dpp/{dppId}/amend` takes the same patch shape
   the draft update takes, publishes a **new** passport carrying `supersedesId`
