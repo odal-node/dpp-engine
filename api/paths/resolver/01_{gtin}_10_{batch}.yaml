@@ -8,6 +8,7 @@ get:
     (`linkType` / `Accept` negotiation).
   tags:
     - Public Resolver
+  security: []
   parameters:
     - name: gtin
       in: path

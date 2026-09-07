@@ -8,6 +8,7 @@ get:
     `/01/{gtin}` otherwise (`linkType` / `Accept` negotiation).
   tags:
     - Public Resolver
+  security: []
   parameters:
     - name: gtin
       in: path

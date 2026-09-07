@@ -14,6 +14,7 @@ get:
     can pre-validate a body and get the verdict the create route would give.
   tags:
     - Integrator
+  security: []
   parameters:
     - name: productGroup
       in: path

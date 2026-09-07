@@ -348,6 +348,7 @@ mod tests {
             new_status: None,
             metadata: None,
             timestamp: Utc::now(),
+            request_id: None,
             prev_hash: None,
             entry_hash: None,
         }

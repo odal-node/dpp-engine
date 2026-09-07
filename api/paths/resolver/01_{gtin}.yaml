@@ -10,6 +10,7 @@ get:
       RFC 9264 linkset
   tags:
     - Public Resolver
+  security: []
   parameters:
     - name: gtin
       in: path
