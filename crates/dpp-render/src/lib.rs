@@ -25,5 +25,5 @@ mod page;
 mod remainder;
 mod sections;
 
-pub use carrier::carrier_uri;
+pub use carrier::{QR_QUIET_ZONE_MODULES, carrier_uri};
 pub use page::{SnapshotNotice, build_qr_svg, render_page};

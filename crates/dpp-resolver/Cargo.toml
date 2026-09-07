@@ -54,3 +54,8 @@ metrics-exporter-prometheus = { workspace = true }
 tower         = { version = "0.5", features = ["util"] }
 ed25519-dalek = { workspace = true }
 rand          = { workspace = true }
+# Test-only QR decoder. The round-trip it enables is the only thing that can
+# tell "this endpoint returned a PNG" apart from "this endpoint returned a PNG
+# encoding the right URL" — the distinction the previous tests could not make,
+# and the one a `qrcode` or `image` bump can silently change.
+rqrr          = "0.10"
