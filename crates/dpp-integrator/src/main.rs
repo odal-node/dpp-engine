@@ -29,6 +29,12 @@ async fn main() -> anyhow::Result<()> {
         vault_client,
         job_store,
         batch_concurrency: cfg.batch_concurrency,
+        // The standalone integrator binary has no database — its job store is
+        // in-memory — so there is nowhere to record a claim. `None` leaves the
+        // middleware unmounted rather than pretending: a key here would be
+        // forgotten on restart, which is worse than not accepting one. Idempotent
+        // imports are a property of the fused node.
+        idempotency: None,
     };
 
     let app = router::build(state);

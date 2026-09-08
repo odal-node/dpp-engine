@@ -24,6 +24,7 @@ post:
       schema:
         type: string
         example: battery
+    - $ref: ../../components/parameters/IdempotencyKey.yaml
   requestBody:
     required: true
     content:
@@ -63,3 +64,5 @@ post:
       $ref: ../../components/responses/ValidationError.yaml
     '400':
       $ref: ../../components/responses/BadRequest.yaml
+    '409':
+      $ref: ../../components/responses/IdempotentRequestInFlight.yaml

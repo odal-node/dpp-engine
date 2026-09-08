@@ -28,9 +28,10 @@ one.
 The app role `odal_app` cannot run DDL, and may `DELETE` only from these tables:
 
 ```
-odal.import_job      (granted 0010) — expired-job cleanup, every 6 hours
-odal.scan_telemetry  (granted 0025) — rolling retention horizon
-odal.qr_render       (granted 0025) — rolling retention horizon
+odal.import_job       (granted 0010) — expired-job cleanup, every 6 hours
+odal.scan_telemetry   (granted 0025) — rolling retention horizon
+odal.qr_render        (granted 0025) — rolling retention horizon
+odal.idempotency_key  (granted 0036) — retry window expiry, hourly
 ```
 
 Two more were granted and correctly **revoked** when the retire-not-delete policy
@@ -40,6 +41,15 @@ landed: `odal.facility` (0012 → revoked 0013) and `odal.operator_identifier`
 Every table in the live set is a counter or a queue. **No table carrying
 passport, audit, evidence, seal or registry-identity data has a DELETE grant**,
 and that is the property the shorter sentence elsewhere is protecting.
+
+`idempotency_key` is a queue by that test, and it is worth saying why rather
+than leaving it to be inferred. A row records that one client request was
+answered, so that resending it replays the answer instead of creating a second
+resource. It is evidence of nothing once the client's retry budget is spent —
+the *outcome* it protects is already in `passport_audit`, which has no DELETE
+grant and never will. Keeping the key rows instead would be an unbounded store
+of request bodies and response bodies, which is a slow leak and a larger
+disclosure surface, not a stronger record.
 
 This list lives here, not in a migration, precisely because of the rule above:
 it has to be editable when a grant changes, and a migration is not. `CLAUDE.md`

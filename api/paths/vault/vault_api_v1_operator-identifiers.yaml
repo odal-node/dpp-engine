@@ -29,11 +29,17 @@ post:
     Add an economic-operator identifier. Validated by scheme — LEI uses
     ISO 7064 MOD 97-10; DUNS is 9 digits; EORI/VAT require a country prefix.
     Requires an admin-scoped key.
+
+    Operator identifiers are retired, never deleted, so a duplicate created by
+    a retried request cannot be cleaned up afterwards. Send an
+    `Idempotency-Key`.
   tags:
     - Operator Identifiers
   security:
     - BearerApiKey: []
     - BasicAuth: []
+  parameters:
+    - $ref: ../../components/parameters/IdempotencyKey.yaml
   requestBody:
     required: true
     content:
@@ -53,3 +59,5 @@ post:
       $ref: ../../components/responses/Forbidden.yaml
     '422':
       $ref: ../../components/responses/ValidationError.yaml
+    '409':
+      $ref: ../../components/responses/IdempotentRequestInFlight.yaml
