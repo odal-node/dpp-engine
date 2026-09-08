@@ -90,6 +90,103 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   former spawns no purge task and the latter has no database, and a key store
   that only grows, or that forgets on restart, is worse than none.
 
+- **Eight reserved columns on the passport table are now written, two are gone,
+  and a gate stops the next one accumulating.** Migration `0035`.
+
+  `0004` reserved ten scalar columns for values that live in the `doc` JSONB and
+  no write path populated any of them. No data was lost — the document carried
+  all of it — but a column reads as authoritative whether or not anything writes
+  it, and these did not. `WHERE supersedes_id IS NULL` returned every row.
+  Ordering by `version` ordered by nothing. `retention_until` was computed at
+  publish and served on the API response while its own column sat NULL, so the
+  two disagreed and only one of them was right.
+
+  `granularity`, `retention_until`, `product_id`, `assessed_at` and
+  `ruleset_version` are now projected out of the document in both the insert and
+  the update. The last two are read from inside `complianceResult`, where the
+  determination that produced them lives. `retention_until` needed the update
+  path specifically: it is sealed at publish, never present at create, so an
+  insert-only projection would have left it NULL on every passport that has one.
+  `version` and `supersedes_id` were wired with the amend route.
+
+  `template_version` and `presentation_profile_id` are **dropped**. They
+  reference a product-template and presentation-profile model that exists
+  nowhere in the workspace — no field, no type, no handler, no reference outside
+  the migration that created them. Nothing has ever intended to write them, so
+  nothing is lost, and re-adding a column is a one-line migration on the day a
+  model needs one.
+
+  `serial_number` stays, unwritten and documented. It is reserved for an
+  item-level unit serial the core library does not carry: `Passport` has
+  `granularity`, which has an `item` level, but no serial to pair with it. The
+  AI 21 value in the GS1 carrier is derived from the passport id — deliberately,
+  so the printed label discloses nothing about the record — which makes it an
+  identifier for the passport and not for the product. Tracked upstream.
+
+  The gate is `passport_column_coverage.rs`. It inserts a passport with every
+  projected field populated, updates it, reads the row back with `to_jsonb`, and
+  fails on any column still NULL that is not in a documented exception list. It
+  asserts the *value* rather than grepping the source for the column name,
+  because `->>` on a missing key is SQL NULL rather than an error — a wrong JSON
+  path fails silently, and a name-matching gate would pass over it.
+
+- **A published passport can now be corrected, by issuing a successor rather than
+  editing it.** `POST /vault/api/v1/dpp/{dppId}/amend` takes the same patch shape
+  the draft update takes, publishes a **new** passport carrying `supersedesId`
+  back to the one being corrected and `version` incremented, then moves the
+  predecessor to the terminal `superseded` state.
+
+  Until now there was no way to fix a mistake in a published passport at all. The
+  content is immutable by design — its signatures commit to its bytes and the
+  retention guard refuses every write outside a handful of status fields — so the
+  only options were to suspend the passport, which reads as a withdrawal, or to
+  leave the error standing. Neither is what the regulation expects of a record
+  that has to remain accurate for the product's lifetime.
+
+  The mechanism was modelled long before it had a caller: `Superseded` has been a
+  legal status since the first migration, `version` and `supersedesId` have been
+  fields on the passport and columns on the table, and the port documentation
+  already described an amendment as "a new passport version, not an in-place
+  edit". What was missing was the route. Both columns are now written, so
+  `idx_passport_supersedes` indexes something for the first time.
+
+  Three properties worth knowing before using it:
+
+  - **The response is a different passport from the one in the path.** It is the
+    successor, with its own id and its own signature. A `201` is deliberate.
+  - **The predecessor is kept, never deleted.** Superseding withdraws a passport
+    from being *current*, never from being *stored*: it keeps its signatures, its
+    seal and its retention lock, and reports `superseded` on `/api/v1/dpp/{id}`.
+    The audit entry carries the successor's id and the stated reason, so a reader
+    arriving at the old record can find what replaced it and why. Its **public**
+    by-id URL answers `404`, as it does for every status that is neither
+    published nor suspended; the product's printed carrier addresses the GTIN and
+    keeps working, resolving on past the superseded record to the successor.
+  - **The predecessor is superseded last.** If the correction is refused by the
+    publish gates — schema, product-group validation, mandatory content, signing
+    — nothing has been superseded and the product still has a live passport.
+
+  The successor **inherits its predecessor's schema version** rather than moving
+  to the product group's current one. An amendment corrects content; migrating a
+  passport to a newer schema is a separate act, and disclosure classes are read
+  from the schema version, so advancing it silently would change who may see
+  which field as a side effect of fixing a typo.
+
+  The by-GTIN public lookup now **excludes superseded records and orders the
+  rest**. One GTIN matched one row only while a product had one passport; an
+  amendment ends that, since the successor inherits the product group data the
+  GTIN comes from and both records carry it. With no ordering, `LIMIT 1` took
+  whichever row the scan reached first, and a superseded predecessor answering
+  for its successor turned a recall into `404` — "no such GTIN", the answer for a
+  mistyped label, served to the person holding the recalled product.
+
+  Known gap, deliberately not guessed at: no registry status intent is enqueued
+  for the superseded passport. `RegistryStatusIntent` has only `Suspended` and
+  `Deactivated`, and supersession is neither — the passport was not withdrawn and
+  the product was not retired. The successor's own registration happens inside
+  publish, so the registry holds both. What it *should* hold is a question about
+  the registry's contract, which is still unverified against the specification.
+
 - **A continuity snapshot now says how long it stands, under its own signature.**
   Each snapshot written to object storage carries `asOf`, `validUntil` and a
   `snapshotJwsSignature` over the whole document — the passport's public view,
@@ -285,6 +382,105 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   turns into method names. Two prose examples carried it too.
 
 ### Fixed
+
+- **Scanning a recalled product's QR code answered `502 Bad Gateway`.**
+  The GS1 Digital Link routes now serve `410 Gone` with a withdrawal message
+  when the passport behind the code has been suspended.
+
+  The vault already did the right thing: `GET /vault/public/dpp/by-gtin/{gtin}`
+  branches on status and answers `410` for a suspended passport, deliberately,
+  because a suspension is a recall and the person scanning the code on a product
+  is precisely who must not be told "bad label".
+
+  The resolver then threw that away. `fetch_by_gtin` mapped `404` and `400` to
+  `404` and folded **everything else** non-2xx into `502` — so the one signal a
+  scanner of a recalled product needs arrived as a message about our
+  infrastructure. All four carrier shapes were affected, which is all of them.
+
+  A withdrawal and a GTIN this node never published now carry different wording,
+  and a genuinely failing vault still reports `502`. The three cases are pinned
+  by tests; the recall case was confirmed to fail (`502`) before the fix.
+
+  A stale comment beside the old behaviour claimed serving `410` here "needs the
+  lookup to stop folding that decision in, which is a `dpp-core` change". That
+  had already been done — the vault route reads through `find_by_gtin_any_status`
+  and branches locally. No core change was required.
+
+- **The stored-document compatibility guard passed without reading a single
+  document.** `passport_doc_compat.rs` freezes a real stored `doc` per product
+  group and asserts it still deserialises, so a change that silently breaks
+  stored passports fails the build. All nineteen fixtures predated the `sector`
+  → `productGroup` envelope rename and were therefore listed in
+  `UNREADABLE_FIXTURES`: the suite was green because every failure was
+  documented, not because the read path worked. The file said so itself.
+
+  Twelve current-shape documents — one per shipped product group — are now
+  captured from real creates, and the nine rows the rename had put on paths that
+  are still current are gone. Ten exemptions remain and all are genuine: six
+  battery breaks (no `batteryType`, or no lens path) and four older pre-rename
+  versions whose files stay on disk as the record of what the break was.
+
+  Verified by breaking it: deleting `productGroup` from a captured fixture now
+  fails the guard with `missing field productGroup`. The same corruption passed
+  silently before.
+
+- **A product group with no frozen document was invisible to that guard.**
+  `collect_fixtures` walks the fixtures directory, so coverage was whatever
+  happened to be on disk — a product group with nothing there was never
+  iterated rather than reported, and could break completely without any test
+  saying so. Three had already fallen through: `mattress` shipped with no
+  fixture directory at all, `furniture` moved to v1.2.0 while its only fixture
+  stayed at v1.1.0, and `unsold-goods` carried a v1.0.0 fixture for a version the
+  catalog no longer ships.
+
+  `every_shipped_product_group_has_a_fixture_for_its_current_version` now reads
+  the catalog rather than the directory, so the question is "does every shipped
+  product group have one" instead of "does everything present still read". The
+  two fail in opposite directions, which is what keeps the list from quietly
+  growing to cover everything again.
+
+- **`just capture-fixture unsold-goods` could not run.** The recipe interpolated
+  the catalog key straight into a Rust function name, and `capture_unsold-goods`
+  is not an identifier — so the one product group whose key carries a hyphen was
+  the one that could never be captured. The key is now substituted before use.
+
+- **A failing capture reported `expected value at line 1 column 1`.** The harness
+  parsed the create response as JSON before checking its status, so any non-JSON
+  refusal surfaced as a decode error that said nothing about what the node
+  refused — and a rejected create is the normal way that harness fails. It now
+  asserts the status against the raw body first, which turned an opaque decode
+  error into `invalid type: floating point 5.0, expected u8` and located two
+  wrong field types in seconds.
+
+- **The registry back-up URL pointed one path segment away from the snapshot it
+  named.** The snapshot store writes `{dppId}/public.json`; `publish` declared
+  the back-up at `{dppId}.json`, and `.env.example` documented that second shape
+  — so the code and its documentation agreed with each other and disagreed with
+  the only thing that writes an object. Any operator who set
+  `SNAPSHOT_PUBLIC_BASE_URL` published a link that fetches nothing.
+
+  Nothing could catch it. `RegistrationRequest::validate` checks that the URL is
+  HTTPS and stops, because `https://host/dpp/{id}.json` is well formed and simply
+  addresses nothing; reachability is the registry's check, so the first party to
+  discover it would have been the registry, on a live registration. No test
+  covered the relationship either — the registry suite only ever exercised
+  `backup_url: None`, which is the default.
+
+  The path now comes from `snapshot_json_key` in `dpp-types`, which is what the
+  store writes and what the declaration reads. One definition, visible to both
+  crates, is what stops them drifting apart again; a test asserts the declared
+  URL ends with the key the store writes, and fails with both halves named when
+  it does not. A trailing slash on the configured base no longer produces a
+  double slash, which is a different path to most static servers.
+
+  Latent rather than live: `SNAPSHOT_PUBLIC_BASE_URL` is unset by default and
+  commented out in `.env.example`, so no back-up link was being declared at all.
+  The defect surfaced the moment an operator did what the documentation said.
+
+  `.env.example` now states that whatever serves the base must expose the
+  bucket's own layout rather than a flattened one. The rendered HTML sibling is
+  deliberately not what the back-up points at: that link is consumed by machines,
+  and the JSON view carries the signatures a verifier needs.
 
 - **Fourteen model groups rendered as API sections with an empty Operations
   heading.** `Errors`, `Passport`, … `Regulatory Catalog` were declared as tags

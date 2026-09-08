@@ -30,18 +30,32 @@
 //! Pure filesystem + in-memory check — no Docker/Postgres required, runs in
 //! the fast `cargo nextest run --workspace` gate.
 //!
-//! # ⚠️ This guard is currently vacuous, and that is not a quiet state
+//! # What keeps this guard from going vacuous again
 //!
-//! Every frozen document predates the `sector` → `productGroup` envelope rename
-//! and is now listed in [`UNREADABLE_FIXTURES`]. Nothing here reads, so nothing
-//! here is being checked: the test passes because each failure is documented,
-//! not because the read path works.
+//! It had. Every frozen document predated the `sector` → `productGroup` envelope
+//! rename, so every one was listed in [`UNREADABLE_FIXTURES`] and nothing here
+//! read: the suite passed because each failure was documented, not because the
+//! read path worked. Twelve current-shape documents — one per shipped product
+//! group — have since been captured from real creates, and the rows the rename
+//! had put there are gone.
 //!
-//! It regains its teeth the moment one current-shape document is captured — from
-//! a real create, not hand-authored, or it is only evidence that the current code
-//! agrees with itself. Capture one per shipped product-group schema version and
-//! delete the corresponding row from [`UNREADABLE_FIXTURES`]; the old files stay
-//! on disk as the record of what the break was.
+//! Two checks now stand between here and that state, and they fail in opposite
+//! directions:
+//!
+//! - [`every_frozen_passport_doc_still_reads`] fails when a documented-unreadable
+//!   fixture *starts* reading, so a row whose reason has stopped being true has
+//!   to be removed rather than left to rot.
+//! - [`every_shipped_product_group_has_a_fixture_for_its_current_version`] fails
+//!   when a shipped product group has no frozen document at all. That direction
+//!   was previously invisible: [`collect_fixtures`] walks the directory, so
+//!   coverage was whatever happened to be on disk, and a product group with no
+//!   fixture was never iterated rather than reported. Three had already fallen
+//!   through it.
+//!
+//! Neither removes the judgement in [`UNREADABLE_FIXTURES`] — an accepted,
+//! permanent break is still recorded by hand, with its reason. What they remove
+//! is the possibility of the list quietly growing to cover everything, or of a
+//! product group having nothing to cover.
 //!
 //! # Layout
 //!
@@ -61,10 +75,15 @@ use dpp_domain::Passport;
 use dpp_domain::catalog::ProductGroupCatalog;
 use dpp_domain::schemas::lens::LensRegistry;
 
+/// Where the frozen documents live.
+fn fixtures_dir() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/passport_docs")
+}
+
 /// Every frozen fixture, paired with the catalog key its parent directory
 /// claims — `(catalog_key, path)`, sorted for a stable failure order.
 fn collect_fixtures() -> Vec<(String, PathBuf)> {
-    let fixtures_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/passport_docs");
+    let fixtures_dir = fixtures_dir();
     let mut fixtures: Vec<(String, PathBuf)> = fs::read_dir(&fixtures_dir)
         .expect("read tests/fixtures/passport_docs")
         .filter_map(|e| e.ok())
@@ -161,27 +180,7 @@ const UNREADABLE_FIXTURES: &[(&str, &str)] = &[
          stated.",
     ),
     (
-        "aluminium/v1.1.0.json",
-        "The envelope keys `sector` and `sectorData` were renamed to `productGroup` \n         and `productGroupData`. `productGroup` is required, so a document of this \n         shape is refused loudly rather than read with the field silently missing. \n         Deliberate and permanent: the term the Regulation defines is product \n         group, and a read-only alias would have kept both spellings alive in a \n         codebase whose whole problem was two names for one concept. No lens \n         bridges it, and none is wanted.",
-    ),
-    (
-        "battery/v2.6.0.json",
-        "The envelope keys `sector` and `sectorData` were renamed to `productGroup` \n         and `productGroupData`. `productGroup` is required, so a document of this \n         shape is refused loudly rather than read with the field silently missing. \n         Deliberate and permanent: the term the Regulation defines is product \n         group, and a read-only alias would have kept both spellings alive in a \n         codebase whose whole problem was two names for one concept. No lens \n         bridges it, and none is wanted.",
-    ),
-    (
-        "construction/v1.1.0.json",
-        "The envelope keys `sector` and `sectorData` were renamed to `productGroup` \n         and `productGroupData`. `productGroup` is required, so a document of this \n         shape is refused loudly rather than read with the field silently missing. \n         Deliberate and permanent: the term the Regulation defines is product \n         group, and a read-only alias would have kept both spellings alive in a \n         codebase whose whole problem was two names for one concept. No lens \n         bridges it, and none is wanted.",
-    ),
-    (
-        "detergent/v1.1.0.json",
-        "The envelope keys `sector` and `sectorData` were renamed to `productGroup` \n         and `productGroupData`. `productGroup` is required, so a document of this \n         shape is refused loudly rather than read with the field silently missing. \n         Deliberate and permanent: the term the Regulation defines is product \n         group, and a read-only alias would have kept both spellings alive in a \n         codebase whose whole problem was two names for one concept. No lens \n         bridges it, and none is wanted.",
-    ),
-    (
         "electronics/v1.1.0.json",
-        "The envelope keys `sector` and `sectorData` were renamed to `productGroup` \n         and `productGroupData`. `productGroup` is required, so a document of this \n         shape is refused loudly rather than read with the field silently missing. \n         Deliberate and permanent: the term the Regulation defines is product \n         group, and a read-only alias would have kept both spellings alive in a \n         codebase whose whole problem was two names for one concept. No lens \n         bridges it, and none is wanted.",
-    ),
-    (
-        "electronics/v1.2.0.json",
         "The envelope keys `sector` and `sectorData` were renamed to `productGroup` \n         and `productGroupData`. `productGroup` is required, so a document of this \n         shape is refused loudly rather than read with the field silently missing. \n         Deliberate and permanent: the term the Regulation defines is product \n         group, and a read-only alias would have kept both spellings alive in a \n         codebase whose whole problem was two names for one concept. No lens \n         bridges it, and none is wanted.",
     ),
     (
@@ -189,23 +188,7 @@ const UNREADABLE_FIXTURES: &[(&str, &str)] = &[
         "The envelope keys `sector` and `sectorData` were renamed to `productGroup` \n         and `productGroupData`. `productGroup` is required, so a document of this \n         shape is refused loudly rather than read with the field silently missing. \n         Deliberate and permanent: the term the Regulation defines is product \n         group, and a read-only alias would have kept both spellings alive in a \n         codebase whose whole problem was two names for one concept. No lens \n         bridges it, and none is wanted.",
     ),
     (
-        "steel/v1.1.0.json",
-        "The envelope keys `sector` and `sectorData` were renamed to `productGroup` \n         and `productGroupData`. `productGroup` is required, so a document of this \n         shape is refused loudly rather than read with the field silently missing. \n         Deliberate and permanent: the term the Regulation defines is product \n         group, and a read-only alias would have kept both spellings alive in a \n         codebase whose whole problem was two names for one concept. No lens \n         bridges it, and none is wanted.",
-    ),
-    (
         "textile/v1.1.0.json",
-        "The envelope keys `sector` and `sectorData` were renamed to `productGroup` \n         and `productGroupData`. `productGroup` is required, so a document of this \n         shape is refused loudly rather than read with the field silently missing. \n         Deliberate and permanent: the term the Regulation defines is product \n         group, and a read-only alias would have kept both spellings alive in a \n         codebase whose whole problem was two names for one concept. No lens \n         bridges it, and none is wanted.",
-    ),
-    (
-        "textile/v1.2.0.json",
-        "The envelope keys `sector` and `sectorData` were renamed to `productGroup` \n         and `productGroupData`. `productGroup` is required, so a document of this \n         shape is refused loudly rather than read with the field silently missing. \n         Deliberate and permanent: the term the Regulation defines is product \n         group, and a read-only alias would have kept both spellings alive in a \n         codebase whose whole problem was two names for one concept. No lens \n         bridges it, and none is wanted.",
-    ),
-    (
-        "toy/v1.1.0.json",
-        "The envelope keys `sector` and `sectorData` were renamed to `productGroup` \n         and `productGroupData`. `productGroup` is required, so a document of this \n         shape is refused loudly rather than read with the field silently missing. \n         Deliberate and permanent: the term the Regulation defines is product \n         group, and a read-only alias would have kept both spellings alive in a \n         codebase whose whole problem was two names for one concept. No lens \n         bridges it, and none is wanted.",
-    ),
-    (
-        "tyre/v1.0.0.json",
         "The envelope keys `sector` and `sectorData` were renamed to `productGroup` \n         and `productGroupData`. `productGroup` is required, so a document of this \n         shape is refused loudly rather than read with the field silently missing. \n         Deliberate and permanent: the term the Regulation defines is product \n         group, and a read-only alias would have kept both spellings alive in a \n         codebase whose whole problem was two names for one concept. No lens \n         bridges it, and none is wanted.",
     ),
     (
@@ -356,5 +339,55 @@ fn no_frozen_doc_loses_an_envelope_key_unrecorded() {
          rename must keep accepting the old key), or add it to RETIRED_ENVELOPE_KEYS \
          with the reason it is no longer carried.",
         failures.join("\n")
+    );
+}
+
+/// Every shipped product group has a frozen document for the version new
+/// passports are written at.
+///
+/// # Why this is a separate check from the one above
+///
+/// [`every_frozen_passport_doc_still_reads`] walks the fixtures directory, so
+/// what it covers is whatever happens to be on disk. That makes it blind in one
+/// direction: a product group with **no** fixture is not a failure, it is
+/// simply never iterated. Coverage can therefore fall to zero for a whole
+/// product group without any test saying so — which is a quieter version of the
+/// same defect as an exemption list that has grown to cover everything.
+///
+/// It had already happened three ways when this check was written: `mattress`
+/// shipped with no fixture directory at all, `furniture` moved to v1.2.0 while
+/// its only fixture stayed at v1.1.0, and `unsold-goods` carried a v1.0.0
+/// fixture for a version the catalog no longer ships.
+///
+/// The current version is the one worth pinning. Older frozen versions are
+/// historical evidence and are allowed to disappear from the catalog; the
+/// version new passports are being written at right now is the one where a
+/// silent read-path break would affect documents a deployment is creating
+/// today.
+#[test]
+fn every_shipped_product_group_has_a_fixture_for_its_current_version() {
+    let catalog = ProductGroupCatalog::new();
+    let mut missing = Vec::new();
+
+    for descriptor in catalog.all() {
+        let key = &descriptor.key;
+        let version = &descriptor.current_schema_version;
+        let path = fixtures_dir().join(key).join(format!("v{version}.json"));
+        if !path.exists() {
+            missing.push(format!(
+                "  {key} v{version} — expected {}",
+                path.strip_prefix(fixtures_dir()).unwrap_or(&path).display()
+            ));
+        }
+    }
+
+    assert!(
+        missing.is_empty(),
+        "a product group the catalog ships has no frozen document for the version new \
+         passports are written at, so nothing checks that documents being created today \
+         still read:\n{}\n\nCapture one with `just capture-fixture <product-group>`. Do not \
+         hand-author it — a document written from the current structs deserialises back \
+         into them by construction, so the guard would pass tautologically.",
+        missing.join("\n")
     );
 }
