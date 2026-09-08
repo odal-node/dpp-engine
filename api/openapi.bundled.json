@@ -790,6 +790,74 @@
         }
       }
     },
+    "/vault/api/v1/dpp/{dppId}/amend": {
+      "post": {
+        "operationId": "amendDpp",
+        "summary": "Amend a published DPP by issuing a successor",
+        "description": "Correct a published DPP. A published passport cannot be edited in place —\nits signatures commit to its bytes and the retention guard refuses the\nwrite — so this issues a **new** passport instead.\n\nThe successor is a copy of `dppId` with the `patch` applied, carrying\n`supersedesId` back to `dppId` and `version` incremented. It goes through\nthe same gates as any first publish: schema validation, product-group\nvalidation, mandatory-content checks, signing, and registry sync. When it\npublishes successfully, `dppId` moves to the terminal `superseded` state.\n\n**The response body is a different passport from the one in the path.** It\nis the successor, with its own `id`. Clients holding the old id keep a valid\nreference: a superseded passport stays resolvable, keeps its signatures and\nits seal, and reports `superseded` as its status.\n\nOnly an `active` DPP can be amended. A draft is edited in place with\n`PUT /vault/api/v1/dpp/{dppId}`; a suspended, archived, superseded or\ndeactivated DPP cannot be superseded.\n\nThe schema version is **inherited**, not advanced to the product group's\ncurrent one. An amendment corrects content; migrating a passport to a newer\nschema is a separate act. This also keeps the successor's disclosure classes\nidentical to the predecessor's, since those are read from the schema\nversion's own annotations.\n\nEmits `dpp.passport.published` for the successor and\n`dpp.passport.superseded` for the predecessor.\n",
+        "tags": [
+          "DPP Lifecycle"
+        ],
+        "security": [
+          {
+            "BearerApiKey": []
+          },
+          {
+            "BasicAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "dppId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/DppId"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AmendRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successor published and predecessor superseded. Returns the **successor**\n— a different record from the one named in the path, with its own `id`,\n`version` incremented, and `supersedesId` set to `dppId`.\n",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PassportResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationError"
+          }
+        }
+      }
+    },
     "/vault/api/v1/dpp/{dppId}/suspend": {
       "post": {
         "operationId": "suspendDpp",
@@ -3746,6 +3814,9 @@
           },
           "404": {
             "description": "No published DPP for this GTIN, or unknown link type."
+          },
+          "410": {
+            "$ref": "#/components/responses/Gone"
           }
         }
       }
@@ -3804,6 +3875,9 @@
           },
           "404": {
             "description": "No published DPP for this GTIN, or unknown link type."
+          },
+          "410": {
+            "$ref": "#/components/responses/Gone"
           }
         }
       }
@@ -3862,6 +3936,9 @@
           },
           "404": {
             "description": "No published DPP for this GTIN, or unknown link type."
+          },
+          "410": {
+            "$ref": "#/components/responses/Gone"
           }
         }
       }
@@ -3929,6 +4006,9 @@
           },
           "404": {
             "description": "No published DPP for this GTIN, or unknown link type."
+          },
+          "410": {
+            "$ref": "#/components/responses/Gone"
           }
         }
       }
@@ -5224,6 +5304,13 @@
           "timestamp": {
             "type": "string",
             "format": "date-time"
+          },
+          "requestId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The `x-request-id` of the HTTP request that produced this entry — the same value returned in that request's response header, so a support conversation can be traced from a client's log to the trail. Null for an entry written outside a request, and for every entry written before this field was populated.\n\nDeliberately **not** covered by `entryHash`: it describes the transport that carried the change, not the change, and folding it in would invalidate the chain of every entry already stored."
           },
           "prevHash": {
             "type": [
@@ -7537,6 +7624,32 @@
         ],
         "description": "Whether an act's obligations bind **a given product group** — a different\nquestion from whether the act exists, which is `InstrumentStatus`.\n\n`in_force` — the act creates binding obligations for this product group that\ncan be determined now. A future applicability date is *not* this status.\n\n`provisional` — the act exists or is anticipated, but nothing is bindingly\ndeterminable for this product group yet. Any obligation reported alongside\nthis status is a reading, not a determination.\n\n`watch` — tracked, but this act imposes nothing on this product group. A\nwatching brief rather than a duty, and never determinable.\n\n**Read this before acting on `passport.required`.** The obligation is a fold\nacross every act reaching the product group, so `required: true` says an act\nimposes a passport — not that the act binds this group today. Where every\nreaching act is `provisional` or `watch`, the requirement is a reading of\ninstruments that have not yet bound anything.\n",
         "example": "provisional"
+      },
+      "AmendRequest": {
+        "type": "object",
+        "description": "Body for amending a published passport.\n\nA published passport's content is immutable — its signatures commit to its\nbytes and the retention guard refuses the write. An amendment therefore\npublishes a **new** passport carrying `supersedesId` back to the one being\ncorrected, and moves that one to the terminal `superseded` state. The\nsuperseded record keeps its signatures and stays resolvable by its own id.\n",
+        "required": [
+          "patch"
+        ],
+        "properties": {
+          "patch": {
+            "type": "object",
+            "description": "The correction, in the same shape the draft-update body takes: only the\npatchable content fields (`productName`, `co2ePerUnit`,\n`repairabilityScore`, `productGroupData`, `componentRefs`) take effect.\n\nOther keys are ignored rather than refused, so a client that sends a full\ncreate-shaped body still works and still cannot make a create-time field\ntake effect. Fields fixed at issuance — the product group, the schema\nversion, the manufacturer, the lineage edges — are not amendable; a\npassport whose product group is wrong is not the same product.\n",
+            "additionalProperties": true,
+            "example": {
+              "productName": "Model X Battery Pack (rev B)",
+              "productGroupData": {
+                "gtin": "01234567890128",
+                "batteryType": "industrial"
+              }
+            }
+          },
+          "reason": {
+            "type": "string",
+            "description": "Why the passport is being corrected. Recorded on the superseded record's\naudit entry alongside the successor's id — the two together are what\nanswers \"why did this change\" for a reader who arrives at the old record.\n",
+            "example": "Recycled-content share restated after supplier re-declaration"
+          }
+        }
       },
       "RulesetReload": {
         "type": "object",

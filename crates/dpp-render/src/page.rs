@@ -175,7 +175,7 @@ pub fn build_qr_svg(carrier_uri: &str) -> String {
     let width = code.width();
     let colors = code.to_colors();
     let module_size = 4u32;
-    let quiet = 4u32; // quiet zone in modules
+    let quiet = crate::carrier::QR_QUIET_ZONE_MODULES;
     let total = (width as u32 + quiet * 2) * module_size;
 
     let mut rects = String::with_capacity(colors.len() * 48);
@@ -337,11 +337,63 @@ mod tests {
         assert!(html.contains("&lt;script&gt;"));
     }
 
+    /// Renamed from `build_qr_svg_encodes_the_carrier_uri`, which claimed more
+    /// than it checked: the URI it found was the one in the `<title>`, not
+    /// anything about the modules. What the symbol encodes is covered by the
+    /// resolver's PNG round-trip; both renderings come from the same
+    /// `QrCode::new`, so the encoding is exercised once rather than twice.
     #[test]
-    fn build_qr_svg_encodes_the_carrier_uri() {
+    fn build_qr_svg_names_the_carrier_uri_in_its_title() {
         let svg = build_qr_svg("https://id.odal-node.io/01/09506000134352/21/abc");
         assert!(svg.starts_with("<svg"));
         assert!(svg.contains("id.odal-node.io"));
+    }
+
+    /// The SVG reserves the four-module quiet zone on all sides.
+    ///
+    /// Read off the geometry: the `viewBox` must be wider than the symbol by
+    /// exactly two quiet zones, and no drawn module may fall inside the margin.
+    /// The PNG renderer had this wrong while this one had it right, which is
+    /// why the value is now a shared constant and why both sides assert it.
+    #[test]
+    fn build_qr_svg_reserves_the_quiet_zone() {
+        let uri = "https://id.odal-node.io/01/09506000134352/21/abc";
+        let svg = build_qr_svg(uri);
+        let module_size = 4u32;
+        let quiet_px = crate::carrier::QR_QUIET_ZONE_MODULES * module_size;
+
+        let total: u32 = svg
+            .split("viewBox=\"0 0 ")
+            .nth(1)
+            .and_then(|s| s.split(' ').next())
+            .and_then(|s| s.parse().ok())
+            .expect("the svg must declare a square viewBox");
+
+        let symbol_px = QrCode::new(uri.as_bytes()).unwrap().width() as u32 * module_size;
+        assert_eq!(
+            total,
+            symbol_px + quiet_px * 2,
+            "the viewBox must reserve a quiet zone on both sides"
+        );
+
+        // No module is drawn inside the margin.
+        for rect in svg.split("<rect x=\"").skip(1) {
+            let x: u32 = rect.split('"').next().unwrap().parse().unwrap();
+            let y: u32 = rect
+                .split("y=\"")
+                .nth(1)
+                .and_then(|s| s.split('"').next())
+                .and_then(|s| s.parse().ok())
+                .expect("every module rect carries a y");
+            assert!(
+                x >= quiet_px && y >= quiet_px,
+                "module at ({x},{y}) intrudes into the {quiet_px}px quiet zone"
+            );
+            assert!(
+                x + module_size <= total - quiet_px && y + module_size <= total - quiet_px,
+                "module at ({x},{y}) crosses the far quiet-zone edge"
+            );
+        }
     }
 
     #[test]

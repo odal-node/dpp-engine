@@ -305,6 +305,7 @@ async fn t4_audit_append_only() {
         new_status: Some("draft".into()),
         metadata: None,
         timestamp: chrono::Utc::now(),
+        request_id: None,
         prev_hash: None,
         entry_hash: None,
     };
@@ -345,6 +346,7 @@ async fn t7_audit_hash_chain_detects_tamper() {
         new_status: Some(new.to_owned()),
         metadata: None,
         timestamp: chrono::Utc::now(),
+        request_id: None,
         prev_hash: None,
         entry_hash: None,
     };
@@ -1202,6 +1204,60 @@ async fn t_scan_telemetry_upsert_stats_and_prune() {
     assert_eq!(
         after.total_scans, 6,
         "current-window data must survive the prune"
+    );
+}
+
+/// A flush carrying the same key twice sums both, rather than failing.
+///
+/// This is the case the per-row loop handled by accident and a bulk upsert can
+/// break: `ON CONFLICT DO UPDATE` refuses to touch the same row twice in one
+/// statement (`cannot affect row a second time`), so `UNNEST`ing duplicates
+/// straight into it errors and loses the whole flush — every counter in the
+/// window, not just the duplicated key.
+///
+/// The resolver aggregates into a map before draining, so it should not emit
+/// duplicates today. That is a property of one caller, not of this port, and it
+/// is not one this repo can check at the call site — hence the `GROUP BY`, and
+/// hence this test, which fails against a naive `UNNEST` rewrite.
+#[tokio::test]
+async fn t_scan_telemetry_batch_tolerates_a_repeated_key() {
+    let pg = start_pg().await;
+    let passport_repo = PgPassportRepo::new(pg.dal.clone());
+    let scan = PgScanTelemetryRepo::new(pg.dal.clone());
+
+    let p = make_passport();
+    let id = p.id;
+    passport_repo.create(p).await.expect("create passport");
+    let today = chrono::Utc::now().date_naive();
+
+    let dup = |count| ScanIncrement {
+        dpp_id: id,
+        day: today,
+        variant: "html".into(),
+        count,
+    };
+    let dup_qr = |count| QrRenderIncrement {
+        dpp_id: id,
+        day: today,
+        count,
+    };
+
+    scan.record_batch(&[dup(2), dup(3), dup(4)], &[dup_qr(1), dup_qr(6)])
+        .await
+        .expect("a batch repeating one key must not fail");
+
+    let stats = scan.passport_stats(id, 30).await.expect("passport stats");
+    assert_eq!(
+        stats.scans_html, 9,
+        "the three increments for one key must sum, not overwrite or error"
+    );
+    assert_eq!(stats.qr_renders, 7, "and the same for QR renders");
+
+    // A second flush still accumulates onto what the first wrote.
+    scan.record_batch(&[dup(1)], &[]).await.expect("second");
+    assert_eq!(
+        scan.passport_stats(id, 30).await.expect("stats").scans_html,
+        10
     );
 }
 

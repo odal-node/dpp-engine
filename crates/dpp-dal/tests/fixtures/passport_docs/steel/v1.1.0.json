@@ -1,32 +1,69 @@
 {
-  "id": "019f3aa5-579d-73c1-a3e6-a8002df5e076",
-  "sector": "steel",
-  "status": "draft",
-  "batchId": "ST-2026-BATCH-01",
-  "version": 1,
-  "createdAt": "2026-08-01T09:00:00.000000000Z",
-  "materials": [],
-  "qrCodeUrl": null,
-  "updatedAt": "2026-08-01T09:00:00.000000000Z",
-  "sectorData": {
-    "sector": "steel",
-    "gtin": "09506000134352",
-    "co2ePerTonneSteel": 1.9,
-    "recycledScrapContentPct": 32.0,
-    "productCategory": "flat",
-    "countryOfOrigin": "DE",
-    "productionRoute": "blast-furnace"
-  },
+  "applicableInstruments": [
+    {
+      "instrument": "espr",
+      "recorded": "catalog"
+    }
+  ],
+  "batchId": null,
   "co2ePerUnit": null,
-  "productName": "Example Hot-Rolled Steel Coil",
-  "publishedAt": null,
-  "jwsSignature": null,
-  "manufacturer": {
-    "name": "Example Stahlwerke GmbH",
-    "address": "DE",
-    "didWebUrl": null
+  "complianceResult": {
+    "assessedAt": "2026-09-02T23:52:52.868131400Z",
+    "co2eScore": null,
+    "complianceStatus": "PASSTHROUGH_NO_VALIDATION",
+    "recycledContentPct": null,
+    "repairabilityIndex": null
   },
+  "createdAt": "2026-09-02T23:52:52.861221200Z",
+  "disclosureSignatures": {
+    "public+restricted+conformity": "test-header.eyJhcHBsaWNhYmxlSW5zdHJ1bWVudHMiOlt7Imluc3RydW1lbnQiOiJlc3ByIiwicmVjb3JkZWQiOiJjYXRhbG9nIn1dLCJiYXRjaElkIjpudWxsLCJjbzJlUGVyVW5pdCI6bnVsbCwiY29tcGxpYW5jZVJlc3VsdCI6eyJhc3Nlc3NlZEF0IjoiMjAyNi0wOS0wMlQyMzo1Mjo1Mi44NjgxMzE0MDBaIiwiY28yZVNjb3JlIjpudWxsLCJjb21wbGlhbmNlU3RhdHVzIjoiUEFTU1RIUk9VR0hfTk9fVkFMSURBVElPTiIsInJlY3ljbGVkQ29udGVudFBjdCI6bnVsbCwicmVwYWlyYWJpbGl0eUluZGV4IjpudWxsfSwiY3JlYXRlZEF0IjoiMjAyNi0wOS0wMlQyMzo1Mjo1Mi44NjEyMjEyMDBaIiwiZmFjaWxpdHkiOnsiY291bnRyeSI6IkRFIiwibmFtZSI6IlNlZWQgUGxhbnQiLCJzY2hlbWUiOiJnbG4iLCJ2YWx1ZSI6IjQwMTIzNDUwMDAwMDkifSwiaWQiOiIwMWEwNjQ4YS0yZjdkLTdmNzEtOGQ4Yy04MzUzMTU3N2VkMmMiLCJsaW50UmVzdWx0Ijp7ImFzc2Vzc2VkQXQiOiIyMDI2LTA5LTAyVDIzOjUyOjUyLjg2ODEzNTYwMFoiLCJwYWNrVmVyc2lvbiI6IjEuMC4wIn0sIm1hbnVmYWN0dXJlciI6eyJhZGRyZXNzIjoiSmFybnZhZ3NnYXRhbiAxLCA2MTMgMzEgT3hlbG9zdW5kLCBTRSIsImRpZFdlYlVybCI6bnVsbCwibmFtZSI6IlNhbXBsZSBTdGFsIEFCIn0sIm1hdGVyaWFscyI6W3siY291bnRyeU9mT3JpZ2luIjpudWxsLCJuYW1lIjoiU3RlZWwiLCJyZWN5Y2xlZFBjdCI6bnVsbCwid2VpZ2h0S2ciOjEwMDAuMH1dLCJvcGVyYXRvcklkZW50aWZpZXIiOiJERTEyMzQ1Njc4OSIsInByb2R1Y3RHcm91cCI6InN0ZWVsIiwicHJvZHVjdEdyb3VwRGF0YSI6eyJjbzJlUGVyVG9ubmVTdGVlbCI6MTg1MC4wLCJjb3VudHJ5T2ZPcmlnaW4iOiJTRSIsImd0aW4iOiIwOTUwNjAwMDIwMDA2NCIsInByb2R1Y3RDYXRlZ29yeSI6ImZsYXQiLCJwcm9kdWN0R3JvdXAiOiJzdGVlbCIsInByb2R1Y3Rpb25Sb3V0ZSI6ImVsZWN0cmljLWFyYyIsInJlY3ljbGVkU2NyYXBDb250ZW50UGN0Ijo0Mi4wfSwicHJvZHVjdE5hbWUiOiJIb3QgUm9sbGVkIENvaWwgUzIzNUpSIiwicHVibGlzaGVkQXQiOiIyMDI2LTA5LTAyVDIzOjUyOjUyLjkwMjY5NzQwMFoiLCJxckNvZGVVcmwiOiJodHRwczovL2lkLm9kYWwtbm9kZS5pby8wMS8wOTUwNjAwMDIwMDA2NC8yMS83ZjcxOGQ4YzgzNTMxNTc3ZWQyYyIsInJlcGFpcmFiaWxpdHlTY29yZSI6bnVsbCwicmV0ZW50aW9uTG9ja2VkIjp0cnVlLCJyZXRlbnRpb25VbnRpbCI6IjIwMzYtMDgtMzBUMjM6NTI6NTIuOTAyNjk3NDAwWiIsInNjaGVtYVZlcnNpb24iOiIxLjEuMCIsInN0YXR1cyI6ImFjdGl2ZSIsInVwZGF0ZWRBdCI6IjIwMjYtMDktMDJUMjM6NTI6NTIuOTAyNjk3NDAwWiIsInZlcnNpb24iOjF9.test-sig",
+    "public+restricted+individual": "test-header.eyJhcHBsaWNhYmxlSW5zdHJ1bWVudHMiOlt7Imluc3RydW1lbnQiOiJlc3ByIiwicmVjb3JkZWQiOiJjYXRhbG9nIn1dLCJiYXRjaElkIjpudWxsLCJjbzJlUGVyVW5pdCI6bnVsbCwiY29tcGxpYW5jZVJlc3VsdCI6eyJhc3Nlc3NlZEF0IjoiMjAyNi0wOS0wMlQyMzo1Mjo1Mi44NjgxMzE0MDBaIiwiY28yZVNjb3JlIjpudWxsLCJjb21wbGlhbmNlU3RhdHVzIjoiUEFTU1RIUk9VR0hfTk9fVkFMSURBVElPTiIsInJlY3ljbGVkQ29udGVudFBjdCI6bnVsbCwicmVwYWlyYWJpbGl0eUluZGV4IjpudWxsfSwiY3JlYXRlZEF0IjoiMjAyNi0wOS0wMlQyMzo1Mjo1Mi44NjEyMjEyMDBaIiwiZmFjaWxpdHkiOnsiY291bnRyeSI6IkRFIiwibmFtZSI6IlNlZWQgUGxhbnQiLCJzY2hlbWUiOiJnbG4iLCJ2YWx1ZSI6IjQwMTIzNDUwMDAwMDkifSwiaWQiOiIwMWEwNjQ4YS0yZjdkLTdmNzEtOGQ4Yy04MzUzMTU3N2VkMmMiLCJsaW50UmVzdWx0Ijp7ImFzc2Vzc2VkQXQiOiIyMDI2LTA5LTAyVDIzOjUyOjUyLjg2ODEzNTYwMFoiLCJwYWNrVmVyc2lvbiI6IjEuMC4wIn0sIm1hbnVmYWN0dXJlciI6eyJhZGRyZXNzIjoiSmFybnZhZ3NnYXRhbiAxLCA2MTMgMzEgT3hlbG9zdW5kLCBTRSIsImRpZFdlYlVybCI6bnVsbCwibmFtZSI6IlNhbXBsZSBTdGFsIEFCIn0sIm1hdGVyaWFscyI6W3siY291bnRyeU9mT3JpZ2luIjpudWxsLCJuYW1lIjoiU3RlZWwiLCJyZWN5Y2xlZFBjdCI6bnVsbCwid2VpZ2h0S2ciOjEwMDAuMH1dLCJvcGVyYXRvcklkZW50aWZpZXIiOiJERTEyMzQ1Njc4OSIsInByb2R1Y3RHcm91cCI6InN0ZWVsIiwicHJvZHVjdEdyb3VwRGF0YSI6eyJjbzJlUGVyVG9ubmVTdGVlbCI6MTg1MC4wLCJjb3VudHJ5T2ZPcmlnaW4iOiJTRSIsImd0aW4iOiIwOTUwNjAwMDIwMDA2NCIsInByb2R1Y3RDYXRlZ29yeSI6ImZsYXQiLCJwcm9kdWN0R3JvdXAiOiJzdGVlbCIsInByb2R1Y3Rpb25Sb3V0ZSI6ImVsZWN0cmljLWFyYyIsInJlY3ljbGVkU2NyYXBDb250ZW50UGN0Ijo0Mi4wfSwicHJvZHVjdE5hbWUiOiJIb3QgUm9sbGVkIENvaWwgUzIzNUpSIiwicHVibGlzaGVkQXQiOiIyMDI2LTA5LTAyVDIzOjUyOjUyLjkwMjY5NzQwMFoiLCJxckNvZGVVcmwiOiJodHRwczovL2lkLm9kYWwtbm9kZS5pby8wMS8wOTUwNjAwMDIwMDA2NC8yMS83ZjcxOGQ4YzgzNTMxNTc3ZWQyYyIsInJlcGFpcmFiaWxpdHlTY29yZSI6bnVsbCwicmV0ZW50aW9uVW50aWwiOiIyMDM2LTA4LTMwVDIzOjUyOjUyLjkwMjY5NzQwMFoiLCJzY2hlbWFWZXJzaW9uIjoiMS4xLjAiLCJzdGF0dXMiOiJhY3RpdmUiLCJ1cGRhdGVkQXQiOiIyMDI2LTA5LTAyVDIzOjUyOjUyLjkwMjY5NzQwMFoiLCJ2ZXJzaW9uIjoxfQ.test-sig"
+  },
+  "facility": {
+    "country": "DE",
+    "name": "Seed Plant",
+    "scheme": "gln",
+    "value": "4012345000009"
+  },
+  "id": "01a0648a-2f7d-7f71-8d8c-83531577ed2c",
+  "jwsSignature": "test-header.eyJhcHBsaWNhYmxlSW5zdHJ1bWVudHMiOlt7Imluc3RydW1lbnQiOiJlc3ByIiwicmVjb3JkZWQiOiJjYXRhbG9nIn1dLCJiYXRjaElkIjpudWxsLCJjbzJlUGVyVW5pdCI6bnVsbCwiY29tcGxpYW5jZVJlc3VsdCI6eyJhc3Nlc3NlZEF0IjoiMjAyNi0wOS0wMlQyMzo1Mjo1Mi44NjgxMzE0MDBaIiwiY28yZVNjb3JlIjpudWxsLCJjb21wbGlhbmNlU3RhdHVzIjoiUEFTU1RIUk9VR0hfTk9fVkFMSURBVElPTiIsInJlY3ljbGVkQ29udGVudFBjdCI6bnVsbCwicmVwYWlyYWJpbGl0eUluZGV4IjpudWxsfSwiY3JlYXRlZEF0IjoiMjAyNi0wOS0wMlQyMzo1Mjo1Mi44NjEyMjEyMDBaIiwiZmFjaWxpdHkiOnsiY291bnRyeSI6IkRFIiwibmFtZSI6IlNlZWQgUGxhbnQiLCJzY2hlbWUiOiJnbG4iLCJ2YWx1ZSI6IjQwMTIzNDUwMDAwMDkifSwiaWQiOiIwMWEwNjQ4YS0yZjdkLTdmNzEtOGQ4Yy04MzUzMTU3N2VkMmMiLCJqd3NTaWduYXR1cmUiOm51bGwsImxpbnRSZXN1bHQiOnsiYXNzZXNzZWRBdCI6IjIwMjYtMDktMDJUMjM6NTI6NTIuODY4MTM1NjAwWiIsInBhY2tWZXJzaW9uIjoiMS4wLjAifSwibWFudWZhY3R1cmVyIjp7ImFkZHJlc3MiOiJKYXJudmFnc2dhdGFuIDEsIDYxMyAzMSBPeGVsb3N1bmQsIFNFIiwiZGlkV2ViVXJsIjpudWxsLCJuYW1lIjoiU2FtcGxlIFN0YWwgQUIifSwibWF0ZXJpYWxzIjpbeyJjb3VudHJ5T2ZPcmlnaW4iOm51bGwsIm5hbWUiOiJTdGVlbCIsInJlY3ljbGVkUGN0IjpudWxsLCJ3ZWlnaHRLZyI6MTAwMC4wfV0sIm9wZXJhdG9ySWRlbnRpZmllciI6IkRFMTIzNDU2Nzg5IiwicHJvZHVjdEdyb3VwIjoic3RlZWwiLCJwcm9kdWN0R3JvdXBEYXRhIjp7ImNvMmVQZXJUb25uZVN0ZWVsIjoxODUwLjAsImNvdW50cnlPZk9yaWdpbiI6IlNFIiwiZ3RpbiI6IjA5NTA2MDAwMjAwMDY0IiwicHJvZHVjdENhdGVnb3J5IjoiZmxhdCIsInByb2R1Y3RHcm91cCI6InN0ZWVsIiwicHJvZHVjdGlvblJvdXRlIjoiZWxlY3RyaWMtYXJjIiwicmVjeWNsZWRTY3JhcENvbnRlbnRQY3QiOjQyLjB9LCJwcm9kdWN0TmFtZSI6IkhvdCBSb2xsZWQgQ29pbCBTMjM1SlIiLCJwdWJsaXNoZWRBdCI6IjIwMjYtMDktMDJUMjM6NTI6NTIuOTAyNjk3NDAwWiIsInFyQ29kZVVybCI6Imh0dHBzOi8vaWQub2RhbC1ub2RlLmlvLzAxLzA5NTA2MDAwMjAwMDY0LzIxLzdmNzE4ZDhjODM1MzE1NzdlZDJjIiwicmVwYWlyYWJpbGl0eVNjb3JlIjpudWxsLCJyZXRlbnRpb25Mb2NrZWQiOnRydWUsInJldGVudGlvblVudGlsIjoiMjAzNi0wOC0zMFQyMzo1Mjo1Mi45MDI2OTc0MDBaIiwic2NoZW1hVmVyc2lvbiI6IjEuMS4wIiwic3RhdHVzIjoiYWN0aXZlIiwidXBkYXRlZEF0IjoiMjAyNi0wOS0wMlQyMzo1Mjo1Mi45MDI2OTc0MDBaIiwidmVyc2lvbiI6MX0.test-sig",
+  "lintResult": {
+    "assessedAt": "2026-09-02T23:52:52.868135600Z",
+    "packVersion": "1.0.0"
+  },
+  "manufacturer": {
+    "address": "Jarnvagsgatan 1, 613 31 Oxelosund, SE",
+    "didWebUrl": null,
+    "name": "Sample Stal AB"
+  },
+  "materials": [
+    {
+      "countryOfOrigin": null,
+      "name": "Steel",
+      "recycledPct": null,
+      "weightKg": 1000.0
+    }
+  ],
+  "operatorIdentifier": "DE123456789",
+  "productGroup": "steel",
+  "productGroupData": {
+    "co2ePerTonneSteel": 1850.0,
+    "countryOfOrigin": "SE",
+    "gtin": "09506000200064",
+    "productCategory": "flat",
+    "productGroup": "steel",
+    "productionRoute": "electric-arc",
+    "recycledScrapContentPct": 42.0
+  },
+  "productName": "Hot Rolled Coil S235JR",
+  "publicJwsSignature": "test-header.eyJhcHBsaWNhYmxlSW5zdHJ1bWVudHMiOlt7Imluc3RydW1lbnQiOiJlc3ByIiwicmVjb3JkZWQiOiJjYXRhbG9nIn1dLCJjbzJlUGVyVW5pdCI6bnVsbCwiY29tcGxpYW5jZVJlc3VsdCI6eyJhc3Nlc3NlZEF0IjoiMjAyNi0wOS0wMlQyMzo1Mjo1Mi44NjgxMzE0MDBaIiwiY28yZVNjb3JlIjpudWxsLCJjb21wbGlhbmNlU3RhdHVzIjoiUEFTU1RIUk9VR0hfTk9fVkFMSURBVElPTiIsInJlY3ljbGVkQ29udGVudFBjdCI6bnVsbCwicmVwYWlyYWJpbGl0eUluZGV4IjpudWxsfSwiY3JlYXRlZEF0IjoiMjAyNi0wOS0wMlQyMzo1Mjo1Mi44NjEyMjEyMDBaIiwiZmFjaWxpdHkiOnsiY291bnRyeSI6IkRFIiwibmFtZSI6IlNlZWQgUGxhbnQiLCJzY2hlbWUiOiJnbG4iLCJ2YWx1ZSI6IjQwMTIzNDUwMDAwMDkifSwiaWQiOiIwMWEwNjQ4YS0yZjdkLTdmNzEtOGQ4Yy04MzUzMTU3N2VkMmMiLCJtYW51ZmFjdHVyZXIiOnsiYWRkcmVzcyI6Ikphcm52YWdzZ2F0YW4gMSwgNjEzIDMxIE94ZWxvc3VuZCwgU0UiLCJkaWRXZWJVcmwiOm51bGwsIm5hbWUiOiJTYW1wbGUgU3RhbCBBQiJ9LCJtYXRlcmlhbHMiOlt7ImNvdW50cnlPZk9yaWdpbiI6bnVsbCwibmFtZSI6IlN0ZWVsIiwicmVjeWNsZWRQY3QiOm51bGwsIndlaWdodEtnIjoxMDAwLjB9XSwib3BlcmF0b3JJZGVudGlmaWVyIjoiREUxMjM0NTY3ODkiLCJwcm9kdWN0R3JvdXAiOiJzdGVlbCIsInByb2R1Y3RHcm91cERhdGEiOnsiY28yZVBlclRvbm5lU3RlZWwiOjE4NTAuMCwiY291bnRyeU9mT3JpZ2luIjoiU0UiLCJndGluIjoiMDk1MDYwMDAyMDAwNjQiLCJwcm9kdWN0Q2F0ZWdvcnkiOiJmbGF0IiwicHJvZHVjdEdyb3VwIjoic3RlZWwiLCJwcm9kdWN0aW9uUm91dGUiOiJlbGVjdHJpYy1hcmMiLCJyZWN5Y2xlZFNjcmFwQ29udGVudFBjdCI6NDIuMH0sInByb2R1Y3ROYW1lIjoiSG90IFJvbGxlZCBDb2lsIFMyMzVKUiIsInB1Ymxpc2hlZEF0IjoiMjAyNi0wOS0wMlQyMzo1Mjo1Mi45MDI2OTc0MDBaIiwicXJDb2RlVXJsIjoiaHR0cHM6Ly9pZC5vZGFsLW5vZGUuaW8vMDEvMDk1MDYwMDAyMDAwNjQvMjEvN2Y3MThkOGM4MzUzMTU3N2VkMmMiLCJyZXBhaXJhYmlsaXR5U2NvcmUiOm51bGwsInJldGVudGlvblVudGlsIjoiMjAzNi0wOC0zMFQyMzo1Mjo1Mi45MDI2OTc0MDBaIiwic2NoZW1hVmVyc2lvbiI6IjEuMS4wIiwic3RhdHVzIjoiYWN0aXZlIiwidXBkYXRlZEF0IjoiMjAyNi0wOS0wMlQyMzo1Mjo1Mi45MDI2OTc0MDBaIiwidmVyc2lvbiI6MX0.test-sig",
+  "publishedAt": "2026-09-02T23:52:52.902697400Z",
+  "qrCodeUrl": "https://id.odal-node.io/01/09506000200064/21/7f718d8c83531577ed2c",
+  "repairabilityScore": null,
+  "retentionLocked": true,
+  "retentionUntil": "2036-08-30T23:52:52.902697400Z",
   "schemaVersion": "1.1.0",
-  "retentionLocked": false,
-  "repairabilityScore": null
+  "status": "active",
+  "updatedAt": "2026-09-02T23:52:52.902697400Z",
+  "version": 1
 }

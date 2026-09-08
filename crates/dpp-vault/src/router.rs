@@ -20,6 +20,7 @@ use dpp_common::{
 
 use crate::{
     handlers::{
+        amend::amend_handler,
         api_keys::{api_keys_create_handler, api_keys_delete_handler, api_keys_list_handler},
         archive::archive_handler,
         create::create_handler,
@@ -88,6 +89,7 @@ pub fn build(state: AppState) -> Router {
         .route("/dpp/by-identity", get(find_by_identity_handler))
         .route("/dpp/{dppId}", get(read_handler).put(update_handler))
         .route("/dpp/{dppId}/publish", post(publish_handler))
+        .route("/dpp/{dppId}/amend", post(amend_handler))
         .route("/dpp/{dppId}/lint", post(lint_handler))
         .route("/dpp/{dppId}/suspend", post(suspend_handler))
         .route("/dpp/{dppId}/archive", post(archive_handler))

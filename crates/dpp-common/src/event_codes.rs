@@ -50,6 +50,12 @@ pub const PLUGIN_MEM_CAPPED: &str = "PLUGIN_MEM_CAPPED";
 /// Archive request was blocked by the ESPR retention policy.
 pub const RETENTION_BLOCKED: &str = "RETENTION_BLOCKED";
 
+/// An amendment published its successor but failed to supersede the predecessor,
+/// so both are live for the same product. The successor is valid and must not be
+/// discarded; the pair needs reconciling by hand. Fires in
+/// `dpp-vault::domain::service::amend`.
+pub const SUPERSEDE_INCOMPLETE: &str = "SUPERSEDE_INCOMPLETE";
+
 // ── EU registry sync ─────────────────────────────────────────────────────────
 
 /// Registry sync failed after exhausting all retries, or the registry is

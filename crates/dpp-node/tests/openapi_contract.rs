@@ -412,6 +412,7 @@ fn object_cases() -> Vec<ObjectCase> {
     );
     case!("EolRequest", fixtures::eol_request());
     case!("SuspendRequest", fixtures::suspend_request());
+    case!("AmendRequest", fixtures::amend_request());
     case!("NodeState", fixtures::node_state());
     case!("VaultInfo", fixtures::vault_info());
     case!(
@@ -1714,6 +1715,7 @@ fn every_keyed_route_is_a_route_the_node_serves() {
 // registers and this list cannot reach fails the build by name.
 mod handler_sources {
     pub const VAULT: &[&str] = &[
+        include_str!("../../dpp-vault/src/handlers/amend.rs"),
         include_str!("../../dpp-vault/src/handlers/api_keys.rs"),
         include_str!("../../dpp-vault/src/handlers/archive.rs"),
         include_str!("../../dpp-vault/src/handlers/audience_read.rs"),
@@ -2211,6 +2213,7 @@ mod fixtures {
     use dpp_vault::{
         domain::verify::{NodeReport, RefUnverifiable, TreeReport},
         handlers::{
+            amend::AmendRequest,
             create::CreatePassportRequest,
             eol::EolRequest,
             info::VaultInfo,
@@ -2537,6 +2540,7 @@ mod fixtures {
             new_status: Some("active".into()),
             metadata: Some(json!({ "note": "first publish" })),
             timestamp: ts(),
+            request_id: Some("019723f4-1a2b-7c3d-8e4f-5a6b7c8d9e0f".into()),
             prev_hash: Some("0".repeat(64)),
             entry_hash: Some("1".repeat(64)),
         }
@@ -2853,6 +2857,16 @@ mod fixtures {
     pub fn suspend_request() -> SuspendRequest {
         SuspendRequest {
             reason: Some("Product recall — safety investigation pending".into()),
+        }
+    }
+
+    /// Both fields populated, per the maximal-fixture rule: `reason` is an
+    /// `Option` that would emit nothing if left `None`, and `patch` is a free
+    /// object whose emptiness would let the schema check pass by not looking.
+    pub fn amend_request() -> AmendRequest {
+        AmendRequest {
+            patch: serde_json::json!({ "productName": "Model X Battery Pack (rev B)" }),
+            reason: Some("Recycled-content share restated after supplier re-declaration".into()),
         }
     }
 

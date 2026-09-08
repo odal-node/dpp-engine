@@ -1,0 +1,70 @@
+post:
+  operationId: amendDpp
+  summary: Amend a published DPP by issuing a successor
+  description: |
+    Correct a published DPP. A published passport cannot be edited in place —
+    its signatures commit to its bytes and the retention guard refuses the
+    write — so this issues a **new** passport instead.
+
+    The successor is a copy of `dppId` with the `patch` applied, carrying
+    `supersedesId` back to `dppId` and `version` incremented. It goes through
+    the same gates as any first publish: schema validation, product-group
+    validation, mandatory-content checks, signing, and registry sync. When it
+    publishes successfully, `dppId` moves to the terminal `superseded` state.
+
+    **The response body is a different passport from the one in the path.** It
+    is the successor, with its own `id`. Clients holding the old id keep a valid
+    reference: a superseded passport stays resolvable, keeps its signatures and
+    its seal, and reports `superseded` as its status.
+
+    Only an `active` DPP can be amended. A draft is edited in place with
+    `PUT /vault/api/v1/dpp/{dppId}`; a suspended, archived, superseded or
+    deactivated DPP cannot be superseded.
+
+    The schema version is **inherited**, not advanced to the product group's
+    current one. An amendment corrects content; migrating a passport to a newer
+    schema is a separate act. This also keeps the successor's disclosure classes
+    identical to the predecessor's, since those are read from the schema
+    version's own annotations.
+
+    Emits `dpp.passport.published` for the successor and
+    `dpp.passport.superseded` for the predecessor.
+  tags:
+    - DPP Lifecycle
+  security:
+    - BearerApiKey: []
+    - BasicAuth: []
+  parameters:
+    - name: dppId
+      in: path
+      required: true
+      schema:
+        $ref: ../../components/schemas/passport/DppId.yaml
+  requestBody:
+    required: true
+    content:
+      application/json:
+        schema:
+          $ref: '../../components/schemas/passport-requests/AmendRequest.yaml'
+  responses:
+    '201':
+      description: |
+        Successor published and predecessor superseded. Returns the **successor**
+        — a different record from the one named in the path, with its own `id`,
+        `version` incremented, and `supersedesId` set to `dppId`.
+      content:
+        application/json:
+          schema:
+            $ref: ../../components/schemas/passport/PassportResponse.yaml
+    '400':
+      $ref: ../../components/responses/BadRequest.yaml
+    '401':
+      $ref: ../../components/responses/Unauthorized.yaml
+    '403':
+      $ref: ../../components/responses/Forbidden.yaml
+    '404':
+      $ref: ../../components/responses/NotFound.yaml
+    '409':
+      $ref: ../../components/responses/Conflict.yaml
+    '422':
+      $ref: ../../components/responses/ValidationError.yaml
