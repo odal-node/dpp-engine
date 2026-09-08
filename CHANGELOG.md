@@ -10,6 +10,35 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ## [Unreleased]
 
+### Fixed
+
+- **A retried scan-telemetry flush no longer double-counts.** The resolver used
+  to fold a failed window back into its live counters and send the merged total
+  on the next tick. The ingest is additive —
+  `count = odal.scan_telemetry.count + EXCLUDED.count` — so a request the node
+  had already **committed**, whose acknowledgement was then lost to a read
+  timeout or a `5xx` from anything in front of it, was added a second time.
+  Nothing detected it and nothing could correct it: there is no way to subtract
+  a count nobody knows was double-added.
+
+  The existing code reasoned about the ingest transaction being atomic, which it
+  is, and not about the acknowledgement being lost, which is the case that
+  matters. `docs/` states at-least-once for the *outbound* surfaces and tells
+  receivers to be idempotent; nothing said it inbound, and the inbound sink was
+  not.
+
+  A failed batch is now **held verbatim** under a stable id and re-sent
+  byte-for-byte as an `Idempotency-Key`, while new counts accumulate for a later
+  batch. Folding back was not merely lossy in the count — it made the window
+  un-identifiable, because the next drain produced a *superset* of the failed
+  one, so no key could describe two consecutive attempts. At most one batch is
+  ever held, since nothing new is drained until the held one resolves, which
+  bounds the memory as well.
+
+  A `409` from the ingest is the one client error that is now held rather than
+  dropped: it means an earlier attempt at that same batch is still being
+  processed, which is transient.
+
 ### Added
 
 - **Eight write endpoints now accept a client-supplied `Idempotency-Key`.**

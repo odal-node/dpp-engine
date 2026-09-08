@@ -5,10 +5,19 @@ post:
     The mTLS-gated sink the public resolver flushes its in-memory
     aggregate scan/QR-render counters to (`CN=odal-resolver` only). The
     resolver holds no operator API key and no database of its own.
+
+    **Send an `Idempotency-Key`.** The ingest is additive
+    (`count = count + delta`), so a window re-sent after a lost acknowledgement
+    is counted twice. The resolver holds a failed batch and re-sends it
+    byte-for-byte under a stable key; without one, a read timeout on a request
+    the node already committed silently inflates an operator's resolution
+    counts.
   tags:
     - Vault (internal)
   security:
     - MutualTLS: []
+  parameters:
+    - $ref: ../../components/parameters/IdempotencyKey.yaml
   requestBody:
     required: true
     content:
@@ -22,3 +31,5 @@ post:
       $ref: ../../components/responses/Unauthorized.yaml
     '403':
       $ref: ../../components/responses/Forbidden.yaml
+    '409':
+      $ref: ../../components/responses/IdempotentRequestInFlight.yaml

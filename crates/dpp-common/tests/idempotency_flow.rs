@@ -342,6 +342,74 @@ async fn a_claim_still_in_flight_answers_409_with_retry_after() {
     assert_eq!(calls.0.load(Ordering::SeqCst), 0);
 }
 
+/// The scan-telemetry case, which is the one route in the keyed set that
+/// creates nothing.
+///
+/// Its write is *additive* (`count = count + delta`), so a window re-sent after
+/// a lost acknowledgement is added twice — and there is no way to subtract a
+/// count nobody knows was double-added. This drives the exact sequence the
+/// resolver produces: send, lose the response, re-send the identical batch
+/// under the same key.
+#[tokio::test]
+async fn a_resent_additive_batch_is_counted_once() {
+    let store = Arc::new(MemStore::default());
+    let total = Arc::new(AtomicUsize::new(0));
+
+    let app = |total: Arc<AtomicUsize>| {
+        let store: Arc<dyn IdempotencyStore> = store.clone();
+        let inner = Router::new()
+            .route(
+                "/scan-batch",
+                post(move || {
+                    let total = total.clone();
+                    async move {
+                        // What `record_batch` does: add the delta.
+                        total.fetch_add(7, Ordering::SeqCst);
+                        StatusCode::NO_CONTENT
+                    }
+                }),
+            )
+            .route_layer(axum::middleware::from_fn_with_state(
+                IdempotencyLayerState {
+                    store,
+                    // The constant the mTLS gate guarantees.
+                    principal: Arc::new(|_| Some("mtls:odal-resolver".to_owned())),
+                },
+                idempotency_middleware,
+            ));
+        Router::new().nest("/vault", Router::new().nest("/internal", inner))
+    };
+
+    let batch = r#"{"scans":[{"dppId":"abc","day":"2026-09-04","variant":"json","count":7}],"qrRenders":[]}"#;
+    let send = |t: Arc<AtomicUsize>| {
+        app(t).oneshot(
+            Request::post("/vault/internal/scan-batch")
+                .header("content-type", "application/json")
+                .header("idempotency-key", "batch-1")
+                .body(Body::from(batch))
+                .unwrap(),
+        )
+    };
+
+    let first = send(total.clone()).await.unwrap();
+    assert_eq!(first.status(), StatusCode::NO_CONTENT);
+
+    // The resolver never saw that response, so it sends the same batch again.
+    let second = send(total.clone()).await.unwrap();
+    assert_eq!(second.status(), StatusCode::NO_CONTENT);
+    assert_eq!(
+        second.headers().get("idempotency-replayed").unwrap(),
+        "true"
+    );
+
+    assert_eq!(
+        total.load(Ordering::SeqCst),
+        7,
+        "the window must be counted once; folding it back and re-sending is \
+         what used to inflate an operator's resolution counts"
+    );
+}
+
 /// Keys are scoped to the caller, so one principal's key can neither collide
 /// with nor reveal another's.
 #[tokio::test]
