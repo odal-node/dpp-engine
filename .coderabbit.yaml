@@ -33,6 +33,18 @@ reviews:
 
   auto_review:
     enabled: false
+    # A positive label match opts a single pull request in even while `enabled`
+    # is false. This is also what makes `pre_merge_checks` below actually run:
+    # when no review happens at all, those checks are skipped with it and the
+    # CodeRabbit status passes vacuously, which is worse than not having them.
+    # Label a PR `review-ready` to opt it in; `@coderabbitai review` still works
+    # for anything unlabelled.
+    labels:
+      - "review-ready"
+    # One review per opt-in rather than one per push. At the open-source plan's
+    # rate limit, re-reviewing on every push would spend the hour's budget on a
+    # typo fix; ask again explicitly when a re-read is worth it.
+    auto_incremental_review: false
 
   # With auto-review off, the default status message would post "Review skipped"
   # on every pull request. At this repo's merge rate that is precisely the noise
