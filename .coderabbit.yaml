@@ -1,0 +1,43 @@
+# yaml-language-server: $schema=https://storage.googleapis.com/coderabbit_public_assets/schema.v2.json
+
+# Reviews here are asked for, not ambient.
+#
+# The open-source plan's review rate limit scales with a repository's star
+# count, and at one star this repo sits at the bottom of that band. Merge waves
+# reach double digits inside a single hour, so automatic review would queue
+# behind itself and land after the merge it was meant to inform. Ask for one
+# where it earns the wait — a cross-cutting refactor, a branch open long enough
+# that main moved underneath it — by commenting
+#
+#   @coderabbitai review
+#
+# on the pull request. What CI already decides is not what this is for: fmt,
+# clippy, the test tiers, the contract fixtures and the migration checks are
+# gates, and a gate that passes needs no second opinion.
+language: en-US
+
+reviews:
+  # A review that was requested deliberately should say everything it has. The
+  # noise argument for a quieter profile applies to review you did not ask for.
+  profile: assertive
+
+  auto_review:
+    enabled: false
+
+  path_filters:
+    # Both bundles are produced by `just openapi-bundle` from the multi-file
+    # tree under api/. Every finding in a bundle is, by construction, already
+    # present in the source it was generated from — where it does get reviewed.
+    - "!api/openapi.bundled.yaml"
+    - "!api/openapi.bundled.json"
+    # Resolved by cargo rather than written by hand.
+    - "!Cargo.lock"
+
+  tools:
+    # ops/pg/** stays in review rather than being excluded: Squawk is a
+    # PostgreSQL-native migration linter and is on by default. SQLFluff is off
+    # because its default dialect is ansi, and pointing a non-PostgreSQL parser
+    # at these files is precisely how Codacy came to fail its gate on valid SQL
+    # and force the exclusion recorded in .codacy.yml.
+    sqlfluff:
+      enabled: false
