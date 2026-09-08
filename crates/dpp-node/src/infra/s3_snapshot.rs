@@ -27,7 +27,7 @@ use aws_sdk_s3::{
     primitives::ByteStream,
 };
 use dpp_domain::error::DppError;
-use dpp_types::snapshot::{SnapshotMeta, SnapshotStore};
+use dpp_types::snapshot::{SnapshotMeta, SnapshotStore, snapshot_html_key, snapshot_json_key};
 
 pub struct S3SnapshotConfig {
     pub endpoint: Option<String>,
@@ -95,12 +95,15 @@ impl S3SnapshotStore {
         }
     }
 
+    /// Delegates to `dpp-types` rather than formatting here. `publish` builds
+    /// the registry back-up URL from the same definition, and the two used to
+    /// disagree by a path segment.
     fn key(dpp_id: &str) -> String {
-        format!("{dpp_id}/public.json")
+        snapshot_json_key(dpp_id)
     }
 
     fn html_key(dpp_id: &str) -> String {
-        format!("{dpp_id}/public.html")
+        snapshot_html_key(dpp_id)
     }
 
     /// Apply the staleness headers every snapshot object carries.

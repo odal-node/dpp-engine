@@ -2,6 +2,35 @@
 
 use serde_json::Value;
 
+/// The quiet zone every rendering of a carrier must leave around the symbol,
+/// in modules.
+///
+/// ISO/IEC 18004 requires four modules of blank margin on all four sides of a
+/// QR symbol. It is not decoration: the quiet zone is what lets a scanner find
+/// the symbol's edge, and a code printed flush to other artwork — or to the
+/// edge of a label — is out of spec whether or not any particular decoder is
+/// lenient enough to read it anyway.
+///
+/// # Why this is a shared constant and not a number in each renderer
+///
+/// It was a number in each renderer, and they disagreed. The SVG rendered for
+/// the passport page applied four modules; the PNG served by the resolver's
+/// `/qr` route applied **none**, sizing its image at exactly `width * scale`.
+/// The divergence ran the wrong way round, too — the screen rendering, which a
+/// browser surrounds with white page anyway, was the compliant one, while the
+/// downloadable PNG an operator would actually print onto a label was the
+/// symbol with no margin at all.
+///
+/// Software decoders mostly tolerate a missing quiet zone, which is exactly why
+/// nothing caught it: a round-trip test that only asks "does this decode?" is
+/// satisfied by a symbol no hand scanner would read against a busy background.
+/// So the geometry is asserted directly, per renderer, against this constant.
+///
+/// The two renderers stay separate — they are split by output class, and
+/// `lib.rs` records the intent to revisit that — but the property neither is
+/// allowed to get wrong now has one home.
+pub const QR_QUIET_ZONE_MODULES: u32 = 4;
+
 /// Build the GS1 Digital Link URI a carrier (QR/Data Matrix) for this
 /// passport should encode.
 ///

@@ -1,0 +1,37 @@
+type: object
+description: |
+  Body for amending a published passport.
+
+  A published passport's content is immutable — its signatures commit to its
+  bytes and the retention guard refuses the write. An amendment therefore
+  publishes a **new** passport carrying `supersedesId` back to the one being
+  corrected, and moves that one to the terminal `superseded` state. The
+  superseded record keeps its signatures and stays resolvable by its own id.
+required:
+  - patch
+properties:
+  patch:
+    type: object
+    description: |
+      The correction, in the same shape the draft-update body takes: only the
+      patchable content fields (`productName`, `co2ePerUnit`,
+      `repairabilityScore`, `productGroupData`, `componentRefs`) take effect.
+
+      Other keys are ignored rather than refused, so a client that sends a full
+      create-shaped body still works and still cannot make a create-time field
+      take effect. Fields fixed at issuance — the product group, the schema
+      version, the manufacturer, the lineage edges — are not amendable; a
+      passport whose product group is wrong is not the same product.
+    additionalProperties: true
+    example:
+      productName: Model X Battery Pack (rev B)
+      productGroupData:
+        gtin: '01234567890128'
+        batteryType: industrial
+  reason:
+    type: string
+    description: |
+      Why the passport is being corrected. Recorded on the superseded record's
+      audit entry alongside the successor's id — the two together are what
+      answers "why did this change" for a reader who arrives at the old record.
+    example: Recycled-content share restated after supplier re-declaration
