@@ -431,6 +431,66 @@ mod tests {
         assert!(counter.drain().is_empty());
     }
 
+    /// An idle window reaches the node, so `ingesting` can mean something.
+    ///
+    /// The node cannot see `SCAN_INGEST_URL`, so without this it cannot tell
+    /// "telemetry off" from "telemetry on, nobody scanned" — both were `0`.
+    #[tokio::test]
+    async fn an_idle_window_is_still_sent_as_a_heartbeat() {
+        let (url, captured) = mock_ingest(StatusCode::OK).await;
+        let counter = ScanCounter::default();
+
+        flush_once(&counter, &reqwest::Client::new(), &url).await;
+
+        let seen = captured.lock().unwrap();
+        assert_eq!(seen.len(), 1, "an empty window must still be POSTed");
+        assert!(
+            seen[0].scans.is_empty() && seen[0].qr_renders.is_empty(),
+            "the heartbeat carries no counts"
+        );
+    }
+
+    /// A failed heartbeat must not be held, or the counter stops counting.
+    ///
+    /// This is the interaction between the two rules, and neither of the changes
+    /// that introduced them covers it: sending empty windows came from one and
+    /// holding failed ones from the other. `next_flush` returns a held batch in
+    /// preference to draining, so a held *empty* batch is returned on every tick
+    /// forever — real scans accumulate behind it and are never sent. The bug is
+    /// silent: flushes keep succeeding, and the number is simply always zero.
+    ///
+    /// The second half is the one that matters. Asserting only `!has_pending()`
+    /// would pass against an implementation that dropped the counts too.
+    #[tokio::test]
+    async fn a_failed_heartbeat_is_not_held_and_does_not_starve_the_counter() {
+        let (url, captured) = mock_ingest(StatusCode::INTERNAL_SERVER_ERROR).await;
+        let counter = ScanCounter::default();
+
+        // Tick one: idle, and the node is down. Nothing to preserve.
+        flush_once(&counter, &reqwest::Client::new(), &url).await;
+        assert!(
+            !counter.has_pending(),
+            "an empty batch must never be held — holding one starves every later flush"
+        );
+
+        // A real scan arrives, and the node recovers.
+        counter.record_scan("abc", ScanVariant::Json);
+        let (ok_url, ok_captured) = mock_ingest(StatusCode::OK).await;
+        flush_once(&counter, &reqwest::Client::new(), &ok_url).await;
+
+        let seen = ok_captured.lock().unwrap();
+        assert_eq!(seen.len(), 1);
+        assert_eq!(
+            seen[0].scans.len(),
+            1,
+            "the scan recorded after a failed heartbeat must still be drained and sent"
+        );
+        drop(seen);
+
+        // And the failed heartbeat was a real request, not a skipped one.
+        assert_eq!(captured.lock().unwrap().len(), 1);
+    }
+
     #[tokio::test]
     async fn flush_once_holds_the_window_on_server_error() {
         let (url, _captured) = mock_ingest(StatusCode::INTERNAL_SERVER_ERROR).await;
