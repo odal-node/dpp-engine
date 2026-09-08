@@ -41,6 +41,55 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ### Added
 
+- **A passport can now be retired in favour of a replacement that already
+  exists.** `POST /vault/api/v1/dpp/{dppId}/supersede` names an
+  already-published successor and moves the passport in the path to the terminal
+  `superseded` state, returning `200` with the record it retired. The successor
+  declares the link by passing `supersedesId` on `POST /dpp` when it is created;
+  this route confirms the two agree before retiring anything.
+
+  This is the sibling of the `amend` route, not a second way to do the same
+  thing, and the distinction is the reason both exist. `amend` **issues** the
+  successor: it clones the predecessor, applies a patch and publishes the
+  result, so the record it retires in favour of is always one it just minted. It
+  therefore cannot express a supersession whose successor was created
+  independently — pointing it at an already-published passport produces a
+  *third* record and leaves two live passports for one product.
+
+  The clearest case is one `amend` names in its own documentation and declines:
+  a successor at a **newer schema version**. `amend` deliberately inherits the
+  predecessor's schema version, because disclosure classes are read from it and
+  advancing it silently would change who may see which field as a side effect of
+  fixing a typo. Migrating a passport to a newer schema is therefore only
+  expressible as create-at-the-new-version and link, which is this route. The
+  same shape covers a successor imported from another node, or one issued by a
+  different operator after a transfer.
+
+  Two properties worth knowing before using it:
+
+  - **The link is checked, not written.** `supersedesId` is protected — set by
+    the write that creates the whole record, never by a field patch — so it must
+    already be present on the successor. That ordering is also the safer one:
+    writing the link during the transition would leave, on a failure between the
+    two writes, a retired passport with nothing pointing at its replacement, the
+    one state a reader cannot recover from. A successor that never declared the
+    link is refused with `422` and nothing is written.
+  - **The response is the passport in the path**, the one that was retired —
+    the opposite of `amend`, which answers `201` with the successor it created.
+
+  Everything downstream of the transition — the status write, the audit entry
+  and its `successorId` and `reason` metadata, the emitted
+  `dpp.passport.superseded` payload, the continuity-tier reconcile — is shared
+  with `amend` rather than reimplemented. Written twice, the two routes emitted
+  the same subject under two different payload shapes and only one of them
+  recorded the successor's id at all, so a reader arriving at a retired record
+  could find what replaced it only if it happened to have been retired by the
+  right route. `both_routes_retire_a_passport_the_same_way` fails if they are
+  split again.
+
+  No migration: `0034` already admits the `superseded` audit action, added when
+  `amend` first produced the transition.
+
 - **Eight write endpoints now accept a client-supplied `Idempotency-Key`.**
   Send the same key with the same body and the first outcome is returned rather
   than a second resource being created. The replay carries

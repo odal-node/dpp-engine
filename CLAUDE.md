@@ -340,6 +340,7 @@ unprotected one. Read the table in the code.
 | PUT | `/vault/api/v1/dpp/{dppId}` | Bearer | Update passport (draft only) |
 | POST | `/vault/api/v1/dpp/{dppId}/publish` | Bearer | Publish (signs with Ed25519) |
 | POST | `/vault/api/v1/dpp/{dppId}/amend` | Bearer **(write)** | Correct a published passport by publishing a **successor** (`supersedesId` → this id, `version` + 1) and moving this one to the terminal `superseded` state. Returns `201` with the successor — **a different record from the one in the path**. The superseded passport keeps its signatures and stays readable here and in the audit trail; its **public** by-id URL answers `404`, while the product's GTIN resolves on past it to the successor |
+| POST | `/vault/api/v1/dpp/{dppId}/supersede` | Bearer **(write)** | Retire this passport in favour of an **already-published** successor named in `supersededBy`, which must already carry `supersedesId` back to this id (declared on `POST /dpp`; this route only checks it). Returns `200` with **the retired passport** — the opposite subject from `amend`, which mints its successor and returns that. Use this when the replacement was created independently: a newer schema version, an imported record, a successor issued after a transfer |
 | POST | `/vault/api/v1/dpp/{dppId}/suspend` | Bearer | Suspend |
 | POST | `/vault/api/v1/dpp/{dppId}/archive` | Bearer | Archive |
 | POST | `/vault/api/v1/dpp/{dppId}/lint` | Bearer (write) | Re-run the plausibility lint pack — **persists** `lintResult` |

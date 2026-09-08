@@ -118,6 +118,9 @@ pub fn validate_textile_row(
         schema_version: None,
         placed_on_market_date,
         commodity_code,
+        // An import creates originals, never replacements: a successor is
+        // declared deliberately by whoever knows what it replaces.
+        supersedes_id: None,
         // A CSV cannot express these: each carries a URI *and* a hash of the
         // referenced passport's public signature, and a hash cannot be authored
         // by hand — an invented one produces a link that fails verification.

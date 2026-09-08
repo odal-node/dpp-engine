@@ -61,6 +61,25 @@ pub struct CreatePassportRequest {
     /// group. Optional: the regulation qualifies it "where relevant".
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub commodity_code: Option<String>,
+    /// The passport this one replaces, if it is a new version of an existing
+    /// record.
+    ///
+    /// Declared at create because `supersedesId` is a protected field: it is set
+    /// by the write that creates the whole record, never by a field patch, so
+    /// this is the only request that can carry it. Declaring it here also puts
+    /// it where the operator actually knows it — they are creating *this*
+    /// passport because it replaces *that* one.
+    ///
+    /// Recording the link does not retire anything. The predecessor is retired
+    /// by `POST /dpp/{predecessorId}/supersede` once this successor is
+    /// published, and that route checks the two agree.
+    ///
+    /// Not the same field `amend` writes. `amend` sets `supersedesId` itself on
+    /// a successor it mints from a patch; this is for a successor created
+    /// independently, which `amend` cannot express.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub supersedes_id: Option<dpp_domain::passport::PassportId>,
+
     /// Cross-operator predecessor this passport derives from (second-life
     /// successor linkage). Shape-validated on receipt; the hash is checked
     /// against the fetched parent at verify time.

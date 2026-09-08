@@ -163,13 +163,24 @@ impl PassportService {
     }
 
     /// Move the predecessor to `Superseded` and record why.
-    async fn supersede_predecessor(
+    ///
+    /// Shared with [`PassportService::supersede`], the link route, which reaches
+    /// the same terminal transition from the other direction: there the
+    /// successor was created and published independently and is merely named,
+    /// here it was just issued from a patch. Everything downstream of the
+    /// transition — the status write, the audit entry, the emitted subject and
+    /// its payload, the snapshot reconcile — is identical for both, and a second
+    /// copy of it is how the two routes would drift into emitting
+    /// `dpp.passport.superseded` under two different payload shapes.
+    ///
+    /// Returns the retired predecessor, which the link route answers with.
+    pub(super) async fn supersede_predecessor(
         &self,
         predecessor: &Passport,
         successor_id: PassportId,
         reason: Option<String>,
         auth: &AuthContext,
-    ) -> Result<(), DppError> {
+    ) -> Result<Passport, DppError> {
         let prev_status = predecessor.status.to_string();
 
         // The one write that can leave the node inconsistent: the successor is
@@ -236,6 +247,6 @@ impl PassportService {
         // still unverified against the specification; inventing an intent here
         // would encode a guess in a durable outbox row.
 
-        Ok(())
+        Ok(superseded)
     }
 }
