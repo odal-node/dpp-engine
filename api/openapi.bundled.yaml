@@ -5313,6 +5313,27 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/QrRenderBatchEntry'
+        flushIntervalSecs:
+          type: integer
+          format: int64
+          minimum: 1
+          description: |
+            How often the sending resolver flushes, in seconds.
+
+            Declared rather than assumed. The node reports `ingesting` on
+            `GET /stats` by asking whether the last flush is recent, and "recent" is
+            only meaningful relative to how often the sender promised to call —
+            `SCAN_FLUSH_INTERVAL_SECS` belongs to the resolver, a separate deployable
+            whose environment the node cannot read.
+
+            Stamped when the window is drained, not when it is sent, so a batch held
+            after a failed flush is re-sent byte-identical under its original
+            `Idempotency-Key`.
+
+            Optional: a resolver predating this field omits it, and the node then
+            reports whether telemetry has *ever* arrived rather than applying a
+            threshold to a cadence it does not know.
+          example: 300
     ScanBatchEntry:
       type: object
       required:

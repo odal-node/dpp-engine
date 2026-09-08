@@ -68,6 +68,10 @@ pub struct ScanCounter {
     /// landing in the maps above meanwhile; nothing new is drained until this
     /// is resolved, which is what caps the hold at one batch.
     pending: Mutex<Option<KeyedBatch>>,
+    /// This resolver's flush cadence, stamped onto every drained batch so the
+    /// node can judge staleness against the sender's own promise rather than a
+    /// hardcoded guess. `None` only in tests that do not exercise liveness.
+    flush_interval_secs: Option<u64>,
 }
 
 /// Increment `key`'s count in `map`. If `key` is new and `map` is already at
@@ -87,6 +91,20 @@ fn bump<K: std::hash::Hash + Eq + std::fmt::Debug>(map: &mut HashMap<K, u64>, ke
 }
 
 impl ScanCounter {
+    /// A counter that declares `interval` on every batch it drains.
+    ///
+    /// The production constructor. `Default` leaves the cadence undeclared, and
+    /// a node receiving batches without it can report that telemetry has
+    /// arrived but not whether it is still arriving — see
+    /// [`ScanBatch::flush_interval_secs`].
+    #[must_use]
+    pub fn with_flush_interval(interval: Duration) -> Self {
+        Self {
+            flush_interval_secs: Some(interval.as_secs()),
+            ..Self::default()
+        }
+    }
+
     /// Record one successful terminal-view resolution of `dpp_id`.
     pub fn record_scan(&self, dpp_id: &str, variant: ScanVariant) {
         let day = Utc::now().date_naive();
@@ -119,6 +137,9 @@ impl ScanCounter {
                 .into_iter()
                 .map(|((dpp_id, day), count)| QrRenderBatchEntry { dpp_id, day, count })
                 .collect(),
+            // Stamped here rather than at send time so it is part of the value
+            // that may be held and re-sent byte-identical under one key.
+            flush_interval_secs: self.flush_interval_secs,
         }
     }
 

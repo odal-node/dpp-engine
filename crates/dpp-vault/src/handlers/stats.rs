@@ -56,7 +56,7 @@ pub async fn passport_stats_handler(
             // still feeding it. Without this a `0` is unreadable — see
             // `infra::scan_liveness`.
             stats.last_ingest_at = crate::infra::scan_liveness::last_ingest();
-            stats.ingesting = stats.last_ingest_at.is_some();
+            stats.ingesting = crate::infra::scan_liveness::is_ingesting();
             (StatusCode::OK, Json(stats)).into_response()
         }
         Err(e) => internal_error(e),
@@ -75,7 +75,7 @@ pub async fn operator_stats_handler(
             // still feeding it. Without this a `0` is unreadable — see
             // `infra::scan_liveness`.
             stats.last_ingest_at = crate::infra::scan_liveness::last_ingest();
-            stats.ingesting = stats.last_ingest_at.is_some();
+            stats.ingesting = crate::infra::scan_liveness::is_ingesting();
             (StatusCode::OK, Json(stats)).into_response()
         }
         Err(e) => internal_error(e),

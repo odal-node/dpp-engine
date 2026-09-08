@@ -2924,10 +2924,14 @@ mod fixtures {
         }
     }
 
+    /// Populated per the maximal-fixture rule: `flush_interval_secs` is an
+    /// `Option` that would emit nothing if left `None`, and the schema check
+    /// would then pass by not looking at it.
     pub fn scan_batch() -> ScanBatch {
         ScanBatch {
             scans: vec![scan_count()],
             qr_renders: vec![qr_render_count()],
+            flush_interval_secs: Some(300),
         }
     }
 
