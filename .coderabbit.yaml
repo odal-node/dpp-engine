@@ -1,0 +1,277 @@
+# yaml-language-server: $schema=https://storage.googleapis.com/coderabbit_public_assets/schema.v2.json
+
+# Reviews here are asked for, not ambient.
+#
+# The open-source plan's review rate limit scales with a repository's star
+# count, and at one star this repo sits at the bottom of that band. Merge waves
+# reach double digits inside a single hour, so automatic review would queue
+# behind itself and land after the merge it was meant to inform. Ask for one
+# where it earns the wait — a cross-cutting refactor, a branch open long enough
+# that main moved underneath it — by commenting
+#
+#   @coderabbitai review
+#
+# on the pull request.
+#
+# What CI already decides is not what this is for. fmt, clippy, the test tiers,
+# the migration and grant checks, the OpenAPI spec lints and the contract
+# fixtures are gates, and a gate that passes needs no second opinion. Everything
+# below is deliberately the complement: the rules that hold here, that cost
+# something when broken, and that nothing mechanical checks.
+#
+# NOTE FOR WHOEVER EDITS THIS FILE NEXT: this file is itself published. The
+# publication boundary described below binds it too. `filePatterns` can point at
+# a document in another repository of the same organisation, and that is
+# deliberately not used here — naming a non-public sibling would be this config
+# violating the rule it exists to enforce.
+language: en-US
+
+reviews:
+  # A review that was requested deliberately should say everything it has. The
+  # noise argument for a quieter profile applies to review you did not ask for.
+  profile: assertive
+
+  auto_review:
+    enabled: false
+    # A positive label match opts a single pull request in even while `enabled`
+    # is false. This is also what makes `pre_merge_checks` below actually run:
+    # when no review happens at all, those checks are skipped with it and the
+    # CodeRabbit status passes vacuously, which is worse than not having them.
+    # Label a PR `review-ready` to opt it in; `@coderabbitai review` still works
+    # for anything unlabelled.
+    labels:
+      - "review-ready"
+    # One review per opt-in rather than one per push. At the open-source plan's
+    # rate limit, re-reviewing on every push would spend the hour's budget on a
+    # typo fix; ask again explicitly when a re-read is worth it.
+    auto_incremental_review: false
+
+  # With auto-review off, the default status message would post "Review skipped"
+  # on every pull request. At this repo's merge rate that is precisely the noise
+  # the on-demand setting exists to avoid.
+  review_status: false
+
+  path_filters:
+    # Both bundles are produced by `just openapi-bundle` from the multi-file
+    # tree under api/. Every finding in a bundle is, by construction, already
+    # present in the source it was generated from — where it does get reviewed.
+    - "!api/openapi.bundled.yaml"
+    - "!api/openapi.bundled.json"
+    # Resolved by cargo rather than written by hand.
+    - "!Cargo.lock"
+
+  tools:
+    # ops/pg/** stays in review rather than being excluded: Squawk is a
+    # PostgreSQL-native migration linter and is on by default. SQLFluff is off
+    # because its default dialect is ansi, and pointing a non-PostgreSQL parser
+    # at these files is precisely how Codacy came to fail its gate on valid SQL
+    # and force the exclusion recorded in .codacy.yml.
+    sqlfluff:
+      enabled: false
+
+  path_instructions:
+    - path: "**"
+      instructions: >-
+        PUBLICATION BOUNDARY. This repository is public. The operative test
+        needs no list: if it is not in this repository, do not name it or link
+        to it — naming a sibling repository discloses that it exists, which is
+        itself something a public reader should not learn here. A leak cannot be
+        un-pushed, so treat every line in the diff — code, comments, docs,
+        CHANGELOG, test fixtures, the pull request body itself — as already
+        read by an outsider. Flag: (a) ADR numbers, titles or section
+        references, such as "ADR-012 §3" or "see the ADR for X" — their
+        existence, numbering and structure are themselves private; (b) the name
+        of, or any path into, a repository that is not this one, including its
+        internal directory layout, even inside a code comment or a doc link;
+        (c) commercial state — pricing, quotes, contract terms, minimums,
+        per-unit rates, negotiation status, vendor lead times; (d) named third
+        parties in a non-public arrangement: which sub-providers sit behind a
+        vendor for us, who introduced whom, individual contact names at
+        partners, and real company names in test fixtures.
+        The remedy is always the same and is worth stating in the review: write
+        the substance, drop the pointer. The technical reasoning is usually
+        public-safe and belongs in the code; the citation to where it was
+        decided is not. Asserting that CAdES carries the same eIDAS Art. 35
+        presumption is fine; pointing at the internal record that concluded it
+        is not. When a fact came from a vendor's published documentation, cite
+        that instead. When a public artifact needs the reasoning, inline it —
+        never solve a missing reference by linking a private file.
+
+        DIFF DISCIPLINE. Every changed line should trace to the stated purpose
+        of the pull request. Flag adjacent "improvements", drive-by
+        reformatting, and refactors of code that was not broken. Flag
+        speculative generality: an abstraction over a single call site,
+        configurability nobody asked for, error handling for a case that cannot
+        occur. Removing pre-existing dead code is out of scope unless the PR
+        says so — worth noting, not worth deleting. Do not reference internal
+        planning taxonomy (roadmap phase letters, review chunk numbers, priority
+        tags such as N-1, P0 or R-phase) in code or doc comments.
+
+    - path: "crates/**/*.rs"
+      instructions: >-
+        DEPENDENCY DIRECTION is one-way: platform depends on core, and core has
+        zero knowledge of the platform. No engine crate may modify a dpp-core
+        type or trait — the engine adapts to core, never the reverse. The
+        internal graph is acyclic: dpp-types and dpp-common are standalone;
+        dpp-dal depends on dpp-types and core's dpp-domain; dpp-vault on
+        dpp-dal, dpp-types, dpp-common and dpp-domain; dpp-integrator on
+        dpp-types and dpp-common; dpp-node on dpp-vault, dpp-identity,
+        dpp-integrator and dpp-common. Flag any edge outside that list. Core
+        crate versions are pinned in [workspace.dependencies] — read the pin
+        there and never from a copy restated in prose, which is how one document
+        claimed 0.1.0 for fourteen releases.
+
+        STANDING CONVENTIONS — rules that hold, so they are not re-derived.
+        Errors are RFC 7807: `dpp-common::http_problem::Problem` is the error
+        shape for every HTTP surface, and a new error path uses it rather than
+        an ad-hoc body. IDs are UUID v7 via `now_v7()` so they sort by time;
+        `new_v4()` is acceptable only for throwaway values that are not
+        identifiers. The passport graph lives in the `doc` JSONB column, not in
+        tables: component relationships are `componentRefs` walked by
+        dpp-vault's `verify_tree`, and there are no component, material or
+        supplier tables — do not add one to model a relationship the document
+        already carries. Serde is camelCase throughout — DB columns, API
+        responses, the event envelope — with one accepted exception, the
+        identity namespace tables (`did_document`, `key_pair`), which stay
+        snake_case.
+
+        ERRORS, LOGGING, SECRETS. Service-layer crates use `DppError` from
+        dpp-domain; infrastructure crates map through anyhow and convert to
+        `DppError` at the boundary. All crates log through tracing, and secrets
+        never reach log output: not API keys, not private keys, not passphrases.
+        No hardcoded secrets anywhere, tests included. No `unsafe` without an
+        explicit justification.
+
+        AUTH — the scheme split is load-bearing, not cosmetic. `auth_middleware`
+        routes on the Authorization scheme and each scheme reaches only its own
+        provider: `Bearer odal_sk_...` goes to the composite chain ending at the
+        API-key provider, and `Basic` goes to `LocalAuthProvider`, the bootstrap
+        and lockout-recovery credential. `LocalAuthProvider` base64-decodes
+        whatever string it is handed, so if it were ever placed in the Bearer
+        chain a `Bearer base64(user:pass)` token would authenticate as admin.
+        Flag any change that widens a provider's reach across schemes. There is
+        deliberately no dev or unsigned-JWT provider in shipped code — the
+        former one allowed an auth bypass and was removed; test-only providers
+        belong in the integration tests that define them.
+
+        TESTS ARE THE ANSWER, NOT A PROBE. When a change turns on a fact about
+        behaviour — does this reject that input, which layer enforces this rule,
+        is this branch reachable — the pull request should contain a committed
+        `#[test]` that pins it, not a claim in the description. A throwaway
+        probe answers the question once and the answer then lives only in one
+        person's head. Name such a test for the fact it pins rather than the
+        function it calls: `a_bad_check_digit_is_refused_while_the_body_is_parsed`,
+        not `test_gtin`. Be suspicious of a validation that cannot fail: a
+        handler here re-validated a GTIN that `Gtin::Deserialize` had already
+        validated, which read as the thing enforcing GTIN validity when it was
+        the reverse of the truth.
+        Shared test scaffolding has exactly one home, behind dpp-dal's
+        `test-harness` feature: `test_harness` (`start_pg`, `start_pg_raw`,
+        `start_pg_before`) and `in_memory_repo` (`InMemoryPassportRepo`). Do not
+        add a second — the Postgres harness reached eight copies across six
+        implementations before anyone noticed, and `just harness-check` now
+        fails the build for it. Extend the shared one instead. Not everything
+        that shares a name is duplication, though: the wire-shaped
+        `serde_json::Value` passport builders and the per-suite `TestAuthProvider`
+        doubles are deliberate and merging them would couple unrelated tests.
+        A test keystore uses `tempfile::tempdir()` and never
+        `std::env::temp_dir()` — these files hold Ed25519 private keys, and only
+        the former creates the directory with restrictive permissions and
+        removes it on drop. Return the `TempDir` alongside the store so the
+        directory outlives it.
+
+    - path: "api/**"
+      instructions: >-
+        DOCUMENTING AN ERROR CONDITION MEANS WRITING THE TEST THAT PRODUCES IT.
+        When a `'404':` or `'422':` gains a description in api/paths/, that
+        sentence is a claim about behaviour and nothing mechanical can check it.
+        The existing gate compares the *codes* a handler can emit against the
+        codes the spec lists, which is sound but cannot compare a sentence to a
+        branch. That gap has shipped: four transfer routes documented 404 as "no
+        pending transfer for this DPP" when that condition returns 422 and 404
+        means the passport has no transfer chain at all. Both codes were
+        reachable, so the gate passed and the wording was then copied onto two
+        more routes.
+        So: if the diff documents an error condition, ask for a test that
+        constructs it and asserts the status. One test per genuinely ambiguous
+        pair is enough — 404 versus 422, where one means "no such resource" and
+        the other "the resource is in the wrong state". Do not ask for one for
+        the uniform, structural codes: 401 from the auth middleware, 400 from a
+        malformed path parameter, 403 from a scope check.
+
+    - path: "ops/pg/**"
+      instructions: >-
+        Migrations are append-only and are never renumbered or edited once
+        applied; a change to an applied file is the finding, not a style note.
+        The app role (`odal_app`) cannot run DDL and can DELETE only from the
+        set recorded in ops/pg/README.md — read that set from the README rather
+        than from any count restated elsewhere, which is how one line came to
+        claim a single sanctioned exception while three tables carried the
+        grant. There is no Row-Level Security and none is expected: the node is
+        single-tenant, one operator per node, so there is no in-process
+        isolation boundary to enforce. This is PostgreSQL — review it as
+        PostgreSQL, not as ANSI SQL or T-SQL.
+
+  pre_merge_checks:
+    custom_checks:
+      - name: "Publication boundary"
+        mode: error
+        instructions: >-
+          FAIL if the diff or the pull request description introduces any of the
+          following into this public repository: an ADR reference by number,
+          title or section; the name of, or a filesystem path into, any
+          repository other than this one; pricing, quotes, contract terms,
+          per-unit rates, vendor lead times or negotiation status; the name of a
+          real company or individual in a non-public arrangement, including
+          inside a test fixture. PASS otherwise. When it fails, say which line
+          and give the fix: write the substance, drop the pointer, and cite the
+          vendor's published documentation or the primary legal text instead of
+          the internal record that interpreted it.
+
+      - name: "New dependency is justified"
+        mode: warning
+        instructions: >-
+          Applies only when the diff adds a new *direct* dependency to a
+          Cargo.toml. PASS if the pull request description says what it is for
+          (a specific need, not "might be useful"), what targets it compiles
+          for, its maintenance status, and — the one that actually matters —
+          whether it lands on a path that touches untrusted input, secrets or
+          the network. This engine's untrusted-input surfaces are enumerable:
+          uploaded XLSX and CSV in dpp-integrator, Wasm plugin binaries in
+          dpp-plugin-host, signed compliance rulesets, webhook targets, and
+          resolver requests. A dependency on any of those is a different
+          decision from one behind the CLI's progress bar, and the description
+          should say which it is. FAIL if a new direct dependency is added and
+          the description does not address the untrusted-input question. PASS
+          trivially when no direct dependency is added. This is deliberately a
+          review prompt rather than a CI gate: a mechanical version would be
+          theatre, and the point is that the review has the same context the
+          author had when picking the crate.
+
+knowledge_base:
+  code_guidelines:
+    enabled: true
+    # The standards live in these documents and are maintained there. Listing
+    # them here rather than restating their contents in this file is the point:
+    # a rule copied into YAML is a rule with two homes and one of them goes
+    # stale. The path_instructions above are the complement — they say what to
+    # *flag*, where these documents say what to *do*.
+    # Globs rather than a list, so a document added later is picked up without
+    # anyone remembering to come back here.
+    filePatterns:
+      - "**/CLAUDE.md"
+      - "CONTRIBUTING.md"
+      - "SECURITY.md"
+      - "GOVERNANCE.md"
+      - "README.md"
+      # Carries the entry format and the `### Breaking` convention, which is a
+      # rule about how a change is written up rather than a record of past ones.
+      - "CHANGELOG.md"
+      # The whole set: architecture (AUTH, DATABASE, DATA-MODEL, EVENT-BUS,
+      # EVIDENCE-DOSSIER, DESIGN-PATTERNS), governance, the developer and
+      # operator guides, WEBHOOKS, the ops runbook and metrics plan, legal
+      # (DPP-RETENTION, LICENSING), and project.
+      - "docs/**/*.md"
+      # The one home for the app role's DELETE set and the grants that
+      # `just grants-check` gates against.
+      - "ops/pg/README.md"
