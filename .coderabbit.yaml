@@ -244,13 +244,22 @@ knowledge_base:
     # a rule copied into YAML is a rule with two homes and one of them goes
     # stale. The path_instructions above are the complement — they say what to
     # *flag*, where these documents say what to *do*.
+    # Globs rather than a list, so a document added later is picked up without
+    # anyone remembering to come back here.
     filePatterns:
       - "**/CLAUDE.md"
       - "CONTRIBUTING.md"
-      - "docs/architecture/DESIGN-PATTERNS.md"
-      - "docs/architecture/AUTH.md"
-      - "docs/architecture/DATABASE.md"
-      - "docs/architecture/EVENT-BUS.md"
-      - "docs/governance/GIT-STRATEGY.md"
-      - "docs/governance/VERSIONING.md"
-      - "docs/governance/RELEASE.md"
+      - "SECURITY.md"
+      - "GOVERNANCE.md"
+      - "README.md"
+      # Carries the entry format and the `### Breaking` convention, which is a
+      # rule about how a change is written up rather than a record of past ones.
+      - "CHANGELOG.md"
+      # The whole set: architecture (AUTH, DATABASE, DATA-MODEL, EVENT-BUS,
+      # EVIDENCE-DOSSIER, DESIGN-PATTERNS), governance, the developer and
+      # operator guides, WEBHOOKS, the ops runbook and metrics plan, legal
+      # (DPP-RETENTION, LICENSING), and project.
+      - "docs/**/*.md"
+      # The one home for the app role's DELETE set and the grants that
+      # `just grants-check` gates against.
+      - "ops/pg/README.md"
