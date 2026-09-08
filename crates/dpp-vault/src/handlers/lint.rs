@@ -2,14 +2,15 @@
 
 use axum::{
     Json,
-    extract::{Extension, Path, State},
+    extract::{Path, State},
     http::StatusCode,
     response::IntoResponse,
 };
 
-use crate::{middleware::auth::AuthContext, state::AppState};
+use crate::middleware::scope::RequireWrite;
+use crate::state::AppState;
 
-use super::error::{internal_error, not_found_error, parse_passport_id, require_write};
+use super::error::{internal_error, not_found_error, parse_passport_id};
 
 /// `POST /api/v1/dpp/{dppId}/lint` — recompute and persist the plausibility
 /// lint pack's findings against the passport's current product group data.
@@ -27,12 +28,12 @@ use super::error::{internal_error, not_found_error, parse_passport_id, require_w
 /// is the wrong axis.
 pub async fn lint_handler(
     State(state): State<AppState>,
-    Extension(auth): Extension<AuthContext>,
+    // This route carries no body, so the extractor's ordering guarantee buys
+    // nothing here — it is the same gate as everywhere else, kept in the same
+    // shape so the scope model reads uniformly across the surface.
+    RequireWrite(_auth): RequireWrite,
     Path(dpp_id): Path<String>,
 ) -> impl IntoResponse {
-    if let Some(resp) = require_write(&auth, "Re-linting a passport") {
-        return resp;
-    }
     let passport_id = match parse_passport_id(&dpp_id) {
         Ok(id) => id,
         Err(e) => return e,
