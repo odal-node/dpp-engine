@@ -1,5 +1,5 @@
 -- ============================================================================
--- 0035 — the *number* of unsold products discarded, alongside their weight.
+-- 0037 — the *number* of unsold products discarded, alongside their weight.
 --
 -- `0008` built this table for ESPR Art. 25 destruction-ban reporting and gave
 -- it `volume_kg`. Art. 24(1)(a) — the disclosure obligation the table actually

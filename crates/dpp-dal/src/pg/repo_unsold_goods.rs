@@ -1,4 +1,4 @@
-//! `UnsoldGoodsStore` on PostgreSQL (`ops/pg/0008`, `0035`).
+//! `UnsoldGoodsStore` on PostgreSQL (`ops/pg/0008`, `0037`).
 //!
 //! One table, no outbox and no state machine: an Art. 24 disclosure line is
 //! written once and read back. `operator_id`/`operator_name` are report
