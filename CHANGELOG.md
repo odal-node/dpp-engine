@@ -876,6 +876,32 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ### Fixed
 
+- **Importing two battery templates silently produced one passport.** All three
+  generated templates shipped the same example `gtin` and `batchId`, and all
+  three import under the `battery` product group — the category rides on the
+  row's own `batteryType` column. The importer matches an incoming row against
+  an existing passport on `(product group, GTIN, batch)`, so importing
+  `battery-lmt` after `battery-ev` **updated** the EV record instead of creating
+  a second one, and the EV content was gone.
+
+  Silently: every import answered `successCount: 1`, with the id under `updated`
+  rather than `created`. Onboarding one category at a time is the entire reason
+  the templates were split per category, and following that path destroyed the
+  previous one. Each template now carries its own identity, and a test asserts
+  no two of them address the same passport — the property the existing
+  "the three templates differ" test could not see, because they did differ,
+  everywhere except where it mattered.
+
+- **The `battery-industrial` template declared no capacity.** Art. 77(1) reaches
+  an industrial battery only above **2 kWh**, so capacity is the field that
+  decides whether that category owes a passport at all — and the template for it
+  offered no `ratedCapacityKwh` column. Every row imported from it therefore
+  landed in the undeclared branch and came back with a note explaining that an
+  undeclared capacity is treated as in scope. It carried `nominalCapacityAh`,
+  which is not a substitute: the article's threshold is energy, not the
+  ampere-hour figure defined for an annex's purposes. The column is now there,
+  with an example above the threshold.
+
 - **`publishReadiness` named the wrong category's field count.** Its description
   called the mandatory-content gate "38 fields for an electric-vehicle one".
   Thirty-eight is what an **industrial** battery owes; an electric-vehicle one

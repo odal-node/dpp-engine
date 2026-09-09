@@ -201,24 +201,77 @@ const fn opt(field: &'static str, name: &'static str, example: &'static str) -> 
     }
 }
 
-/// Envelope columns, identical for every category.
+/// Envelope columns whose example is the same whatever the category.
+///
+/// The identity columns — `gtin`, `batchId` and the passport number that embeds
+/// them — are **not** here. They are per-category, and the reason is not
+/// cosmetic: see [`Identity`].
 const ENVELOPE_COLUMNS: &[Column] = &[
-    req(ENVELOPE, "productName", "Odal Reference Cell"),
-    req(ENVELOPE, "gtin", "09506000134352"),
-    req(ENVELOPE, "batchId", "BATCH-2026-001"),
     req(ENVELOPE, "manufacturerName", "Acme Energy GmbH"),
     req(ENVELOPE, "manufacturerCountry", "DE"),
     opt(ENVELOPE, "commodityCode", "85076000"),
 ];
 
+/// The capacity the industrial template's example row declares, in kWh.
+///
+/// Above the Art. 77(1) threshold of 2 kWh, deliberately: the template exists
+/// for industrial batteries the article reaches, and a row declaring less would
+/// generate an example of a passport nobody owes.
+const INDUSTRIAL_EXAMPLE_KWH: &str = "48.0";
+
+/// The example identity a category's template row carries.
+///
+/// # Why these must differ per category
+///
+/// All three templates import under the **`battery`** product group — the
+/// category rides on the row's own `batteryType` column, not on a product group
+/// of its own — and the importer matches an incoming row against an existing
+/// passport on `(product group, GTIN, batch)`. A shared example identity
+/// therefore makes the three templates address **one** passport: importing
+/// `battery-lmt` after `battery-ev` updates the EV record rather than creating a
+/// second one, and the EV content is gone. Silently, with `successCount: 1` and
+/// the id reported under `updated` rather than `created`.
+///
+/// That is exactly what these templates exist to prevent an operator from
+/// hitting. They are per-category so a category can be onboarded at a time,
+/// which is the whole point of splitting them, and a shared identity turns the
+/// documented path into data loss.
+///
+/// The GTINs are distinct and each carries a valid GS1 mod-10 check digit —
+/// `Gtin`'s `Deserialize` calls `Gtin::parse`, so an invalid one would fail the
+/// import rather than the template test.
+struct Identity {
+    gtin: &'static str,
+    batch_id: &'static str,
+    passport_number: &'static str,
+}
+
+impl BatteryCategory {
+    /// The example identity this category's template row carries.
+    const fn identity(self) -> Identity {
+        match self {
+            Self::Ev => Identity {
+                gtin: "09506000134352",
+                batch_id: "BATCH-2026-EV-001",
+                passport_number: "URN:ODL:BATT:09506000134352:BATCH-2026-EV-001",
+            },
+            Self::Lmt => Identity {
+                gtin: "09506000134369",
+                batch_id: "BATCH-2026-LMT-001",
+                passport_number: "URN:ODL:BATT:09506000134369:BATCH-2026-LMT-001",
+            },
+            Self::Industrial => Identity {
+                gtin: "09506000134376",
+                batch_id: "BATCH-2026-IND-001",
+                passport_number: "URN:ODL:BATT:09506000134376:BATCH-2026-IND-001",
+            },
+        }
+    }
+}
+
 /// The data points every category owes, in the rules table's own order so the
 /// two can be read side by side.
 const COMMON: &[Column] = &[
-    req(
-        "batteryPassportNumber",
-        "batteryPassportNumber",
-        "URN:ODL:BATT:09506000134352:BATCH-2026-001",
-    ),
     req("batteryModelId", "batteryModelId", "ACME-REF-48-100"),
     req("manufacturingPlace", "manufacturingPlace", "Erfurt, DE"),
     req("manufacturingDate", "manufacturingDate", "2026-03-01"),
@@ -489,9 +542,18 @@ const EV_ONLY: &[Column] = &[req(
 /// Every column the template for `category` carries, in order.
 #[must_use]
 pub fn columns_for(category: BatteryCategory) -> Vec<Column> {
+    let identity = category.identity();
     let mut out: Vec<Column> = Vec::new();
+    out.push(req(ENVELOPE, "productName", "Odal Reference Cell"));
+    out.push(req(ENVELOPE, "gtin", identity.gtin));
+    out.push(req(ENVELOPE, "batchId", identity.batch_id));
     out.extend_from_slice(ENVELOPE_COLUMNS);
     out.push(req("batteryType", "batteryType", category.as_str()));
+    out.push(req(
+        "batteryPassportNumber",
+        "batteryPassportNumber",
+        identity.passport_number,
+    ));
     out.extend_from_slice(COMMON);
     match category {
         BatteryCategory::Ev => {
@@ -507,7 +569,22 @@ pub fn columns_for(category: BatteryCategory) -> Vec<Column> {
         // threshold: the rules table marks them `Conditional`, and offering a
         // column for a data point the guidance does not ask for invites an
         // operator to invent one.
-        BatteryCategory::Industrial => out.extend_from_slice(SOH_STATIONARY),
+        //
+        // It does get `ratedCapacityKwh`, which no other category needs. Art.
+        // 77(1) reaches an industrial battery only **above 2 kWh**, so this is
+        // the one column that decides whether the record owes a passport at
+        // all — and without it every row imported from this template lands in
+        // `passport_scope`'s undeclared branch and is told so. The neighbouring
+        // `nominalCapacityAh` is not a substitute: the article's threshold is
+        // energy, not the ampere-hour figure defined for an annex's purposes.
+        BatteryCategory::Industrial => {
+            out.extend_from_slice(SOH_STATIONARY);
+            out.push(opt(
+                "ratedCapacityKwh",
+                "ratedCapacityKwh",
+                INDUSTRIAL_EXAMPLE_KWH,
+            ));
+        }
     }
     out
 }

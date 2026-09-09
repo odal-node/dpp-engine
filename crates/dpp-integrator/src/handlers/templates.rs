@@ -341,4 +341,47 @@ mod template_publishes {
         assert_ne!(rendered[1], rendered[2], "lmt and industrial must differ");
         assert_ne!(rendered[0], rendered[2], "ev and industrial must differ");
     }
+
+    /// The three templates must not address the same passport.
+    ///
+    /// `the_three_templates_differ_from_one_another` above is not enough, and
+    /// the gap between the two is where a real defect lived: the three files
+    /// differed in their data points and shared `gtin` and `batchId`. All three
+    /// import under the `battery` product group, and the importer matches on
+    /// `(product group, GTIN, batch)` — so importing two of them updated one
+    /// passport instead of creating two, and the first category's content was
+    /// overwritten with no error. Observed live before this test existed:
+    /// three imports, three `successCount: 1`, one id, `batteryType` left as
+    /// whichever went last.
+    ///
+    /// Asserted on the rendered CSV rather than on the identity table, so it
+    /// covers the row an operator actually downloads.
+    #[test]
+    fn no_two_templates_import_as_the_same_passport() {
+        let identity_of = |category: BatteryCategory| -> (String, String) {
+            let csv = crate::domain::battery_template::render_csv(category);
+            let rows = crate::domain::csv_parser::parse_csv(csv.as_bytes()).expect("parses");
+            let row = rows.first().expect("template has an example row").clone();
+            let get = |key: &str| {
+                row.get(key)
+                    .unwrap_or_else(|| panic!("{} has no `{key}` column", category.as_str()))
+                    .clone()
+            };
+            (get("gtin"), get("batchId"))
+        };
+
+        let mut seen: Vec<(BatteryCategory, (String, String))> = Vec::new();
+        for category in BatteryCategory::ALL {
+            let id = identity_of(*category);
+            if let Some((other, _)) = seen.iter().find(|(_, prev)| *prev == id) {
+                panic!(
+                    "the {} and {} templates share the identity {id:?}, so importing both \
+                     updates one passport instead of creating two",
+                    other.as_str(),
+                    category.as_str()
+                );
+            }
+            seen.push((*category, id));
+        }
+    }
 }
