@@ -11,8 +11,8 @@ use serde::{Deserialize, Serialize};
 use crate::{middleware::auth::AuthContext, state::AppState};
 
 use super::error::{
-    api_error, conflict_error, field_validation_error, internal_error, not_found_error,
-    parse_passport_id, require_write,
+    conflict_error, field_validation_error, internal_error, not_found_error, parse_passport_id,
+    require_write, validation_error,
 };
 
 /// Which passport replaces the one named in the path.
@@ -63,14 +63,17 @@ pub async fn supersede_handler(
         Ok(id) => id,
         Err(e) => return e,
     };
+    // `422`, not the `400` that `parse_passport_id` produces for the path.
+    // `BadRequest` documents one thing — "a path parameter is malformed" — and
+    // this is a body field, so answering `400` here would make the published
+    // response mean two different things on the same operation. Every other
+    // body-field refusal in the service is a `422`, and a client that indexes on
+    // the status to decide whether to re-read the URL or fix the payload is
+    // told the wrong one.
     let successor_id = match parse_passport_id(&body.superseded_by) {
         Ok(id) => id,
         Err(_) => {
-            return api_error(
-                StatusCode::BAD_REQUEST,
-                "BAD_REQUEST",
-                "supersededBy is not a valid passport id",
-            );
+            return validation_error("supersededBy is not a valid passport id.");
         }
     };
 

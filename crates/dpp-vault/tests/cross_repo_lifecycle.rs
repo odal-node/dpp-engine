@@ -368,6 +368,37 @@ async fn a_successor_must_declare_the_link_before_it_can_replace_anything() {
         "an unknown successor is not found, not unprocessable"
     );
 
+    // A `supersededBy` that is not a UUID is a *body* failure, so `422` — the
+    // same code every other bad field gets. `400` is reserved for a malformed
+    // path parameter, which is what `BadRequest` documents and all it
+    // documents; answering it here would make one status mean two things on one
+    // operation, and tell a client to re-read a URL that was fine.
+    let resp = client
+        .post_json(
+            &format!("/api/v1/dpp/{predecessor}/supersede"),
+            serde_json::json!({"supersededBy": "not-a-uuid"}),
+        )
+        .await;
+    assert_eq!(
+        resp.status(),
+        422,
+        "a malformed body field is unprocessable, not a bad request"
+    );
+
+    // And the path parameter keeps the `400` that `BadRequest` describes, so
+    // the two are told apart rather than merely asserted separately.
+    let resp = client
+        .post_json(
+            "/api/v1/dpp/not-a-uuid/supersede",
+            serde_json::json!({"supersededBy": successor}),
+        )
+        .await;
+    assert_eq!(
+        resp.status(),
+        400,
+        "a malformed path parameter is still a bad request"
+    );
+
     // The declared link is accepted.
     let resp = client
         .post_json(
