@@ -38,8 +38,10 @@ properties:
     description: Present only for `exemptDestruction`.
   countryOfDisposal:
     type: string
-    minLength: 2
-    maxLength: 2
+    # Upper-case only, unlike the request: the handler normalises before
+    # storing, so this is what the server actually emits.
+    pattern: '^[A-Z]{2}$'
+    description: ISO 3166-1 alpha-2 country the goods were disposed of in.
   operatorName:
     type:
       - string

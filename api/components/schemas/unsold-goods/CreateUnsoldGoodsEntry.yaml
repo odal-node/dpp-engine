@@ -61,7 +61,13 @@ properties:
     example: Contaminated stock unfit for use under Art. 25(5)
   countryOfDisposal:
     type: string
-    minLength: 2
-    maxLength: 2
-    description: ISO 3166-1 alpha-2 country the goods were disposed of in.
+    pattern: '^[A-Za-z]{2}$'
+    description: |
+      ISO 3166-1 alpha-2 country the goods were disposed of in.
+
+      Either case is accepted and the stored value is upper-cased. The pattern
+      is what makes the description enforceable: a length bound alone admits
+      `1?`, which satisfies the published contract and is then refused by the
+      handler — a contract looser than the implementation is the kind a
+      generated client trusts.
     example: DE

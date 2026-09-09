@@ -5713,9 +5713,13 @@ components:
           $ref: '#/components/schemas/CredentialRole'
         country:
           type: string
-          minLength: 2
-          maxLength: 2
-          description: ISO 3166-1 alpha-2 country of the holder's registration.
+          pattern: ^[A-Za-z]{2}$
+          description: |
+            ISO 3166-1 alpha-2 country of the holder's registration.
+
+            Either case is accepted and the credential carries the upper-cased form,
+            which is what a verifier compares against. Same reason for the pattern as
+            on `countryOfDisposal`: a length bound alone admits `1?`.
           example: DE
         productGroups:
           type: array
@@ -5825,9 +5829,15 @@ components:
           example: Contaminated stock unfit for use under Art. 25(5)
         countryOfDisposal:
           type: string
-          minLength: 2
-          maxLength: 2
-          description: ISO 3166-1 alpha-2 country the goods were disposed of in.
+          pattern: ^[A-Za-z]{2}$
+          description: |
+            ISO 3166-1 alpha-2 country the goods were disposed of in.
+
+            Either case is accepted and the stored value is upper-cased. The pattern
+            is what makes the description enforceable: a length bound alone admits
+            `1?`, which satisfies the published contract and is then refused by the
+            handler — a contract looser than the implementation is the kind a
+            generated client trusts.
           example: DE
     UnsoldGoodsEntry:
       type: object
@@ -5870,8 +5880,8 @@ components:
           description: Present only for `exemptDestruction`.
         countryOfDisposal:
           type: string
-          minLength: 2
-          maxLength: 2
+          pattern: ^[A-Z]{2}$
+          description: ISO 3166-1 alpha-2 country the goods were disposed of in.
         operatorName:
           type:
             - string

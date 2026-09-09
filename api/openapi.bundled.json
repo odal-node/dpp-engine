@@ -7177,9 +7177,8 @@
           },
           "country": {
             "type": "string",
-            "minLength": 2,
-            "maxLength": 2,
-            "description": "ISO 3166-1 alpha-2 country of the holder's registration.",
+            "pattern": "^[A-Za-z]{2}$",
+            "description": "ISO 3166-1 alpha-2 country of the holder's registration.\n\nEither case is accepted and the credential carries the upper-cased form,\nwhich is what a verifier compares against. Same reason for the pattern as\non `countryOfDisposal`: a length bound alone admits `1?`.\n",
             "example": "DE"
           },
           "productGroups": {
@@ -7270,9 +7269,8 @@
           },
           "countryOfDisposal": {
             "type": "string",
-            "minLength": 2,
-            "maxLength": 2,
-            "description": "ISO 3166-1 alpha-2 country the goods were disposed of in.",
+            "pattern": "^[A-Za-z]{2}$",
+            "description": "ISO 3166-1 alpha-2 country the goods were disposed of in.\n\nEither case is accepted and the stored value is upper-cased. The pattern\nis what makes the description enforceable: a length bound alone admits\n`1?`, which satisfies the published contract and is then refused by the\nhandler — a contract looser than the implementation is the kind a\ngenerated client trusts.\n",
             "example": "DE"
           }
         }
@@ -7326,8 +7324,8 @@
           },
           "countryOfDisposal": {
             "type": "string",
-            "minLength": 2,
-            "maxLength": 2
+            "pattern": "^[A-Z]{2}$",
+            "description": "ISO 3166-1 alpha-2 country the goods were disposed of in."
           },
           "operatorName": {
             "type": [
