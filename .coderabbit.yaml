@@ -72,17 +72,24 @@ reviews:
   path_instructions:
     - path: "**"
       instructions: >-
-        PUBLICATION BOUNDARY. This repository is public. The operative test
-        needs no list: if it is not in this repository, do not name it or link
-        to it — naming a sibling repository discloses that it exists, which is
-        itself something a public reader should not learn here. A leak cannot be
-        un-pushed, so treat every line in the diff — code, comments, docs,
-        CHANGELOG, test fixtures, the pull request body itself — as already
-        read by an outsider. Flag: (a) ADR numbers, titles or section
-        references, such as "ADR-012 §3" or "see the ADR for X" — their
-        existence, numbering and structure are themselves private; (b) the name
-        of, or any path into, a repository that is not this one, including its
-        internal directory layout, even inside a code comment or a doc link;
+        PUBLICATION BOUNDARY. This repository is public. The test is whether a
+        thing is *public*, never whether it lives in this repository. `dpp-core`
+        is public, published on crates.io, and a declared dependency of this
+        workspace: naming it — in code, comments, docs, CHANGELOG entries or a
+        pull request body — is correct and expected, and must NOT be flagged.
+        The reverse is the rule that binds, and it binds the other repository
+        rather than this one: `dpp-core` is a deliberately product-agnostic
+        library and must never name `dpp-engine`, because a reader implementing
+        against it has no interest in one particular consumer. Nothing in this
+        repository can violate that direction, so do not raise it here.
+        What does apply here: a repository that is NOT public may not be named
+        at all. A leak cannot be un-pushed, so treat every line in the diff —
+        code, comments, docs, CHANGELOG, test fixtures, the pull request body
+        itself — as already read by an outsider. Flag: (a) ADR numbers, titles
+        or section references, such as "ADR-012 §3" or "see the ADR for X" —
+        their existence, numbering and structure are themselves private; (b) the
+        name of, or any path into, a repository that is not public, including
+        its internal directory layout, even inside a code comment or a doc link;
         (c) commercial state — pricing, quotes, contract terms, minimums,
         per-unit rates, negotiation status, vendor lead times; (d) named third
         parties in a non-public arrangement: which sub-providers sit behind a
