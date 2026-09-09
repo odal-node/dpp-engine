@@ -33,7 +33,26 @@ pub(super) const COLUMNS: &[Column] = &[
     Column::required("nominalCapacityAh"),
     Column::required("expectedLifetimeCycles"),
     Column::required("co2ePerUnitKg"),
-    Column::optional("recycledContentPct"),
+    // Per-metal, not aggregate. `recycledContentPct` stood here and was read by
+    // nothing: the template advertised a column the importer silently ignored,
+    // so an operator who filled it in lost the value with no error. Annex XIII
+    // asks per metal and the validator has always parsed it that way — the
+    // column list was the half that never caught up.
+    Column::optional("recycledContentCobaltPct"),
+    Column::optional("recycledContentLithiumPct"),
+    Column::optional("recycledContentNickelPct"),
+    Column::optional("recycledContentLeadPct"),
+    // Read by `validate_battery_row` since before this list existed, and absent
+    // from it — so the generated template omitted twelve fields the importer
+    // accepts, which an operator could only discover by reading the validator.
+    Column::optional("stateOfHealthPct"),
+    Column::optional("ratedCapacityKwh"),
+    Column::optional("batteryWeightKg"),
+    Column::optional("operatingTempMinC"),
+    Column::optional("operatingTempMaxC"),
+    Column::optional("roundTripEfficiencyPct"),
+    Column::optional("dueDiligenceUrl"),
+    Column::optional("carbonFootprintClass"),
     Column::optional("repairabilityScore"),
 ];
 
