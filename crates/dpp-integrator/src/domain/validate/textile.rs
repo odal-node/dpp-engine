@@ -12,6 +12,25 @@ use crate::domain::fields::{
 };
 use crate::domain::request::{CreatePassportRequest, RowError};
 
+use super::Column;
+
+/// The columns this validator reads, in template order. Envelope columns
+/// (`placedOnMarketDate`, `commodityCode`) are appended by `columns_for`.
+pub(super) const COLUMNS: &[Column] = &[
+    Column::required("productName"),
+    Column::required("gtin"),
+    Column::required("batchId"),
+    Column::required("manufacturerName"),
+    Column::required("manufacturerCountry"),
+    Column::required("fibreComposition"),
+    Column::required("countryOfOrigin"),
+    Column::required("careInstructions"),
+    Column::required("chemicalComplianceStandard"),
+    Column::optional("recycledContentPct"),
+    Column::optional("repairScore"),
+    Column::optional("carbonFootprintKgCo2e"),
+];
+
 /// Validate a single textile row and convert it to a vault `CreatePassportRequest`.
 pub fn validate_textile_row(
     row: &HashMap<String, String>,
@@ -118,6 +137,9 @@ pub fn validate_textile_row(
         schema_version: None,
         placed_on_market_date,
         commodity_code,
+        // An import creates originals, never replacements: a successor is
+        // declared deliberately by whoever knows what it replaces.
+        supersedes_id: None,
         // A CSV cannot express these: each carries a URI *and* a hash of the
         // referenced passport's public signature, and a hash cannot be authored
         // by hand — an invented one produces a link that fails verification.

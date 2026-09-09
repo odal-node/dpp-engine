@@ -1,0 +1,3 @@
+productName [REQUIRED],gtin [REQUIRED],batchId [OPTIONAL],manufacturerName [REQUIRED],manufacturerCountry [REQUIRED],primaryMaterial [REQUIRED],countryOfOrigin [REQUIRED],recycledContentPct [OPTIONAL],repairabilityScore [OPTIONAL],co2ePerUnitKg [OPTIONAL],disassemblyInstructionsUrl [OPTIONAL],endOfLifeInstructions [OPTIONAL],placedOnMarketDate [OPTIONAL],commodityCode [OPTIONAL]
+Pocket Sprung 160x200,09506000300016,BATCH-M-2026-001,Sample Sleep Systems Oy,FI,mixed,FI,35.0,7.2,48.0,https://example.com/mattress/disassembly,Return to a mattress collection point,2026-03-01,94042100
+Foam Roll 90x200,09506000300023,,Sample Sleep Systems Oy,FI,other,FI,,,31.5,,,2026-04-15,94042900

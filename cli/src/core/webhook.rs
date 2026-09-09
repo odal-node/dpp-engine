@@ -84,7 +84,7 @@ pub async fn action_webhook_add(
     if let Some(d) = &description {
         payload["description"] = json!(d);
     }
-    let (status, body) = client.post_json(&url, &payload).await?;
+    let (status, body) = client.post_json_creating(&url, &payload).await?;
     if !status.is_success() {
         bail!("webhook creation failed: {}", describe_error(status, &body));
     }

@@ -267,6 +267,7 @@ mod tests {
         CreatePassportRequest {
             product_name: "Test Widget".into(),
             product_group: None,
+            supersedes_id: None,
             manufacturer: ManufacturerInfo {
                 name: "Acme".into(),
                 address: "1 Main St".into(),

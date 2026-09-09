@@ -1,0 +1,3 @@
+productName [REQUIRED],gtin [REQUIRED],batchId [OPTIONAL],manufacturerName [REQUIRED],manufacturerCountry [REQUIRED],productFamily [REQUIRED],countryOfOrigin [REQUIRED],co2ePerFunctionalUnitKg [REQUIRED],functionalUnit [REQUIRED],recycledContentPct [OPTIONAL],epdUrl [OPTIONAL],ceMarking [OPTIONAL],placedOnMarketDate [OPTIONAL],commodityCode [OPTIONAL]
+CEM II/A-S 42.5 N,09506000300078,BATCH-C-2026-001,Sample Baustoffe GmbH,DE,cement,DE,620.0,1 tonne of cement,12.0,https://example.com/epd/cem-ii,true,2026-03-05,25232900
+Mineral Wool Batt 100mm,09506000300085,,Sample Baustoffe GmbH,DE,insulation,DE,48.5,1 m2 at R=2.5,30.0,,true,2026-04-01,68061000

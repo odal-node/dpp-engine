@@ -20,6 +20,7 @@ use dispatch::{dispatch, should_enter_interactive};
 async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
     config::set_active_profile_override(cli.profile.clone());
+    http::set_idempotency_key(cli.idempotency_key.clone());
     match cli.command {
         Some(cmd) => dispatch(cmd).await,
         None => {

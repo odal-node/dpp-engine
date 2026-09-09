@@ -10,7 +10,496 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ## [Unreleased]
 
+### Fixed
+
+- **A transfer's acceptance signature attested nothing.** Accepting a transfer
+  of responsibility re-signed the **initiation** payload, so on a
+  single-operator node the acceptance signature came out byte-identical to the
+  from-signature. An "acceptance" could therefore be produced by copying a field
+  that predates the acceptance entirely, and the signature proved nothing about
+  the accepting party having accepted — which is the one thing a dual-signed
+  handover exists to establish.
+
+  Acceptance now signs a **discriminated** payload, verified against the hosting
+  node's DID. The two signatures are distinguishable by construction rather than
+  by who happened to hold the key, so the property survives a node that holds
+  both sides.
+
+- **A transfer waiting on registry registration was recorded as failed.** A
+  handover held until its passport's registration has an id was persisted with
+  `mark_attempt_failed`. Waiting is not failing: it spent the retry budget,
+  pinned itself at the one-hour backoff cap, and crossed the threshold the
+  operator rollup reports as **stalled**. On a node with no registry credentials
+  — the default — *every* accepted transfer ended there, so the rollup reported
+  a fleet of stalled handovers that were merely waiting for a queue nobody had
+  configured. It is now deferred rather than failed.
+- **Webhook delivery closed a DNS-rebinding window.** *(Security.)* The drain
+  approved a target and then handed the **URL** to a client that resolved the
+  name a second time — the exact rebinding gap the SSRF guard's own
+  documentation describes. A name that passed the check as a public address
+  could resolve to a link-local or internal one by the time the request was
+  made, and the guard would never see it: a zero-TTL record alternating a public
+  and an internal answer passes the first resolution and connects on the second.
+
+  The drain now receives a client **pinned to the addresses that were checked**,
+  so the connection cannot reach anywhere the guard did not approve. A host
+  given as an IP literal keeps the shared pooled client, since there is no name
+  to rebind.
+
+- **An empty `PLUGIN_SIGNING_KEY` no longer aborts the boot.** The value reached
+  `hex::decode("")` and was rejected as a **corrupt key**, where every other
+  optional variable in the service normalises empty to absent. Setting a
+  variable to nothing is how a `.env` unsets it, so this failed closed in the
+  least useful way available — the node would not start at all. Empty is now
+  treated as unset, which loosens nothing: with no key configured the
+  unsigned-plugin gate still refuses.
+- **An imported passport's id came back under two different names.** The import
+  job's stored result carried no `rename_all`, so the same record was
+  `passportId` from the import `POST` and `passport_id` from the job poll. A
+  client following an async import had to handle both spellings of one field to
+  find the passport it had just created.
+
+  An **alias** keeps rows written before this readable, which matters more than
+  it looks: the job store discards a parse failure *silently*, so without the
+  alias every in-flight job's result would have become an empty poll response
+  rather than an error.
+
+- **`lastUsedAt` on an API key was served but never written.** The key
+  management API returned the field and nothing ever set it, so the signal an
+  operator revokes a stale credential on was permanently null — it said "never
+  used" about every key in active use.
+
+  Two deliberate constraints, since this is the authentication hot path.
+  **Throttled to five minutes**: per-request accuracy on this field is worth
+  nothing and a write on every authenticated request is worth a great deal.
+  **Best effort**: failing to record the timestamp cannot fail an otherwise
+  valid request — the credential is good regardless of whether the node managed
+  to note that it was used.
+
+- **A retired passport is publicly readable again instead of answering `404`.**
+  `Deactivated`, `Superseded` and `Archived` now serve on both public routes;
+  `Suspended` still answers `410 Gone` and `Draft` still `404`s.
+
+  Three distinct terminal states used to fall through a `_` arm into one `404`,
+  which is how the question stopped being asked. ESPR Art. 10(4)(i) requires the
+  passport to "remain available" for a period corresponding to "at least the
+  expected lifetime of a specific product", and retiring a *record* does not
+  retire the products already in the field — it is those products that carry the
+  data carrier a recycler or an authority scans. A `404` made a retained record
+  unreachable and indistinguishable from one that never existed, which is the
+  opposite of retaining it.
+
+  Each state on its own terms. `Deactivated` is end of life for the **product**,
+  not the passport — core's status doc says the record "is retained (the DPP
+  outlives the product, EN 18221)", and this node already enforced that on the
+  write side by refusing to archive before `retention_until`. `Superseded`
+  replaces the record, not the goods made under the old specification.
+  `Archived` is only reachable *after* `retention_until`, so it is the one state
+  where the obligation has genuinely lapsed — it serves anyway, because nothing
+  requires a node to stop, the data is already public and already signed, and
+  withdrawing it breaks every carrier still in circulation for no gain. The two
+  that do not serve are the two that mean something else: `Suspended` is a
+  deliberate withdrawal and says so, and `Draft` was never public.
+
+  **What this costs, stated plainly.** The public view is the payload frozen and
+  signed at publish, served back rather than re-derived — that is what lets
+  anyone verify it against the operator DID. `status` is a Public field, so a
+  retired passport's body still reports `"status": "active"`. It cannot report
+  otherwise: rewriting a signed payload is exactly what `publicJwsSignature`
+  exists to make detectable. `amend`'s module doc previously argued from this
+  that the honest answer was a redirect to the successor. The redirect was never
+  built, so the real alternative was the `404` — and a reader who reaches a
+  retired passport is better served by the signed document than by nothing. The
+  live status remains on the authenticated route, which reads the row rather
+  than the proof. `a_deactivated_passport_is_still_served_publicly` pins the
+  frozen value so this is a recorded trade rather than a surprise.
+
+  The redaction lens is unchanged by retirement: it is the same
+  `signed_public_view` a published passport gets, filtered by the same policy at
+  the same schema version. Retirement widens nothing. `serves_publicly` answers
+  the question with a `match` rather than a `||` chain so every state is decided
+  rather than only the remembered ones, and — since `PassportStatus` is
+  `#[non_exhaustive]` — it fails closed on an unrecognised one and logs, because
+  a silent withhold is how this happened the first time.
+
+  The by-GTIN route applies the same rule, so the two public routes cannot
+  disagree about whether a passport exists. Resolving past a superseded record
+  to its successor is unaffected: that exclusion lives in the query
+  (`status <> 'superseded'`), not in the handler.
+
+- **A retried scan-telemetry flush no longer double-counts.** The resolver used
+  to fold a failed window back into its live counters and send the merged total
+  on the next tick. The ingest is additive —
+  `count = odal.scan_telemetry.count + EXCLUDED.count` — so a request the node
+  had already **committed**, whose acknowledgement was then lost to a read
+  timeout or a `5xx` from anything in front of it, was added a second time.
+  Nothing detected it and nothing could correct it: there is no way to subtract
+  a count nobody knows was double-added.
+
+  The existing code reasoned about the ingest transaction being atomic, which it
+  is, and not about the acknowledgement being lost, which is the case that
+  matters. `docs/` states at-least-once for the *outbound* surfaces and tells
+  receivers to be idempotent; nothing said it inbound, and the inbound sink was
+  not.
+
+  A failed batch is now **held verbatim** under a stable id and re-sent
+  byte-for-byte as an `Idempotency-Key`, while new counts accumulate for a later
+  batch. Folding back was not merely lossy in the count — it made the window
+  un-identifiable, because the next drain produced a *superset* of the failed
+  one, so no key could describe two consecutive attempts. At most one batch is
+  ever held, since nothing new is drained until the held one resolves, which
+  bounds the memory as well.
+
+  A `409` from the ingest is the one client error that is now held rather than
+  dropped: it means an earlier attempt at that same batch is still being
+  processed, which is transient.
+
 ### Added
+
+- **The node can now tell "nobody scanned" from "nothing is counting".**
+  `totalScans: 0` meant both, and the node **cannot** resolve the ambiguity for
+  itself: `SCAN_INGEST_URL` is the *resolver's* configuration, not the node's. So
+  an operator reading a zero could not tell telemetry being switched off — the
+  default — from telemetry being on through an idle window.
+
+  An idle window is now sent as a **heartbeat**: one small request per flush
+  interval, which is the only thing that makes the node's `ingesting` flag mean
+  anything.
+
+  The resolver also **declares its flush cadence** in every batch. `ingesting`
+  was `last_ingest_at.is_some()` — ever-flushed rather than currently-flushing —
+  so a resolver that died stayed reported as live for the whole life of the node
+  process, which is precisely the reading an operator staring at a zero must not
+  be given. Judging staleness needs the sender's cadence, and
+  `SCAN_FLUSH_INTERVAL_SECS` is the resolver's environment, so the resolver
+  states it rather than the node assuming a value it cannot see. It is stamped
+  at drain, so a held batch re-sends byte-identical.
+
+  **A heartbeat is never held.** This is the one place it interacts with the
+  held-flush retry added alongside it, and the two were written against
+  different baselines: that change requires an empty window to be a no-op, this
+  one requires it to be sent. Combined naively they *starve the counter* —
+  `next_flush` returns a held batch in preference to draining, so an empty batch
+  held after a failed heartbeat is re-sent every tick forever while real scans
+  pile up behind it and are never drained. Flushes keep succeeding and the
+  number is simply always zero: a silent stop to counting that neither change's
+  tests would catch.
+
+  The resolution is a third behaviour written by neither — send empty batches,
+  never hold one. A heartbeat is **at-most-once**: losing one is free, the next
+  tick sends another. A count is **at-least-once**: losing one is a permanently
+  wrong number. Held batches are the at-least-once machinery, so a heartbeat
+  does not belong in them. The guard lives in `hold()` rather than at the three
+  call sites, because the invariant it protects — "a held batch is never empty"
+  — was previously true only *incidentally*, since empty windows were never sent
+  at all. Making the heartbeat real removed that accident.
+
+- **The lint route now also reports whether the passport would publish.**
+  `POST /vault/api/v1/dpp/{dppId}/lint` answers a `publishReadiness` object
+  naming every field that would block a publish, alongside the plausibility
+  findings it already returned.
+
+  The mandatory-content gate is the one that matters here: it is what most often
+  refuses a battery — 38 fields for an EV — and it could not be previewed
+  anywhere. `dpp-core` made `check_mandatory_content` public precisely so a
+  caller could ask, but it takes a `Passport`, and the only preview the engine
+  had wired (`POST /dpp/validate`) holds an unsaved request body. This route
+  already loads the record, so it can simply ask.
+
+  Additive, via `#[serde(flatten)]`: every field a client already reads stays
+  exactly where it was.
+
+  **Two gates are deliberately out of scope**, and `ready: true` does not claim
+  otherwise: the registry-identity requirement, which is operator state rather
+  than passport state, and the binding-compliance gate, which needs a
+  determination this endpoint does not run. Reporting readiness for either would
+  be worse than not reporting it.
+
+- **A node can now issue the access credentials its own read path verifies.**
+  `POST /vault/api/v1/credentials` (admin) mints a credential signed with the
+  node's key and returns it as a compact VC-JWT, which the holder presents as
+  `X-DPP-Credential` on `GET /vault/credential/dpp/{dppId}`. `odal credential
+  issue` is the command.
+
+  Nothing in the product could produce one before. `CREDENTIAL_ISSUERS_SELF=true`
+  made a node trust its own DID and report the credential port `live`, while
+  `dpp_vc::sign_access_credential` had no caller in this repo: there was no
+  route and no command, so the credential-verified read path could only ever be
+  exercised by a test that hand-rolled the JWS.
+
+  **Only a legitimate interest, never an authority.** The three authority roles
+  — market surveillance, customs, notified body — are refused with `422`.
+  `dpp-vc` says at its signing helper that issuing is "an authority's act, not a
+  node's" and that a node signing its own access credentials "has attested
+  nothing to anyone"; that is right about authority status, which a member state
+  confers and no operator can assert, and wrong about the rest. An operator
+  naming its own authorised repairer attests something nobody else can —
+  membership of that network is a fact the operator alone holds, and no EU
+  register of authorised repairers exists to hold it instead. The gate reads
+  core's own `CredentialRole::audience` rather than restating the mapping, so a
+  role added there lands on the correct side without anything being edited.
+
+  **Issuing is not trusting**, so issuance is not gated on
+  `CREDENTIAL_ISSUERS_SELF`. An operator running two nodes ordinarily mints on
+  one and honours the credential on the other, and gating the two together would
+  make that arrangement impossible to set up.
+
+  **Revocation is expiry.** This node fetches W3C status lists but publishes
+  none, so a credential it mints carries no `credentialStatus` and cannot be
+  withdrawn before it lapses. The lifetime is therefore the whole of the control
+  and is capped at 90 days, defaulting to 30 — the CLI says so on every issue,
+  because there is no `revoke` command for an operator to go looking for. For
+  the same reason the route is keyed: a lost response cannot be retried without
+  putting a second live credential into the world that nobody can find.
+
+  A credential minted here never carries a product **category** restriction. The
+  verifier downgrades any credential that does to public access, because a
+  passport has no category to match it against, so minting one would produce a
+  credential that unlocks nothing.
+
+  The standalone vault binary reaches no key store and answers `501` rather than
+  pretending it can sign.
+
+- **A passport can now be retired in favour of a replacement that already
+  exists.** `POST /vault/api/v1/dpp/{dppId}/supersede` names an
+  already-published successor and moves the passport in the path to the terminal
+  `superseded` state, returning `200` with the record it retired. The successor
+  declares the link by passing `supersedesId` on `POST /dpp` when it is created;
+  this route confirms the two agree before retiring anything.
+
+  This is the sibling of the `amend` route, not a second way to do the same
+  thing, and the distinction is the reason both exist. `amend` **issues** the
+  successor: it clones the predecessor, applies a patch and publishes the
+  result, so the record it retires in favour of is always one it just minted. It
+  therefore cannot express a supersession whose successor was created
+  independently — pointing it at an already-published passport produces a
+  *third* record and leaves two live passports for one product.
+
+  The clearest case is one `amend` names in its own documentation and declines:
+  a successor at a **newer schema version**. `amend` deliberately inherits the
+  predecessor's schema version, because disclosure classes are read from it and
+  advancing it silently would change who may see which field as a side effect of
+  fixing a typo. Migrating a passport to a newer schema is therefore only
+  expressible as create-at-the-new-version and link, which is this route. The
+  same shape covers a successor imported from another node, or one issued by a
+  different operator after a transfer.
+
+  Two properties worth knowing before using it:
+
+  - **The link is checked, not written.** `supersedesId` is protected — set by
+    the write that creates the whole record, never by a field patch — so it must
+    already be present on the successor. That ordering is also the safer one:
+    writing the link during the transition would leave, on a failure between the
+    two writes, a retired passport with nothing pointing at its replacement, the
+    one state a reader cannot recover from. A successor that never declared the
+    link is refused with `422` and nothing is written.
+  - **The response is the passport in the path**, the one that was retired —
+    the opposite of `amend`, which answers `201` with the successor it created.
+
+  Everything downstream of the transition — the status write, the audit entry
+  and its `successorId` and `reason` metadata, the emitted
+  `dpp.passport.superseded` payload, the continuity-tier reconcile — is shared
+  with `amend` rather than reimplemented. Written twice, the two routes emitted
+  the same subject under two different payload shapes and only one of them
+  recorded the successor's id at all, so a reader arriving at a retired record
+  could find what replaced it only if it happened to have been retired by the
+  right route. `both_routes_retire_a_passport_the_same_way` fails if they are
+  split again.
+
+  No migration: `0034` already admits the `superseded` audit action, added when
+  `amend` first produced the transition.
+
+- **Ten write endpoints now accept a client-supplied `Idempotency-Key`.**
+  Send the same key with the same body and the first outcome is returned rather
+  than a second resource being created. The replay carries
+  `Idempotency-Replayed: true`, so a client can tell a retry that worked from
+  one that duplicated without comparing anything.
+
+  Which routes get a key is decided by **effect, not verb**: the test is whether
+  a replay creates a second thing, or spends something that cannot be un-spent.
+  That is `POST /dpp`, evidence generation, plugin install, credential issuance,
+  the unsold-goods disclosure, and the five creates behind API keys, webhooks,
+  facilities, operator identifiers and bulk import.
+  `PUT` and every lifecycle transition are deliberately excluded — they converge
+  on their own — and a key sent to one of them is a `400`, not a silent no-op.
+  Accepting the header where nothing records it would advertise a protection
+  that is not there.
+
+  The key is bound to a SHA-256 of the **raw** request body. Not of a
+  canonicalised form: canonicalising would invent a normalisation this API does
+  not otherwise have, and a client that re-serialises with different member
+  order has changed its request. Reusing a key with a different body is
+  refused with `422` under its own problem type
+  (`.../idempotency-key-reuse`) — built directly rather than through the shared
+  helper, which derives the type URI from the status reason and would have made
+  it indistinguishable from every other validation failure.
+
+  Keys are scoped to the authenticated caller and the matched route template,
+  honoured for 24 hours, and swept hourly. A concurrent duplicate gets `409`
+  with `Retry-After`; a claim orphaned by a crash is reclaimed after 60 seconds.
+  If the key store is unreachable the write is **refused**, not run: executing
+  with no record produces exactly the outcome the caller asked to be protected
+  from.
+
+  Two carve-outs, both deliberate and both documented on the routes themselves.
+  `POST /api-keys` and `POST /webhooks` return a secret once, so the secret is
+  never stored — their replay returns the created resource with
+  `"secretAlreadyDelivered": true` in place of it. That is the only shape
+  divergence in the set; the alternative was parking a live credential in a
+  table for a day.
+
+  One honest limitation, recorded rather than hidden: the middleware cannot
+  commit its record inside the handler's transaction, because the repository
+  ports beneath it are per-operation. If a write commits and its record does
+  not, a later retry re-executes. That is today's behaviour, so the mechanism
+  is never a regression — but it is why this is a `warn!` in the logs and a
+  paragraph here.
+
+  Standalone `dpp-vault` and standalone `dpp-integrator` do not mount it: the
+  former spawns no purge task and the latter has no database, and a key store
+  that only grows, or that forgets on restart, is worse than none.
+
+- **`odal --idempotency-key <KEY>`** sends that key on the commands that create
+  something, so a script can re-run one after a network error without risking a
+  duplicate. It is global rather than per-command, and applied at the call sites
+  that hit keyed routes rather than to every `POST` — the node refuses a key on
+  a route that is idempotent by shape, so a blanket flag would have broken
+  `validate`, `publish` and every lifecycle transition.
+
+  A bulk import derives a **per-row** key (`<KEY>#<index>`). One key for the
+  whole loop would be refused at row two as a reuse with a different body, and
+  had it not been, every row would have replayed row one's response. Per-row
+  keys mean re-running a partially failed import re-creates exactly the rows
+  that did not land.
+
+  Multipart uploads — file import and plugin install — deliberately send **no**
+  key, even though the routes accept one. `reqwest` mints a fresh boundary per
+  request and the node fingerprints the raw body, so a retry would differ in
+  bytes and be refused; attaching a key there would turn a retryable failure
+  into a guaranteed `422`. The API description now says this for any client.
+
+- **Eight reserved columns on the passport table are now written, two are gone,
+  and a gate stops the next one accumulating.** Migration `0035`.
+
+  `0004` reserved ten scalar columns for values that live in the `doc` JSONB and
+  no write path populated any of them. No data was lost — the document carried
+  all of it — but a column reads as authoritative whether or not anything writes
+  it, and these did not. `WHERE supersedes_id IS NULL` returned every row.
+  Ordering by `version` ordered by nothing. `retention_until` was computed at
+  publish and served on the API response while its own column sat NULL, so the
+  two disagreed and only one of them was right.
+
+  `granularity`, `retention_until`, `product_id`, `assessed_at` and
+  `ruleset_version` are now projected out of the document in both the insert and
+  the update. The last two are read from inside `complianceResult`, where the
+  determination that produced them lives. `retention_until` needed the update
+  path specifically: it is sealed at publish, never present at create, so an
+  insert-only projection would have left it NULL on every passport that has one.
+  `version` and `supersedes_id` were wired with the amend route.
+
+  `template_version` and `presentation_profile_id` are **dropped**. They
+  reference a product-template and presentation-profile model that exists
+  nowhere in the workspace — no field, no type, no handler, no reference outside
+  the migration that created them. Nothing has ever intended to write them, so
+  nothing is lost, and re-adding a column is a one-line migration on the day a
+  model needs one.
+
+  `serial_number` stays, unwritten and documented. It is reserved for an
+  item-level unit serial the core library does not carry: `Passport` has
+  `granularity`, which has an `item` level, but no serial to pair with it. The
+  AI 21 value in the GS1 carrier is derived from the passport id — deliberately,
+  so the printed label discloses nothing about the record — which makes it an
+  identifier for the passport and not for the product. Tracked upstream.
+
+  The gate is `passport_column_coverage.rs`. It inserts a passport with every
+  projected field populated, updates it, reads the row back with `to_jsonb`, and
+  fails on any column still NULL that is not in a documented exception list. It
+  asserts the *value* rather than grepping the source for the column name,
+  because `->>` on a missing key is SQL NULL rather than an error — a wrong JSON
+  path fails silently, and a name-matching gate would pass over it.
+
+- **A published passport can now be corrected, by issuing a successor rather than
+  editing it.** `POST /vault/api/v1/dpp/{dppId}/amend` takes the same patch shape
+  the draft update takes, publishes a **new** passport carrying `supersedesId`
+  back to the one being corrected and `version` incremented, then moves the
+  predecessor to the terminal `superseded` state.
+
+  Until now there was no way to fix a mistake in a published passport at all. The
+  content is immutable by design — its signatures commit to its bytes and the
+  retention guard refuses every write outside a handful of status fields — so the
+  only options were to suspend the passport, which reads as a withdrawal, or to
+  leave the error standing. Neither is what the regulation expects of a record
+  that has to remain accurate for the product's lifetime.
+
+  The mechanism was modelled long before it had a caller: `Superseded` has been a
+  legal status since the first migration, `version` and `supersedesId` have been
+  fields on the passport and columns on the table, and the port documentation
+  already described an amendment as "a new passport version, not an in-place
+  edit". What was missing was the route. Both columns are now written, so
+  `idx_passport_supersedes` indexes something for the first time.
+
+  Three properties worth knowing before using it:
+
+  - **The response is a different passport from the one in the path.** It is the
+    successor, with its own id and its own signature. A `201` is deliberate.
+  - **The predecessor is kept, never deleted.** Superseding withdraws a passport
+    from being *current*, never from being *stored*: it keeps its signatures, its
+    seal and its retention lock, and reports `superseded` on `/api/v1/dpp/{id}`.
+    The audit entry carries the successor's id and the stated reason, so a reader
+    arriving at the old record can find what replaced it and why. Its **public**
+    by-id URL keeps serving — see the entry below on retired passports staying
+    publicly readable; the product's printed carrier addresses the GTIN and keeps
+    working, resolving on past the superseded record to the successor.
+  - **The predecessor is superseded last.** If the correction is refused by the
+    publish gates — schema, product-group validation, mandatory content, signing
+    — nothing has been superseded and the product still has a live passport.
+
+  The successor **inherits its predecessor's schema version** rather than moving
+  to the product group's current one. An amendment corrects content; migrating a
+  passport to a newer schema is a separate act, and disclosure classes are read
+  from the schema version, so advancing it silently would change who may see
+  which field as a side effect of fixing a typo.
+
+  The by-GTIN public lookup now **excludes superseded records and orders the
+  rest**. One GTIN matched one row only while a product had one passport; an
+  amendment ends that, since the successor inherits the product group data the
+  GTIN comes from and both records carry it. With no ordering, `LIMIT 1` took
+  whichever row the scan reached first, and a superseded predecessor answering
+  for its successor turned a recall into `404` — "no such GTIN", the answer for a
+  mistyped label, served to the person holding the recalled product.
+
+  Known gap, deliberately not guessed at: no registry status intent is enqueued
+  for the superseded passport. `RegistryStatusIntent` has only `Suspended` and
+  `Deactivated`, and supersession is neither — the passport was not withdrawn and
+  the product was not retired. The successor's own registration happens inside
+  publish, so the registry holds both. What it *should* hold is a question about
+  the registry's contract, which is still unverified against the specification.
+- **Bulk import and CSV templates reach nine product groups, up from five.**
+  `mattress`, `furniture`, `toy` and `construction` gain a row validator and a
+  template. Each carries its schema's required set plus the optional fields the
+  typed data model holds, because an importer that silently dropped a column an
+  operator filled in would be worse than one that never offered it.
+
+  Three product groups are still out, and the reason is recorded next to the
+  list rather than left as silence. `detergent` requires `surfactants`, a
+  variable-length list of `{name, biodegradable, concentrationBand}` records —
+  flattening that into fixed columns means inventing a delimiter convention or a
+  column-per-index cap, and both are formats an operator has to be taught.
+  `unsold-goods` is not a product row at all: an Art. 24 disclosure is one
+  undertaking, one financial year and N discard lines, which is a different
+  document with a header section rather than a passport per row. `electronics`
+  is out for a smaller reason — its `productCategory` and
+  `energyEfficiencyClass` are typed enums in `dpp-domain` with no string parse
+  path, so a validator would have to invent one, which is a core-shaped
+  decision.
+
+- **A boolean column type.** `require_bool` / `optional_bool` accept the
+  spellings a spreadsheet actually produces — `true`/`false`, `yes`/`no`, `1`/`0`,
+  case-insensitively — because Excel writes `TRUE` from a checkbox and a person
+  writes `yes`. An unrecognised value is an error rather than a silent `false`:
+  `false` is a positive claim (a toy without CE marking is a different product,
+  not a missing field), and guessing it would put a conformity statement on a
+  passport the operator never made.
 
 - **A continuity snapshot now says how long it stands, under its own signature.**
   Each snapshot written to object storage carries `asOf`, `validUntil` and a
@@ -171,6 +660,28 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ### Breaking
 
+- **`CREDENTIAL_ISSUERS_SELF` no longer trusts the operator as an authority.**
+  *(Breaking: the switch now adds the node's own DID to the legitimate-interest
+  bucket only. A deployment that relied on it for authority-audience reads must
+  name an issuer in `CREDENTIAL_ISSUERS_AUTHORITY` — including itself, if that
+  is genuinely what it meant.)*
+
+  The switch pushed the operator's own DID into **both** buckets. Nothing argued
+  for the authority half, and it is not the operator's to grant: authority
+  status under Art. 77(2)(b) is conferred by a member state, so an operator with
+  the switch on had written itself a market-surveillance credential and the
+  credential-verified read path would honour it — the widest disclosure class
+  there is, reachable by a single environment variable set for an unrelated
+  reason.
+
+  The legitimate-interest half stays, and is the reason the switch exists: no EU
+  register of authorised repairers has been established, the DPP registry
+  registers operators and passports rather than repairer credentials, and an
+  operator vouching for its own repair network is the only trust anchor that
+  exists in practice. Trusting an actual authority is what
+  `CREDENTIAL_ISSUERS_AUTHORITY` is for, where naming the issuer is a deliberate
+  act rather than a side effect of a switch about repairers.
+
 - **Seventeen schemas are renamed to be unambiguous in a flat namespace.**
   *(Breaking: seventeen schema names in the published description are renamed,
   and so are the Rust types behind them. No wire field changes — the contract
@@ -207,6 +718,29 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   turns into method names. Two prose examples carried it too.
 
 ### Fixed
+
+- **Scanning a recalled product's QR code answered `502 Bad Gateway`.**
+  The GS1 Digital Link routes now serve `410 Gone` with a withdrawal message
+  when the passport behind the code has been suspended.
+
+  The vault already did the right thing: `GET /vault/public/dpp/by-gtin/{gtin}`
+  branches on status and answers `410` for a suspended passport, deliberately,
+  because a suspension is a recall and the person scanning the code on a product
+  is precisely who must not be told "bad label".
+
+  The resolver then threw that away. `fetch_by_gtin` mapped `404` and `400` to
+  `404` and folded **everything else** non-2xx into `502` — so the one signal a
+  scanner of a recalled product needs arrived as a message about our
+  infrastructure. All four carrier shapes were affected, which is all of them.
+
+  A withdrawal and a GTIN this node never published now carry different wording,
+  and a genuinely failing vault still reports `502`. The three cases are pinned
+  by tests; the recall case was confirmed to fail (`502`) before the fix.
+
+  A stale comment beside the old behaviour claimed serving `410` here "needs the
+  lookup to stop folding that decision in, which is a `dpp-core` change". That
+  had already been done — the vault route reads through `find_by_gtin_any_status`
+  and branches locally. No core change was required.
 
 - **The stored-document compatibility guard passed without reading a single
   document.** `passport_doc_compat.rs` freezes a real stored `doc` per product
@@ -361,6 +895,33 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   passport has several (each is a snapshot of the proof chain at a moment, so
   one taken before a transfer and one after are both valid and neither
   supersedes the other), and why the list is empty before first publish.
+- **A CSV template's header and the validator behind it were two hand-written
+  lists.** The importer reads columns imperatively and the template served to
+  operators repeated the same names in a checked-in header. Checked column by
+  column, every one of them was correct — but nothing said so, and a column
+  renamed on one side produces an operator downloading a template their own
+  importer rejects, with no test between them and that outcome.
+
+  Each product group now declares its columns once, the template header is
+  generated from that list by `just regenerate-templates`, and a test asserts
+  the committed file still matches — the same arrangement `openapi-check` uses
+  for the API bundle. Regenerating the five pre-existing templates produced them
+  byte for byte, which is the evidence that the extracted lists are faithful
+  rather than merely plausible.
+
+  A second test parses each template's example rows with the importer's own
+  reader and runs them through the product group's validator, so a template
+  cannot ship an example row the importer rejects. That one earned its place
+  immediately: written with a naive comma split it failed on textile's
+  `fibreComposition`, which is a quoted JSON array containing commas.
+
+  The envelope columns (`placedOnMarketDate`, `commodityCode`) are appended
+  centrally rather than repeated per product group — a list that has to remember
+  them is a list that can forget them.
+
+- **`SUPPORTED_SECTORS` was renamed to `SUPPORTED_PRODUCT_GROUPS`**, the last
+  residue of that rename in this crate.
+
 
 - **Four `s3_archive` tests booted a MinIO container each, and sat 0.4s from
   failing CI.** Around eight seconds apiece was container startup, which the test

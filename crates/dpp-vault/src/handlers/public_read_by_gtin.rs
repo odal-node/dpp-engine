@@ -31,7 +31,9 @@ pub async fn public_read_by_gtin_handler(
     Query(query): Query<PublicReadQuery>,
 ) -> impl IntoResponse {
     match state.service.find_by_gtin_any_status(&gtin).await {
-        Ok(Some(p)) if p.status == PassportStatus::Published => {
+        // Which states serve is `public_read`'s one rule, applied here too so the
+        // two public routes cannot disagree about whether a passport exists.
+        Ok(Some(p)) if crate::public_view::serves_publicly(&p.status) => {
             // Same signed payload the by-id route serves. Previously this
             // handler re-derived the redaction inline, which also skipped
             // `public_view`'s unknown-product group backstop; both routes now read the

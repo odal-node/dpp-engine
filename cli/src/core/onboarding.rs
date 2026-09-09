@@ -124,7 +124,7 @@ pub async fn action_bootstrap(
 
     let key_url = format!("{}/api/v1/api-keys", cfg.vault_url);
     let (status, body) = admin_client
-        .post_json(&key_url, &json!({ "name": "cli-bootstrap" }))
+        .post_json_creating(&key_url, &json!({ "name": "cli-bootstrap" }))
         .await?;
     if !status.is_success() {
         bail!("API key creation failed: {}", describe_error(status, &body));
@@ -200,7 +200,7 @@ pub async fn action_key_create(
 ) -> Result<KeyCreateResult> {
     let url = format!("{}/api/v1/api-keys", cfg.vault_url);
     let (status, body) = client
-        .post_json(&url, &json!({ "name": params.name }))
+        .post_json_creating(&url, &json!({ "name": params.name }))
         .await?;
     if !status.is_success() {
         bail!("key creation failed: {}", describe_error(status, &body));

@@ -31,7 +31,7 @@ pub async fn reload_ruleset_handler(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthContext>,
 ) -> Response {
-    if let Some(resp) = require_admin(&auth, "Reloading the compliance ruleset") {
+    if let Some(resp) = require_admin(&auth) {
         return resp;
     }
 

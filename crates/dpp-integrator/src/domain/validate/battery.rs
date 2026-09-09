@@ -17,6 +17,45 @@ use crate::domain::fields::{
 };
 use crate::domain::request::{CreatePassportRequest, RowError};
 
+use super::Column;
+
+/// The columns this validator reads, in template order. Envelope columns
+/// (`placedOnMarketDate`, `commodityCode`) are appended by `columns_for`.
+pub(super) const COLUMNS: &[Column] = &[
+    Column::required("productName"),
+    Column::required("gtin"),
+    Column::required("batchId"),
+    Column::required("manufacturerName"),
+    Column::required("manufacturerCountry"),
+    Column::required("batteryChemistry"),
+    Column::required("batteryType"),
+    Column::required("nominalVoltageV"),
+    Column::required("nominalCapacityAh"),
+    Column::required("expectedLifetimeCycles"),
+    Column::required("co2ePerUnitKg"),
+    // Per-metal, not aggregate. `recycledContentPct` stood here and was read by
+    // nothing: the template advertised a column the importer silently ignored,
+    // so an operator who filled it in lost the value with no error. Annex XIII
+    // asks per metal and the validator has always parsed it that way — the
+    // column list was the half that never caught up.
+    Column::optional("recycledContentCobaltPct"),
+    Column::optional("recycledContentLithiumPct"),
+    Column::optional("recycledContentNickelPct"),
+    Column::optional("recycledContentLeadPct"),
+    // Read by `validate_battery_row` since before this list existed, and absent
+    // from it — so the generated template omitted twelve fields the importer
+    // accepts, which an operator could only discover by reading the validator.
+    Column::optional("stateOfHealthPct"),
+    Column::optional("ratedCapacityKwh"),
+    Column::optional("batteryWeightKg"),
+    Column::optional("operatingTempMinC"),
+    Column::optional("operatingTempMaxC"),
+    Column::optional("roundTripEfficiencyPct"),
+    Column::optional("dueDiligenceUrl"),
+    Column::optional("carbonFootprintClass"),
+    Column::optional("repairabilityScore"),
+];
+
 /// Validate a single battery row and convert it to a vault `CreatePassportRequest`.
 pub fn validate_battery_row(
     row: &HashMap<String, String>,
@@ -242,6 +281,9 @@ pub fn validate_battery_row(
         schema_version: None,
         placed_on_market_date,
         commodity_code,
+        // An import creates originals, never replacements: a successor is
+        // declared deliberately by whoever knows what it replaces.
+        supersedes_id: None,
         // A CSV cannot express these: each carries a URI *and* a hash of the
         // referenced passport's public signature, and a hash cannot be authored
         // by hand — an invented one produces a link that fails verification.

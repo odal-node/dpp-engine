@@ -5,5 +5,6 @@ pub mod config;
 pub mod domain;
 pub mod handlers;
 pub mod infra;
+pub mod middleware;
 pub mod router;
 pub mod state;
