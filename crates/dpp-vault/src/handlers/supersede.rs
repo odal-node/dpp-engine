@@ -1,13 +1,13 @@
 //! `POST /api/v1/dpp/{dppId}/supersede` — retire a passport in favour of a newer one.
 
 use axum::{
-    Json,
     extract::{Path, State},
     http::StatusCode,
     response::IntoResponse,
 };
 use serde::{Deserialize, Serialize};
 
+use crate::extract::Json;
 use crate::middleware::scope::RequireWrite;
 use crate::state::AppState;
 

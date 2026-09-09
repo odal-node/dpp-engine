@@ -1,13 +1,13 @@
 //! `POST /api/v1/dpp/{dppId}/amend` — issue a corrected successor.
 
 use axum::{
-    Json,
     extract::{Path, State},
     http::StatusCode,
     response::IntoResponse,
 };
 use serde::{Deserialize, Serialize};
 
+use crate::extract::Json;
 use crate::middleware::scope::RequireWrite;
 use crate::state::AppState;
 

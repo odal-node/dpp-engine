@@ -1,7 +1,6 @@
 //! `POST /api/v1/dpp/{dppId}/suspend` — suspend a published passport.
 
 use axum::{
-    Json,
     extract::{Path, State},
     http::StatusCode,
     response::IntoResponse,
@@ -11,6 +10,7 @@ use serde::{Deserialize, Serialize};
 use crate::state::AppState;
 
 use super::error::{conflict_error, internal_error, not_found_error, parse_passport_id};
+use crate::extract::Json;
 use crate::middleware::scope::RequireWrite;
 
 /// Optional request body for the suspend endpoint.

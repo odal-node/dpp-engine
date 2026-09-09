@@ -1,7 +1,6 @@
 //! `PUT /api/v1/dpp/{dppId}` — patch a draft passport's fields.
 
 use axum::{
-    Json,
     extract::{Path, State},
     http::StatusCode,
     response::IntoResponse,
@@ -12,6 +11,7 @@ use crate::state::AppState;
 use super::error::{
     conflict_error, field_validation_error, internal_error, not_found_error, parse_passport_id,
 };
+use crate::extract::Json;
 use crate::middleware::scope::RequireWrite;
 
 /// `PUT /api/v1/dpp/{dppId}` — partial-update a draft passport.
