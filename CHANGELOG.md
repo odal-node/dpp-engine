@@ -186,7 +186,7 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   No migration: `0034` already admits the `superseded` audit action, added when
   `amend` first produced the transition.
 
-- **Nine write endpoints now accept a client-supplied `Idempotency-Key`.**
+- **Ten write endpoints now accept a client-supplied `Idempotency-Key`.**
   Send the same key with the same body and the first outcome is returned rather
   than a second resource being created. The replay carries
   `Idempotency-Replayed: true`, so a client can tell a retry that worked from
@@ -195,8 +195,8 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   Which routes get a key is decided by **effect, not verb**: the test is whether
   a replay creates a second thing, or spends something that cannot be un-spent.
   That is `POST /dpp`, evidence generation, plugin install, credential issuance,
-  and the five creates behind API keys, webhooks, facilities, operator
-  identifiers and bulk import.
+  the unsold-goods disclosure, and the five creates behind API keys, webhooks,
+  facilities, operator identifiers and bulk import.
   `PUT` and every lifecycle transition are deliberately excluded — they converge
   on their own — and a key sent to one of them is a `400`, not a silent no-op.
   Accepting the header where nothing records it would advertise a protection
