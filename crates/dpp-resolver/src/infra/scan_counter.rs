@@ -68,6 +68,10 @@ pub struct ScanCounter {
     /// landing in the maps above meanwhile; nothing new is drained until this
     /// is resolved, which is what caps the hold at one batch.
     pending: Mutex<Option<KeyedBatch>>,
+    /// This resolver's flush cadence, stamped onto every drained batch so the
+    /// node can judge staleness against the sender's own promise rather than a
+    /// hardcoded guess. `None` only in tests that do not exercise liveness.
+    flush_interval_secs: Option<u64>,
 }
 
 /// Increment `key`'s count in `map`. If `key` is new and `map` is already at
@@ -87,6 +91,20 @@ fn bump<K: std::hash::Hash + Eq + std::fmt::Debug>(map: &mut HashMap<K, u64>, ke
 }
 
 impl ScanCounter {
+    /// A counter that declares `interval` on every batch it drains.
+    ///
+    /// The production constructor. `Default` leaves the cadence undeclared, and
+    /// a node receiving batches without it can report that telemetry has
+    /// arrived but not whether it is still arriving — see
+    /// [`ScanBatch::flush_interval_secs`].
+    #[must_use]
+    pub fn with_flush_interval(interval: Duration) -> Self {
+        Self {
+            flush_interval_secs: Some(interval.as_secs()),
+            ..Self::default()
+        }
+    }
+
     /// Record one successful terminal-view resolution of `dpp_id`.
     pub fn record_scan(&self, dpp_id: &str, variant: ScanVariant) {
         let day = Utc::now().date_naive();
@@ -119,6 +137,9 @@ impl ScanCounter {
                 .into_iter()
                 .map(|((dpp_id, day), count)| QrRenderBatchEntry { dpp_id, day, count })
                 .collect(),
+            // Stamped here rather than at send time so it is part of the value
+            // that may be held and re-sent byte-identical under one key.
+            flush_interval_secs: self.flush_interval_secs,
         }
     }
 
@@ -141,7 +162,28 @@ impl ScanCounter {
 
     /// Hold `batch` for the next tick after a flush that may or may not have
     /// been applied.
+    ///
+    /// **An empty batch is never held.** Since an idle window is now sent as a
+    /// liveness heartbeat rather than skipped, every failure path can be handed
+    /// one, and holding it would stop this module counting: [`Self::next_flush`]
+    /// returns a held batch in preference to draining, so an empty batch parked
+    /// here would be re-sent on every tick forever while real scans accumulated
+    /// behind it and were never drained.
+    ///
+    /// The guard is here rather than at the three call sites deliberately. The
+    /// invariant `next_flush` relies on — a held batch is never empty — was true
+    /// only incidentally before, because empty windows were never sent at all.
+    /// Making the heartbeat real removed that accident, so the invariant is now
+    /// enforced where it is depended upon, and no future failure path can
+    /// forget it.
+    ///
+    /// Dropping a heartbeat is free: it is at-most-once by nature and the next
+    /// tick sends another. Dropping counts would not be, which is why they are
+    /// what the hold exists for.
     pub fn hold(&self, batch: KeyedBatch) {
+        if batch.batch.is_empty() {
+            return;
+        }
         *self.pending.lock().unwrap() = Some(batch);
     }
 
@@ -167,17 +209,37 @@ impl ScanCounter {
 ///
 /// A transient failure (`5xx`, or the request itself failing) holds the batch
 /// for the next tick; a `4xx` is a permanent rejection and is dropped rather
-/// than retried forever. An empty window is a no-op.
+/// than retried forever.
 ///
 /// Broken out from the loop so it is testable against a mock ingest server
 /// without waiting on a timer.
+///
+/// # An empty window is still sent
+///
+/// It used to return early with nothing to say, which meant the node heard from
+/// the resolver only when somebody had scanned something. The node cannot read
+/// `SCAN_INGEST_URL` — it is this process's configuration, not the node's — so
+/// silence was indistinguishable between "telemetry is switched off" (the
+/// default) and "telemetry is on and nobody scanned". The node reported `0`
+/// either way, and an operator could not tell a real zero from an unmeasured
+/// one.
+///
+/// So an empty batch is a heartbeat: it costs one small request per flush
+/// interval and it is the only thing that makes the node's `ingesting` flag
+/// mean anything.
+///
+/// # Where the heartbeat and the hold meet
+///
+/// These two rules are in direct tension and the resolution lives in
+/// [`ScanCounter::hold`], which refuses an empty batch. A heartbeat is
+/// **at-most-once** — losing one costs nothing, the next tick sends another. A
+/// count is **at-least-once** — losing one is a permanently wrong number. Held
+/// batches are the at-least-once machinery, and parking a heartbeat in it would
+/// starve the counter outright: `next_flush` returns a held batch in preference
+/// to draining, so an empty batch held once is re-sent forever while real scans
+/// pile up behind it and are never drained.
 async fn flush_once(counter: &ScanCounter, client: &reqwest::Client, ingest_url: &str) {
     let keyed = counter.next_flush();
-    if keyed.batch.is_empty() {
-        // Nothing to say. A held batch is never empty, so this can only be a
-        // fresh drain of an idle window, and there is nothing to clear.
-        return;
-    }
 
     let result = client
         .post(ingest_url)
@@ -388,6 +450,66 @@ mod tests {
         assert_eq!(batch.qr_renders[0].count, 1);
         // A successful flush drained the counter.
         assert!(counter.drain().is_empty());
+    }
+
+    /// An idle window reaches the node, so `ingesting` can mean something.
+    ///
+    /// The node cannot see `SCAN_INGEST_URL`, so without this it cannot tell
+    /// "telemetry off" from "telemetry on, nobody scanned" — both were `0`.
+    #[tokio::test]
+    async fn an_idle_window_is_still_sent_as_a_heartbeat() {
+        let (url, captured) = mock_ingest(StatusCode::OK).await;
+        let counter = ScanCounter::default();
+
+        flush_once(&counter, &reqwest::Client::new(), &url).await;
+
+        let seen = captured.lock().unwrap();
+        assert_eq!(seen.len(), 1, "an empty window must still be POSTed");
+        assert!(
+            seen[0].scans.is_empty() && seen[0].qr_renders.is_empty(),
+            "the heartbeat carries no counts"
+        );
+    }
+
+    /// A failed heartbeat must not be held, or the counter stops counting.
+    ///
+    /// This is the interaction between the two rules, and neither of the changes
+    /// that introduced them covers it: sending empty windows came from one and
+    /// holding failed ones from the other. `next_flush` returns a held batch in
+    /// preference to draining, so a held *empty* batch is returned on every tick
+    /// forever — real scans accumulate behind it and are never sent. The bug is
+    /// silent: flushes keep succeeding, and the number is simply always zero.
+    ///
+    /// The second half is the one that matters. Asserting only `!has_pending()`
+    /// would pass against an implementation that dropped the counts too.
+    #[tokio::test]
+    async fn a_failed_heartbeat_is_not_held_and_does_not_starve_the_counter() {
+        let (url, captured) = mock_ingest(StatusCode::INTERNAL_SERVER_ERROR).await;
+        let counter = ScanCounter::default();
+
+        // Tick one: idle, and the node is down. Nothing to preserve.
+        flush_once(&counter, &reqwest::Client::new(), &url).await;
+        assert!(
+            !counter.has_pending(),
+            "an empty batch must never be held — holding one starves every later flush"
+        );
+
+        // A real scan arrives, and the node recovers.
+        counter.record_scan("abc", ScanVariant::Json);
+        let (ok_url, ok_captured) = mock_ingest(StatusCode::OK).await;
+        flush_once(&counter, &reqwest::Client::new(), &ok_url).await;
+
+        let seen = ok_captured.lock().unwrap();
+        assert_eq!(seen.len(), 1);
+        assert_eq!(
+            seen[0].scans.len(),
+            1,
+            "the scan recorded after a failed heartbeat must still be drained and sent"
+        );
+        drop(seen);
+
+        // And the failed heartbeat was a real request, not a skipped one.
+        assert_eq!(captured.lock().unwrap().len(), 1);
     }
 
     #[tokio::test]
