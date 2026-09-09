@@ -49,5 +49,12 @@ zip           = { version = "8.6", default-features = false, features = ["deflat
 quick-xml     = "0.41"
 
 [dev-dependencies]
+# Test-only. The battery column contract is *asserted* against the rules table
+# the publish gate reads — `every_mandatory_field_has_a_column` — but nothing on
+# the serving or import path calls into it: the templates are rendered from the
+# contract in this crate, not from the rules crate at runtime. A dev-dependency
+# says so and keeps it out of the shipped binary, so the CSV import path — which
+# parses operator-supplied files — links none of it.
+dpp-rules     = { workspace = true }
 tower         = { workspace = true, features = ["util"] }
 proptest      = { workspace = true }

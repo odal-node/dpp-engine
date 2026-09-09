@@ -126,13 +126,13 @@ pub async fn import_file(
     mut multipart: Multipart,
 ) -> impl IntoResponse {
     // Validate product group early
-    if !validate::SUPPORTED_PRODUCT_GROUPS.contains(&product_group.as_str()) {
+    if !validate::is_importable(&product_group) {
         metrics::counter!("import_rejections_total", "reason" => "unknown_product_group")
             .increment(1);
         return Problem::new(StatusCode::NOT_FOUND, "Not Found")
             .with_detail(format!(
                 "Unknown product_group: '{product_group}'. Valid values: {}.",
-                validate::SUPPORTED_PRODUCT_GROUPS.join(", ")
+                validate::importable_keys().join(", ")
             ))
             .into_response();
     }

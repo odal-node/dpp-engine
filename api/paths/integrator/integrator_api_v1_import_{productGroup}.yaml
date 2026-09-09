@@ -6,6 +6,12 @@ post:
     (`battery`, `textile`, `steel`, `aluminium`, `tyre`). The caller's
     `Authorization: Bearer` token is validated and forwarded to the vault.
 
+    A battery **template** key is accepted here too — `battery-ev`,
+    `battery-lmt` and `battery-industrial` all import as `battery`, since the
+    category is carried by the row's own `batteryType` column rather than being
+    a product group of its own. An operator who downloads `battery-ev` can post
+    it back to `battery-ev` without translating the name.
+
     - ≤ 100 valid rows → processed synchronously, `200` with results.
     - `> 100` valid rows → an async job is queued, `202` with a `jobId`.
     - `mode=dry_run` → validate only, `200` with the would-be results.

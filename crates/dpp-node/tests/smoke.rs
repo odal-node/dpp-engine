@@ -720,9 +720,16 @@ async fn route_inventory_matches_assembled_router() {
             "/identity/.well-known/did.json".into(),
         ),
         (reqwest::Method::GET, "/integrator/health".into()),
+        // `battery-ev` rather than `battery`: the bare product group is no
+        // longer a template key — what a battery owes is decided per category,
+        // so it 404s and names the three that replace it. This list is about
+        // whether the route is mounted, and a key the handler refuses on
+        // content grounds cannot answer that question. The generated keys are
+        // also the better probe: they exercise the renderer through the
+        // assembled node, which the embedded ones do not.
         (
             reqwest::Method::GET,
-            "/integrator/api/v1/templates/battery".into(),
+            "/integrator/api/v1/templates/battery-ev".into(),
         ),
         (
             reqwest::Method::POST,

@@ -669,6 +669,42 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ### Changed
 
+- **The battery import template is now three, one per category, and generated.**
+  *(Breaking for the template route: `GET /integrator/api/v1/templates/battery`
+  is gone. Use `battery-ev`, `battery-lmt` or `battery-industrial`; the `404`
+  names them.)*
+
+  The shipped battery template had fifteen columns. Importing **its own example
+  rows** produced drafts that publish refused, naming around forty missing
+  mandatory fields the template had no column for. So the documented way to
+  onboard at volume — the only path with a first-party template — could produce
+  nothing but records that were dead on arrival. The publish gate was right; the
+  template was the gap.
+
+  What a battery owes is decided **per category**: an electric-vehicle battery
+  forty-six data points, an LMT battery forty-five, an industrial one
+  thirty-eight. One file cannot serve three obligations, which is why there are
+  three. They are **generated** from the same rules table the publish gate reads,
+  so the two cannot disagree — a committed CSV drifts the moment that table
+  moves, which is exactly how the fifteen-column file survived the arrival of the
+  content gate.
+
+  **Three and not five.** Art. 77(1) gives a passport to LMT, industrial above
+  2 kWh, and electric-vehicle batteries. Portable and SLI bear no obligation at
+  all, which is also why the rules table answers `Unknown` for them rather than
+  guessing — an absence of obligation, not a gap in the guidance. A template for
+  either would be an import path for a passport nobody owes.
+
+  The importer now fills the ~30 fields it had hardcoded to `None` under a
+  comment reading "until the template gains columns for them". A round-trip test
+  drives template → import → publish for all three categories, so the example
+  rows are the fixture that proves the path works rather than illustrative
+  strings.
+
+  Non-battery templates are unchanged: still committed files, still generated
+  from each validator's column list by `just regenerate-templates`. The two
+  arrangements sit behind one table, so adding either kind is one edit.
+
 - **The API description is ordered and grouped by what it renders as.** `paths:`
   and `tags:` in `api/openapi.yaml` are ordered service-first, an `x-tagGroups`
   block gives the reference four top-level sections — Vault, Integrator &
