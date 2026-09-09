@@ -92,6 +92,44 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ### Added
 
+- **The node can now tell "nobody scanned" from "nothing is counting".**
+  `totalScans: 0` meant both, and the node **cannot** resolve the ambiguity for
+  itself: `SCAN_INGEST_URL` is the *resolver's* configuration, not the node's. So
+  an operator reading a zero could not tell telemetry being switched off — the
+  default — from telemetry being on through an idle window.
+
+  An idle window is now sent as a **heartbeat**: one small request per flush
+  interval, which is the only thing that makes the node's `ingesting` flag mean
+  anything.
+
+  The resolver also **declares its flush cadence** in every batch. `ingesting`
+  was `last_ingest_at.is_some()` — ever-flushed rather than currently-flushing —
+  so a resolver that died stayed reported as live for the whole life of the node
+  process, which is precisely the reading an operator staring at a zero must not
+  be given. Judging staleness needs the sender's cadence, and
+  `SCAN_FLUSH_INTERVAL_SECS` is the resolver's environment, so the resolver
+  states it rather than the node assuming a value it cannot see. It is stamped
+  at drain, so a held batch re-sends byte-identical.
+
+  **A heartbeat is never held.** This is the one place it interacts with the
+  held-flush retry added alongside it, and the two were written against
+  different baselines: that change requires an empty window to be a no-op, this
+  one requires it to be sent. Combined naively they *starve the counter* —
+  `next_flush` returns a held batch in preference to draining, so an empty batch
+  held after a failed heartbeat is re-sent every tick forever while real scans
+  pile up behind it and are never drained. Flushes keep succeeding and the
+  number is simply always zero: a silent stop to counting that neither change's
+  tests would catch.
+
+  The resolution is a third behaviour written by neither — send empty batches,
+  never hold one. A heartbeat is **at-most-once**: losing one is free, the next
+  tick sends another. A count is **at-least-once**: losing one is a permanently
+  wrong number. Held batches are the at-least-once machinery, so a heartbeat
+  does not belong in them. The guard lives in `hold()` rather than at the three
+  call sites, because the invariant it protects — "a held batch is never empty"
+  — was previously true only *incidentally*, since empty windows were never sent
+  at all. Making the heartbeat real removed that accident.
+
 - **The lint route now also reports whether the passport would publish.**
   `POST /vault/api/v1/dpp/{dppId}/lint` answers a `publishReadiness` object
   naming every field that would block a publish, alongside the plausibility
