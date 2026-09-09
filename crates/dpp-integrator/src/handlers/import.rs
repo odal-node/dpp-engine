@@ -699,7 +699,9 @@ mod tests {
         let mut buf = Vec::new();
         {
             let mut zw = zip::ZipWriter::new(std::io::Cursor::new(&mut buf));
-            let opts = zip::write::FileOptions::default()
+            // See `xlsx_parser`'s fixture builder: zip 8 made `FileOptions`
+            // generic, so the inferring alias is `SimpleFileOptions`.
+            let opts = zip::write::SimpleFileOptions::default()
                 .compression_method(zip::CompressionMethod::Stored);
             zw.start_file("[Content_Types].xml", opts).unwrap();
             zw.write_all(CONTENT_TYPES.as_bytes()).unwrap();
