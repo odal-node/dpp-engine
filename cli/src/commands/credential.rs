@@ -4,6 +4,8 @@ use anyhow::Result;
 
 use crate::core::credential::{IssueRequest, action_credential_issue};
 
+/// Issue a credential and print it, together with the one thing an operator
+/// cannot discover later: that there is no way to take it back.
 pub async fn run_credential_issue(req: IssueRequest) -> Result<()> {
     let (client, cfg) = crate::http::load_client()?;
     let issued = action_credential_issue(req, &client, &cfg).await?;

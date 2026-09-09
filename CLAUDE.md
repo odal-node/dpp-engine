@@ -379,7 +379,6 @@ unprotected one. Read the table in the code.
 | POST | `/vault/api/v1/dpp/{dppId}/supersede` | Bearer **(write)** | Retire this passport in favour of an **already-published** successor named in `supersededBy`, which must already carry `supersedesId` back to this id (declared on `POST /dpp`; this route only checks it). Returns `200` with **the retired passport** — the opposite subject from `amend`, which mints its successor and returns that. Use this when the replacement was created independently: a newer schema version, an imported record, a successor issued after a transfer |
 | POST | `/vault/api/v1/dpp/{dppId}/suspend` | Bearer | Suspend |
 | POST | `/vault/api/v1/dpp/{dppId}/archive` | Bearer | Archive |
-| POST | `/vault/api/v1/dpp/{dppId}/supersede` | Bearer **(write)** | Retire a DPP in favour of a newer one. The successor must already be published **and** already carry `supersedesId` pointing back — the link is checked here, never written, so a failure cannot leave a retired passport with nothing pointing at its replacement |
 | POST | `/vault/api/v1/dpp/{dppId}/lint` | Bearer (write) | Re-run the plausibility lint pack — **persists** `lintResult` |
 | POST | `/vault/api/v1/dpp/{dppId}/eol` | Bearer (write) | Declare end of life |
 | POST | `/vault/api/v1/dpp/{dppId}/transfer/initiate` | Bearer (write) | Sign a pending transfer of responsibility |

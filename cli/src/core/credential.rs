@@ -68,14 +68,30 @@ pub struct IssuedCredential {
 /// four of them are strings and the compiler cannot tell a holder's name from a
 /// country when they are transposed.
 pub struct IssueRequest {
+    /// DID of the party being vouched for.
     pub holder_did: String,
+    /// Legal name of the holder, carried in the credential for an auditor.
     pub name: String,
+    /// Role granted, as the wire spells it — see `NAMED_ROLES`.
     pub role: String,
+    /// ISO 3166-1 alpha-2 country of the holder's registration.
     pub country: String,
+    /// Product groups covered. Empty means every group this operator publishes.
     pub product_groups: Vec<String>,
+    /// Lifetime in days. `None` takes the node's default.
     pub valid_for_days: Option<i64>,
 }
 
+/// Ask the node to mint a credential and read back the parts an operator needs.
+///
+/// Sent through `post_json_creating`, so the invocation's `--idempotency-key`
+/// reaches the node: issuance creates something that nothing can withdraw, and
+/// a retry after a lost response would otherwise put a second live credential
+/// into the world with no way to find the first.
+///
+/// Every refusal is the node's — an authority role, a bad `holderDid`, a
+/// lifetime outside the cap — and its `detail` is carried through verbatim
+/// rather than pre-empted here.
 pub async fn action_credential_issue(
     req: IssueRequest,
     client: &OdalClient,
@@ -93,7 +109,7 @@ pub async fn action_credential_issue(
     }
 
     let url = format!("{}/api/v1/credentials", cfg.vault_url);
-    let (status, resp) = client.post_json(&url, &body).await?;
+    let (status, resp) = client.post_json_creating(&url, &body).await?;
     if !status.is_success() {
         bail!(
             "failed to issue credential: {}",

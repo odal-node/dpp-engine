@@ -283,7 +283,13 @@ const UNCHECKED: &[(&str, &str)] = &[
     ),
     (
         "CredentialRole",
-        "a `oneOf` of a string enum and an externally-tagged object (`Custom`),          which neither checker can express: `enum_cases` requires every variant          to serialise to a string, and `object_cases` requires an object with a          property list. The wire form of each variant is pinned instead by          `the_issuable_roles_serialise_as_documented` in          `dpp-vault/src/handlers/credentials.rs`, which is where a drift would          actually be caught",
+        "a `oneOf` of a string enum and an externally-tagged object (`Custom`), \
+         which neither checker can express: `enum_cases` requires every variant \
+         to serialise to a string, and `object_cases` requires an object with a \
+         property list. The wire form of each variant is pinned instead by \
+         `the_issuable_roles_serialise_as_documented` in \
+         `dpp-vault/src/handlers/credentials.rs`, which is where a drift would \
+         actually be caught",
     ),
     (
         "ProductGroupData",
@@ -1727,10 +1733,10 @@ mod handler_sources {
     pub const VAULT: &[&str] = &[
         include_str!("../../dpp-vault/src/handlers/amend.rs"),
         include_str!("../../dpp-vault/src/handlers/api_keys.rs"),
-        include_str!("../../dpp-vault/src/handlers/credentials.rs"),
         include_str!("../../dpp-vault/src/handlers/archive.rs"),
         include_str!("../../dpp-vault/src/handlers/audience_read.rs"),
         include_str!("../../dpp-vault/src/handlers/create.rs"),
+        include_str!("../../dpp-vault/src/handlers/credentials.rs"),
         include_str!("../../dpp-vault/src/handlers/eol.rs"),
         include_str!("../../dpp-vault/src/handlers/evidence.rs"),
         include_str!("../../dpp-vault/src/handlers/find_by_identity.rs"),

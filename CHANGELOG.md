@@ -92,6 +92,51 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ### Added
 
+- **A node can now issue the access credentials its own read path verifies.**
+  `POST /vault/api/v1/credentials` (admin) mints a credential signed with the
+  node's key and returns it as a compact VC-JWT, which the holder presents as
+  `X-DPP-Credential` on `GET /vault/credential/dpp/{dppId}`. `odal credential
+  issue` is the command.
+
+  Nothing in the product could produce one before. `CREDENTIAL_ISSUERS_SELF=true`
+  made a node trust its own DID and report the credential port `live`, while
+  `dpp_vc::sign_access_credential` had no caller in this repo: there was no
+  route and no command, so the credential-verified read path could only ever be
+  exercised by a test that hand-rolled the JWS.
+
+  **Only a legitimate interest, never an authority.** The three authority roles
+  — market surveillance, customs, notified body — are refused with `422`.
+  `dpp-vc` says at its signing helper that issuing is "an authority's act, not a
+  node's" and that a node signing its own access credentials "has attested
+  nothing to anyone"; that is right about authority status, which a member state
+  confers and no operator can assert, and wrong about the rest. An operator
+  naming its own authorised repairer attests something nobody else can —
+  membership of that network is a fact the operator alone holds, and no EU
+  register of authorised repairers exists to hold it instead. The gate reads
+  core's own `CredentialRole::audience` rather than restating the mapping, so a
+  role added there lands on the correct side without anything being edited.
+
+  **Issuing is not trusting**, so issuance is not gated on
+  `CREDENTIAL_ISSUERS_SELF`. An operator running two nodes ordinarily mints on
+  one and honours the credential on the other, and gating the two together would
+  make that arrangement impossible to set up.
+
+  **Revocation is expiry.** This node fetches W3C status lists but publishes
+  none, so a credential it mints carries no `credentialStatus` and cannot be
+  withdrawn before it lapses. The lifetime is therefore the whole of the control
+  and is capped at 90 days, defaulting to 30 — the CLI says so on every issue,
+  because there is no `revoke` command for an operator to go looking for. For
+  the same reason the route is keyed: a lost response cannot be retried without
+  putting a second live credential into the world that nobody can find.
+
+  A credential minted here never carries a product **category** restriction. The
+  verifier downgrades any credential that does to public access, because a
+  passport has no category to match it against, so minting one would produce a
+  credential that unlocks nothing.
+
+  The standalone vault binary reaches no key store and answers `501` rather than
+  pretending it can sign.
+
 - **A passport can now be retired in favour of a replacement that already
   exists.** `POST /vault/api/v1/dpp/{dppId}/supersede` names an
   already-published successor and moves the passport in the path to the terminal
@@ -141,7 +186,7 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   No migration: `0034` already admits the `superseded` audit action, added when
   `amend` first produced the transition.
 
-- **Eight write endpoints now accept a client-supplied `Idempotency-Key`.**
+- **Nine write endpoints now accept a client-supplied `Idempotency-Key`.**
   Send the same key with the same body and the first outcome is returned rather
   than a second resource being created. The replay carries
   `Idempotency-Replayed: true`, so a client can tell a retry that worked from
@@ -149,8 +194,9 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
   Which routes get a key is decided by **effect, not verb**: the test is whether
   a replay creates a second thing, or spends something that cannot be un-spent.
-  That is `POST /dpp`, evidence generation, plugin install, and the five creates
-  behind API keys, webhooks, facilities, operator identifiers and bulk import.
+  That is `POST /dpp`, evidence generation, plugin install, credential issuance,
+  and the five creates behind API keys, webhooks, facilities, operator
+  identifiers and bulk import.
   `PUT` and every lifecycle transition are deliberately excluded — they converge
   on their own — and a key sent to one of them is a `400`, not a silent no-op.
   Accepting the header where nothing records it would advertise a protection
@@ -464,6 +510,28 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   180 files and left `openapi.bundled.yaml` byte-identical.
 
 ### Breaking
+
+- **`CREDENTIAL_ISSUERS_SELF` no longer trusts the operator as an authority.**
+  *(Breaking: the switch now adds the node's own DID to the legitimate-interest
+  bucket only. A deployment that relied on it for authority-audience reads must
+  name an issuer in `CREDENTIAL_ISSUERS_AUTHORITY` — including itself, if that
+  is genuinely what it meant.)*
+
+  The switch pushed the operator's own DID into **both** buckets. Nothing argued
+  for the authority half, and it is not the operator's to grant: authority
+  status under Art. 77(2)(b) is conferred by a member state, so an operator with
+  the switch on had written itself a market-surveillance credential and the
+  credential-verified read path would honour it — the widest disclosure class
+  there is, reachable by a single environment variable set for an unrelated
+  reason.
+
+  The legitimate-interest half stays, and is the reason the switch exists: no EU
+  register of authorised repairers has been established, the DPP registry
+  registers operators and passports rather than repairer credentials, and an
+  operator vouching for its own repair network is the only trust anchor that
+  exists in practice. Trusting an actual authority is what
+  `CREDENTIAL_ISSUERS_AUTHORITY` is for, where naming the issuer is a deliberate
+  act rather than a side effect of a switch about repairers.
 
 - **Seventeen schemas are renamed to be unambiguous in a flat namespace.**
   *(Breaking: seventeen schema names in the published description are renamed,
