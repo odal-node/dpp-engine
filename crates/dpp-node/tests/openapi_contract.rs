@@ -413,6 +413,7 @@ fn object_cases() -> Vec<ObjectCase> {
     case!("EolRequest", fixtures::eol_request());
     case!("SuspendRequest", fixtures::suspend_request());
     case!("AmendRequest", fixtures::amend_request());
+    case!("SupersedeRequest", fixtures::supersede_request());
     case!("NodeState", fixtures::node_state());
     case!("VaultInfo", fixtures::vault_info());
     case!(
@@ -1741,6 +1742,7 @@ mod handler_sources {
         include_str!("../../dpp-vault/src/handlers/scan_ingest.rs"),
         include_str!("../../dpp-vault/src/handlers/seal.rs"),
         include_str!("../../dpp-vault/src/handlers/stats.rs"),
+        include_str!("../../dpp-vault/src/handlers/supersede.rs"),
         include_str!("../../dpp-vault/src/handlers/suspend.rs"),
         include_str!("../../dpp-vault/src/handlers/transfer.rs"),
         include_str!("../../dpp-vault/src/handlers/update.rs"),
@@ -2225,6 +2227,7 @@ mod fixtures {
                 TransferNotificationView,
             },
             seal::{SealCoverage, SealDeclarer, SealResponse, SealSummaryResponse},
+            supersede::SupersedeRequest,
             suspend::SuspendRequest,
             transfer::TransferInitiateRequest,
             validate::ValidateResponse,
@@ -2794,6 +2797,9 @@ mod fixtures {
         CreatePassportRequest {
             product_name: "EcoCell Pro 48V".into(),
             product_group: Some(ProductGroup::Textile),
+            // Populated per the maximal-fixture rule: `None` would emit nothing
+            // and the schema check would pass by not looking at the field.
+            supersedes_id: Some(dpp_domain::passport::PassportId::new()),
             manufacturer: manufacturer(),
             materials: Some(vec![material()]),
             co2e_per_unit: Some(45.2),
@@ -2867,6 +2873,20 @@ mod fixtures {
         AmendRequest {
             patch: serde_json::json!({ "productName": "Model X Battery Pack (rev B)" }),
             reason: Some("Recycled-content share restated after supplier re-declaration".into()),
+        }
+    }
+
+    /// Both fields populated, same rule as `amend_request`: a `None` `reason`
+    /// emits nothing and would let the schema check pass by not looking.
+    ///
+    /// The reason names a case `amend` cannot serve, which is why this route
+    /// exists — the successor was created independently at a newer schema
+    /// version, so it could not have been minted from a patch on the record it
+    /// replaces.
+    pub fn supersede_request() -> SupersedeRequest {
+        SupersedeRequest {
+            superseded_by: uuid::Uuid::now_v7().to_string(),
+            reason: Some("Reissued on schema 2.6.0 after the product group's lens changed".into()),
         }
     }
 
@@ -2953,6 +2973,7 @@ mod fixtures {
         CreatePassportRequest {
             product_name: "EcoCell Pro 48V".into(),
             product_group: None,
+            supersedes_id: None,
             manufacturer: manufacturer(),
             materials: None,
             co2e_per_unit: None,

@@ -317,6 +317,8 @@ paths:
     $ref: paths/vault/vault_api_v1_dpp_{dppId}_publish.yaml
   /vault/api/v1/dpp/{dppId}/amend:
     $ref: paths/vault/vault_api_v1_dpp_{dppId}_amend.yaml
+  /vault/api/v1/dpp/{dppId}/supersede:
+    $ref: paths/vault/vault_api_v1_dpp_{dppId}_supersede.yaml
   /vault/api/v1/dpp/{dppId}/suspend:
     $ref: paths/vault/vault_api_v1_dpp_{dppId}_suspend.yaml
   /vault/api/v1/dpp/{dppId}/archive:

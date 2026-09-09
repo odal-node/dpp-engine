@@ -1,4 +1,11 @@
-//! `suspend` and `archive` — reversible and terminal passport status transitions.
+//! `suspend`, `supersede` and `archive` — reversible and terminal passport
+//! status transitions.
+//!
+//! `supersede` links a passport to an already-published replacement. It is the
+//! sibling of [`super::amend`], not a duplicate of it: `amend` issues the
+//! successor itself from a patch, so it cannot name one that already exists;
+//! this names one and cannot create it. They share the transition and nothing
+//! else, and the shared part lives in one place — `supersede_predecessor`.
 
 use chrono::Utc;
 use dpp_common::{event, event_codes};
@@ -83,6 +90,102 @@ impl PassportService {
         self.enqueue_snapshot_reconcile(updated.id).await;
 
         Ok(updated)
+    }
+
+    /// Retire `predecessor_id` in favour of `successor_id`, linking the two.
+    ///
+    /// # Why this is not `amend`
+    ///
+    /// Both routes end in the same transition, and that is the whole of what
+    /// they share. `amend` *issues* the successor: it clones the predecessor,
+    /// applies a patch, runs the ordinary publish pipeline and hands back a
+    /// record it created. It therefore cannot express retiring a passport whose
+    /// replacement already exists — its successor is always freshly minted with
+    /// a new id, so pointing it at an already-published passport would produce a
+    /// *third* record and leave two live passports for one product.
+    ///
+    /// This route is the other act: the successor was created and published
+    /// independently, on its own content and through its own gates, and is named
+    /// here. `amend` explicitly declines one such case in its own comments —
+    /// moving a passport to a newer schema version, which it refuses to do
+    /// silently because disclosure classes are read from the schema version.
+    /// That migration is only expressible as create-at-the-new-version and link,
+    /// which is this.
+    ///
+    /// Everything downstream of the transition is
+    /// [`PassportService::supersede_predecessor`], shared with `amend`, so both
+    /// routes write one audit shape and emit one payload.
+    ///
+    /// # What is required, and why
+    ///
+    /// Both must be **published**. A draft successor retiring a live passport
+    /// would leave the product with no servable record at all, and a
+    /// not-yet-published successor may still fail its own gates. A predecessor
+    /// that is not published has nothing to retire.
+    ///
+    /// The link is **checked, not written**. `supersedesId` is a protected
+    /// field, set by the write that creates the whole record and never by a
+    /// field patch, so the successor declares it at create time and this route
+    /// confirms the two agree before retiring anything. That ordering is the
+    /// safer one regardless: writing the link here and then the status would
+    /// leave, on a failure between them, a retired passport with nothing
+    /// pointing at its replacement — the one state a reader cannot recover from.
+    ///
+    /// Terminal, per the state machine: a superseded passport cannot be
+    /// superseded again, and the transition table refuses it rather than this
+    /// method having to.
+    ///
+    /// # Errors
+    /// [`DppError::NotFound`] if either id is unknown, [`DppError::Validation`]
+    /// if they are the same record, the successor is not published, or it does
+    /// not declare the link, and [`DppError::InvalidTransition`] if the
+    /// predecessor cannot be superseded from its current state.
+    #[tracing::instrument(skip(self, reason), fields(passport_id = %predecessor_id, successor_id = %successor_id))]
+    pub async fn supersede(
+        &self,
+        predecessor_id: PassportId,
+        successor_id: PassportId,
+        reason: Option<String>,
+        auth: &AuthContext,
+    ) -> Result<Passport, DppError> {
+        if predecessor_id == successor_id {
+            return Err(DppError::Validation(
+                "a passport cannot supersede itself".into(),
+            ));
+        }
+
+        let predecessor = self.find_by_id(predecessor_id).await?;
+        let successor = self.find_by_id(successor_id).await?;
+
+        if successor.status != PassportStatus::Published {
+            return Err(DppError::Validation(
+                "the successor must be published before it can replace another passport".into(),
+            ));
+        }
+
+        // Asking the state machine rather than matching on the variant keeps
+        // this in step with `can_transition_to` if the table ever widens, the
+        // same way `amend` asks it.
+        if !predecessor
+            .status
+            .can_transition_to(&PassportStatus::Superseded)
+        {
+            return Err(DppError::InvalidTransition {
+                current: predecessor.status.to_string(),
+                required: PassportStatus::Superseded.to_string(),
+            });
+        }
+
+        if successor.supersedes_id != Some(predecessor_id) {
+            return Err(DppError::Validation(
+                "the successor does not declare that it supersedes this passport; \
+                 create it with `supersedesId` set to this passport's id"
+                    .into(),
+            ));
+        }
+
+        self.supersede_predecessor(&predecessor, successor_id, reason, auth)
+            .await
     }
 
     /// Permanently archive a passport after retention expiry.
