@@ -8,13 +8,24 @@
 //! kept, never deleted.
 //!
 //! The product's printed carrier keeps working, because it addresses the GTIN
-//! and the by-GTIN lookup now resolves past a superseded record to the successor.
-//! The predecessor's own `/public/dpp/{id}` URL is a separate question and is
-//! **not** answered here: it serves `404`, as it does for every status that is
-//! neither published nor suspended. That matters only for a product with no
-//! GTIN, whose carrier is that URL — tracked separately, since the honest answer
-//! is a redirect to the successor rather than serving a signed view that still
-//! says `"status": "active"`.
+//! and the by-GTIN lookup resolves past a superseded record to the successor —
+//! that exclusion is in the query itself (`status <> 'superseded'`), not in the
+//! public handler, so it holds however the handler decides what to serve.
+//!
+//! The predecessor's own `/public/dpp/{id}` URL **serves**, and no longer
+//! `404`s — see `public_view::serves_publicly`. This module used to argue the
+//! other way: that the honest answer was a redirect to the successor rather
+//! than "serving a signed view that still says `\"status\": \"active\"`". The
+//! staleness is real and unavoidable — the public payload is frozen at publish
+//! and `status` is a Public field, so the served body does report `active`, and
+//! rewriting it is precisely what `publicJwsSignature` exists to make
+//! detectable. What changed is the comparison. The alternative was never the
+//! redirect, which was never built; it was the `404`, which made a retained
+//! record indistinguishable from one that never existed. ESPR Art. 10(4)(i)
+//! keeps the record available for the product's expected lifetime, and a reader
+//! who reaches a retired passport is better served by the signed document than
+//! by nothing. The live status stays on the authenticated route, which reads
+//! the row rather than the proof.
 //!
 //! The mechanism this uses was modelled before it had a caller.
 //! `PassportStatus::Superseded`, `Passport::version`, `Passport::supersedes_id`
@@ -44,8 +55,8 @@ impl PassportService {
     /// predecessor to `Superseded`. The predecessor keeps its signatures, its
     /// seal and its retention lock, and stays readable on `/api/v1/dpp/{id}` and
     /// in the audit trail — superseding a passport withdraws it from being
-    /// *current*, never from being *stored*. Its public by-id URL answers `404`;
-    /// see the module doc.
+    /// *current*, never from being *stored*. Its public by-id URL keeps serving
+    /// too, carrying the status it was signed with; see the module doc.
     ///
     /// # Ordering
     ///
@@ -233,9 +244,13 @@ impl PassportService {
         )
         .await;
 
-        // The static continuity tier still holds the predecessor rendered as
-        // `active`. Same reconcile `suspend` and `archive` do, and non-fatal for
-        // the same reason: the database is the source of truth.
+        // A superseded passport keeps serving publicly, like an archived or
+        // deactivated one — products made under the old specification are still
+        // in the field carrying carriers that resolve to it. The reconcile is
+        // still needed, and for the opposite reason to a withdrawal: the stored
+        // snapshot has to be refreshed to carry the new status rather than the
+        // old one, not removed. Same reconcile `suspend` and `archive` do, and
+        // non-fatal for the same reason: the database is the source of truth.
         self.enqueue_snapshot_reconcile(superseded.id).await;
 
         // Deliberately *not* enqueued: a registry status intent for the
