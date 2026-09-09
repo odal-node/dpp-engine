@@ -53,6 +53,28 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   least useful way available — the node would not start at all. Empty is now
   treated as unset, which loosens nothing: with no key configured the
   unsigned-plugin gate still refuses.
+- **An imported passport's id came back under two different names.** The import
+  job's stored result carried no `rename_all`, so the same record was
+  `passportId` from the import `POST` and `passport_id` from the job poll. A
+  client following an async import had to handle both spellings of one field to
+  find the passport it had just created.
+
+  An **alias** keeps rows written before this readable, which matters more than
+  it looks: the job store discards a parse failure *silently*, so without the
+  alias every in-flight job's result would have become an empty poll response
+  rather than an error.
+
+- **`lastUsedAt` on an API key was served but never written.** The key
+  management API returned the field and nothing ever set it, so the signal an
+  operator revokes a stale credential on was permanently null — it said "never
+  used" about every key in active use.
+
+  Two deliberate constraints, since this is the authentication hot path.
+  **Throttled to five minutes**: per-request accuracy on this field is worth
+  nothing and a write on every authenticated request is worth a great deal.
+  **Best effort**: failing to record the timestamp cannot fail an otherwise
+  valid request — the credential is good regardless of whether the node managed
+  to note that it was used.
 
 - **A retired passport is publicly readable again instead of answering `404`.**
   `Deactivated`, `Superseded` and `Archived` now serve on both public routes;
