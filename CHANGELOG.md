@@ -156,6 +156,31 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ### Added
 
+- **The lint route now says whether a passport is owed at all.** `POST
+  /vault/api/v1/dpp/{dppId}/lint` reports an Art. 77(1) `passportScope` beside
+  the publish blockers.
+
+  Nothing read that scope, so the node could not tell a battery it *must*
+  passport from one it need not, and both halves of that were wrong in the same
+  way. A portable or SLI battery could be published as a battery passport
+  carrying no mandatory content at all. An industrial battery at or below
+  **2 kWh** — which the article exempts — was still held to the full category
+  content.
+
+  The scope is a predicate over values core already owns: `Required` for LMT and
+  electric-vehicle batteries and for industrial above the threshold, `Voluntary`
+  for portable, SLI, and industrial at or below it.
+
+  It reports rather than enforces, and says so. The content gate lives in core's
+  `transition_to` and fires whatever the scope says, so a voluntary passport is
+  still gated on the full set — the note admits that instead of leaving an
+  operator to wonder why they are being asked for content the regulation does
+  not require of them.
+
+  This is the companion to the publish-readiness preview above, not a second
+  copy of it: readiness answers *would this publish*, scope answers *is a
+  passport owed*.
+
 - **The node can now tell "nobody scanned" from "nothing is counting".**
   `totalScans: 0` meant both, and the node **cannot** resolve the ambiguity for
   itself: `SCAN_INGEST_URL` is the *resolver's* configuration, not the node's. So
