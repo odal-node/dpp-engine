@@ -22,6 +22,7 @@ use crate::{middleware::auth::AuthContext, state::AppState};
 use super::error::{
     api_error, field_validation_error, internal_error, not_found_error, require_admin,
 };
+use crate::middleware::scope::RequireAdmin;
 
 /// Create response — the redacted subscription plus the signing secret, shown once.
 #[derive(Serialize)]
@@ -38,7 +39,7 @@ pub async fn webhooks_list_handler(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthContext>,
 ) -> impl IntoResponse {
-    if let Some(resp) = require_admin(&auth, "Webhook management") {
+    if let Some(resp) = require_admin(&auth) {
         return resp;
     }
     match state.webhook_service.list().await {
@@ -50,12 +51,12 @@ pub async fn webhooks_list_handler(
 /// `POST /api/v1/webhooks` — create a subscription; returns the secret once.
 pub async fn webhooks_create_handler(
     State(state): State<AppState>,
-    Extension(auth): Extension<AuthContext>,
+    // The gate is an extractor, and it precedes the body extractor
+    // deliberately: axum runs body-less extractors first, so a wrong-scope
+    // caller is refused before the body is buffered or parsed.
+    RequireAdmin(_auth): RequireAdmin,
     Json(body): Json<CreateWebhookRequest>,
 ) -> impl IntoResponse {
-    if let Some(resp) = require_admin(&auth, "Webhook management") {
-        return resp;
-    }
     match state.webhook_service.create(body).await {
         Ok(created) => (
             StatusCode::CREATED,
@@ -77,7 +78,7 @@ pub async fn webhooks_delete_handler(
     Extension(auth): Extension<AuthContext>,
     Path(id): Path<String>,
 ) -> impl IntoResponse {
-    if let Some(resp) = require_admin(&auth, "Webhook management") {
+    if let Some(resp) = require_admin(&auth) {
         return resp;
     }
     let parsed = match Uuid::parse_str(&id) {
@@ -97,7 +98,7 @@ pub async fn webhooks_test_handler(
     Extension(auth): Extension<AuthContext>,
     Path(id): Path<String>,
 ) -> impl IntoResponse {
-    if let Some(resp) = require_admin(&auth, "Webhook management") {
+    if let Some(resp) = require_admin(&auth) {
         return resp;
     }
     let parsed = match Uuid::parse_str(&id) {

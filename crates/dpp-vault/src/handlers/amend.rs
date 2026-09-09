@@ -2,17 +2,17 @@
 
 use axum::{
     Json,
-    extract::{Extension, Path, State},
+    extract::{Path, State},
     http::StatusCode,
     response::IntoResponse,
 };
 use serde::{Deserialize, Serialize};
 
-use crate::{middleware::auth::AuthContext, state::AppState};
+use crate::middleware::scope::RequireWrite;
+use crate::state::AppState;
 
 use super::error::{
     conflict_error, field_validation_error, internal_error, not_found_error, parse_passport_id,
-    require_write,
 };
 
 /// Request body for the amend endpoint.
@@ -47,13 +47,13 @@ pub struct AmendRequest {
 /// the same gates that govern a first publish.
 pub async fn amend_handler(
     State(state): State<AppState>,
-    Extension(auth): Extension<AuthContext>,
+    // The gate is an extractor, and it precedes the body extractor
+    // deliberately: axum runs body-less extractors first, so a wrong-scope
+    // caller is refused before the body is buffered or parsed.
+    RequireWrite(auth): RequireWrite,
     Path(dpp_id): Path<String>,
     Json(body): Json<AmendRequest>,
 ) -> impl IntoResponse {
-    if let Some(resp) = require_write(&auth, "Amending a passport") {
-        return resp;
-    }
     let passport_id = match parse_passport_id(&dpp_id) {
         Ok(id) => id,
         Err(e) => return e,
