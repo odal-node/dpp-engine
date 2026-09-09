@@ -27,6 +27,15 @@ properties:
     description: Scheme euOperatorId is expressed in — "vat", "lei", "eori", "duns".
   country:
     type: string
-    minLength: 2
-    maxLength: 2
-    description: ISO 3166-1 alpha-2 country code of the operator's establishment.
+    pattern: '^[A-Z]{2}$'
+    description: |
+      ISO 3166-1 alpha-2 country code of the operator's establishment, upper
+      case.
+
+      Checked against the assigned ISO 3166-1 list on
+      `POST /dpp/{dppId}/transfer/initiate`, not merely shaped — `de` and `XX`
+      are both refused with `422`. Canonical form is required rather than
+      normalised because both operators are inside the payload this node signs,
+      and upper-casing a caller's value before signing would sign something they
+      did not send.
+    example: DE
