@@ -1,18 +1,17 @@
 //! `POST /api/v1/dpp/{dppId}/suspend` — suspend a published passport.
 
 use axum::{
-    Json,
-    extract::{Extension, Path, State},
+    extract::{Path, State},
     http::StatusCode,
     response::IntoResponse,
 };
 use serde::{Deserialize, Serialize};
 
-use crate::{middleware::auth::AuthContext, state::AppState};
+use crate::state::AppState;
 
-use super::error::{
-    conflict_error, internal_error, not_found_error, parse_passport_id, require_write,
-};
+use super::error::{conflict_error, internal_error, not_found_error, parse_passport_id};
+use crate::extract::Json;
+use crate::middleware::scope::RequireWrite;
 
 /// Optional request body for the suspend endpoint.
 ///
@@ -34,13 +33,13 @@ pub struct SuspendRequest {
 /// passport is not in a suspendable state.
 pub async fn suspend_handler(
     State(state): State<AppState>,
-    Extension(auth): Extension<AuthContext>,
+    // The gate is an extractor, and it precedes the body extractor
+    // deliberately: axum runs body-less extractors first, so a wrong-scope
+    // caller is refused before the body is buffered or parsed.
+    RequireWrite(auth): RequireWrite,
     Path(dpp_id): Path<String>,
     body: Option<Json<SuspendRequest>>,
 ) -> impl IntoResponse {
-    if let Some(resp) = require_write(&auth, "Suspending a passport") {
-        return resp;
-    }
     let passport_id = match parse_passport_id(&dpp_id) {
         Ok(id) => id,
         Err(e) => return e,

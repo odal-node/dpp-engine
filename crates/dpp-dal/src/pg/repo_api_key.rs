@@ -118,6 +118,28 @@ impl ApiKeyRepository for PgApiKeyRepo {
 
     /// Set `is_active = false`. Returns `true` if the key existed, `false`
     /// if no matching row was found.
+    /// See the trait: throttled so the auth hot path does not take a write per
+    /// request. The predicate is in SQL rather than read-then-write so two
+    /// concurrent requests cannot both decide to write.
+    async fn touch_last_used(
+        &self,
+        id: Uuid,
+        not_within: chrono::Duration,
+    ) -> Result<(), DppError> {
+        sqlx::query(
+            r#"UPDATE odal.api_key
+                 SET last_used_at = now()
+               WHERE id = $1
+                 AND (last_used_at IS NULL OR last_used_at < now() - $2::interval)"#,
+        )
+        .bind(id)
+        .bind(not_within)
+        .execute(self.dal.pool())
+        .await
+        .map_err(db_err)?;
+        Ok(())
+    }
+
     async fn revoke(&self, id: Uuid) -> Result<bool, DppError> {
         let res = sqlx::query("UPDATE odal.api_key SET is_active = false WHERE id = $1")
             .bind(id)

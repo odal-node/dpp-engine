@@ -797,3 +797,105 @@ async fn a_restricted_product_group_field_is_absent_from_the_public_view() {
         "point 1 content must survive: {body}"
     );
 }
+
+/// A recall must reach the person holding the product.
+///
+/// The vault branches on status and answers `410 Gone` for a suspended
+/// passport. This route folded every non-2xx that was not `404`/`400` into
+/// `502 Bad Gateway`, so the one signal a scanner of a recalled product needs
+/// arrived as a message about our infrastructure.
+#[tokio::test]
+async fn a_withdrawn_passport_is_a_recall_not_a_gateway_error() {
+    let gtin = "09506000134352";
+    let vault = Router::new().route(
+        "/public/dpp/by-gtin/{gtin}",
+        get(|| async {
+            (
+                StatusCode::GONE,
+                axum::Json(json!({
+                    "code": "SUSPENDED",
+                    "message": "This passport has been suspended."
+                })),
+            )
+        }),
+    );
+    let port = start_mock_vault(vault).await;
+    let base = format!("http://127.0.0.1:{port}");
+
+    // Every carrier shape, because a printed label may carry any of them and a
+    // recall must not depend on how much precision was printed.
+    for uri in [
+        format!("/01/{gtin}"),
+        format!("/01/{gtin}/21/A1B2C3D4E5F6G7H8J9K0"),
+        format!("/01/{gtin}/10/LOT-2026-07"),
+        format!("/01/{gtin}/10/LOT-2026-07/21/A1B2C3D4E5F6G7H8J9K0"),
+    ] {
+        let app = router::build(test_state(base.clone()));
+        let req = Request::builder().uri(&uri).body(Body::empty()).unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+
+        assert_eq!(
+            resp.status(),
+            StatusCode::GONE,
+            "{uri} should report the withdrawal, not an upstream fault"
+        );
+
+        let body = axum::body::to_bytes(resp.into_body(), 64 * 1024)
+            .await
+            .expect("read body");
+        let problem: serde_json::Value = serde_json::from_slice(&body).expect("problem json");
+        assert_eq!(
+            problem["detail"], "The DPP for this GTIN has been withdrawn.",
+            "a withdrawal must not read as a bad label: {problem}"
+        );
+    }
+}
+
+/// The not-found case keeps its own wording — a withdrawal and a GTIN this node
+/// never published are different answers and must not converge.
+#[tokio::test]
+async fn an_unknown_gtin_still_reports_not_found() {
+    let gtin = "09506000134352";
+    let vault = Router::new().route(
+        "/public/dpp/by-gtin/{gtin}",
+        get(|| async { StatusCode::NOT_FOUND }),
+    );
+    let port = start_mock_vault(vault).await;
+    let app = router::build(test_state(format!("http://127.0.0.1:{port}")));
+
+    let req = Request::builder()
+        .uri(format!("/01/{gtin}"))
+        .body(Body::empty())
+        .unwrap();
+    let resp = app.oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+
+    let body = axum::body::to_bytes(resp.into_body(), 64 * 1024)
+        .await
+        .expect("read body");
+    let problem: serde_json::Value = serde_json::from_slice(&body).expect("problem json");
+    assert_eq!(
+        problem["detail"],
+        "No published DPP resolves for this GTIN."
+    );
+}
+
+/// An upstream that is genuinely broken must still say so, rather than being
+/// swept into the withdrawal path by the change above.
+#[tokio::test]
+async fn a_failing_vault_is_still_a_gateway_error() {
+    let gtin = "09506000134352";
+    let vault = Router::new().route(
+        "/public/dpp/by-gtin/{gtin}",
+        get(|| async { StatusCode::INTERNAL_SERVER_ERROR }),
+    );
+    let port = start_mock_vault(vault).await;
+    let app = router::build(test_state(format!("http://127.0.0.1:{port}")));
+
+    let req = Request::builder()
+        .uri(format!("/01/{gtin}"))
+        .body(Body::empty())
+        .unwrap();
+    let resp = app.oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_GATEWAY);
+}

@@ -1,0 +1,99 @@
+get:
+  operationId: listUnsoldGoods
+  summary: List unsold-goods disclosure lines
+  description: |
+    Every recorded ESPR Art. 24 disclosure line, newest first, optionally
+    narrowed to one financial year.
+
+    Admin rather than write: these are the operator's own annual figures, and
+    reading them back is an administrative act rather than part of producing
+    passports.
+  tags:
+    - Unsold goods
+  security:
+    - BearerApiKey: []
+    - BasicAuth: []
+  parameters:
+    - name: reportingPeriod
+      in: query
+      required: false
+      description: Financial year as `YYYY`. Omit for every period.
+      schema:
+        type: string
+        pattern: '^[0-9]{4}$'
+  responses:
+    '200':
+      description: The disclosure lines.
+      content:
+        application/json:
+          schema:
+            type: array
+            items:
+              $ref: ../../components/schemas/unsold-goods/UnsoldGoodsEntry.yaml
+    '401':
+      $ref: ../../components/responses/Unauthorized.yaml
+    '403':
+      $ref: ../../components/responses/Forbidden.yaml
+    '422':
+      description: '`reportingPeriod` is not a four-digit year.'
+      content:
+        application/problem+json:
+          schema:
+            $ref: ../../components/schemas/errors/Problem.yaml
+post:
+  operationId: recordUnsoldGoods
+  summary: Record an unsold-goods disclosure line
+  description: |
+    Records one line of the ESPR Art. 24 disclosure of unsold consumer products
+    discarded in a financial year.
+
+    **This is not a passport.** There is no digital product passport anywhere in
+    Art. 24 or Art. 25: the subject is an *operator over a financial year*, the
+    medium is the operator's own website, and the trigger is discarding unsold
+    stock — none of which is a product placed on the market. These routes
+    therefore sit beside the other operator-scoped ones, and no `unsold-goods`
+    product group carries passports.
+
+    **Destruction must be justified.** Art. 25 prohibits destroying unsold
+    consumer products listed in Annex VII from 19 July 2026, so
+    `destination: exemptDestruction` requires `destructionJustification` and is
+    refused with `422` without it. The converse is refused too: a justification
+    on any other destination describes nothing.
+
+    **Annex VII scope is not decided here.** That is a CN-code prefix test, and
+    the goods in a disclosure line do not arrive carrying CN codes.
+    `productCategory` is the operator's own categorisation for Art. 24(1)(a).
+  tags:
+    - Unsold goods
+  security:
+    - BearerApiKey: []
+    - BasicAuth: []
+  requestBody:
+    required: true
+    content:
+      application/json:
+        schema:
+          $ref: ../../components/schemas/unsold-goods/CreateUnsoldGoodsEntry.yaml
+  responses:
+    '201':
+      description: The recorded line.
+      content:
+        application/json:
+          schema:
+            $ref: ../../components/schemas/unsold-goods/UnsoldGoodsEntry.yaml
+    '401':
+      $ref: ../../components/responses/Unauthorized.yaml
+    '403':
+      $ref: ../../components/responses/Forbidden.yaml
+    '400':
+      $ref: ../../components/responses/BadRequest.yaml
+    '422':
+      description: |
+        The line cannot be recorded — a `reportingPeriod` that is not a
+        four-digit year, a negative count or weight, a `countryOfDisposal` that
+        is not alpha-2, a destruction with no justification, or a justification
+        on something that was not destroyed.
+      content:
+        application/problem+json:
+          schema:
+            $ref: ../../components/schemas/errors/Problem.yaml

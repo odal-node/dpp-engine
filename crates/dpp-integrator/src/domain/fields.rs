@@ -127,6 +127,63 @@ pub(super) fn require_u32(
     }
 }
 
+/// Parse a required boolean cell.
+///
+/// Accepts the spellings a spreadsheet actually produces — `true`/`false`,
+/// `yes`/`no`, `1`/`0` — case-insensitively. Excel writes `TRUE` from a checkbox
+/// and `yes` from a human, and rejecting either would mean an operator whose
+/// file looks correct in the application they authored it in.
+///
+/// Deliberately not lenient about anything else: an unrecognised value is an
+/// error rather than a silent `false`, because `false` is a positive claim here
+/// (a toy without CE marking is a different product, not a missing field).
+pub(super) fn require_bool(
+    row: &HashMap<String, String>,
+    field: &str,
+    row_num: usize,
+    errors: &mut Vec<RowError>,
+) -> Option<bool> {
+    let raw = require_str(row, field, row_num, errors)?;
+    match raw.trim().to_ascii_lowercase().as_str() {
+        "true" | "yes" | "1" => Some(true),
+        "false" | "no" | "0" => Some(false),
+        _ => {
+            errors.push(RowError {
+                row: row_num,
+                field: field.to_owned(),
+                message: format!("Expected true/false, yes/no or 1/0, got '{raw}'"),
+            });
+            None
+        }
+    }
+}
+
+/// [`require_bool`] for a column that may be absent or empty.
+///
+/// An absent cell is `None`; a present but unparseable one is an error, for the
+/// same reason as above — silently dropping a value the operator wrote is worse
+/// than telling them it was not understood.
+pub(super) fn optional_bool(
+    row: &HashMap<String, String>,
+    field: &str,
+    row_num: usize,
+    errors: &mut Vec<RowError>,
+) -> Option<bool> {
+    let raw = optional_str(row, field)?;
+    match raw.trim().to_ascii_lowercase().as_str() {
+        "true" | "yes" | "1" => Some(true),
+        "false" | "no" | "0" => Some(false),
+        _ => {
+            errors.push(RowError {
+                row: row_num,
+                field: field.to_owned(),
+                message: format!("Expected true/false, yes/no or 1/0, got '{raw}'"),
+            });
+            None
+        }
+    }
+}
+
 pub(super) fn optional_f64(
     row: &HashMap<String, String>,
     field: &str,
@@ -305,5 +362,61 @@ mod tests {
             Some("Acme")
         );
         assert!(get_field(&row, "somethingElse").is_none());
+    }
+
+    /// A spreadsheet writes booleans several ways and an operator writes more,
+    /// so the accepted set is deliberately wider than Rust's `bool` parse.
+    #[test]
+    fn require_bool_accepts_the_spellings_a_spreadsheet_produces() {
+        for (raw, expected) in [
+            ("true", true),
+            ("TRUE", true),
+            ("Yes", true),
+            ("1", true),
+            ("false", false),
+            ("FALSE", false),
+            ("no", false),
+            ("0", false),
+        ] {
+            let row = HashMap::from([("ceMarking".to_owned(), raw.to_owned())]);
+            let mut errors = Vec::new();
+            assert_eq!(
+                require_bool(&row, "ceMarking", 1, &mut errors),
+                Some(expected),
+                "{raw} should parse as {expected}"
+            );
+            assert!(errors.is_empty(), "{raw} should not error");
+        }
+    }
+
+    /// An unrecognised value is an error, never a silent `false`. `false` is a
+    /// positive claim here — a toy without CE marking is a different product,
+    /// not a missing field — so guessing it would put a conformity statement on
+    /// a passport the operator never made.
+    #[test]
+    fn an_unparseable_boolean_is_an_error_not_a_false() {
+        let row = HashMap::from([("ceMarking".to_owned(), "maybe".to_owned())]);
+        let mut errors = Vec::new();
+        assert_eq!(require_bool(&row, "ceMarking", 3, &mut errors), None);
+        assert_eq!(errors.len(), 1);
+        assert_eq!(errors[0].field, "ceMarking");
+        assert_eq!(errors[0].row, 3);
+    }
+
+    /// An absent optional boolean is `None` and not an error; a present but
+    /// unparseable one still is, because dropping a value the operator wrote is
+    /// worse than telling them it was not understood.
+    #[test]
+    fn optional_bool_distinguishes_absent_from_unparseable() {
+        let mut errors = Vec::new();
+        assert_eq!(
+            optional_bool(&HashMap::new(), "containsBattery", 1, &mut errors),
+            None
+        );
+        assert!(errors.is_empty(), "absent is not an error");
+
+        let row = HashMap::from([("containsBattery".to_owned(), "sometimes".to_owned())]);
+        assert_eq!(optional_bool(&row, "containsBattery", 1, &mut errors), None);
+        assert_eq!(errors.len(), 1, "present but unparseable is an error");
     }
 }

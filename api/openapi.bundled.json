@@ -132,6 +132,11 @@
             "BasicAuth": []
           }
         ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          }
+        ],
         "requestBody": {
           "required": true,
           "content": {
@@ -177,6 +182,9 @@
           },
           "403": {
             "$ref": "#/components/responses/Forbidden"
+          },
+          "409": {
+            "$ref": "#/components/responses/IdempotentRequestInFlight"
           },
           "422": {
             "$ref": "#/components/responses/ValidationError"
@@ -545,7 +553,7 @@
       "post": {
         "operationId": "relintDpp",
         "summary": "Re-check plausibility-lint findings",
-        "description": "Recomputes the `dpp-rules` plausibility lint pack against the DPP's\ncurrent product group data and persists the refreshed `lintResult` (pack\nversion, findings, assessed-at timestamp). Findings are non-binding —\narithmetic and physical-plausibility checks distinct from binding\ncompliance rules — and never gate publish or any other transition.\n\nWorks regardless of DPP status, including `active` (published):\nre-checking does not retroactively affect the passport's JWS\nsignature, which is frozen over whatever `lintResult` looked like at\npublish time. No request body is required.\n",
+        "description": "Recomputes the `dpp-rules` plausibility lint pack against the DPP's\ncurrent product group data and persists the refreshed `lintResult` (pack\nversion, findings, assessed-at timestamp). Findings are non-binding —\narithmetic and physical-plausibility checks distinct from binding\ncompliance rules — and never gate publish or any other transition.\n\nWorks regardless of DPP status, including `active` (published):\nre-checking does not retroactively affect the passport's JWS\nsignature, which is frozen over whatever `lintResult` looked like at\npublish time. No request body is required.\n\nThe response also reports **`publishReadiness`**: whether this passport\nwould clear the category mandatory-content gate and the product-group\ndata/schema gates. That is the gate that most often refuses a battery, and\nasking it here is the only way to learn the answer without attempting the\npublish.\n",
         "tags": [
           "DPP Management"
         ],
@@ -569,11 +577,26 @@
         ],
         "responses": {
           "200": {
-            "description": "Lint findings refreshed. Returns the full passport record.",
+            "description": "Lint findings refreshed. Returns the full passport record, plus\n`publishReadiness` — whether this passport would clear the publish gates\nthat can be answered without attempting the transition.\n",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/PassportResponse"
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/PassportResponse"
+                    },
+                    {
+                      "type": "object",
+                      "required": [
+                        "publishReadiness"
+                      ],
+                      "properties": {
+                        "publishReadiness": {
+                          "$ref": "#/components/schemas/PublishReadiness"
+                        }
+                      }
+                    }
+                  ]
                 }
               }
             }
@@ -753,6 +776,142 @@
         "responses": {
           "200": {
             "description": "DPP published successfully. Returns the full passport record.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PassportResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationError"
+          }
+        }
+      }
+    },
+    "/vault/api/v1/dpp/{dppId}/amend": {
+      "post": {
+        "operationId": "amendDpp",
+        "summary": "Amend a published DPP by issuing a successor",
+        "description": "Correct a published DPP. A published passport cannot be edited in place —\nits signatures commit to its bytes and the retention guard refuses the\nwrite — so this issues a **new** passport instead.\n\nThe successor is a copy of `dppId` with the `patch` applied, carrying\n`supersedesId` back to `dppId` and `version` incremented. It goes through\nthe same gates as any first publish: schema validation, product-group\nvalidation, mandatory-content checks, signing, and registry sync. When it\npublishes successfully, `dppId` moves to the terminal `superseded` state.\n\n**The response body is a different passport from the one in the path.** It\nis the successor, with its own `id`. Clients holding the old id keep a valid\nreference: a superseded passport stays resolvable, keeps its signatures and\nits seal, and reports `superseded` as its status.\n\nOnly an `active` DPP can be amended. A draft is edited in place with\n`PUT /vault/api/v1/dpp/{dppId}`; a suspended, archived, superseded or\ndeactivated DPP cannot be superseded.\n\nThe schema version is **inherited**, not advanced to the product group's\ncurrent one. An amendment corrects content; migrating a passport to a newer\nschema is a separate act. This also keeps the successor's disclosure classes\nidentical to the predecessor's, since those are read from the schema\nversion's own annotations.\n\nEmits `dpp.passport.published` for the successor and\n`dpp.passport.superseded` for the predecessor.\n",
+        "tags": [
+          "DPP Lifecycle"
+        ],
+        "security": [
+          {
+            "BearerApiKey": []
+          },
+          {
+            "BasicAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "dppId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/DppId"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AmendRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successor published and predecessor superseded. Returns the **successor**\n— a different record from the one named in the path, with its own `id`,\n`version` incremented, and `supersedesId` set to `dppId`.\n",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PassportResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationError"
+          }
+        }
+      }
+    },
+    "/vault/api/v1/dpp/{dppId}/supersede": {
+      "post": {
+        "operationId": "supersedeDpp",
+        "summary": "Retire a DPP in favour of a newer one",
+        "description": "Marks the DPP in the path `superseded`, retiring it in favour of the\nreplacement named in `supersededBy`.\n\n**The link is checked here, not written.** The successor must already carry\n`supersedesId` pointing back at this passport, set when it was created —\n`supersedesId` is a protected field and no field patch can add it later. A\nsuccessor that does not declare the link is refused with `422`.\n\nThat ordering is deliberate. Writing the link during this transition would\nleave, on a failure between the two writes, a retired passport with nothing\npointing at its replacement — the one state a reader cannot recover from.\nRequiring the link to exist first makes that unreachable.\n\n**Both must already be published.** A draft successor retiring a live\npassport would leave the product with no servable record, and a\nnot-yet-published successor may still fail its own gates. A predecessor that\nis not published has nothing to retire.\n\nTerminal and irreversible: a superseded passport accepts no further\ntransitions, and the successor is what a reader follows forward.\n\nIt keeps serving on the public tier. Superseding replaces the *record*, not\nthe goods: products made under the old specification are still in the field\ncarrying data carriers that resolve to it, and ESPR Art. 10(4)(i) asks the\npassport to remain available for at least the product's expected lifetime.\n",
+        "tags": [
+          "DPP Lifecycle"
+        ],
+        "security": [
+          {
+            "BearerApiKey": []
+          },
+          {
+            "BasicAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "dppId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/DppId"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SupersedeRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "DPP superseded. Returns the retired passport's record.",
             "content": {
               "application/json": {
                 "schema": {
@@ -1269,6 +1428,9 @@
             "schema": {
               "$ref": "#/components/schemas/DppId"
             }
+          },
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
           }
         ],
         "responses": {
@@ -1798,7 +1960,7 @@
       "post": {
         "operationId": "addFacility",
         "summary": "Add a facility",
-        "description": "Add a facility. The identifier is validated by scheme — a `gln` must\npass the GS1 mod-10 check digit. Requires an admin-scoped key.\n",
+        "description": "Add a facility. The identifier is validated by scheme — a `gln` must\npass the GS1 mod-10 check digit. Requires an admin-scoped key.\n\nFacilities are retired, never deleted, so a duplicate created by a retried\nrequest cannot be cleaned up afterwards. Send an `Idempotency-Key`.\n",
         "tags": [
           "Facilities"
         ],
@@ -1808,6 +1970,11 @@
           },
           {
             "BasicAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
           }
         ],
         "requestBody": {
@@ -1836,6 +2003,9 @@
           },
           "403": {
             "$ref": "#/components/responses/Forbidden"
+          },
+          "409": {
+            "$ref": "#/components/responses/IdempotentRequestInFlight"
           },
           "422": {
             "$ref": "#/components/responses/ValidationError"
@@ -2032,7 +2202,7 @@
       "post": {
         "operationId": "addOperatorIdentifier",
         "summary": "Add an operator identifier",
-        "description": "Add an economic-operator identifier. Validated by scheme — LEI uses\nISO 7064 MOD 97-10; DUNS is 9 digits; EORI/VAT require a country prefix.\nRequires an admin-scoped key.\n",
+        "description": "Add an economic-operator identifier. Validated by scheme — LEI uses\nISO 7064 MOD 97-10; DUNS is 9 digits; EORI/VAT require a country prefix.\nRequires an admin-scoped key.\n\nOperator identifiers are retired, never deleted, so a duplicate created by\na retried request cannot be cleaned up afterwards. Send an\n`Idempotency-Key`.\n",
         "tags": [
           "Operator Identifiers"
         ],
@@ -2042,6 +2212,11 @@
           },
           {
             "BasicAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
           }
         ],
         "requestBody": {
@@ -2070,6 +2245,9 @@
           },
           "403": {
             "$ref": "#/components/responses/Forbidden"
+          },
+          "409": {
+            "$ref": "#/components/responses/IdempotentRequestInFlight"
           },
           "422": {
             "$ref": "#/components/responses/ValidationError"
@@ -2266,7 +2444,7 @@
       "post": {
         "operationId": "createApiKey",
         "summary": "Create a new API key",
-        "description": "Generate a new API key. The response includes the full plain-text\n`secret` — this is the only time it will be shown. Store it securely.\n",
+        "description": "Generate a new API key. The response includes the full plain-text\n`secret` — this is the only time it will be shown. Store it securely.\n\n**A replayed request does not return the secret.** This route accepts an\n`Idempotency-Key`, but the secret is never stored, so a retry that finds a\ncompleted key answers with the key record and\n`\"secretAlreadyDelivered\": true` in place of `secret`. That is the honest\nanswer: the credential exists and was handed to the first attempt. If that\nresponse was lost, revoke the key and create another.\n",
         "tags": [
           "API Keys"
         ],
@@ -2276,6 +2454,11 @@
           },
           {
             "BasicAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
           }
         ],
         "requestBody": {
@@ -2304,6 +2487,9 @@
           },
           "403": {
             "$ref": "#/components/responses/Forbidden"
+          },
+          "409": {
+            "$ref": "#/components/responses/IdempotentRequestInFlight"
           },
           "422": {
             "$ref": "#/components/responses/ValidationError"
@@ -2364,6 +2550,193 @@
         }
       }
     },
+    "/vault/api/v1/credentials": {
+      "post": {
+        "operationId": "issueCredential",
+        "summary": "Issue an access credential",
+        "description": "Mints a DPP access credential signed with this node's own key, and returns\nit as a compact VC-JWT the holder presents in the `X-DPP-Credential` header\non `GET /vault/credential/dpp/{dppId}`.\n\n**Only a legitimate interest, never an authority.** An operator naming its\nown authorised repairer attests something no one else can — membership of\nthat network is a fact the operator alone holds, and no EU register of\nauthorised repairers exists to hold it instead. An operator naming itself a\nmarket surveillance authority attests nothing, because the standing being\nclaimed is conferred by a member state. The three authority roles are\nrefused with `422`.\n\n**Issuing is not trusting.** A credential minted here is honoured by *this*\nnode only if the node also trusts its own DID (`CREDENTIAL_ISSUERS_SELF`).\nAn operator running more than one node ordinarily mints on one and honours\nit on another, so issuance is available regardless of that switch.\n\n**Revocation is expiry.** This node fetches W3C status lists but publishes\nnone, so a credential it mints carries no `credentialStatus` and cannot be\nwithdrawn before it lapses. `validForDays` is therefore capped rather than\nopen-ended, and defaults to less than the cap.\n",
+        "tags": [
+          "Access"
+        ],
+        "security": [
+          {
+            "BearerApiKey": []
+          },
+          {
+            "BasicAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/IssueCredentialRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Credential issued.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IssuedCredential"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "422": {
+            "description": "The request cannot produce a usable credential — an authority role, a\n`holderDid` that is not a DID, a `country` that is not alpha-2, or a\n`validForDays` outside 1–90.\n",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "501": {
+            "description": "This deployment reaches no key store, so it cannot sign. The standalone\nvault binary answers this; the fused node does not.\n",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/vault/api/v1/unsold-goods": {
+      "get": {
+        "operationId": "listUnsoldGoods",
+        "summary": "List unsold-goods disclosure lines",
+        "description": "Every recorded ESPR Art. 24 disclosure line, newest first, optionally\nnarrowed to one financial year.\n\nAdmin rather than write: these are the operator's own annual figures, and\nreading them back is an administrative act rather than part of producing\npassports.\n",
+        "tags": [
+          "Unsold goods"
+        ],
+        "security": [
+          {
+            "BearerApiKey": []
+          },
+          {
+            "BasicAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "reportingPeriod",
+            "in": "query",
+            "required": false,
+            "description": "Financial year as `YYYY`. Omit for every period.",
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9]{4}$"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The disclosure lines.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/UnsoldGoodsEntry"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "422": {
+            "description": "`reportingPeriod` is not a four-digit year.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "operationId": "recordUnsoldGoods",
+        "summary": "Record an unsold-goods disclosure line",
+        "description": "Records one line of the ESPR Art. 24 disclosure of unsold consumer products\ndiscarded in a financial year.\n\n**This is not a passport.** There is no digital product passport anywhere in\nArt. 24 or Art. 25: the subject is an *operator over a financial year*, the\nmedium is the operator's own website, and the trigger is discarding unsold\nstock — none of which is a product placed on the market. These routes\ntherefore sit beside the other operator-scoped ones, and no `unsold-goods`\nproduct group carries passports.\n\n**Destruction must be justified.** Art. 25 prohibits destroying unsold\nconsumer products listed in Annex VII from 19 July 2026, so\n`destination: exemptDestruction` requires `destructionJustification` and is\nrefused with `422` without it. The converse is refused too: a justification\non any other destination describes nothing.\n\n**Annex VII scope is not decided here.** That is a CN-code prefix test, and\nthe goods in a disclosure line do not arrive carrying CN codes.\n`productCategory` is the operator's own categorisation for Art. 24(1)(a).\n",
+        "tags": [
+          "Unsold goods"
+        ],
+        "security": [
+          {
+            "BearerApiKey": []
+          },
+          {
+            "BasicAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateUnsoldGoodsEntry"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The recorded line.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UnsoldGoodsEntry"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "422": {
+            "description": "The line cannot be recorded — a `reportingPeriod` that is not a\nfour-digit year, a negative count or weight, a `countryOfDisposal` that\nis not alpha-2, a destruction with no justification, or a justification\non something that was not destroyed.\n",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/vault/api/v1/webhooks": {
       "get": {
         "operationId": "listWebhooks",
@@ -2405,7 +2778,7 @@
       "post": {
         "operationId": "createWebhook",
         "summary": "Create a webhook subscription",
-        "description": "Register a receiver URL (must be https and resolve to a public host,\nunless the node sets WEBHOOK_ALLOW_PRIVATE_TARGETS). The response includes\nthe `secret` — shown ONCE — used to verify the `X-Odal-Signature` header\non every delivery. Admin-scoped.\n",
+        "description": "Register a receiver URL (must be https and resolve to a public host,\nunless the node sets WEBHOOK_ALLOW_PRIVATE_TARGETS). The response includes\nthe `secret` — shown ONCE — used to verify the `X-Odal-Signature` header\non every delivery. Admin-scoped.\n\n**A replayed request does not return the secret.** This route accepts an\n`Idempotency-Key`, but the signing secret is never stored, so a retry that\nfinds a completed key answers with the subscription and\n`\"secretAlreadyDelivered\": true` in place of `secret`. If the first\nresponse was lost, delete the subscription and create another.\n",
         "tags": [
           "Webhooks"
         ],
@@ -2415,6 +2788,11 @@
           },
           {
             "BasicAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
           }
         ],
         "requestBody": {
@@ -2443,6 +2821,9 @@
           },
           "403": {
             "$ref": "#/components/responses/Forbidden"
+          },
+          "409": {
+            "$ref": "#/components/responses/IdempotentRequestInFlight"
           },
           "422": {
             "$ref": "#/components/responses/ValidationError"
@@ -2565,6 +2946,11 @@
             "BasicAuth": []
           }
         ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          }
+        ],
         "requestBody": {
           "required": true,
           "content": {
@@ -2615,6 +3001,9 @@
           },
           "403": {
             "description": "A non-admin credential attempted to install a plugin."
+          },
+          "409": {
+            "$ref": "#/components/responses/IdempotentRequestInFlight"
           },
           "422": {
             "description": "The artifact was rejected — bad signature, incompatible ABI, or a non-instantiable/incompatible module."
@@ -2952,13 +3341,18 @@
       "post": {
         "operationId": "ingestScanBatch",
         "summary": "Flush a scan-telemetry batch (internal, mTLS)",
-        "description": "The mTLS-gated sink the public resolver flushes its in-memory\naggregate scan/QR-render counters to (`CN=odal-resolver` only). The\nresolver holds no operator API key and no database of its own.\n",
+        "description": "The mTLS-gated sink the public resolver flushes its in-memory\naggregate scan/QR-render counters to (`CN=odal-resolver` only). The\nresolver holds no operator API key and no database of its own.\n\n**Send an `Idempotency-Key`.** The ingest is additive\n(`count = count + delta`), so a window re-sent after a lost acknowledgement\nis counted twice. The resolver holds a failed batch and re-sends it\nbyte-for-byte under a stable key; without one, a read timeout on a request\nthe node already committed silently inflates an operator's resolution\ncounts.\n",
         "tags": [
           "Vault (internal)"
         ],
         "security": [
           {
             "MutualTLS": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
           }
         ],
         "requestBody": {
@@ -2980,6 +3374,9 @@
           },
           "403": {
             "$ref": "#/components/responses/Forbidden"
+          },
+          "409": {
+            "$ref": "#/components/responses/IdempotentRequestInFlight"
           }
         }
       }
@@ -3210,7 +3607,7 @@
       "get": {
         "operationId": "getImportTemplate",
         "summary": "Download a CSV import template",
-        "description": "Returns the canonical CSV import template for a product group (`battery`,\n`textile`). `?format=xlsx` returns 501 (download the CSV and open it in\na spreadsheet app). Unauthenticated.\n",
+        "description": "Returns the canonical CSV import template for a product group. Templates\nexist for `battery`, `textile`, `steel`, `aluminium` and `tyre`; any other\nproduct group returns 404 naming the ones that are served.\n`?format=xlsx` returns 501 (download the CSV and open it in a spreadsheet\napp). Unauthenticated.\n",
         "tags": [
           "Integrator"
         ],
@@ -3250,10 +3647,24 @@
             }
           },
           "404": {
-            "description": "No template for this product group."
+            "description": "No template for this product group.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
           },
           "501": {
-            "description": "XLSX export not yet implemented."
+            "description": "XLSX export not yet implemented.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
           }
         }
       }
@@ -3280,6 +3691,9 @@
               "type": "string",
               "example": "battery"
             }
+          },
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
           }
         ],
         "requestBody": {
@@ -3335,6 +3749,9 @@
           },
           "404": {
             "description": "Unknown product group."
+          },
+          "409": {
+            "$ref": "#/components/responses/IdempotentRequestInFlight"
           },
           "422": {
             "$ref": "#/components/responses/ValidationError"
@@ -3689,6 +4106,9 @@
           },
           "404": {
             "description": "No published DPP for this GTIN, or unknown link type."
+          },
+          "410": {
+            "$ref": "#/components/responses/Gone"
           }
         }
       }
@@ -3747,6 +4167,9 @@
           },
           "404": {
             "description": "No published DPP for this GTIN, or unknown link type."
+          },
+          "410": {
+            "$ref": "#/components/responses/Gone"
           }
         }
       }
@@ -3805,6 +4228,9 @@
           },
           "404": {
             "description": "No published DPP for this GTIN, or unknown link type."
+          },
+          "410": {
+            "$ref": "#/components/responses/Gone"
           }
         }
       }
@@ -3872,6 +4298,9 @@
           },
           "404": {
             "description": "No published DPP for this GTIN, or unknown link type."
+          },
+          "410": {
+            "$ref": "#/components/responses/Gone"
           }
         }
       }
@@ -4880,6 +5309,14 @@
             "type": "string",
             "description": "Customs tariff classification — HS-6, CN-8 or TARIC-10 (6, 8 or 10 digits, no separators). Registration data the EU registry verifies against the ranges its product group permits.",
             "example": "85076000"
+          },
+          "supersedesId": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/DppId"
+              }
+            ],
+            "description": "The passport this one replaces, if it is a new version of an existing\nrecord.\n\nDeclared here because `supersedesId` is protected: it is set by the write\nthat creates the whole record, never by a field patch. Recording the link\nretires nothing — the predecessor is retired by\n`POST /dpp/{dppId}/supersede` once this successor is published, and that\nroute checks the two agree.\n\nOnly for a successor created independently. `POST /dpp/{dppId}/amend`\nmints its own successor and sets this field itself; it is not settable\nthrough that route and does not need to be.\n"
           }
         }
       },
@@ -6068,7 +6505,8 @@
           "scansHtml",
           "scansJson",
           "daily",
-          "qrRenders"
+          "qrRenders",
+          "ingesting"
         ],
         "properties": {
           "windowDays": {
@@ -6092,6 +6530,15 @@
           },
           "qrRenders": {
             "type": "integer"
+          },
+          "ingesting": {
+            "type": "boolean",
+            "description": "Whether scan telemetry is actually reaching this node.\n\n`false` alongside `totalScans: 0` means the number is **unmeasured**, not\nzero — and that is the shipped default, since `SCAN_INGEST_URL` is unset\nunless an operator configures it.\n\nThe node cannot answer this from its own configuration: `SCAN_INGEST_URL`\nbelongs to the resolver, a separate deployable. What it reports is whether\na resolver has flushed to it, which the resolver makes possible by sending\nan empty batch each interval even with nothing to count.\n\nResets on restart — this is liveness, not history — so a freshly booted\nnode reports `false` until the next flush, at most one interval.\n"
+          },
+          "lastIngestAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When a resolver last flushed to this node. Absent if none has."
           }
         }
       },
@@ -6102,7 +6549,8 @@
           "windowDays",
           "totalScans",
           "totalQrRenders",
-          "distinctPassportsScanned"
+          "distinctPassportsScanned",
+          "ingesting"
         ],
         "properties": {
           "windowDays": {
@@ -6116,6 +6564,15 @@
           },
           "distinctPassportsScanned": {
             "type": "integer"
+          },
+          "ingesting": {
+            "type": "boolean",
+            "description": "Whether scan telemetry is actually reaching this node.\n\n`false` alongside `totalScans: 0` means the number is **unmeasured**, not\nzero — and that is the shipped default, since `SCAN_INGEST_URL` is unset\nunless an operator configures it.\n\nThe node cannot answer this from its own configuration: `SCAN_INGEST_URL`\nbelongs to the resolver, a separate deployable. What it reports is whether\na resolver has flushed to it, which the resolver makes possible by sending\nan empty batch each interval even with nothing to count.\n\nResets on restart — this is liveness, not history — so a freshly booted\nnode reports `false` until the next flush, at most one interval.\n"
+          },
+          "lastIngestAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When a resolver last flushed to this node. Absent if none has."
           }
         }
       },
@@ -6154,6 +6611,13 @@
             "items": {
               "$ref": "#/components/schemas/QrRenderBatchEntry"
             }
+          },
+          "flushIntervalSecs": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 1,
+            "description": "How often the sending resolver flushes, in seconds.\n\nDeclared rather than assumed. The node reports `ingesting` on\n`GET /stats` by asking whether the last flush is recent, and \"recent\" is\nonly meaningful relative to how often the sender promised to call —\n`SCAN_FLUSH_INTERVAL_SECS` belongs to the resolver, a separate deployable\nwhose environment the node cannot read.\n\nStamped when the window is drained, not when it is sent, so a batch held\nafter a failed flush is re-sent byte-identical under its original\n`Idempotency-Key`.\n\nOptional: a resolver predating this field omits it, and the node then\nreports whether telemetry has *ever* arrived rather than applying a\nthreshold to a cadence it does not know.\n",
+            "example": 300
           }
         }
       },
@@ -6698,6 +7162,262 @@
             "description": "Defaults to `admin` when omitted. Name `read` or `write` explicitly for a key issued to an integration."
           }
         }
+      },
+      "CredentialRole": {
+        "description": "The access role granted.\n\nOnly roles carrying a **legitimate interest** may be issued here.\n`market_surveillance_authority`, `customs_authority` and `notified_body` map\nto the authority audience under Art. 77(2)(b) and are refused with `422`:\nauthority status is conferred by a member state, so an operator signing itself\none has attested nothing. An authority presents a credential from its own\nissuer, named in `CREDENTIAL_ISSUERS_AUTHORITY`.\n\nA product-group-specific role that none of the named ones fit uses the object\nform — the variant is externally tagged, so it is an object where the rest are\nstrings. It carries a legitimate interest like the others.\n",
+        "oneOf": [
+          {
+            "type": "string",
+            "title": "Named role",
+            "enum": [
+              "authorised_repairer",
+              "recycler",
+              "remanufacturer",
+              "preparer_for_reuse",
+              "distributor"
+            ]
+          },
+          {
+            "type": "object",
+            "title": "Custom role",
+            "required": [
+              "custom"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "custom": {
+                "type": "string",
+                "description": "Free-form role label, e.g. a product-group-specific one."
+              }
+            }
+          }
+        ],
+        "example": "authorised_repairer"
+      },
+      "IssueCredentialRequest": {
+        "type": "object",
+        "description": "Ask this node to vouch for a holder.\n\nThe node signs with its own key, so the credential says \"this operator\nattests that this party holds this role\". That is a claim an operator is\nuniquely placed to make about its own authorised network, and one it has no\nstanding to make about authority status — see `role`.\n",
+        "required": [
+          "holderDid",
+          "holderName",
+          "role",
+          "country"
+        ],
+        "properties": {
+          "holderDid": {
+            "type": "string",
+            "description": "DID of the party being vouched for. A verifier matches it exactly, so a\nname or a URL here produces a credential nothing can present.\n",
+            "example": "did:web:repairs.example"
+          },
+          "holderName": {
+            "type": "string",
+            "description": "Legal name of the holder, carried in the credential for an auditor.",
+            "example": "Nord Repair GmbH"
+          },
+          "role": {
+            "$ref": "#/components/schemas/CredentialRole"
+          },
+          "country": {
+            "type": "string",
+            "pattern": "^[A-Za-z]{2}$",
+            "description": "ISO 3166-1 alpha-2 country of the holder's registration.\n\nEither case is accepted and the credential carries the upper-cased form,\nwhich is what a verifier compares against. Same reason for the pattern as\non `countryOfDisposal`: a length bound alone admits `1?`.\n",
+            "example": "DE"
+          },
+          "productGroups": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Product groups the credential covers. Omit or leave empty to cover every\nproduct group this operator publishes.\n",
+            "example": [
+              "battery"
+            ]
+          },
+          "validForDays": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 90,
+            "default": 30,
+            "description": "Lifetime in days.\n\nNothing can withdraw a credential once issued — this node fetches W3C\nstatus lists but publishes none, so a credential it mints carries no\n`credentialStatus` — which makes the expiry the only control there is.\nThat is why the ceiling is 90 rather than open-ended, and why the default\nis shorter still. Re-issuing is cheap.\n",
+            "example": 30
+          }
+        }
+      },
+      "IssuedCredential": {
+        "type": "object",
+        "description": "The minted credential, in both the forms a caller needs: the wire value the\nholder presents, and the same claims readable without decoding it.\n",
+        "required": [
+          "credentialJws",
+          "credential"
+        ],
+        "properties": {
+          "credentialJws": {
+            "type": "string",
+            "description": "Compact VC-JWT — the value the holder sends as the `X-DPP-Credential`\nheader. This is the credential; `credential` below is the same claims in\nreadable form, not a second artefact.\n"
+          },
+          "credential": {
+            "type": "object",
+            "description": "The credential document, so a caller can show the holder what it says\nwithout decoding the JWS. Shape follows W3C VC Data Model v2.0.\n",
+            "additionalProperties": true
+          }
+        }
+      },
+      "CreateUnsoldGoodsEntry": {
+        "type": "object",
+        "description": "One line of an ESPR Art. 24 disclosure: a category of unsold consumer products\ndiscarded in a financial year, with the reason and where it went.\n\nA disclosure is many of these, not one row. Art. 24(1) asks for the figures\n\"differentiated per type or category of products\", and separately per reason\nand destination — which a single aggregate cannot express.\n\nThe operator is **not** part of the request. The report is about this node's\nown operator, taken from its operator config; there is no second operator on a\nsingle-tenant node for it to legitimately be.\n",
+        "required": [
+          "reportingPeriod",
+          "unitCount",
+          "volumeKg",
+          "productCategory",
+          "reason",
+          "destination",
+          "countryOfDisposal"
+        ],
+        "properties": {
+          "reportingPeriod": {
+            "type": "string",
+            "pattern": "^[0-9]{4}$",
+            "description": "The financial year the goods were discarded in. Art. 24(1) discloses \"the\npreceding financial year\", annually, so this is a year and not a month or\na quarter.\n",
+            "example": "2026"
+          },
+          "unitCount": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0,
+            "description": "How many products. Art. 24(1)(a) asks for the number **and** the weight;\nboth are required here because a disclosure carrying only one cannot\nsatisfy it.\n",
+            "example": 1240
+          },
+          "volumeKg": {
+            "type": "number",
+            "format": "double",
+            "minimum": 0,
+            "description": "Their total weight in kilograms.",
+            "example": 860.5
+          },
+          "productCategory": {
+            "$ref": "#/components/schemas/UnsoldProductCategory"
+          },
+          "reason": {
+            "$ref": "#/components/schemas/UnsoldDiscardReason"
+          },
+          "destination": {
+            "$ref": "#/components/schemas/UnsoldDestination"
+          },
+          "destructionJustification": {
+            "type": "string",
+            "description": "Which Art. 25 exemption the destruction relies on.\n\n**Required** when `destination` is `exemptDestruction`, and **refused**\notherwise. ESPR Art. 25 prohibits destroying unsold consumer products\nlisted in Annex VII from 19 July 2026, so a recorded destruction has to say\nwhy it was permitted; a justification attached to a donation describes\nnothing.\n",
+            "example": "Contaminated stock unfit for use under Art. 25(5)"
+          },
+          "countryOfDisposal": {
+            "type": "string",
+            "pattern": "^[A-Za-z]{2}$",
+            "description": "ISO 3166-1 alpha-2 country the goods were disposed of in.\n\nEither case is accepted and the stored value is upper-cased. The pattern\nis what makes the description enforceable: a length bound alone admits\n`1?`, which satisfies the published contract and is then refused by the\nhandler — a contract looser than the implementation is the kind a\ngenerated client trusts.\n",
+            "example": "DE"
+          }
+        }
+      },
+      "UnsoldGoodsEntry": {
+        "type": "object",
+        "description": "A stored ESPR Art. 24 disclosure line.",
+        "required": [
+          "id",
+          "reportingPeriod",
+          "volumeKg",
+          "productCategory",
+          "reason",
+          "destination",
+          "countryOfDisposal",
+          "createdAt"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "reportingPeriod": {
+            "type": "string",
+            "example": "2026"
+          },
+          "unitCount": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Null only for a row written before the count had a column — the write path\nrequires it, so anything recorded through this API carries one.\n"
+          },
+          "volumeKg": {
+            "type": "number",
+            "format": "double"
+          },
+          "productCategory": {
+            "$ref": "#/components/schemas/UnsoldProductCategory"
+          },
+          "reason": {
+            "$ref": "#/components/schemas/UnsoldDiscardReason"
+          },
+          "destination": {
+            "$ref": "#/components/schemas/UnsoldDestination"
+          },
+          "destructionJustification": {
+            "type": "string",
+            "description": "Present only for `exemptDestruction`."
+          },
+          "countryOfDisposal": {
+            "type": "string",
+            "pattern": "^[A-Z]{2}$",
+            "description": "ISO 3166-1 alpha-2 country the goods were disposed of in."
+          },
+          "operatorName": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The operator the disclosure is about — this node's own legal name at the\ntime the line was recorded. Report content, not a tenant key.\n"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "UnsoldProductCategory": {
+        "type": "string",
+        "description": "The operator's own categorisation of the discarded goods, for Art. 24(1)(a)'s\n\"differentiated per type or category of products\" — which prescribes no\nvocabulary.\n\nThis is **not** Annex VII ban scope. Annex VII gives two *code-valued*\nheadings — apparel and clothing accessories (`4203`, `61`, `62`, `6504`,\n`6505`) and footwear (`6401`–`6405`) — matched by CN **prefix**, with clothing\naccessories inside the first heading rather than beside it. Reading this list\nas those headings gets both their count and their shape wrong.\n",
+        "enum": [
+          "apparel",
+          "footwear",
+          "homeTextile",
+          "accessories",
+          "other"
+        ],
+        "example": "apparel"
+      },
+      "UnsoldDiscardReason": {
+        "type": "string",
+        "description": "Why the goods went unsold, for Art. 24(1)(b).",
+        "enum": [
+          "endOfSeason",
+          "qualityDefect",
+          "packagingDefect",
+          "overProduction",
+          "customerReturn",
+          "other"
+        ],
+        "example": "endOfSeason"
+      },
+      "UnsoldDestination": {
+        "type": "string",
+        "description": "Where the goods went, for Art. 24(1)(c).\n\n`exemptDestruction` is the only value recording an act that is otherwise\nprohibited, and the only one that requires `destructionJustification`.\n",
+        "enum": [
+          "donation",
+          "recycling",
+          "repurposing",
+          "supplierReturn",
+          "exemptDestruction"
+        ],
+        "example": "recycling"
       },
       "CreatedApiKeyResponse": {
         "type": "object",
@@ -7488,6 +8208,94 @@
         "description": "Whether an act's obligations bind **a given product group** — a different\nquestion from whether the act exists, which is `InstrumentStatus`.\n\n`in_force` — the act creates binding obligations for this product group that\ncan be determined now. A future applicability date is *not* this status.\n\n`provisional` — the act exists or is anticipated, but nothing is bindingly\ndeterminable for this product group yet. Any obligation reported alongside\nthis status is a reading, not a determination.\n\n`watch` — tracked, but this act imposes nothing on this product group. A\nwatching brief rather than a duty, and never determinable.\n\n**Read this before acting on `passport.required`.** The obligation is a fold\nacross every act reaching the product group, so `required: true` says an act\nimposes a passport — not that the act binds this group today. Where every\nreaching act is `provisional` or `watch`, the requirement is a reading of\ninstruments that have not yet bound anything.\n",
         "example": "provisional"
       },
+      "PublishBlocker": {
+        "type": "object",
+        "description": "One reason a publish would be refused, addressed to the field that causes it.\n\nAddressed rather than prose: the mandatory-content gate names every missing\nfield at once, and a caller completing a draft wants to attach each message to\nthe input it belongs to.\n",
+        "required": [
+          "field",
+          "message"
+        ],
+        "properties": {
+          "field": {
+            "type": "string",
+            "description": "Path of the offending field.",
+            "example": "/productGroupData/batteryModelId"
+          },
+          "message": {
+            "type": "string",
+            "description": "Why this field blocks the publish."
+          }
+        }
+      },
+      "PublishReadiness": {
+        "type": "object",
+        "description": "Whether the passport would clear the publish gates that can be answered\nwithout attempting the transition: the category **mandatory-content** gate and\nthe product-group data/schema gates.\n\nDeliberately not the whole of publish. The registry-identity requirement is\noperator state rather than passport state, and the binding-compliance gate\nneeds a determination this route does not run — so `ready: true` means \"these\ngates pass\", not \"publish will certainly succeed\".\n\nThe mandatory-content half is the reason this exists. It is the gate that most\noften refuses a battery (38 fields for an electric-vehicle one) and it could\nnot previously be previewed anywhere: it is reachable only from a stored\npassport, and the only dry-run the API offered takes an unsaved request body.\n",
+        "required": [
+          "ready",
+          "blockers"
+        ],
+        "properties": {
+          "ready": {
+            "type": "boolean",
+            "description": "True when no blocker below applies."
+          },
+          "blockers": {
+            "type": "array",
+            "description": "Every blocking field, named individually. Empty when `ready`.",
+            "items": {
+              "$ref": "#/components/schemas/PublishBlocker"
+            }
+          }
+        }
+      },
+      "AmendRequest": {
+        "type": "object",
+        "description": "Body for amending a published passport.\n\nA published passport's content is immutable — its signatures commit to its\nbytes and the retention guard refuses the write. An amendment therefore\npublishes a **new** passport carrying `supersedesId` back to the one being\ncorrected, and moves that one to the terminal `superseded` state. The\nsuperseded record keeps its signatures and stays resolvable by its own id.\n",
+        "required": [
+          "patch"
+        ],
+        "properties": {
+          "patch": {
+            "type": "object",
+            "description": "The correction, in the same shape the draft-update body takes: only the\npatchable content fields (`productName`, `co2ePerUnit`,\n`repairabilityScore`, `productGroupData`, `componentRefs`) take effect.\n\nOther keys are ignored rather than refused, so a client that sends a full\ncreate-shaped body still works and still cannot make a create-time field\ntake effect. Fields fixed at issuance — the product group, the schema\nversion, the manufacturer, the lineage edges — are not amendable; a\npassport whose product group is wrong is not the same product.\n",
+            "additionalProperties": true,
+            "example": {
+              "productName": "Model X Battery Pack (rev B)",
+              "productGroupData": {
+                "gtin": "01234567890128",
+                "batteryType": "industrial"
+              }
+            }
+          },
+          "reason": {
+            "type": "string",
+            "description": "Why the passport is being corrected. Recorded on the superseded record's\naudit entry alongside the successor's id — the two together are what\nanswers \"why did this change\" for a reader who arrives at the old record.\n",
+            "example": "Recycled-content share restated after supplier re-declaration"
+          }
+        }
+      },
+      "SupersedeRequest": {
+        "type": "object",
+        "description": "Which passport replaces the one being retired.\n\nSupersession is a **link between two passports that already exist**, not a\ncreate-and-retire in one call: a successor is an ordinary passport with its own\ncontent and its own publish gates, so it goes through the normal create and\npublish routes and is only then named here.\n\nFor the other direction — correcting a published passport, where the successor\nis derived from the record it replaces — use `POST /dpp/{dppId}/amend`, which\nmints the successor itself and cannot name one that already exists.\n",
+        "required": [
+          "supersededBy"
+        ],
+        "properties": {
+          "supersededBy": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/DppId"
+              }
+            ],
+            "description": "The successor, which must already be **published** and must already carry\n`supersedesId` pointing back at the passport named in the path. That link\nis set when the successor is created; this call confirms the two agree\nbefore retiring anything, and refuses with `422` if they do not.\n"
+          },
+          "reason": {
+            "type": "string",
+            "description": "Why the passport is being retired. Stored on the predecessor's audit entry\nalongside the successor's id — the same entry `amend` writes, so a reader\narriving at a retired record finds what replaced it and why, whichever\nroute retired it.\n",
+            "example": "Reissued on schema 2.6.0 after the product group's lens changed"
+          }
+        }
+      },
       "RulesetReload": {
         "type": "object",
         "description": "The outcome of re-reading the signed compliance-ruleset channel.",
@@ -7509,6 +8317,20 @@
         }
       }
     },
+    "parameters": {
+      "IdempotencyKey": {
+        "name": "Idempotency-Key",
+        "in": "header",
+        "required": false,
+        "description": "An opaque, client-minted string that makes this write safe to retry.\n\nSend the same key with the same body and the first outcome is returned\ninstead of a second resource being created. The replayed response carries\n`Idempotency-Replayed: true`, so a client can tell a replay from a first\nexecution without comparing anything.\n\nOnly the routes that document this parameter accept it. Sending it to any\nother route is a `400` rather than being ignored — a route that is idempotent\nby shape records nothing, and silently accepting the header would suggest a\nprotection that is not there.\n\n**A retry must resend byte-identical bytes.** The key is bound to a SHA-256\nof the raw request body, not of a canonicalised form, so re-serialising with\ndifferent member order or whitespace counts as a different request and is\nrefused with `422`. Use a fresh key whenever the body changes.\n\nOn a `multipart/form-data` route this includes the **boundary**: the whole\nencoded body is what is hashed. Most HTTP clients generate a fresh boundary\nper request, which makes the retry differ in bytes and be refused. Either\npin the boundary across attempts, or omit the key on multipart uploads.\n\nKeys are scoped to the authenticated caller and to this route, so the same\nkey may safely be reused across different operations, and one caller can\nnever observe another's. A key is honoured for **24 hours**; after that the\nsame key starts a new request.\n\nWhile a first attempt is still running, a duplicate receives `409` with\n`Retry-After`.\n",
+        "schema": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 255
+        },
+        "example": "6f2a1c40-2f6f-4b8a-9a3e-1f4c9b2d7e51"
+      }
+    },
     "responses": {
       "Unauthorized": {
         "description": "Missing or invalid authentication credentials.",
@@ -7527,7 +8349,7 @@
         }
       },
       "Forbidden": {
-        "description": "The credential is authenticated but lacks the required scope — e.g. a\n`write`/`read` key attempting an admin-only action (registry identity).\n",
+        "description": "The credential is authenticated but lacks the required scope — e.g. a\n`write`/`read` key attempting an admin-only action.\n\nEvery scope refusal in the service answers this one sentence, naming the scope\nrequired rather than the route. The route is what the caller just addressed;\nthe scope is the part they have to act on.\n",
         "content": {
           "application/problem+json": {
             "schema": {
@@ -7537,7 +8359,32 @@
               "type": "https://problems.odal-node.io/forbidden",
               "title": "Forbidden",
               "status": 403,
-              "detail": "Registry-identity management requires an admin-scoped credential."
+              "detail": "This operation requires an admin-scoped credential."
+            }
+          }
+        }
+      },
+      "IdempotentRequestInFlight": {
+        "description": "An earlier attempt carrying this `Idempotency-Key` is still running.\n\nReturned instead of letting a duplicate execute alongside it. Retry shortly\nwith the same key and the same body; `Retry-After` carries the suggested\ndelay.\n\nA claim left behind by a process that died mid-request is reclaimed\nautomatically after 60 seconds, so this can never wedge a key permanently.\n",
+        "headers": {
+          "Retry-After": {
+            "description": "Seconds to wait before retrying.",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        },
+        "content": {
+          "application/problem+json": {
+            "schema": {
+              "$ref": "#/components/schemas/Problem"
+            },
+            "example": {
+              "type": "https://problems.odal-node.io/idempotent-request-in-flight",
+              "title": "Idempotent Request In Flight",
+              "status": 409,
+              "detail": "An earlier attempt with this `Idempotency-Key` is still running. Retry shortly; do not change the body."
             }
           }
         }

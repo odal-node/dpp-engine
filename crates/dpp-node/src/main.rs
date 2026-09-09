@@ -330,8 +330,21 @@ async fn main() -> anyhow::Result<()> {
         }),
         trusted_issuers: credentials_live
             .then(|| Arc::new(trusted_issuers) as Arc<dyn dpp_vc::TrustedIssuerRegistry>),
+        // Unconditional, and deliberately not gated on `credentials_live`:
+        // issuing is not the same act as trusting. An operator running two
+        // nodes mints on one and honours on the other, and gating issuance on
+        // this node also trusting itself would make that ordinary arrangement
+        // impossible to set up.
+        credential_issuer: Some(Arc::new(
+            dpp_node::infra::credential_issuance::KeyStoreCredentialIssuer::new(
+                key_store.clone(),
+                ISSUER_KEY_ID.to_owned(),
+                cfg.did_web_base_url.clone(),
+            ),
+        )),
         cors_allowed_origins: cfg.cors_allowed_origins.clone(),
         scan_repo: db.scan_repo.clone(),
+        unsold_goods_repo: db.unsold_goods_repo.clone(),
         plugin_admin: Some(plugin_admin),
         // Reported on the authenticated `/vault/api/v1/node/state`, not on the
         // public `/health` — see `dpp_node::router::node_health`.
@@ -340,6 +353,7 @@ async fn main() -> anyhow::Result<()> {
         // force at the moment it is asked, and `POST /ruleset/reload` reaches
         // the same channel this booted from.
         ruleset_admin: Some(active_ruleset.clone()),
+        idempotency: Some(db.idempotency.clone()),
     };
 
     // ── Integrator service state ────────────────────────────────────────────────
@@ -349,10 +363,12 @@ async fn main() -> anyhow::Result<()> {
         vault_client,
         job_store: db.job_store.clone(),
         batch_concurrency: cfg.batch_concurrency,
+        idempotency: Some(db.idempotency.clone()),
     };
 
     // ── Background tasks: expired-import-job cleanup + registry outbox drain ──
     boot::tasks::spawn_job_cleanup(db.job_store.clone());
+    boot::tasks::spawn_idempotency_purge(db.idempotency.clone());
     boot::tasks::spawn_scan_prune(db.scan_repo.clone());
     boot::tasks::spawn_ruleset_poll(active_ruleset.clone(), ruleset_wiring.poll_interval);
     boot::tasks::spawn_registry_drain(

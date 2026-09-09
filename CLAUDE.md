@@ -116,6 +116,42 @@ If you are unsure whether something is private, it is — ask the operator rathe
 5. NEVER commit before running the full check suite (`just check`) locally and confirming it is green — a commit is not ready because the code looks right, it is ready because the same gate CI runs has already passed
 6. Do not reference internal planning taxonomy (roadmap phase letters, review chunk numbers, priority tags like N-1/P0/R-phase) in commit messages or in code/doc comments outside the planning docs themselves — describe what the change does, not which internal tracking item it closes
 
+## Asking for a Code Review
+
+CodeRabbit reviews this repository **on request, never automatically**. A pull
+request is reviewed when it carries the `review-ready` label, or when someone
+comments `@coderabbitai review` on it. Nothing else triggers one, and an
+unlabelled pull request gets no comment at all. What it reviews against is in
+`.coderabbit.yaml` and in the documents that file points at — this one included.
+
+**Apply the label when the branch is genuinely finished, and not before.**
+Finished means all of:
+
+- the work covers the scope the branch was opened for, with nothing left
+  stubbed, `TODO`-ed, or deferred to "a follow-up";
+- `just check` has been run locally and is green — not `just test`, which never
+  builds the feature-gated integration suites, so one that has stopped
+  compiling fails only in CI;
+- the pull request title is a conventional commit, since it becomes the squash
+  subject on `main` and cannot be corrected once a release is cut from it;
+- the pull request is not a draft.
+
+Labelling a half-finished branch spends a review on code that is about to
+change. The open-source plan rate-limits reviews, and re-review on push is
+deliberately off, so a labelled pull request gets **one** pass — ask again with
+`@coderabbitai review` if a later push earns another.
+
+**Label the changes where a second read earns its cost, and leave the rest
+unlabelled.** Worth a review: anything spanning more than one crate; a new or
+changed HTTP route, or an edit to `api/paths/` that documents an error
+condition; a database migration or a change to the app role's grants; anything
+touching `auth_middleware` or an auth provider; the plugin host and its
+sandbox; the event bus or job store; a new direct dependency, especially one
+landing on an untrusted-input path (uploaded XLSX/CSV, plugin binaries, signed
+rulesets, webhook targets, resolver requests); and a branch open long enough
+that `main` has moved underneath it. Not worth one: a single-crate mechanical
+change, a doc typo, a version bump, a dependency bump.
+
 ## Overview
 
 **dpp-engine** is the self-hostable engine (BSL-1.1) for the Odal Node Digital Product Passport system. It consumes the pure core library (`dpp-core`, Apache-2.0) and adds HTTP services, database persistence, auth, event bus, Wasm plugin hosting, and operator management.
@@ -285,7 +321,7 @@ Implementations:
 - `NoOpEventBus` (default when `NATS_URL` is absent) — discards silently
 - `NatsEventBus` (in `dpp-node/src/infra/`) — publishes to NATS JetStream stream `DPP_EVENTS` with subject pattern `dpp.>`, 7-day retention, file storage
 
-Subjects: `dpp.passport.{created,updated,published,suspended,archived,failed}`, `dpp.import.{completed,failed}`.
+Subjects: `dpp.passport.{created,updated,published,suspended,superseded,archived,failed}`, `dpp.import.{completed,failed}`. The authoritative set is `event::subjects` in `dpp-common`; this line has been behind it before.
 
 ### Job Store
 
@@ -314,6 +350,14 @@ Background cleanup task runs every 6 hours, deleting completed/failed jobs older
 > in the handler, not by the middleware**, so they are the column most likely to
 > go stale — verify against the handler's first lines before relying on a row.
 
+**Which routes accept an `Idempotency-Key` is deliberately not a column here.**
+That set is decided in one place —
+`dpp_common::idempotency::policy`'s `KEYED` table — and asserted against the
+live routers by `every_keyed_route_is_a_route_the_node_serves` in
+`crates/dpp-node/tests/openapi_contract.rs`. A second copy in this table would
+be a second thing to drift, and a keyed route missing from it would read as an
+unprotected one. Read the table in the code.
+
 ### MVP Node (port 8001)
 
 | Method | Path | Auth | Handler |
@@ -331,6 +375,8 @@ Background cleanup task runs every 6 hours, deleting completed/failed jobs older
 | GET | `/vault/api/v1/dpp/{dppId}` | Bearer | Read passport |
 | PUT | `/vault/api/v1/dpp/{dppId}` | Bearer | Update passport (draft only) |
 | POST | `/vault/api/v1/dpp/{dppId}/publish` | Bearer | Publish (signs with Ed25519) |
+| POST | `/vault/api/v1/dpp/{dppId}/amend` | Bearer **(write)** | Correct a published passport by publishing a **successor** (`supersedesId` → this id, `version` + 1) and moving this one to the terminal `superseded` state. Returns `201` with the successor — **a different record from the one in the path**. The superseded passport keeps its signatures and stays readable here and in the audit trail; its **public** by-id URL keeps serving (the frozen signed view, so `status` reads as it did at publish), while the product's GTIN resolves on past it to the successor |
+| POST | `/vault/api/v1/dpp/{dppId}/supersede` | Bearer **(write)** | Retire this passport in favour of an **already-published** successor named in `supersededBy`, which must already carry `supersedesId` back to this id (declared on `POST /dpp`; this route only checks it). Returns `200` with **the retired passport** — the opposite subject from `amend`, which mints its successor and returns that. Use this when the replacement was created independently: a newer schema version, an imported record, a successor issued after a transfer |
 | POST | `/vault/api/v1/dpp/{dppId}/suspend` | Bearer | Suspend |
 | POST | `/vault/api/v1/dpp/{dppId}/archive` | Bearer | Archive |
 | POST | `/vault/api/v1/dpp/{dppId}/lint` | Bearer (write) | Re-run the plausibility lint pack — **persists** `lintResult` |
@@ -361,6 +407,9 @@ Background cleanup task runs every 6 hours, deleting completed/failed jobs older
 | GET | `/vault/api/v1/api-keys` | Bearer (admin) | List API keys |
 | POST | `/vault/api/v1/api-keys` | Bearer (admin) | Create API key |
 | DELETE | `/vault/api/v1/api-keys/{id}` | Bearer (admin) | Revoke API key |
+| POST | `/vault/api/v1/unsold-goods` | Bearer **(write)** | Record an ESPR Art. 24 disclosure line for unsold consumer products discarded in a financial year. Not a passport — Art. 24's subject is an operator over a year. `exemptDestruction` requires a justification (Art. 25 bans the destruction outright from 19 July 2026); any other destination refuses one |
+| GET | `/vault/api/v1/unsold-goods` | Bearer (admin) | List those lines, newest first, optionally filtered by financial year |
+| POST | `/vault/api/v1/credentials` | Bearer (admin) | Issue a DPP access credential signed with this node's key. **Legitimate-interest roles only** — an authority's standing is conferred by a member state, so the three authority roles are refused. No revocation list is published, so the lifetime is capped |
 | POST | `/vault/api/v1/plugins` | Bearer (admin) | Install a **signed** product group plugin and hot-swap it |
 | POST | `/vault/api/v1/ruleset/reload` | Bearer (admin) | Re-read the **signed** compliance-ruleset channel and hot-swap a verified bundle |
 | GET | `/vault/api/v1/webhooks` | Bearer (admin) | List webhook subscriptions |

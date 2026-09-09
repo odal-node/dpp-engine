@@ -7,7 +7,6 @@
 //! unauthenticated writer here could inflate an operator's resolution counts.
 
 use axum::{
-    Json,
     extract::{Request, State},
     http::StatusCode,
     middleware::Next,
@@ -20,6 +19,7 @@ use dpp_domain::{DppError, passport::PassportId};
 use dpp_types::scan::{QrRenderIncrement, ScanIncrement, ScanTelemetryRepository};
 
 use super::error::internal_error;
+use crate::extract::Json;
 use crate::state::AppState;
 
 /// The client-certificate common name the resolver presents when flushing.
@@ -35,6 +35,15 @@ pub async fn scan_ingest_handler(
     State(state): State<AppState>,
     Json(batch): Json<ScanBatch>,
 ) -> impl IntoResponse {
+    // Recorded before the rows are stored, and for an empty batch too: this is
+    // the heartbeat that lets `GET /stats` tell "nobody scanned" from "nothing
+    // is counting". A window with no counts still proves a resolver is there.
+    //
+    // The declared cadence rides along so the node can judge *staleness* — that
+    // a resolver flushed once is a weaker claim than that one is flushing still,
+    // and only the sender knows how often it intends to call.
+    crate::infra::scan_liveness::record_ingest(batch.flush_interval_secs);
+
     match ingest_batch(state.scan_repo.as_ref(), batch).await {
         Ok(()) => StatusCode::NO_CONTENT.into_response(),
         Err(e) => internal_error(e),
@@ -143,6 +152,7 @@ mod tests {
                 day: day(),
                 count: 2,
             }],
+            flush_interval_secs: Some(300),
         };
         ingest_batch(&repo, batch).await.expect("ingest");
 
@@ -165,6 +175,7 @@ mod tests {
                 count: 1,
             }],
             qr_renders: vec![],
+            flush_interval_secs: Some(300),
         };
         // A bad id must not fail the whole flush — it is silently dropped.
         ingest_batch(&repo, batch).await.expect("ingest still ok");

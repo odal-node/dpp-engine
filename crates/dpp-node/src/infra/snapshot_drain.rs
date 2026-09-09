@@ -29,9 +29,7 @@
 use std::sync::Arc;
 
 use chrono::SubsecRound as _;
-use dpp_domain::{
-    ports::identity::IdentityPort, ports::passport_repo::PassportRepository, status::PassportStatus,
-};
+use dpp_domain::{ports::identity::IdentityPort, ports::passport_repo::PassportRepository};
 use dpp_types::SnapshotOutbox;
 use dpp_types::snapshot::{SnapshotMeta, SnapshotStore};
 
@@ -113,12 +111,22 @@ pub async fn drain_once(
             }
         };
 
-        // A passport that is Published belongs in the public tier; anything else
-        // — suspended, archived, deactivated, draft, or deleted outright — must
-        // not be served from it. Both branches are idempotent.
+        // Whether a passport belongs in the public tier is one question with one
+        // answer: `dpp_vault::public_view::serves_publicly`, the same rule the
+        // live public read applies.
+        //
+        // It used to be `== Published` here and a separate list of statuses
+        // there, and the two had already diverged — a deactivated passport was
+        // served live while the snapshot of it was removed, so the continuity
+        // tier answered `404` for a record the node itself was serving. That
+        // tier exists to stand in for the node when the node is down, which
+        // makes a disagreement between them invisible until precisely the moment
+        // it matters.
+        //
+        // Both branches are idempotent.
         let started = std::time::Instant::now();
         let outcome = match &passport {
-            Some(p) if p.status == PassportStatus::Published => {
+            Some(p) if dpp_vault::public_view::serves_publicly(&p.status) => {
                 store_published(store, identity, &dpp_id, p, resolver_base_url)
                     .await
                     .map(|()| Action::Stored)

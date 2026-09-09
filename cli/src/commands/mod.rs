@@ -2,6 +2,7 @@
 
 pub mod bootstrap;
 pub mod catalog;
+pub mod credential;
 pub mod down;
 pub mod evidence;
 pub mod export;

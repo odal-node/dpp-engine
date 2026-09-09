@@ -13,6 +13,26 @@ use crate::domain::fields::{
 };
 use crate::domain::request::{CreatePassportRequest, RowError};
 
+use super::Column;
+
+/// The columns this validator reads, in template order. Envelope columns
+/// (`placedOnMarketDate`, `commodityCode`) are appended by `columns_for`.
+pub(super) const COLUMNS: &[Column] = &[
+    Column::required("productName"),
+    Column::required("gtin"),
+    Column::optional("batchId"),
+    Column::required("manufacturerName"),
+    Column::required("manufacturerCountry"),
+    Column::required("tyreClass"),
+    Column::required("fuelEfficiencyClass"),
+    Column::required("wetGripClass"),
+    Column::required("externalRollingNoiseDb"),
+    Column::optional("noisePerformanceClass"),
+    Column::optional("rollingResistanceNPerKn"),
+    Column::optional("recycledRubberPct"),
+    Column::optional("co2ePerTyreKg"),
+];
+
 /// Validate a single tyre row and convert it to a vault `CreatePassportRequest`.
 ///
 /// Expected CSV columns: `productName`, `batchId` (opt), `manufacturerName`,
@@ -82,6 +102,9 @@ pub fn validate_tyre_row(
         schema_version: None,
         placed_on_market_date,
         commodity_code,
+        // An import creates originals, never replacements: a successor is
+        // declared deliberately by whoever knows what it replaces.
+        supersedes_id: None,
         // A CSV cannot express these: each carries a URI *and* a hash of the
         // referenced passport's public signature, and a hash cannot be authored
         // by hand — an invented one produces a link that fails verification.

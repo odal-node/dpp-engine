@@ -79,15 +79,31 @@ pub async fn resolve_by_gtin_batch_serial_handler(
     resolve_gtin(state, gtin, query, headers).await
 }
 
-/// What the GS1 route can honestly say when it finds nothing.
+/// What the GS1 route says when no passport resolves for the GTIN.
 ///
-/// Deliberately not "this GTIN is unknown": the lookup behind it filters to
-/// published passports, so a withdrawn one is indistinguishable from one that
-/// never existed. Saying which would be inventing an answer this route does not
-/// have. Serving `410 Gone` for a withdrawal — the recall signal a scanner
-/// should see — needs the lookup to stop folding that decision in, which is a
-/// `dpp-core` change, tracked upstream.
+/// Deliberately not "this GTIN is unknown": this is the genuine no-such-record
+/// answer, and a label carrying a GTIN this node never published is
+/// indistinguishable from a mistyped one.
 const NO_DPP_FOR_GTIN: &str = "No published DPP resolves for this GTIN.";
+
+/// What a scanner sees when the product behind the code has been withdrawn.
+///
+/// This is the recall signal, and it is the whole reason the vault's by-GTIN
+/// route branches on status instead of reading through `find_published_by_gtin`:
+/// the person holding the product is precisely who must not be told "bad label".
+const DPP_WITHDRAWN: &str = "The DPP for this GTIN has been withdrawn.";
+
+/// The detail to serve alongside `status`.
+///
+/// A `410` from the vault is a recall and has its own sentence; everything else
+/// this route turns into a client error is the not-found case.
+fn detail_for(status: StatusCode) -> &'static str {
+    if status == StatusCode::GONE {
+        DPP_WITHDRAWN
+    } else {
+        NO_DPP_FOR_GTIN
+    }
+}
 
 /// Render a GS1-route failure as RFC 9457, the shape every other public route
 /// on this resolver uses.
@@ -122,7 +138,7 @@ async fn resolve_gtin(
 
     let passport = match fetch_by_gtin(&state, &gtin).await {
         Ok(v) => v,
-        Err(status) => return gtin_problem(status, NO_DPP_FOR_GTIN),
+        Err(status) => return gtin_problem(status, detail_for(status)),
     };
 
     // Verify the public signature against the operator DID before trusting
@@ -273,6 +289,14 @@ async fn fetch_by_gtin(state: &AppState, gtin: &str) -> Result<Value, StatusCode
         .await
         .map_err(|_| StatusCode::BAD_GATEWAY)?;
 
+    // A withdrawal is a real answer about the product, not an upstream fault.
+    // The vault branches on status and serves `410 Gone` for a suspended
+    // passport; folding that into the catch-all below turned the one signal a
+    // scanner of a recalled product needs into `502 Bad Gateway` — a message
+    // about our infrastructure, addressed to someone holding the product.
+    if resp.status() == reqwest::StatusCode::GONE {
+        return Err(StatusCode::GONE);
+    }
     if matches!(
         resp.status(),
         reqwest::StatusCode::NOT_FOUND | reqwest::StatusCode::BAD_REQUEST

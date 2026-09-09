@@ -5,14 +5,91 @@ use axum::{
     http::{HeaderMap, StatusCode, header},
     response::{IntoResponse, Response},
 };
+use dpp_common::http_problem;
 use serde::{Deserialize, Serialize};
 
 // Templates are embedded at compile time — zero runtime I/O on the hot path.
-const BATTERY_TEMPLATE: &str = include_str!("../../templates/battery-v1.csv");
-const TEXTILE_TEMPLATE: &str = include_str!("../../templates/textile-v1.csv");
-const STEEL_TEMPLATE: &str = include_str!("../../templates/steel-v1.csv");
-const ALUMINIUM_TEMPLATE: &str = include_str!("../../templates/aluminium-v1.csv");
-const TYRE_TEMPLATE: &str = include_str!("../../templates/tyre-v1.csv");
+//
+// One table, because this list had three homes and they disagreed: the lookup,
+// a hand-written "Valid values:" sentence inside its own 404, and the API
+// description (which named two of the five). Lookup, refusal message and
+// `template_for` now all read from here, so adding a template is one edit and
+// none of the three can go stale.
+const TEMPLATES: &[(&str, &str, &str)] = &[
+    (
+        "battery",
+        include_str!("../../templates/battery-v1.csv"),
+        "odal-battery-template.csv",
+    ),
+    (
+        "textile",
+        include_str!("../../templates/textile-v1.csv"),
+        "odal-textile-template.csv",
+    ),
+    (
+        "steel",
+        include_str!("../../templates/steel-v1.csv"),
+        "odal-steel-template.csv",
+    ),
+    (
+        "aluminium",
+        include_str!("../../templates/aluminium-v1.csv"),
+        "odal-aluminium-template.csv",
+    ),
+    (
+        "tyre",
+        include_str!("../../templates/tyre-v1.csv"),
+        "odal-tyre-template.csv",
+    ),
+    (
+        "mattress",
+        include_str!("../../templates/mattress-v1.csv"),
+        "odal-mattress-template.csv",
+    ),
+    (
+        "furniture",
+        include_str!("../../templates/furniture-v1.csv"),
+        "odal-furniture-template.csv",
+    ),
+    (
+        "toy",
+        include_str!("../../templates/toy-v1.csv"),
+        "odal-toy-template.csv",
+    ),
+    (
+        "construction",
+        include_str!("../../templates/construction-v1.csv"),
+        "odal-construction-template.csv",
+    ),
+];
+
+/// The product groups this endpoint serves, for the refusal message. Derived,
+/// never restated.
+fn served_keys() -> String {
+    TEMPLATES
+        .iter()
+        .map(|(k, _, _)| *k)
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// The committed CSV template for a product group, or `None` where there is no
+/// row validator for it.
+///
+/// Separate from the handler so the drift test in `domain::validate` can compare
+/// each committed header against the columns its validator declares. A template
+/// nobody can read from a test is a template nothing can check.
+///
+/// Reads [`TEMPLATES`] rather than carrying its own `match`. The table exists
+/// because this list previously had three homes that disagreed; a second lookup
+/// beside it would have re-created the problem the table was introduced to end.
+#[must_use]
+pub fn template_for(product_group: &str) -> Option<&'static str> {
+    TEMPLATES
+        .iter()
+        .find(|(key, _, _)| *key == product_group)
+        .map(|(_, content, _)| *content)
+}
 
 /// Query parameters for the template download endpoint.
 #[derive(Debug, Deserialize, Serialize)]
@@ -31,31 +108,27 @@ pub async fn get_template(
 ) -> Response {
     let format = query.format.as_deref().unwrap_or("csv");
 
+    // RFC 7807, like every other error surface here. These two answered a bare
+    // string with `text/plain`, while `GET /schemas/{pg}` and
+    // `GET /product-groups/{pg}` — same crate, same failure class — already
+    // answered `application/problem+json`.
     if format == "xlsx" {
-        return (
-            StatusCode::NOT_IMPLEMENTED,
-            "XLSX template export is not yet available — download the CSV template and open it \
-             with any spreadsheet application (Excel, LibreOffice Calc, Google Sheets).",
-        )
+        return http_problem::Problem::new(StatusCode::NOT_IMPLEMENTED, "Not Implemented")
+            .with_detail(
+                "XLSX template export is not yet available — download the CSV template and                  open it with any spreadsheet application (Excel, LibreOffice Calc, Google                  Sheets).",
+            )
             .into_response();
     }
 
-    let (content, filename): (&str, &str) = match product_group.as_str() {
-        "battery" => (BATTERY_TEMPLATE, "odal-battery-template.csv"),
-        "textile" => (TEXTILE_TEMPLATE, "odal-textile-template.csv"),
-        "steel" => (STEEL_TEMPLATE, "odal-steel-template.csv"),
-        "aluminium" => (ALUMINIUM_TEMPLATE, "odal-aluminium-template.csv"),
-        "tyre" => (TYRE_TEMPLATE, "odal-tyre-template.csv"),
-        _ => {
-            return (
-                StatusCode::NOT_FOUND,
-                format!(
-                    "No template available for product_group: '{product_group}'. Valid values: battery, \
-                     textile, steel, aluminium, tyre."
-                ),
-            )
-                .into_response();
-        }
+    let Some((_, content, filename)) = TEMPLATES
+        .iter()
+        .find(|(key, _, _)| *key == product_group.as_str())
+    else {
+        return http_problem::not_found(format!(
+            "No template available for product_group: '{product_group}'. Valid values: {}.",
+            served_keys()
+        ))
+        .into_response();
     };
 
     let mut headers = HeaderMap::new();
@@ -74,58 +147,37 @@ pub async fn get_template(
         "max-age=3600, public".parse().unwrap(),
     );
 
-    (StatusCode::OK, headers, content).into_response()
+    (StatusCode::OK, headers, *content).into_response()
 }
 
-/// Golden-pairing test: each shipped template's own example rows must be
-/// accepted by that product group's row validator. Without this, a validator's
-/// required-field list can silently drift away from the header set the
-/// template actually ships (or vice versa) with nothing catching it.
 #[cfg(test)]
 mod template_validator_pairing {
-    use super::{
-        ALUMINIUM_TEMPLATE, BATTERY_TEMPLATE, STEEL_TEMPLATE, TEXTILE_TEMPLATE, TYRE_TEMPLATE,
-    };
-    use crate::domain::{csv_parser, validate};
+    use super::TEMPLATES;
 
-    fn assert_all_rows_validate(product_group: &str, csv: &str) {
-        let rows = csv_parser::parse_csv(csv.as_bytes()).expect("template must parse as CSV");
-        assert!(
-            !rows.is_empty(),
-            "{product_group} template has no example rows"
-        );
-        for (i, row) in rows.iter().enumerate() {
-            let row_num = i + 1;
-            if let Err(validate::RowValidationError::Invalid(errs)) =
-                validate::validate_row(product_group, row, row_num)
-            {
-                panic!("{product_group} template row {row_num} failed validation: {errs:?}");
-            }
+    /// The table is the only list; this is what makes "the only" true.
+    ///
+    /// A template whose key is not a product group the rest of the node knows
+    /// would serve a CSV nothing can import.
+    ///
+    /// Kept when its sibling was dropped as duplicated, because this one is not.
+    /// `validate`'s `supported_product_groups_and_templates_are_the_same_set`
+    /// reads as though it covers this, and does not: it iterates
+    /// `SUPPORTED_PRODUCT_GROUPS` and asserts each has a template, which is one
+    /// inclusion of the two its name claims. This is the other direction, and it
+    /// checks against `dpp-domain`'s catalog rather than the integrator's own
+    /// list — so a template keyed to something the domain does not recognise
+    /// fails here and nowhere else.
+    ///
+    /// The row-validation half *was* duplicated, by
+    /// `every_template_example_row_passes_its_own_validator`, and is gone.
+    #[test]
+    fn every_served_key_is_a_known_product_group() {
+        let known = dpp_domain::catalog::ProductGroupCatalog::new();
+        for (key, _, _) in TEMPLATES {
+            assert!(
+                known.get(key).is_some(),
+                "{key} has a template but is not in the product-group catalog"
+            );
         }
-    }
-
-    #[test]
-    fn battery_template_rows_pass_battery_validator() {
-        assert_all_rows_validate("battery", BATTERY_TEMPLATE);
-    }
-
-    #[test]
-    fn textile_template_rows_pass_textile_validator() {
-        assert_all_rows_validate("textile", TEXTILE_TEMPLATE);
-    }
-
-    #[test]
-    fn steel_template_rows_pass_steel_validator() {
-        assert_all_rows_validate("steel", STEEL_TEMPLATE);
-    }
-
-    #[test]
-    fn aluminium_template_rows_pass_aluminium_validator() {
-        assert_all_rows_validate("aluminium", ALUMINIUM_TEMPLATE);
-    }
-
-    #[test]
-    fn tyre_template_rows_pass_tyre_validator() {
-        assert_all_rows_validate("tyre", TYRE_TEMPLATE);
     }
 }

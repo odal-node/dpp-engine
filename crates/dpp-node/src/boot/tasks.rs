@@ -40,6 +40,32 @@ pub fn spawn_scan_prune(repo: Arc<dyn ScanTelemetryRepository>) {
     });
 }
 
+/// Spawn the periodic purge of expired idempotency keys (hourly).
+///
+/// Hourly against a 24-hour retention: frequent enough that the table tracks a
+/// day of traffic rather than growing between restarts, rare enough that the
+/// `DELETE` is never in the way. The grant that lets this run is the reason
+/// `odal.idempotency_key` is named in `ops/pg/README.md`'s DELETE set.
+///
+/// A failure is logged and the loop continues — an unswept table is a growing
+/// one, not a broken one, and every row in it is still honoured.
+pub fn spawn_idempotency_purge(store: Arc<dyn dpp_common::idempotency::IdempotencyStore>) {
+    tokio::spawn(async move {
+        let interval = tokio::time::Duration::from_secs(3600);
+        loop {
+            tokio::time::sleep(interval).await;
+            match store.purge_expired().await {
+                Ok(0) => tracing::debug!("idempotency purge: nothing expired"),
+                Ok(n) => {
+                    metrics::counter!("idempotency_keys_purged_total").increment(n);
+                    tracing::debug!(purged = n, "idempotency purge removed expired keys");
+                }
+                Err(e) => tracing::warn!(error = %e, "idempotency purge failed"),
+            }
+        }
+    });
+}
+
 /// Spawn the periodic cleanup of expired import jobs (every 6 hours).
 pub fn spawn_job_cleanup(store: Arc<dyn JobStore>) {
     tokio::spawn(async move {

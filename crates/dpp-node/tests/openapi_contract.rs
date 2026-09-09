@@ -282,6 +282,16 @@ const UNCHECKED: &[(&str, &str)] = &[
          the only thing that would actually close it",
     ),
     (
+        "CredentialRole",
+        "a `oneOf` of a string enum and an externally-tagged object (`Custom`), \
+         which neither checker can express: `enum_cases` requires every variant \
+         to serialise to a string, and `object_cases` requires an object with a \
+         property list. The wire form of each variant is pinned instead by \
+         `the_issuable_roles_serialise_as_documented` in \
+         `dpp-vault/src/handlers/credentials.rs`, which is where a drift would \
+         actually be caught",
+    ),
+    (
         "ProductGroupData",
         "deliberately open (`additionalProperties: true`, discriminated by \
          `productGroup`). The per-product-group payloads are described by the versioned JSON \
@@ -330,6 +340,28 @@ fn object_cases() -> Vec<ObjectCase> {
     case!("ComplianceFinding", fixtures::compliance_finding());
     case!("LintResult", fixtures::lint_result());
 
+    // Publish-readiness, reported by `POST /dpp/{dppId}/lint`. Registered from
+    // the handler's own types rather than a hand-written literal, so the
+    // published shape is gated against what the route actually serves.
+    case!(
+        "PublishReadiness",
+        dpp_vault::handlers::lint::PublishReadiness {
+            ready: false,
+            blockers: vec![dpp_vault::handlers::lint::PublishBlocker {
+                field: "/productGroupData/batteryModelId".to_owned(),
+                message: "'batteryModelId' is mandatory for an 'ev' battery and is absent"
+                    .to_owned(),
+            }],
+        }
+    );
+    case!(
+        "PublishBlocker",
+        dpp_vault::handlers::lint::PublishBlocker {
+            field: "/productGroupData/batteryModelId".to_owned(),
+            message: "'batteryModelId' is mandatory for an 'ev' battery and is absent".to_owned(),
+        }
+    );
+
     // The obligation endpoint. Served as declared types rather than assembled
     // JSON, so this gate has something to check the published shape against.
     //
@@ -360,6 +392,16 @@ fn object_cases() -> Vec<ObjectCase> {
     case!("ApiKey", fixtures::api_key());
     case!("CreatedApiKeyResponse", fixtures::new_api_key());
     case!("CreateApiKeyRequest", fixtures::create_api_key_request());
+    case!(
+        "IssueCredentialRequest",
+        fixtures::issue_credential_request()
+    );
+    case!("IssuedCredential", fixtures::issued_credential());
+    case!(
+        "CreateUnsoldGoodsEntry",
+        fixtures::create_unsold_goods_entry()
+    );
+    case!("UnsoldGoodsEntry", fixtures::unsold_goods_entry());
     case!("PassportAuditEntry", fixtures::audit_entry());
     case!("Facility", fixtures::facility());
     case!("CreateFacilityRequest", fixtures::create_facility_request());
@@ -412,6 +454,8 @@ fn object_cases() -> Vec<ObjectCase> {
     );
     case!("EolRequest", fixtures::eol_request());
     case!("SuspendRequest", fixtures::suspend_request());
+    case!("AmendRequest", fixtures::amend_request());
+    case!("SupersedeRequest", fixtures::supersede_request());
     case!("NodeState", fixtures::node_state());
     case!("VaultInfo", fixtures::vault_info());
     case!(
@@ -466,6 +510,18 @@ fn enum_cases() -> Vec<EnumCase> {
         EnumCase {
             name: "PassportStatus",
             variants: wire(&fixtures::all_passport_statuses()),
+        },
+        EnumCase {
+            name: "UnsoldProductCategory",
+            variants: wire(&fixtures::all_unsold_product_categories()),
+        },
+        EnumCase {
+            name: "UnsoldDiscardReason",
+            variants: wire(&fixtures::all_unsold_discard_reasons()),
+        },
+        EnumCase {
+            name: "UnsoldDestination",
+            variants: wire(&fixtures::all_unsold_destinations()),
         },
         EnumCase {
             name: "OperatorRole",
@@ -567,6 +623,11 @@ fn query_cases() -> Vec<QueryCase> {
     }
 
     case!("get", "/vault/api/v1/dpps", fixtures::list_query());
+    case!(
+        "get",
+        "/vault/api/v1/unsold-goods",
+        fixtures::unsold_goods_list_query()
+    );
     case!(
         "get",
         "/vault/api/v1/dpp/by-identity",
@@ -1656,6 +1717,53 @@ fn every_route_is_documented_and_every_documented_path_exists() {
     );
 }
 
+/// Every route the idempotency policy claims to key must be a route the node
+/// actually serves.
+///
+/// This gate exists because the first draft of the policy table listed
+/// `POST /vault/api/v1/credentials` and `POST /vault/api/v1/unsold-goods` —
+/// routes that exist on an unmerged branch and not on `main`. Nothing would
+/// have failed: `policy_for` would simply never match them, the middleware
+/// would never fire, and the table would have read as protection that was not
+/// there. A policy entry naming a route nobody serves is worse than a missing
+/// one, because it is silent.
+///
+/// The reverse direction is deliberately **not** checked. Most routes are
+/// correctly unkeyed, so "every route appears in the policy" would be false by
+/// design; which routes are keyed is the decision recorded in `policy.rs`.
+#[test]
+fn every_keyed_route_is_a_route_the_node_serves() {
+    let served = node_surface();
+
+    // Parsed out of the policy source rather than imported, for the same reason
+    // the routers above are: the assertion must be against the file that ships,
+    // not against a value this test could be handed.
+    let policy = include_str!("../../dpp-common/src/idempotency/policy.rs");
+    let table = section(policy, "const KEYED:", Some("/// The policy for"));
+
+    let keyed: BTreeSet<String> = table
+        .lines()
+        .filter_map(|l| l.trim().strip_prefix('"'))
+        .filter_map(|l| l.split('"').next())
+        .filter(|l| l.starts_with('/'))
+        .map(str::to_owned)
+        .collect();
+
+    assert!(
+        !keyed.is_empty(),
+        "no keyed routes were parsed out of policy.rs — the parse broke, and a \
+         gate that reads nothing passes by not looking"
+    );
+
+    let phantom: BTreeSet<String> = keyed.difference(&served).cloned().collect();
+    assert!(
+        phantom.is_empty(),
+        "the idempotency policy keys routes nothing serves, so those requests \
+         are silently unprotected: {}",
+        joined(&phantom)
+    );
+}
+
 // ── Documented error codes ─────────────────────────────────────────────────
 //
 // Handler sources, embedded like the routers above so they cannot go stale
@@ -1667,10 +1775,12 @@ fn every_route_is_documented_and_every_documented_path_exists() {
 // registers and this list cannot reach fails the build by name.
 mod handler_sources {
     pub const VAULT: &[&str] = &[
+        include_str!("../../dpp-vault/src/handlers/amend.rs"),
         include_str!("../../dpp-vault/src/handlers/api_keys.rs"),
         include_str!("../../dpp-vault/src/handlers/archive.rs"),
         include_str!("../../dpp-vault/src/handlers/audience_read.rs"),
         include_str!("../../dpp-vault/src/handlers/create.rs"),
+        include_str!("../../dpp-vault/src/handlers/credentials.rs"),
         include_str!("../../dpp-vault/src/handlers/eol.rs"),
         include_str!("../../dpp-vault/src/handlers/evidence.rs"),
         include_str!("../../dpp-vault/src/handlers/find_by_identity.rs"),
@@ -1692,8 +1802,10 @@ mod handler_sources {
         include_str!("../../dpp-vault/src/handlers/scan_ingest.rs"),
         include_str!("../../dpp-vault/src/handlers/seal.rs"),
         include_str!("../../dpp-vault/src/handlers/stats.rs"),
+        include_str!("../../dpp-vault/src/handlers/supersede.rs"),
         include_str!("../../dpp-vault/src/handlers/suspend.rs"),
         include_str!("../../dpp-vault/src/handlers/transfer.rs"),
+        include_str!("../../dpp-vault/src/handlers/unsold_goods.rs"),
         include_str!("../../dpp-vault/src/handlers/update.rs"),
         include_str!("../../dpp-vault/src/handlers/validate.rs"),
         include_str!("../../dpp-vault/src/handlers/verify_tree.rs"),
@@ -2164,6 +2276,7 @@ mod fixtures {
     use dpp_vault::{
         domain::verify::{NodeReport, RefUnverifiable, TreeReport},
         handlers::{
+            amend::AmendRequest,
             create::CreatePassportRequest,
             eol::EolRequest,
             info::VaultInfo,
@@ -2175,6 +2288,7 @@ mod fixtures {
                 TransferNotificationView,
             },
             seal::{SealCoverage, SealDeclarer, SealResponse, SealSummaryResponse},
+            supersede::SupersedeRequest,
             suspend::SuspendRequest,
             transfer::TransferInitiateRequest,
             validate::ValidateResponse,
@@ -2480,6 +2594,110 @@ mod fixtures {
         }
     }
 
+    pub fn all_unsold_product_categories() -> Vec<dpp_types::ProductCategory> {
+        use dpp_types::ProductCategory as C;
+        vec![
+            C::Apparel,
+            C::Footwear,
+            C::HomeTextile,
+            C::Accessories,
+            C::Other,
+        ]
+    }
+
+    pub fn all_unsold_discard_reasons() -> Vec<dpp_types::DiscardReason> {
+        use dpp_types::DiscardReason as R;
+        vec![
+            R::EndOfSeason,
+            R::QualityDefect,
+            R::PackagingDefect,
+            R::OverProduction,
+            R::CustomerReturn,
+            R::Other,
+        ]
+    }
+
+    pub fn all_unsold_destinations() -> Vec<dpp_types::Destination> {
+        use dpp_types::Destination as D;
+        vec![
+            D::Donation,
+            D::Recycling,
+            D::Repurposing,
+            D::SupplierReturn,
+            D::ExemptDestruction,
+        ]
+    }
+
+    pub fn create_unsold_goods_entry() -> dpp_types::CreateUnsoldGoodsEntry {
+        dpp_types::CreateUnsoldGoodsEntry {
+            reporting_period: "2026".into(),
+            unit_count: 1240,
+            volume_kg: 860.5,
+            product_category: dpp_types::ProductCategory::Apparel,
+            reason: dpp_types::DiscardReason::EndOfSeason,
+            destination: dpp_types::Destination::ExemptDestruction,
+            destruction_justification: Some(
+                "Contaminated stock unfit for use under Art. 25(5)".into(),
+            ),
+            country_of_disposal: "DE".into(),
+        }
+    }
+
+    pub fn unsold_goods_entry() -> dpp_types::UnsoldGoodsEntry {
+        dpp_types::UnsoldGoodsEntry {
+            id: uuid(),
+            reporting_period: "2026".into(),
+            unit_count: Some(1240),
+            volume_kg: 860.5,
+            product_category: "apparel".into(),
+            reason: "endOfSeason".into(),
+            destination: "exemptDestruction".into(),
+            destruction_justification: Some(
+                "Contaminated stock unfit for use under Art. 25(5)".into(),
+            ),
+            country_of_disposal: "DE".into(),
+            operator_name: Some("Nord Textiles GmbH".into()),
+            created_at: ts(),
+        }
+    }
+
+    pub fn unsold_goods_list_query() -> dpp_vault::handlers::unsold_goods::ListQuery {
+        dpp_vault::handlers::unsold_goods::ListQuery {
+            reporting_period: Some("2026".into()),
+        }
+    }
+
+    pub fn issue_credential_request() -> dpp_vault::handlers::credentials::IssueCredentialRequest {
+        dpp_vault::handlers::credentials::IssueCredentialRequest {
+            holder_did: "did:web:repairs.example".into(),
+            holder_name: "Nord Repair GmbH".into(),
+            role: dpp_vc::CredentialRole::AuthorisedRepairer,
+            country: "DE".into(),
+            product_groups: vec!["battery".into()],
+            valid_for_days: Some(30),
+        }
+    }
+
+    pub fn issued_credential() -> dpp_vault::handlers::credentials::IssuedCredential {
+        let credential = dpp_vc::CredentialBuilder::new(
+            "did:web:operator.example".into(),
+            dpp_vc::DppCredentialSubject {
+                id: "did:web:repairs.example".into(),
+                name: "Nord Repair GmbH".into(),
+                role: dpp_vc::CredentialRole::AuthorisedRepairer,
+                country: "DE".into(),
+                product_groups: vec!["battery".into()],
+                product_categories: Vec::new(),
+            },
+        )
+        .expires_in_days(30)
+        .build();
+        dpp_vault::handlers::credentials::IssuedCredential {
+            credential_jws: "eyJhbGciOiJFZERTQSJ9.eyJ9.c2ln".into(),
+            credential,
+        }
+    }
+
     pub fn audit_entry() -> PassportAuditEntry {
         PassportAuditEntry {
             id: uuid(),
@@ -2706,10 +2924,14 @@ mod fixtures {
         }
     }
 
+    /// Populated per the maximal-fixture rule: `flush_interval_secs` is an
+    /// `Option` that would emit nothing if left `None`, and the schema check
+    /// would then pass by not looking at it.
     pub fn scan_batch() -> ScanBatch {
         ScanBatch {
             scans: vec![scan_count()],
             qr_renders: vec![qr_render_count()],
+            flush_interval_secs: Some(300),
         }
     }
 
@@ -2744,6 +2966,9 @@ mod fixtures {
         CreatePassportRequest {
             product_name: "EcoCell Pro 48V".into(),
             product_group: Some(ProductGroup::Textile),
+            // Populated per the maximal-fixture rule: `None` would emit nothing
+            // and the schema check would pass by not looking at the field.
+            supersedes_id: Some(dpp_domain::passport::PassportId::new()),
             manufacturer: manufacturer(),
             materials: Some(vec![material()]),
             co2e_per_unit: Some(45.2),
@@ -2807,6 +3032,30 @@ mod fixtures {
     pub fn suspend_request() -> SuspendRequest {
         SuspendRequest {
             reason: Some("Product recall — safety investigation pending".into()),
+        }
+    }
+
+    /// Both fields populated, per the maximal-fixture rule: `reason` is an
+    /// `Option` that would emit nothing if left `None`, and `patch` is a free
+    /// object whose emptiness would let the schema check pass by not looking.
+    pub fn amend_request() -> AmendRequest {
+        AmendRequest {
+            patch: serde_json::json!({ "productName": "Model X Battery Pack (rev B)" }),
+            reason: Some("Recycled-content share restated after supplier re-declaration".into()),
+        }
+    }
+
+    /// Both fields populated, same rule as `amend_request`: a `None` `reason`
+    /// emits nothing and would let the schema check pass by not looking.
+    ///
+    /// The reason names a case `amend` cannot serve, which is why this route
+    /// exists — the successor was created independently at a newer schema
+    /// version, so it could not have been minted from a patch on the record it
+    /// replaces.
+    pub fn supersede_request() -> SupersedeRequest {
+        SupersedeRequest {
+            superseded_by: uuid::Uuid::now_v7().to_string(),
+            reason: Some("Reissued on schema 2.6.0 after the product group's lens changed".into()),
         }
     }
 
@@ -2893,6 +3142,7 @@ mod fixtures {
         CreatePassportRequest {
             product_name: "EcoCell Pro 48V".into(),
             product_group: None,
+            supersedes_id: None,
             manufacturer: manufacturer(),
             materials: None,
             co2e_per_unit: None,
@@ -2941,6 +3191,10 @@ mod fixtures {
 
     pub fn passport_scan_stats() -> PassportScanStats {
         PassportScanStats {
+            // A measured window: telemetry arriving, so a zero here would be a
+            // real zero. The unmeasured case is the one the flag exists for.
+            ingesting: true,
+            last_ingest_at: Some(ts()),
             window_days: 30,
             total_scans: 128,
             scans_html: 96,
@@ -2952,6 +3206,8 @@ mod fixtures {
 
     pub fn operator_scan_stats() -> OperatorScanStats {
         OperatorScanStats {
+            ingesting: true,
+            last_ingest_at: Some(ts()),
             window_days: 30,
             total_scans: 1024,
             total_qr_renders: 64,

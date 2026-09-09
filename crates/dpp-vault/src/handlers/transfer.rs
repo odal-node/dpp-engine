@@ -3,7 +3,6 @@
 //! `cancel`.
 
 use axum::{
-    Json,
     extract::{Extension, Path, State},
     http::StatusCode,
     response::IntoResponse,
@@ -17,6 +16,8 @@ use super::error::{
     conflict_error, field_validation_error, internal_error, not_found_error, parse_passport_id,
     require_write, validation_error,
 };
+use crate::extract::Json;
+use crate::middleware::scope::RequireWrite;
 
 /// Body for initiating a transfer: the outgoing and incoming operators and the
 /// reason. In the managed single-node model the caller supplies both parties.
@@ -38,13 +39,13 @@ pub struct TransferInitiateRequest {
 /// pending handover onto the passport's transfer chain.
 pub async fn transfer_initiate_handler(
     State(state): State<AppState>,
-    Extension(auth): Extension<AuthContext>,
+    // The gate is an extractor, and it precedes the body extractor
+    // deliberately: axum runs body-less extractors first, so a wrong-scope
+    // caller is refused before the body is buffered or parsed.
+    RequireWrite(auth): RequireWrite,
     Path(dpp_id): Path<String>,
     Json(body): Json<TransferInitiateRequest>,
 ) -> impl IntoResponse {
-    if let Some(resp) = require_write(&auth, "Initiating a transfer") {
-        return resp;
-    }
     let id = match parse_passport_id(&dpp_id) {
         Ok(i) => i,
         Err(e) => return e,
@@ -93,7 +94,7 @@ pub async fn transfer_accept_handler(
     Extension(auth): Extension<AuthContext>,
     Path(dpp_id): Path<String>,
 ) -> impl IntoResponse {
-    if let Some(resp) = require_write(&auth, "Accepting a transfer") {
+    if let Some(resp) = require_write(&auth) {
         return resp;
     }
     let id = match parse_passport_id(&dpp_id) {
@@ -126,7 +127,7 @@ pub async fn transfer_reject_handler(
     Extension(auth): Extension<AuthContext>,
     Path(dpp_id): Path<String>,
 ) -> impl IntoResponse {
-    if let Some(resp) = require_write(&auth, "Rejecting a transfer") {
+    if let Some(resp) = require_write(&auth) {
         return resp;
     }
     let id = match parse_passport_id(&dpp_id) {
@@ -154,7 +155,7 @@ pub async fn transfer_cancel_handler(
     Extension(auth): Extension<AuthContext>,
     Path(dpp_id): Path<String>,
 ) -> impl IntoResponse {
-    if let Some(resp) = require_write(&auth, "Cancelling a transfer") {
+    if let Some(resp) = require_write(&auth) {
         return resp;
     }
     let id = match parse_passport_id(&dpp_id) {

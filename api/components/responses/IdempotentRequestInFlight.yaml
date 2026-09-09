@@ -1,0 +1,26 @@
+description: |
+  An earlier attempt carrying this `Idempotency-Key` is still running.
+
+  Returned instead of letting a duplicate execute alongside it. Retry shortly
+  with the same key and the same body; `Retry-After` carries the suggested
+  delay.
+
+  A claim left behind by a process that died mid-request is reclaimed
+  automatically after 60 seconds, so this can never wedge a key permanently.
+headers:
+  Retry-After:
+    description: Seconds to wait before retrying.
+    schema:
+      type: integer
+      minimum: 1
+content:
+  application/problem+json:
+    schema:
+      $ref: ../schemas/errors/Problem.yaml
+    example:
+      type: https://problems.odal-node.io/idempotent-request-in-flight
+      title: Idempotent Request In Flight
+      status: 409
+      detail: >-
+        An earlier attempt with this `Idempotency-Key` is still running. Retry
+        shortly; do not change the body.

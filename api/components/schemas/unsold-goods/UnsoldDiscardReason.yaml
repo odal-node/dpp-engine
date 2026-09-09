@@ -1,0 +1,10 @@
+type: string
+description: Why the goods went unsold, for Art. 24(1)(b).
+enum:
+  - endOfSeason
+  - qualityDefect
+  - packagingDefect
+  - overProduction
+  - customerReturn
+  - other
+example: endOfSeason

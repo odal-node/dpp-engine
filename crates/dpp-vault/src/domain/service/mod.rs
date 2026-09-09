@@ -8,8 +8,9 @@
 //! never propagated, since the DB write is the source of truth).
 //!
 //! - `query` — read paths: `find_*`, `list`, `count`, `history`
-//! - `create` — `create`, `update`, and their private helpers `apply_patch`/`apply_compliance`
+//! - `create` — `create`, `update`, and their helpers `apply_patch`/`apply_compliance`/`apply_lint`
 //! - `publish` — `publish` and its private helpers `validate_schema_for_publish`/`build_carrier_url`
+//! - `amend` — `amend`: issue a corrected successor and supersede its predecessor
 //! - `lint` — `relint` (advisory lint re-check; never blocks publish)
 //! - `lifecycle` — `suspend`, `archive`
 //! - `eol` — `declare_eol`
@@ -18,6 +19,7 @@
 //! - `seal` — reserved seat for the eIDAS seal step in `publish` (not wired yet)
 //!
 
+mod amend;
 mod create;
 mod eol;
 mod evidence;
