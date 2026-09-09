@@ -33,6 +33,26 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   — the default — *every* accepted transfer ended there, so the rollup reported
   a fleet of stalled handovers that were merely waiting for a queue nobody had
   configured. It is now deferred rather than failed.
+- **Webhook delivery closed a DNS-rebinding window.** *(Security.)* The drain
+  approved a target and then handed the **URL** to a client that resolved the
+  name a second time — the exact rebinding gap the SSRF guard's own
+  documentation describes. A name that passed the check as a public address
+  could resolve to a link-local or internal one by the time the request was
+  made, and the guard would never see it: a zero-TTL record alternating a public
+  and an internal answer passes the first resolution and connects on the second.
+
+  The drain now receives a client **pinned to the addresses that were checked**,
+  so the connection cannot reach anywhere the guard did not approve. A host
+  given as an IP literal keeps the shared pooled client, since there is no name
+  to rebind.
+
+- **An empty `PLUGIN_SIGNING_KEY` no longer aborts the boot.** The value reached
+  `hex::decode("")` and was rejected as a **corrupt key**, where every other
+  optional variable in the service normalises empty to absent. Setting a
+  variable to nothing is how a `.env` unsets it, so this failed closed in the
+  least useful way available — the node would not start at all. Empty is now
+  treated as unset, which loosens nothing: with no key configured the
+  unsigned-plugin gate still refuses.
 
 - **A retired passport is publicly readable again instead of answering `404`.**
   `Deactivated`, `Superseded` and `Archived` now serve on both public routes;
