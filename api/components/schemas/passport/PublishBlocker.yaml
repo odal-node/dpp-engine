@@ -1,0 +1,18 @@
+type: object
+description: |
+  One reason a publish would be refused, addressed to the field that causes it.
+
+  Addressed rather than prose: the mandatory-content gate names every missing
+  field at once, and a caller completing a draft wants to attach each message to
+  the input it belongs to.
+required:
+  - field
+  - message
+properties:
+  field:
+    type: string
+    description: Path of the offending field.
+    example: /productGroupData/batteryModelId
+  message:
+    type: string
+    description: Why this field blocks the publish.
