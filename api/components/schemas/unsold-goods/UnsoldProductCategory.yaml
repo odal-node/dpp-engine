@@ -1,0 +1,18 @@
+type: string
+description: |
+  The operator's own categorisation of the discarded goods, for Art. 24(1)(a)'s
+  "differentiated per type or category of products" — which prescribes no
+  vocabulary.
+
+  This is **not** Annex VII ban scope. Annex VII gives two *code-valued*
+  headings — apparel and clothing accessories (`4203`, `61`, `62`, `6504`,
+  `6505`) and footwear (`6401`–`6405`) — matched by CN **prefix**, with clothing
+  accessories inside the first heading rather than beside it. Reading this list
+  as those headings gets both their count and their shape wrong.
+enum:
+  - apparel
+  - footwear
+  - homeTextile
+  - accessories
+  - other
+example: apparel
