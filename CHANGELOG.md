@@ -12,6 +12,28 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ### Fixed
 
+- **A transfer's acceptance signature attested nothing.** Accepting a transfer
+  of responsibility re-signed the **initiation** payload, so on a
+  single-operator node the acceptance signature came out byte-identical to the
+  from-signature. An "acceptance" could therefore be produced by copying a field
+  that predates the acceptance entirely, and the signature proved nothing about
+  the accepting party having accepted — which is the one thing a dual-signed
+  handover exists to establish.
+
+  Acceptance now signs a **discriminated** payload, verified against the hosting
+  node's DID. The two signatures are distinguishable by construction rather than
+  by who happened to hold the key, so the property survives a node that holds
+  both sides.
+
+- **A transfer waiting on registry registration was recorded as failed.** A
+  handover held until its passport's registration has an id was persisted with
+  `mark_attempt_failed`. Waiting is not failing: it spent the retry budget,
+  pinned itself at the one-hour backoff cap, and crossed the threshold the
+  operator rollup reports as **stalled**. On a node with no registry credentials
+  — the default — *every* accepted transfer ended there, so the rollup reported
+  a fleet of stalled handovers that were merely waiting for a queue nobody had
+  configured. It is now deferred rather than failed.
+
 - **A retired passport is publicly readable again instead of answering `404`.**
   `Deactivated`, `Superseded` and `Archived` now serve on both public routes;
   `Suspended` still answers `410 Gone` and `Draft` still `404`s.
