@@ -246,32 +246,99 @@ fn app_url_for(admin_url: &str) -> String {
 async fn ensure_template(admin_url: &str) {
     let admin = connect_admin(admin_url).await;
 
-    sqlx::query("SELECT pg_advisory_lock($1)")
+    acquire_template_lock(&admin).await;
+
+    // The critical section returns its failure rather than panicking inside it.
+    //
+    // This is the whole point of the split. `pg_advisory_lock` is a *session*
+    // lock, so a panic between the lock and the unlock skips both the unlock and
+    // `admin.close()`, and the lock then rides on the connection's eventual
+    // teardown while every other test process queues behind it. With 361
+    // processes on one server that is not a slow test, it is a stuck one — and
+    // the slowest thing under the lock is `PgDal::migrate`, so the window is
+    // widest exactly where a failure is most likely.
+    //
+    // Observed as `TERMINATING [>120.000s]` on a different vault test each run:
+    // 360 tests passing and one making no progress at all until nextest's
+    // `terminate-after` killed it.
+    let built = build_template_if_missing(&admin, admin_url).await;
+
+    // Released on both paths, before anything can unwind.
+    let released = sqlx::query("SELECT pg_advisory_unlock($1)")
         .bind(TEMPLATE_LOCK_KEY)
         .execute(&admin)
-        .await
-        .expect("take template lock");
+        .await;
+    admin.close().await;
 
+    if let Err(e) = built {
+        panic!("build template database: {e}");
+    }
+    released.expect("release template lock");
+}
+
+/// Take the template lock, waiting a bounded time rather than forever.
+///
+/// `pg_advisory_lock` blocks with **no timeout**, so a holder that dies without
+/// releasing turns every waiter into a hang that only the test runner's kill
+/// resolves — which reports as a slow test and sends the reader after a
+/// stopwatch instead of a stuck lock. `pg_try_advisory_lock` returns immediately
+/// and lets the wait be bounded here, so the failure says what it is.
+///
+/// The budget is generous on purpose: building the template runs the whole
+/// migration set, and on a cold CI runner that is far from instant. It is a
+/// deadlock detector, not a performance bound.
+async fn acquire_template_lock(admin: &sqlx::PgPool) {
+    const LOCK_WAIT: std::time::Duration = std::time::Duration::from_secs(90);
+    const POLL: std::time::Duration = std::time::Duration::from_millis(100);
+
+    let deadline = std::time::Instant::now() + LOCK_WAIT;
+    loop {
+        let taken: bool = sqlx::query_scalar("SELECT pg_try_advisory_lock($1)")
+            .bind(TEMPLATE_LOCK_KEY)
+            .fetch_one(admin)
+            .await
+            .expect("try template lock");
+        if taken {
+            return;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "waited {}s for the template lock ({TEMPLATE_LOCK_KEY}) and never got it. \
+             Another test process holds it and has not released it — most likely it \
+             panicked while building the template. Check for an earlier failure in this \
+             run; the server keeps a session lock until that connection is gone.",
+            LOCK_WAIT.as_secs()
+        );
+        tokio::time::sleep(POLL).await;
+    }
+}
+
+/// Build the role and migrated template if they are not already there.
+///
+/// Split out so [`ensure_template`] can release the lock on the failure path;
+/// see the comment at its call site.
+async fn build_template_if_missing(
+    admin: &sqlx::PgPool,
+    admin_url: &str,
+) -> Result<(), sqlx::Error> {
     let exists: Option<i32> = sqlx::query_scalar("SELECT 1 FROM pg_database WHERE datname = $1")
         .bind(TEMPLATE_DB)
-        .fetch_optional(&admin)
-        .await
-        .expect("look up template");
+        .fetch_optional(admin)
+        .await?;
 
     if exists.is_none() {
         // Provisioned exactly as `ops/bootstrap/pg-init.sh` does, so a suite
         // meets the same privilege boundary a deployed node does. Ignore the
         // duplicate error: the role is cluster-wide and may predate us.
         let _ = sqlx::query("CREATE ROLE odal_app LOGIN PASSWORD 'test'")
-            .execute(&admin)
+            .execute(admin)
             .await;
 
         sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
             r#"CREATE DATABASE "{TEMPLATE_DB}""#
         )))
-        .execute(&admin)
-        .await
-        .expect("create template database");
+        .execute(admin)
+        .await?;
 
         // Migrate through its own pool, then close it. `CREATE DATABASE ...
         // TEMPLATE` refuses while anything is connected to the template, so
@@ -279,15 +346,9 @@ async fn ensure_template(admin_url: &str) {
         let template_url = with_database(admin_url, TEMPLATE_DB);
         PgDal::migrate(&template_url)
             .await
-            .expect("migrate template database");
+            .map_err(|e| sqlx::Error::Protocol(format!("migrate template database: {e}")))?;
     }
-
-    sqlx::query("SELECT pg_advisory_unlock($1)")
-        .bind(TEMPLATE_LOCK_KEY)
-        .execute(&admin)
-        .await
-        .expect("release template lock");
-    admin.close().await;
+    Ok(())
 }
 
 async fn connect_admin(url: &str) -> sqlx::PgPool {
