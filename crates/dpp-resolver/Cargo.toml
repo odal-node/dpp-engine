@@ -58,4 +58,11 @@ rand          = { workspace = true }
 # tell "this endpoint returned a PNG" apart from "this endpoint returned a PNG
 # encoding the right URL" — the distinction the previous tests could not make,
 # and the one a `qrcode` or `image` bump can silently change.
-rqrr          = "0.10"
+# Decodes the PNG the QR route emits, so the round-trip test asserts the symbol
+# says what it should rather than merely that bytes came back.
+#
+# Moves with `image`, and must: 0.10 pins `image 0.24`, so bumping the workspace
+# to 0.25 leaves the decoder expecting a different `ImageBuffer` than the one it
+# is handed and the suite stops compiling. Bumping the two apart disables the
+# only test that proves the label encodes the carrier URI.
+rqrr          = "0.11"
