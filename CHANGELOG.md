@@ -92,6 +92,27 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ### Added
 
+- **The lint route now also reports whether the passport would publish.**
+  `POST /vault/api/v1/dpp/{dppId}/lint` answers a `publishReadiness` object
+  naming every field that would block a publish, alongside the plausibility
+  findings it already returned.
+
+  The mandatory-content gate is the one that matters here: it is what most often
+  refuses a battery — 38 fields for an EV — and it could not be previewed
+  anywhere. `dpp-core` made `check_mandatory_content` public precisely so a
+  caller could ask, but it takes a `Passport`, and the only preview the engine
+  had wired (`POST /dpp/validate`) holds an unsaved request body. This route
+  already loads the record, so it can simply ask.
+
+  Additive, via `#[serde(flatten)]`: every field a client already reads stays
+  exactly where it was.
+
+  **Two gates are deliberately out of scope**, and `ready: true` does not claim
+  otherwise: the registry-identity requirement, which is operator state rather
+  than passport state, and the binding-compliance gate, which needs a
+  determination this endpoint does not run. Reporting readiness for either would
+  be worse than not reporting it.
+
 - **A node can now issue the access credentials its own read path verifies.**
   `POST /vault/api/v1/credentials` (admin) mints a credential signed with the
   node's key and returns it as a compact VC-JWT, which the holder presents as
