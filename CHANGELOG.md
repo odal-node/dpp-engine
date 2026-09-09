@@ -900,6 +900,26 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ### Fixed
 
+- **A misnamed plugin artifact loaded under a key nothing asks for, and said
+  nothing.** The product group was derived by trimming `product-group-` off the
+  filename, so a file that did not carry the prefix keyed on its whole stem:
+  `sector-battery.wasm` registered as `sector-battery`. `has_plugin("battery")`
+  then stayed false, the compliance port resolved `ghost`, and every
+  determination fell through to the passthrough registry — while the boot logged
+  `plugin loaded` and named the bogus key. A total loss of compliance checking
+  presented as a healthy node.
+
+  A file outside the convention is now skipped, with a warning naming it and the
+  expected shape. That loses nothing which worked: a key outside the convention
+  could never bind to a product group. A *well-named* file whose key the catalog
+  does not know is loaded with a warning instead of skipped — a newer core can
+  name a product group this build has not heard of, and refusing it would break
+  a deployment that is merely ahead.
+
+  Also fixed in the same line: the prefix was removed **repeatedly**, so
+  `product-group-product-group-battery.wasm` resolved to `battery` as well —
+  two files silently claiming one key. `strip_prefix` is the right primitive.
+
 - **Importing two battery templates silently produced one passport.** All three
   generated templates shipped the same example `gtin` and `batchId`, and all
   three import under the `battery` product group — the category rides on the
