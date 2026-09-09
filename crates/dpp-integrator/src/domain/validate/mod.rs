@@ -369,6 +369,12 @@ mod tests {
             let rows = crate::domain::csv_parser::parse_csv(template.as_bytes())
                 .unwrap_or_else(|e| panic!("{group} template is not parseable CSV: {e:?}"));
 
+            // Without this the test passes vacuously on a template that ships no
+            // example rows: the loop below simply never runs. Carried over from
+            // the templates-side pairing test this replaced, which is the only
+            // assertion it had that this one did not.
+            assert!(!rows.is_empty(), "{group} template has no example rows");
+
             for (offset, row) in rows.iter().enumerate() {
                 if let Err(errs) = super::validate_row(group, row, offset + 1) {
                     let detail = match errs {

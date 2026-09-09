@@ -223,31 +223,13 @@ pub async fn get_template(
 #[cfg(test)]
 mod template_validator_pairing {
     use super::{BatteryCategory, templates};
-    use crate::domain::{csv_parser, validate};
 
-    /// Every shipped template, driven from the same table the handler serves.
-    ///
-    /// This was five near-identical tests naming five constants. Iterating the
-    /// table instead means a template added to `templates()` is validated the
-    /// moment it is added — the drift the table exists to prevent, closed on the
-    /// test side too rather than only on the serving side.
-    #[test]
-    fn every_shipped_template_passes_its_own_validator() {
-        for template in templates() {
-            let key = template.key;
-            let csv = template.source.render();
-            let rows = csv_parser::parse_csv(csv.as_bytes()).expect("template must parse as CSV");
-            assert!(!rows.is_empty(), "{key} template has no example rows");
-            for (i, row) in rows.iter().enumerate() {
-                let row_num = i + 1;
-                if let Err(validate::RowValidationError::Invalid(errs)) =
-                    validate::validate_row(template.key, row, row_num)
-                {
-                    panic!("{key} template row {row_num} failed validation: {errs:?}");
-                }
-            }
-        }
-    }
+    // The row-validation pairing test that stood here is now
+    // `validate::tests::every_template_example_row_passes_its_own_validator`,
+    // which asserts the same property over the same `templates()` list and
+    // reports *every* rejected row rather than panicking on the first. Its
+    // `!rows.is_empty()` guard came from here. One home, and it is the one
+    // beside the validators the rows are checked against.
 
     /// The table is the only list; this is what makes "the only" true.
     ///
