@@ -10,10 +10,11 @@ use serde::{Deserialize, Serialize};
 
 // Templates are embedded at compile time — zero runtime I/O on the hot path.
 //
-// One table, because this list had three homes and they disagreed: the `match`
-// below, a hand-written "Valid values:" sentence inside its own 404, and the API
-// description (which named two of the five). Lookup and message now both read
-// from here, so adding a template is one edit and the refusal cannot go stale.
+// One table, because this list had three homes and they disagreed: the lookup,
+// a hand-written "Valid values:" sentence inside its own 404, and the API
+// description (which named two of the five). Lookup, refusal message and
+// `template_for` now all read from here, so adding a template is one edit and
+// none of the three can go stale.
 const TEMPLATES: &[(&str, &str, &str)] = &[
     (
         "battery",
@@ -40,6 +41,26 @@ const TEMPLATES: &[(&str, &str, &str)] = &[
         include_str!("../../templates/tyre-v1.csv"),
         "odal-tyre-template.csv",
     ),
+    (
+        "mattress",
+        include_str!("../../templates/mattress-v1.csv"),
+        "odal-mattress-template.csv",
+    ),
+    (
+        "furniture",
+        include_str!("../../templates/furniture-v1.csv"),
+        "odal-furniture-template.csv",
+    ),
+    (
+        "toy",
+        include_str!("../../templates/toy-v1.csv"),
+        "odal-toy-template.csv",
+    ),
+    (
+        "construction",
+        include_str!("../../templates/construction-v1.csv"),
+        "odal-construction-template.csv",
+    ),
 ];
 
 /// The product groups this endpoint serves, for the refusal message. Derived,
@@ -50,6 +71,24 @@ fn served_keys() -> String {
         .map(|(k, _, _)| *k)
         .collect::<Vec<_>>()
         .join(", ")
+}
+
+/// The committed CSV template for a product group, or `None` where there is no
+/// row validator for it.
+///
+/// Separate from the handler so the drift test in `domain::validate` can compare
+/// each committed header against the columns its validator declares. A template
+/// nobody can read from a test is a template nothing can check.
+///
+/// Reads [`TEMPLATES`] rather than carrying its own `match`. The table exists
+/// because this list previously had three homes that disagreed; a second lookup
+/// beside it would have re-created the problem the table was introduced to end.
+#[must_use]
+pub fn template_for(product_group: &str) -> Option<&'static str> {
+    TEMPLATES
+        .iter()
+        .find(|(key, _, _)| *key == product_group)
+        .map(|(_, content, _)| *content)
 }
 
 /// Query parameters for the template download endpoint.
@@ -111,45 +150,26 @@ pub async fn get_template(
     (StatusCode::OK, headers, *content).into_response()
 }
 
-/// Golden-pairing test: each shipped template's own example rows must be
-/// accepted by that product group's row validator. Without this, a validator's
-/// required-field list can silently drift away from the header set the
-/// template actually ships (or vice versa) with nothing catching it.
 #[cfg(test)]
 mod template_validator_pairing {
     use super::TEMPLATES;
-    use crate::domain::{csv_parser, validate};
-
-    /// Every shipped template, driven from the same table the handler serves.
-    ///
-    /// This was five near-identical tests naming five constants. Iterating the
-    /// table instead means a template added to `TEMPLATES` is validated the
-    /// moment it is added — the drift the table exists to prevent, closed on the
-    /// test side too rather than only on the serving side.
-    #[test]
-    fn every_shipped_template_passes_its_own_validator() {
-        for (product_group, csv, _) in TEMPLATES {
-            let rows = csv_parser::parse_csv(csv.as_bytes()).expect("template must parse as CSV");
-            assert!(
-                !rows.is_empty(),
-                "{product_group} template has no example rows"
-            );
-            for (i, row) in rows.iter().enumerate() {
-                let row_num = i + 1;
-                if let Err(validate::RowValidationError::Invalid(errs)) =
-                    validate::validate_row(product_group, row, row_num)
-                {
-                    panic!("{product_group} template row {row_num} failed validation: {errs:?}");
-                }
-            }
-        }
-    }
 
     /// The table is the only list; this is what makes "the only" true.
     ///
     /// A template whose key is not a product group the rest of the node knows
-    /// would serve a CSV nothing can import. Cheap to assert, and it is the
-    /// check that would have caught the key list drifting in the first place.
+    /// would serve a CSV nothing can import.
+    ///
+    /// Kept when its sibling was dropped as duplicated, because this one is not.
+    /// `validate`'s `supported_product_groups_and_templates_are_the_same_set`
+    /// reads as though it covers this, and does not: it iterates
+    /// `SUPPORTED_PRODUCT_GROUPS` and asserts each has a template, which is one
+    /// inclusion of the two its name claims. This is the other direction, and it
+    /// checks against `dpp-domain`'s catalog rather than the integrator's own
+    /// list — so a template keyed to something the domain does not recognise
+    /// fails here and nowhere else.
+    ///
+    /// The row-validation half *was* duplicated, by
+    /// `every_template_example_row_passes_its_own_validator`, and is gone.
     #[test]
     fn every_served_key_is_a_known_product_group() {
         let known = dpp_domain::catalog::ProductGroupCatalog::new();

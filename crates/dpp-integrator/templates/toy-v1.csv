@@ -1,0 +1,3 @@
+productName [REQUIRED],gtin [REQUIRED],batchId [OPTIONAL],manufacturerName [REQUIRED],manufacturerCountry [REQUIRED],ageGroup [REQUIRED],primaryMaterial [REQUIRED],ceMarking [REQUIRED],countryOfOrigin [REQUIRED],containsBattery [OPTIONAL],repairabilityInfo [OPTIONAL],placedOnMarketDate [OPTIONAL],commodityCode [OPTIONAL]
+Wooden Stacking Rings,09506000300054,BATCH-T-2026-001,Sample Spielwaren GmbH,DE,0-3,wood,true,DE,false,Replacement rings available from the manufacturer,2026-01-20,95030041
+Remote Control Car,09506000300061,,Sample Spielwaren GmbH,DE,6-12,plastic,yes,DE,yes,,2026-06-01,95030075
