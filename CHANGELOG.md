@@ -12,6 +12,57 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ### Fixed
 
+- **A retired passport is publicly readable again instead of answering `404`.**
+  `Deactivated`, `Superseded` and `Archived` now serve on both public routes;
+  `Suspended` still answers `410 Gone` and `Draft` still `404`s.
+
+  Three distinct terminal states used to fall through a `_` arm into one `404`,
+  which is how the question stopped being asked. ESPR Art. 10(4)(i) requires the
+  passport to "remain available" for a period corresponding to "at least the
+  expected lifetime of a specific product", and retiring a *record* does not
+  retire the products already in the field — it is those products that carry the
+  data carrier a recycler or an authority scans. A `404` made a retained record
+  unreachable and indistinguishable from one that never existed, which is the
+  opposite of retaining it.
+
+  Each state on its own terms. `Deactivated` is end of life for the **product**,
+  not the passport — core's status doc says the record "is retained (the DPP
+  outlives the product, EN 18221)", and this node already enforced that on the
+  write side by refusing to archive before `retention_until`. `Superseded`
+  replaces the record, not the goods made under the old specification.
+  `Archived` is only reachable *after* `retention_until`, so it is the one state
+  where the obligation has genuinely lapsed — it serves anyway, because nothing
+  requires a node to stop, the data is already public and already signed, and
+  withdrawing it breaks every carrier still in circulation for no gain. The two
+  that do not serve are the two that mean something else: `Suspended` is a
+  deliberate withdrawal and says so, and `Draft` was never public.
+
+  **What this costs, stated plainly.** The public view is the payload frozen and
+  signed at publish, served back rather than re-derived — that is what lets
+  anyone verify it against the operator DID. `status` is a Public field, so a
+  retired passport's body still reports `"status": "active"`. It cannot report
+  otherwise: rewriting a signed payload is exactly what `publicJwsSignature`
+  exists to make detectable. `amend`'s module doc previously argued from this
+  that the honest answer was a redirect to the successor. The redirect was never
+  built, so the real alternative was the `404` — and a reader who reaches a
+  retired passport is better served by the signed document than by nothing. The
+  live status remains on the authenticated route, which reads the row rather
+  than the proof. `a_deactivated_passport_is_still_served_publicly` pins the
+  frozen value so this is a recorded trade rather than a surprise.
+
+  The redaction lens is unchanged by retirement: it is the same
+  `signed_public_view` a published passport gets, filtered by the same policy at
+  the same schema version. Retirement widens nothing. `serves_publicly` answers
+  the question with a `match` rather than a `||` chain so every state is decided
+  rather than only the remembered ones, and — since `PassportStatus` is
+  `#[non_exhaustive]` — it fails closed on an unrecognised one and logs, because
+  a silent withhold is how this happened the first time.
+
+  The by-GTIN route applies the same rule, so the two public routes cannot
+  disagree about whether a passport exists. Resolving past a superseded record
+  to its successor is unaffected: that exclusion lives in the query
+  (`status <> 'superseded'`), not in the handler.
+
 - **A retried scan-telemetry flush no longer double-counts.** The resolver used
   to fold a failed window back into its live counters and send the merged total
   on the next tick. The ingest is additive —
@@ -227,9 +278,9 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
     seal and its retention lock, and reports `superseded` on `/api/v1/dpp/{id}`.
     The audit entry carries the successor's id and the stated reason, so a reader
     arriving at the old record can find what replaced it and why. Its **public**
-    by-id URL answers `404`, as it does for every status that is neither
-    published nor suspended; the product's printed carrier addresses the GTIN and
-    keeps working, resolving on past the superseded record to the successor.
+    by-id URL keeps serving — see the entry below on retired passports staying
+    publicly readable; the product's printed carrier addresses the GTIN and keeps
+    working, resolving on past the superseded record to the successor.
   - **The predecessor is superseded last.** If the correction is refused by the
     publish gates — schema, product-group validation, mandatory content, signing
     — nothing has been superseded and the product still has a live passport.

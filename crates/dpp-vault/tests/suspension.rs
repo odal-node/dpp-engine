@@ -150,4 +150,27 @@ async fn a_deactivated_passport_is_still_served_publicly() {
         view.get("jwsSignature").is_none(),
         "end of life must not widen the lens to the full-view signature, got {view}"
     );
+
+    // The one thing serving a retired passport costs, pinned rather than left
+    // to be discovered: `status` is a Public field and the payload is frozen at
+    // publish, so the body reports the status it was *signed* with, not the
+    // current one. It cannot report the current one — rewriting a signed
+    // payload is what `publicJwsSignature` exists to make detectable, so the
+    // choice is this or the `404` that used to hide the record entirely.
+    //
+    // `amend`'s module doc argued the other way, preferring a redirect over "a
+    // signed view that still says `\"status\": \"active\"`". That reasoning is
+    // sound for a *superseded* passport, which has a successor to redirect to.
+    // It does not reach a deactivated one, which has none — the alternative
+    // there is only the `404`, and a recycler scanning a scrapped battery is
+    // exactly the reader Art. 10(4)(i) keeps the record for.
+    //
+    // The live status stays available on the authenticated route, which reads
+    // the row rather than the proof.
+    assert_eq!(
+        view["status"], "active",
+        "the public view is the frozen signed payload, so it carries the \
+         publish-time status; if this ever reads `deactivated` the payload is \
+         being rewritten and the proof no longer verifies, got {view}"
+    );
 }
