@@ -12,6 +12,25 @@ use crate::domain::fields::{
 };
 use crate::domain::request::{CreatePassportRequest, RowError};
 
+use super::Column;
+
+/// The columns this validator reads, in template order. Envelope columns
+/// (`placedOnMarketDate`, `commodityCode`) are appended by `columns_for`.
+pub(super) const COLUMNS: &[Column] = &[
+    Column::required("productName"),
+    Column::required("gtin"),
+    Column::required("batchId"),
+    Column::required("manufacturerName"),
+    Column::required("manufacturerCountry"),
+    Column::required("fibreComposition"),
+    Column::required("countryOfOrigin"),
+    Column::required("careInstructions"),
+    Column::required("chemicalComplianceStandard"),
+    Column::optional("recycledContentPct"),
+    Column::optional("repairScore"),
+    Column::optional("carbonFootprintKgCo2e"),
+];
+
 /// Validate a single textile row and convert it to a vault `CreatePassportRequest`.
 pub fn validate_textile_row(
     row: &HashMap<String, String>,
