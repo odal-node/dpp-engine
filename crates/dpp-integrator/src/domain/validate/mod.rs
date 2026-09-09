@@ -186,6 +186,28 @@ pub fn is_importable(key: &str) -> bool {
         .contains(&crate::domain::battery_template::product_group_for_template_key(key))
 }
 
+/// Every key [`is_importable`] accepts, for a refusal message.
+///
+/// Derived from the same two sources the predicate reads, because the two had
+/// already disagreed: the refusal listed [`SUPPORTED_PRODUCT_GROUPS`], which
+/// names `battery` and omits `battery-ev`, `battery-lmt` and
+/// `battery-industrial` — so it advertised a key whose template no longer
+/// exists and hid the three an operator actually downloads.
+#[must_use]
+pub fn importable_keys() -> Vec<&'static str> {
+    let mut keys: Vec<&'static str> = SUPPORTED_PRODUCT_GROUPS
+        .iter()
+        .copied()
+        .filter(|g| *g != "battery")
+        .collect();
+    keys.extend(
+        crate::domain::battery_template::BatteryCategory::ALL
+            .iter()
+            .map(|c| c.template_key()),
+    );
+    keys
+}
+
 /// Row-level validation failure: either the product group has no validator at all,
 /// or the row itself failed field validation. Kept as a distinct, typed case
 /// rather than an `unreachable!()` at the call site.

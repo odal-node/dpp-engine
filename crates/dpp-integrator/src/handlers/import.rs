@@ -132,7 +132,7 @@ pub async fn import_file(
         return Problem::new(StatusCode::NOT_FOUND, "Not Found")
             .with_detail(format!(
                 "Unknown product_group: '{product_group}'. Valid values: {}.",
-                validate::SUPPORTED_PRODUCT_GROUPS.join(", ")
+                validate::importable_keys().join(", ")
             ))
             .into_response();
     }

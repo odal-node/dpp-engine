@@ -289,7 +289,31 @@ pub(super) fn parse_state_of_health(
                 ),
             })))
         }
-        (None, None) => Ok(None),
+        (None, None) => {
+            // The three optional items are read only in the arm above, so a row
+            // carrying *only* those reached this arm and was answered `Ok(None)`
+            // — the values discarded, no error, nothing for the operator to see.
+            // The template marks all three `OPTIONAL`, so filling exactly that
+            // combination is something it invites.
+            //
+            // Refused with the same sentence the partial-list arm uses, because
+            // it is the same fault: items 1 and 4 are unconditional in Annex VII
+            // Part A, and a list without them is not the list.
+            const OPTIONAL_ONLY: &[&str] = &[
+                "stateOfHealth_remainingPowerCapabilityPct",
+                "stateOfHealth_remainingRoundTripEfficiencyPct",
+                "stateOfHealth_ohmicResistanceMohm",
+            ];
+            if OPTIONAL_ONLY
+                .iter()
+                .any(|c| row.get(*c).is_some_and(|v| !v.trim().is_empty()))
+            {
+                return Err("stateOfHealth for a stationary or LMT battery needs both \
+                     remainingCapacityPct and selfDischargeRatePctPerMonth — Annex VII Part A \
+                     lists items 1 and 4 unconditionally, unlike items 2, 3 and 5.");
+            }
+            Ok(None)
+        }
     }
 }
 
@@ -449,6 +473,45 @@ mod tests {
     fn a_stationary_state_of_health_missing_an_unconditional_item_is_refused() {
         let r = row(&[("stateOfHealth_remainingCapacityPct", "98.0")]);
         assert!(parse_state_of_health(&r, 1, &mut errs()).is_err());
+    }
+
+    /// A row carrying **only** the optional items is refused, not silently
+    /// dropped.
+    ///
+    /// The three optional columns are read inside the stationary arm, which is
+    /// reached only when item 1 or item 4 is present. A row filling just these
+    /// therefore landed on `(None, None)` and was answered `Ok(None)`: the
+    /// values discarded, no error, and nothing to tell the operator their
+    /// figures never arrived. The template marks all three `OPTIONAL`, so it
+    /// invites exactly this combination.
+    ///
+    /// Each is asserted on its own rather than all three together, because one
+    /// column reaching the discriminant is enough to prove the arm is entered —
+    /// and a fix that caught only the first would pass a combined case.
+    #[test]
+    fn a_state_of_health_of_only_optional_items_is_refused_not_dropped() {
+        for column in [
+            "stateOfHealth_remainingPowerCapabilityPct",
+            "stateOfHealth_remainingRoundTripEfficiencyPct",
+            "stateOfHealth_ohmicResistanceMohm",
+        ] {
+            let r = row(&[(column, "12.5")]);
+            assert!(
+                parse_state_of_health(&r, 1, &mut errs()).is_err(),
+                "{column} alone must be refused, not discarded"
+            );
+        }
+    }
+
+    /// A genuinely empty block stays absent — the guard above must not turn
+    /// "no state of health was reported" into an error.
+    #[test]
+    fn an_absent_state_of_health_is_still_absent() {
+        let r = row(&[("productName", "Cell")]);
+        assert!(matches!(
+            parse_state_of_health(&r, 1, &mut errs()),
+            Ok(None)
+        ));
     }
 
     #[test]

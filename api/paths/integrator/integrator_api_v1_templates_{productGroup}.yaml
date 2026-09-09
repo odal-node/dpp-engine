@@ -2,19 +2,22 @@ get:
   operationId: getImportTemplate
   summary: Download a CSV import template
   description: |
-    Returns the canonical CSV import template for a product group. Templates
-    exist for `textile`, `steel`, `aluminium`, `tyre`, and — per battery
-    category — `battery-ev`, `battery-lmt` and `battery-industrial`. Any other
-    value returns 404 naming the ones that are served.
+    Returns the canonical CSV import template for a product group. Most product
+    groups are served under their own key; batteries are served **per category**
+    as `battery-ev`, `battery-lmt` and `battery-industrial`.
+
+    The served set is deliberately **not enumerated here.** It is derived from
+    one table in the handler, and the `404` body lists it — so a template added
+    there is named by the refusal without anyone remembering to edit this
+    sentence. That table exists because this list previously had three homes
+    that disagreed, and this description was one of them.
 
     **There is no bare `battery` template.** What a battery passport must carry
-    is decided per category: an electric-vehicle battery owes forty-six
-    mandatory data points, an LMT battery forty-five and an industrial one
-    thirty-eight, and the state-of-health parameters are two disjoint sets under
-    Annex VII Part A — an EV battery reports state of certified energy alone,
-    while stationary and LMT batteries report a five-parameter list. One file
-    cannot carry three obligations without offering columns some categories must
-    not fill.
+    is decided per category, and the state-of-health parameters are two disjoint
+    sets under Annex VII Part A — an EV battery reports state of certified
+    energy alone, while stationary and LMT batteries report a five-parameter
+    list. One file cannot carry three obligations without offering columns some
+    categories must not fill.
 
     **Three categories, not five.** Reg. (EU) 2023/1542 defines five battery
     categories, but Art. 77(1) gives a battery passport only to "each LMT
