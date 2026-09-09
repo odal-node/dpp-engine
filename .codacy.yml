@@ -11,6 +11,14 @@
 # Concretely: the `BasicAuth` security scheme has been on main since long before
 # the bundle existed and is deliberate — it is the operator's bootstrap
 # credential and the lockout-recovery path, documented as such in the spec.
+#
+# api/openapi.bundled.json is the same document emitted a second time by the
+# same recipe — read `openapi-bundle` in the justfile, which writes both from
+# one source tree. Excluding only the YAML left the argument above applying to a
+# file that was still analysed: every route added to the spec re-declares
+# `BasicAuth` in the JSON twin, so each one arrives as a new high-severity
+# finding against generated content nobody wrote. Both halves of one artifact,
+# both excluded.
 
 # The only SQL analyser Codacy runs here is TSQLLint, which checks Microsoft
 # T-SQL. `ops/pg/*.sql` is PostgreSQL, so its findings are wrong by
@@ -26,4 +34,5 @@
 # they produce.
 exclude_paths:
   - "api/openapi.bundled.yaml"
+  - "api/openapi.bundled.json"
   - "ops/pg/**"

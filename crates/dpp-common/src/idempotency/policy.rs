@@ -100,6 +100,25 @@ const KEYED: &[(Method, &str, RoutePolicy)] = &[
         "/vault/api/v1/operator-identifiers",
         RoutePolicy::verbatim(),
     ),
+    // Issuance mints a credential and stores nothing: the node keeps no record
+    // of what it signed, and publishes no status list, so a duplicate cannot be
+    // found afterwards and could not be withdrawn if it were. A lost response
+    // is therefore the sharpest case in the set — the caller has no way to tell
+    // whether a live credential is loose.
+    //
+    // `verbatim`, deliberately, though the body carries a bearer credential.
+    // The two `secret_bearing` routes below redact because the resource
+    // survives the response and the orphan can be revoked from the listing;
+    // here neither is true, so redacting would leave the retry with nothing to
+    // recover and force a re-issue — which is a *second* live credential, the
+    // exact outcome the key exists to prevent. Replaying the JWS is what makes
+    // the retry safe. It rests in the store for the retention window, having
+    // already crossed the wire, and lapses on its own.
+    (
+        Method::POST,
+        "/vault/api/v1/credentials",
+        RoutePolicy::verbatim(),
+    ),
     // ── Creates whose response carries a once-only secret ────────────────────
     (
         Method::POST,
@@ -182,13 +201,13 @@ mod tests {
     /// and `dpp-node`'s `idempotency_policy` suite asserts every template here
     /// is a route the assembled node actually serves.
     ///
-    /// Eight creates plus the additive scan ingest. Not the ten the design note
-    /// first counted: `POST /credentials` and `POST /unsold-goods` do not exist
-    /// on `main`. They are on an unmerged branch, and both are creates, so both
-    /// belong here the day it lands.
+    /// Nine creates plus the additive scan ingest. The design note first
+    /// counted ten creates; `POST /credentials` has since landed and is here,
+    /// and `POST /unsold-goods` is still on an unmerged branch — it is a create
+    /// too, so it belongs here the day it lands.
     #[test]
-    fn the_keyed_set_is_nine_routes() {
-        assert_eq!(KEYED.len(), 9);
+    fn the_keyed_set_is_ten_routes() {
+        assert_eq!(KEYED.len(), 10);
     }
 
     /// Two entries for the same operation would make `policy_for` depend on

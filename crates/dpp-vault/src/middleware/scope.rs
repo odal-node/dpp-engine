@@ -138,6 +138,32 @@ mod tests {
         name: String,
     }
 
+    /// Both refusals read as English. `admin` takes "an" and the sentence was
+    /// built with a hardcoded "a", so every admin-gated route answered "requires
+    /// a admin-scoped credential" — a message an operator reads on their first
+    /// permissions problem.
+    #[tokio::test]
+    async fn each_scope_gets_the_right_article() {
+        async fn detail(resp: Response) -> String {
+            let bytes = axum::body::to_bytes(resp.into_body(), 64 * 1024)
+                .await
+                .expect("body");
+            serde_json::from_slice::<serde_json::Value>(&bytes).expect("problem document")["detail"]
+                .as_str()
+                .expect("detail")
+                .to_owned()
+        }
+
+        assert_eq!(
+            detail(forbidden("admin")).await,
+            "This operation requires an admin-scoped credential."
+        );
+        assert_eq!(
+            detail(forbidden("write")).await,
+            "This operation requires a write-scoped credential."
+        );
+    }
+
     fn app() -> Router {
         Router::new().route(
             "/w",

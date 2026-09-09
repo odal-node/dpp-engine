@@ -407,6 +407,7 @@ unprotected one. Read the table in the code.
 | GET | `/vault/api/v1/api-keys` | Bearer (admin) | List API keys |
 | POST | `/vault/api/v1/api-keys` | Bearer (admin) | Create API key |
 | DELETE | `/vault/api/v1/api-keys/{id}` | Bearer (admin) | Revoke API key |
+| POST | `/vault/api/v1/credentials` | Bearer (admin) | Issue a DPP access credential signed with this node's key. **Legitimate-interest roles only** — an authority's standing is conferred by a member state, so the three authority roles are refused. No revocation list is published, so the lifetime is capped |
 | POST | `/vault/api/v1/plugins` | Bearer (admin) | Install a **signed** product group plugin and hot-swap it |
 | POST | `/vault/api/v1/ruleset/reload` | Bearer (admin) | Re-read the **signed** compliance-ruleset channel and hot-swap a verified bundle |
 | GET | `/vault/api/v1/webhooks` | Bearer (admin) | List webhook subscriptions |
