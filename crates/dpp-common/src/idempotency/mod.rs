@@ -35,7 +35,7 @@ mod store;
 pub use middleware::{
     IDEMPOTENCY_KEY_HEADER, IdempotencyLayerState, PrincipalResolver, idempotency_middleware,
 };
-pub use policy::{RoutePolicy, policy_for};
+pub use policy::{RoutePolicy, keyed_routes, policy_for};
 pub use store::{
     Claim, DEFAULT_LEASE, DEFAULT_RETENTION, IdempotencyError, IdempotencyStore, RequestKey,
     StoredResponse, fingerprint,

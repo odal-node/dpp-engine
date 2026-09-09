@@ -43,3 +43,9 @@ get:
       description: No published DPP for this GTIN, or unknown link type.
     '410':
       $ref: ../../components/responses/Gone.yaml
+    '409':
+      $ref: ../../components/responses/PassportSignatureUnverified.yaml
+    '502':
+      $ref: ../../components/responses/ResolverUpstreamFailure.yaml
+    '503':
+      $ref: ../../components/responses/PassportVerificationUnavailable.yaml

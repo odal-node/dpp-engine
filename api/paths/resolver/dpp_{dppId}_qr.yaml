@@ -6,6 +6,16 @@ get:
     GS1 Digital Link on the resolver's configured base
     (e.g. `https://id.odal-node.io/01/{gtin}/21/{serial}`).
     This endpoint is on the **resolver** service (port 8003).
+
+    **Every response is `image/png`, including the failures.** This route is
+    addressed by `<img src>`, so an error carries no problem document — the
+    body is empty and the status line is the whole of the answer. A client that
+    needs a readable reason should ask `GET /dpp/{dppId}`, which answers the
+    same failures as `application/problem+json`.
+
+    Fails closed on verification, like every other resolver route: the
+    passport's public signature is checked against the operator's DID before a
+    QR is drawn, so an unverifiable passport yields no image.
   tags:
     - Public Resolver
   security: []
@@ -24,6 +34,59 @@ get:
             type: string
             format: binary
     '404':
-      $ref: ../../components/responses/NotFound.yaml
+      description: No published passport with this identifier. Empty body.
+      content:
+        image/png:
+          schema:
+            type: string
+            format: binary
+    '409':
+      description: >-
+        The passport's public signature did not verify against the operator's
+        DID, so no QR was drawn. Empty body.
+      content:
+        image/png:
+          schema:
+            type: string
+            format: binary
+    '410':
+      description: >-
+        The passport has been withdrawn from public view — it is suspended.
+        Empty body.
+      content:
+        image/png:
+          schema:
+            type: string
+            format: binary
     '422':
-      $ref: ../../components/responses/ValidationError.yaml
+      description: >-
+        The passport carries no data carrier to encode — no GTIN, so no GS1
+        Digital Link exists to put in a QR code. Empty body.
+      content:
+        image/png:
+          schema:
+            type: string
+            format: binary
+    '500':
+      description: QR encoding failed. Empty body.
+      content:
+        image/png:
+          schema:
+            type: string
+            format: binary
+    '502':
+      description: The vault this resolver fronts could not be read. Empty body.
+      content:
+        image/png:
+          schema:
+            type: string
+            format: binary
+    '503':
+      description: >-
+        Verification could not be attempted — the operator's DID document was
+        unreachable. Empty body.
+      content:
+        image/png:
+          schema:
+            type: string
+            format: binary

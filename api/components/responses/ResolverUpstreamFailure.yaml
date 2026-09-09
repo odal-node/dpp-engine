@@ -1,0 +1,20 @@
+description: |
+  The resolver could not read the passport from the vault it fronts.
+
+  The resolver holds no passport data of its own — it fetches from the vault's
+  public tier on every request — so an unreachable vault, or one answering
+  anything other than a success, a `404`/`400` or a `410`, is reported as an
+  upstream failure rather than as an answer about the passport.
+
+  Deliberately not `404`: the identifier may be perfectly good. A consumer
+  scanning a carrier should retry rather than conclude the product has no
+  passport.
+content:
+  application/problem+json:
+    schema:
+      $ref: ../schemas/errors/Problem.yaml
+    example:
+      type: https://problems.odal-node.io/bad-gateway
+      title: Bad Gateway
+      status: 502
+      detail: The passport could not be read.

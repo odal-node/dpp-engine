@@ -1,0 +1,21 @@
+description: |
+  The passport was fetched but its public signature did not verify against the
+  operator's DID, so the resolver refuses to serve it.
+
+  Every resolver representation is built from the **verified** signed payload,
+  never from whatever the vault returned, and verification fails closed: a
+  published passport carrying no public signature, a signature that does not
+  check out, or a payload that does not match what was signed all end here
+  rather than being served unmarked.
+
+  Distinct from `503`, which means verification could not be *attempted*
+  because the DID document was unreachable.
+content:
+  application/problem+json:
+    schema:
+      $ref: ../schemas/errors/Problem.yaml
+    example:
+      type: https://problems.odal-node.io/conflict
+      title: Conflict
+      status: 409
+      detail: The passport's digital signature could not be verified.
