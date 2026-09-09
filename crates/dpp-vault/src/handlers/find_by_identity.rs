@@ -2,8 +2,7 @@
 //! import delta-matcher (product group, GTIN, batch), across `Draft` and `Published`.
 
 use axum::{
-    Json,
-    extract::{Extension, Query, State},
+    extract::{Extension, State},
     http::StatusCode,
     response::IntoResponse,
 };
@@ -14,6 +13,7 @@ use dpp_domain::{product::ProductIdentity, product_group::ProductGroup};
 use crate::{middleware::auth::AuthContext, state::AppState};
 
 use super::error::internal_error;
+use crate::extract::{Json, Query};
 
 /// Query parameters for the identity-lookup endpoint.
 #[derive(Debug, Deserialize, Serialize)]

@@ -31,7 +31,7 @@ const IMPORT_BODY_LIMIT: usize = 5 * 1024 * 1024;
 /// the work an authenticated caller can force the parser to do. Auth is enforced
 /// inside each handler by forwarding the `Bearer` token to the vault.
 pub fn build(state: AppState) -> Router {
-    Router::new()
+    let router = Router::new()
         .route("/health", get(health::health_handler))
         .route(
             "/api/v1/templates/{productGroup}",
@@ -58,7 +58,23 @@ pub fn build(state: AppState) -> Router {
             "/api/v1/import/{productGroup}",
             post(import::import_file).layer(DefaultBodyLimit::max(IMPORT_BODY_LIMIT)),
         )
-        .route("/api/v1/imports/{job_id}", get(job_status::get_job_status))
+        .route("/api/v1/imports/{job_id}", get(job_status::get_job_status));
+
+    // Only the upload is keyed, but the layer goes on the whole tree: it is a
+    // `route_layer`, so it runs after routing and can read the matched
+    // template, and the policy table is what decides. Putting it on the one
+    // route instead would move that decision into two places.
+    //
+    // Mounted only when a store is wired — see `AppState::idempotency`.
+    let router = match &state.idempotency {
+        Some(store) => router.route_layer(middleware::from_fn_with_state(
+            crate::middleware::idempotency_state(store.clone()),
+            dpp_common::idempotency::idempotency_middleware,
+        )),
+        None => router,
+    };
+
+    router
         .layer(TraceLayer::new_for_http())
         .layer(middleware::from_fn(http_metrics_middleware))
         .layer(middleware::from_fn(inject_request_id))
@@ -90,6 +106,7 @@ mod tests {
             vault_client: Arc::new(VaultHttpClient::new("http://127.0.0.1:1")),
             job_store: Arc::new(InMemoryJobStore::new()),
             batch_concurrency: 1,
+            idempotency: None,
         };
         let app = super::build(state);
 
@@ -106,6 +123,7 @@ mod tests {
             vault_client: Arc::new(VaultHttpClient::new("http://127.0.0.1:1")),
             job_store: Arc::new(InMemoryJobStore::new()),
             batch_concurrency: 1,
+            idempotency: None,
         }
     }
 

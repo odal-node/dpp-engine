@@ -2,7 +2,7 @@
 
 Operational telemetry for the node (`dpp-node`) and the public resolver (`dpp-resolver`).
 Stack: the [`metrics`](https://docs.rs/metrics) facade + `metrics-exporter-prometheus`.
-Last updated: 2026-06-13._
+Last updated: 2026-09-08.
 
 This document is the source of truth for **what is measured, how it is exposed, and what to
 alert on**. It also records the gaps still open (see [Roadmap](#roadmap)).
@@ -62,6 +62,21 @@ space. Keep that discipline (see [Label policy](#3-label--cardinality-policy)).
 | `db_ping_total` | counter | `result` = `ok` \| `error` | Readiness DB pings |
 | `db_ping_duration_seconds` | histogram | — | DB ping latency |
 
+### Trust posture (the ghost-honesty invariant)
+
+| Metric | Type | Labels | Meaning |
+|--------|------|--------|---------|
+| `trust_mode` | gauge | `port` | Tier the adapter behind each trust port resolved to: **`0` ghost** (placeholder), **`1` sandbox** (real service, non-production), **`2` live**. One series per port. |
+
+Set once per port during boot, from the same `NodeTrustReport` the `/vault/api/v1/node/state`
+response is built from — so the gauge and the API answer cannot disagree. `port` values come
+from the report's list, which is the whole reason the invariant is list-driven: a trust port that
+is never registered there is invisible to the boot guard *and* absent from this gauge.
+
+A `production` profile refuses to boot while a required port is a ghost, so `trust_mode == 0`
+on a production node means either a **non-required** port degraded, or the boot guard did not see
+that port at all. Both are worth waking up for — see the alert rules in §4.
+
 ### Resolver (public-facing)
 
 | Metric | Type | Labels | Meaning |
@@ -93,7 +108,7 @@ caller-controlled value ever reaches a label — treat new labels as a review ch
 
 ## 4. Starter alert rules
 
-PromQL sketches — tune thresholds to traffic. The first two are pages, the rest are warnings.
+PromQL sketches — tune thresholds to traffic. The first four are pages, the rest are warnings.
 
 ```yaml
 # Someone is serving tampered passports against the public resolver. PAGE.
@@ -107,6 +122,31 @@ PromQL sketches — tune thresholds to traffic. The first two are pages, the res
   expr: rate(signing_failures_total[5m]) > 0
   for: 5m
   labels: { severity: page }
+
+# A trust port is serving placeholder trust. PAGE.
+# On a `production` profile this should be unreachable — the node refuses to
+# boot on a ghost *required* port — so it firing means either a non-required
+# port degraded, or that port never reached the trust report at all and the
+# boot guard could not see it. Both need a human.
+- alert: DppTrustModeGhost
+  expr: trust_mode == 0
+  for: 0m
+  labels: { severity: page }
+  annotations:
+    summary: "trust port {{ $labels.port }} is serving ghost (placeholder) trust"
+
+# A port's trust tier fell without a deliberate redeploy — the silent config
+# regression the honesty invariant exists to catch. PAGE.
+# Written as a *drop* rather than a floor on purpose: the expected value is a
+# property of the deployment (a sandbox node legitimately sits at 1), so no
+# fleet-wide rule can hardcode one. The 24h window also means a deliberate
+# downgrade stops alerting a day after it is made, instead of forever.
+- alert: DppTrustModeRegressed
+  expr: trust_mode < max_over_time(trust_mode[24h])
+  for: 5m
+  labels: { severity: page }
+  annotations:
+    summary: "trust port {{ $labels.port }} dropped below the tier it was serving"
 
 # Credential attack / a client broke after key rotation.
 - alert: DppAuthFailureSpike
@@ -145,14 +185,36 @@ Point Prometheus at the **private** metrics listeners (sidecar / same-host / in-
 
 ```yaml
 scrape_configs:
+  # Address the target by SERVICE NAME, and take the port from that
+  # deployment's METRICS_ADDR. The ports below are the per-binary *defaults*;
+  # a deployment that sets one METRICS_ADDR for every service in a compose
+  # file gives them all the SAME port, which is legal — they are in separate
+  # network namespaces. Never assume the two services differ by port.
   - job_name: dpp-node
     static_configs: [{ targets: ["dpp-node:9100"] }]
   - job_name: dpp-resolver
     static_configs: [{ targets: ["dpp-resolver:9101"] }]
 ```
 
-If a central Prometheus must scrape over the network, terminate that on a private interface with a
-network boundary (or front the listener with bearer/TLS) — never expose a raw `/metrics` publicly.
+### A loopback `METRICS_ADDR` binds the *container's* loopback
+
+This is the constraint that decides where a scraper can run, and it is easy to plan around
+wrongly. In a container deployment `METRICS_ADDR=127.0.0.1:<port>` is reachable **only from
+inside that container's own network namespace** — not from the host, and therefore not from
+anything that arrives at the host, including a tunnel or a bastion. Unless the port is
+explicitly published, `curl` on the host answers nothing, and a plan that assumes otherwise
+fails identically on every node.
+
+So a scraper must either **run on the same network** as the target (a sidecar, or a service on
+the same compose network, addressing it by service name as above), or the deployment must
+publish the metrics port deliberately and accept what that exposes.
+
+The tempting third option — setting `METRICS_ADDR` to a routable address so a host-side or
+remote scraper can reach it — **re-opens finding RT2-7**: it puts `passport_publish_total`,
+`signing_failures_total` and the JWS tamper counts back on the wire. Move the scraper onto the
+network; do not move the listener onto it. If a central scraper genuinely must cross a network,
+terminate that on a private interface with a network boundary (or front the listener with
+bearer/TLS) — never expose a raw `/metrics` publicly.
 
 ---
 

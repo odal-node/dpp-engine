@@ -75,10 +75,35 @@ pub struct ScanBatch {
     pub scans: Vec<ScanBatchEntry>,
     /// QR-image render increments.
     pub qr_renders: Vec<QrRenderBatchEntry>,
+    /// How often the sending resolver flushes, in seconds.
+    ///
+    /// Declared rather than assumed. The node decides whether telemetry is
+    /// *currently* arriving by asking whether the last flush is recent, and
+    /// "recent" is only meaningful relative to how often the sender promised to
+    /// call. `SCAN_FLUSH_INTERVAL_SECS` belongs to the resolver — a separate
+    /// deployable with its own environment — so a threshold hardcoded in the
+    /// node would be a guess about another process's configuration, which is the
+    /// same mistake `scan_liveness` exists to avoid.
+    ///
+    /// Stamped when the window is **drained**, not when it is sent, so it
+    /// travels inside the batch. A held batch is re-sent byte-identical under
+    /// its original `Idempotency-Key`; a value applied at send time would change
+    /// under it if the interval were reconfigured between attempts, and the
+    /// node's fingerprint check would reject the resend.
+    ///
+    /// `None` from a resolver that predates this field. The node then reports
+    /// liveness without staleness rather than inventing a threshold — see
+    /// `dpp_vault::infra::scan_liveness`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub flush_interval_secs: Option<u64>,
 }
 
 impl ScanBatch {
-    /// True when there is nothing to send — the flush task skips the round-trip.
+    /// True when there is nothing to **count**.
+    ///
+    /// `flush_interval_secs` deliberately does not participate: it describes the
+    /// sender, not the window. An idle window carrying it is still empty, and
+    /// sending one is the heartbeat — see `flush_once` in the resolver.
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.scans.is_empty() && self.qr_renders.is_empty()
@@ -112,10 +137,12 @@ mod tests {
                 day: NaiveDate::from_ymd_opt(2026, 7, 24).unwrap(),
                 count: 1,
             }],
+            flush_interval_secs: Some(300),
         };
         let json = serde_json::to_string(&batch).unwrap();
         assert!(json.contains("qrRenders"));
         assert!(json.contains("dppId"));
+        assert!(json.contains("flushIntervalSecs"));
         let back: ScanBatch = serde_json::from_str(&json).unwrap();
         assert_eq!(back, batch);
     }
@@ -123,5 +150,30 @@ mod tests {
     #[test]
     fn empty_batch_detected() {
         assert!(ScanBatch::default().is_empty());
+    }
+
+    /// A batch from a resolver predating the cadence declaration still parses.
+    ///
+    /// The node degrades to the weaker "ever flushed" signal in that case; it
+    /// must not reject the window, which would lose real counts over a
+    /// diagnostic field.
+    #[test]
+    fn a_batch_without_a_declared_cadence_still_parses() {
+        let json = r#"{"scans":[],"qrRenders":[]}"#;
+        let batch: ScanBatch = serde_json::from_str(json).expect("must stay wire-compatible");
+        assert_eq!(batch.flush_interval_secs, None);
+        assert!(batch.is_empty());
+    }
+
+    /// The cadence describes the sender, not the window, so it must not make an
+    /// idle batch look like it has something to report — the heartbeat carries
+    /// it and is still empty.
+    #[test]
+    fn a_declared_cadence_does_not_make_a_batch_non_empty() {
+        let heartbeat = ScanBatch {
+            flush_interval_secs: Some(300),
+            ..ScanBatch::default()
+        };
+        assert!(heartbeat.is_empty());
     }
 }

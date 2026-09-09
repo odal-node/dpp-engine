@@ -126,13 +126,13 @@ pub async fn import_file(
     mut multipart: Multipart,
 ) -> impl IntoResponse {
     // Validate product group early
-    if !validate::SUPPORTED_SECTORS.contains(&product_group.as_str()) {
+    if !validate::SUPPORTED_PRODUCT_GROUPS.contains(&product_group.as_str()) {
         metrics::counter!("import_rejections_total", "reason" => "unknown_product_group")
             .increment(1);
         return Problem::new(StatusCode::NOT_FOUND, "Not Found")
             .with_detail(format!(
                 "Unknown product_group: '{product_group}'. Valid values: {}.",
-                validate::SUPPORTED_SECTORS.join(", ")
+                validate::SUPPORTED_PRODUCT_GROUPS.join(", ")
             ))
             .into_response();
     }
@@ -275,7 +275,7 @@ pub async fn import_file(
                     });
                 }
             }
-            // The pre-upload SUPPORTED_SECTORS check above already rejected any
+            // The pre-upload SUPPORTED_PRODUCT_GROUPS check above already rejected any
             // product group that would land here — kept as a real, typed branch rather
             // than `unreachable!()` so this stays correct if the two checks
             // ever move apart.
@@ -699,7 +699,9 @@ mod tests {
         let mut buf = Vec::new();
         {
             let mut zw = zip::ZipWriter::new(std::io::Cursor::new(&mut buf));
-            let opts = zip::write::FileOptions::default()
+            // See `xlsx_parser`'s fixture builder: zip 8 made `FileOptions`
+            // generic, so the inferring alias is `SimpleFileOptions`.
+            let opts = zip::write::SimpleFileOptions::default()
                 .compression_method(zip::CompressionMethod::Stored);
             zw.start_file("[Content_Types].xml", opts).unwrap();
             zw.write_all(CONTENT_TYPES.as_bytes()).unwrap();
@@ -869,6 +871,7 @@ mod tests {
             vault_client: Arc::new(VaultHttpClient::new(&base_url)),
             job_store: Arc::new(InMemoryJobStore::new()),
             batch_concurrency: 4,
+            idempotency: None,
         };
         (state, mock_state)
     }
@@ -1411,6 +1414,7 @@ mod tests {
             vault_client: Arc::new(VaultHttpClient::new("http://127.0.0.1:1")),
             job_store: Arc::new(InMemoryJobStore::new()),
             batch_concurrency: 1,
+            idempotency: None,
         };
         let app = build_router(state);
 

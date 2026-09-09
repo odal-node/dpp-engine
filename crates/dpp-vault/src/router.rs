@@ -13,15 +13,18 @@ use tower_http::{
 };
 
 use dpp_common::{
+    idempotency::idempotency_middleware,
     metrics::http_metrics_middleware,
     request_id::{UuidRequestId, inject_request_id},
 };
 
 use crate::{
     handlers::{
+        amend::amend_handler,
         api_keys::{api_keys_create_handler, api_keys_delete_handler, api_keys_list_handler},
         archive::archive_handler,
         create::create_handler,
+        credentials::issue_credential_handler,
         eol::eol_handler,
         evidence::{
             generate_evidence_handler, get_evidence_handler, list_evidence_handler,
@@ -51,11 +54,13 @@ use crate::{
         scan_ingest::{scan_ingest_handler, scan_ingest_mtls},
         seal::{seal_handler, seal_summary_handler},
         stats::{operator_stats_handler, passport_stats_handler},
+        supersede::supersede_handler,
         suspend::suspend_handler,
         transfer::{
             transfer_accept_handler, transfer_cancel_handler, transfer_initiate_handler,
             transfer_reject_handler,
         },
+        unsold_goods::{unsold_goods_create_handler, unsold_goods_list_handler},
         update::update_handler,
         validate::validate_handler,
         verify_tree::verify_tree_handler,
@@ -65,7 +70,10 @@ use crate::{
         },
         whoami::whoami_handler,
     },
-    middleware::auth::auth_middleware,
+    middleware::{
+        auth::auth_middleware,
+        idempotency::{idempotency_state, resolver_idempotency_state},
+    },
     state::AppState,
 };
 
@@ -87,6 +95,8 @@ pub fn build(state: AppState) -> Router {
         .route("/dpp/by-identity", get(find_by_identity_handler))
         .route("/dpp/{dppId}", get(read_handler).put(update_handler))
         .route("/dpp/{dppId}/publish", post(publish_handler))
+        .route("/dpp/{dppId}/amend", post(amend_handler))
+        .route("/dpp/{dppId}/supersede", post(supersede_handler))
         .route("/dpp/{dppId}/lint", post(lint_handler))
         .route("/dpp/{dppId}/suspend", post(suspend_handler))
         .route("/dpp/{dppId}/archive", post(archive_handler))
@@ -150,6 +160,11 @@ pub fn build(state: AppState) -> Router {
             get(api_keys_list_handler).post(api_keys_create_handler),
         )
         .route("/api-keys/{id}", delete(api_keys_delete_handler))
+        .route("/credentials", post(issue_credential_handler))
+        .route(
+            "/unsold-goods",
+            get(unsold_goods_list_handler).post(unsold_goods_create_handler),
+        )
         // ── Plugins (signed product group-plugin hot-install) ────────────────
         .route("/plugins", post(install_plugin_handler))
         // ── Compliance Current (signed ruleset channel hot-reload) ──────────
@@ -188,18 +203,45 @@ pub fn build(state: AppState) -> Router {
         .route(
             "/operator-identifiers/{id}/primary",
             post(operator_ids_set_primary_handler),
-        )
-        .route_layer(middleware::from_fn_with_state(
-            state.clone(),
-            auth_middleware,
-        ));
+        );
+
+    // Idempotency sits *between* auth and the handlers, and the layer order
+    // below is what puts it there: the last `route_layer` added runs first, so
+    // auth resolves the caller and only then does this read it. Reversing them
+    // would key an unauthenticated request to a principal that does not exist
+    // yet.
+    //
+    // Mounted only when a store is wired — see `AppState::idempotency`.
+    let authenticated = match &state.idempotency {
+        Some(store) => authenticated.route_layer(middleware::from_fn_with_state(
+            idempotency_state(store.clone()),
+            idempotency_middleware,
+        )),
+        None => authenticated,
+    };
+
+    let authenticated = authenticated.route_layer(middleware::from_fn_with_state(
+        state.clone(),
+        auth_middleware,
+    ));
 
     // Internal service-to-service tree: not public, not Bearer-authenticated.
     // The resolver (which holds no operator API key) flushes scan telemetry here,
     // gated by client-certificate mTLS (`CN=odal-resolver`).
-    let internal = Router::new()
-        .route("/scan-batch", post(scan_ingest_handler))
-        .route_layer(middleware::from_fn(scan_ingest_mtls));
+    let internal = Router::new().route("/scan-batch", post(scan_ingest_handler));
+
+    // Same ordering rule as the authenticated tree: the mTLS gate is added last
+    // so it runs first, and idempotency only sees a request whose peer has
+    // already been verified.
+    let internal = match &state.idempotency {
+        Some(store) => internal.route_layer(middleware::from_fn_with_state(
+            resolver_idempotency_state(store.clone()),
+            idempotency_middleware,
+        )),
+        None => internal,
+    };
+
+    let internal = internal.route_layer(middleware::from_fn(scan_ingest_mtls));
 
     let cors_layer = build_cors(&state.cors_allowed_origins);
 

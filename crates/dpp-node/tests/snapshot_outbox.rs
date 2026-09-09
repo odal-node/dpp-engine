@@ -536,14 +536,21 @@ async fn retiring_a_snapshot_removes_the_page_too() {
     );
 }
 
+/// The continuity tier retires exactly what the live public read refuses.
+///
+/// These two used to be decided separately — `== Published` here, a list of
+/// statuses in the handler — and they had already diverged: a deactivated
+/// passport was served live while its snapshot was removed, so the tier that
+/// exists to stand in for the node when the node is down answered `404` for a
+/// record the node itself was serving. A disagreement between them is invisible
+/// until precisely the moment it matters.
+///
+/// Both now read `dpp_vault::public_view::serves_publicly`. This test pins the
+/// half that retires; `drain_keeps_a_retired_passport_that_still_serves` pins
+/// the other half, and the two lists together must cover every status.
 #[tokio::test]
 async fn drain_retires_a_passport_that_left_the_public_tier() {
-    for status in [
-        PassportStatus::Suspended,
-        PassportStatus::Archived,
-        PassportStatus::Deactivated,
-        PassportStatus::Draft,
-    ] {
+    for status in [PassportStatus::Suspended, PassportStatus::Draft] {
         let (outbox, repo, store) = (
             FakeOutbox::default(),
             InMemoryPassportRepo::default(),
@@ -569,6 +576,72 @@ async fn drain_retires_a_passport_that_left_the_public_tier() {
         assert!(
             store.get(&p.id.to_string()).is_none(),
             "{status:?} must not keep being served from the static tier"
+        );
+    }
+}
+
+/// The two lists above cover every status this build models.
+///
+/// The doc comments claim it; without this they only claim it. A status added
+/// to `dpp-domain` and left out of both lists would be exercised by neither
+/// test, and would take whatever the wildcard arm in `serves_publicly` gives it
+/// — silently, which is how three terminal states came to share one `404`.
+#[test]
+fn the_two_halves_account_for_every_status() {
+    const RETIRED: &[PassportStatus] = &[PassportStatus::Suspended, PassportStatus::Draft];
+    const SERVED: &[PassportStatus] = &[
+        PassportStatus::Published,
+        PassportStatus::Archived,
+        PassportStatus::Superseded,
+        PassportStatus::Deactivated,
+    ];
+
+    for status in PassportStatus::ALL {
+        let retired = RETIRED.contains(status);
+        let served = SERVED.contains(status);
+        assert!(
+            retired ^ served,
+            "{status:?} is in neither list or in both — decide whether the public              tier serves it, then add it to exactly one"
+        );
+        assert_eq!(
+            served,
+            dpp_vault::public_view::serves_publicly(status),
+            "{status:?} is listed on one side and treated as the other"
+        );
+    }
+}
+
+/// Retiring the *record* does not retire the products in the field.
+///
+/// `Archived`, `Superseded` and `Deactivated` all keep serving publicly — ESPR
+/// Art. 10(4)(i) asks the passport to remain available for at least the
+/// product's expected lifetime, and the goods bearing the data carrier outlive
+/// the status change. So the snapshot has to be refreshed rather than removed:
+/// the stored copy must come to carry the new status, not disappear.
+#[tokio::test]
+async fn drain_keeps_a_retired_passport_that_still_serves() {
+    for status in [
+        PassportStatus::Archived,
+        PassportStatus::Superseded,
+        PassportStatus::Deactivated,
+    ] {
+        let (outbox, repo, store) = (
+            FakeOutbox::default(),
+            InMemoryPassportRepo::default(),
+            InMemorySnapshotStore::default(),
+        );
+        let p = passport(status.clone());
+        repo.create(p.clone()).await.unwrap();
+        outbox.enqueue(p.id).await.unwrap();
+
+        let (o, r, s, i) = ports(&outbox, &repo, &store);
+        let stats = drain_once(&o, &r, &s, &i, TEST_RESOLVER_BASE, 50).await;
+
+        assert_eq!(stats.removed, 0, "{status:?} must not be retired");
+        assert_eq!(stats.stored, 1, "{status:?} must be refreshed instead");
+        assert!(
+            store.get(&p.id.to_string()).is_some(),
+            "{status:?} must keep being served from the static tier"
         );
     }
 }
@@ -634,7 +707,38 @@ async fn draining_the_same_row_twice_is_a_no_op() {
     drain_once(&o, &r, &s, &i, TEST_RESOLVER_BASE, 50).await;
     let second = store.get(&p.id.to_string()).expect("still mirrored");
 
-    assert_eq!(first, second, "a replayed reconcile must be byte-identical");
+    assert_eq!(
+        without_freshness(&first),
+        without_freshness(&second),
+        "a replayed reconcile must converge on the same content"
+    );
+}
+
+/// A snapshot minus the two fields that say *when it was taken*.
+///
+/// The drain stamps `as_of` from the wall clock, truncated to the second
+/// (`snapshot_drain.rs`), and derives `valid_until` from it. Comparing whole
+/// snapshots therefore asserted that two drains happen within the same second —
+/// true in microseconds locally, and false often enough on a loaded CI runner to
+/// fail this test with "a replayed reconcile must be byte-identical".
+///
+/// That was the assertion being too strong, not the code being wrong: a
+/// freshness marker is *supposed* to move. Convergence is a claim about the
+/// content, so the content is what this compares.
+///
+/// `snapshotJwsSignature` goes with them, and dropping the timestamps without it
+/// would fix nothing: the outer proof is taken over the whole document *except
+/// itself*, so it covers `asOf` and moves whenever `asOf` moves. What remains is
+/// the passport content and `publicJwsSignature`, the inner proof that is frozen
+/// at publish — which is exactly the pair a replay must not disturb.
+fn without_freshness(snapshot: &[u8]) -> serde_json::Value {
+    let mut v: serde_json::Value = serde_json::from_slice(snapshot).expect("a snapshot is JSON");
+    if let Some(o) = v.as_object_mut() {
+        o.remove("asOf");
+        o.remove("validUntil");
+        o.remove("snapshotJwsSignature");
+    }
+    v
 }
 
 #[tokio::test]

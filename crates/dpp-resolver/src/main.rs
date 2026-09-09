@@ -208,18 +208,24 @@ async fn main() -> anyhow::Result<()> {
     // nothing and behaves exactly as before.
     let scan_counter = match std::env::var("SCAN_INGEST_URL") {
         Ok(url) if !url.trim().is_empty() => {
-            let counter = Arc::new(dpp_resolver::infra::scan_counter::ScanCounter::default());
             let flush_client =
                 build_scan_flush_client().context("Failed to build scan-telemetry flush client")?;
             let interval_secs: u64 = std::env::var("SCAN_FLUSH_INTERVAL_SECS")
                 .ok()
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(300);
+            let interval = Duration::from_secs(interval_secs);
+            // The counter is built with the cadence rather than told it later:
+            // every batch it drains declares the interval, which is what lets the
+            // node judge staleness instead of assuming a value it cannot see.
+            let counter = Arc::new(
+                dpp_resolver::infra::scan_counter::ScanCounter::with_flush_interval(interval),
+            );
             dpp_resolver::infra::scan_counter::spawn_scan_flush(
                 counter.clone(),
                 flush_client,
                 url,
-                Duration::from_secs(interval_secs),
+                interval,
             );
             tracing::info!(interval_secs, "scan telemetry enabled");
             Some(counter)

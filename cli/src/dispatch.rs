@@ -1,9 +1,9 @@
 //! Command dispatch: maps a parsed `Commands` tree to its `commands::run_*` handler.
 
 use crate::cli_args::{
-    Commands, FacilityCommands, KeyCommands, OperatorCommands, OperatorIdCommands,
-    PassportCommands, PluginCommands, ProductGroupCommands, ProfileCommands, RulesetCommands,
-    SchemaCommands, SealCommands, TransferCommands, WebhookCommands,
+    Commands, CredentialCommands, FacilityCommands, KeyCommands, OperatorCommands,
+    OperatorIdCommands, PassportCommands, PluginCommands, ProductGroupCommands, ProfileCommands,
+    RulesetCommands, SchemaCommands, SealCommands, TransferCommands, WebhookCommands,
 };
 use crate::commands::{
     bootstrap::run_bootstrap,
@@ -11,6 +11,7 @@ use crate::commands::{
         run_product_group_list, run_product_group_show, run_schema_list, run_schema_show,
         run_template,
     },
+    credential::run_credential_issue,
     down::run_down,
     evidence::run_evidence,
     export::run_export,
@@ -188,6 +189,27 @@ pub async fn dispatch(cmd: Commands) -> anyhow::Result<()> {
         Commands::OperatorId {
             command: OperatorIdCommands::Audit { id },
         } => run_operator_id_audit(&id).await,
+        Commands::Credential {
+            command:
+                CredentialCommands::Issue {
+                    holder_did,
+                    name,
+                    role,
+                    country,
+                    product_groups,
+                    valid_for_days,
+                },
+        } => {
+            run_credential_issue(crate::core::credential::IssueRequest {
+                holder_did,
+                name,
+                role,
+                country,
+                product_groups,
+                valid_for_days,
+            })
+            .await
+        }
         Commands::Webhook {
             command: WebhookCommands::List,
         } => run_webhook_list().await,

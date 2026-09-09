@@ -79,7 +79,11 @@ async fn import_json_records(
     let mut errors: Vec<String> = Vec::new();
     let url = format!("{}/api/v1/dpp", cfg.vault_url);
     for (i, payload) in payloads.iter().enumerate() {
-        match client.post_json(&url, payload).await {
+        // Each row gets its own derived key, so re-running a partially failed
+        // import re-creates exactly the rows that did not land. One key for the
+        // whole loop would be refused at row two as a reuse with a different
+        // body — and if it were not, every row would replay row one's response.
+        match client.post_json_creating_indexed(&url, payload, i).await {
             Ok((status, _)) if status.is_success() => created += 1,
             Ok((status, body)) => {
                 failed += 1;

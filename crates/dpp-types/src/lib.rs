@@ -38,6 +38,7 @@ pub mod seal;
 pub mod snapshot;
 pub mod transfer;
 pub mod trust;
+pub mod unsold_goods;
 pub mod webhook;
 
 pub use api_key::{
@@ -78,6 +79,10 @@ pub use snapshot::{
 };
 pub use transfer::TransferStore;
 pub use trust::{NodeProfile, NodeTrustReport, TrustMode, TrustPort};
+pub use unsold_goods::{
+    CreateUnsoldGoodsEntry, Destination, DiscardReason, ProductCategory, UnsoldGoodsEntry,
+    UnsoldGoodsStore,
+};
 pub use webhook::{
     CreateWebhookRequest, WebhookCounts, WebhookDeliveryRow, WebhookDeliveryStatus, WebhookOutbox,
     WebhookSubscription, WebhookSubscriptionStore,

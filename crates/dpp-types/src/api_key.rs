@@ -170,6 +170,26 @@ pub trait ApiKeyRepository: Send + Sync {
 
     /// Revoke a key by id. Returns `true` if the key existed and was revoked.
     async fn revoke(&self, id: Uuid) -> Result<bool, DppError>;
+
+    /// Record that `id` was just used to authenticate, at most once per
+    /// `not_within`.
+    ///
+    /// `last_used_at` is the signal an operator revokes a stale key on, and it
+    /// was returned by the API while nothing ever wrote it — the column was read
+    /// in three queries, set to `None` at every construction site, and the only
+    /// `UPDATE` on the table deactivates a key.
+    ///
+    /// Throttled because this is the authentication hot path: every request with
+    /// a Bearer key would otherwise take a row write. "When was this last used"
+    /// does not need second precision to answer "is anyone still using it", so
+    /// the write is skipped while the stored value is already recent.
+    ///
+    /// Best-effort by contract: an implementation that fails here must not fail
+    /// the request. Authentication has already succeeded at the point it is
+    /// called, and refusing a valid credential because a bookkeeping write
+    /// failed would trade a real capability for a diagnostic one.
+    async fn touch_last_used(&self, id: Uuid, not_within: chrono::Duration)
+    -> Result<(), DppError>;
 }
 
 #[cfg(test)]

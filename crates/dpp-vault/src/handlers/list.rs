@@ -1,8 +1,7 @@
 //! `GET /api/v1/dpps` — paginated passport list with optional status and text filtering.
 
 use axum::{
-    Json,
-    extract::{Extension, Query, State},
+    extract::{Extension, State},
     http::StatusCode,
     response::IntoResponse,
 };
@@ -13,6 +12,7 @@ use dpp_domain::status::PassportStatus;
 use crate::{middleware::auth::AuthContext, state::AppState};
 
 use super::error::internal_error;
+use crate::extract::{Json, Query};
 
 /// One page of passports, with the totals a caller needs to page through them.
 ///

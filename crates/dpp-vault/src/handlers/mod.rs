@@ -1,9 +1,11 @@
 //! HTTP handler modules for the vault API.
 
+pub mod amend;
 pub mod api_keys;
 pub mod archive;
 pub mod audience_read;
 pub mod create;
+pub mod credentials;
 pub mod eol;
 pub mod error;
 pub mod evidence;
@@ -26,8 +28,10 @@ pub mod ruleset;
 pub mod scan_ingest;
 pub mod seal;
 pub mod stats;
+pub mod supersede;
 pub mod suspend;
 pub mod transfer;
+pub mod unsold_goods;
 pub mod update;
 pub mod validate;
 pub mod verify_tree;

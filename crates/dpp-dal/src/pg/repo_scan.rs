@@ -4,6 +4,7 @@
 //! being written as a scan.
 
 use async_trait::async_trait;
+use chrono::NaiveDate;
 use sqlx::Row;
 
 use dpp_domain::{DppError, passport::PassportId};
@@ -13,6 +14,40 @@ use dpp_types::scan::{
 };
 
 use super::{PgDal, db_err};
+
+/// Split increments into the parallel arrays `UNNEST` takes.
+///
+/// Separate from the query so the column order is stated once; a transposition
+/// here would bind days as variants and fail loudly at the type cast rather
+/// than writing plausible-looking wrong rows.
+fn unzip_scans(
+    scans: &[ScanIncrement],
+) -> (Vec<uuid::Uuid>, Vec<NaiveDate>, Vec<String>, Vec<i64>) {
+    let mut ids = Vec::with_capacity(scans.len());
+    let mut days = Vec::with_capacity(scans.len());
+    let mut variants = Vec::with_capacity(scans.len());
+    let mut counts = Vec::with_capacity(scans.len());
+    for s in scans {
+        ids.push(s.dpp_id.0);
+        days.push(s.day);
+        variants.push(s.variant.clone());
+        counts.push(s.count);
+    }
+    (ids, days, variants, counts)
+}
+
+/// The [`unzip_scans`] counterpart for QR renders, which carry no variant.
+fn unzip_qr_renders(qr: &[QrRenderIncrement]) -> (Vec<uuid::Uuid>, Vec<NaiveDate>, Vec<i64>) {
+    let mut ids = Vec::with_capacity(qr.len());
+    let mut days = Vec::with_capacity(qr.len());
+    let mut counts = Vec::with_capacity(qr.len());
+    for q in qr {
+        ids.push(q.dpp_id.0);
+        days.push(q.day);
+        counts.push(q.count);
+    }
+    (ids, days, counts)
+}
 
 /// PostgreSQL implementation of [`ScanTelemetryRepository`].
 pub struct PgScanTelemetryRepo {
@@ -39,35 +74,46 @@ impl ScanTelemetryRepository for PgScanTelemetryRepo {
         // One transaction over both tables so a flush lands atomically or not at
         // all — the resolver retains and retries the whole window on failure.
         let mut tx = self.dal.begin().await?;
-        for s in scans {
+
+        if !scans.is_empty() {
+            let (ids, days, variants, counts) = unzip_scans(scans);
             sqlx::query(
                 r#"INSERT INTO odal.scan_telemetry (dpp_id, day, variant, count)
-                   VALUES ($1, $2, $3, $4)
+                   SELECT dpp_id, day, variant, SUM(count)
+                     FROM UNNEST($1::uuid[], $2::date[], $3::text[], $4::bigint[])
+                          AS t(dpp_id, day, variant, count)
+                    GROUP BY dpp_id, day, variant
                    ON CONFLICT (dpp_id, day, variant)
                    DO UPDATE SET count = odal.scan_telemetry.count + EXCLUDED.count"#,
             )
-            .bind(s.dpp_id.0)
-            .bind(s.day)
-            .bind(&s.variant)
-            .bind(s.count)
+            .bind(&ids)
+            .bind(&days)
+            .bind(&variants)
+            .bind(&counts)
             .execute(&mut *tx)
             .await
             .map_err(db_err)?;
         }
-        for q in qr_renders {
+
+        if !qr_renders.is_empty() {
+            let (ids, days, counts) = unzip_qr_renders(qr_renders);
             sqlx::query(
                 r#"INSERT INTO odal.qr_render (dpp_id, day, count)
-                   VALUES ($1, $2, $3)
+                   SELECT dpp_id, day, SUM(count)
+                     FROM UNNEST($1::uuid[], $2::date[], $3::bigint[])
+                          AS t(dpp_id, day, count)
+                    GROUP BY dpp_id, day
                    ON CONFLICT (dpp_id, day)
                    DO UPDATE SET count = odal.qr_render.count + EXCLUDED.count"#,
             )
-            .bind(q.dpp_id.0)
-            .bind(q.day)
-            .bind(q.count)
+            .bind(&ids)
+            .bind(&days)
+            .bind(&counts)
             .execute(&mut *tx)
             .await
             .map_err(db_err)?;
         }
+
         tx.commit().await.map_err(db_err)?;
         Ok(())
     }
@@ -118,6 +164,10 @@ impl ScanTelemetryRepository for PgScanTelemetryRepo {
         .map_err(db_err)?;
 
         Ok(PassportScanStats {
+            // Liveness is not the database's to know — the handler overlays it
+            // from what this process has actually received. See `scan_liveness`.
+            ingesting: false,
+            last_ingest_at: None,
             window_days,
             total_scans: totals.get("total"),
             scans_html: totals.get("html"),
@@ -157,6 +207,8 @@ impl ScanTelemetryRepository for PgScanTelemetryRepo {
         .map_err(db_err)?;
 
         Ok(OperatorScanStats {
+            ingesting: false,
+            last_ingest_at: None,
             window_days,
             total_scans: row.get("total"),
             total_qr_renders: total_qr,

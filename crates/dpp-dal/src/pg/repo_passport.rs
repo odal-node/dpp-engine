@@ -110,11 +110,25 @@ pub(crate) async fn update_passport_in_tx(
     let doc = serde_json::to_value(passport)
         .map_err(|e| DppError::Internal(format!("serialize: {e}")))?;
     let res = sqlx::query(
+        // The scalar columns re-projected from `$2`, each `COALESCE`d onto its
+        // stored value for the reason the doc comment above gives: an omitted
+        // key is absent, not null, so a column must keep what it has rather
+        // than be cleared by a partial document.
+        //
+        // `retention_until` is the one that matters most here — it is sealed at
+        // publish, so it is never present at create and would stay NULL forever
+        // if only the insert wrote it. `assessed_at` and `ruleset_version`
+        // change whenever the compliance determination is re-run.
         r#"UPDATE odal.passport SET
              product_group           = $2->>'productGroup',
              status           = COALESCE($2->>'status', status),
              retention_locked = COALESCE(($2->>'retentionLocked')::boolean, retention_locked),
              schema_version   = COALESCE($2->>'schemaVersion', schema_version),
+             granularity      = COALESCE($2->>'granularity', granularity),
+             retention_until  = COALESCE(NULLIF($2->>'retentionUntil','')::timestamptz, retention_until),
+             product_id       = COALESCE(NULLIF($2->>'productId','')::uuid, product_id),
+             assessed_at      = COALESCE(NULLIF($2->'complianceResult'->>'assessedAt','')::timestamptz, assessed_at),
+             ruleset_version  = COALESCE($2->'complianceResult'->>'rulesetVersion', ruleset_version),
              published_at     = COALESCE(NULLIF($2->>'publishedAt','')::timestamptz, published_at),
              doc              = doc || $2
            WHERE id = $1"#,
@@ -177,14 +191,40 @@ impl PassportRepository for PgPassportRepo {
         let doc = Self::to_doc(&passport)?;
         let mut tx = self.dal.begin().await?;
         sqlx::query(
+            // Every scalar column here is a **projection of `doc`**, never a
+            // second source of truth: the document is authoritative and these
+            // exist so a value can be filtered, indexed or reported on without
+            // reaching into JSONB. `passport_column_coverage.rs` fails the build
+            // if a column on this table is left out of both this statement and
+            // the update, which is how ten of them came to sit permanently NULL
+            // while reading as authoritative.
+            //
+            // `version` and `supersedes_id` carry the version chain —
+            // `idx_passport_supersedes` indexes the second, and "is this record
+            // still the head" is a predicate, not a document read.
+            //
+            // `assessed_at` and `ruleset_version` live one level down, inside
+            // `complianceResult`, because that is where the determination that
+            // produced them lives. A missing `complianceResult` yields SQL NULL
+            // through both arrows rather than an error.
             r#"INSERT INTO odal.passport
                  (id, product_group, status, retention_locked, schema_version,
+                  version, supersedes_id,
+                  granularity, retention_until, product_id,
+                  assessed_at, ruleset_version,
                   created_at, updated_at, published_at, doc)
                VALUES ($1,
                        $2->>'productGroup',
                        COALESCE($2->>'status','draft'),
                        COALESCE(($2->>'retentionLocked')::boolean, false),
                        COALESCE($2->>'schemaVersion','1.0.0'),
+                       COALESCE(($2->>'version')::integer, 1),
+                       NULLIF($2->>'supersedesId','')::uuid,
+                       $2->>'granularity',
+                       NULLIF($2->>'retentionUntil','')::timestamptz,
+                       NULLIF($2->>'productId','')::uuid,
+                       NULLIF($2->'complianceResult'->>'assessedAt','')::timestamptz,
+                       $2->'complianceResult'->>'rulesetVersion',
                        now(), now(),
                        NULLIF($2->>'publishedAt','')::timestamptz,
                        $2)"#,
@@ -261,6 +301,27 @@ impl PassportRepository for PgPassportRepo {
     /// Same numeric-only guard as `find_published_by_gtin`: a `%` or `_` in an
     /// untrusted value would otherwise widen the LIKE pattern and match an
     /// arbitrary passport.
+    ///
+    /// # Why a superseded record is excluded, and why the order is fixed
+    ///
+    /// One GTIN matches one row only while a product has one passport. An
+    /// amendment ends that: the successor inherits the product group data the
+    /// GTIN comes from, so predecessor and successor both carry `/01/{gtin}/`
+    /// in `qrCodeUrl` and both match. With no `ORDER BY`, `LIMIT 1` then took
+    /// whichever row the scan reached first.
+    ///
+    /// That is not a tie worth breaking, because a superseded record is never
+    /// the answer to "what does this product's code resolve to" — its successor
+    /// is, which is the whole point of superseding it. Excluding it says so.
+    /// Left in, it answered for its successor: a product amended and then
+    /// recalled reported `404 "no published DPP for this GTIN"` to the scanner
+    /// instead of the `410` that is the recall signal, because the predecessor
+    /// won the scan and its status is neither published nor suspended.
+    ///
+    /// `created_at DESC` then makes the remainder deterministic rather than
+    /// heap-ordered. It does not encode a rule about which of two live records
+    /// wins — nothing should produce two — it only stops the answer from
+    /// depending on physical row order if something ever does.
     async fn find_by_gtin_any_status(&self, gtin: &str) -> Result<Option<Passport>, DppError> {
         if gtin.is_empty() || !gtin.bytes().all(|b| b.is_ascii_digit()) {
             return Ok(None);
@@ -268,6 +329,8 @@ impl PassportRepository for PgPassportRepo {
         let row = sqlx::query(
             "SELECT doc FROM odal.passport \
              WHERE doc->>'qrCodeUrl' LIKE '%/01/' || $1 || '/%' \
+               AND status <> 'superseded' \
+             ORDER BY created_at DESC \
              LIMIT 1",
         )
         .bind(gtin)

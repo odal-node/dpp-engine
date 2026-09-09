@@ -13,6 +13,8 @@ post:
   security:
     - BearerApiKey: []
     - BasicAuth: []
+  parameters:
+    - $ref: ../../components/parameters/IdempotencyKey.yaml
   requestBody:
     required: true
     content:
@@ -48,3 +50,5 @@ post:
       $ref: ../../components/responses/ValidationError.yaml
     '403':
       $ref: ../../components/responses/Forbidden.yaml
+    '409':
+      $ref: ../../components/responses/IdempotentRequestInFlight.yaml

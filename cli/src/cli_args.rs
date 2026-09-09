@@ -12,6 +12,19 @@ pub struct Cli {
     /// and the saved current profile. See `odal profile --help`.
     #[arg(long, global = true)]
     pub profile: Option<String>,
+    /// Make this invocation safe to re-run. Sent as `Idempotency-Key` on the
+    /// commands that create something; re-running with the same key returns the
+    /// first outcome instead of creating a second resource.
+    ///
+    /// Intended for scripts: on a network error you cannot tell whether the
+    /// write landed, and re-running blind is how duplicates happen. Pass the
+    /// same value on the retry — and only on a retry of the *same* command, as
+    /// a changed argument is a different request and is refused.
+    ///
+    /// Ignored by commands that create nothing; those are already safe to
+    /// repeat.
+    #[arg(long, global = true, value_name = "KEY")]
+    pub idempotency_key: Option<String>,
     /// Re-run guided setup (connect · start · onboard). Bypasses the TTY guard.
     #[arg(long)]
     pub reconfigure: bool,
@@ -96,6 +109,11 @@ pub enum Commands {
     OperatorId {
         #[command(subcommand)]
         command: OperatorIdCommands,
+    },
+    /// Issue DPP access credentials for parties with a legitimate interest
+    Credential {
+        #[command(subcommand)]
+        command: CredentialCommands,
     },
     /// Manage signed outbound webhooks (delivery of passport events)
     Webhook {
@@ -668,6 +686,42 @@ pub enum RulesetCommands {
     /// swaps atomically — no restart. The node also polls on its own; this is
     /// how you say "take it now".
     Reload,
+}
+
+#[derive(Subcommand)]
+pub enum CredentialCommands {
+    /// Issue an access credential for a repairer, recycler or other holder of a
+    /// legitimate interest.
+    ///
+    /// The node signs with its own key, so the credential says "this operator
+    /// attests that this party holds this role" — a claim the operator is
+    /// uniquely placed to make about its own network. Authority roles
+    /// (market surveillance, customs, notified body) are refused: that standing
+    /// is conferred by a member state, not asserted by an operator.
+    ///
+    /// Nothing can withdraw a credential once issued — this node publishes no
+    /// revocation status list — so the lifetime is the only control and is
+    /// capped at 90 days.
+    Issue {
+        /// DID of the party being vouched for, e.g. did:web:repairs.example
+        holder_did: String,
+        /// Legal name of the holder
+        #[arg(long)]
+        name: String,
+        /// Role granted: authorised_repairer, recycler, remanufacturer,
+        /// preparer_for_reuse, distributor, or any other label for a custom role
+        #[arg(long, default_value = "authorised_repairer")]
+        role: String,
+        /// ISO 3166-1 alpha-2 country of the holder's registration
+        #[arg(long)]
+        country: String,
+        /// Product groups the credential covers. Omit to cover all of them.
+        #[arg(long, value_delimiter = ',')]
+        product_groups: Vec<String>,
+        /// Lifetime in days (1-90)
+        #[arg(long)]
+        valid_for_days: Option<i64>,
+    },
 }
 
 #[derive(Subcommand)]

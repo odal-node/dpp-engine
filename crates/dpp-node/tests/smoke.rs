@@ -26,6 +26,7 @@ use dpp_domain::passport::PassportRef;
 use dpp_domain::{DppError, GhostArchive, GhostRegistrySync, PassthroughRegistry};
 use dpp_identity_service::state::AppState as IdentityState;
 use dpp_integrator::{infra::vault_client::VaultHttpClient, state::AppState as IntegratorState};
+use dpp_node::infra::credential_issuance::KeyStoreCredentialIssuer;
 use dpp_node::infra::pg_job_store::PgJobStore;
 use dpp_types::auth::{AuthContext, AuthError, AuthProvider};
 use dpp_vault::domain::verify::{RefUnverifiable, RefVerification, verify_ref};
@@ -143,6 +144,15 @@ async fn start_node_with_ruleset(
         .expect("provision root issuer key");
     let did_web_base_url = "test.example.com".to_owned();
 
+    // The issuer identity, derived the same way the issuing adapter derives it
+    // rather than spelled as a constant here — a constant would keep agreeing
+    // after the derivation changed.
+    let node_did = dpp_vc::build_did_document(&key_store, &did_web_base_url, "root")
+        .expect("build the node's DID document")["id"]
+        .as_str()
+        .expect("a DID document carries an id")
+        .to_owned();
+
     let identity = Arc::new(LocalIdentityService::new(
         key_store.clone(),
         "root".to_owned(),
@@ -183,6 +193,7 @@ async fn start_node_with_ruleset(
     ));
     let auth_provider: Arc<dyn dpp_types::auth::AuthProvider> = Arc::new(TestAuthProvider);
     let scan_repo = Arc::new(PgScanTelemetryRepo::new(dal.clone()));
+    let unsold_goods_repo = Arc::new(dpp_dal::pg::PgUnsoldGoodsRepo::new(dal.clone()));
     // Declared before the vault state, which now carries the trust posture so
     // the authenticated node-state route can report it.
     let trust = std::sync::Arc::new(dpp_types::trust::NodeTrustReport::new(
@@ -202,15 +213,37 @@ async fn start_node_with_ruleset(
         db_ping: Arc::new(PgPing(dal)),
         auth_provider,
         local_auth_provider: None,
-        credential_directory: None,
-        trusted_issuers: None,
+        // Self-trust, wired the way `CREDENTIAL_ISSUERS_SELF=true` wires it —
+        // and only as far as it now reaches. The node's own DID goes in the
+        // legitimate-interest bucket and *not* the authority one, so
+        // `a_self_issued_credential_never_reaches_the_authority_audience` is
+        // testing the product's rule rather than this harness's.
+        credential_directory: Some(Arc::new(ServedDidDirectory {
+            node_did: node_did.clone(),
+            did_json_url: format!("{base_url}/identity/.well-known/did.json"),
+        })),
+        trusted_issuers: Some(Arc::new(dpp_vc::StaticTrustedIssuers::new(
+            vec![node_did.clone()],
+            Vec::<String>::new(),
+        ))),
+        // The real adapter over the real key store, not a stub, and wired
+        // unconditionally exactly as `main.rs` wires it. A stub here would have
+        // exercised the handler and left `KeyStoreCredentialIssuer` — the piece
+        // that has to agree with the node's published DID document — untested.
+        credential_issuer: Some(Arc::new(KeyStoreCredentialIssuer::new(
+            key_store.clone(),
+            "root".to_owned(),
+            did_web_base_url.clone(),
+        ))),
         cors_allowed_origins: Vec::new(),
         scan_repo,
+        unsold_goods_repo,
         plugin_admin: None,
         // The trust posture is asserted through the authenticated node-state
         // route, not the public probe.
         trust: Some(trust.clone()),
         ruleset_admin: Some(ruleset.clone()),
+        idempotency: None,
     };
 
     let identity_state = IdentityState {
@@ -223,6 +256,7 @@ async fn start_node_with_ruleset(
         vault_client,
         job_store,
         batch_concurrency: 4,
+        idempotency: None,
     };
 
     let app = dpp_node::router::build(vault_state, identity_state, integrator_state);
@@ -1616,4 +1650,508 @@ async fn unknown_product_group_import_increments_import_rejections_total() {
         output.contains(r#"reason="unknown_product_group""#),
         "import_rejections_total unknown_product_group-reason not found:\n{output}"
     );
+}
+
+/// Resolves the node's own issuer DID by fetching the document the node
+/// actually publishes.
+///
+/// Deliberately not a fixture document. The property under test is that the key
+/// a verifier finds at `/.well-known/did.json` is the key that signed the
+/// credential; a hand-built document would only prove that two copies of one
+/// key agree, which is the thing that cannot fail. Going over HTTP means the
+/// served bytes are what verification runs against.
+struct ServedDidDirectory {
+    node_did: String,
+    did_json_url: String,
+}
+
+#[async_trait]
+impl dpp_vault::middleware::credential::CredentialDirectory for ServedDidDirectory {
+    async fn did_document(&self, issuer_did: &str) -> Option<serde_json::Value> {
+        // Only this node's own DID resolves. Returning the document for any
+        // issuer would let a credential signed by someone else borrow this
+        // node's key material and appear valid.
+        if issuer_did != self.node_did {
+            return None;
+        }
+        reqwest::get(&self.did_json_url)
+            .await
+            .ok()?
+            .json()
+            .await
+            .ok()
+    }
+
+    async fn status_list(
+        &self,
+        _credential: &dpp_vc::DppAccessCredential,
+    ) -> Option<dpp_vc::StatusList> {
+        // This node publishes none — which is exactly why issuance caps the
+        // lifetime instead of relying on revocation.
+        None
+    }
+}
+
+// ── Access credential issuance ───────────────────────────────────────────────
+
+/// A credential this node mints is signed by the key its own DID document
+/// offers, and names that document as the issuer.
+///
+/// This is the property `infra::credential_issuance` claims in prose — that
+/// routing both halves through `dpp-vc` means "the credential is signed by
+/// exactly the key the node's published DID document offers a verifier, and the
+/// `kid` in the JWS header resolves in that document" — and nothing checked it.
+/// The two halves are sourced separately (`build_did_document` for the identity,
+/// `sign_access_credential` for the signature), so they can drift apart in the
+/// one way that stays invisible until an external verifier rejects a credential
+/// this node considers valid. Asserting the issuer against the *served* DID
+/// document rather than against a constant is what makes that reachable here.
+#[tokio::test(flavor = "multi_thread")]
+async fn an_issued_credential_names_the_did_document_this_node_serves() {
+    let (base, _container) = start_db_and_node().await;
+    let token = make_jwt("00000000-0000-0000-0000-000000000099");
+    let client = reqwest::Client::new();
+
+    let resp = client
+        .post(format!("{base}/vault/api/v1/credentials"))
+        .bearer_auth(&token)
+        .json(&serde_json::json!({
+            "holderDid": "did:web:repairs.example",
+            "holderName": "Nord Repair GmbH",
+            "role": "authorised_repairer",
+            "country": "de",
+            "productGroups": ["battery"],
+        }))
+        .send()
+        .await
+        .expect("issue request failed");
+    assert_eq!(resp.status(), 201, "a legitimate-interest role must issue");
+    let issued: serde_json::Value = resp.json().await.unwrap();
+
+    // The document the node publishes for verifiers, fetched over the same
+    // route an external one would use.
+    let did_doc: serde_json::Value = client
+        .get(format!("{base}/identity/.well-known/did.json"))
+        .send()
+        .await
+        .expect("did document request failed")
+        .json()
+        .await
+        .expect("did document must be JSON");
+    let served_did = did_doc["id"].as_str().expect("did document must carry id");
+
+    assert_eq!(
+        issued["credential"]["issuer"], served_did,
+        "the credential's issuer must be the DID this node actually serves, \
+         got {issued}"
+    );
+
+    // The `kid` in the JWS header has to resolve *in that document*, which is
+    // the half a matching `issuer` string would not catch: the same DID can be
+    // named while a different key signs.
+    let header_b64 = issued["credentialJws"]
+        .as_str()
+        .expect("credentialJws must be a string")
+        .split('.')
+        .next()
+        .expect("compact JWS has a header segment");
+    let header: serde_json::Value = serde_json::from_slice(
+        &base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .decode(header_b64)
+            .expect("JWS header is base64url"),
+    )
+    .expect("JWS header is JSON");
+    let kid = header["kid"].as_str().expect("JWS header must carry kid");
+    // Resolved with the verifier's own helper rather than by comparing strings.
+    // `kid` here is a SHA-256 fingerprint of the raw key, not a verification
+    // method id, and `extract_key_by_fingerprint` additionally requires the
+    // method to be authorised for `assertionMethod` — reimplementing either
+    // rule in the test would let the test agree with itself while a verifier
+    // disagreed.
+    assert!(
+        dpp_crypto::jws::verifier::extract_key_by_fingerprint(&did_doc, kid).is_some(),
+        "the signing kid {kid} must resolve to an assertion-authorised key in \
+         the document this node serves, got {did_doc}"
+    );
+
+    // Country is normalised on the way in, so a credential carries the form a
+    // verifier compares against rather than whatever the caller typed.
+    assert_eq!(issued["credential"]["credentialSubject"]["country"], "DE");
+}
+
+/// The node refuses to write itself an authority credential.
+///
+/// The whole argument for issuing here is that an operator attests something
+/// only it knows — membership of its own authorised repair network. Authority
+/// standing is conferred by a member state, so an operator asserting it attests
+/// nothing, and the credential-verified read path would honour the widest
+/// disclosure class there is. The gate reads core's `CredentialRole::audience`
+/// rather than a list here, and this drives it through the real route.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_node_refuses_to_issue_itself_an_authority_credential() {
+    let (base, _container) = start_db_and_node().await;
+    let token = make_jwt("00000000-0000-0000-0000-000000000099");
+    let client = reqwest::Client::new();
+
+    for role in [
+        "market_surveillance_authority",
+        "customs_authority",
+        "notified_body",
+    ] {
+        let resp = client
+            .post(format!("{base}/vault/api/v1/credentials"))
+            .bearer_auth(&token)
+            .json(&serde_json::json!({
+                "holderDid": "did:web:authority.example",
+                "holderName": "Bundesnetzagentur",
+                "role": role,
+                "country": "DE",
+            }))
+            .send()
+            .await
+            .expect("issue request failed");
+        assert_eq!(resp.status(), 422, "{role} must be refused");
+    }
+}
+
+/// The lifetime cap is enforced, and it is the only control there is.
+///
+/// Nothing can withdraw a credential once issued — this node fetches W3C status
+/// lists and publishes none — so a credential carries no `credentialStatus` and
+/// the expiry is the whole of the revocation story. A request above the ceiling
+/// is refused rather than clamped: clamping would hand back a credential that
+/// silently expires long before the caller was told it would.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_lifetime_past_the_ceiling_is_refused_and_none_is_ever_revocable() {
+    let (base, _container) = start_db_and_node().await;
+    let token = make_jwt("00000000-0000-0000-0000-000000000099");
+    let client = reqwest::Client::new();
+
+    let issue = |days: Option<i64>| {
+        let client = client.clone();
+        let base = base.clone();
+        let token = token.clone();
+        async move {
+            let mut body = serde_json::json!({
+                "holderDid": "did:web:recycler.example",
+                "holderName": "Recycler AG",
+                "role": "recycler",
+                "country": "DE",
+            });
+            if let Some(d) = days {
+                body["validForDays"] = serde_json::json!(d);
+            }
+            client
+                .post(format!("{base}/vault/api/v1/credentials"))
+                .bearer_auth(&token)
+                .json(&body)
+                .send()
+                .await
+                .expect("issue request failed")
+        }
+    };
+
+    assert_eq!(
+        issue(Some(91)).await.status(),
+        422,
+        "91 days is past the cap"
+    );
+    assert_eq!(
+        issue(Some(0)).await.status(),
+        422,
+        "a zero lifetime is not a credential"
+    );
+    assert_eq!(
+        issue(Some(-1)).await.status(),
+        422,
+        "a negative lifetime is not a credential"
+    );
+    assert_eq!(
+        issue(Some(90)).await.status(),
+        201,
+        "the cap itself must issue"
+    );
+
+    // And no credential the node mints can be withdrawn before it lapses, which
+    // is the reason the cap exists rather than a free-form date.
+    let issued: serde_json::Value = issue(None).await.json().await.unwrap();
+    assert!(
+        issued["credential"].get("credentialStatus").is_none(),
+        "a credential naming a status list would imply a revocation this node \
+         cannot perform, got {issued}"
+    );
+}
+
+// ── The loop: issue here, present here, read here ────────────────────────────
+
+/// A credential this node issues unlocks data on this node's own
+/// credential-verified read route.
+///
+/// Every existing test of that read route hand-rolls its JWS with a fixture key
+/// and a fixture DID document, which is what let the feature ship with no
+/// producer at all — `sign_access_credential` had zero callers in this repo, so
+/// the two halves had never met. This drives the real one: issue over HTTP,
+/// present the returned header value, read.
+///
+/// `stateOfHealthPct` is the assertion because it is `individual` class under
+/// Annex XIII point 4 — absent from the public view, present only for a reader
+/// with a legitimate interest. Asserting a `200` would prove nothing: the route
+/// answers `200` with the *public* view when a credential grants nothing, so a
+/// broken credential and a working one are indistinguishable by status code.
+/// The unlocked field is the only honest signal.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_credential_this_node_issued_unlocks_data_on_this_node() {
+    let (base, _container) = start_db_and_node().await;
+    let token = make_jwt("00000000-0000-0000-0000-000000000099");
+    let client = reqwest::Client::new();
+
+    let id = publish_layered_battery(&base, &token, &client).await;
+
+    // The public view first, so the unlocked read below is a measured
+    // difference rather than an assumption about what "public" contains.
+    let public: serde_json::Value = client
+        .get(format!("{base}/vault/public/dpp/{id}"))
+        .send()
+        .await
+        .expect("public read failed")
+        .json()
+        .await
+        .unwrap();
+    assert!(
+        public["productGroupData"].get("stateOfHealthPct").is_none(),
+        "state of health is individual-class and must not be public, got {public}"
+    );
+
+    let jws = issue_repairer_credential(&base, &token, &client).await;
+
+    let resp = client
+        .get(format!("{base}/vault/credential/dpp/{id}"))
+        .header("X-DPP-Credential", &jws)
+        .send()
+        .await
+        .expect("credentialed read failed");
+    assert_eq!(resp.status(), 200);
+    let view: serde_json::Value = resp.json().await.unwrap();
+
+    assert!(
+        view["productGroupData"].get("stateOfHealthPct").is_some(),
+        "a credential this node signed must unlock individual-class data on \
+         this node, got {view}"
+    );
+}
+
+/// The self-trust narrowing holds through the whole loop, not just at issuance.
+///
+/// `CREDENTIAL_ISSUERS_SELF` used to put the operator's own DID in the
+/// authority bucket too, which let an operator write itself a
+/// market-surveillance credential this read path would honour. Two independent
+/// gates stop that now; this asserts the second. The first — issuance refusing
+/// the role outright — is
+/// `the_node_refuses_to_issue_itself_an_authority_credential`. Testing only
+/// that one would leave the read path's trust check unexercised, and it is the
+/// half that actually decides what a holder sees.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_self_issued_credential_stops_at_its_own_audience() {
+    let (base, _container) = start_db_and_node().await;
+    let token = make_jwt("00000000-0000-0000-0000-000000000099");
+    let client = reqwest::Client::new();
+
+    let id = publish_layered_battery(&base, &token, &client).await;
+    let jws = issue_repairer_credential(&base, &token, &client).await;
+
+    let view: serde_json::Value = client
+        .get(format!("{base}/vault/credential/dpp/{id}"))
+        .header("X-DPP-Credential", &jws)
+        .send()
+        .await
+        .expect("credentialed read failed")
+        .json()
+        .await
+        .unwrap();
+
+    // It reaches its own audience, which is `public+restricted+individual` —
+    // the route says so in `disclosureSet`, and both classes above public are
+    // asserted so a narrowing of the grant would fail here rather than pass
+    // quietly.
+    assert_eq!(
+        view["disclosureSet"], "public+restricted+individual",
+        "a legitimate interest is exactly these three classes, got {view}"
+    );
+    assert!(
+        view["productGroupData"].get("stateOfHealthPct").is_some(),
+        "individual-class data must be unlocked, got {view}"
+    );
+    assert!(
+        view["productGroupData"].get("cathodeMaterial").is_some(),
+        "restricted-class data must be unlocked, got {view}"
+    );
+
+    // ...and stops below `conformity`, the class an authority reaches and a
+    // legitimate interest does not. `retentionLocked` is that class (Annex XIII
+    // point 3), stamped at publish — so its absence is what proves the grant
+    // has a ceiling rather than merely a floor.
+    assert!(
+        view.get("retentionLocked").is_none(),
+        "a legitimate interest must not reach conformity-class data, got {view}"
+    );
+}
+
+/// A credential naming this node as issuer but signed by a key it does not
+/// publish unlocks nothing.
+///
+/// The trust registry matches `credential.issuer` by exact string equality, so
+/// naming the right DID is free. What is not free is signing with the key that
+/// DID document offers — the check standing between "the operator vouches for
+/// its repair network" and "anyone can mint a credential that says so". The
+/// forgery keeps the genuine header and the genuine claims so the signature is
+/// the only variable.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_credential_signed_by_a_key_this_node_does_not_publish_unlocks_nothing() {
+    let (base, _container) = start_db_and_node().await;
+    let token = make_jwt("00000000-0000-0000-0000-000000000099");
+    let client = reqwest::Client::new();
+
+    let id = publish_layered_battery(&base, &token, &client).await;
+    let genuine = issue_repairer_credential(&base, &token, &client).await;
+
+    let mut parts = genuine.split('.');
+    let header = parts.next().expect("header segment");
+    let payload = parts.next().expect("payload segment");
+    // 64 bytes of base64url — a well-formed Ed25519 signature that is not the
+    // right one, so the failure is verification rather than parsing.
+    let forged = format!("{header}.{payload}.{}", "A".repeat(86));
+
+    let resp = client
+        .get(format!("{base}/vault/credential/dpp/{id}"))
+        .header("X-DPP-Credential", forged)
+        .send()
+        .await
+        .expect("credentialed read failed");
+    let status = resp.status();
+    let view: serde_json::Value = resp.json().await.unwrap();
+
+    // `401`, and deliberately not a quiet downgrade to the public view. The two
+    // failure modes on this route mean different things and are answered
+    // differently: a credential that verifies but grants nothing here (wrong
+    // product group, expired) yields the public view with a `200`, while one
+    // whose signature does not verify is refused outright. Collapsing the
+    // second into the first would let a forger probe by watching the body
+    // shrink instead of being told no.
+    assert_eq!(
+        status, 401,
+        "a forged signature must be refused, got {view}"
+    );
+    assert_eq!(
+        view["detail"], "Credential signature did not verify.",
+        "the refusal must name the signature, not the holder or the passport, \
+         got {view}"
+    );
+}
+
+/// Mint the legitimate-interest credential the loop tests present.
+async fn issue_repairer_credential(base: &str, token: &str, client: &reqwest::Client) -> String {
+    let resp = client
+        .post(format!("{base}/vault/api/v1/credentials"))
+        .bearer_auth(token)
+        .json(&serde_json::json!({
+            "holderDid": "did:web:repairs.example",
+            "holderName": "Nord Repair GmbH",
+            "role": "authorised_repairer",
+            "country": "DE",
+            "productGroups": ["battery"],
+        }))
+        .send()
+        .await
+        .expect("issue request failed");
+    assert_eq!(resp.status(), 201, "issuing a repairer credential failed");
+    let issued: serde_json::Value = resp.json().await.unwrap();
+    issued["credentialJws"]
+        .as_str()
+        .expect("credentialJws must be a string")
+        .to_owned()
+}
+
+/// Publish a battery carrying one field of each disclosure class above public,
+/// so a credentialed read is checked by what it unlocks rather than by its
+/// status code.
+///
+/// `stateOfHealthPct` is `individual` (Annex XIII point 4) and `cathodeMaterial`
+/// is `restricted` (point 2) — both inside a legitimate interest. The ceiling is
+/// shown by `retentionLocked`, which is `conformity` (point 3) and is stamped at
+/// publish rather than supplied here. A fixture carrying only the field under
+/// test could show that the grant reaches far enough, never that it stops.
+async fn publish_layered_battery(base: &str, token: &str, client: &reqwest::Client) -> String {
+    // Battery is an in-force product group, so publish requires a default
+    // facility and a primary operator identifier (Annex III / Art. 13). Seeded
+    // through the API rather than the repo so this fixture exercises the same
+    // path an operator would.
+    let resp = client
+        .post(format!("{base}/vault/api/v1/facilities"))
+        .bearer_auth(token)
+        .json(&serde_json::json!({
+            "name": "Default Plant", "identifierScheme": "gln",
+            "identifierValue": "4012345000009", "country": "DE", "isDefault": true
+        }))
+        .send()
+        .await
+        .expect("facility seed request failed");
+    assert!(
+        resp.status().is_success(),
+        "facility seed failed: {}",
+        resp.status()
+    );
+    let resp = client
+        .post(format!("{base}/vault/api/v1/operator-identifiers"))
+        .bearer_auth(token)
+        .json(&serde_json::json!({ "scheme": "vat", "value": "DE123456789", "isPrimary": true }))
+        .send()
+        .await
+        .expect("operator-identifier seed request failed");
+    assert!(
+        resp.status().is_success(),
+        "operator-identifier seed failed: {}",
+        resp.status()
+    );
+
+    let resp = client
+        .post(format!("{base}/vault/api/v1/dpp"))
+        .bearer_auth(token)
+        .json(&serde_json::json!({
+            "productName": "Credential Loop Cell",
+            "manufacturer": { "name": "GreenCell GmbH", "address": "Berlin, DE" },
+            "materials": [{ "name": "Lithium", "weightKg": 1.2 }],
+            "batchId": "LOT-2026-09",
+            "productGroupData": {
+                "productGroup": "battery",
+                "gtin": "09506000134352",
+                "batteryChemistry": "LFP",
+                "batteryType": "portable",
+                "nominalVoltageV": 48.0,
+                "nominalCapacityAh": 100.0,
+                "expectedLifetimeCycles": 3000,
+                "co2ePerUnitKg": 45.2,
+                "ratedCapacityKwh": 4.8,
+                "stateOfHealthPct": 87.5,
+                "cathodeMaterial": [{ "name": "LiFePO4", "weightPct": 92.0 }]
+            }
+        }))
+        .send()
+        .await
+        .expect("create failed");
+    let status = resp.status();
+    let created: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(status, 201, "create failed: {created}");
+    let id = created["id"].as_str().expect("created id").to_owned();
+
+    let resp = client
+        .post(format!("{base}/vault/api/v1/dpp/{id}/publish"))
+        .bearer_auth(token)
+        .json(&serde_json::json!({}))
+        .send()
+        .await
+        .expect("publish failed");
+    let status = resp.status();
+    let body = resp.text().await.unwrap_or_default();
+    assert_eq!(status, 200, "publish failed: {body}");
+    id
 }
