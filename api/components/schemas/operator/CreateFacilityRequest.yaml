@@ -16,8 +16,17 @@ properties:
     example: '4012345000009'
   country:
     type: string
-    minLength: 2
-    maxLength: 2
+    pattern: '^[A-Z]{2}$'
+    description: |
+      ISO 3166-1 alpha-2 country the facility is located in.
+
+      **Upper case, and an assigned code.** Unlike the other country fields on
+      this API, this one is checked against the ISO 3166-1 list rather than
+      merely shaped — `de` and `XX` are both refused. The pattern is what makes
+      the published contract as strict as the handler: a length bound alone
+      admits `1?`, which satisfies the contract and is then refused with `422`,
+      and a contract looser than the implementation is the kind a generated
+      client trusts.
     example: DE
   address:
     type:

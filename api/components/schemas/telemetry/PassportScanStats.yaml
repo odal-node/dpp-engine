@@ -42,6 +42,15 @@ properties:
       a resolver has flushed to it, which the resolver makes possible by sending
       an empty batch each interval even with nothing to count.
 
+      It goes false again when a resolver stops reporting: the resolver declares
+      its own flush cadence in every batch, and telemetry is called stale after
+      three of those intervals — enough to absorb the dropped heartbeats the
+      sender never retries, since holding an empty batch would starve its
+      counter. A resolver too old to declare a cadence leaves no window to be
+      outside of, and this then reports only that one ever flushed; `lastIngestAt`
+      is on the wire either way, so a caller who knows their own deployment can
+      judge for themselves.
+
       Resets on restart — this is liveness, not history — so a freshly booted
       node reports `false` until the next flush, at most one interval.
   lastIngestAt:

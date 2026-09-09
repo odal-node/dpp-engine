@@ -2854,6 +2854,15 @@ paths:
         - name: productGroup
           in: path
           required: true
+          description: |
+            The **template key**, which since the battery split is no longer always
+            a product group: `battery-ev`, `battery-lmt` and `battery-industrial`
+            are keys served here, while `battery` is a product group served by
+            nothing. Rows from all three import under the `battery` product group.
+
+            The parameter keeps its name because renaming a path parameter renames
+            the method argument in every generated client, and for the eight
+            non-battery templates the two are still the same string.
           schema:
             type: string
             example: battery-ev
@@ -4121,9 +4130,13 @@ components:
           type: string
         country:
           type: string
-          minLength: 2
-          maxLength: 2
-          description: ISO 3166-1 alpha-2 country code.
+          pattern: ^[A-Z]{2}$
+          description: |
+            ISO 3166-1 alpha-2 country code, upper case.
+
+            Copied from a facility whose country was validated against the ISO
+            3166-1 list when it was registered, so this is what the server emits
+            rather than merely what it hopes for.
         address:
           type: string
     MaterialEntry:
@@ -5512,6 +5525,15 @@ components:
             a resolver has flushed to it, which the resolver makes possible by sending
             an empty batch each interval even with nothing to count.
 
+            It goes false again when a resolver stops reporting: the resolver declares
+            its own flush cadence in every batch, and telemetry is called stale after
+            three of those intervals — enough to absorb the dropped heartbeats the
+            sender never retries, since holding an empty batch would starve its
+            counter. A resolver too old to declare a cadence leaves no window to be
+            outside of, and this then reports only that one ever flushed; `lastIngestAt`
+            is on the wire either way, so a caller who knows their own deployment can
+            judge for themselves.
+
             Resets on restart — this is liveness, not history — so a freshly booted
             node reports `false` until the next flush, at most one interval.
         lastIngestAt:
@@ -5549,6 +5571,15 @@ components:
             belongs to the resolver, a separate deployable. What it reports is whether
             a resolver has flushed to it, which the resolver makes possible by sending
             an empty batch each interval even with nothing to count.
+
+            It goes false again when a resolver stops reporting: the resolver declares
+            its own flush cadence in every batch, and telemetry is called stale after
+            three of those intervals — enough to absorb the dropped heartbeats the
+            sender never retries, since holding an empty batch would starve its
+            counter. A resolver too old to declare a cadence leaves no window to be
+            outside of, and this then reports only that one ever flushed; `lastIngestAt`
+            is on the wire either way, so a caller who knows their own deployment can
+            judge for themselves.
 
             Resets on restart — this is liveness, not history — so a freshly booted
             node reports `false` until the next flush, at most one interval.
@@ -5830,8 +5861,17 @@ components:
           example: '4012345000009'
         country:
           type: string
-          minLength: 2
-          maxLength: 2
+          pattern: ^[A-Z]{2}$
+          description: |
+            ISO 3166-1 alpha-2 country the facility is located in.
+
+            **Upper case, and an assigned code.** Unlike the other country fields on
+            this API, this one is checked against the ISO 3166-1 list rather than
+            merely shaped — `de` and `XX` are both refused. The pattern is what makes
+            the published contract as strict as the handler: a length bound alone
+            admits `1?`, which satisfies the contract and is then refused with `422`,
+            and a contract looser than the implementation is the kind a generated
+            client trusts.
           example: DE
         address:
           type:
@@ -7059,9 +7099,10 @@ components:
         gates pass", not "publish will certainly succeed".
 
         The mandatory-content half is the reason this exists. It is the gate that most
-        often refuses a battery (38 fields for an electric-vehicle one) and it could
-        not previously be previewed anywhere: it is reachable only from a stored
-        passport, and the only dry-run the API offered takes an unsaved request body.
+        often refuses a battery — 46 data points for an electric-vehicle one, 45 for
+        an LMT battery, 38 for an industrial one — and it could not previously be
+        previewed anywhere: it is reachable only from a stored passport, and the only
+        dry-run the API offered takes an unsaved request body.
       required:
         - ready
         - blockers

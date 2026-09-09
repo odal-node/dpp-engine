@@ -3649,6 +3649,7 @@
             "name": "productGroup",
             "in": "path",
             "required": true,
+            "description": "The **template key**, which since the battery split is no longer always\na product group: `battery-ev`, `battery-lmt` and `battery-industrial`\nare keys served here, while `battery` is a product group served by\nnothing. Rows from all three import under the `battery` product group.\n\nThe parameter keeps its name because renaming a path parameter renames\nthe method argument in every generated client, and for the eight\nnon-battery templates the two are still the same string.\n",
             "schema": {
               "type": "string",
               "example": "battery-ev"
@@ -5054,9 +5055,8 @@
           },
           "country": {
             "type": "string",
-            "minLength": 2,
-            "maxLength": 2,
-            "description": "ISO 3166-1 alpha-2 country code."
+            "pattern": "^[A-Z]{2}$",
+            "description": "ISO 3166-1 alpha-2 country code, upper case.\n\nCopied from a facility whose country was validated against the ISO\n3166-1 list when it was registered, so this is what the server emits\nrather than merely what it hopes for.\n"
           },
           "address": {
             "type": "string"
@@ -6759,7 +6759,7 @@
           },
           "ingesting": {
             "type": "boolean",
-            "description": "Whether scan telemetry is actually reaching this node.\n\n`false` alongside `totalScans: 0` means the number is **unmeasured**, not\nzero — and that is the shipped default, since `SCAN_INGEST_URL` is unset\nunless an operator configures it.\n\nThe node cannot answer this from its own configuration: `SCAN_INGEST_URL`\nbelongs to the resolver, a separate deployable. What it reports is whether\na resolver has flushed to it, which the resolver makes possible by sending\nan empty batch each interval even with nothing to count.\n\nResets on restart — this is liveness, not history — so a freshly booted\nnode reports `false` until the next flush, at most one interval.\n"
+            "description": "Whether scan telemetry is actually reaching this node.\n\n`false` alongside `totalScans: 0` means the number is **unmeasured**, not\nzero — and that is the shipped default, since `SCAN_INGEST_URL` is unset\nunless an operator configures it.\n\nThe node cannot answer this from its own configuration: `SCAN_INGEST_URL`\nbelongs to the resolver, a separate deployable. What it reports is whether\na resolver has flushed to it, which the resolver makes possible by sending\nan empty batch each interval even with nothing to count.\n\nIt goes false again when a resolver stops reporting: the resolver declares\nits own flush cadence in every batch, and telemetry is called stale after\nthree of those intervals — enough to absorb the dropped heartbeats the\nsender never retries, since holding an empty batch would starve its\ncounter. A resolver too old to declare a cadence leaves no window to be\noutside of, and this then reports only that one ever flushed; `lastIngestAt`\nis on the wire either way, so a caller who knows their own deployment can\njudge for themselves.\n\nResets on restart — this is liveness, not history — so a freshly booted\nnode reports `false` until the next flush, at most one interval.\n"
           },
           "lastIngestAt": {
             "type": "string",
@@ -6793,7 +6793,7 @@
           },
           "ingesting": {
             "type": "boolean",
-            "description": "Whether scan telemetry is actually reaching this node.\n\n`false` alongside `totalScans: 0` means the number is **unmeasured**, not\nzero — and that is the shipped default, since `SCAN_INGEST_URL` is unset\nunless an operator configures it.\n\nThe node cannot answer this from its own configuration: `SCAN_INGEST_URL`\nbelongs to the resolver, a separate deployable. What it reports is whether\na resolver has flushed to it, which the resolver makes possible by sending\nan empty batch each interval even with nothing to count.\n\nResets on restart — this is liveness, not history — so a freshly booted\nnode reports `false` until the next flush, at most one interval.\n"
+            "description": "Whether scan telemetry is actually reaching this node.\n\n`false` alongside `totalScans: 0` means the number is **unmeasured**, not\nzero — and that is the shipped default, since `SCAN_INGEST_URL` is unset\nunless an operator configures it.\n\nThe node cannot answer this from its own configuration: `SCAN_INGEST_URL`\nbelongs to the resolver, a separate deployable. What it reports is whether\na resolver has flushed to it, which the resolver makes possible by sending\nan empty batch each interval even with nothing to count.\n\nIt goes false again when a resolver stops reporting: the resolver declares\nits own flush cadence in every batch, and telemetry is called stale after\nthree of those intervals — enough to absorb the dropped heartbeats the\nsender never retries, since holding an empty batch would starve its\ncounter. A resolver too old to declare a cadence leaves no window to be\noutside of, and this then reports only that one ever flushed; `lastIngestAt`\nis on the wire either way, so a caller who knows their own deployment can\njudge for themselves.\n\nResets on restart — this is liveness, not history — so a freshly booted\nnode reports `false` until the next flush, at most one interval.\n"
           },
           "lastIngestAt": {
             "type": "string",
@@ -7157,8 +7157,8 @@
           },
           "country": {
             "type": "string",
-            "minLength": 2,
-            "maxLength": 2,
+            "pattern": "^[A-Z]{2}$",
+            "description": "ISO 3166-1 alpha-2 country the facility is located in.\n\n**Upper case, and an assigned code.** Unlike the other country fields on\nthis API, this one is checked against the ISO 3166-1 list rather than\nmerely shaped — `de` and `XX` are both refused. The pattern is what makes\nthe published contract as strict as the handler: a length bound alone\nadmits `1?`, which satisfies the contract and is then refused with `422`,\nand a contract looser than the implementation is the kind a generated\nclient trusts.\n",
             "example": "DE"
           },
           "address": {
@@ -8478,7 +8478,7 @@
       },
       "PublishReadiness": {
         "type": "object",
-        "description": "Whether the passport would clear the publish gates that can be answered\nwithout attempting the transition: the category **mandatory-content** gate and\nthe product-group data/schema gates.\n\nDeliberately not the whole of publish. The registry-identity requirement is\noperator state rather than passport state, and the binding-compliance gate\nneeds a determination this route does not run — so `ready: true` means \"these\ngates pass\", not \"publish will certainly succeed\".\n\nThe mandatory-content half is the reason this exists. It is the gate that most\noften refuses a battery (38 fields for an electric-vehicle one) and it could\nnot previously be previewed anywhere: it is reachable only from a stored\npassport, and the only dry-run the API offered takes an unsaved request body.\n",
+        "description": "Whether the passport would clear the publish gates that can be answered\nwithout attempting the transition: the category **mandatory-content** gate and\nthe product-group data/schema gates.\n\nDeliberately not the whole of publish. The registry-identity requirement is\noperator state rather than passport state, and the binding-compliance gate\nneeds a determination this route does not run — so `ready: true` means \"these\ngates pass\", not \"publish will certainly succeed\".\n\nThe mandatory-content half is the reason this exists. It is the gate that most\noften refuses a battery — 46 data points for an electric-vehicle one, 45 for\nan LMT battery, 38 for an industrial one — and it could not previously be\npreviewed anywhere: it is reachable only from a stored passport, and the only\ndry-run the API offered takes an unsaved request body.\n",
         "required": [
           "ready",
           "blockers",
