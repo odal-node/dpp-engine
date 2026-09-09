@@ -5,7 +5,9 @@
 use anyhow::Result;
 use serde_json::{Value, json};
 
-use super::super::types::{LintFinding, LintReport, PassportSummary, TreeReport};
+use super::super::types::{
+    LintFinding, LintReport, PassportScope, PassportSummary, PublishReadiness, TreeReport,
+};
 use crate::{
     config::Config,
     http::{OdalClient, describe_error},
@@ -51,10 +53,65 @@ pub async fn action_lint(id: &str, client: &OdalClient, cfg: &Config) -> Result<
         })
         .unwrap_or_default();
 
+    let publish_readiness = parse_publish_readiness(&passport);
+
     Ok(LintReport {
         pack_version: text("packVersion"),
         assessed_at: text("assessedAt"),
         findings,
+        publish_readiness,
+    })
+}
+
+/// Read `publishReadiness` off a lint response.
+///
+/// It sits on the response **envelope**, not inside `lintResult` — it is
+/// computed per request and never persisted, because it is a question about the
+/// gates rather than a finding about the content. Reading it from the wrong
+/// place is the kind of mistake that shows up as a silently empty section
+/// rather than an error, so it is pulled out here and pinned by a test against
+/// a real response shape.
+///
+/// `None` from a node that predates the field, which the caller renders as
+/// "not reported" rather than as "not ready".
+fn parse_publish_readiness(passport: &Value) -> Option<PublishReadiness> {
+    let r = passport.get("publishReadiness")?;
+    let blockers = r
+        .get("blockers")
+        .and_then(Value::as_array)
+        .map(|a| {
+            a.iter()
+                .map(|b| {
+                    let s = |k: &str| {
+                        b.get(k)
+                            .and_then(Value::as_str)
+                            .unwrap_or_default()
+                            .to_owned()
+                    };
+                    LintFinding {
+                        // Blockers carry no severity of their own: every one of
+                        // them stops the publish, which is what makes them
+                        // blockers rather than findings.
+                        severity: "blocking".to_owned(),
+                        field: s("field"),
+                        message: s("message"),
+                    }
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+
+    Some(PublishReadiness {
+        ready: r.get("ready").and_then(Value::as_bool).unwrap_or(false),
+        blockers,
+        scope: r.get("passportScope").map(|s| PassportScope {
+            status: s
+                .get("status")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_owned(),
+            note: s.get("note").and_then(Value::as_str).map(str::to_owned),
+        }),
     })
 }
 
@@ -201,4 +258,65 @@ pub async fn action_find_by_identity(
         batch: v.get("batchId").and_then(Value::as_str).map(str::to_owned),
         updated: s("updatedAt"),
     }))
+}
+
+#[cfg(test)]
+mod publish_readiness {
+    use super::parse_publish_readiness;
+    use serde_json::json;
+
+    /// The shape a node actually returns, captured from a live `/lint` call
+    /// against an imported battery rather than written from the schema.
+    #[test]
+    fn reads_the_envelope_field_not_the_lint_result() {
+        let response = json!({
+            "id": "01a08610-bce5-79e2-b85f-bdbe158446b2",
+            "lintResult": { "packVersion": "1.2.0", "findings": [] },
+            "publishReadiness": {
+                "ready": true,
+                "blockers": [],
+                "passportScope": {
+                    "status": "required",
+                    "note": "Art. 77(1) requires a battery passport for an industrial \
+                             battery with a capacity greater than 2 kWh."
+                }
+            }
+        });
+        let r = parse_publish_readiness(&response).expect("publishReadiness is on the envelope");
+        assert!(r.ready);
+        assert!(r.blockers.is_empty());
+        let scope = r.scope.expect("passportScope is reported");
+        assert_eq!(scope.status, "required");
+        assert!(scope.note.is_some());
+    }
+
+    /// Blockers are addressed to a field, which is the whole reason they are a
+    /// list rather than a sentence — a caller completing a draft attaches each
+    /// message to the input it belongs to.
+    #[test]
+    fn a_blocker_keeps_the_field_it_is_addressed_to() {
+        let response = json!({
+            "publishReadiness": {
+                "ready": false,
+                "blockers": [
+                    { "field": "/productGroupData/batteryModelId", "message": "is mandatory" }
+                ]
+            }
+        });
+        let r = parse_publish_readiness(&response).expect("present");
+        assert!(!r.ready);
+        assert_eq!(r.blockers.len(), 1);
+        assert_eq!(r.blockers[0].field, "/productGroupData/batteryModelId");
+        assert_eq!(r.blockers[0].severity, "blocking");
+        assert!(r.scope.is_none(), "a node may omit the scope report");
+    }
+
+    /// A node that predates the field reports nothing, and that must not read
+    /// as "not ready" — which would tell an operator their passport is blocked
+    /// when nothing has been asked.
+    #[test]
+    fn an_older_node_reports_nothing_rather_than_not_ready() {
+        let response = json!({ "id": "x", "lintResult": { "findings": [] } });
+        assert!(parse_publish_readiness(&response).is_none());
+    }
 }

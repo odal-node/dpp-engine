@@ -155,12 +155,40 @@ pub struct LintReport {
     pub pack_version: Option<String>,
     pub assessed_at: Option<String>,
     pub findings: Vec<LintFinding>,
+    /// Whether publish would clear the gates that can be answered without
+    /// attempting it. `None` from a node that predates the field.
+    ///
+    /// Carried on the lint report because the route carries it: `/lint` is the
+    /// only place the mandatory-content gate can be previewed, and an operator
+    /// running `odal passport lint` to find out what is wrong with a draft is
+    /// asking exactly that question. Reporting the advisory findings and
+    /// withholding the blocking ones would answer the smaller half.
+    pub publish_readiness: Option<PublishReadiness>,
 }
 
 pub struct LintFinding {
     pub severity: String,
     pub field: String,
     pub message: String,
+}
+
+/// The publish-readiness half of a lint response.
+pub struct PublishReadiness {
+    pub ready: bool,
+    pub blockers: Vec<LintFinding>,
+    pub scope: Option<PassportScope>,
+}
+
+/// Whether Art. 77(1) requires a battery passport for this record at all.
+///
+/// Distinct from the blockers, and reported beside them rather than folded in:
+/// the node applies the content gate whatever this says, so a `voluntary`
+/// passport is still held to the full category content. Saying so is the point
+/// — an operator being asked for forty-six data points on a battery the article
+/// does not reach deserves to know that is the node's choice and not the law's.
+pub struct PassportScope {
+    pub status: String,
+    pub note: Option<String>,
 }
 
 // ── Component (BOM) tree ─────────────────────────────────────────────────────

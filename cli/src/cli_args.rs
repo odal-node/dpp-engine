@@ -115,6 +115,15 @@ pub enum Commands {
         #[command(subcommand)]
         command: CredentialCommands,
     },
+    /// Record and read the ESPR Art. 24 disclosure of unsold consumer products.
+    ///
+    /// Not a passport: Art. 24's subject is an operator over a financial year,
+    /// so these lines belong to the operator and not to any product.
+    #[command(name = "unsold-goods")]
+    UnsoldGoods {
+        #[command(subcommand)]
+        command: UnsoldGoodsCommands,
+    },
     /// Manage signed outbound webhooks (delivery of passport events)
     Webhook {
         #[command(subcommand)]
@@ -282,6 +291,47 @@ pub enum PassportCommands {
         /// Output file (stdout if omitted)
         #[arg(short, long)]
         output: Option<String>,
+    },
+    /// Correct a published passport by issuing a successor. The passport in the
+    /// path moves to the terminal `superseded` state and the new record is
+    /// returned — a different ID from the one you passed.
+    Amend {
+        /// Passport ID to correct
+        id: String,
+        /// Path to a JSON file holding the correction. Only the patchable
+        /// content fields take effect (productName, co2ePerUnit,
+        /// repairabilityScore, productGroupData, componentRefs); the product
+        /// group, schema version, manufacturer and lineage are fixed at
+        /// issuance.
+        #[arg(long)]
+        patch: String,
+        /// Why the passport is being corrected — recorded on the superseded
+        /// record's audit entry beside the successor's id
+        #[arg(long)]
+        reason: Option<String>,
+        /// Output raw JSON instead of a summary
+        #[arg(long)]
+        json: bool,
+    },
+    /// Retire a published passport in favour of one that already exists.
+    ///
+    /// The successor must already be published and must already carry
+    /// `supersedesId` pointing back at this passport — that link is declared
+    /// when the successor is created and is only checked here. Use `amend`
+    /// instead when the replacement is a correction of this record rather than
+    /// a passport created independently.
+    Supersede {
+        /// Passport ID to retire
+        id: String,
+        /// The successor's passport ID
+        #[arg(long = "superseded-by")]
+        superseded_by: String,
+        /// Why the passport is being retired
+        #[arg(long)]
+        reason: Option<String>,
+        /// Output raw JSON instead of a summary
+        #[arg(long)]
+        json: bool,
     },
     /// Re-run the plausibility lint pack and store the refreshed findings.
     /// Findings are advisory — they never gate publish.
@@ -721,6 +771,57 @@ pub enum CredentialCommands {
         /// Lifetime in days (1-90)
         #[arg(long)]
         valid_for_days: Option<i64>,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum UnsoldGoodsCommands {
+    /// Record one line of the Art. 24 disclosure.
+    ///
+    /// A disclosure is many of these, not one row: Art. 24(1) asks for the
+    /// figures "differentiated per type or category of products", and
+    /// separately per reason and destination, which a single aggregate cannot
+    /// express. The operator is not part of the line — the report is about this
+    /// node's own operator, taken from its config.
+    Record {
+        /// Financial year the goods were discarded in, as YYYY
+        #[arg(long)]
+        period: String,
+        /// How many products. Art. 24(1)(a) asks for the number *and* the
+        /// weight, so both are required.
+        #[arg(long)]
+        units: i64,
+        /// Their total weight in kilograms
+        #[arg(long)]
+        kg: f64,
+        /// The operator's own categorisation, for Art. 24(1)(a). Not Annex VII
+        /// ban scope — that is a CN-code prefix test this does not perform.
+        #[arg(long, value_parser = ["apparel", "footwear", "homeTextile", "accessories", "other"])]
+        category: String,
+        /// Why the goods went unsold, for Art. 24(1)(b)
+        #[arg(long, value_parser = ["endOfSeason", "qualityDefect", "packagingDefect", "overProduction", "customerReturn", "other"])]
+        reason: String,
+        /// Where they went, for Art. 24(1)(c)
+        #[arg(long, value_parser = ["donation", "recycling", "repurposing", "supplierReturn", "exemptDestruction"])]
+        destination: String,
+        /// Which Art. 25 exemption a destruction relies on. Required for
+        /// `--destination exemptDestruction`, and refused for every other
+        /// destination — a justification attached to a donation describes
+        /// nothing.
+        #[arg(long)]
+        justification: Option<String>,
+        /// ISO 3166-1 alpha-2 country the goods were disposed of in
+        #[arg(long)]
+        country: String,
+    },
+    /// List recorded disclosure lines, newest first
+    List {
+        /// Narrow to one financial year (YYYY). Omit for every period.
+        #[arg(long)]
+        period: Option<String>,
+        /// Output raw JSON instead of a table
+        #[arg(long)]
+        json: bool,
     },
 }
 

@@ -214,7 +214,9 @@ least-privilege key cannot mutate the operator's registry identity).
 | `odal passport history <id>` | Passport audit trail | API key |
 | `odal passport export [--format] [--status] [-o]` | Export passports (JSON/CSV) | API key |
 | `odal passport find --product-group --gtin [--batch] [--json]` | Look a passport up by its business identity instead of its ID. The batch is part of that identity, not a filter on it | API key |
-| `odal passport lint <id> [--json]` | Re-run the plausibility lint pack and store the findings. Advisory — they never gate publish | API key (write) |
+| `odal passport lint <id> [--json]` | Re-run the plausibility lint pack and store the findings. Advisory — they never gate publish. Also reports **publish readiness**: the blocking fields, and whether Art. 77(1) requires a battery passport for this record at all | API key (write) |
+| `odal passport amend <id> --patch <file> [--reason] [--json]` | Correct a published passport by issuing a **successor**. The passport named moves to the terminal `superseded` state and a new record is returned — a different id from the one passed. Only the patchable content fields take effect | API key (write) |
+| `odal passport supersede <id> --superseded-by <id> [--reason] [--json]` | Retire a published passport in favour of one that **already exists**. The successor must already carry `supersedesId` back to it — declared when the successor was created, and only checked here. Use `amend` when the replacement is a correction rather than an independently created passport | API key (write) |
 | `odal passport tree <id> [--json]` | Walk the component (BOM) tree, checking each node against the hash its parent pinned. Integrity only, not a signature check | API key |
 | `odal passport eol <id> --reason [--derogation] [--derogation-citation] [--notes]` | Declare end of life (terminal). The record is retained. `--reason destroyed` requires a `--derogation` — the ESPR Art. 25 ban | API key (write) |
 
@@ -242,7 +244,7 @@ anyone has a node, let alone a key.
 | `odal schema check` | The node build, core version, and active ruleset it applies | none |
 | `odal schema list [--json]` | Product groups with a schema, the current version, and the older ones the upcast lens chain still reads | none |
 | `odal schema show <group> [version] [-o]` | Print a product group's JSON Schema | none |
-| `odal template <group> [-o]` | The CSV header row `odal passport import` expects. Only the five groups with a row validator have one | none |
+| `odal template <key> [-o]` | The CSV header row `odal passport import` expects. The served set is not restated here — a `404` from this command lists it, which is what keeps the list from going stale. Batteries are served **per category** (`battery-ev`, `battery-lmt`, `battery-industrial`); there is no bare `battery` template, because what a battery must carry depends on its category | none |
 
 ### EU registry & provenance
 
@@ -251,6 +253,23 @@ anyone has a node, let alone a key.
 | `odal registry [id] [--json]` | Registry sync rollup, or one passport's record | API key |
 | `odal facility audit <id>` | A facility's append-only trail (facilities are retired, never deleted) | API key (Admin) |
 | `odal operator-id audit <id>` | An operator identifier's append-only trail | API key (Admin) |
+
+### Access credentials
+
+| Command | Purpose | Auth |
+|---|---|---|
+| `odal credential issue <holder-did> --name --role --country [--product-groups] [--valid-for-days]` | Mint a DPP access credential the holder presents as `X-DPP-Credential`. **Legitimate-interest roles only** — an authority's standing is conferred by a member state, so the three authority roles are refused. Nothing can withdraw a credential once issued, so the lifetime is capped at 90 days and is the only control there is | API key (Admin) |
+
+### Unsold goods (ESPR Art. 24)
+
+Not a passport. Art. 24's subject is an **operator over a financial year** — the
+figures go on the operator's own website and the trigger is discarding unsold
+stock, none of which is a product placed on the market.
+
+| Command | Purpose | Auth |
+|---|---|---|
+| `odal unsold-goods record --period --units --kg --category --reason --destination [--justification] --country` | Record one disclosure line. Art. 24(1)(a) asks for the number **and** the weight, so both are required. `--destination exemptDestruction` requires a `--justification` — Art. 25 bans the destruction outright from 19 July 2026 — and every other destination refuses one | API key (write) |
+| `odal unsold-goods list [--period] [--json]` | The recorded lines, newest first, optionally for one financial year. Admin rather than write: reading the operator's own annual figures back is an administrative act, not part of producing passports | API key (Admin) |
 
 ---
 

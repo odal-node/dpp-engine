@@ -18,6 +18,15 @@ pub async fn run_lint(id: &str, json: bool) -> Result<()> {
                 "findings": report.findings.iter().map(|f| serde_json::json!({
                     "severity": f.severity, "field": f.field, "message": f.message,
                 })).collect::<Vec<_>>(),
+                "publishReadiness": report.publish_readiness.as_ref().map(|r| serde_json::json!({
+                    "ready": r.ready,
+                    "blockers": r.blockers.iter().map(|b| serde_json::json!({
+                        "field": b.field, "message": b.message,
+                    })).collect::<Vec<_>>(),
+                    "passportScope": r.scope.as_ref().map(|s| serde_json::json!({
+                        "status": s.status, "note": s.note,
+                    })),
+                })),
             })
         );
         return Ok(());
@@ -43,6 +52,43 @@ pub async fn run_lint(id: &str, json: bool) -> Result<()> {
     // Said every time, because a list of findings that gates nothing is
     // otherwise read as a list of findings that does.
     println!("\nFindings are advisory — they never block publish.");
+
+    // What *does* block publish, which is the question an operator running this
+    // command is usually asking. Absent from a node that predates the field.
+    if let Some(r) = &report.publish_readiness {
+        println!();
+        if r.ready {
+            println!("Publish readiness: ready — no blocking field found.");
+        } else {
+            println!(
+                "Publish readiness: NOT ready — {} blocker(s):",
+                r.blockers.len()
+            );
+            for b in &r.blockers {
+                let where_ = if b.field.is_empty() { "-" } else { &b.field };
+                println!("  {where_}  {}", b.message);
+            }
+        }
+        // Deliberately below the blockers rather than beside them: the gates
+        // are what an operator acts on, and the scope is context for why they
+        // are being asked at all.
+        if let Some(s) = &r.scope {
+            let label = match s.status.as_str() {
+                "required" => "required by Art. 77(1)",
+                "voluntary" => "voluntary — Art. 77(1) does not reach this record",
+                "notApplicable" => "not a battery — Art. 77(1) has nothing to say",
+                other => other,
+            };
+            println!("\nPassport scope: {label}");
+            if let Some(note) = &s.note {
+                println!("  {note}");
+            }
+        }
+        println!(
+            "\nThese are the gates answerable without attempting the publish. The registry\n\
+             identity requirement and the binding-compliance determination are not among them."
+        );
+    }
     Ok(())
 }
 

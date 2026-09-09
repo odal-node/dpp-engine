@@ -429,6 +429,37 @@ fn stat_i64(v: &serde_json::Value, key: &str) -> i64 {
     v.get(key).and_then(serde_json::Value::as_i64).unwrap_or(0)
 }
 
+/// Say whether the zero above is a measurement or the absence of one.
+///
+/// The node grew an `ingesting` flag precisely because `totalScans: 0` meant two
+/// different things — nobody scanned, and nothing is counting — and the second
+/// is the shipped default, since the resolver's `SCAN_INGEST_URL` is unset
+/// unless an operator configures it. Printing the counters without the flag
+/// hands the operator back the ambiguity the flag was added to remove, which is
+/// worse here than on the API: a number on a terminal reads as a fact.
+///
+/// Absent from an older node's response, which is treated as "cannot say"
+/// rather than as `false` — reporting a node that never had the flag as not
+/// ingesting would be a claim this cannot support.
+fn render_telemetry_state(stats: &serde_json::Value, label_width: usize) {
+    let label = format!("{:<label_width$}", "Telemetry");
+    let indent = " ".repeat(label_width + 4);
+    match stats.get("ingesting").and_then(serde_json::Value::as_bool) {
+        Some(true) => {
+            let last = stats
+                .get("lastIngestAt")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("just now");
+            println!("  {label}: arriving (last flush {last})");
+        }
+        Some(false) => {
+            println!("  {label}: NOT arriving — the counts above are unmeasured, not zero.");
+            println!("{indent}Set SCAN_INGEST_URL on the resolver to start counting.");
+        }
+        None => println!("  {label}: not reported by this node (older version)"),
+    }
+}
+
 pub fn render_passport_stats(stats: &serde_json::Value, id: &str) {
     let window = stat_i64(stats, "windowDays");
     println!("Scan telemetry for {id} — last {window} days");
@@ -442,6 +473,7 @@ pub fn render_passport_stats(stats: &serde_json::Value, id: &str) {
         "  QR renders  : {}   (label production — never counted as a resolution)",
         stat_i64(stats, "qrRenders"),
     );
+    render_telemetry_state(stats, 12);
     if let Some(daily) = stats.get("daily").and_then(serde_json::Value::as_array) {
         let daily: Vec<&serde_json::Value> =
             daily.iter().filter(|d| stat_i64(d, "count") > 0).collect();
@@ -470,6 +502,7 @@ pub fn render_operator_stats(stats: &serde_json::Value) {
         "  Passports scanned : {}",
         stat_i64(stats, "distinctPassportsScanned")
     );
+    render_telemetry_state(stats, 18);
 }
 
 pub fn render_export(result: &ExportResult, output: Option<&str>) -> Result<()> {

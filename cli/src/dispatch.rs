@@ -3,7 +3,8 @@
 use crate::cli_args::{
     Commands, CredentialCommands, FacilityCommands, KeyCommands, OperatorCommands,
     OperatorIdCommands, PassportCommands, PluginCommands, ProductGroupCommands, ProfileCommands,
-    RulesetCommands, SchemaCommands, SealCommands, TransferCommands, WebhookCommands,
+    RulesetCommands, SchemaCommands, SealCommands, TransferCommands, UnsoldGoodsCommands,
+    WebhookCommands,
 };
 use crate::commands::{
     bootstrap::run_bootstrap,
@@ -22,7 +23,7 @@ use crate::commands::{
     init::run_init,
     inspect::{run_eol, run_find, run_lint, run_tree},
     key::{run_key_create, run_key_list, run_key_revoke, run_key_use},
-    lifecycle::{run_archive, run_history, run_suspend},
+    lifecycle::{run_amend, run_archive, run_history, run_supersede, run_suspend},
     list::run_passport_list,
     operator::{run_operator_set, run_operator_show},
     operator_id::{
@@ -42,6 +43,7 @@ use crate::commands::{
     stats::{run_operator_stats, run_passport_stats},
     status::run_status,
     transfer::{run_transfer_initiate, run_transfer_resolve},
+    unsold_goods::{run_unsold_goods_list, run_unsold_goods_record},
     up::run_up,
     update::run_update,
     validate::run_validate,
@@ -210,6 +212,34 @@ pub async fn dispatch(cmd: Commands) -> anyhow::Result<()> {
             })
             .await
         }
+        Commands::UnsoldGoods {
+            command:
+                UnsoldGoodsCommands::Record {
+                    period,
+                    units,
+                    kg,
+                    category,
+                    reason,
+                    destination,
+                    justification,
+                    country,
+                },
+        } => {
+            run_unsold_goods_record(crate::core::unsold_goods::DisclosureLine {
+                period,
+                units,
+                kg,
+                category,
+                reason,
+                destination,
+                justification,
+                country,
+            })
+            .await
+        }
+        Commands::UnsoldGoods {
+            command: UnsoldGoodsCommands::List { period, json },
+        } => run_unsold_goods_list(period.as_deref(), json).await,
         Commands::Webhook {
             command: WebhookCommands::List,
         } => run_webhook_list().await,
@@ -313,6 +343,24 @@ pub async fn dispatch(cmd: Commands) -> anyhow::Result<()> {
         Commands::Passport {
             command: PassportCommands::Lint { id, json },
         } => run_lint(&id, json).await,
+        Commands::Passport {
+            command:
+                PassportCommands::Amend {
+                    id,
+                    patch,
+                    reason,
+                    json,
+                },
+        } => run_amend(&id, &patch, reason.as_deref(), json).await,
+        Commands::Passport {
+            command:
+                PassportCommands::Supersede {
+                    id,
+                    superseded_by,
+                    reason,
+                    json,
+                },
+        } => run_supersede(&id, &superseded_by, reason.as_deref(), json).await,
         Commands::Passport {
             command:
                 PassportCommands::Eol {
