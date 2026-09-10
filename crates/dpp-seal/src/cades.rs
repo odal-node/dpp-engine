@@ -152,18 +152,29 @@ const ID_AA_ETS_ARCHIVE_TIMESTAMP_V2: const_oid::ObjectIdentifier =
 ///
 /// # Two homes for the long-term material, and both count
 ///
-/// This is the part that is easy to get wrong, because the two standards in play
-/// disagree. ETSI EN 319 122-1 puts an LT seal's revocation material in
-/// `SignedData.crls` and marks the `revocation-values` attribute **`shall not be
-/// present`** at that level. ETSI TS 103 173 — the older profile, and the one
-/// Commission Implementing Decision (EU) 2015/1506 actually names for
-/// cross-border recognition — gives its LT-Level clause a `Revocation values`
-/// subclause, the CAdES-X Long attribute.
+/// This is the part that is easy to get wrong, because the two profiles in play
+/// disagree — and **both are lawful right now**, which is what makes reading
+/// only one of them a live defect rather than a theoretical one.
 ///
-/// A seal built to the profile the law cites therefore carries precisely the
-/// attribute the modern standard forbids at the same level. Reading only
-/// `SignedData.crls` would misreport such a seal as `BaselineT` and raise a
-/// downgrade alarm against a provider that did nothing wrong. Both are accepted.
+/// Commission Implementing Regulation (EU) 2026/248 lists the formats public
+/// sector bodies must recognise. It carries two annexes:
+///
+/// - **Annex I** — the current set, which for CAdES is ETSI EN 319 122-1. That
+///   standard puts an LT seal's revocation material in `SignedData.crls`, and
+///   marks the `revocation-values` attribute **`shall not be present`** at that
+///   level.
+/// - **Annex II** — the superseded set, which for CAdES is ETSI TS 103 173.
+///   That profile's LT-Level clause has a `Revocation values` subclause: the
+///   CAdES-X Long attribute, in the very place Annex I's standard forbids it.
+///
+/// Annex II is not history. Article 3(2) obliges recognition of seals in those
+/// formats where they were **created before 23 February 2028**, so seals of both
+/// shapes are being produced and must both be read correctly until then — and,
+/// since a passport's seal is retention-locked, long after.
+///
+/// Reading only `SignedData.crls` would misreport an Annex II seal as
+/// `BaselineT` and raise a downgrade alarm against a provider that did nothing
+/// wrong. Both are accepted.
 ///
 /// `Ok(None)` when the bytes are not a seal this module can read, matching
 /// [`signer_certificate_thumbprint`]: a stored seal must not be lost to a parse
@@ -427,15 +438,17 @@ mod tests {
 
     /// Both homes of the long-term material evidence `BaselineLt`.
     ///
-    /// The finding this test exists for. ETSI EN 319 122-1 puts an LT seal's
+    /// The finding this test exists for. ETSI EN 319 122-1 — Annex I of
+    /// Commission Implementing Regulation (EU) 2026/248 — puts an LT seal's
     /// revocation material in `SignedData.crls` and forbids the
-    /// `revocation-values` attribute at that level; ETSI TS 103 173 — the older
-    /// profile, and the one Commission Implementing Decision (EU) 2015/1506
-    /// names for cross-border recognition — carries it in that very attribute.
+    /// `revocation-values` attribute at that level. ETSI TS 103 173, that
+    /// Regulation's Annex II, carries it in that very attribute.
     ///
-    /// So a seal produced to the profile the law cites carries exactly what the
-    /// modern standard forbids. Reading only one home would report such a seal
-    /// as `BaselineT` and raise a downgrade alarm against a provider that did
+    /// Both annexes are live: Article 3(2) obliges recognition of Annex II
+    /// formats for seals created before 23 February 2028. So a seal produced to
+    /// either profile is lawful today and carries exactly what the other
+    /// forbids. Reading only one home would report an Annex II seal as
+    /// `BaselineT` and raise a downgrade alarm against a provider that did
     /// nothing wrong.
     #[test]
     fn either_home_of_the_revocation_material_evidences_baseline_lt() {
@@ -451,12 +464,12 @@ mod tests {
         assert_eq!(
             evidenced_level(&modern).unwrap(),
             Some(SealConformanceLevel::BaselineLt),
-            "EN 319 122-1 puts the material in SignedData.crls"
+            "EN 319 122-1 (2026/248 Annex I) puts the material in SignedData.crls"
         );
         assert_eq!(
             evidenced_level(&legacy).unwrap(),
             Some(SealConformanceLevel::BaselineLt),
-            "TS 103 173 — the profile 2015/1506 cites — puts it in revocation-values"
+            "TS 103 173 (2026/248 Annex II, lawful until Feb 2028) puts it in revocation-values"
         );
     }
 

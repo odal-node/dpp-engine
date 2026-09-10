@@ -171,14 +171,19 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   module.
 
   The subtle part is where the long-term material lives, because the two
-  standards in play disagree. ETSI EN 319 122-1 puts it in `SignedData.crls` and
-  marks the `revocation-values` attribute **`shall not be present`** at that
-  level. ETSI TS 103 173 — the older profile, and the one Commission
-  Implementing Decision (EU) 2015/1506 names for cross-border recognition — puts
-  it in that very attribute. A seal built to the profile the law cites therefore
-  carries exactly what the modern standard forbids at the same level. Both homes
-  are accepted; reading only one reported a lawful `LT` seal as `T` and raised a
-  downgrade alarm against a provider that had done nothing wrong, which is what
+  profiles in play disagree and **both are lawful today**. Commission
+  Implementing Regulation (EU) 2026/248 lists the formats public sector bodies
+  must recognise, in two annexes. Annex I is ETSI EN 319 122-1, which puts the
+  material in `SignedData.crls` and marks the `revocation-values` attribute
+  **`shall not be present`** at that level. Annex II is ETSI TS 103 173, which
+  carries it in that very attribute — and Annex II is not history: Article 3(2)
+  obliges recognition of those formats for seals **created before 23 February
+  2028**.
+
+  So a seal produced to either profile is lawful now and carries exactly what
+  the other forbids. Both homes are accepted; reading only one reported an
+  Annex II seal as `T` and raised a downgrade alarm against a provider that had
+  done nothing wrong, which is what
   `either_home_of_the_revocation_material_evidences_baseline_lt` pins.
 
 - **`just coderabbit-check`**, deliberately *not* in `just check`: validates
