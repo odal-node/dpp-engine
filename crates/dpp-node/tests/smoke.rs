@@ -1218,6 +1218,31 @@ async fn transfer_of_responsibility_dual_signed_then_eol() {
         200
     );
 
+    // An operator country that is not an assigned alpha-2 code is refused at the
+    // edge, before anything reaches the signed transfer chain. The field has
+    // been documented as ISO 3166-1 alpha-2 throughout and was bounded only by
+    // length, so `de` and `XX` satisfied the published contract; both are
+    // stored verbatim into a payload this node signs, which is why the check
+    // belongs here and not at read time.
+    for bad in ["de", "XX"] {
+        let resp = client
+            .post(format!("{base}/vault/api/v1/dpp/{id}/transfer/initiate"))
+            .bearer_auth(&token)
+            .json(&serde_json::json!({
+                "fromOperator": {"did":"did:web:acme.example","name":"Acme GmbH","role":"manufacturer","euOperatorId":null,"country":bad},
+                "toOperator": {"did":"did:web:recycler.example","name":"ReCo","role":"recycler","euOperatorId":null,"country":"DE"},
+                "reason": "preparationForReuse"
+            }))
+            .send()
+            .await
+            .expect("initiate request failed");
+        assert_eq!(
+            resp.status(),
+            422,
+            "country {bad:?} must be refused before it reaches the chain"
+        );
+    }
+
     // Outgoing operator initiates and signs the handover.
     let init_resp = client
         .post(format!("{base}/vault/api/v1/dpp/{id}/transfer/initiate"))

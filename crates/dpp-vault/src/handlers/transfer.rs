@@ -64,6 +64,9 @@ pub async fn transfer_initiate_handler(
         if let Err(e) = validate_counterparty_did(&operator.did) {
             return validation_error(&format!("{label}.did: {e}"));
         }
+        if let Err(e) = validate_counterparty_country(&operator.country) {
+            return validation_error(&format!("{label}.country: {e}"));
+        }
     }
     match state
         .service
@@ -184,6 +187,51 @@ fn validate_counterparty_did(did: &str) -> Result<(), String> {
     dpp_common::url_guard::validate_public_https_url(&url)
         .map(|_| ())
         .map_err(|e| format!("{did} does not resolve to a public https document ({e})"))
+}
+
+/// An operator's country is an assigned ISO 3166-1 alpha-2 code, upper case.
+///
+/// The field has been documented as alpha-2 since it was introduced and nothing
+/// checked it, so the published contract described a shape the node would store
+/// anything in. Checked against the **assigned list** rather than the shape —
+/// `country_code_valid` is what the facility route already holds its own country
+/// to, so the two entry points that take a country now agree.
+///
+/// Canonical form is required rather than normalised. Both operators sit inside
+/// the payload this node signs on initiation, so upper-casing a caller's value
+/// first would sign something they did not send. `de` is refused, not corrected.
+fn validate_counterparty_country(country: &str) -> Result<(), String> {
+    if dpp_rules::country_code_valid(country) {
+        Ok(())
+    } else {
+        Err(format!(
+            "'{country}' is not an assigned ISO 3166-1 alpha-2 code in upper case, e.g. 'DE'"
+        ))
+    }
+}
+
+#[cfg(test)]
+mod counterparty_country {
+    use super::validate_counterparty_country;
+
+    #[test]
+    fn an_assigned_upper_case_code_is_accepted() {
+        for c in ["DE", "FR", "PT", "SE"] {
+            assert!(validate_counterparty_country(c).is_ok(), "{c} is assigned");
+        }
+    }
+
+    /// The three shapes the length-only contract used to admit, each of which
+    /// would have been stored verbatim onto a signed transfer chain.
+    #[test]
+    fn lower_case_unassigned_and_non_alphabetic_are_refused() {
+        for c in ["de", "XX", "1?", "", "DEU"] {
+            assert!(
+                validate_counterparty_country(c).is_err(),
+                "{c:?} must not reach the transfer chain"
+            );
+        }
+    }
 }
 
 #[cfg(test)]

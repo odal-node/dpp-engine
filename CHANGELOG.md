@@ -12,6 +12,25 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ### Breaking
 
+- **A transfer's operator `country` is now checked, not just shaped.**
+  *(Breaking: `POST /dpp/{dppId}/transfer/initiate` answers `422` for a
+  `fromOperator.country` or `toOperator.country` that is not an assigned ISO
+  3166-1 alpha-2 code in upper case. `de` and `XX` were previously accepted and
+  stored. A caller sending lower case must upper-case it — the value is not
+  normalised for them, deliberately.)*
+
+  The field has been documented as ISO 3166-1 alpha-2 since it was introduced
+  and nothing checked it: the published schema bounded it by length alone, so
+  `1?` satisfied the contract. Both operators sit inside the payload this node
+  signs on initiation, so an unchecked value is signed and then stored on the
+  transfer chain permanently.
+
+  Checked against the assigned list rather than the shape, using the same
+  answer the facility route already holds its own country to — the two entry
+  points that take a country now agree. Canonical form is required rather than
+  normalised precisely because the value is signed: upper-casing a caller's
+  input before signing would attest something they did not send.
+
 - **`CREDENTIAL_ISSUERS_SELF` no longer trusts the operator as an authority.**
   *(Breaking: the switch now adds the node's own DID to the legitimate-interest
   bucket only. A deployment that relied on it for authority-audience reads must
