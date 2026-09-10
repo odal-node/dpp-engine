@@ -18,15 +18,15 @@ All endpoints except `/health` require `Authorization: Bearer odal_sk_…`.
 | Method | Path | Description |
 |---|---|---|
 | `GET` | `/health` | Liveness probe |
-| `GET` | `/api/v1/templates/{sector}` | Download a pre-filled CSV template for a sector |
-| `POST` | `/api/v1/import/{sector}` | Upload a CSV or Excel file; returns a `job_id` |
+| `GET` | `/api/v1/templates/{productGroup}` | Download a pre-filled CSV template for a product group |
+| `POST` | `/api/v1/import/{productGroup}` | Upload a CSV or Excel file; returns a `job_id` |
 | `GET` | `/api/v1/imports/{job_id}` | Poll job status and per-row results |
 
-### Sector dispatch
+### Product group dispatch
 
-The `sector` path parameter (`battery`, `textile`, `electronics`, …) is passed to the
-parser so sector-specific column mappings and validation rules are applied. The sector
-key must match a key in `dpp-domain`'s `SectorCatalog`.
+The `productGroup` path parameter (`battery`, `textile`, `electronics`, …) is passed to
+the parser so product-group-specific column mappings and validation rules are applied.
+The product group key must match a key in `dpp-domain`'s `ProductGroupCatalog`.
 
 ### Job lifecycle
 
@@ -64,7 +64,7 @@ src/
 
 | Crate | Role |
 |---|---|
-| `dpp-domain` | `Passport` shape and `SectorCatalog` for sector validation |
+| `dpp-domain` | `Passport` shape and `ProductGroupCatalog` for product group validation |
 | `dpp-vault` | Receives the per-row `POST /api/v1/dpp` calls from `VaultHttpClient` |
 | `dpp-node` | Mounts this crate's router under `/integrator` |
 | `dpp-cli` | `dpp import` uses the vault endpoint directly; for large async loads use this service |

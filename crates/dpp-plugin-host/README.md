@@ -1,18 +1,19 @@
 # dpp-plugin-host
 
-`wasmtime`-based sandbox host for [Odal Node](https://odal-node.io) sector plugins.
+`wasmtime`-based sandbox host for [Odal Node](https://odal-node.io) product group
+plugins.
 
 At node startup, `dpp-plugin-host` scans `/plugins/*.wasm`, compiles each module
-with `wasmtime`, and registers it under its sector key. Inbound passport requests
-are dispatched here; the host invokes the plugin's `calculate` export, maps the
-result to a `ComplianceResult`, and enforces the `SectorCatalog` regulatory status
-gate before returning.
+with `wasmtime`, and registers it under its product group key. Inbound passport
+requests are dispatched here; the host invokes the plugin's `calculate` export, maps
+the result to a `ComplianceResult`, and enforces the regulatory status gate before
+returning.
 
 ---
 
 ## When to use this crate
 
-- You are wiring new Wasm sector plugins into the node startup sequence.
+- You are wiring new Wasm product group plugins into the node startup sequence.
 - You are writing a benchmark or integration test for plugin invocation overhead.
 - You need to extend host functions exposed to plugins.
 
@@ -26,9 +27,9 @@ gate before returning.
 ## Architecture
 
 ```
-node boot → loader::load_plugin(path) → WasmPluginHost::register(sector_key, plugin)
+node boot → loader::load_plugin(path) → WasmPluginHost::register(product_group_key, plugin)
                                                          │
-passport request → PassportService → WasmPluginHost::compute(sector, data)
+passport request → PassportService → WasmPluginHost::compute(product_group_key, data)
                                              │
                               plugin.invoke_calculate(input_json)
                                              │
@@ -39,11 +40,11 @@ passport request → PassportService → WasmPluginHost::compute(sector, data)
 
 ### Regulatory status gate
 
-`WasmPluginHost::compute` calls `gate_determination(catalog.is_in_force(sector_key), status)` after every plugin invocation. A plugin registered for a provisional sector (e.g. a delegated act not yet in force) can never surface `Compliant` or `NonCompliant` — the gate downgrades the status to `NotAssessed`. This is enforced centrally regardless of what the plugin returns.
+`WasmPluginHost::compute` calls `gate_determination(passport_determinable(key), status)` after every plugin invocation. A plugin registered for a provisional product group (e.g. a delegated act not yet in force) can never surface `Compliant` or `NonCompliant` — the gate downgrades the status to `NotAssessed`. This is enforced centrally regardless of what the plugin returns.
 
 ### Passthrough behaviour
 
-When no plugin is registered for the requested sector, `WasmPluginHost::compute`
+When no plugin is registered for the requested product group, `WasmPluginHost::compute`
 returns `ComplianceStatus::PassthroughNoValidation`. The passport is stored with
 the manufacturer-supplied values unchanged — no compliance score is computed.
 

@@ -748,6 +748,25 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ### Changed
 
+- **Seven documents stopped naming identifiers that no longer exist.** The
+  `sector` → product group rename reached the code and the routes but not the
+  prose around them, so the READMEs for `dpp-integrator`, `dpp-plugin-host` and
+  `dpp-render`, plus `docs/ops/METRICS-PLAN.md`, still pointed at
+  `SectorCatalog`, `sectorData`, `sector_key`, a `sectors/*.json` directory, an
+  `unknown_sector` metric label and a test name — none of which resolve today.
+  The integrator README documented `/api/v1/templates/{sector}` when the route
+  is `{productGroup}`, and the plugin-host README described the regulatory gate
+  as `catalog.is_in_force(sector_key)` when it is `passport_determinable(key)`.
+  Nothing mechanical checks prose against code, which is why this drifted for
+  the length of a rename; the fix is to say what the code says.
+
+  Deliberately unchanged: `ops/pg/0004` and `0019`, because an applied
+  migration is append-only and editing one makes a node that already ran it
+  refuse to boot; the ten frozen fixtures under
+  `crates/dpp-dal/tests/fixtures/passport_docs/`, which carry the pre-rename
+  envelope *as evidence* that today's code still reads it; and the two demo CSV
+  filenames, which are named correctly for what they are.
+
 - **The battery import template is now three, one per category, and generated.**
   *(Breaking for the template route: `GET /integrator/api/v1/templates/battery`
   is gone. Use `battery-ev`, `battery-lmt` or `battery-industrial`; the `404`

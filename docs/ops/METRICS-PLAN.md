@@ -90,7 +90,7 @@ that port at all. Both are worth waking up for — see the alert rules in §4.
 | Metric | Type | Labels | Meaning |
 |--------|------|--------|---------|
 | `import_rows_total` | counter | — | Rows accepted for processing (volume baseline) |
-| `import_rejections_total` | counter | `reason` = `unknown_sector` \| `auth` \| `parse` | Rejected uploads — **RT2-1 parser-probing signal** |
+| `import_rejections_total` | counter | `reason` = `unknown_product_group` \| `auth` \| `parse` | Rejected uploads — **RT2-1 parser-probing signal** |
 
 ---
 
@@ -226,7 +226,7 @@ Integration-level **metric-presence** guards (so an emission can't be silently r
 |--------|-----------|------|
 | `passport_publish_total` | `publish_increments_passport_publish_total` | `dpp-node/tests/smoke.rs` (needs `--features integration-tests` + Docker) |
 | `auth_failures_total` | `unauthenticated_request_increments_auth_failures_total` | same |
-| `import_rejections_total` | `unknown_sector_import_increments_import_rejections_total` | same |
+| `import_rejections_total` | `unknown_product_group_import_increments_import_rejections_total` | same |
 | `jws_verify_total` | `resolve_records_jws_verify_total` | `dpp-resolver/tests/resolver_e2e.rs` (no Docker) |
 
 **Known limitation:** these prove the counter *fires on the handler path*. They do **not** prove a
