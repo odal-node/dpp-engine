@@ -919,6 +919,26 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ### Fixed
 
+- **`--idempotency-key` reached every keyed route the CLI calls but one:
+  evidence generation.** `POST /api/v1/dpp/{dppId}/evidence` is in the node's
+  keyed set, and the CLI reached it through `post_empty`, which attaches no
+  `Idempotency-Key` header at all. The flag was accepted on the command line,
+  documented as protecting "the commands that create something", and then
+  silently dropped for this one — the worst arrangement available, because the
+  operator believes the retry is protected.
+
+  It matters here for the reason the route is keyed at all: generating a dossier
+  **stores** one, and `evidence_dossier` carries no `DELETE` grant, so a dossier
+  written twice is written twice for good. `post_empty_creating` now carries the
+  key. An empty body is safe to key because the node fingerprints the raw body
+  and an empty one is byte-identical on retry — which is exactly why the
+  multipart uploads (`upload_file`, `install_plugin`) cannot be keyed, and both
+  now say so in place instead of leaving the next reader to re-derive it.
+
+  Found by auditing every CLI `POST` call site against the node's keyed table
+  rather than by hitting it. Nothing mechanical compares the two, and until
+  something does, this class recurs.
+
 - **A misnamed plugin artifact loaded under a key nothing asks for, and said
   nothing.** The product group was derived by trimming `product-group-` off the
   filename, so a file that did not carry the prefix keyed on its whole stem:

@@ -10,8 +10,14 @@ pub async fn action_evidence(
     client: &OdalClient,
     cfg: &crate::config::Config,
 ) -> Result<ExportResult> {
+    // Keyed: this route is in the node's `KEYED` set and generating a dossier
+    // stores one. `evidence_dossier` carries no DELETE grant (see the DELETE set
+    // in ops/pg/README.md), so a dossier written twice is written twice for
+    // good — the same permanence that put facilities and the Art. 24 disclosure
+    // in that set. `post_empty` sent no key at all, so `--idempotency-key` was
+    // accepted on the command line and then silently dropped here.
     let url = format!("{}/api/v1/dpp/{id}/evidence", cfg.vault_url);
-    let (status, body) = client.post_empty(&url).await?;
+    let (status, body) = client.post_empty_creating(&url).await?;
     if !status.is_success() {
         anyhow::bail!(
             "Evidence generation failed: {}",
