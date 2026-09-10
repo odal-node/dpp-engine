@@ -19,8 +19,12 @@ properties:
     type: string
   country:
     type: string
-    minLength: 2
-    maxLength: 2
-    description: ISO 3166-1 alpha-2 country code.
+    pattern: '^[A-Z]{2}$'
+    description: |
+      ISO 3166-1 alpha-2 country code, upper case.
+
+      Copied from a facility whose country was validated against the ISO
+      3166-1 list when it was registered, so this is what the server emits
+      rather than merely what it hopes for.
   address:
     type: string

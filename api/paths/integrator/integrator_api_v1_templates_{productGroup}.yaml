@@ -47,6 +47,15 @@ get:
     - name: productGroup
       in: path
       required: true
+      description: |
+        The **template key**, which since the battery split is no longer always
+        a product group: `battery-ev`, `battery-lmt` and `battery-industrial`
+        are keys served here, while `battery` is a product group served by
+        nothing. Rows from all three import under the `battery` product group.
+
+        The parameter keeps its name because renaming a path parameter renames
+        the method argument in every generated client, and for the eight
+        non-battery templates the two are still the same string.
       schema:
         type: string
         example: battery-ev

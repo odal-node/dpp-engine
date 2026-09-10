@@ -1786,6 +1786,38 @@ fn every_keyed_route_is_a_route_the_node_serves() {
     );
 }
 
+/// The mandatory-field counts `PublishReadiness` quotes are the counts the gate
+/// actually applies.
+///
+/// A number in prose is a claim about code that nothing normally checks, and
+/// this one was wrong on arrival: the description said "38 fields for an
+/// electric-vehicle one", which is the **industrial** figure. An EV battery owes
+/// 46. The sentence had been written beside the industrial number and kept the
+/// wrong half — the failure mode a restated set invites.
+///
+/// Pinned rather than removed because the number is what gives the sentence its
+/// point: an operator deciding whether to preview publish-readiness wants to
+/// know the gate is large. Derived from `mandatory_fields`, so a category whose
+/// obligation moves in `dpp-rules` fails here rather than in a reader's
+/// expectations.
+#[test]
+fn publish_readiness_quotes_the_real_mandatory_field_counts() {
+    let spec = spec();
+    let description = spec["components"]["schemas"]["PublishReadiness"]["description"]
+        .as_str()
+        .expect("PublishReadiness carries a description");
+
+    for category in ["ev", "lmt", "industrial"] {
+        let count = dpp_rules::batteries::passport_content::mandatory_fields(category).count();
+        assert!(
+            description.contains(&count.to_string()),
+            "PublishReadiness quotes mandatory-field counts and does not name {count}, \
+             which is what the gate requires of a '{category}' battery. The description \
+             reads:\n{description}"
+        );
+    }
+}
+
 /// Whether an operation declares the shared `Idempotency-Key` parameter.
 ///
 /// The bundle keeps component parameters as `$ref`s rather than inlining them,

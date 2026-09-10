@@ -857,6 +857,35 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ### Fixed
 
+- **`publishReadiness` named the wrong category's field count.** Its description
+  called the mandatory-content gate "38 fields for an electric-vehicle one".
+  Thirty-eight is what an **industrial** battery owes; an electric-vehicle one
+  owes 46, and an LMT battery 45. The sentence had been written beside the
+  industrial figure and kept the wrong half.
+
+  All three counts are now named and pinned by a test that derives them from the
+  same rules table the gate iterates, so a category whose obligation moves fails
+  the build rather than quietly making the description wrong.
+
+- **A facility's `country` was published looser than the handler accepts.** The
+  request schema bounded it by length only, so `de`, `XX` and `1?` all satisfied
+  the published contract and were then refused with `422` — the handler checks
+  it against the ISO 3166-1 assigned list, upper case. Both the request and the
+  snapshot copied into a passport now carry the pattern that says so.
+
+- **The CSV template route's path parameter said `productGroup` and meant a
+  template key.** Since batteries split per category, `battery-ev` is a key and
+  `battery` is a product group served by nothing. The parameter keeps its name —
+  renaming it renames a method argument in every generated client, and for the
+  eight non-battery templates the two are still the same string — but it now
+  says which of the two it is.
+
+- **`ingesting` documented only half of when it is false.** It described the
+  post-restart case and not the one an operator actually meets: a resolver that
+  has stopped reporting. The flag goes false after three of the sender's own
+  declared flush intervals, and degrades to "one ever flushed" for a resolver
+  too old to declare a cadence.
+
 - **Nine operations documented fewer responses than they return.** An audit of
   every operation against the handler behind it found five statuses missing from
   the published description, each in a place the existing contract gate cannot

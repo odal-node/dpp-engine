@@ -10,9 +10,10 @@ description: |
   gates pass", not "publish will certainly succeed".
 
   The mandatory-content half is the reason this exists. It is the gate that most
-  often refuses a battery (38 fields for an electric-vehicle one) and it could
-  not previously be previewed anywhere: it is reachable only from a stored
-  passport, and the only dry-run the API offered takes an unsaved request body.
+  often refuses a battery — 46 data points for an electric-vehicle one, 45 for
+  an LMT battery, 38 for an industrial one — and it could not previously be
+  previewed anywhere: it is reachable only from a stored passport, and the only
+  dry-run the API offered takes an unsaved request body.
 required:
   - ready
   - blockers
