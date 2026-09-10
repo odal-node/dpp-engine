@@ -73,10 +73,24 @@ async fn back_off_or_exhaust(
 }
 
 /// Drain up to `batch` due seal rows once.
+///
+/// `mode` travels in from the composition root for the same reason `key_ref` and
+/// `conformance_level` do, and more urgently than either: it was a literal
+/// `ProviderSeal` here, which is a claim about *whose* attestation the seal is —
+/// the QTSP's, holding the key on the operator's behalf. Only the QTSP backend
+/// advertises that mode. The local development sealer signs under the operator's
+/// own self-signed certificate and advertises `OperatorSeal`, so every request
+/// this loop built for it was refused by the adapter's capability check, retried
+/// eight times and exhausted. `SEAL_PROVIDER=local` could not produce a single
+/// seal under any configuration.
+///
+/// Naming the mode here could not have been right for both backends: it is a
+/// property of the arrangement, not of the drain.
 pub async fn drain_once(
     outbox: &Arc<dyn SealOutbox>,
     seal: &Arc<dyn SealPort>,
     key_ref: &SealCredentialRef,
+    mode: SealMode,
     conformance_level: SealConformanceLevel,
     batch: i64,
 ) -> DrainStats {
@@ -92,7 +106,7 @@ pub async fn drain_once(
     for row in due {
         let req = SealRequest {
             payload_hash: row.payload_hash.clone(),
-            mode: SealMode::ProviderSeal,
+            mode: mode.clone(),
             // CSC-shaped, and no backend here reads it — each one's credential
             // is adapter config rather than a per-request reference. Passed in
             // from the composition root rather than named here: the drain is
@@ -293,6 +307,7 @@ mod tests {
             &(outbox.clone() as Arc<dyn SealOutbox>),
             &(seal.clone() as Arc<dyn SealPort>),
             &test_key_ref(),
+            SealMode::ProviderSeal,
             SealConformanceLevel::BaselineLt,
             10,
         )
@@ -313,6 +328,7 @@ mod tests {
             &(outbox as Arc<dyn SealOutbox>),
             &(seal.clone() as Arc<dyn SealPort>),
             &test_key_ref(),
+            SealMode::ProviderSeal,
             SealConformanceLevel::BaselineLt,
             10,
         )
@@ -328,6 +344,7 @@ mod tests {
             &(outbox.clone() as Arc<dyn SealOutbox>),
             &(seal as Arc<dyn SealPort>),
             &test_key_ref(),
+            SealMode::ProviderSeal,
             SealConformanceLevel::BaselineLt,
             10,
         )
@@ -345,6 +362,7 @@ mod tests {
             &(outbox.clone() as Arc<dyn SealOutbox>),
             &(seal as Arc<dyn SealPort>),
             &test_key_ref(),
+            SealMode::ProviderSeal,
             SealConformanceLevel::BaselineLt,
             10,
         )
@@ -364,6 +382,7 @@ mod tests {
             &(outbox.clone() as Arc<dyn SealOutbox>),
             &(seal as Arc<dyn SealPort>),
             &test_key_ref(),
+            SealMode::ProviderSeal,
             SealConformanceLevel::BaselineLt,
             10,
         )

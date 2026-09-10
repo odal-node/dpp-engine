@@ -17,13 +17,22 @@
 //! error rather than a silent ghost: dropping to no sealing because one variable
 //! was misspelled is exactly the downgrade the trust report exists to prevent,
 //! so it fails the boot.
+//!
+//! There is deliberately **no** variable for the seal *mode*. It states whose
+//! attestation the seal is, which is a fact about the backend rather than a
+//! preference, so it is read off the backend's advertised capabilities — see
+//! [`SealWiring::mode`]. A node that would enqueue seal rows its backend cannot
+//! produce refuses to boot instead; see [`ensure_drainable`].
 
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use dpp_domain::{
     ports::seal::SealPort,
-    seal::{SealConformanceLevel, SealCredentialRef},
+    seal::{
+        SealCapabilities, SealConformanceLevel, SealCredentialRef, SealEnvelope, SealFormat,
+        SealMode, SealRequest,
+    },
 };
 use dpp_types::trust::TrustMode;
 
@@ -71,6 +80,111 @@ pub struct SealWiring {
     /// outlive its own certificate is exactly what should not silently satisfy a
     /// request for one that can.
     pub conformance_level: SealConformanceLevel,
+    /// **Whose** attestation the seal is — read off what the backend advertises,
+    /// never chosen here.
+    ///
+    /// `SealMode` is not a preference. `ProviderSeal` says a qualified provider
+    /// holds the key and attests on the operator's behalf; `OperatorSeal` says
+    /// the operator's own certificate signed it. Asking a backend for the mode
+    /// it does not implement names an attestation nobody made, which is why the
+    /// adapter refuses rather than substituting — core's `SealPort` states the
+    /// rule: "the mode decides *whose* attestation the seal is."
+    ///
+    /// This travelled as a literal `ProviderSeal` in the drain loop, which only
+    /// the QTSP backend advertises. Every request built for the local
+    /// development sealer was therefore refused, retried eight times and
+    /// exhausted: `SEAL_PROVIDER=local` could not produce a seal under any
+    /// configuration. Deriving it from the backend is the only form that can be
+    /// true for both.
+    pub mode: SealMode,
+}
+
+/// The mode to request from a backend, read off what it advertises.
+///
+/// Preference order matters only for a backend advertising both, and the only
+/// one that does is the ghost — whose `drains` is false, so nothing it returns
+/// is ever requested. `ProviderSeal` wins there because it is the stronger
+/// claim, and a backend advertising it is asserting it can back it.
+fn mode_for(caps: &SealCapabilities) -> Result<SealMode> {
+    [SealMode::ProviderSeal, SealMode::OperatorSeal]
+        .into_iter()
+        .find(|m| caps.supported_modes.contains(m))
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "the configured seal backend advertises no seal mode this node can request \
+                 (it advertises {:?})",
+                caps.supported_modes
+            )
+        })
+}
+
+/// Refuse to boot a node that would enqueue seal rows it can never drain.
+///
+/// Publish enqueues a row whenever `drains` is true; the drain then builds one
+/// fixed request shape per row. If the backend cannot produce that shape, every
+/// row fails identically, backs off through eight attempts and exhausts —
+/// leaving published passports permanently unsealed while
+/// `GET /vault/api/v1/seal` reports `sealingConfigured: true` throughout. The
+/// only operator-visible signal today is `exhausted` climbing hours later.
+///
+/// Every input to that decision exists at boot, so the mismatch is knowable
+/// before a single passport is published. Checking it here converts hours of
+/// silence into a refusal naming the axis and the remedy.
+///
+/// Deliberately gated on `drains`: a node with sealing off enqueues nothing and
+/// has nothing to be wrong about.
+fn ensure_drainable(w: &SealWiring) -> Result<()> {
+    if !w.drains {
+        return Ok(());
+    }
+    let caps = w.port.capabilities();
+    let probe = SealRequest {
+        // Any well-formed digest: `can_produce` inspects the shape, not the
+        // payload.
+        payload_hash: "00".repeat(32),
+        mode: w.mode.clone(),
+        key_ref: w.credential.clone(),
+        sig_format: SealFormat::Cades,
+        conformance_level: w.conformance_level,
+        envelope: SealEnvelope::Detached,
+    };
+    if caps.can_produce(&probe) {
+        return Ok(());
+    }
+    // Name the axis that actually fails. The adapter's runtime error listed all
+    // four and told the reader to change `SEAL_CONFORMANCE_LEVEL`, which is
+    // wrong guidance whenever the level is not the mismatching one — it cost a
+    // restart chasing the wrong variable.
+    let mut wrong: Vec<String> = Vec::new();
+    if !caps.supported_modes.contains(&probe.mode) {
+        wrong.push(format!(
+            "mode {:?} (backend advertises {:?}) — not settable; it is a property of the backend",
+            probe.mode, caps.supported_modes
+        ));
+    }
+    if !caps.supported_levels.contains(&probe.conformance_level) {
+        wrong.push(format!(
+            "level {:?} (backend advertises {:?}) — set SEAL_CONFORMANCE_LEVEL to one of those",
+            probe.conformance_level, caps.supported_levels
+        ));
+    }
+    if !caps.supported_formats.contains(&probe.sig_format) {
+        wrong.push(format!(
+            "format {:?} (backend advertises {:?})",
+            probe.sig_format, caps.supported_formats
+        ));
+    }
+    if !caps.supported_envelopes.contains(&probe.envelope) {
+        wrong.push(format!(
+            "envelope {:?} (backend advertises {:?})",
+            probe.envelope, caps.supported_envelopes
+        ));
+    }
+    anyhow::bail!(
+        "the configured seal backend cannot produce the seal this node would request, so every \
+         published passport would enqueue a row that can never drain. Mismatched: {}",
+        wrong.join("; ")
+    )
 }
 
 /// Read `SEAL_CONFORMANCE_LEVEL`, defaulting to `B-LT`.
@@ -100,6 +214,12 @@ fn conformance_level_from_env() -> Result<SealConformanceLevel> {
 /// Propagates a backend's own configuration error, and an unrecognised
 /// `SEAL_PROVIDER` value. Both fail the boot rather than degrading to a ghost.
 pub fn from_env() -> Result<SealWiring> {
+    let wiring = wiring_from_env()?;
+    ensure_drainable(&wiring)?;
+    Ok(wiring)
+}
+
+fn wiring_from_env() -> Result<SealWiring> {
     let conformance_level = conformance_level_from_env()?;
     match dpp_seal::SealProvider::from_env().context("seal provider")? {
         dpp_seal::SealProvider::Qtsp => {
@@ -122,12 +242,15 @@ pub fn from_env() -> Result<SealWiring> {
             );
             let backend = dpp_seal::eideasy::EideasyClient::new(cfg)
                 .context("Failed to build the QTSP seal adapter")?;
+            let port: Arc<dyn SealPort> = Arc::new(dpp_seal::QtspSealAdapter::new(backend));
+            let mode = mode_for(&port.capabilities())?;
             Ok(SealWiring {
-                port: Arc::new(dpp_seal::QtspSealAdapter::new(backend)),
+                port,
                 credential,
                 trust,
                 drains: true,
                 conformance_level,
+                mode,
             })
         }
         dpp_seal::SealProvider::Local => {
@@ -140,8 +263,10 @@ pub fn from_env() -> Result<SealWiring> {
                 "eIDAS seal: LOCAL development backend — a real CMS signature under a \
                  self-signed certificate, on no EU Trusted List and of no legal weight"
             );
+            let port: Arc<dyn SealPort> = Arc::new(dpp_seal::QtspSealAdapter::new(backend));
+            let mode = mode_for(&port.capabilities())?;
             Ok(SealWiring {
-                port: Arc::new(dpp_seal::QtspSealAdapter::new(backend)),
+                port,
                 credential: SealCredentialRef {
                     qtsp_id: dpp_seal::local::config::PROVIDER.to_owned(),
                     // No credential to reference: the key is this node's own.
@@ -153,12 +278,16 @@ pub fn from_env() -> Result<SealWiring> {
                 trust: TrustMode::Ghost,
                 drains: true,
                 conformance_level,
+                mode,
             })
         }
         dpp_seal::SealProvider::None => {
             tracing::info!("eIDAS seal: ghost (no provider) — set SEAL_PROVIDER to enable sealing");
+            let port: Arc<dyn SealPort> =
+                Arc::new(dpp_seal::QtspSealAdapter::new(dpp_seal::ghost::GhostSeal));
+            let mode = mode_for(&port.capabilities())?;
             Ok(SealWiring {
-                port: Arc::new(dpp_seal::QtspSealAdapter::new(dpp_seal::ghost::GhostSeal)),
+                port,
                 // Never used: `drains` is false, so no drain is spawned and
                 // nothing builds a request from this.
                 credential: SealCredentialRef {
@@ -168,7 +297,137 @@ pub fn from_env() -> Result<SealWiring> {
                 trust: TrustMode::Ghost,
                 drains: false,
                 conformance_level,
+                mode,
             })
         }
+    }
+}
+
+#[cfg(test)]
+mod seal_mode_and_drainability {
+    use super::*;
+    use async_trait::async_trait;
+    use dpp_domain::{
+        DppError,
+        seal::{SealVerification, SealedEnvelope},
+    };
+
+    fn caps(modes: Vec<SealMode>, levels: Vec<SealConformanceLevel>) -> SealCapabilities {
+        SealCapabilities {
+            supported_formats: vec![SealFormat::Cades],
+            supported_modes: modes,
+            supported_levels: levels,
+            supported_envelopes: vec![SealEnvelope::Detached],
+        }
+    }
+
+    struct Backend(SealCapabilities);
+
+    #[async_trait]
+    impl SealPort for Backend {
+        async fn seal(&self, _r: SealRequest) -> Result<SealedEnvelope, DppError> {
+            unreachable!("capabilities are all these tests read")
+        }
+        async fn verify(&self, _e: &SealedEnvelope) -> Result<SealVerification, DppError> {
+            unreachable!("capabilities are all these tests read")
+        }
+        fn capabilities(&self) -> SealCapabilities {
+            self.0.clone()
+        }
+    }
+
+    fn wiring(c: SealCapabilities, level: SealConformanceLevel, drains: bool) -> SealWiring {
+        let mode = mode_for(&c).expect("a mode");
+        SealWiring {
+            port: Arc::new(Backend(c)),
+            credential: SealCredentialRef {
+                qtsp_id: "test".into(),
+                credential_id: String::new(),
+            },
+            trust: TrustMode::Ghost,
+            drains,
+            conformance_level: level,
+            mode,
+        }
+    }
+
+    /// THE regression. The local development sealer signs under the operator's
+    /// own certificate and advertises `OperatorSeal` only. The drain used to
+    /// name `ProviderSeal` unconditionally, so every request built for it was
+    /// refused, retried eight times and exhausted — `SEAL_PROVIDER=local` could
+    /// not produce one seal under any configuration.
+    #[test]
+    fn a_backend_that_signs_under_its_own_certificate_is_asked_for_an_operator_seal() {
+        let m = mode_for(&caps(
+            vec![SealMode::OperatorSeal],
+            vec![SealConformanceLevel::BaselineB],
+        ))
+        .expect("a mode");
+        assert_eq!(m, SealMode::OperatorSeal);
+    }
+
+    /// And the QTSP backend must still be asked for the provider's attestation —
+    /// the fix must not swing the other way.
+    #[test]
+    fn a_provider_held_backend_is_asked_for_a_provider_seal() {
+        let m = mode_for(&caps(
+            vec![SealMode::ProviderSeal],
+            vec![SealConformanceLevel::BaselineLt],
+        ))
+        .expect("a mode");
+        assert_eq!(m, SealMode::ProviderSeal);
+    }
+
+    #[test]
+    fn a_backend_advertising_no_mode_is_refused_rather_than_defaulted() {
+        assert!(mode_for(&caps(vec![], vec![SealConformanceLevel::BaselineB])).is_err());
+    }
+
+    /// The local backend's real shape: operator seal, `BaselineB` only. With the
+    /// mode derived, this is drainable — which is the whole point.
+    #[test]
+    fn the_local_backends_shape_is_drainable_at_baseline_b() {
+        let w = wiring(
+            caps(
+                vec![SealMode::OperatorSeal],
+                vec![SealConformanceLevel::BaselineB],
+            ),
+            SealConformanceLevel::BaselineB,
+            true,
+        );
+        assert!(ensure_drainable(&w).is_ok());
+    }
+
+    /// The level default (`B-LT`) against that same backend must fail the boot
+    /// rather than enqueueing rows that exhaust hours later, and must name the
+    /// variable that fixes it.
+    #[test]
+    fn a_level_the_backend_cannot_reach_fails_the_boot_and_names_the_remedy() {
+        let w = wiring(
+            caps(
+                vec![SealMode::OperatorSeal],
+                vec![SealConformanceLevel::BaselineB],
+            ),
+            SealConformanceLevel::BaselineLt,
+            true,
+        );
+        let err = ensure_drainable(&w).expect_err("must refuse").to_string();
+        assert!(err.contains("SEAL_CONFORMANCE_LEVEL"), "{err}");
+        assert!(err.contains("BaselineLt"), "{err}");
+    }
+
+    /// A node with sealing off enqueues nothing, so it has nothing to be wrong
+    /// about — the check must not strand it on a backend it never calls.
+    #[test]
+    fn a_node_that_does_not_seal_is_not_checked() {
+        let w = wiring(
+            caps(
+                vec![SealMode::OperatorSeal],
+                vec![SealConformanceLevel::BaselineB],
+            ),
+            SealConformanceLevel::BaselineLta,
+            false,
+        );
+        assert!(ensure_drainable(&w).is_ok());
     }
 }
