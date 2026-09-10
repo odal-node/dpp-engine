@@ -31,6 +31,15 @@ fn render_supersession(result: &Supersession, verb: &str) {
     println!("URL keeps serving — a carrier already in the field still resolves.");
 }
 
+/// `odal passport amend` — correct a published passport by issuing a successor.
+///
+/// The patch is read from a file rather than an argument because it is a JSON
+/// document: a shell-quoted object is where the quoting mistakes live, and a
+/// file is also the thing an operator can keep alongside the change as a record
+/// of what was corrected.
+///
+/// It is parsed here only to fail early and name the file — the node decides
+/// what is amendable, and the parsed value is passed through untouched.
 pub async fn run_amend(id: &str, patch_file: &str, reason: Option<&str>, json: bool) -> Result<()> {
     let (client, cfg) = crate::http::load_client()?;
     let raw = std::fs::read_to_string(patch_file)
@@ -50,6 +59,14 @@ pub async fn run_amend(id: &str, patch_file: &str, reason: Option<&str>, json: b
     Ok(())
 }
 
+/// `odal passport supersede` — retire a passport in favour of one that already
+/// exists.
+///
+/// The sibling of `run_amend` and not a variant of it: amend *mints* the
+/// successor, this one *names* an existing passport that must already carry
+/// `supersedesId` back to the id being retired. Use it when the replacement was
+/// created independently — a newer schema version, an imported record, or a
+/// successor issued after a transfer.
 pub async fn run_supersede(
     id: &str,
     superseded_by: &str,

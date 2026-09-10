@@ -7,14 +7,16 @@ use crate::core::unsold_goods::{
     DisclosureLine, action_unsold_goods_list, action_unsold_goods_record,
 };
 
+/// `odal unsold-goods record` — write one line of the Art. 24 disclosure.
+///
+/// Prints the retry advice on the write itself rather than leaving it in the
+/// docs, because the route serves no `DELETE`: a line recorded twice is
+/// permanent, and Art. 24 figures are published for a financial year, so the
+/// duplicate becomes an overstatement of what the operator actually discarded.
 pub async fn run_unsold_goods_record(line: DisclosureLine) -> Result<()> {
     let (client, cfg) = crate::http::load_client()?;
-    let recorded = action_unsold_goods_record(&line, &client, &cfg).await?;
+    let id = action_unsold_goods_record(&line, &client, &cfg).await?;
 
-    let id = recorded
-        .get("id")
-        .and_then(Value::as_str)
-        .unwrap_or("(not reported)");
     println!("Recorded disclosure line {id}.");
     println!(
         "  {} — {} units, {} kg, {} → {}",
@@ -24,10 +26,16 @@ pub async fn run_unsold_goods_record(line: DisclosureLine) -> Result<()> {
     // DELETE, so a line recorded twice is a figure overstated for a financial
     // year that gets published.
     println!();
-    println!("There is no delete — send an `Idempotency-Key` if you retry this.");
+    println!("There is no delete — pass --idempotency-key if you retry this.");
     Ok(())
 }
 
+/// `odal unsold-goods list` — read the disclosure back, newest first.
+///
+/// The table flags lines carrying no unit count instead of printing a zero for
+/// them. Art. 24(1)(a) asks for the number *and* the weight, and a row written
+/// before the count had a column is incomplete rather than empty — an operator
+/// assembling a return from these figures has to be able to tell the two apart.
 pub async fn run_unsold_goods_list(period: Option<&str>, json: bool) -> Result<()> {
     let (client, cfg) = crate::http::load_client()?;
     let lines = action_unsold_goods_list(period, &client, &cfg).await?;

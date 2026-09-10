@@ -74,6 +74,12 @@ pub fn should_enter_interactive() -> bool {
     std::io::stdin().is_terminal() && std::env::var("CI").is_err()
 }
 
+/// Route a parsed command to the `run_*` function that performs it.
+///
+/// One flat match rather than per-module dispatch, so the set of commands the
+/// binary actually serves can be read in one place — a subcommand that is
+/// declared in `cli_args` but wired to nothing shows up here as an obviously
+/// absent arm rather than as a silent gap spread across modules.
 pub async fn dispatch(cmd: Commands) -> anyhow::Result<()> {
     match cmd {
         Commands::Init {

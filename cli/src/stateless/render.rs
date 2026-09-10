@@ -429,6 +429,26 @@ fn stat_i64(v: &serde_json::Value, key: &str) -> i64 {
     v.get(key).and_then(serde_json::Value::as_i64).unwrap_or(0)
 }
 
+/// Strip control characters from a node-supplied string before it is printed.
+///
+/// `lastIngestAt` below is echoed straight from the node's response into a
+/// terminal. The node is not a trusted peer here — it is whichever host the
+/// active profile points at, including one that has been replaced — and a
+/// timestamp carrying ANSI escapes can repaint the surrounding output, erase
+/// the lines above it or move the cursor, so what the operator reads afterwards
+/// is no longer what this module wrote.
+///
+/// Removing the control bytes rather than escaping them leaves a legitimate
+/// timestamp byte-identical and a tampered one visibly wrong, which is the
+/// right outcome for a field whose only job is to be read at a glance.
+///
+/// Scope: this guards the field this module added. The passport-document
+/// strings rendered further up have the same shape and predate it — widening
+/// the fix is its own change, not one to smuggle in here.
+fn plain(s: &str) -> String {
+    s.chars().filter(|c| !c.is_control()).collect()
+}
+
 /// Say whether the zero above is a measurement or the absence of one.
 ///
 /// The node grew an `ingesting` flag precisely because `totalScans: 0` meant two
@@ -449,7 +469,7 @@ fn render_telemetry_state(stats: &serde_json::Value, label_width: usize) {
             let last = stats
                 .get("lastIngestAt")
                 .and_then(serde_json::Value::as_str)
-                .unwrap_or("just now");
+                .map_or_else(|| "just now".to_owned(), plain);
             println!("  {label}: arriving (last flush {last})");
         }
         Some(false) => {
@@ -460,6 +480,13 @@ fn render_telemetry_state(stats: &serde_json::Value, label_width: usize) {
     }
 }
 
+/// Print one passport's scan telemetry.
+///
+/// Resolutions and QR renders are printed on separate lines and are never
+/// summed: a QR render is label production, an operator generating a print run,
+/// while a resolution is somebody in the field actually reading the passport.
+/// Adding them would inflate the number that means "this product was looked at"
+/// with one that means "we printed labels".
 pub fn render_passport_stats(stats: &serde_json::Value, id: &str) {
     let window = stat_i64(stats, "windowDays");
     println!("Scan telemetry for {id} — last {window} days");
@@ -490,6 +517,12 @@ pub fn render_passport_stats(stats: &serde_json::Value, id: &str) {
     }
 }
 
+/// Print the operator-wide scan telemetry rollup.
+///
+/// Same counters as [`render_passport_stats`] across every passport, plus
+/// `distinctPassportsScanned` — which is the one that answers "is anything
+/// being read at all", since a single heavily-scanned product can carry the
+/// total on its own and make a silent catalogue look healthy.
 pub fn render_operator_stats(stats: &serde_json::Value) {
     let window = stat_i64(stats, "windowDays");
     println!("Scan telemetry — all passports, last {window} days");
@@ -731,5 +764,50 @@ pub fn render_seal_summary(summary: &serde_json::Value) {
             "\n  Unsealed with an empty outbox — those passports have no row at all, so no\n  \
              drain will pick them up. The repair sweep queues them on its next pass."
         );
+    }
+}
+
+#[cfg(test)]
+mod node_supplied_text {
+    use super::plain;
+
+    /// The overwhelmingly common case must be byte-identical, or the guard is
+    /// paying for itself in mangled timestamps.
+    #[test]
+    fn a_real_timestamp_passes_through_unchanged() {
+        assert_eq!(plain("2026-09-10T01:46:06Z"), "2026-09-10T01:46:06Z");
+    }
+
+    /// The escape byte is what makes the rest of the sequence act on the
+    /// terminal. With it gone the remainder is inert text the reader can see,
+    /// which is the point — the tampering stays visible.
+    #[test]
+    fn an_ansi_sequence_loses_the_byte_that_makes_it_an_escape() {
+        let out = plain("2026-09-10\u{1b}[2J\u{1b}[H");
+        assert!(!out.contains('\u{1b}'), "escape survived: {out:?}");
+        assert_eq!(out, "2026-09-10[2J[H");
+    }
+
+    /// A newline in the field would let a node forge extra CLI output lines
+    /// under this command's own labels.
+    #[test]
+    fn newlines_cannot_forge_further_output_lines() {
+        assert_eq!(
+            plain("2026-09-10\r\n  Telemetry: NOT arriving"),
+            "2026-09-10  Telemetry: NOT arriving"
+        );
+    }
+
+    /// C1 controls are control characters too, and a terminal that decodes
+    /// them treats U+009B as a control sequence introducer in its own right.
+    #[test]
+    fn c1_controls_are_removed_as_well() {
+        assert_eq!(plain("2026\u{9b}31m"), "202631m");
+    }
+
+    /// Ordinary non-ASCII text is not a control character and must survive.
+    #[test]
+    fn non_ascii_text_is_not_stripped() {
+        assert_eq!(plain("2026-09-10 — flushed"), "2026-09-10 — flushed");
     }
 }

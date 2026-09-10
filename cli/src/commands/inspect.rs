@@ -5,6 +5,13 @@ use anyhow::Result;
 
 use crate::core::passport::{action_eol, action_find_by_identity, action_lint, action_verify_tree};
 
+/// `odal passport lint` — re-run the plausibility pack against a passport.
+///
+/// The route **persists** its `lintResult`, so this is a write dressed as a
+/// read: running it replaces the stored assessment rather than reporting
+/// alongside it. It also carries `publishReadiness`, which is the answer an
+/// operator is usually actually after — whether the draft can be published,
+/// and which fields block it if not.
 pub async fn run_lint(id: &str, json: bool) -> Result<()> {
     let (client, cfg) = crate::http::load_client()?;
     let report = action_lint(id, &client, &cfg).await?;
