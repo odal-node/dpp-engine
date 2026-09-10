@@ -944,6 +944,41 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ### Fixed
 
+- **`SEAL_PROVIDER=local` could not produce a single seal, under any
+  configuration.** The drain loop named `SealMode::ProviderSeal` as a literal.
+  That is not a setting — it is a claim about *whose* attestation the seal is,
+  the provider's, holding the key on the operator's behalf. Only the QTSP backend
+  advertises it. The local development sealer signs under the operator's own
+  self-signed certificate and advertises `OperatorSeal`, so the adapter's
+  capability check refused every request the drain built for it. Each row then
+  backed off through eight attempts and reached `exhausted`, leaving published
+  passports permanently unsealed while `GET /vault/api/v1/seal` reported
+  `sealingConfigured: true` throughout.
+
+  The mode now travels from the composition root, read off the backend's
+  advertised capabilities — the same route `credential` and `conformance_level`
+  already take, and the only form that can be true for both backends. A literal
+  in the drain could never have been right for more than one of them.
+
+  Two things this also fixes:
+
+  - **The node refuses to boot when it would enqueue rows it cannot drain.**
+    Every input to that decision exists at startup, so the mismatch was knowable
+    before a single passport was published; it was instead discovered per row,
+    after publish, logging nothing until `exhausted` climbed hours later. Gated
+    on `drains`, so a node with sealing off is unaffected.
+  - **The failure names the axis that actually mismatched.** The adapter's error
+    listed all four and closed with "Set `SEAL_CONFORMANCE_LEVEL` to a level this
+    backend supports" — wrong guidance whenever the level was not the problem,
+    and it cost a restart chasing the wrong variable. Where the mode is the
+    mismatch, the message now says so and says it is not settable.
+
+  A node running `SEAL_PROVIDER=local` still needs `SEAL_CONFORMANCE_LEVEL=B`:
+  the local sealer advertises `BaselineB` only, and that refusal is deliberate —
+  a self-signed seal that cannot outlive its own certificate should not silently
+  satisfy a request for one that can. The difference is that it is now a boot
+  error naming the variable, not silence.
+
 - **`just up`, `just infra` and `just reset-db` could not read `.env`, and failed
   in a way that looked like nothing happening.** `docker compose -f
   docker/docker-compose.yml` resolves its env file relative to the **compose

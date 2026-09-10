@@ -346,6 +346,7 @@ pub async fn spawn_seal_drain(
     outbox: Arc<dyn SealOutbox>,
     seal: Arc<dyn SealPort>,
     key_ref: dpp_domain::seal::SealCredentialRef,
+    mode: dpp_domain::seal::SealMode,
     conformance_level: dpp_domain::seal::SealConformanceLevel,
 ) {
     match outbox.status_counts().await {
@@ -368,6 +369,7 @@ pub async fn spawn_seal_drain(
                 &outbox,
                 &seal,
                 &key_ref,
+                mode.clone(),
                 conformance_level,
                 DRAIN_BATCH,
             )

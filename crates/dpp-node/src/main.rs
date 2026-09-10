@@ -393,6 +393,7 @@ async fn main() -> anyhow::Result<()> {
             db.seal_outbox.clone(),
             seal_wiring.port.clone(),
             seal_wiring.credential,
+            seal_wiring.mode,
             seal_wiring.conformance_level,
         )
         .await;

@@ -47,6 +47,7 @@ use dpp_domain::passport::{ManufacturerInfo, Passport, PassportId};
 use dpp_domain::ports::compliance::ComplianceRegistry;
 use dpp_domain::ports::passport_repo::PassportRepository;
 use dpp_domain::product_group::ProductGroup;
+use dpp_domain::seal::SealMode;
 use dpp_domain::status::PassportStatus;
 use dpp_domain::{GhostArchive, GhostRegistrySync};
 use dpp_domain::{ports::seal::SealPort, seal::SealConformanceLevel};
@@ -341,7 +342,15 @@ async fn publish_then_drain_seals_the_passport_end_to_end() {
     // ── 3. Drain: the real adapter against the mock ──────────────────────────
     let adapter = eideasy_adapter(eideasy_config(&base_url));
     let outbox_dyn: Arc<dyn SealOutbox> = seal_outbox.clone();
-    let stats = drain_once(&outbox_dyn, &adapter, &mock_key_ref(), TEST_LEVEL, 10).await;
+    let stats = drain_once(
+        &outbox_dyn,
+        &adapter,
+        &mock_key_ref(),
+        SealMode::ProviderSeal,
+        TEST_LEVEL,
+        10,
+    )
+    .await;
     assert_eq!(stats.sealed, 1, "the drain must seal the queued row");
     assert_eq!(stats.retried, 0);
 
@@ -411,7 +420,15 @@ async fn publish_then_drain_seals_the_passport_end_to_end() {
     assert_eq!(counts.sealed, 1);
     assert_eq!(counts.pending, 0);
 
-    let stats2 = drain_once(&outbox_dyn, &adapter, &mock_key_ref(), TEST_LEVEL, 10).await;
+    let stats2 = drain_once(
+        &outbox_dyn,
+        &adapter,
+        &mock_key_ref(),
+        SealMode::ProviderSeal,
+        TEST_LEVEL,
+        10,
+    )
+    .await;
     assert_eq!(stats2.sealed, 0, "a closed row must not be re-sealed");
     assert_eq!(
         mock.requests.lock().unwrap().len(),
@@ -466,7 +483,15 @@ async fn a_republish_needs_and_gets_its_own_seal() {
 
     let adapter = eideasy_adapter(eideasy_config(&base_url));
     let outbox_dyn: Arc<dyn SealOutbox> = seal_outbox.clone();
-    drain_once(&outbox_dyn, &adapter, &mock_key_ref(), TEST_LEVEL, 10).await;
+    drain_once(
+        &outbox_dyn,
+        &adapter,
+        &mock_key_ref(),
+        SealMode::ProviderSeal,
+        TEST_LEVEL,
+        10,
+    )
+    .await;
 
     // Suspend → publish again: the signing path runs afresh.
     service
@@ -492,7 +517,15 @@ async fn a_republish_needs_and_gets_its_own_seal() {
         hex::encode(Sha256::digest(second_jws.as_bytes()))
     );
 
-    drain_once(&outbox_dyn, &adapter, &mock_key_ref(), TEST_LEVEL, 10).await;
+    drain_once(
+        &outbox_dyn,
+        &adapter,
+        &mock_key_ref(),
+        SealMode::ProviderSeal,
+        TEST_LEVEL,
+        10,
+    )
+    .await;
     let counts = seal_outbox.status_counts().await.expect("counts");
     assert_eq!(counts.sealed, 2, "one seal per distinct signature");
     assert_eq!(
@@ -545,7 +578,15 @@ async fn a_wrong_key_is_rejected_and_the_row_stays_pending() {
     let adapter = eideasy_adapter(bad);
     let outbox_dyn: Arc<dyn SealOutbox> = seal_outbox.clone();
 
-    let stats = drain_once(&outbox_dyn, &adapter, &mock_key_ref(), TEST_LEVEL, 10).await;
+    let stats = drain_once(
+        &outbox_dyn,
+        &adapter,
+        &mock_key_ref(),
+        SealMode::ProviderSeal,
+        TEST_LEVEL,
+        10,
+    )
+    .await;
     assert_eq!(stats.sealed, 0);
     assert_eq!(stats.retried, 1, "a rejected call must back off, not drop");
     assert_eq!(*mock.rejected.lock().unwrap(), 1);
