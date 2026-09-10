@@ -182,12 +182,41 @@ impl OdalClient {
     /// POST with an empty body to `url` with the client's credential — for endpoints
     /// that take no request payload.
     pub async fn post_empty(&self, url: &str) -> Result<(StatusCode, String)> {
-        let resp = self
+        self.post_empty_inner(url, None).await
+    }
+
+    /// As [`Self::post_empty`], for a bodyless route that **creates** something,
+    /// carrying the invocation's `--idempotency-key` when one was given.
+    ///
+    /// The same split as [`Self::post_json`] / [`Self::post_json_creating`], and
+    /// it exists for the same reason: whether a key may be sent is a property of
+    /// the route, so the call site decides. Without this, a bodyless create had
+    /// no way to send one at all — `post_empty` was the only option and it
+    /// attaches no header, so `--idempotency-key` was silently dropped on every
+    /// such route.
+    ///
+    /// Safe to key precisely because the body is empty. The node fingerprints
+    /// the raw body under `RoutePolicy::verbatim()`, and an empty body is
+    /// byte-identical on every retry — unlike [`Self::upload_file`], whose
+    /// multipart boundary changes per request and so cannot be keyed at all.
+    pub async fn post_empty_creating(&self, url: &str) -> Result<(StatusCode, String)> {
+        self.post_empty_inner(url, idempotency_key().map(str::to_owned))
+            .await
+    }
+
+    async fn post_empty_inner(
+        &self,
+        url: &str,
+        key: Option<String>,
+    ) -> Result<(StatusCode, String)> {
+        let mut request = self
             .inner
             .post(url)
-            .header(AUTHORIZATION, &self.authorization)
-            .send()
-            .await?;
+            .header(AUTHORIZATION, &self.authorization);
+        if let Some(key) = key {
+            request = request.header("Idempotency-Key", key);
+        }
+        let resp = request.send().await?;
         let status = resp.status();
         let body = resp.text().await?;
         Ok((status, body))
@@ -263,6 +292,19 @@ impl OdalClient {
     /// Upload a signed plugin as `multipart/form-data` — a `wasm` file part
     /// (filename preserved so the node can derive the product group) plus a `sig` part
     /// carrying the detached Ed25519 signature. Mirrors `POST /api/v1/plugins`.
+    ///
+    /// # No `Idempotency-Key`, deliberately
+    ///
+    /// `POST /api/v1/plugins` is in the node's keyed set, so unlike most routes
+    /// it would accept one — but for the same reason [`Self::upload_file`]
+    /// cannot send one, neither can this. `reqwest::multipart::Form` mints a
+    /// fresh boundary per request and the node fingerprints the raw body, so a
+    /// retry differs in bytes and would be refused as a reused key with a
+    /// changed body: a retryable failure turned into a guaranteed rejection.
+    ///
+    /// Stated here rather than left to be re-derived, because the absence of a
+    /// key on a keyed route otherwise reads as the oversight it was on
+    /// `POST /api/v1/dpp/{dppId}/evidence`.
     pub async fn install_plugin(
         &self,
         url: &str,
