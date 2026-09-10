@@ -11,6 +11,33 @@ set dotenv-load
 # or they will disagree about what the spec is allowed to contain.
 REDOCLY_VERSION := "2.46.2"
 
+# Every compose invocation here, with the env file named explicitly.
+#
+# `docker compose -f docker/docker-compose.yml` resolves its env file relative to
+# the **compose file's** directory, not the working directory. So it looks for
+# `docker/.env`, does not find it, and every `${VAR:?...}` in the file fails
+# interpolation — `just up` died with "DATABASE_POSTGRES_PASS must be set in
+# .env" while that variable was set, with a value, in the `.env` beside the
+# justfile.
+#
+# Two things made it worse than a clear error. It fails at *parse* time, before
+# any build step runs, so the stack was simply never rebuilt and the running
+# containers kept serving an older image — the failure looks like nothing
+# happening. And `env_file: ../.env` inside the compose file resolves correctly
+# from `docker/`, so the container would have received the variables fine; only
+# compose's own `${...}` substitution could not see them. That split is why
+# reading the compose file does not reveal the bug.
+#
+# `set dotenv-load` above does not help: it loads `.env` into the recipe's
+# environment, and compose interpolation reads the env file it was given, not
+# the environment it inherits.
+#
+# The installer path was never affected — `scripts/install.sh` writes
+# `docker-compose.yml` and `.env` into the same directory, so they line up
+# there. This was only ever the in-repo developer path, which is the one
+# CLAUDE.md tells you to use.
+COMPOSE := "docker compose --env-file .env"
+
 # ---------------------------------------------------------------------------
 # Why the gate's checks live in scripts/ rather than as shebang recipes
 #
@@ -328,12 +355,12 @@ docker-resolver-local:
 
 # Bring up the full self-host stack, building node/resolver from crates.io.
 up:
-    docker compose -f docker/docker-compose.yml up -d --build
+    {{ COMPOSE }} -f docker/docker-compose.yml up -d --build
 
 # Bring up the full stack, building node/resolver from the sibling ../dpp-core
 # source (pre-publish dev — use until dpp-core's changes are published).
 up-local:
-    docker compose -f docker/docker-compose.yml -f docker/docker-compose.local.yml up -d --build
+    {{ COMPOSE }} -f docker/docker-compose.yml -f docker/docker-compose.local.yml up -d --build
 
 # ---------------------------------------------------------------------------
 # Run / dev (dpp-engine is a service; these have no analogue in dpp-core)
@@ -341,16 +368,16 @@ up-local:
 
 # Start local infrastructure (PostgreSQL + Redis + NATS) via Docker Compose
 infra:
-    docker compose -f docker/docker-compose.dev.yml up -d
+    {{ COMPOSE }} -f docker/docker-compose.dev.yml up -d
 
 # Stop local infrastructure
 infra-down:
-    docker compose -f docker/docker-compose.dev.yml down
+    {{ COMPOSE }} -f docker/docker-compose.dev.yml down
 
 # Wipe + recreate the dev DB (drops pg-data volume) — fixes migration checksum errors
 reset-db:
-    docker compose -f docker/docker-compose.dev.yml down -v
-    docker compose -f docker/docker-compose.dev.yml up -d
+    {{ COMPOSE }} -f docker/docker-compose.dev.yml down -v
+    {{ COMPOSE }} -f docker/docker-compose.dev.yml up -d
 
 # One-time DB + role provisioning for a MANAGED / external Postgres (RDS, Cloud
 # SQL, DBA-provisioned). Creates the `odal` database and sets the odal_app

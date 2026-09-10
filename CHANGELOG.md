@@ -944,6 +944,31 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ### Fixed
 
+- **`just up`, `just infra` and `just reset-db` could not read `.env`, and failed
+  in a way that looked like nothing happening.** `docker compose -f
+  docker/docker-compose.yml` resolves its env file relative to the **compose
+  file's** directory, not the working directory — so it looked for `docker/.env`,
+  did not find it, and every `${VAR:?…}` in the file failed interpolation. `just
+  up` died with `DATABASE_POSTGRES_PASS must be set in .env` while that variable
+  was set, with a value, in the `.env` beside the justfile.
+
+  The failure is at *parse* time, before any build step runs, so the stack was
+  never rebuilt and the running containers kept serving an older image — which
+  is how a runtime audit comes to be performed against code that was never
+  deployed. All six compose invocations now go through a `COMPOSE` variable that
+  names the env file.
+
+  Two details worth keeping: `env_file: ../.env` **inside** the compose file
+  resolves correctly from `docker/`, so the container would have received the
+  variables fine — only compose's own `${…}` substitution could not see them,
+  which is why reading the compose file does not reveal the bug. And
+  `set dotenv-load` does not help, because compose interpolation reads the env
+  file it is given, not the environment it inherits.
+
+  The installer path was never affected: `scripts/install.sh` writes
+  `docker-compose.yml` and `.env` into the same directory. This was only ever the
+  in-repo developer path — the one the build docs tell you to use.
+
 - **`--idempotency-key` reached every keyed route the CLI calls but one:
   evidence generation.** `POST /api/v1/dpp/{dppId}/evidence` is in the node's
   keyed set, and the CLI reached it through `post_empty`, which attaches no
