@@ -151,6 +151,35 @@ openapi-bundle:
 openapi-html:
     npx --yes @redocly/cli@{{ REDOCLY_VERSION }} build-docs api/openapi.bundled.yaml -o api/openapi.html
 
+# Validate .coderabbit.yaml against CodeRabbit's published schema (needs Node
+# and the network; no install — npx fetches on demand).
+#
+# Unlike every other gate here, the file being checked is not read by this build
+# at all: it is read by a service, on a pull request, days from now. A key it
+# does not recognise fails nothing and reports nothing — it just quietly stops
+# being a setting. That is not hypothetical for this file; `auto_review.enabled:
+# false` was found to skip `pre_merge_checks` along with the review and pass the
+# CodeRabbit status vacuously, visible only in the live check output.
+#
+# The schema is fetched fresh every run — drift is the whole point, and a
+# vendored copy is exactly what cannot show it. The validator is pinned, for the
+# reason REDOCLY_VERSION above is pinned.
+#
+# Not in `just check`: needs Node and the network, which nothing in that gate
+# does. Same call as openapi-check.
+#
+# Proves values, not nested key spelling — the schema closes additional
+# properties at the top level only. scripts/coderabbit-check.sh says where the
+# line falls.
+coderabbit-check:
+    bash scripts/coderabbit-check.sh
+
+# Prove the gate above still rejects what it claims to. It is a wrapper around a
+# validator reached over the network, so it has two ways to pass while checking
+# nothing, and both look like a green run.
+coderabbit-check-self-test:
+    bash scripts/coderabbit-check.test.sh
+
 # Capture a frozen stored-doc fixture for the compatibility guard (needs Docker).
 #
 # Creates and publishes a passport through the real vault, then writes the row's

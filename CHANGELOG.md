@@ -136,6 +136,31 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ### Added
 
+- **`just coderabbit-check`**, deliberately *not* in `just check`: validates
+  `.coderabbit.yaml` against CodeRabbit's published JSON Schema, fetched fresh
+  on every run.
+
+  Unlike every other gate here, the file it checks is not read by this build at
+  all — it is read by a service, on a pull request, days later. A key CodeRabbit
+  does not recognise fails nothing and reports nothing; it just quietly stops
+  being a setting. That is not hypothetical for this file: `auto_review.enabled:
+  false` turned out to skip `pre_merge_checks` along with the review and pass the
+  CodeRabbit status vacuously, which was visible only in the live check output.
+
+  The schema is fetched rather than vendored because drift is the whole point
+  and a stale copy is precisely what cannot show it; the validator is pinned, for
+  the reason `REDOCLY_VERSION` is pinned. The schema URL is read from the
+  config's own `# yaml-language-server:` header, so the editor and the gate can
+  never end up checking different documents.
+
+  **What it proves and what it does not:** the schema closes additional
+  properties at the *top level only*, so `reviewz:` is rejected and
+  `reviews.auto_reviews:` is accepted in silence. Values are checked at every
+  depth; nested key spelling is not checked at all. `just
+  coderabbit-check-self-test` pins both halves of that boundary — including a
+  case asserting the nested typo *is* accepted — so it will start failing if
+  CodeRabbit ever closes the schema, and the caveat cannot quietly become untrue.
+
 - **The CLI caught up with the routes.** Five features shipped with an HTTP
   surface and no way to reach them from the control plane, and `amend` had never
   had one at all — so the CLI, which the docs call the single control plane,
