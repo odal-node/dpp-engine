@@ -22,6 +22,19 @@ get:
     header naming something this route cannot produce gets `406`.
 
     Responses carry `Vary: Accept`.
+
+    **Errors follow the door.** A request that reached the HTML view gets an
+    HTML error page carrying the same status; every other view answers
+    `application/problem+json`. So each error below has two representations,
+    and which one arrives depends on the same `Accept` header that chose the
+    success representation.
+
+    **Serving is conditional on verification, so verification failures are
+    statuses of this route.** The resolver holds no passport data — it fetches
+    from the vault's public tier and verifies the public signature against the
+    operator's DID before building any representation. A passport it cannot
+    verify is never served unmarked: `409` when the signature does not check
+    out, `503` when the DID document could not be reached to try.
   tags:
     - Public Resolver
   security: []
@@ -140,6 +153,80 @@ get:
 
               `Link` — an error is not a representation of the passport.
     '404':
-      $ref: ../../components/responses/NotFound.yaml
+      description: |
+        No published passport with this identifier, or the identifier is not a
+        valid passport id — the resolver reports a malformed id as "not found"
+        rather than as a bad request, since to a consumer holding a data
+        carrier the two are the same answer.
+      content:
+        application/problem+json:
+          schema:
+            $ref: ../../components/schemas/errors/Problem.yaml
+        text/html:
+          schema:
+            type: string
+            description: Consumer-facing "not found" page.
     '406':
       $ref: ../../components/responses/NotAcceptable.yaml
+    '409':
+      description: |
+        The passport's public signature did not verify against the operator's
+        DID, so it is not served. See the operation description: verification
+        runs before any representation is built, and fails closed.
+      content:
+        application/problem+json:
+          schema:
+            $ref: ../../components/schemas/errors/Problem.yaml
+        text/html:
+          schema:
+            type: string
+            description: Consumer-facing error page.
+    '410':
+      description: |
+        The passport exists and has been withdrawn from public view — it is
+        suspended. Distinct from `404`: the identifier is confirmed real and
+        service is being declined, which is the signal a consumer scanning a
+        recalled product needs.
+      content:
+        application/problem+json:
+          schema:
+            $ref: ../../components/schemas/errors/Problem.yaml
+        text/html:
+          schema:
+            type: string
+            description: Consumer-facing withdrawal page.
+    '500':
+      description: |
+        The HTML view could not be rendered. Only the HTML door produces this;
+        the data doors have no rendering step to fail.
+      content:
+        text/html:
+          schema:
+            type: string
+    '502':
+      description: |
+        The vault this resolver fronts could not be read. Deliberately not
+        `404` — the identifier may be perfectly good, so a consumer should
+        retry rather than conclude the product has no passport.
+      content:
+        application/problem+json:
+          schema:
+            $ref: ../../components/schemas/errors/Problem.yaml
+        text/html:
+          schema:
+            type: string
+            description: Consumer-facing error page.
+    '503':
+      description: |
+        Verification could not be attempted: the operator's DID document was
+        unreachable, unparseable, or carried no key matching the signature.
+        Nothing has been established about the passport either way, which is
+        why this is temporary where `409` is not.
+      content:
+        application/problem+json:
+          schema:
+            $ref: ../../components/schemas/errors/Problem.yaml
+        text/html:
+          schema:
+            type: string
+            description: Consumer-facing error page.

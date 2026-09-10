@@ -1874,7 +1874,7 @@
       "patch": {
         "operationId": "updateOperatorConfig",
         "summary": "Update operator configuration",
-        "description": "Merge-patch the operator's configuration. Only supplied fields\nare changed.\n",
+        "description": "Merge-patch the operator's configuration. Only supplied fields\nare changed.\n\nRequires an admin-scoped key. Reading the configuration back does not —\n`GET` is open to any authenticated caller, since a passport's issuer is\npublic information the moment one is published.\n",
         "tags": [
           "Operator"
         ],
@@ -2407,7 +2407,7 @@
       "get": {
         "operationId": "listApiKeys",
         "summary": "List active API keys",
-        "description": "Lists all active API keys for this deployment. Only the key prefix\nis returned — the full secret is shown once at creation time.\n",
+        "description": "Lists all active API keys for this deployment. Only the key prefix\nis returned — the full secret is shown once at creation time.\n\nRequires an admin-scoped key.\n",
         "tags": [
           "API Keys"
         ],
@@ -2444,7 +2444,7 @@
       "post": {
         "operationId": "createApiKey",
         "summary": "Create a new API key",
-        "description": "Generate a new API key. The response includes the full plain-text\n`secret` — this is the only time it will be shown. Store it securely.\n\n**A replayed request does not return the secret.** This route accepts an\n`Idempotency-Key`, but the secret is never stored, so a retry that finds a\ncompleted key answers with the key record and\n`\"secretAlreadyDelivered\": true` in place of `secret`. That is the honest\nanswer: the credential exists and was handed to the first attempt. If that\nresponse was lost, revoke the key and create another.\n",
+        "description": "Generate a new API key. The response includes the full plain-text\n`secret` — this is the only time it will be shown. Store it securely.\n\n**A replayed request does not return the secret.** This route accepts an\n`Idempotency-Key`, but the secret is never stored, so a retry that finds a\ncompleted key answers with the key record and\n`\"secretAlreadyDelivered\": true` in place of `secret`. That is the honest\nanswer: the credential exists and was handed to the first attempt. If that\nresponse was lost, revoke the key and create another.\n\nRequires an admin-scoped key — including the first one, which is minted\nwith the operator's Basic credential.\n",
         "tags": [
           "API Keys"
         ],
@@ -2501,7 +2501,7 @@
       "delete": {
         "operationId": "revokeApiKey",
         "summary": "Revoke an API key",
-        "description": "Soft-revokes a key. The record remains for audit but `isActive`\nis set to false. Subsequent auth attempts with this key will fail.\n",
+        "description": "Soft-revokes a key. The record remains for audit but `isActive`\nis set to false. Subsequent auth attempts with this key will fail.\n\n**A key cannot revoke itself.** Revoking the credential this very request\nauthenticated with would lock the caller — and everything sharing that key\n— out of every authenticated route, so it is refused with `409`.\nAuthenticate with a different key, or with the operator's Basic credential,\nwhich carries no key id and is therefore the lockout-recovery path.\n\nRequires an admin-scoped key.\n",
         "tags": [
           "API Keys"
         ],
@@ -2546,6 +2546,22 @@
           },
           "404": {
             "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "description": "The key named in the path is the one this request authenticated with.\nRevoking it would lock the caller out of every authenticated route, so\nit is refused rather than performed.\n",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "example": {
+                  "type": "https://problems.odal-node.io/conflict",
+                  "title": "Conflict",
+                  "status": 409,
+                  "detail": "Cannot revoke the API key you are currently authenticating with. Authenticate with a different key (or admin credentials), then revoke this one."
+                }
+              }
+            }
           }
         }
       }
@@ -2554,7 +2570,7 @@
       "post": {
         "operationId": "issueCredential",
         "summary": "Issue an access credential",
-        "description": "Mints a DPP access credential signed with this node's own key, and returns\nit as a compact VC-JWT the holder presents in the `X-DPP-Credential` header\non `GET /vault/credential/dpp/{dppId}`.\n\n**Only a legitimate interest, never an authority.** An operator naming its\nown authorised repairer attests something no one else can — membership of\nthat network is a fact the operator alone holds, and no EU register of\nauthorised repairers exists to hold it instead. An operator naming itself a\nmarket surveillance authority attests nothing, because the standing being\nclaimed is conferred by a member state. The three authority roles are\nrefused with `422`.\n\n**Issuing is not trusting.** A credential minted here is honoured by *this*\nnode only if the node also trusts its own DID (`CREDENTIAL_ISSUERS_SELF`).\nAn operator running more than one node ordinarily mints on one and honours\nit on another, so issuance is available regardless of that switch.\n\n**Revocation is expiry.** This node fetches W3C status lists but publishes\nnone, so a credential it mints carries no `credentialStatus` and cannot be\nwithdrawn before it lapses. `validForDays` is therefore capped rather than\nopen-ended, and defaults to less than the cap.\n",
+        "description": "Mints a DPP access credential signed with this node's own key, and returns\nit as a compact VC-JWT the holder presents in the `X-DPP-Credential` header\non `GET /vault/credential/dpp/{dppId}`.\n\n**Only a legitimate interest, never an authority.** An operator naming its\nown authorised repairer attests something no one else can — membership of\nthat network is a fact the operator alone holds, and no EU register of\nauthorised repairers exists to hold it instead. An operator naming itself a\nmarket surveillance authority attests nothing, because the standing being\nclaimed is conferred by a member state. The three authority roles are\nrefused with `422`.\n\n**Issuing is not trusting.** A credential minted here is honoured by *this*\nnode only if the node also trusts its own DID (`CREDENTIAL_ISSUERS_SELF`).\nAn operator running more than one node ordinarily mints on one and honours\nit on another, so issuance is available regardless of that switch.\n\n**Revocation is expiry.** This node fetches W3C status lists but publishes\nnone, so a credential it mints carries no `credentialStatus` and cannot be\nwithdrawn before it lapses. `validForDays` is therefore capped rather than\nopen-ended, and defaults to less than the cap.\n\n**Retry with an `Idempotency-Key`.** Issuance is the sharpest case in the\nkeyed set: the node stores no record of what it signed and publishes no\nstatus list, so a duplicate cannot be found afterwards and could not be\nwithdrawn if it were. A retry under the same key replays the original\nresponse — including `credentialJws`, which is what stops the retry from\nminting a *second* live credential.\n\nRequires an admin-scoped key.\n",
         "tags": [
           "Access"
         ],
@@ -2564,6 +2580,11 @@
           },
           {
             "BasicAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
           }
         ],
         "requestBody": {
@@ -2595,6 +2616,9 @@
           },
           "403": {
             "$ref": "#/components/responses/Forbidden"
+          },
+          "409": {
+            "$ref": "#/components/responses/IdempotentRequestInFlight"
           },
           "422": {
             "description": "The request cannot produce a usable credential — an authority role, a\n`holderDid` that is not a DID, a `country` that is not alpha-2, or a\n`validForDays` outside 1–90.\n",
@@ -2682,7 +2706,7 @@
       "post": {
         "operationId": "recordUnsoldGoods",
         "summary": "Record an unsold-goods disclosure line",
-        "description": "Records one line of the ESPR Art. 24 disclosure of unsold consumer products\ndiscarded in a financial year.\n\n**This is not a passport.** There is no digital product passport anywhere in\nArt. 24 or Art. 25: the subject is an *operator over a financial year*, the\nmedium is the operator's own website, and the trigger is discarding unsold\nstock — none of which is a product placed on the market. These routes\ntherefore sit beside the other operator-scoped ones, and no `unsold-goods`\nproduct group carries passports.\n\n**Destruction must be justified.** Art. 25 prohibits destroying unsold\nconsumer products listed in Annex VII from 19 July 2026, so\n`destination: exemptDestruction` requires `destructionJustification` and is\nrefused with `422` without it. The converse is refused too: a justification\non any other destination describes nothing.\n\n**Annex VII scope is not decided here.** That is a CN-code prefix test, and\nthe goods in a disclosure line do not arrive carrying CN codes.\n`productCategory` is the operator's own categorisation for Art. 24(1)(a).\n",
+        "description": "Records one line of the ESPR Art. 24 disclosure of unsold consumer products\ndiscarded in a financial year.\n\n**This is not a passport.** There is no digital product passport anywhere in\nArt. 24 or Art. 25: the subject is an *operator over a financial year*, the\nmedium is the operator's own website, and the trigger is discarding unsold\nstock — none of which is a product placed on the market. These routes\ntherefore sit beside the other operator-scoped ones, and no `unsold-goods`\nproduct group carries passports.\n\n**Destruction must be justified.** Art. 25 prohibits destroying unsold\nconsumer products listed in Annex VII from 19 July 2026, so\n`destination: exemptDestruction` requires `destructionJustification` and is\nrefused with `422` without it. The converse is refused too: a justification\non any other destination describes nothing.\n\n**Annex VII scope is not decided here.** That is a CN-code prefix test, and\nthe goods in a disclosure line do not arrive carrying CN codes.\n`productCategory` is the operator's own categorisation for Art. 24(1)(a).\n\n**Retry with an `Idempotency-Key`.** This route serves no `DELETE`, so a\nduplicate line is permanent — and Art. 24 is disclosed publicly for a\nfinancial year, so a discard counted twice overstates what the operator\nactually did.\n\nRequires a write-scoped key; reading the lines back requires admin.\n",
         "tags": [
           "Unsold goods"
         ],
@@ -2692,6 +2716,11 @@
           },
           {
             "BasicAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
           }
         ],
         "requestBody": {
@@ -2723,6 +2752,9 @@
           },
           "403": {
             "$ref": "#/components/responses/Forbidden"
+          },
+          "409": {
+            "$ref": "#/components/responses/IdempotentRequestInFlight"
           },
           "422": {
             "description": "The line cannot be recorded — a `reportingPeriod` that is not a\nfour-digit year, a negative count or weight, a `countryOfDisposal` that\nis not alpha-2, a destruction with no justification, or a justification\non something that was not destroyed.\n",
@@ -3974,7 +4006,7 @@
       "get": {
         "operationId": "resolveDpp",
         "summary": "Resolve a public DPP",
-        "description": "Resolve a published Digital Product Passport by ID. This endpoint\nis the target of QR code scans. No authentication required.\n\nEvery representation is built from the **signed** public payload, not\nthe live database row, so the body and the proof it carries agree by\nconstruction.\n\nContent negotiation via `Accept` header:\n- `application/json` / `application/ld+json` (default): JSON-LD\n  passport data\n- `text/html`: the consumer-facing HTML passport page with operator\n  branding (logo, colours)\n- `application/aas+json`: an IDTA Asset Administration Shell\n  Environment (see below)\n\nAn absent, empty, `*/*`, `application/*`, `application/json` or\n`application/ld+json` header all reach the JSON-LD default. Only a\nheader naming something this route cannot produce gets `406`.\n\nResponses carry `Vary: Accept`.\n",
+        "description": "Resolve a published Digital Product Passport by ID. This endpoint\nis the target of QR code scans. No authentication required.\n\nEvery representation is built from the **signed** public payload, not\nthe live database row, so the body and the proof it carries agree by\nconstruction.\n\nContent negotiation via `Accept` header:\n- `application/json` / `application/ld+json` (default): JSON-LD\n  passport data\n- `text/html`: the consumer-facing HTML passport page with operator\n  branding (logo, colours)\n- `application/aas+json`: an IDTA Asset Administration Shell\n  Environment (see below)\n\nAn absent, empty, `*/*`, `application/*`, `application/json` or\n`application/ld+json` header all reach the JSON-LD default. Only a\nheader naming something this route cannot produce gets `406`.\n\nResponses carry `Vary: Accept`.\n\n**Errors follow the door.** A request that reached the HTML view gets an\nHTML error page carrying the same status; every other view answers\n`application/problem+json`. So each error below has two representations,\nand which one arrives depends on the same `Accept` header that chose the\nsuccess representation.\n\n**Serving is conditional on verification, so verification failures are\nstatuses of this route.** The resolver holds no passport data — it fetches\nfrom the vault's public tier and verifies the public signature against the\noperator's DID before building any representation. A passport it cannot\nverify is never served unmarked: `409` when the signature does not check\nout, `503` when the DID document could not be reached to try.\n",
         "tags": [
           "Public Resolver"
         ],
@@ -4013,10 +4045,97 @@
             }
           },
           "404": {
-            "$ref": "#/components/responses/NotFound"
+            "description": "No published passport with this identifier, or the identifier is not a\nvalid passport id — the resolver reports a malformed id as \"not found\"\nrather than as a bad request, since to a consumer holding a data\ncarrier the two are the same answer.\n",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              },
+              "text/html": {
+                "schema": {
+                  "type": "string",
+                  "description": "Consumer-facing \"not found\" page."
+                }
+              }
+            }
           },
           "406": {
             "$ref": "#/components/responses/NotAcceptable"
+          },
+          "409": {
+            "description": "The passport's public signature did not verify against the operator's\nDID, so it is not served. See the operation description: verification\nruns before any representation is built, and fails closed.\n",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              },
+              "text/html": {
+                "schema": {
+                  "type": "string",
+                  "description": "Consumer-facing error page."
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "The passport exists and has been withdrawn from public view — it is\nsuspended. Distinct from `404`: the identifier is confirmed real and\nservice is being declined, which is the signal a consumer scanning a\nrecalled product needs.\n",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              },
+              "text/html": {
+                "schema": {
+                  "type": "string",
+                  "description": "Consumer-facing withdrawal page."
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The HTML view could not be rendered. Only the HTML door produces this;\nthe data doors have no rendering step to fail.\n",
+            "content": {
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "The vault this resolver fronts could not be read. Deliberately not\n`404` — the identifier may be perfectly good, so a consumer should\nretry rather than conclude the product has no passport.\n",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              },
+              "text/html": {
+                "schema": {
+                  "type": "string",
+                  "description": "Consumer-facing error page."
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Verification could not be attempted: the operator's DID document was\nunreachable, unparseable, or carried no key matching the signature.\nNothing has been established about the passport either way, which is\nwhy this is temporary where `409` is not.\n",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              },
+              "text/html": {
+                "schema": {
+                  "type": "string",
+                  "description": "Consumer-facing error page."
+                }
+              }
+            }
           }
         }
       }
@@ -4025,7 +4144,7 @@
       "get": {
         "operationId": "getDppQrCode",
         "summary": "Get QR code for a DPP",
-        "description": "Returns a QR code image for the given DPP. The QR encodes the passport's\nGS1 Digital Link on the resolver's configured base\n(e.g. `https://id.odal-node.io/01/{gtin}/21/{serial}`).\nThis endpoint is on the **resolver** service (port 8003).\n",
+        "description": "Returns a QR code image for the given DPP. The QR encodes the passport's\nGS1 Digital Link on the resolver's configured base\n(e.g. `https://id.odal-node.io/01/{gtin}/21/{serial}`).\nThis endpoint is on the **resolver** service (port 8003).\n\n**Every response is `image/png`, including the failures.** This route is\naddressed by `<img src>`, so an error carries no problem document — the\nbody is empty and the status line is the whole of the answer. A client that\nneeds a readable reason should ask `GET /dpp/{dppId}`, which answers the\nsame failures as `application/problem+json`.\n\nFails closed on verification, like every other resolver route: the\npassport's public signature is checked against the operator's DID before a\nQR is drawn, so an unverifiable passport yields no image.\n",
         "tags": [
           "Public Resolver"
         ],
@@ -4053,10 +4172,81 @@
             }
           },
           "404": {
-            "$ref": "#/components/responses/NotFound"
+            "description": "No published passport with this identifier. Empty body.",
+            "content": {
+              "image/png": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The passport's public signature did not verify against the operator's DID, so no QR was drawn. Empty body.",
+            "content": {
+              "image/png": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "The passport has been withdrawn from public view — it is suspended. Empty body.",
+            "content": {
+              "image/png": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
           },
           "422": {
-            "$ref": "#/components/responses/ValidationError"
+            "description": "The passport carries no data carrier to encode — no GTIN, so no GS1 Digital Link exists to put in a QR code. Empty body.",
+            "content": {
+              "image/png": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "QR encoding failed. Empty body.",
+            "content": {
+              "image/png": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "The vault this resolver fronts could not be read. Empty body.",
+            "content": {
+              "image/png": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Verification could not be attempted — the operator's DID document was unreachable. Empty body.",
+            "content": {
+              "image/png": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
           }
         }
       }
@@ -4107,8 +4297,17 @@
           "404": {
             "description": "No published DPP for this GTIN, or unknown link type."
           },
+          "409": {
+            "$ref": "#/components/responses/PassportSignatureUnverified"
+          },
           "410": {
             "$ref": "#/components/responses/Gone"
+          },
+          "502": {
+            "$ref": "#/components/responses/ResolverUpstreamFailure"
+          },
+          "503": {
+            "$ref": "#/components/responses/PassportVerificationUnavailable"
           }
         }
       }
@@ -4168,8 +4367,17 @@
           "404": {
             "description": "No published DPP for this GTIN, or unknown link type."
           },
+          "409": {
+            "$ref": "#/components/responses/PassportSignatureUnverified"
+          },
           "410": {
             "$ref": "#/components/responses/Gone"
+          },
+          "502": {
+            "$ref": "#/components/responses/ResolverUpstreamFailure"
+          },
+          "503": {
+            "$ref": "#/components/responses/PassportVerificationUnavailable"
           }
         }
       }
@@ -4229,8 +4437,17 @@
           "404": {
             "description": "No published DPP for this GTIN, or unknown link type."
           },
+          "409": {
+            "$ref": "#/components/responses/PassportSignatureUnverified"
+          },
           "410": {
             "$ref": "#/components/responses/Gone"
+          },
+          "502": {
+            "$ref": "#/components/responses/ResolverUpstreamFailure"
+          },
+          "503": {
+            "$ref": "#/components/responses/PassportVerificationUnavailable"
           }
         }
       }
@@ -4299,8 +4516,17 @@
           "404": {
             "description": "No published DPP for this GTIN, or unknown link type."
           },
+          "409": {
+            "$ref": "#/components/responses/PassportSignatureUnverified"
+          },
           "410": {
             "$ref": "#/components/responses/Gone"
+          },
+          "502": {
+            "$ref": "#/components/responses/ResolverUpstreamFailure"
+          },
+          "503": {
+            "$ref": "#/components/responses/PassportVerificationUnavailable"
           }
         }
       }
@@ -8508,6 +8734,54 @@
               "title": "Not Acceptable",
               "status": 406,
               "detail": "No representation matches 'application/pdf'. This resource is available as text/html, application/ld+json, or application/aas+json."
+            }
+          }
+        }
+      },
+      "PassportSignatureUnverified": {
+        "description": "The passport was fetched but its public signature did not verify against the\noperator's DID, so the resolver refuses to serve it.\n\nEvery resolver representation is built from the **verified** signed payload,\nnever from whatever the vault returned, and verification fails closed: a\npublished passport carrying no public signature, a signature that does not\ncheck out, or a payload that does not match what was signed all end here\nrather than being served unmarked.\n\nDistinct from `503`, which means verification could not be *attempted*\nbecause the DID document was unreachable.\n",
+        "content": {
+          "application/problem+json": {
+            "schema": {
+              "$ref": "#/components/schemas/Problem"
+            },
+            "example": {
+              "type": "https://problems.odal-node.io/conflict",
+              "title": "Conflict",
+              "status": 409,
+              "detail": "The passport's digital signature could not be verified."
+            }
+          }
+        }
+      },
+      "ResolverUpstreamFailure": {
+        "description": "The resolver could not read the passport from the vault it fronts.\n\nThe resolver holds no passport data of its own — it fetches from the vault's\npublic tier on every request — so an unreachable vault, or one answering\nanything other than a success, a `404`/`400` or a `410`, is reported as an\nupstream failure rather than as an answer about the passport.\n\nDeliberately not `404`: the identifier may be perfectly good. A consumer\nscanning a carrier should retry rather than conclude the product has no\npassport.\n",
+        "content": {
+          "application/problem+json": {
+            "schema": {
+              "$ref": "#/components/schemas/Problem"
+            },
+            "example": {
+              "type": "https://problems.odal-node.io/bad-gateway",
+              "title": "Bad Gateway",
+              "status": 502,
+              "detail": "The passport could not be read."
+            }
+          }
+        }
+      },
+      "PassportVerificationUnavailable": {
+        "description": "The passport could not be verified right now, so it is not served.\n\nVerification needs the operator's DID document, and this is the answer when\nthat document cannot be fetched, cannot be parsed, or carries no key matching\nthe signature's `kid`. The passport itself may be perfectly valid — nothing\nhas been established about it either way, which is why this is a temporary\nfailure and not a judgement.\n\nDistinct from `409`, where verification ran and the signature did not check\nout. Retry; a `409` will not fix itself.\n",
+        "content": {
+          "application/problem+json": {
+            "schema": {
+              "$ref": "#/components/schemas/Problem"
+            },
+            "example": {
+              "type": "https://problems.odal-node.io/service-unavailable",
+              "title": "Service Unavailable",
+              "status": 503,
+              "detail": "The passport could not be verified right now; try again later."
             }
           }
         }

@@ -175,6 +175,24 @@ pub fn policy_for(method: &Method, template: &str) -> Option<RoutePolicy> {
         .map(|(_, _, policy)| *policy)
 }
 
+/// Every keyed route, as `(method, route template)`.
+///
+/// Exposed so the OpenAPI contract test can compare this table against the
+/// published description: a keyed route whose operation does not declare the
+/// `Idempotency-Key` parameter and the `409` it can answer is a route whose
+/// retry protection no client knows to use, and an operation that declares
+/// them while absent here documents a header the middleware answers `400` to.
+/// Two routes had drifted the first way before this check existed.
+///
+/// Returns the table rather than restating it, for the same reason the refusal
+/// message in the integrator's template handler is derived: a second list
+/// beside this one would be a second thing to keep in step.
+pub fn keyed_routes() -> impl Iterator<Item = (&'static Method, &'static str)> {
+    KEYED
+        .iter()
+        .map(|(method, template, _)| (method, *template))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

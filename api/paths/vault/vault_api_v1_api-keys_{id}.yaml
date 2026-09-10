@@ -4,6 +4,14 @@ delete:
   description: |
     Soft-revokes a key. The record remains for audit but `isActive`
     is set to false. Subsequent auth attempts with this key will fail.
+
+    **A key cannot revoke itself.** Revoking the credential this very request
+    authenticated with would lock the caller — and everything sharing that key
+    — out of every authenticated route, so it is refused with `409`.
+    Authenticate with a different key, or with the operator's Basic credential,
+    which carries no key id and is therefore the lockout-recovery path.
+
+    Requires an admin-scoped key.
   tags:
     - API Keys
   security:
@@ -31,3 +39,20 @@ delete:
       $ref: ../../components/responses/NotFound.yaml
     '403':
       $ref: ../../components/responses/Forbidden.yaml
+    '409':
+      description: |
+        The key named in the path is the one this request authenticated with.
+        Revoking it would lock the caller out of every authenticated route, so
+        it is refused rather than performed.
+      content:
+        application/problem+json:
+          schema:
+            $ref: ../../components/schemas/errors/Problem.yaml
+          example:
+            type: https://problems.odal-node.io/conflict
+            title: Conflict
+            status: 409
+            detail: >-
+              Cannot revoke the API key you are currently authenticating with.
+              Authenticate with a different key (or admin credentials), then
+              revoke this one.

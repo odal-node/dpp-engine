@@ -4,6 +4,8 @@ get:
   description: |
     Lists all active API keys for this deployment. Only the key prefix
     is returned — the full secret is shown once at creation time.
+
+    Requires an admin-scoped key.
   tags:
     - API Keys
   security:
@@ -35,6 +37,9 @@ post:
     `"secretAlreadyDelivered": true` in place of `secret`. That is the honest
     answer: the credential exists and was handed to the first attempt. If that
     response was lost, revoke the key and create another.
+
+    Requires an admin-scoped key — including the first one, which is minted
+    with the operator's Basic credential.
   tags:
     - API Keys
   security:

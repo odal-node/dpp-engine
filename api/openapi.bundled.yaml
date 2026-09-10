@@ -1469,6 +1469,10 @@ paths:
       description: |
         Merge-patch the operator's configuration. Only supplied fields
         are changed.
+
+        Requires an admin-scoped key. Reading the configuration back does not —
+        `GET` is open to any authenticated caller, since a passport's issuer is
+        public information the moment one is published.
       tags:
         - Operator
       security:
@@ -1810,6 +1814,8 @@ paths:
       description: |
         Lists all active API keys for this deployment. Only the key prefix
         is returned — the full secret is shown once at creation time.
+
+        Requires an admin-scoped key.
       tags:
         - API Keys
       security:
@@ -1841,6 +1847,9 @@ paths:
         `"secretAlreadyDelivered": true` in place of `secret`. That is the honest
         answer: the credential exists and was handed to the first attempt. If that
         response was lost, revoke the key and create another.
+
+        Requires an admin-scoped key — including the first one, which is minted
+        with the operator's Basic credential.
       tags:
         - API Keys
       security:
@@ -1876,6 +1885,14 @@ paths:
       description: |
         Soft-revokes a key. The record remains for audit but `isActive`
         is set to false. Subsequent auth attempts with this key will fail.
+
+        **A key cannot revoke itself.** Revoking the credential this very request
+        authenticated with would lock the caller — and everything sharing that key
+        — out of every authenticated route, so it is refused with `409`.
+        Authenticate with a different key, or with the operator's Basic credential,
+        which carries no key id and is therefore the lockout-recovery path.
+
+        Requires an admin-scoped key.
       tags:
         - API Keys
       security:
@@ -1903,6 +1920,20 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
+        '409':
+          description: |
+            The key named in the path is the one this request authenticated with.
+            Revoking it would lock the caller out of every authenticated route, so
+            it is refused rather than performed.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+              example:
+                type: https://problems.odal-node.io/conflict
+                title: Conflict
+                status: 409
+                detail: Cannot revoke the API key you are currently authenticating with. Authenticate with a different key (or admin credentials), then revoke this one.
   /vault/api/v1/credentials:
     post:
       operationId: issueCredential
@@ -1929,11 +1960,22 @@ paths:
         none, so a credential it mints carries no `credentialStatus` and cannot be
         withdrawn before it lapses. `validForDays` is therefore capped rather than
         open-ended, and defaults to less than the cap.
+
+        **Retry with an `Idempotency-Key`.** Issuance is the sharpest case in the
+        keyed set: the node stores no record of what it signed and publishes no
+        status list, so a duplicate cannot be found afterwards and could not be
+        withdrawn if it were. A retry under the same key replays the original
+        response — including `credentialJws`, which is what stops the retry from
+        minting a *second* live credential.
+
+        Requires an admin-scoped key.
       tags:
         - Access
       security:
         - BearerApiKey: []
         - BasicAuth: []
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
       requestBody:
         required: true
         content:
@@ -1953,6 +1995,8 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/IdempotentRequestInFlight'
         '422':
           description: |
             The request cannot produce a usable credential — an authority role, a
@@ -2036,11 +2080,20 @@ paths:
         **Annex VII scope is not decided here.** That is a CN-code prefix test, and
         the goods in a disclosure line do not arrive carrying CN codes.
         `productCategory` is the operator's own categorisation for Art. 24(1)(a).
+
+        **Retry with an `Idempotency-Key`.** This route serves no `DELETE`, so a
+        duplicate line is permanent — and Art. 24 is disclosed publicly for a
+        financial year, so a discard counted twice overstates what the operator
+        actually did.
+
+        Requires a write-scoped key; reading the lines back requires admin.
       tags:
         - Unsold goods
       security:
         - BearerApiKey: []
         - BasicAuth: []
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
       requestBody:
         required: true
         content:
@@ -2060,6 +2113,8 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/IdempotentRequestInFlight'
         '422':
           description: |
             The line cannot be recorded — a `reportingPeriod` that is not a
@@ -3068,6 +3123,19 @@ paths:
         header naming something this route cannot produce gets `406`.
 
         Responses carry `Vary: Accept`.
+
+        **Errors follow the door.** A request that reached the HTML view gets an
+        HTML error page carrying the same status; every other view answers
+        `application/problem+json`. So each error below has two representations,
+        and which one arrives depends on the same `Accept` header that chose the
+        success representation.
+
+        **Serving is conditional on verification, so verification failures are
+        statuses of this route.** The resolver holds no passport data — it fetches
+        from the vault's public tier and verifies the public signature against the
+        operator's DID before building any representation. A passport it cannot
+        verify is never served unmarked: `409` when the signature does not check
+        out, `503` when the DID document could not be reached to try.
       tags:
         - Public Resolver
       security: []
@@ -3144,9 +3212,83 @@ paths:
                   default `https://id.odal-node.io`). Error responses carry no
                   `Link` — an error is not a representation of the passport.
         '404':
-          $ref: '#/components/responses/NotFound'
+          description: |
+            No published passport with this identifier, or the identifier is not a
+            valid passport id — the resolver reports a malformed id as "not found"
+            rather than as a bad request, since to a consumer holding a data
+            carrier the two are the same answer.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+            text/html:
+              schema:
+                type: string
+                description: Consumer-facing "not found" page.
         '406':
           $ref: '#/components/responses/NotAcceptable'
+        '409':
+          description: |
+            The passport's public signature did not verify against the operator's
+            DID, so it is not served. See the operation description: verification
+            runs before any representation is built, and fails closed.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+            text/html:
+              schema:
+                type: string
+                description: Consumer-facing error page.
+        '410':
+          description: |
+            The passport exists and has been withdrawn from public view — it is
+            suspended. Distinct from `404`: the identifier is confirmed real and
+            service is being declined, which is the signal a consumer scanning a
+            recalled product needs.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+            text/html:
+              schema:
+                type: string
+                description: Consumer-facing withdrawal page.
+        '500':
+          description: |
+            The HTML view could not be rendered. Only the HTML door produces this;
+            the data doors have no rendering step to fail.
+          content:
+            text/html:
+              schema:
+                type: string
+        '502':
+          description: |
+            The vault this resolver fronts could not be read. Deliberately not
+            `404` — the identifier may be perfectly good, so a consumer should
+            retry rather than conclude the product has no passport.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+            text/html:
+              schema:
+                type: string
+                description: Consumer-facing error page.
+        '503':
+          description: |
+            Verification could not be attempted: the operator's DID document was
+            unreachable, unparseable, or carried no key matching the signature.
+            Nothing has been established about the passport either way, which is
+            why this is temporary where `409` is not.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+            text/html:
+              schema:
+                type: string
+                description: Consumer-facing error page.
   /dpp/{dppId}/qr:
     get:
       operationId: getDppQrCode
@@ -3156,6 +3298,16 @@ paths:
         GS1 Digital Link on the resolver's configured base
         (e.g. `https://id.odal-node.io/01/{gtin}/21/{serial}`).
         This endpoint is on the **resolver** service (port 8003).
+
+        **Every response is `image/png`, including the failures.** This route is
+        addressed by `<img src>`, so an error carries no problem document — the
+        body is empty and the status line is the whole of the answer. A client that
+        needs a readable reason should ask `GET /dpp/{dppId}`, which answers the
+        same failures as `application/problem+json`.
+
+        Fails closed on verification, like every other resolver route: the
+        passport's public signature is checked against the operator's DID before a
+        QR is drawn, so an unverifiable passport yields no image.
       tags:
         - Public Resolver
       security: []
@@ -3174,9 +3326,54 @@ paths:
                 type: string
                 format: binary
         '404':
-          $ref: '#/components/responses/NotFound'
+          description: No published passport with this identifier. Empty body.
+          content:
+            image/png:
+              schema:
+                type: string
+                format: binary
+        '409':
+          description: The passport's public signature did not verify against the operator's DID, so no QR was drawn. Empty body.
+          content:
+            image/png:
+              schema:
+                type: string
+                format: binary
+        '410':
+          description: The passport has been withdrawn from public view — it is suspended. Empty body.
+          content:
+            image/png:
+              schema:
+                type: string
+                format: binary
         '422':
-          $ref: '#/components/responses/ValidationError'
+          description: The passport carries no data carrier to encode — no GTIN, so no GS1 Digital Link exists to put in a QR code. Empty body.
+          content:
+            image/png:
+              schema:
+                type: string
+                format: binary
+        '500':
+          description: QR encoding failed. Empty body.
+          content:
+            image/png:
+              schema:
+                type: string
+                format: binary
+        '502':
+          description: The vault this resolver fronts could not be read. Empty body.
+          content:
+            image/png:
+              schema:
+                type: string
+                format: binary
+        '503':
+          description: Verification could not be attempted — the operator's DID document was unreachable. Empty body.
+          content:
+            image/png:
+              schema:
+                type: string
+                format: binary
   /01/{gtin}:
     get:
       operationId: resolveByGtin
@@ -3215,8 +3412,14 @@ paths:
           description: Redirect to the DPP page (`Location` header).
         '404':
           description: No published DPP for this GTIN, or unknown link type.
+        '409':
+          $ref: '#/components/responses/PassportSignatureUnverified'
         '410':
           $ref: '#/components/responses/Gone'
+        '502':
+          $ref: '#/components/responses/ResolverUpstreamFailure'
+        '503':
+          $ref: '#/components/responses/PassportVerificationUnavailable'
   /01/{gtin}/21/{serial}:
     get:
       operationId: resolveByGtinSerial
@@ -3261,8 +3464,14 @@ paths:
           description: Redirect to the DPP page (`Location` header).
         '404':
           description: No published DPP for this GTIN, or unknown link type.
+        '409':
+          $ref: '#/components/responses/PassportSignatureUnverified'
         '410':
           $ref: '#/components/responses/Gone'
+        '502':
+          $ref: '#/components/responses/ResolverUpstreamFailure'
+        '503':
+          $ref: '#/components/responses/PassportVerificationUnavailable'
   /01/{gtin}/10/{batch}:
     get:
       operationId: resolveByGtinBatch
@@ -3305,8 +3514,14 @@ paths:
           description: Redirect to the DPP page (`Location` header).
         '404':
           description: No published DPP for this GTIN, or unknown link type.
+        '409':
+          $ref: '#/components/responses/PassportSignatureUnverified'
         '410':
           $ref: '#/components/responses/Gone'
+        '502':
+          $ref: '#/components/responses/ResolverUpstreamFailure'
+        '503':
+          $ref: '#/components/responses/PassportVerificationUnavailable'
   /01/{gtin}/10/{batch}/21/{serial}:
     get:
       operationId: resolveByGtinBatchSerial
@@ -3355,8 +3570,14 @@ paths:
           description: Redirect to the DPP page (`Location` header).
         '404':
           description: No published DPP for this GTIN, or unknown link type.
+        '409':
+          $ref: '#/components/responses/PassportSignatureUnverified'
         '410':
           $ref: '#/components/responses/Gone'
+        '502':
+          $ref: '#/components/responses/ResolverUpstreamFailure'
+        '503':
+          $ref: '#/components/responses/PassportVerificationUnavailable'
   /vault/health:
     get:
       operationId: vaultHealth
@@ -7116,6 +7337,70 @@ components:
             title: Not Acceptable
             status: 406
             detail: No representation matches 'application/pdf'. This resource is available as text/html, application/ld+json, or application/aas+json.
+    PassportSignatureUnverified:
+      description: |
+        The passport was fetched but its public signature did not verify against the
+        operator's DID, so the resolver refuses to serve it.
+
+        Every resolver representation is built from the **verified** signed payload,
+        never from whatever the vault returned, and verification fails closed: a
+        published passport carrying no public signature, a signature that does not
+        check out, or a payload that does not match what was signed all end here
+        rather than being served unmarked.
+
+        Distinct from `503`, which means verification could not be *attempted*
+        because the DID document was unreachable.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+          example:
+            type: https://problems.odal-node.io/conflict
+            title: Conflict
+            status: 409
+            detail: The passport's digital signature could not be verified.
+    ResolverUpstreamFailure:
+      description: |
+        The resolver could not read the passport from the vault it fronts.
+
+        The resolver holds no passport data of its own — it fetches from the vault's
+        public tier on every request — so an unreachable vault, or one answering
+        anything other than a success, a `404`/`400` or a `410`, is reported as an
+        upstream failure rather than as an answer about the passport.
+
+        Deliberately not `404`: the identifier may be perfectly good. A consumer
+        scanning a carrier should retry rather than conclude the product has no
+        passport.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+          example:
+            type: https://problems.odal-node.io/bad-gateway
+            title: Bad Gateway
+            status: 502
+            detail: The passport could not be read.
+    PassportVerificationUnavailable:
+      description: |
+        The passport could not be verified right now, so it is not served.
+
+        Verification needs the operator's DID document, and this is the answer when
+        that document cannot be fetched, cannot be parsed, or carries no key matching
+        the signature's `kid`. The passport itself may be perfectly valid — nothing
+        has been established about it either way, which is why this is a temporary
+        failure and not a judgement.
+
+        Distinct from `409`, where verification ran and the signature did not check
+        out. Retry; a `409` will not fix itself.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+          example:
+            type: https://problems.odal-node.io/service-unavailable
+            title: Service Unavailable
+            status: 503
+            detail: The passport could not be verified right now; try again later.
     ServiceUnavailable:
       description: |
         A dependency the node needs is not reachable — the readiness probe pings the

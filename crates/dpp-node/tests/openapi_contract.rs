@@ -7,7 +7,7 @@
 //! never made the spec fail. Drift was not a risk being managed; it was
 //! guaranteed, and it accumulated (see `docs/` for the audit that found it).
 //!
-//! Five things are checked, and every one of them fails loudly rather than
+//! Seven things are checked, and every one of them fails loudly rather than
 //! skipping:
 //!
 //! 1. **Object schemas** — the property set of each schema equals the key set
@@ -31,6 +31,13 @@
 //!    assembled node, the standalone resolver, and the standalone identity
 //!    service's mTLS signing surface. No exception list — see
 //!    `identity_standalone_surface` for why one would be the wrong shape.
+//! 6. **Error codes** — every status a handler body demonstrably produces is a
+//!    status the operation documents. One direction only, and the reasoning for
+//!    that is on `documented_error_codes_are_the_ones_handlers_return`.
+//! 7. **The idempotency contract** — the routes the policy table keys are
+//!    exactly the operations declaring the `Idempotency-Key` parameter and the
+//!    `409` that goes with it. Separate from (6) because that gate reads handler
+//!    bodies and this `409` comes from a `route_layer` no body mentions.
 //!
 //! ## Why maximal instances built from exhaustive struct literals
 //!
@@ -1776,6 +1783,112 @@ fn every_keyed_route_is_a_route_the_node_serves() {
         "the idempotency policy keys routes nothing serves, so those requests \
          are silently unprotected: {}",
         joined(&phantom)
+    );
+}
+
+/// Whether an operation declares the shared `Idempotency-Key` parameter.
+///
+/// The bundle keeps component parameters as `$ref`s rather than inlining them,
+/// so the reference is what there is to match on. An operation that inlined an
+/// equivalent parameter by hand would read as absent here — deliberately: the
+/// header's contract (what a retry must resend, how long a key is honoured) is
+/// written once in that component, and a second copy is a second thing to drift.
+fn declares_idempotency_key(spec: &Value, method: &str, path: &str) -> bool {
+    spec["paths"][path][method]["parameters"]
+        .as_array()
+        .is_some_and(|params| {
+            params.iter().any(|p| {
+                p.get("$ref")
+                    .and_then(Value::as_str)
+                    .is_some_and(|r| r.ends_with("/IdempotencyKey"))
+            })
+        })
+}
+
+/// The idempotency middleware's contract is documented on exactly the routes it
+/// applies to.
+///
+/// `documented_error_codes_are_the_ones_handlers_return` cannot see this. It
+/// reads handler bodies, and the `409` here is raised by a `route_layer` that no
+/// handler body mentions — the same blind spot that let two routes ship without
+/// it. `POST /vault/api/v1/credentials` and `POST /vault/api/v1/unsold-goods`
+/// were added to the policy table and to no `responses:` block, so the sharpest
+/// keyed route in the set — issuance, where a duplicate mints a second live
+/// credential that cannot be found or withdrawn — documented no retry story at
+/// all.
+///
+/// Both directions matter, and the reverse is not the "proving absence" problem
+/// the error-code gate declines: `policy_for` returning `None` is not "ignore
+/// the header", it is a `400`. So an operation advertising the parameter while
+/// absent from the table tells a client its retry is protected when the
+/// middleware will refuse the request outright.
+#[test]
+fn every_keyed_route_documents_its_idempotency_contract() {
+    let spec = spec();
+    let keyed: BTreeSet<(String, String)> = dpp_common::idempotency::keyed_routes()
+        .map(|(method, path)| (method.as_str().to_lowercase(), path.to_owned()))
+        .collect();
+
+    assert!(
+        !keyed.is_empty(),
+        "no keyed routes came back from the policy table — a gate that reads \
+         nothing passes by not looking"
+    );
+
+    let mut failures: Vec<String> = Vec::new();
+
+    for (method, path) in &keyed {
+        let op = format!("{} {path}", method.to_uppercase());
+        if spec["paths"][path][method].is_null() {
+            // Route coverage's job, not this gate's.
+            continue;
+        }
+        if !declares_idempotency_key(&spec, method, path) {
+            failures.push(format!(
+                "{op}: keyed by the idempotency policy, but the operation does not \
+                 declare the Idempotency-Key parameter — a client reading the \
+                 description cannot know the retry is protected"
+            ));
+        }
+        if !documented_error_codes(&spec, method, path).contains(&409) {
+            failures.push(format!(
+                "{op}: keyed by the idempotency policy, but the operation does not \
+                 document the 409 the middleware answers while an earlier attempt \
+                 with the same key is still running"
+            ));
+        }
+    }
+
+    // The reverse: the parameter is advertised only where it is honoured.
+    for (path, item) in spec["paths"]
+        .as_object()
+        .expect("paths is not an object")
+        .iter()
+    {
+        for method in ["get", "post", "put", "patch", "delete"] {
+            if item.get(method).is_none() {
+                continue;
+            }
+            if declares_idempotency_key(&spec, method, path)
+                && !keyed.contains(&(method.to_owned(), path.clone()))
+            {
+                failures.push(format!(
+                    "{} {path}: declares the Idempotency-Key parameter but is not in \
+                     the policy table, so the middleware answers 400 to the header \
+                     this operation invites",
+                    method.to_uppercase()
+                ));
+            }
+        }
+    }
+
+    failures.sort();
+    assert!(
+        failures.is_empty(),
+        "the idempotency policy and the published description disagree:\n  {}\n\n\
+         Fix `api/paths/` (then `just openapi-bundle`), or the KEYED table in \
+         crates/dpp-common/src/idempotency/policy.rs.",
+        failures.join("\n  ")
     );
 }
 

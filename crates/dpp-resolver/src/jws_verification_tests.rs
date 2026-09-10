@@ -329,6 +329,46 @@ async fn missing_signature_returns_conflict() {
     );
 }
 
+/// A verification failure is a **problem document**, and must say so.
+///
+/// The JSON-LD door serves `application/ld+json` on success, and this path
+/// carried that label over onto its error body — so a client that switches on
+/// the content type was handed a problem document to parse as passport data.
+/// The sibling doors (`resolve_aas`, the GS1 routes) and `fetch_problem` in
+/// this same file all labelled the identical shape correctly; this was the one
+/// that did not.
+#[tokio::test]
+async fn a_verification_failure_is_labelled_as_a_problem_document() {
+    let (_jws, did_doc) = sign_jws(&json!({"id": "x"}));
+    let did_url = serve_did(did_doc).await;
+    let served = json!({"id": "00000000-0000-4000-8000-000000000018", "productName": "Widget", "status": "active"});
+    let vault = serve_vault(served).await;
+
+    let app = router::build(test_state_did(vault, did_url));
+    let req = Request::builder()
+        .uri("/dpp/00000000-0000-4000-8000-000000000018")
+        .header("accept", "application/json")
+        .body(Body::empty())
+        .unwrap();
+    let resp = app.oneshot(req).await.unwrap();
+
+    assert_eq!(
+        resp.status(),
+        StatusCode::CONFLICT,
+        "an unsigned published passport must fail closed"
+    );
+    let ct = resp
+        .headers()
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or_default()
+        .to_owned();
+    assert!(
+        ct.contains("application/problem+json"),
+        "a problem body must be labelled as one, got: {ct}"
+    );
+}
+
 /// When the operator DID is unreachable, verification fails closed with
 /// `503` — never serves unverified data as `200`.
 #[tokio::test]

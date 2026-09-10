@@ -65,9 +65,16 @@ pub async fn resolve_json_handler(
             let problem =
                 http_problem::Problem::new(status, status.canonical_reason().unwrap_or("Error"))
                     .with_detail(detail);
+            // `application/problem+json`, not the `application/ld+json` this
+            // door serves on success: the body is a problem document, and
+            // labelling it as JSON-LD hands a JSON-LD client a document to
+            // parse as passport data instead of an error to report. Both
+            // sibling doors — `resolve_aas` and the GS1 routes — already label
+            // the identical shape correctly, as does `fetch_problem` a few
+            // lines above; this path was the one that did not.
             return (
                 status,
-                [(header::CONTENT_TYPE, "application/ld+json")],
+                [(header::CONTENT_TYPE, "application/problem+json")],
                 serde_json::to_string(&problem).unwrap_or_default(),
             )
                 .into_response();

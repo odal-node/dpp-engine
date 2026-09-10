@@ -117,6 +117,19 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ### Added
 
+- **The contract gate now checks the idempotency contract.** The routes the
+  policy table keys must be exactly the operations that declare the
+  `Idempotency-Key` parameter and the `409` that comes with it, in both
+  directions.
+
+  It is a separate check from the error-code gate because the error-code gate
+  reads handler bodies, and this `409` is raised by a `route_layer` no body
+  mentions — which is how two routes came to be keyed and undocumented. The
+  reverse direction matters just as much and is not the "prove absence" problem
+  the error-code gate declines: a key sent to an unkeyed route is **refused**
+  with `400`, so an operation advertising the header where the middleware will
+  not honour it promises a client protection it does not have.
+
 - **The lint route now says whether a passport is owed at all.** `POST
   /vault/api/v1/dpp/{dppId}/lint` reports an Art. 77(1) `passportScope` beside
   the publish blockers.
@@ -843,6 +856,38 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   against the core aggregate, which is what it was always meant to check.
 
 ### Fixed
+
+- **Nine operations documented fewer responses than they return.** An audit of
+  every operation against the handler behind it found five statuses missing from
+  the published description, each in a place the existing contract gate cannot
+  reach because it reads one handler body and these are decided elsewhere:
+
+  - `DELETE /vault/api/v1/api-keys/{id}` answers `409` when a key is asked to
+    revoke *itself* — the self-lockout guard — and the guard lives in a helper
+    the gate does not follow.
+  - The resolver's `GET /dpp/{dppId}` and `/dpp/{dppId}/qr`, and all four GS1
+    Digital Link routes, can answer `409` (the public signature did not verify),
+    `502` (the vault could not be read) and `503` (the DID document was
+    unreachable, so verification could not be attempted). `/dpp/{dppId}`
+    documented none of them, including the `410` for a **recalled** product that
+    its four GS1 siblings have documented since the recall fix — the one route
+    a scanned carrier actually lands on was the one left out.
+  - `POST /vault/api/v1/credentials` and `POST /vault/api/v1/unsold-goods` are
+    keyed by the idempotency policy and declared neither the `Idempotency-Key`
+    parameter nor the `409` the middleware answers, so the retry protection was
+    undiscoverable — on issuance, the route where a duplicate mints a second
+    live credential that cannot be found or withdrawn.
+
+  Also corrected: `GET /dpp/{dppId}/qr` documented its `404` and `422` as
+  problem documents, where every failure on that route is an empty `image/png`
+  — it is addressed by `<img src>`, and the status line is the whole answer.
+
+- **A resolver problem document was labelled as JSON-LD.** The JSON-LD door
+  returned its verification failures with `content-type: application/ld+json`,
+  the type it serves on success, so a client switching on the content type was
+  handed a problem document to parse as passport data. Both sibling doors and
+  the fetch-failure path in the same file already labelled the identical shape
+  `application/problem+json`.
 
 - **A transfer's acceptance signature attested nothing.** Accepting a transfer
   of responsibility re-signed the **initiation** payload, so on a

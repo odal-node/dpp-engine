@@ -63,11 +63,20 @@ post:
     **Annex VII scope is not decided here.** That is a CN-code prefix test, and
     the goods in a disclosure line do not arrive carrying CN codes.
     `productCategory` is the operator's own categorisation for Art. 24(1)(a).
+
+    **Retry with an `Idempotency-Key`.** This route serves no `DELETE`, so a
+    duplicate line is permanent — and Art. 24 is disclosed publicly for a
+    financial year, so a discard counted twice overstates what the operator
+    actually did.
+
+    Requires a write-scoped key; reading the lines back requires admin.
   tags:
     - Unsold goods
   security:
     - BearerApiKey: []
     - BasicAuth: []
+  parameters:
+    - $ref: ../../components/parameters/IdempotencyKey.yaml
   requestBody:
     required: true
     content:
@@ -97,3 +106,5 @@ post:
         application/problem+json:
           schema:
             $ref: ../../components/schemas/errors/Problem.yaml
+    '409':
+      $ref: ../../components/responses/IdempotentRequestInFlight.yaml

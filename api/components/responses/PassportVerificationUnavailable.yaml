@@ -1,0 +1,20 @@
+description: |
+  The passport could not be verified right now, so it is not served.
+
+  Verification needs the operator's DID document, and this is the answer when
+  that document cannot be fetched, cannot be parsed, or carries no key matching
+  the signature's `kid`. The passport itself may be perfectly valid — nothing
+  has been established about it either way, which is why this is a temporary
+  failure and not a judgement.
+
+  Distinct from `409`, where verification ran and the signature did not check
+  out. Retry; a `409` will not fix itself.
+content:
+  application/problem+json:
+    schema:
+      $ref: ../schemas/errors/Problem.yaml
+    example:
+      type: https://problems.odal-node.io/service-unavailable
+      title: Service Unavailable
+      status: 503
+      detail: The passport could not be verified right now; try again later.
