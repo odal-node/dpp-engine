@@ -25,6 +25,7 @@ pub mod seal;
 pub mod stats;
 pub mod status;
 pub mod transfer;
+pub mod unsold_goods;
 pub mod up;
 pub mod update;
 pub mod validate;

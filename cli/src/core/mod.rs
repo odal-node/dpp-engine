@@ -12,5 +12,6 @@ pub mod ruleset;
 pub mod schema;
 pub mod seal;
 pub mod types;
+pub mod unsold_goods;
 pub mod verify;
 pub mod webhook;

@@ -136,6 +136,30 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ### Added
 
+- **The CLI caught up with the routes.** Five features shipped with an HTTP
+  surface and no way to reach them from the control plane, and `amend` had never
+  had one at all — so the CLI, which the docs call the single control plane,
+  could not drive six of the node's capabilities.
+
+  - `odal passport amend <id> --patch <file>` — correct a published passport by
+    issuing a successor. Reports **both** ids, because this route answers with
+    the successor it minted and `supersede` answers with the predecessor it
+    retired, and an operator who has to remember which is which will eventually
+    act on the wrong one.
+  - `odal passport supersede <id> --superseded-by <id>` — retire a passport in
+    favour of one that already exists.
+  - `odal unsold-goods record` / `list` — the ESPR Art. 24 disclosure.
+  - `odal passport lint` now renders **publish readiness**: the blocking fields,
+    each addressed to the input that causes it, and the Art. 77(1)
+    `passportScope` beside them. Reporting the advisory findings while
+    withholding the blocking ones answered the smaller half of the question an
+    operator runs `lint` to ask.
+  - `odal stats` and `odal passport stats` now render **`ingesting`**. Without
+    it the CLI handed back the exact ambiguity the node grew that flag to
+    remove — a bare `0` that means either "nobody scanned" or "nothing is
+    counting" — and a number on a terminal reads as a fact. The interactive
+    console's telemetry view shares the renderer, so it gained the same line.
+
 - **The contract gate now checks the idempotency contract.** The routes the
   policy table keys must be exactly the operations that declare the
   `Idempotency-Key` parameter and the `409` that comes with it, in both

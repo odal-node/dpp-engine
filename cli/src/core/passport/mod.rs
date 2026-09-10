@@ -15,7 +15,9 @@ pub use evidence::action_evidence;
 pub use export::action_export;
 pub use import::action_import;
 pub use inspect::{action_eol, action_find_by_identity, action_lint, action_verify_tree};
-pub use lifecycle::{action_archive, action_history, action_suspend};
+pub use lifecycle::{
+    Supersession, action_amend, action_archive, action_history, action_supersede, action_suspend,
+};
 pub use list::{action_get, action_list};
 pub use publish::action_publish;
 pub use stats::{action_operator_stats, action_passport_stats};
