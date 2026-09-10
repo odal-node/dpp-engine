@@ -1,6 +1,6 @@
 [package]
 name        = "dpp-plugin-host"
-description = "wasmtime-based sandbox host for Odal Node sector plugins"
+description = "wasmtime-based sandbox host for Odal Node product group plugins"
 version.workspace     = true
 edition.workspace     = true
 authors.workspace     = true
