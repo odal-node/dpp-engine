@@ -255,6 +255,60 @@ fn discover_strips_product_group_prefix() {
     std::fs::remove_dir_all(&tmp).ok();
 }
 
+/// A file outside the naming convention is skipped, not loaded under its stem.
+///
+/// Loading it was the silent, total failure: `sector-battery.wasm` registered
+/// as `"sector-battery"`, `has_plugin("battery")` stayed false, the compliance
+/// port resolved `ghost`, and the boot said `plugin loaded`. Every
+/// determination fell through to the passthrough registry while the node
+/// presented as healthy.
+///
+/// `tempfile::tempdir` rather than the `std::env::temp_dir()` the older
+/// discovery tests above use: it creates the directory with restrictive
+/// permissions and removes it on drop, so a panicking assertion cannot leave
+/// plugin fixtures behind in a world-readable place. The older tests are left
+/// as they are — changing them is not this fix's business — but new ones do not
+/// add to the pile.
+#[test]
+fn discover_skips_an_artifact_outside_the_naming_convention() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let tmp = dir.path();
+    std::fs::write(tmp.join("sector-battery.wasm"), b"fake").unwrap();
+    std::fs::write(tmp.join("battery.wasm"), b"fake").unwrap();
+    std::fs::write(tmp.join("product-group-battery.wasm"), b"fake").unwrap();
+
+    let result = crate::loader::discover_plugins(tmp).unwrap();
+    let keys: Vec<&str> = result.iter().map(|(k, _)| k.as_str()).collect();
+
+    assert_eq!(
+        keys,
+        vec!["battery"],
+        "only the conforming file may load, and it must load under the bare product group"
+    );
+}
+
+/// The prefix is stripped once, not repeatedly.
+///
+/// `trim_start_matches` removes every leading occurrence, so a doubled prefix
+/// resolved to the same key as the single one — two files silently claiming
+/// `battery`, with whichever the directory yielded last winning.
+#[test]
+fn discover_strips_the_prefix_once_not_repeatedly() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let tmp = dir.path();
+    std::fs::write(
+        tmp.join("product-group-product-group-battery.wasm"),
+        b"fake",
+    )
+    .unwrap();
+
+    let result = crate::loader::discover_plugins(tmp).unwrap();
+    assert_eq!(
+        result[0].0, "product-group-battery",
+        "a doubled prefix must not collapse onto the real battery key"
+    );
+}
+
 // ── enrich_input() ───────────────────────────────────────────────────────
 
 #[test]
