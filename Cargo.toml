@@ -195,3 +195,10 @@ wasmtime-wasi  = "48"
 
 # GS1 / JSON-LD
 json-ld        = "0.21"
+
+# Vendored one-constant fix: the published crate hard-caps XML node-sets at
+# 65536 and the Italian and French trusted lists carry 65540 and 65541, so
+# neither verifies. Reported upstream as structured-world/xml-sec#158 — remove
+# this stanza and the fork when that ships.
+[patch.crates-io]
+xml-sec = { git = "https://github.com/odal-node/xml-sec.git", rev = "7daf6028e08bc17f60ac36833d90c9307ca25449" }

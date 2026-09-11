@@ -54,6 +54,11 @@ zeroize      = { workspace = true }
 # attack does not apply.
 roxmltree    = "0.20"
 
+# XMLDSig verification for trusted lists. Pure Rust, so the node stays a single
+# self-hosted binary — the constraint that ruled out libxmlsec1 bindings and the
+# EU DSS validator. See the workspace `[patch.crates-io]` for the vendored fix.
+xml-sec      = "0.1.16"
+
 cms          = { version = "0.2", default-features = false }
 x509-cert    = "0.2"
 der          = "0.7"
