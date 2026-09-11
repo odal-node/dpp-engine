@@ -13,11 +13,18 @@
 //! against the scheme operator's certificate, is what makes it evidence rather
 //! than a file from a web server. **This module does not check it.**
 //!
-//! Verifying one needs XML Signature with canonicalisation, which has no mature
-//! Rust implementation — the EU's own validator is a Java application. Writing
-//! one is a serious piece of work in its own right, and canonicalisation is
-//! exactly where subtle signature-verification bugs live. So it is not attempted
-//! here, and the gap is named rather than glossed.
+//! Verifying one needs XML Signature over the **canonicalised** subtree, which
+//! is where subtle signature-verification bugs live: a canonicaliser that
+//! differs from the signer's in any edge case either rejects valid documents or,
+//! worse, accepts one whose signed portion is not what the verifier thinks it
+//! is.
+//!
+//! Rust has candidates rather than a settled answer — `xml-sec` is a young
+//! pure-Rust implementation, `xml_c14n` binds libxml2 for the canonicalisation
+//! half, and the EU's own reference validator is a Java application. Choosing
+//! between them is a real decision with a deployment cost attached, not a
+//! dependency to add in passing, so it is not made here. The gap is named rather
+//! than glossed.
 //!
 //! What follows from that is a hard boundary, and it is built into the type
 //! names: [`UnverifiedTrustedList`] is what parsing produces, and nothing in
