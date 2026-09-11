@@ -26,6 +26,28 @@
 //! dependency to add in passing, so it is not made here. The gap is named rather
 //! than glossed.
 //!
+//! ## For whoever implements it
+//!
+//! `xml-sec` has been evaluated against the real corpus and **verifies every
+//! reachable EU trusted list**, rejecting single-byte tampering in signed
+//! content and inside the XAdES `SignedProperties` alike. Two national lists
+//! (Italy, France) exceed a hard-coded node-set ceiling in the published crate;
+//! a fork carrying the one-constant fix is pinned and ready:
+//!
+//! ```toml
+//! # workspace Cargo.toml — remove once the upstream fix ships
+//! [patch.crates-io]
+//! xml-sec = { git = "https://github.com/odal-node/xml-sec.git", rev = "7daf6028e08bc17f60ac36833d90c9307ca25449" }
+//! ```
+//!
+//! It is deliberately **not** wired in yet: a patch for a crate nothing depends
+//! on is a build warning, and verifying a signature against a certificate the
+//! document itself carries would prove nothing. The missing half is the trust
+//! anchor, and it is not a CA — the list of lists is anchored on certificates
+//! published in the Official Journal, C series, so they have to be pinned from
+//! that notice and refreshed when the Commission republishes it. That design
+//! comes first.
+//!
 //! What follows from that is a hard boundary, and it is built into the type
 //! names: [`UnverifiedTrustedList`] is what parsing produces, and nothing in
 //! this crate turns it into a verdict.
