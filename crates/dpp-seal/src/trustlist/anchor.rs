@@ -27,7 +27,7 @@ use sha2::{Digest as _, Sha256};
 /// claim of qualified status that rests on one. Configuration is for choices
 /// about a deployment; this is the thing the deployment is trusted *against*.
 ///
-/// It is the same reasoning [`crate::config`] applies to `SEAL_PROVIDER` — a
+/// It is the same reasoning [`crate::config::SEAL_PROVIDER`] applies — a
 /// node that cannot name its trust provider must not quietly become one that has
 /// none — carried to its root. Changing the anchor is a reviewed commit and a
 /// release, and that is the feature, not the friction.
@@ -73,7 +73,7 @@ pub struct LotlAnchor {
 ///
 /// The early signal is in the LOTL itself: the first entry of its
 /// `SchemeInformationURI` is the notice currently in force, so a node can notice
-/// that [`Self::notice_uri`] no longer matches and say so *before* the
+/// that [`LotlAnchor::notice_uri`] no longer matches and say so *before* the
 /// certificates change under it.
 ///
 /// To refresh: open the notice, take the SHA-256 **base64** digests from the

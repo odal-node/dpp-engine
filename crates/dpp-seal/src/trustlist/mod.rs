@@ -7,71 +7,52 @@
 //! a vendor. The vocabulary those lists are written in lives in
 //! [`dpp_domain::trusted_list`]; this module fetches and parses the documents.
 //!
-//! # 🚩 Nothing here is verified, and the ceiling that puts on it
+//! # What is verified, and what is not
 //!
-//! A trusted list is an **XAdES-signed** XML document. The signature, checked
-//! against the scheme operator's certificate, is what makes it evidence rather
-//! than a file from a web server. **This module does not check it.**
+//! A trusted list is an **XAdES-signed** XML document, and that signature is
+//! what makes it evidence rather than a file from a web server. The two kinds of
+//! document here are at different stages:
 //!
-//! Verifying one needs XML Signature over the **canonicalised** subtree, which
-//! is where subtle signature-verification bugs live: a canonicaliser that
-//! differs from the signer's in any edge case either rejects valid documents or,
-//! worse, accepts one whose signed portion is not what the verifier thinks it
-//! is.
+//! - **The list of lists is verified.** [`verify_lotl`] checks that the
+//!   certificate in its `ds:KeyInfo` is one the Official Journal authorises
+//!   ([`EU_LOTL_ANCHOR`]) and that the XML signature verifies with it. Success
+//!   yields a [`VerifiedLotl`], which has no public constructor — holding one is
+//!   evidence the check ran.
+//! - **National lists are not.** [`parse_trusted_list`] yields an
+//!   [`UnverifiedTrustedList`], and the name is the warning. Their signing
+//!   certificates are named by the LOTL per territory, so verifying them is the
+//!   next step and reuses the same machinery.
 //!
-//! Rust has candidates rather than a settled answer — `xml-sec` is a young
-//! pure-Rust implementation, `xml_c14n` binds libxml2 for the canonicalisation
-//! half, and the EU's own reference validator is a Java application. Choosing
-//! between them is a real decision with a deployment cost attached, not a
-//! dependency to add in passing, so it is not made here. The gap is named rather
-//! than glossed.
+//! So a national list is still *what a server answered*, not *what a Member
+//! State published*. That is sound for reading — answering "which service types
+//! is this provider listed under, and with what status?", which is the only
+//! automated starting point for the Art. 39a check
+//! ([`TrustServiceType::REMOTE_QSEAL_CD_MANAGEMENT`](dpp_domain::trusted_list::TrustServiceType::REMOTE_QSEAL_CD_MANAGEMENT)).
+//! It is **not** sound for a compliance verdict, and in particular must not
+//! produce [`SealChecks::QualifiedValidation`](dpp_domain::seal::SealChecks::QualifiedValidation),
+//! which asserts the legs of Art. 32(1) were checked.
 //!
-//! ## For whoever implements it
+//! Same discipline [`crate::cades`] applies to a seal's own bytes: read, report,
+//! and never imply a check that did not happen.
 //!
-//! `xml-sec` has been evaluated against the real corpus and **verifies every
-//! reachable EU trusted list**, rejecting single-byte tampering in signed
-//! content and inside the XAdES `SignedProperties` alike. Two national lists
-//! (Italy, France) exceed a hard-coded node-set ceiling in the published crate;
-//! a fork carrying the one-constant fix is pinned and ready:
+//! ## The canonicalisation problem, and the vendored fix
 //!
-//! ```toml
-//! # workspace Cargo.toml — remove once the upstream fix ships
-//! [patch.crates-io]
-//! xml-sec = { git = "https://github.com/odal-node/xml-sec.git", rev = "7daf6028e08bc17f60ac36833d90c9307ca25449" }
-//! ```
+//! XML Signature verifies a digest over the **canonicalised** subtree, not over
+//! the bytes as received, and that is where signature bugs live: a canonicaliser
+//! that differs from the signer's in any edge case either rejects valid
+//! documents or — worse — accepts one whose signed portion is not what the
+//! verifier believes.
 //!
-//! It is deliberately **not** wired in yet: a patch for a crate nothing depends
-//! on is a build warning.
+//! `xml-sec` does it in pure Rust, which is what keeps this node a single
+//! self-hosted binary; the alternatives were libxmlsec1 bindings or the EU's
+//! Java validator, each of which would put a native library or a JVM into every
+//! operator's deployment.
 //!
-//! The other half — knowing *which* key to trust — is done. [`EU_LOTL_ANCHOR`]
-//! pins the certificates the Official Journal authorises to sign the list of
-//! lists, so a verifier has something to check the signing certificate against
-//! rather than trusting whichever one the document happens to carry. Read
-//! [`LotlAnchor::authorises`] before using it: it is a precondition, never a
-//! verdict.
-//!
-//! What remains is to run the two together — establish the certificate is
-//! anchored, then verify the signature with it, then verify each national list
-//! against the certificates the now-verified LOTL names for that territory.
-//!
-//! What follows from that is a hard boundary, and it is built into the type
-//! names: [`UnverifiedTrustedList`] is what parsing produces, and nothing in
-//! this crate turns it into a verdict.
-//!
-//! **Sound uses.** Answering *"which service types is this provider listed
-//! under, and with what status?"* — for a trust report, or to put a precise
-//! question to a provider and its supervisory body. For the Art. 39a check
-//! ([`TrustServiceType::REMOTE_QSEAL_CD_MANAGEMENT`](dpp_domain::trusted_list::TrustServiceType::REMOTE_QSEAL_CD_MANAGEMENT))
-//! there is no other automated starting point.
-//!
-//! **Unsound uses.** Any compliance verdict. In particular this must not be used
-//! to produce [`SealChecks::QualifiedValidation`](dpp_domain::seal::SealChecks::QualifiedValidation),
-//! which asserts the legs of Art. 32(1) were checked. An unverified document
-//! cannot establish that a certificate was qualified; it can only report what
-//! something claimed.
-//!
-//! This is the same discipline [`crate::cades`] applies to a seal's own bytes:
-//! read, report, and never imply a check that did not happen.
+//! The published crate hard-caps XML node-sets at 65 536 and the Italian and
+//! French lists carry 65 540 and 65 541, so neither verifies. The workspace
+//! therefore pins a fork carrying that one constant, and the exit condition is
+//! in the manifest beside it: remove the `[patch.crates-io]` stanza once
+//! `structured-world/xml-sec#158` ships.
 //!
 //! # Time, not the present
 //!
@@ -90,6 +71,9 @@ mod model;
 mod parse;
 #[cfg(test)]
 mod tests;
+mod verify;
+#[cfg(test)]
+mod verify_tests;
 
 pub use anchor::{EU_LOTL_ANCHOR, LotlAnchor};
 pub use fetch::{
@@ -97,3 +81,4 @@ pub use fetch::{
 };
 pub use model::{ListedProvider, ListedService, TrustedListPointer, UnverifiedTrustedList};
 pub use parse::{parse_lotl, parse_trusted_list};
+pub use verify::{LotlRejected, VerifiedLotl, verify_lotl, verify_lotl_with};
