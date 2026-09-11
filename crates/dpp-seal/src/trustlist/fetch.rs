@@ -52,15 +52,41 @@ pub async fn fetch_lotl_pointers() -> Result<Vec<TrustedListPointer>, SealError>
     parse_lotl(&xml)
 }
 
-/// The pointers that name a scheme territory — the national trusted lists.
+/// `TSLType` of a Member State's trusted list.
+const TSL_TYPE_NATIONAL: &str = "http://uri.etsi.org/TrstSvc/TrustedList/TSLType/EUgeneric";
+
+/// The MIME type of a machine-processable trusted list.
+const TSL_MIME_XML: &str = "application/vnd.etsi.tsl+xml";
+
+/// The pointers that are national trusted lists in machine-processable form.
 ///
-/// The rest are the list of lists' own historical pivot documents, which record
-/// how it changed over time and are not trusted lists. They parse without error
-/// and yield no providers, so fetching them wastes a request and produces an
-/// empty result that reads like a country with no trust services.
+/// # Two things this filters out, both of which bite
+///
+/// **The self-pointer.** The LOTL points at *itself* with `TSLType`
+/// `…/EUlistofthelists`, which is how it declares its own signing certificates.
+/// It has a scheme territory (`EU`) and a location like any other pointer, so a
+/// filter on "has a territory" keeps it and a refresh then fetches the list of
+/// lists again as though it were a country's list.
+///
+/// **The PDF variants.** Several Member States publish a human-readable PDF
+/// beside the XML as a second pointer with the same territory — Bulgaria,
+/// Czechia, Estonia and Portugal among them. Fetching one yields a parse failure
+/// that reads like a broken trusted list rather than the wrong document.
+///
+/// Both were found by a test that asserted the opposite and failed. Every
+/// pointer in the published LOTL carries a territory, so presence of one
+/// distinguishes nothing.
+///
+/// A pointer that declares no MIME type is kept: the field is optional, and
+/// dropping a list because its publisher omitted an annotation would lose a
+/// country for a reason that has nothing to do with the document.
 #[must_use]
 pub fn national_pointers(pointers: &[TrustedListPointer]) -> Vec<&TrustedListPointer> {
-    pointers.iter().filter(|p| p.territory.is_some()).collect()
+    pointers
+        .iter()
+        .filter(|p| p.tsl_type.as_deref() == Some(TSL_TYPE_NATIONAL))
+        .filter(|p| p.mime_type.as_deref().is_none_or(|m| m == TSL_MIME_XML))
+        .collect()
 }
 
 /// Fetch and parse one national trusted list.

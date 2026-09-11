@@ -183,6 +183,184 @@ pub fn verify_lotl_with(xml: &str, anchor: &LotlAnchor) -> Result<VerifiedLotl, 
     })
 }
 
+/// Why a national trusted list was not accepted.
+///
+/// Separate from [`LotlRejected`] despite the overlap, because the remedies have
+/// nothing in common. A LOTL this node will not accept usually means *our* pin
+/// is stale; a national list the LOTL does not vouch for means something is
+/// wrong at the Member State's end, or with the document in front of us. One
+/// shared enum would have a variant meaning two different things depending on
+/// which document produced it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TrustedListRejected {
+    /// The document could not be read as XML, or is not a trusted list.
+    Malformed(String),
+    /// It carries no signature.
+    NotSigned,
+    /// The signature carries no X.509 certificate.
+    NoCertificate,
+    /// The verified LOTL names no certificates at all for this territory.
+    ///
+    /// Distinct from being named and not matching: nothing can be verified here,
+    /// rather than something failing to. A pointer with no certificates cannot
+    /// vouch for anything.
+    NoAuthorisedCertificates,
+    /// The list is signed by a certificate the LOTL does not name for it.
+    ///
+    /// Most likely a Member State mid-rotation whose LOTL entry has not caught
+    /// up, or a document that is not theirs. Unlike a stale anchor this is not
+    /// something the operator can fix — it is a finding to report, not a
+    /// configuration to change.
+    NotNamedByLotl {
+        /// Base64 SHA-256 of the certificate that was offered.
+        offered: String,
+        /// How many the LOTL names for this list.
+        authorised: usize,
+    },
+    /// The certificate is named, and the signature does not verify with it.
+    SignatureInvalid(String),
+}
+
+impl std::fmt::Display for TrustedListRejected {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Malformed(why) => write!(f, "not a readable trusted list: {why}"),
+            Self::NotSigned => f.write_str("the document carries no signature"),
+            Self::NoCertificate => f.write_str("the signature carries no certificate"),
+            Self::NoAuthorisedCertificates => {
+                f.write_str("the list of trusted lists names no certificate for this list")
+            }
+            Self::NotNamedByLotl {
+                offered,
+                authorised,
+            } => write!(
+                f,
+                "signed by {offered}, which is not among the {authorised} certificate(s) the \
+                 list of trusted lists names for it — the scheme operator may be mid-rotation, \
+                 or this document is not theirs"
+            ),
+            Self::SignatureInvalid(why) => write!(f, "the signature does not verify: {why}"),
+        }
+    }
+}
+
+impl std::error::Error for TrustedListRejected {}
+
+/// A national trusted list whose signature has been verified against the
+/// certificates a **verified** list of trusted lists names for it.
+///
+/// No public constructor, for the same reason [`VerifiedLotl`] has none.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VerifiedTrustedList {
+    content: super::model::UnverifiedTrustedList,
+    signed_by: String,
+}
+
+impl VerifiedTrustedList {
+    /// The `SchemeTerritory`, where the list gives one.
+    #[must_use]
+    pub fn territory(&self) -> Option<&str> {
+        self.content.territory.as_deref()
+    }
+
+    /// The providers the list carries.
+    #[must_use]
+    pub fn providers(&self) -> &[super::model::ListedProvider] {
+        &self.content.providers
+    }
+
+    /// Providers listed for a service type, with those services.
+    ///
+    /// The lookup the Art. 39a question needs, now over content that has been
+    /// verified rather than merely fetched.
+    pub fn providers_offering<'a>(
+        &'a self,
+        service_type: &'a str,
+    ) -> impl Iterator<
+        Item = (
+            &'a super::model::ListedProvider,
+            Vec<&'a super::model::ListedService>,
+        ),
+    > + 'a {
+        self.content.providers_offering(service_type)
+    }
+
+    /// Base64 SHA-256 of the certificate that signed it.
+    #[must_use]
+    pub fn signed_by(&self) -> &str {
+        &self.signed_by
+    }
+}
+
+/// Verify a national trusted list against the certificates its pointer names.
+///
+/// `pointer` must come from a [`VerifiedLotl`]. That is the whole chain: the
+/// Official Journal anchors the list of lists, and the list of lists anchors
+/// every national list. Taking a pointer from an unverified document would move
+/// the trust problem rather than solve it, which is why
+/// [`TrustedListPointer::certificates`] says so too.
+///
+/// # Errors
+///
+/// [`TrustedListRejected`]. Note the deliberate split between
+/// [`TrustedListRejected::NotNamedByLotl`] and
+/// [`TrustedListRejected::SignatureInvalid`]: the first is a document signed by
+/// the wrong key, the second a document altered after signing, and only the
+/// second means someone touched the bytes.
+pub fn verify_trusted_list(
+    xml: &str,
+    pointer: &TrustedListPointer,
+) -> Result<VerifiedTrustedList, TrustedListRejected> {
+    if pointer.certificates.is_empty() {
+        return Err(TrustedListRejected::NoAuthorisedCertificates);
+    }
+
+    let certificate = signing_certificate(xml).map_err(|e| match e {
+        LotlRejected::Malformed(why) => TrustedListRejected::Malformed(why),
+        LotlRejected::NotSigned => TrustedListRejected::NotSigned,
+        _ => TrustedListRejected::NoCertificate,
+    })?;
+
+    // Compared as the published base64 rather than by digest: the LOTL carries
+    // the certificates themselves, so there is nothing to hash against and a
+    // digest step would only add a place to disagree about encoding.
+    if !pointer.certificates.iter().any(|c| c == &certificate) {
+        let der = base64::engine::general_purpose::STANDARD
+            .decode(&certificate)
+            .unwrap_or_default();
+        return Err(TrustedListRejected::NotNamedByLotl {
+            offered: base64::engine::general_purpose::STANDARD
+                .encode(<sha2::Sha256 as sha2::Digest>::digest(&der)),
+            authorised: pointer.certificates.len(),
+        });
+    }
+
+    let resolver = DefaultKeyResolver::default();
+    let outcome = VerifyContext::new()
+        .key_resolver(&resolver)
+        .verify(xml)
+        .map_err(|e| TrustedListRejected::SignatureInvalid(e.to_string()))?;
+
+    if !matches!(outcome.status, DsigStatus::Valid) {
+        return Err(TrustedListRejected::SignatureInvalid(format!(
+            "{:?}",
+            outcome.status
+        )));
+    }
+
+    let content = super::parse::parse_trusted_list(xml)
+        .map_err(|e| TrustedListRejected::Malformed(e.to_string()))?;
+
+    let der = base64::engine::general_purpose::STANDARD
+        .decode(&certificate)
+        .unwrap_or_default();
+    Ok(VerifiedTrustedList {
+        content,
+        signed_by: base64::engine::general_purpose::STANDARD
+            .encode(<sha2::Sha256 as sha2::Digest>::digest(&der)),
+    })
+}
+
 /// The base64 certificate from the document's signature.
 ///
 /// Read with the same local-name matching the rest of this module uses: the

@@ -193,12 +193,20 @@ fn collect_certificates(node: Node<'_, '_>) -> Vec<String> {
 ///
 /// # The LOTL points at more than national lists
 ///
-/// It also points at its own historical *pivot* documents, which record how the
-/// list of lists itself changed over time. Those carry no `SchemeTerritory`,
-/// which is how they are told apart — see
-/// [`TrustedListPointer::territory`](super::model::TrustedListPointer::territory).
-/// Fetching one as though it were a national list would parse and yield nothing,
-/// which is the quiet kind of wrong.
+/// Every pointer is returned, including the LOTL's pointer **to itself** — the
+/// one carrying its own signing certificates, with `TSLType` `…/EUlistofthelists`
+/// — and the human-readable PDF that several Member States publish beside their
+/// XML. Both look exactly like a national list if the only question asked is
+/// whether a `SchemeTerritory` is present, and both are the quiet kind of wrong
+/// to fetch: one re-fetches the list of lists, the other fails to parse.
+///
+/// Filtering is [`national_pointers`](super::national_pointers)'s job, and the
+/// fields it needs are [`tsl_type`](super::model::TrustedListPointer::tsl_type)
+/// and [`mime_type`](super::model::TrustedListPointer::mime_type).
+///
+/// The historical *pivot* documents — which record how the list of lists itself
+/// changed over time — are **not** pointers at all. They are listed in
+/// `SchemeInformationURI`, and this function does not return them.
 pub fn parse_lotl(xml: &str) -> Result<Vec<TrustedListPointer>, SealError> {
     let doc = Document::parse(xml).map_err(|e| malformed(format!("not XML: {e}")))?;
     let root = doc.root_element();
@@ -214,23 +222,46 @@ pub fn parse_lotl(xml: &str) -> Result<Vec<TrustedListPointer>, SealError> {
         .filter_map(|p| {
             let location = child_text(p, "TSLLocation")?;
             Some(TrustedListPointer {
-                territory: pointer_territory(p),
+                territory: pointer_info(p, "SchemeTerritory").map(|t| t.to_uppercase()),
+                tsl_type: pointer_info(p, "TSLType"),
+                mime_type: pointer_info(p, "MimeType"),
+                certificates: pointer_certificates(p),
                 location,
             })
         })
         .collect())
 }
 
-/// The scheme territory an `OtherTSLPointer` declares, if any.
+/// Every certificate an `OtherTSLPointer` names as authorised to sign the list
+/// it points at.
 ///
-/// It is not a child element but one of a bag of typed `OtherInformation`
-/// entries, so it has to be searched for rather than addressed.
-fn pointer_territory(pointer: Node<'_, '_>) -> Option<String> {
+/// Searched by descendant rather than addressed by path: the certificates sit
+/// under `ServiceDigitalIdentities` → `ServiceDigitalIdentity` → `DigitalId`,
+/// and a `DigitalId` may carry other identifier forms — a subject name, a key
+/// hash — beside or instead of an X.509 certificate. Walking to the certificates
+/// directly takes the ones that exist and ignores the rest, rather than
+/// depending on every publisher nesting them identically.
+fn pointer_certificates(pointer: Node<'_, '_>) -> Vec<String> {
+    pointer
+        .descendants()
+        .filter(|n| n.is_element() && n.tag_name().name() == "X509Certificate")
+        .filter_map(|n| n.text())
+        .map(|t| t.split_whitespace().collect::<String>())
+        .filter(|s| !s.is_empty())
+        .collect()
+}
+
+/// One value out of an `OtherTSLPointer`'s `AdditionalInformation`.
+///
+/// These are not child elements but a bag of typed `OtherInformation` entries —
+/// scheme territory, MIME type, scheme operator name — so each has to be
+/// searched for rather than addressed by path.
+fn pointer_info(pointer: Node<'_, '_>, name: &str) -> Option<String> {
     child(pointer, "AdditionalInformation")?
         .descendants()
-        .find(|n| n.is_element() && n.tag_name().name() == "SchemeTerritory")
+        .find(|n| n.is_element() && n.tag_name().name() == name)
         .and_then(|n| n.text())
         .map(str::trim)
         .filter(|s| !s.is_empty())
-        .map(str::to_uppercase)
+        .map(ToOwned::to_owned)
 }
