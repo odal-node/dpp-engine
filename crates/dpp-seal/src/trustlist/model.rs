@@ -120,9 +120,48 @@ pub struct TrustedListPointer {
     pub location: String,
     /// The `SchemeTerritory` this pointer is for, where the LOTL gave one.
     ///
-    /// `None` for the pointers that are not national lists — the LOTL also
-    /// points at its own historical pivot documents, which carry no territory
-    /// and are not trusted lists. Filtering on this is how a caller tells them
-    /// apart; see [`super::parse::parse_lotl`].
+    /// In practice every pointer in the published LOTL carries one, including
+    /// the self-pointer, whose territory is `EU`. **Presence is therefore not a
+    /// way to tell a national list from anything else** — use [`Self::tsl_type`]
+    /// and [`Self::mime_type`], which is what [`super::national_pointers`] does.
     pub territory: Option<String>,
+    /// The `TSLType` URI — what kind of list this points at.
+    ///
+    /// Two values appear: `…/TSLType/EUgeneric` for a Member State's list, and
+    /// `…/TSLType/EUlistofthelists` for the LOTL's pointer **to itself**, which
+    /// is how it declares its own signing certificates.
+    ///
+    /// That self-pointer is why this field exists. It has a territory (`EU`) and
+    /// a location like any other, so anything that treats "has a territory" as
+    /// "is a national list" will re-fetch the list of lists as though it were a
+    /// country's.
+    pub tsl_type: Option<String>,
+    /// The declared MIME type of the document at [`Self::location`].
+    ///
+    /// Several Member States publish a **human-readable PDF alongside the XML**,
+    /// as two separate pointers with the same territory — Bulgaria, Czechia,
+    /// Estonia and Portugal among them. The PDF is not machine-processable and
+    /// fetching it yields a parse failure that looks like a broken list rather
+    /// than the wrong document.
+    ///
+    /// `application/vnd.etsi.tsl+xml` is the one to want.
+    pub mime_type: Option<String>,
+    /// The certificates authorised to sign the list this points at, base64 DER
+    /// as published.
+    ///
+    /// This is the second link of the trust chain. The list of lists is anchored
+    /// on the Official Journal; each national list is anchored on **this** —
+    /// the set its pointer names, inside a LOTL that has itself been verified.
+    /// So no national list needs pinning of its own, which is most of the point
+    /// of having a list of lists.
+    ///
+    /// Several per pointer is normal rather than exceptional: a Member State
+    /// rotating its scheme operator certificate publishes the old and the new
+    /// together so relying parties do not break at the cutover. Finland names
+    /// five.
+    ///
+    /// **Only meaningful once the LOTL carrying it has been verified.** Taken
+    /// from an unverified document these are whatever the document said, and
+    /// trusting them would move the problem rather than solve it.
+    pub certificates: Vec<String>,
 }

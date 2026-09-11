@@ -178,31 +178,82 @@ fn a_status_without_a_start_time_is_dropped() {
     );
 }
 
-/// The list of lists yields its pointers, and the pivots are distinguishable.
+/// The list of lists yields every pointer; only one of these three is a list.
+///
+/// The three shapes the published document actually contains. Note that all of
+/// them name a territory — including the LOTL's pointer to itself — which is why
+/// the filter reads `TSLType` and `MimeType` instead.
 #[test]
-fn lotl_pointers_carry_their_territory_where_there_is_one() {
+fn only_the_machine_readable_national_pointer_survives_the_filter() {
     let xml = r#"<?xml version="1.0"?>
 <TrustServiceStatusList xmlns="http://uri.etsi.org/02231/v2#">
  <SchemeInformation><PointersToOtherTSL>
   <OtherTSLPointer>
-    <TSLLocation>https://example.test/TSL-FI.xml</TSLLocation>
-    <AdditionalInformation><OtherInformation>
-      <SchemeTerritory>FI</SchemeTerritory>
-    </OtherInformation></AdditionalInformation>
+    <TSLLocation>https://example.test/eu-lotl.xml</TSLLocation>
+    <AdditionalInformation>
+      <OtherInformation><TSLType>http://uri.etsi.org/TrstSvc/TrustedList/TSLType/EUlistofthelists</TSLType></OtherInformation>
+      <OtherInformation><SchemeTerritory>EU</SchemeTerritory></OtherInformation>
+      <OtherInformation><MimeType>application/vnd.etsi.tsl+xml</MimeType></OtherInformation>
+    </AdditionalInformation>
   </OtherTSLPointer>
   <OtherTSLPointer>
-    <TSLLocation>https://example.test/eu-lotl-pivot-300.xml</TSLLocation>
+    <TSLLocation>https://example.test/TSL-FI.xml</TSLLocation>
+    <AdditionalInformation>
+      <OtherInformation><TSLType>http://uri.etsi.org/TrstSvc/TrustedList/TSLType/EUgeneric</TSLType></OtherInformation>
+      <OtherInformation><SchemeTerritory>FI</SchemeTerritory></OtherInformation>
+      <OtherInformation><MimeType>application/vnd.etsi.tsl+xml</MimeType></OtherInformation>
+    </AdditionalInformation>
+  </OtherTSLPointer>
+  <OtherTSLPointer>
+    <TSLLocation>https://example.test/TSL-FI.pdf</TSLLocation>
+    <AdditionalInformation>
+      <OtherInformation><TSLType>http://uri.etsi.org/TrstSvc/TrustedList/TSLType/EUgeneric</TSLType></OtherInformation>
+      <OtherInformation><SchemeTerritory>FI</SchemeTerritory></OtherInformation>
+      <OtherInformation><MimeType>application/pdf</MimeType></OtherInformation>
+    </AdditionalInformation>
   </OtherTSLPointer>
  </PointersToOtherTSL></SchemeInformation>
 </TrustServiceStatusList>"#;
 
     let pointers = parse_lotl(xml).expect("parses");
-    assert_eq!(pointers.len(), 2, "both pointers are returned");
+    assert_eq!(pointers.len(), 3, "every pointer is returned");
+    assert!(
+        pointers.iter().all(|p| p.territory.is_some()),
+        "including the self-pointer, whose territory is EU"
+    );
 
     let national = national_pointers(&pointers);
-    assert_eq!(national.len(), 1, "only one names a territory");
+    assert_eq!(
+        national.len(),
+        1,
+        "the list of lists and the PDF are not lists"
+    );
     assert_eq!(national[0].territory.as_deref(), Some("FI"));
     assert_eq!(national[0].location, "https://example.test/TSL-FI.xml");
+}
+
+/// A pointer that declares no MIME type is kept.
+///
+/// The field is optional in TS 119 612. Dropping a Member State because its
+/// publisher omitted an annotation would lose a country for a reason that has
+/// nothing to do with the document behind the pointer.
+#[test]
+fn a_pointer_without_a_mime_type_is_still_a_national_list() {
+    let xml = r#"<?xml version="1.0"?>
+<TrustServiceStatusList xmlns="http://uri.etsi.org/02231/v2#">
+ <SchemeInformation><PointersToOtherTSL>
+  <OtherTSLPointer>
+    <TSLLocation>https://example.test/TSL-SE.xml</TSLLocation>
+    <AdditionalInformation>
+      <OtherInformation><TSLType>http://uri.etsi.org/TrstSvc/TrustedList/TSLType/EUgeneric</TSLType></OtherInformation>
+      <OtherInformation><SchemeTerritory>SE</SchemeTerritory></OtherInformation>
+    </AdditionalInformation>
+  </OtherTSLPointer>
+ </PointersToOtherTSL></SchemeInformation>
+</TrustServiceStatusList>"#;
+
+    let pointers = parse_lotl(xml).expect("parses");
+    assert_eq!(national_pointers(&pointers).len(), 1);
 }
 
 /// Looking up a service type finds only that type.
