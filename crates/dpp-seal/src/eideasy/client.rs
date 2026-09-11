@@ -197,6 +197,18 @@ impl SealBackend for EideasyClient {
             format: SealFormat::Cades,
             seal_value,
             signing_cert_ref,
+            // The level this client is configured to ask for — the same source
+            // `capabilities()` reports from, so the record and the
+            // advertisement cannot disagree. A **record of the request**, not a
+            // reading of the bytes: what the response actually carries is
+            // `cades::evidenced_level`, and the drain compares the two.
+            //
+            // `None` when the configured profile is one this build cannot
+            // classify. The adapter refuses such a request before any billable
+            // call, so this is unreachable in practice — but guessing a level
+            // here would be exactly the misdescription that refusal exists to
+            // prevent.
+            conformance_level: level_for_profile(&self.config.signature_profile),
             sealed_at: Utc::now(),
             placeholder: false,
         })

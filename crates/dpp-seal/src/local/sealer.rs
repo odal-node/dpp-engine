@@ -209,6 +209,13 @@ impl SealBackend for LocalIdentity {
             format: SealFormat::Cades,
             seal_value: base64::engine::general_purpose::STANDARD.encode(&der),
             signing_cert_ref: Some(self.cert_thumbprint()),
+            // What these bytes are, not what was asked for. `sign_detached`
+            // sets no unsigned attributes, so `BaselineB` is what the envelope
+            // carries — and it is the only level this backend advertises, so a
+            // request for anything else was already refused by the adapter.
+            // Echoing the request here would launder that refusal if it ever
+            // stopped working.
+            conformance_level: Some(SealConformanceLevel::BaselineB),
             sealed_at: Utc::now(),
             // Not a placeholder: these bytes verify. Legal standing is the trust
             // tier's business, not the envelope's.

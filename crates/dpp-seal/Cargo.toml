@@ -12,6 +12,12 @@ publish = false
 [dependencies]
 dpp-domain   = { workspace = true }
 
+# For `outbound` — the one guarded HTTP path. A trusted list fetch must use it
+# rather than its own client: the list of lists names 43 URLs, we do not verify
+# its signature, so those URLs are attacker-influenceable in principle. That is
+# precisely what the resolving SSRF guard is for.
+dpp-common   = { path = "../dpp-common" }
+
 serde        = { workspace = true }
 serde_json   = { workspace = true }
 thiserror    = { workspace = true }
@@ -35,6 +41,19 @@ zeroize      = { workspace = true }
 # `default-features = false` keeps `rsa` out of the tree: the `builder` feature
 # pulls it in, we sign with P-256, and `rsa` 0.9 carries RUSTSEC-2023-0071 (Marvin
 # timing sidechannel) with no fixed upgrade available.
+# EU Trusted Lists are XML, and this parses them. A read-only DOM rather than a
+# pull parser: the TS 119 612 shape is deeply nested with optional branches
+# (`TSPService` -> `ServiceInformation` plus an optional `ServiceHistory` of
+# instances), and a pull parser would need hand-rolled nesting state for each —
+# more places for a hostile document to walk a parser into the wrong branch.
+# Documents are bounded by the caller's fetch cap before they reach here, so
+# holding one in memory is affordable and correctness wins.
+#
+# `roxmltree` forbids unsafe, has no transitive dependencies beyond its own
+# tokenizer, and does no entity expansion — so the billion-laughs class of
+# attack does not apply.
+roxmltree    = "0.20"
+
 cms          = { version = "0.2", default-features = false }
 x509-cert    = "0.2"
 der          = "0.7"

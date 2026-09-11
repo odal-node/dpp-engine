@@ -46,6 +46,7 @@ pub mod eideasy;
 pub mod error;
 pub mod ghost;
 pub mod local;
+pub mod trustlist;
 
 pub use adapter::QtspSealAdapter;
 pub use backend::SealBackend;
