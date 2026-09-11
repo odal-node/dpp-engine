@@ -41,12 +41,18 @@
 //! ```
 //!
 //! It is deliberately **not** wired in yet: a patch for a crate nothing depends
-//! on is a build warning, and verifying a signature against a certificate the
-//! document itself carries would prove nothing. The missing half is the trust
-//! anchor, and it is not a CA — the list of lists is anchored on certificates
-//! published in the Official Journal, C series, so they have to be pinned from
-//! that notice and refreshed when the Commission republishes it. That design
-//! comes first.
+//! on is a build warning.
+//!
+//! The other half — knowing *which* key to trust — is done. [`EU_LOTL_ANCHOR`]
+//! pins the certificates the Official Journal authorises to sign the list of
+//! lists, so a verifier has something to check the signing certificate against
+//! rather than trusting whichever one the document happens to carry. Read
+//! [`LotlAnchor::authorises`] before using it: it is a precondition, never a
+//! verdict.
+//!
+//! What remains is to run the two together — establish the certificate is
+//! anchored, then verify the signature with it, then verify each national list
+//! against the certificates the now-verified LOTL names for that territory.
 //!
 //! What follows from that is a hard boundary, and it is built into the type
 //! names: [`UnverifiedTrustedList`] is what parsing produces, and nothing in
@@ -76,12 +82,16 @@
 //! so a present-tense answer is the wrong answer to the question that matters,
 //! in both directions.
 
+mod anchor;
+#[cfg(test)]
+mod anchor_tests;
 mod fetch;
 mod model;
 mod parse;
 #[cfg(test)]
 mod tests;
 
+pub use anchor::{EU_LOTL_ANCHOR, LotlAnchor};
 pub use fetch::{
     EU_LOTL_URL, MAX_TRUSTED_LIST_BYTES, fetch_lotl_pointers, fetch_trusted_list, national_pointers,
 };
