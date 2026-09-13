@@ -12,6 +12,20 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ### Breaking
 
+- **A battery import-template route was removed.**
+  *(Breaking: `GET /integrator/api/v1/templates/battery` is gone. Use
+  `battery-ev`, `battery-lmt` or `battery-industrial` — the `404` names them.)*
+
+  Recorded here because it is a removed HTTP endpoint, and a consumer calling it
+  gets a `404` rather than a deprecation. The reasoning — a fifteen-column
+  template whose own example rows produced drafts that publish refused, naming
+  around forty missing mandatory fields — is under **Changed**, at *"The battery
+  import template is now three, one per category, and generated"*, where it was
+  written and where it reads best.
+
+  Found by sweeping `[Unreleased]` for breaking-change language outside this
+  section, the same check that found three misfiled breaks in `dpp-core` 0.20.0.
+
 - **A transfer's operator `country` is now checked, not just shaped.**
   *(Breaking: `POST /dpp/{dppId}/transfer/initiate` answers `422` for a
   `fromOperator.country` or `toOperator.country` that is not an assigned ISO
@@ -822,6 +836,46 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   an adopted regulation with a firm date.
 
 ### Changed
+
+- **Four README claims had drifted, and seven documents were unreachable from
+  the index.** A release-checklist accuracy pass, every claim re-checked against
+  the tree rather than re-read.
+
+  **The crate map was missing a crate.** `dpp-render` — the shared renderer
+  extracted from `dpp-resolver` so the live read and the continuity tier's
+  pre-rendered snapshot cannot drift apart — appeared nowhere, while all eleven
+  of its siblings did.
+
+  **The dpp-core dependency table named seven crates where the workspace takes
+  nine.** `dpp-aas` (the resolver's `Accept`-negotiated AAS Environment) and
+  `dpp-rules` were both absent. `dpp-rules` is the notable one: it is taken with
+  `features = ["bundle"]`, which is the signed-ruleset channel the README's own
+  trust-layer section advertises two screens further down.
+
+  **The open-core table named a crate where a repository belongs.** The Odal Core
+  row read `dpp-domain`, which is one crate inside `dpp-core`, in a column headed
+  *Repository*.
+
+  **The resolver route table listed five of the eight routes `router.rs`
+  serves** — every GS1 Digital Link variant beyond the bare `/01/{gtin}` was
+  missing, including `/01/{gtin}/10/{batch}/21/{serial}`, the full shape this
+  node's own carrier emits.
+
+  **Seven documents were not reachable from `docs/README.md`**, among them
+  `architecture/EVIDENCE-DOSSIER.md` — which the paragraph immediately below that
+  index advertises — plus the operator-setup and webhooks guides and all three
+  governance documents.
+
+  **`docs/project/ENDPOINTS.md` was a second register of the HTTP surface**,
+  carrying 33 of the spec's 78 paths and last touched in August. Nothing in it is
+  *wrong* — every route it names still exists — but a partial duplicate of an
+  authoritative file drifts by construction. It now says so at the top, and says
+  that a table disagreeing with the spec should be deleted rather than corrected.
+
+  `docs/governance/RELEASE.md` gains the two checks that would have caught this:
+  a README-versus-tree reconciliation, and a sweep of `[Unreleased]` for
+  breaking-change language outside `### Breaking`. Its checklist also skipped
+  from 6 to 8, so step 7 had been missing entirely.
 
 - **Seven documents stopped naming identifiers that no longer exist.** The
   `sector` → product group rename reached the code and the routes but not the

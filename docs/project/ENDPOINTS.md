@@ -1,6 +1,16 @@
 
 ## Service Endpoints
 
+> ⚠️ **`api/openapi.yaml` is the authoritative HTTP surface, not this file.**
+> This document covers **how routes are mounted** across the fused node — which
+> router owns what, and which endpoints are deliberately unreachable in the fused
+> deployment. The route tables below are a partial illustration: they name 33 of
+> the 78 paths the spec carries, and they are not kept in step with it.
+>
+> Two registers of the same fact drift; one does not. If a route table here ever
+> disagrees with the spec, the spec is right — and the table should be deleted
+> rather than corrected.
+
 ### MVP Node (port 8001)
 
 Routes are mounted by prefix: `/vault/*`, `/identity/*`, `/integrator/*` (see

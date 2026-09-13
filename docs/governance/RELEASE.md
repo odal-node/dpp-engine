@@ -31,7 +31,13 @@ Before tagging a release:
    `ops/pg/` and applied via `PgDal::migrate` or pre-applied by ops tooling.
 5. **Bootstrap flow verified** — `odal bootstrap` provisions operator config +
    first API key cleanly against a fresh node.
-6. **README accuracy** — verify the root README reflects the current API.
+6. **README accuracy** — verify the root README reflects the current API:
+   the crate map against `crates/`, the dpp-core table against
+   `[workspace.dependencies]`, and the resolver route table against
+   `dpp-resolver/src/router.rs`. All four drifted before 0.13.0.
+7. **CHANGELOG sections reconciled** — sweep `[Unreleased]` for breaking-change
+   language outside `### Breaking`. A removed route or renamed field described
+   under *Added*, *Changed* or *Fixed* is a break nobody will migrate for.
 8. **Dependency review** — check for known vulnerabilities with `cargo audit`.
 9. **dpp-core version pinned** — ensure the workspace uses a tagged release
    of dpp-core, not an unreleased commit.
