@@ -21,6 +21,11 @@ This folder documents **running the product**: services, database, operations, s
 | "What exactly is the HTTP surface?" | [../api/openapi.yaml](../api/openapi.yaml) |
 | "What are the licence terms, really?" | [legal/LICENSING.md](legal/LICENSING.md) — BSL-1.1 with a genuine self-host grant · [legal/DPP-RETENTION.md](legal/DPP-RETENTION.md) |
 | "What's built, what's next?" | [project/BLUEPRINT.md](project/BLUEPRINT.md) |
+| "How is an evidence dossier built and checked?" | [architecture/EVIDENCE-DOSSIER.md](architecture/EVIDENCE-DOSSIER.md) — the thing the paragraph below is about |
+| "How do I onboard an operator?" | [guides/OPERATOR-SETUP.md](guides/OPERATOR-SETUP.md) |
+| "How do outbound webhooks work?" | [guides/WEBHOOKS.md](guides/WEBHOOKS.md) |
+| "How are releases cut and versioned?" | [governance/RELEASE.md](governance/RELEASE.md) · [governance/VERSIONING.md](governance/VERSIONING.md) · [governance/GIT-STRATEGY.md](governance/GIT-STRATEGY.md) |
+| "How are routes mounted across the fused node?" | [project/ENDPOINTS.md](project/ENDPOINTS.md) — mounting architecture only; [../api/openapi.yaml](../api/openapi.yaml) is the authoritative surface |
 
 ## What makes this node different (the 60-second version)
 

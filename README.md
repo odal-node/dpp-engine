@@ -56,6 +56,7 @@ The engine ships as a **single binary** (`dpp-node`) that fuses all services und
 | `dpp-vault` | bin+lib | DPP write engine — create, versioned lifecycle (publish / suspend / archive / end-of-life), transfer-of-responsibility handshake, hash-chained audit, evidence-dossier generation + verification |
 | `dpp-identity` | bin+lib | `did:web` identity HTTP service — signing, key rotation |
 | `dpp-resolver` | bin+lib | Public QR / Digital Link resolver, JWS-verified fail-closed |
+| `dpp-render` | lib | Shared HTML rendering of the public passport view. Extracted from `dpp-resolver` so the live read and the continuity tier's pre-rendered snapshot go through **one** renderer — a second implementation is precisely how the static tier would drift from what the resolver serves |
 | `dpp-integrator` | bin+lib | CSV/XLSX-to-DPP bulk import adapter with per-product group templates |
 | `dpp-common` | lib | Event bus trait + well-known subjects, telemetry, RFC 7807 HTTP errors |
 | `dpp-plugin-host` | lib | wasmtime sandbox — fuel metering, memory cap, deny-all WASI, signed-plugin policy |
@@ -76,6 +77,8 @@ All core crates are consumed from crates.io — dpp-core is published independen
 | `dpp-digital-link` | GS1 Digital Link parser and link-type negotiation |
 | `dpp-calc` | EU-methodology calculators (CO2e, repairability) |
 | `dpp-plugin-traits` | Wasm plugin ABI |
+| `dpp-aas` | Asset Administration Shell projection — the resolver's `Accept`-negotiated AAS Environment |
+| `dpp-rules` | Cross-field regulatory rules, taken with `features = ["bundle"]` — the signed-ruleset format the node verifies fail-closed |
 | `dpp-registry` | EU registry interface types |
 
 **Dependency direction**: dpp-engine -> dpp-core (one-way). dpp-core has zero knowledge of this repo.
@@ -139,6 +142,9 @@ Full command reference: **[cli/README.md](cli/README.md)**.
 | GET | `/dpp/{id}` | None — content-negotiated (HTML, JSON-LD, or AAS Environment via `Accept`) |
 | GET | `/dpp/{id}/qr` | None |
 | GET | `/01/{gtin}` | None — GS1 Digital Link resolution |
+| GET | `/01/{gtin}/21/{serial}` | None — resolves on the GTIN; AI 21 identifies the record, not the product |
+| GET | `/01/{gtin}/10/{batch}` | None |
+| GET | `/01/{gtin}/10/{batch}/21/{serial}` | None — the full shape this node's own carrier emits |
 
 ---
 
@@ -166,7 +172,7 @@ Migrations: `ops/pg/0001_extensions_roles_schemas.sql` onward (see the directory
 
 | Tier | Repository | License | Contents |
 |---|---|---|---|
-| **Odal Core** | `dpp-domain` | Apache-2.0 | Domain types, crypto, schemas, plugin ABI, port traits |
+| **Odal Core** | [dpp-core](https://github.com/odal-node/dpp-core) | Apache-2.0 | Domain types, crypto, schemas, plugin ABI, port traits |
 | **Odal Engine** | dpp-engine (this repo) | BSL-1.1 | HTTP services, database, auth, telemetry, calculators |
 
 The `ComplianceRegistry` trait in `dpp-domain::ports` is a technical extension seam. Compliance calculation is open: the Wasm plugin registry and the `dpp-calc` calculators (CO2e, repairability) are all Apache-2.0 in dpp-core.
