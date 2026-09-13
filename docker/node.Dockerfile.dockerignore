@@ -1,17 +1,29 @@
 # BuildKit honours `<Dockerfile>.dockerignore` next to the Dockerfile, so this
 # lives in the platform repo (not the build-context root). Patterns are relative
 # to the build context (the parent dir holding dpp-engine/).
-# Keep the context to Rust source only.
+#
+# 🚨 This is a WHITELIST, and it must stay one.
+#
+# It used to name the siblings to exclude. That missed every sibling nobody
+# thought of — the context root also holds private repositories, and 209 MB of
+# one of them was being handed to the Docker daemon on every build. Nothing
+# leaked into an image, because the Dockerfile copies named directories and never
+# `COPY . .`, but a build context is not the place to find that out.
+#
+# A denylist here fails open: a new sibling checkout is shipped by default and
+# nobody notices. This form fails closed — a directory the build genuinely needs
+# must be named, and anything else is simply not sent.
+*
+!dpp-core
+!dpp-engine
+
+# Now trim the two directories that are re-included above.
 **/target
 **/node_modules
 **/.git
 **/.github
 **/dist
 **/.astro
-dpp-web
-docs
-public
-research
 **/*.log
 **/.env
 **/.env.*
