@@ -25,7 +25,18 @@ use dpp_node::infra::s3_archive::{S3ArchiveAdapter, S3ArchiveConfig};
 /// starts locally cannot drift onto different releases. A suite that runs
 /// against one MinIO in CI and a different one on a developer machine proves
 /// less than it looks like it does.
-const MINIO_IMAGE: (&str, &str) = ("minio/minio", "RELEASE.2025-09-07T16-13-09Z");
+/// `quay.io`, not Docker Hub.
+///
+/// `docker.io/minio/minio` was removed: the Hub API answers **404** for the
+/// repository and a pull is denied for every tag, including this one, which CI
+/// had been pulling successfully until it vanished. quay.io is MinIO's own
+/// registry and carries this exact release, so the pin is otherwise unchanged —
+/// same publisher, same tag. The CI workflow pins the same pair and the two must
+/// move together.
+const MINIO_IMAGE: (&str, &str) = (
+    "quay.io/minio/minio",
+    "RELEASE.2025-09-07T16-13-09Z",
+);
 
 /// Point this at a running MinIO and the suite uses it instead of starting a
 /// container per test.
