@@ -4973,6 +4973,7 @@ components:
         sealedAt:
           type: string
           format: date-time
+          description: '**This node''s clock when the backend answered — not a trusted timestamp.** Not necessarily when the signature was formed. A seal carries an independently established signing time only from baseline level `T` upward, where a timestamp authority attests it; at `B` there is no such token anywhere in the envelope, so this is an unattested claim by the party that bought the seal. Anything resting on *when* the seal was made must read the timestamp token out of `sealValue`.'
         signingCertRef:
           type:
             - string

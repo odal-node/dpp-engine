@@ -136,6 +136,56 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ### Added
 
+- **Nothing checked what conformance level a seal actually came back at.**
+
+  The request names a level. The boot gate checks that level against the
+  backend's *advertised* capabilities. The returned bytes were then taken on
+  trust. A provider answering `CAdES_BASELINE_T` to a request for `LT` — a
+  client enabled for the wrong profile, a plan change, a provider-side default —
+  produced a seal that was correct in every record this node kept, and that
+  stops verifying when the signing certificate expires, years after the passport
+  was retention-locked and long after anything could be done about it.
+
+  `dpp_seal::cades::evidenced_level` now reads the returned CMS and reports the
+  highest baseline level whose distinguishing material is present: a
+  `signature-time-stamp` for `T`, long-term revocation material for `LT`, an
+  archival timestamp for `LTA`. The drain calls it on every seal and logs at
+  `error` when a seal bought as long-term carries no long-term material,
+  counting it in a new **`seal_downgraded_total`**. Its own counter rather than
+  another `seal_total{outcome=…}`: that label is a partition — a row is sealed
+  *or* retried *or* exhausted — and a downgraded row is a sealed row too, so
+  putting it there would make `sum(seal_total)` exceed the rows drained.
+
+  **It warns and does not fail the row.** The seal exists and has been billed, so
+  backing off would buy the same weaker seal again on the next pass — paying
+  twice to record the problem twice. Same reasoning as the produced-but-unrecorded
+  path, reached from the other side.
+
+  Two things this deliberately is not. It is a **floor, not a verdict**:
+  conforming to a baseline level means satisfying every row of the profile's
+  requirements table, and none of that is checked here — a level is reported only
+  when the material for it *and every level below it* is present, so under-reporting
+  is possible and over-reporting is not. And nothing here is **validated**: a
+  timestamp token is counted because it is in the bytes, not because anyone
+  confirmed it timestamps this signature. Same register as the rest of that
+  module.
+
+  The subtle part is where the long-term material lives, because the two
+  profiles in play disagree and **both are lawful today**. Commission
+  Implementing Regulation (EU) 2026/248 lists the formats public sector bodies
+  must recognise, in two annexes. Annex I is ETSI EN 319 122-1, which puts the
+  material in `SignedData.crls` and marks the `revocation-values` attribute
+  **`shall not be present`** at that level. Annex II is ETSI TS 103 173, which
+  carries it in that very attribute — and Annex II is not history: Article 3(2)
+  obliges recognition of those formats for seals **created before 23 February
+  2028**.
+
+  So a seal produced to either profile is lawful now and carries exactly what
+  the other forbids. Both homes are accepted; reading only one reported an
+  Annex II seal as `T` and raised a downgrade alarm against a provider that had
+  done nothing wrong, which is what
+  `either_home_of_the_revocation_material_evidences_baseline_lt` pins.
+
 - **`just coderabbit-check`**, deliberately *not* in `just check`: validates
   `.coderabbit.yaml` against CodeRabbit's published JSON Schema, fetched fresh
   on every run.
@@ -943,6 +993,28 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   against the core aggregate, which is what it was always meant to check.
 
 ### Fixed
+
+- **`sealedAt` read as evidence and was not.** `GET /dpp/{dppId}/seal`
+  documented the field as *"When the QTSP produced it."* Every construction site
+  sets the node's own clock, and for the local development backend there is no
+  QTSP at all. Documentation only, in the handler and in the published schema.
+
+  It matters more than a normal doc slip because of what surrounds it. A seal
+  carries an independently established signing time only from baseline `T`
+  upward, where a timestamp authority attests it; at `B` there is no timestamp
+  token anywhere in the envelope, so `sealedAt` is an unattested claim by the
+  party that bought the seal. That response is scrupulous about exactly this
+  distinction everywhere else — `signingCertRef` says "as reported by the seal,
+  never verified", `sealedPayloadHash` says "a record, not proof", `verification`
+  states what was not checked. This was the one field that read as evidence
+  without saying it was not.
+
+- **`LocalIdentity::generated_at` returned `Utc::now()`**, under a doc comment
+  saying it returned when the certificate was generated. It had no callers, so
+  nothing was wrong today; anything wiring it into a trust report would have got
+  a fresh timestamp and no reason to doubt it. Removed rather than corrected —
+  the identity is persisted so yesterday's seal still verifies, and nothing has
+  needed to ask when it was minted.
 
 - **`SEAL_PROVIDER=local` could not produce a single seal, under any
   configuration.** The drain loop named `SealMode::ProviderSeal` as a literal.

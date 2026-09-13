@@ -89,7 +89,18 @@ pub struct SealResponse {
     pub format: String,
     /// Base64 detached CAdES (`.p7s`) as returned by the QTSP.
     pub seal_value: String,
-    /// When the QTSP produced it.
+    /// **This node's clock when the backend answered — not a trusted timestamp.**
+    ///
+    /// Stated rather than left to inference, like every other field here. It is
+    /// not necessarily when the signature was formed, and for the local
+    /// development backend there is no QTSP involved at all.
+    ///
+    /// A seal carries an independently established signing time only from
+    /// `B-T` upward, where a timestamp authority attests it. At `B-B` there is
+    /// no such token anywhere in the envelope, so this is an unattested claim by
+    /// the party that bought the seal. Anything resting on *when* the seal was
+    /// made must read the timestamp token out of `sealValue`, which is the only
+    /// place an attested time can be.
     pub sealed_at: chrono::DateTime<chrono::Utc>,
 
     /// Hex SHA-256 of the certificate the seal names as its signer, **as

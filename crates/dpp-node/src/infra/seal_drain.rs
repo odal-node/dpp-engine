@@ -32,6 +32,7 @@ use dpp_domain::{
     ports::seal::SealPort,
     seal::{
         SealConformanceLevel, SealCredentialRef, SealEnvelope, SealFormat, SealMode, SealRequest,
+        SealedEnvelope,
     },
 };
 use dpp_types::SealOutbox;
@@ -131,38 +132,116 @@ pub async fn drain_once(
         metrics::histogram!("seal_seconds").record(started.elapsed().as_secs_f64());
 
         match outcome {
-            Ok(envelope) => match outbox.mark_sealed(row.id, &envelope).await {
-                Ok(()) => {
-                    metrics::counter!("seal_total", "outcome" => "sealed").increment(1);
-                    stats.sealed += 1;
+            Ok(envelope) => {
+                report_shortfall(&envelope, conformance_level, &row.passport_id);
+                match outbox.mark_sealed(row.id, &envelope).await {
+                    Ok(()) => {
+                        metrics::counter!("seal_total", "outcome" => "sealed").increment(1);
+                        stats.sealed += 1;
+                    }
+                    // The seal exists and has been billed, but recording it failed.
+                    // Back off and retry the *write* — `mark_sealed` is the only
+                    // thing that closes the row, so leaving it pending is correct
+                    // even though the next attempt will buy a second seal. Loud,
+                    // because this is the one path that can cost twice.
+                    Err(e) => {
+                        tracing::error!(
+                            passport_id = %row.passport_id,
+                            error = %e,
+                            "seal produced but not recorded — a retry will re-seal and re-bill"
+                        );
+                        back_off_or_exhaust(
+                            outbox,
+                            row.id,
+                            row.attempts,
+                            format!("seal recorded failed: {e}"),
+                            &mut stats,
+                        )
+                        .await;
+                    }
                 }
-                // The seal exists and has been billed, but recording it failed.
-                // Back off and retry the *write* — `mark_sealed` is the only
-                // thing that closes the row, so leaving it pending is correct
-                // even though the next attempt will buy a second seal. Loud,
-                // because this is the one path that can cost twice.
-                Err(e) => {
-                    tracing::error!(
-                        passport_id = %row.passport_id,
-                        error = %e,
-                        "seal produced but not recorded — a retry will re-seal and re-bill"
-                    );
-                    back_off_or_exhaust(
-                        outbox,
-                        row.id,
-                        row.attempts,
-                        format!("seal recorded failed: {e}"),
-                        &mut stats,
-                    )
-                    .await;
-                }
-            },
+            }
             Err(e) => {
                 back_off_or_exhaust(outbox, row.id, row.attempts, e.to_string(), &mut stats).await;
             }
         }
     }
     stats
+}
+
+/// Say so when a seal carries less than was asked for.
+///
+/// Until now nothing looked at what came back. The request names a level, the
+/// boot gate checks that level against the backend's *advertised* capabilities,
+/// and the returned bytes were taken on trust. A provider answering
+/// `CAdES_BASELINE_T` to a request for `LT` — a client enabled for the wrong
+/// profile, a plan change, a provider-side default — produced a seal that was
+/// correct in every record this node kept, and that stops verifying when the
+/// signing certificate expires, years after the passport was retention-locked.
+///
+/// # Why this only warns
+///
+/// The seal exists and has been billed. Failing the row would retry and buy the
+/// same wrong thing again, so the shortfall is reported and the row closes
+/// normally. That is the same reasoning as the `mark_sealed` failure path above,
+/// reached from the opposite direction: there the seal is right and the record
+/// failed, here the record will be right and the seal is weaker than ordered.
+/// Neither is fixed by re-buying.
+///
+/// Silence on the happy path is deliberate. A drain that logged every seal's
+/// level would bury the one line that matters under one per passport.
+fn report_shortfall(
+    envelope: &SealedEnvelope,
+    requested: SealConformanceLevel,
+    passport_id: &dpp_domain::passport::PassportId,
+) {
+    // A placeholder is not a seal, so there is nothing to fall short of.
+    if envelope.placeholder {
+        return;
+    }
+
+    let Ok(der) = base64::Engine::decode(
+        &base64::engine::general_purpose::STANDARD,
+        &envelope.seal_value,
+    ) else {
+        // Unreadable here means unreadable everywhere, and the seal route says
+        // as much through a null `signingCertRef`. Not this function's alarm to
+        // raise.
+        return;
+    };
+
+    let Ok(Some(evidenced)) = dpp_seal::cades::evidenced_level(&der) else {
+        return;
+    };
+
+    // Ordering by what actually matters rather than by enum position: the
+    // question is whether the seal outlives its signing certificate, and that is
+    // the line `SealConformanceLevel` itself draws. A `B`-for-`T` substitution is
+    // real but survivable; a `T`-for-`LT` one is the permanent kind.
+    if requested.survives_certificate_expiry() && !evidenced.survives_certificate_expiry() {
+        // Its own counter, not another `seal_total` outcome. That label is a
+        // partition — a row is sealed *or* retried *or* exhausted — and a
+        // downgraded row is a `sealed` row as well, so adding it there would
+        // make `sum(seal_total)` exceed the rows drained and quietly corrupt
+        // every ratio built on it.
+        metrics::counter!("seal_downgraded_total").increment(1);
+        tracing::error!(
+            passport_id = %passport_id,
+            requested = ?requested,
+            evidenced = ?evidenced,
+            "sealed below the requested level: this seal carries no long-term validation \
+             material and will stop verifying when its signing certificate expires. The \
+             passport is retention-locked, so it cannot be re-sealed — check the profile \
+             enabled for this client with the provider"
+        );
+    } else if evidenced != requested {
+        tracing::warn!(
+            passport_id = %passport_id,
+            requested = ?requested,
+            evidenced = ?evidenced,
+            "the seal's material does not match the level requested"
+        );
+    }
 }
 
 #[cfg(test)]
@@ -315,6 +394,82 @@ mod tests {
 
         assert_eq!(stats.sealed, 1);
         assert_eq!(outbox.sealed.lock().unwrap().len(), 1);
+    }
+
+    /// A backend that seals below the requested level still closes the row.
+    ///
+    /// The shortfall is reported, and that is *all* it does. The seal exists and
+    /// has been billed, so failing the row would back it off and buy the same
+    /// weaker seal again on the next pass — paying twice to record the problem
+    /// twice. The same reasoning as the produced-but-unrecorded path, reached
+    /// from the other side.
+    ///
+    /// Real CAdES bytes from the local backend rather than a stub: the check
+    /// reads unsigned attributes out of a CMS structure, so a placeholder string
+    /// would exercise the early return and prove nothing about the shortfall
+    /// path. Those bytes carry no timestamp and no revocation material, which is
+    /// exactly a `B` answer to an `LT` request.
+    #[tokio::test]
+    async fn a_seal_below_the_requested_level_is_still_recorded() {
+        struct Downgrades(String);
+
+        #[async_trait]
+        impl SealPort for Downgrades {
+            async fn seal(&self, _req: SealRequest) -> Result<SealedEnvelope, DppError> {
+                Ok(SealedEnvelope {
+                    format: SealFormat::Cades,
+                    seal_value: self.0.clone(),
+                    signing_cert_ref: None,
+                    sealed_at: chrono::Utc::now(),
+                    placeholder: false,
+                })
+            }
+            async fn verify(&self, _e: &SealedEnvelope) -> Result<SealVerification, DppError> {
+                unreachable!("the drain never verifies")
+            }
+            fn capabilities(&self) -> SealCapabilities {
+                SealCapabilities {
+                    supported_formats: vec![SealFormat::Cades],
+                    supported_modes: vec![SealMode::ProviderSeal],
+                    supported_levels: SealConformanceLevel::ALL.to_vec(),
+                    supported_envelopes: vec![SealEnvelope::Detached],
+                }
+            }
+        }
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let identity =
+            dpp_seal::local::LocalIdentity::load_or_create(dir.path()).expect("identity");
+        let der = identity.sign_detached(&[0x11; 32]).expect("sign");
+        let b_level = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &der);
+
+        assert_eq!(
+            dpp_seal::cades::evidenced_level(&der).unwrap(),
+            Some(SealConformanceLevel::BaselineB),
+            "the fixture must actually be a downgrade, or this test asserts nothing"
+        );
+
+        let outbox = Arc::new(FakeOutbox {
+            rows: Mutex::new(vec![row(0)]),
+            ..Default::default()
+        });
+        let stats = drain_once(
+            &(outbox.clone() as Arc<dyn SealOutbox>),
+            &(Arc::new(Downgrades(b_level)) as Arc<dyn SealPort>),
+            &test_key_ref(),
+            SealMode::ProviderSeal,
+            SealConformanceLevel::BaselineLt,
+            10,
+        )
+        .await;
+
+        assert_eq!(stats.sealed, 1, "a downgraded seal is still a sealed row");
+        assert_eq!(
+            stats.retried, 0,
+            "re-buying would cost twice and fix nothing"
+        );
+        assert_eq!(outbox.sealed.lock().unwrap().len(), 1);
+        assert!(outbox.failed.lock().unwrap().is_empty());
     }
 
     /// The row's stored digest is what gets sealed — never one re-derived from

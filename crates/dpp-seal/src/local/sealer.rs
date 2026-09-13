@@ -196,11 +196,6 @@ impl LocalIdentity {
         info.to_der()
             .map_err(|e| SealError::Config(format!("cannot DER-encode the seal: {e}")))
     }
-
-    /// When this identity's certificate was generated.
-    pub fn generated_at(&self) -> chrono::DateTime<Utc> {
-        Utc::now()
-    }
 }
 
 #[async_trait]
