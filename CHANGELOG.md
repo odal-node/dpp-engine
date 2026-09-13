@@ -10,6 +10,8 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-09-13
+
 ### Breaking
 
 - **A battery import-template route was removed.**
