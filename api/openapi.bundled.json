@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Odal Node API",
-    "version": "0.12.0",
+    "version": "0.13.0",
     "description": "**Sovereign Digital Product Passport Infrastructure**\n\nThe Odal API is split across two deployable services:\n\n- **Node** (`http://localhost:8001`) — the MVP service that bundles vault,\n  identity, and integrator on a single port with sub-path routing:\n  `/vault/*`, `/identity/*`, `/integrator/*`.\n- **Resolver** (`http://localhost:8003`) — standalone public resolver for\n  QR code scans and supply-chain integrations. Unauthenticated.\n\nAll authenticated vault endpoints are versioned under `/vault/api/v1/`.\nPath parameters use OpenAPI 3.1 `{id}` brace syntax (aligned with\nAxum 0.8 routing).\n\nAuthentication uses `Authorization: Bearer odal_sk_...` API keys (SHA-256\nhashed, prefix-indexed) or HTTP Basic auth for local development.\n\nRegulation references:\n- EU Ecodesign for Sustainable Products Regulation (ESPR) 2024/1781\n- EU Battery Regulation 2023/1542\n- W3C DID Core Spec 1.0 / W3C VC Data Model 2.0\n",
     "contact": {
       "name": "Odal Support",
