@@ -33,10 +33,7 @@ use dpp_node::infra::s3_archive::{S3ArchiveAdapter, S3ArchiveConfig};
 /// registry and carries this exact release, so the pin is otherwise unchanged —
 /// same publisher, same tag. The CI workflow pins the same pair and the two must
 /// move together.
-const MINIO_IMAGE: (&str, &str) = (
-    "quay.io/minio/minio",
-    "RELEASE.2025-09-07T16-13-09Z",
-);
+const MINIO_IMAGE: (&str, &str) = ("quay.io/minio/minio", "RELEASE.2025-09-07T16-13-09Z");
 
 /// Point this at a running MinIO and the suite uses it instead of starting a
 /// container per test.
