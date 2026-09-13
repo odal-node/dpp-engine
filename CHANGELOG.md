@@ -994,6 +994,26 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ### Fixed
 
+- **CI could not pull MinIO, so nothing could go green.** `docker.io/minio/minio`
+  was removed from Docker Hub: the Hub API answers **404** for the repository and
+  a pull is denied for every tag — including the one pinned here, which CI had
+  been pulling successfully until it vanished. Confirmed from two networks, and
+  a re-run failed identically, so it is not a rate limit or a flake.
+
+  Every pull request failed at *Start MinIO* and could therefore never reach a
+  mergeable state. This was found while preparing the 0.13.0 release, and it
+  blocked the release itself rather than any one change.
+
+  Both pin sites move to **quay.io**, MinIO's own registry, which carries this
+  exact release: `quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z`. Same
+  publisher, same tag, same build — only the host moved, so what the tests
+  exercise is unchanged. The workflow step and `s3_archive.rs` are pinned as a
+  pair and each now says so, and says why the registry is not Docker Hub.
+
+  Verified by pulling the image and running the suite against it: `s3_archive`
+  is 4/4 green, which also confirms `testcontainers` accepts a registry-qualified
+  image name.
+
 - **`sealedAt` read as evidence and was not.** `GET /dpp/{dppId}/seal`
   documented the field as *"When the QTSP produced it."* Every construction site
   sets the node's own clock, and for the local development backend there is no
