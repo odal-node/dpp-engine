@@ -204,15 +204,20 @@ jobs:
       # `volumes` and `options` but not a command. The alternative — an image
       # that runs the server by default — would have CI and a local run testing
       # two different MinIO builds, which is a worse trade than a longer step.
-      # The tag is the one `s3_archive.rs` pins for its own container; the two
-      # must move together.
+      # The image and tag are the ones `s3_archive.rs` pins for its own container;
+      # the two must move together.
+      #
+      # `quay.io`, not Docker Hub: `docker.io/minio/minio` was removed. The Hub API
+      # answers 404 for the repository and every tag is denied, including this one,
+      # which this step pulled successfully until it vanished. quay.io is MinIO's own
+      # registry and carries this exact release — same publisher, same tag.
       - name: Start MinIO
         run: |
           docker run -d --name minio \
             -p 9000:9000 \
             -e MINIO_ROOT_USER=minioadmin \
             -e MINIO_ROOT_PASSWORD=minioadmin \
-            minio/minio:RELEASE.2025-09-07T16-13-09Z \
+            quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z \
             server /data --console-address :9001
           for _ in $(seq 1 30); do
             if curl -fsS http://127.0.0.1:9000/minio/health/live >/dev/null 2>&1; then
