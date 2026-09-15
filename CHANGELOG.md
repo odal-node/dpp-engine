@@ -51,6 +51,37 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ### Added
 
+- **Trusted-list signatures are checked against the transform profile the law
+  mandates.** New `LotlRejected::NonConformantProfile` and the same on
+  `TrustedListRejected`: the `ds:Reference` with `URI=""` must carry exactly one
+  `ds:Transforms`, holding exactly two `ds:Transform` — enveloped-signature then
+  exclusive canonicalization, in that order.
+
+  ✅ COMPLIANCE-PIN: CID (EU) 2015/1505 Annex I, Chapter II, the "Signature
+  element (clause B.1)" section inserted by CID (EU) 2025/2164, Annex, point (3).
+  Applicable since 29 April 2026.
+
+  **Transforms decide what was actually signed**, so a permissive chain is the
+  classic signature-wrapping surface: a signature can validate perfectly and
+  cover something other than the document being read. The narrowness of the
+  profile is the point of it, and it is checked *before* the signature — a valid
+  signature must not be able to excuse a chain the law does not permit.
+
+  **The gap was confirmed, not assumed.** `xml-sec`'s
+  `TransformPolicy::allowed_algorithms` is documented as "`None` accepts every
+  implemented algorithm" and defaults to `None`; the implemented set includes
+  XPath and XPath Filter 2.0. An injected XPath transform is not merely accepted
+  in principle — in the negative test it is **evaluated**, running 5800 context
+  evaluations before an unrelated resource ceiling stops it.
+
+  Only the `URI=""` reference is constrained. Both published documents carry a
+  second reference to the XAdES `SignedProperties`, which the clause does not
+  govern and which constraining would refuse every real trusted list.
+
+  Separate from `SignatureInvalid` deliberately: a non-conformant profile is a
+  problem at the publisher, a bad signature is an altered document, and the two
+  send an operator to different people.
+
 - **A life status that contradicts its own lineage is now reported.** The
   plausibility lint gains `lineage.life_status_unsupported`, from
   `dpp_rules::lineage::check_life_status_consistency`: a unit claiming
