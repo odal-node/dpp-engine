@@ -75,6 +75,58 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   The create/update path and `POST /dpp/{dppId}/lint` now compute the result
   through one function. They did not before, so a check added to one and not the
   other would have made the route disagree with the record it re-checks.
+- **The EU Trusted Lists can now be read and verified.** New
+  `dpp_seal::trustlist`: `verify_lotl` for the List of Trusted Lists,
+  `verify_trusted_list` for a Member State's, plus the parsers, the fetcher and
+  the typed rejections. Nothing calls it yet — this is the reader, not a
+  policy.
+
+  **The trust anchor is an Official Journal notice, not a certificate
+  authority.** The LOTL's signing certificates chain to no commercial root; they
+  are published in the OJ C series, which the LOTL itself names through
+  `SchemeInformationURI`. So there is nothing to walk up to, and the anchor is
+  six SHA-256 digests taken from notice `52026XC01944`, compiled in with the
+  location, CELEX and pin date beside them.
+
+  **Compiled in, never configuration.** An operator who can repoint the anchor
+  can make any list verify.
+
+  **Six digests are the entire pinned surface.** No Member State's certificates
+  live in the repository — they arrive inside a document that has already been
+  verified, so a country joining or rotating its certificate needs no code change
+  and no release. That is the whole payoff of a list of lists.
+
+  `authorises` is a **precondition, not a verdict**: anyone can copy the genuine
+  certificate into a forgery and pass it. Only the signature separates them.
+  Conversely a valid signature alone proves nothing about authority — Finland's
+  list is genuine and correctly signed by Finland, which does not sign the LOTL,
+  and it verifies cleanly with the anchor check disabled. That pair is why both
+  halves exist.
+
+  🚨 **This creates a recurring operational obligation.** The pin must be
+  refreshed when the Commission republishes the notice, and the current signer
+  expires **2027-11-17** — a calendar date, not a discovery. A stale pin fails
+  closed and looks like an outage, so the reader also has the early signal: the
+  LOTL's first `SchemeInformationURI` entry is the current notice.
+
+  `TrustedListRejected` is a separate enum from `LotlRejected` deliberately: a
+  rejected LOTL usually means our pin is stale, a rejected national list never
+  does, and the two send an operator in different directions.
+
+- **`xml-sec` is pinned to an organisation fork, temporarily.** Italy (2.86 MB)
+  and France (2.55 MB) exceed a compile-time node-set ceiling in the published
+  crate and cannot be verified at any configuration — the constant is
+  `pub(crate)` and the policy knob that appears to raise it is validated against
+  the same number. They miss it by four and five nodes, and trusted lists only
+  grow.
+
+  The fork changes that one constant and nothing else. It is a pinned git rev
+  rather than a vendored copy because the crate is ~66k LOC: vendoring would make
+  every upstream sync a 66k-line diff and bury the one line that is ours.
+  `deny.toml` carries the matching source allowance and the same exit condition.
+
+  Filed upstream as `structured-world/xml-sec#158`. **When that resolves, the
+  `[patch.crates-io]` stanza and the `deny.toml` entry go together.**
 
 - **The passport response now serves `serialNumber`, `lifeStatus` and
   `responsibleOperator`.** All three are modelled on the core aggregate and were

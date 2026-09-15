@@ -277,7 +277,29 @@ unknown-git = "deny"
 # if not specified. If it is specified but empty, no registries are allowed.
 allow-registry = ["https://github.com/rust-lang/crates.io-index"]
 # List of URLs for allowed Git repositories
-allow-git = []
+#
+# One entry, and it is meant to be temporary. `xml-sec` verifies the XMLDSig
+# signature on the EU List of Trusted Lists and on each national list. Two of
+# those — Italy at 2.86 MB and France at 2.55 MB — exceed a compile-time node-set
+# ceiling in the published crate and cannot be verified at any configuration:
+# `NODE_SET_ENTRY_CEILING` is `pub(crate)`, and the policy knob that looks like it
+# raises it is validated against the same constant. They miss by four and five
+# nodes, and trusted lists only grow.
+#
+# The fork changes that one constant and nothing else, which is why it is a
+# pinned git rev rather than a vendored copy: the crate is ~66k LOC, so vendoring
+# would turn every upstream sync into a 66k-line diff and hide the one line that
+# is ours. Pinned by rev, not branch, so the reviewed commit is the one that
+# builds.
+#
+# Filed upstream as structured-world/xml-sec#158. **Exit condition: when that
+# resolves, drop the `[patch.crates-io]` stanza in the workspace `Cargo.toml` and
+# this entry together.** The fork's own commit message says the same thing.
+#
+# The rule above still stands for everything else — a git dependency is how
+# unreviewed code enters a build, and this one is allowed because the review is
+# a single constant, not because forks are fine.
+allow-git = ["https://github.com/odal-node/xml-sec"]
 
 [sources.allow-org]
 # github.com organizations to allow git sources for
