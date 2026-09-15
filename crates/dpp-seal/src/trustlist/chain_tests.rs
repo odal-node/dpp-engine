@@ -17,6 +17,19 @@ const FI_LIST: &str = include_str!("../../tests/fixtures/fi-trusted-list.xml");
 /// They are committed rather than fetched for the same reason every other
 /// fixture here is: a test that reaches 27 Member States' web servers fails for
 /// reasons that have nothing to do with this crate.
+///
+/// **Committing them changes their bytes, and that is safe** — worth stating,
+/// because it looks alarming. `.gitattributes` normalises line endings to LF, so
+/// Italy arrives from its publisher with CRLF and is stored 31 157 bytes
+/// shorter. It still verifies: XML parsing normalises end-of-line before an
+/// application sees the document, so canonicalisation — and therefore the
+/// signature — never sees the difference. Checked by verifying the committed
+/// form rather than reasoned about, and the LOTL fixture beside it has been LF
+/// since it was added.
+///
+/// The consequence for the fetch cap is the other direction: the wire form is
+/// *larger* than the committed one, so a cap sized against these fixtures is
+/// sized against the smaller number.
 const IT_LIST: &str = include_str!("../../tests/fixtures/it-trusted-list.xml");
 const FR_LIST: &str = include_str!("../../tests/fixtures/fr-trusted-list.xml");
 
