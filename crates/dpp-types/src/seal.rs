@@ -79,6 +79,18 @@ pub struct SealOutboxCounts {
     pub exhausted: i64,
 }
 
+/// One sealed passport, as an audit pass needs to see it.
+#[derive(Debug, Clone)]
+pub struct SealedPassport {
+    /// The passport carrying the seal.
+    pub passport_id: PassportId,
+    /// The seal stored on it.
+    pub seal: SealedEnvelope,
+    /// Hex SHA-256 of the passport's **current** compact JWS — what a sound
+    /// seal should be covering.
+    pub payload_hash: String,
+}
+
 /// The sealing outbox — enqueued in the publish transaction, drained by the node.
 #[async_trait]
 pub trait SealOutbox: Send + Sync {
@@ -186,6 +198,34 @@ pub trait SealOutbox: Send + Sync {
     /// condition and shares this predicate, but adds its own guards for rows the
     /// drain already owns — those belong to the repair, not to the question.
     async fn unsealed_published_count(&self) -> Result<i64, DppError>;
+
+    /// Sealed passports, in id order, for an audit pass to read.
+    ///
+    /// # Why "unsealed" is not the only failure worth finding
+    ///
+    /// [`Self::enqueue_unsealed`] and [`Self::unsealed_published_count`] both ask
+    /// the same question of the database: is the `seal` member absent? **A seal
+    /// that is present but worthless satisfies neither clause.** Its passport is
+    /// not swept, not counted, and looks healthy in every number this node
+    /// reports — while being, in substance, unsealed.
+    ///
+    /// That question cannot be a SQL clause. Whether a stored seal stands up is
+    /// cryptographic: open the CAdES, check the signature, read the digest it
+    /// covers and compare. So this hands the rows out and lets a caller that can
+    /// read seals decide.
+    ///
+    /// Paged with `after` as a cursor rather than an offset: passport ids are
+    /// UUIDv7 and time-ordered, so a cursor is stable against rows arriving
+    /// mid-walk, which an offset is not.
+    ///
+    /// # Errors
+    ///
+    /// Propagates the store's own failure.
+    async fn sealed_passports(
+        &self,
+        limit: i64,
+        after: Option<PassportId>,
+    ) -> Result<Vec<SealedPassport>, DppError>;
 }
 
 // ─── Reading a stored seal ────────────────────────────────────────────────────

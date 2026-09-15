@@ -189,6 +189,96 @@ pub async fn drain_once(
     stats
 }
 
+/// What one audit pass found.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct SealAudit {
+    /// Seals opened.
+    pub checked: u64,
+    /// Seals that cover their passport's current signature.
+    pub sound: u64,
+    /// Seals over a **different** digest — ordinarily a passport re-published
+    /// after sealing, which is not a defect.
+    pub superseded: u64,
+    /// Seals whose own signature does not verify. These are the finding.
+    pub broken: u64,
+    /// Seals this node could not read. Not a finding, and not counted as one.
+    pub unreadable: u64,
+}
+
+/// Open a bounded batch of stored seals and report what they are worth.
+///
+/// # The gap this closes
+///
+/// The repair sweep and the operator rollup both ask the database whether the
+/// `seal` member is **absent**. A seal that is present and worthless satisfies
+/// neither: its passport is not swept, not counted, and looks healthy in every
+/// number this node reports, while being in substance unsealed.
+///
+/// That question is cryptographic rather than relational, so it needs a pass
+/// that opens seals. This is that pass.
+///
+/// # It reports and does not repair, deliberately
+///
+/// The existing sweep carries a guarantee worth keeping: *it cannot double-bill,
+/// because it only queues passports carrying no seal at all.* Re-queueing a
+/// broken seal breaks exactly that — the row was already paid for, and buying a
+/// second seal is justified only because the first is worthless. That is a
+/// decision an operator should take knowingly, not one a background loop should
+/// take on their behalf on the strength of a check that has never met a real
+/// provider's seal.
+///
+/// So this counts and names them. Repair is its own change.
+///
+/// # What is not a finding
+///
+/// A seal over a **different** digest is ordinarily a passport re-published
+/// after sealing, which the read route already reports as `superseded` and which
+/// the sweep deliberately leaves alone. It is counted separately rather than
+/// alarmed on.
+///
+/// A seal this node **cannot read** is not a finding either. Treating "cannot
+/// check" as "broken" would make every seal from a backend emitting a format
+/// this node does not parse look like corruption.
+pub async fn audit_seals_once(
+    outbox: &Arc<dyn SealOutbox>,
+    inspector: &dyn dpp_types::SealInspector,
+    limit: i64,
+    after: Option<dpp_domain::passport::PassportId>,
+) -> (SealAudit, Option<dpp_domain::passport::PassportId>) {
+    let batch = match outbox.sealed_passports(limit, after).await {
+        Ok(b) => b,
+        Err(e) => {
+            tracing::warn!(error = %e, "seal audit could not read stored seals");
+            return (SealAudit::default(), after);
+        }
+    };
+
+    // An empty batch means the walk reached the end; the caller restarts it.
+    let cursor = batch.last().map(|p| p.passport_id);
+    let mut audit = SealAudit::default();
+
+    for row in &batch {
+        audit.checked += 1;
+        match inspector.binding(&row.seal, &row.payload_hash) {
+            dpp_types::SealBinding::CoversThisSignature => audit.sound += 1,
+            dpp_types::SealBinding::CoversAnotherDigest { .. } => audit.superseded += 1,
+            dpp_types::SealBinding::NotIntact => {
+                audit.broken += 1;
+                tracing::error!(
+                    passport_id = %row.passport_id,
+                    "stored seal does not verify — this passport is published and, in \
+                     substance, unsealed. It is invisible to `unsealedPublished`, which asks \
+                     only whether a seal is present"
+                );
+            }
+            dpp_types::SealBinding::Unknown => audit.unreadable += 1,
+        }
+    }
+
+    metrics::gauge!("seal_broken_total").set(audit.broken as f64);
+    (audit, cursor)
+}
+
 /// Refuse a seal that does not cover the digest it was bought for.
 ///
 /// `Some(reason)` means do not store it.
@@ -366,6 +456,13 @@ mod tests {
             Ok(SealOutboxCounts::default())
         }
 
+        async fn sealed_passports(
+            &self,
+            _limit: i64,
+            _after: Option<PassportId>,
+        ) -> Result<Vec<dpp_types::SealedPassport>, DppError> {
+            Ok(Vec::new())
+        }
         async fn unsealed_published_count(&self) -> Result<i64, DppError> {
             // These tests drive the drain, which never asks. A passport-level
             // count has no meaning against a fake holding only rows.
@@ -567,6 +664,146 @@ mod tests {
             stats.sealed, 1,
             "an envelope whose coverage cannot be determined must still be recorded"
         );
+    }
+
+    /// The audit names a broken seal that every existing count calls healthy.
+    ///
+    /// The whole point of the pass. Both `enqueue_unsealed` and
+    /// `unsealed_published_count` ask whether the `seal` member is absent, so a
+    /// passport carrying a seal that does not verify is swept by neither and
+    /// counted by neither — it looks fine in every number the node reports.
+    ///
+    /// The three non-findings are checked in the same run, because each is a way
+    /// this could become a nuisance rather than a signal: a sound seal, a
+    /// superseded one (an ordinary re-publish, which the sweep deliberately
+    /// leaves alone), and one this node cannot read.
+    #[tokio::test]
+    async fn the_audit_separates_a_broken_seal_from_the_three_things_that_are_not() {
+        struct Stored(Vec<dpp_types::SealedPassport>);
+
+        #[async_trait]
+        impl SealOutbox for Stored {
+            async fn sealed_passports(
+                &self,
+                _limit: i64,
+                _after: Option<PassportId>,
+            ) -> Result<Vec<dpp_types::SealedPassport>, DppError> {
+                Ok(self.0.clone())
+            }
+            async fn enqueue(&self, _p: PassportId, _h: &str) -> Result<(), DppError> {
+                unreachable!("the audit must not queue anything")
+            }
+            async fn enqueue_unsealed(&self, _l: i64, _c: i64) -> Result<u64, DppError> {
+                unreachable!("the audit must not queue anything")
+            }
+            async fn due(&self, _l: i64) -> Result<Vec<SealRow>, DppError> {
+                Ok(Vec::new())
+            }
+            async fn mark_sealed(
+                &self,
+                _i: uuid::Uuid,
+                _e: &SealedEnvelope,
+            ) -> Result<(), DppError> {
+                unreachable!("the audit must not write")
+            }
+            async fn sealed_digest(&self, _p: PassportId) -> Result<Option<String>, DppError> {
+                Ok(None)
+            }
+            async fn mark_attempt_failed(
+                &self,
+                _i: uuid::Uuid,
+                _m: String,
+            ) -> Result<(), DppError> {
+                unreachable!("the audit must not write")
+            }
+            async fn mark_exhausted(&self, _i: uuid::Uuid, _m: String) -> Result<(), DppError> {
+                unreachable!("the audit must not write")
+            }
+            async fn status_counts(&self) -> Result<dpp_types::SealOutboxCounts, DppError> {
+                Ok(dpp_types::SealOutboxCounts::default())
+            }
+            async fn unsealed_published_count(&self) -> Result<i64, DppError> {
+                Ok(0)
+            }
+        }
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let id = dpp_seal::local::LocalIdentity::load_or_create(dir.path()).expect("identity");
+        let digest = [0x11; 32];
+        let hex_digest = hex::encode(digest);
+        let sound = base64::Engine::encode(
+            &base64::engine::general_purpose::STANDARD,
+            id.sign_detached(&digest).expect("sign"),
+        );
+
+        // One byte of the signature flipped: the structure is intact, so it
+        // parses and reaches the signature check, and fails it.
+        let corrupted = {
+            use der::{Decode as _, Encode as _};
+            let der_bytes = id.sign_detached(&digest).expect("sign");
+            let info = cms::content_info::ContentInfo::from_der(&der_bytes).expect("CMS");
+            let mut sd: cms::signed_data::SignedData =
+                info.content.decode_as().expect("SignedData");
+            let mut signers = sd.signer_infos.0.as_slice().to_vec();
+            let mut bytes = signers[0].signature.as_bytes().to_vec();
+            let last = bytes.len() - 1;
+            bytes[last] ^= 0xff;
+            signers[0].signature = der::asn1::OctetString::new(bytes).expect("octets");
+            let mut set = der::asn1::SetOfVec::new();
+            set.insert(signers.remove(0)).expect("signer");
+            sd.signer_infos = cms::signed_data::SignerInfos::from(set);
+            let rebuilt = cms::content_info::ContentInfo {
+                content_type: info.content_type,
+                content: der::Any::encode_from(&sd).expect("encode"),
+            }
+            .to_der()
+            .expect("re-encode");
+            base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &rebuilt)
+        };
+
+        let envelope = |value: String, placeholder: bool| SealedEnvelope {
+            format: SealFormat::Cades,
+            seal_value: value,
+            signing_cert_ref: None,
+            conformance_level: Some(SealConformanceLevel::BaselineB),
+            sealed_at: chrono::Utc::now(),
+            placeholder,
+        };
+        let row = |seal: SealedEnvelope, hash: &str| dpp_types::SealedPassport {
+            passport_id: PassportId::new(),
+            seal,
+            payload_hash: hash.to_owned(),
+        };
+
+        let outbox: Arc<dyn SealOutbox> = Arc::new(Stored(vec![
+            // Sound: covers the digest it is asked about.
+            row(envelope(sound.clone(), false), &hex_digest),
+            // Superseded: intact, over a different digest. An ordinary
+            // re-publish, and not a finding.
+            row(envelope(sound.clone(), false), &hex::encode([0x22; 32])),
+            // Broken: a real seal whose signature has been corrupted. It must
+            // still *parse* — garbage bytes are `unknown`, correctly, because
+            // nothing could be checked, and that is a different finding.
+            row(envelope(corrupted.clone(), false), &hex_digest),
+            // Unreadable: a placeholder carries no certificate to check.
+            row(envelope("Z2hvc3Q=".to_owned(), true), &hex_digest),
+        ]));
+
+        let (audit, cursor) =
+            audit_seals_once(&outbox, &dpp_seal::CadesInspector::new(), 100, None).await;
+
+        assert_eq!(audit.checked, 4);
+        assert_eq!(audit.sound, 1);
+        assert_eq!(audit.superseded, 1, "a re-publish is not a broken seal");
+        assert_eq!(
+            audit.unreadable, 1,
+            "a placeholder is not a broken seal either"
+        );
+        assert_eq!(
+            audit.broken, 1,
+            "the one finding: a seal that reads and does not verify"
+        );
+        assert!(cursor.is_some(), "the walk must hand back a cursor");
     }
 
     /// weaker seal again on the next pass — paying twice to record the problem

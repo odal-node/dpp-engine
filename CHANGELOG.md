@@ -51,6 +51,32 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ### Added
 
+- **A stored seal that is broken is now found, rather than looking healthy**
+  (part of #328). The repair sweep and the operator rollup both ask the database
+  whether a passport's `seal` member is **absent** — so a seal that is present
+  and worthless answers "no" and is invisible: not swept, not counted, healthy in
+  every number the node reports, while the passport is in substance unsealed.
+
+  Whether a stored seal stands up is cryptographic rather than relational, so no
+  widening of that query could reach it. A background audit walks sealed
+  passports in bounded batches from a cursor, opens each CAdES through the same
+  reader the drain uses to accept one, and logs and counts what does not verify
+  (`seal_broken_total`). Restarting at the end rather than stopping, because a
+  seal sound today can be corrupt tomorrow.
+
+  **It reports and does not repair.** The existing sweep carries a guarantee
+  worth keeping — it cannot double-bill, because it only queues passports
+  carrying no seal at all — and re-queueing a broken seal breaks exactly that:
+  the row was paid for, and buying a second seal is justified only because the
+  first is worthless. That is a decision to take knowingly, not one for a
+  background loop on an operator's behalf. Repair is its own change.
+
+  Two things are deliberately not findings. A seal over a **different** digest is
+  ordinarily a passport re-published after sealing, which the read route already
+  reports as `superseded`. A seal this node **cannot read** is counted apart:
+  treating "cannot check" as "broken" would make every seal from a backend
+  emitting an unparsed format look like corruption.
+
 - **The seal route now reports both the level asked for and the level the bytes
   carry.** `conformanceLevel` is what this node requested, recorded on the
   envelope; `evidencedLevel` is what `cades::evidenced_level` finds in the CAdES.

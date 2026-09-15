@@ -428,6 +428,82 @@ pub fn spawn_seal_sweep(outbox: Arc<dyn SealOutbox>) {
     });
 }
 
+/// How many stored seals one audit pass opens.
+///
+/// Smaller than the sweep's batch, because this does cryptographic work per row
+/// rather than one query: a pass opens each CAdES, checks a signature and reads
+/// a digest out of it. Walking the whole estate in one go would be a spike of
+/// CPU on a background task that is in no hurry — the walk continues from its
+/// cursor on the next tick, so a large estate is covered over several passes
+/// rather than in one.
+const SEAL_AUDIT_BATCH: i64 = 100;
+
+/// Spawn the stored-seal audit.
+///
+/// # What it finds that nothing else can
+///
+/// [`spawn_seal_sweep`] and the operator rollup both ask the database whether a
+/// passport's `seal` member is **absent**. A seal that is present and worthless
+/// answers "no" to that and is therefore invisible: not swept, not counted,
+/// healthy in every number the node reports — while the passport is, in
+/// substance, unsealed.
+///
+/// Whether a stored seal stands up is cryptographic rather than relational, so
+/// no widening of that query could reach it. This opens them.
+///
+/// # It reports and does not repair
+///
+/// [`spawn_seal_sweep`] carries a guarantee worth keeping: it cannot double-bill,
+/// because it only queues passports carrying no seal at all. Re-queueing a broken
+/// seal breaks exactly that — the row was paid for, and buying a second seal is
+/// justified only because the first is worthless. That is a decision to take
+/// knowingly rather than one for a background loop to take on an operator's
+/// behalf, on the strength of a check that has not yet met a real provider's
+/// seal.
+///
+/// So a finding is logged at `error` and counted on `seal_broken_total`. Repair
+/// is its own change.
+pub fn spawn_seal_audit(outbox: Arc<dyn SealOutbox>) {
+    tokio::spawn(async move {
+        // The same reader the drain uses to accept a seal, so the audit and the
+        // acceptance cannot come to disagree about what a sound seal is.
+        let inspector = dpp_seal::CadesInspector::new();
+        let mut cursor = None;
+        loop {
+            tokio::time::sleep(SWEEP_INTERVAL).await;
+            let (audit, next) = dpp_node::infra::seal_drain::audit_seals_once(
+                &outbox,
+                &inspector,
+                SEAL_AUDIT_BATCH,
+                cursor,
+            )
+            .await;
+
+            // An empty batch means the walk reached the end. Restart it rather
+            // than stopping: a seal sound today can be corrupt tomorrow, and a
+            // pass that ran once would only ever catch what was already broken.
+            cursor = next;
+
+            if audit.broken > 0 {
+                tracing::error!(
+                    broken = audit.broken,
+                    checked = audit.checked,
+                    "stored seals do not verify — those passports are published and, in \
+                     substance, unsealed, and `unsealedPublished` cannot see them"
+                );
+            } else {
+                tracing::debug!(
+                    checked = audit.checked,
+                    sound = audit.sound,
+                    superseded = audit.superseded,
+                    unreadable = audit.unreadable,
+                    "seal audit pass"
+                );
+            }
+        }
+    });
+}
+
 /// Spawn the continuity tier's repair sweep.
 ///
 /// The drain only ever sees reconciles that were successfully queued. This loop

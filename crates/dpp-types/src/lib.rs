@@ -74,7 +74,7 @@ pub use scan::{
 };
 pub use seal::{
     ArchivalFreshness, CreationDevice, SealBinding, SealInspector, SealOrigin, SealOutbox,
-    SealOutboxCounts, SealRow, digest_for_jws,
+    SealOutboxCounts, SealRow, SealedPassport, digest_for_jws,
 };
 pub use snapshot::{
     SnapshotOutbox, SnapshotOutboxCounts, SnapshotReconcileRow, SnapshotReconcileStatus,

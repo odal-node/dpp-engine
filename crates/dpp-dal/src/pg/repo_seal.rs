@@ -20,7 +20,7 @@ use sqlx::Row;
 use uuid::Uuid;
 
 use dpp_domain::{DppError, passport::PassportId, seal::SealedEnvelope};
-use dpp_types::{SealOutbox, SealOutboxCounts, SealRow};
+use dpp_types::{SealOutbox, SealOutboxCounts, SealRow, SealedPassport};
 
 use super::{PgDal, db_err, require_updated};
 
@@ -301,5 +301,57 @@ impl SealOutbox for PgSealOutboxRepo {
         .await
         .map_err(db_err)?;
         Ok(row.get::<i64, _>("unsealed"))
+    }
+
+    async fn sealed_passports(
+        &self,
+        limit: i64,
+        after: Option<PassportId>,
+    ) -> Result<Vec<SealedPassport>, DppError> {
+        // The mirror image of the count above: passports that DO carry a seal.
+        // Whether that seal stands up is not a question SQL can ask, so the rows
+        // go back to a caller that can open a CAdES.
+        //
+        // `jwsSignature` comes back so the digest can be derived with
+        // `digest_for_jws` — the same single definition the enqueue path uses.
+        // Deriving it in SQL would be a second implementation of what a seal
+        // covers, which is the drift that buys seals over digests nothing else
+        // recognises.
+        let rows = sqlx::query(
+            r#"SELECT p.id, p.doc->'seal' AS seal, p.doc->>'jwsSignature' AS jws
+               FROM odal.passport p
+               WHERE p.published_at IS NOT NULL
+                 AND p.doc->'seal' IS NOT NULL
+                 AND p.doc->>'jwsSignature' IS NOT NULL
+                 AND ($1::uuid IS NULL OR p.id > $1::uuid)
+               ORDER BY p.id
+               LIMIT $2"#,
+        )
+        .bind(after.map(|p| p.0))
+        .bind(limit)
+        .fetch_all(self.dal.pool())
+        .await
+        .map_err(db_err)?;
+
+        let mut out = Vec::with_capacity(rows.len());
+        for row in rows {
+            let id: uuid::Uuid = row.get("id");
+            let jws: String = row.get("jws");
+            let seal: serde_json::Value = row.get("seal");
+            // A seal member that will not deserialise is skipped rather than
+            // failing the batch: one unreadable row must not stop the rest of
+            // the audit, and a row nothing can read is reported by its absence
+            // from the walk rather than by aborting it.
+            let Ok(seal) = serde_json::from_value::<SealedEnvelope>(seal) else {
+                tracing::warn!(passport_id = %id, "stored seal member will not deserialise");
+                continue;
+            };
+            out.push(SealedPassport {
+                passport_id: PassportId(id),
+                payload_hash: dpp_types::digest_for_jws(&jws),
+                seal,
+            });
+        }
+        Ok(out)
     }
 }

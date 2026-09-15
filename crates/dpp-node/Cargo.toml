@@ -92,6 +92,12 @@ tower          = { version = "0.5", features = ["util"] }
 serial_test    = "4"
 wat            = "1"
 futures        = "0.3"
+# To corrupt a real seal's signature in the seal-audit test. Garbage bytes are
+# classified `unknown` — correctly, since nothing could be checked — so a seal
+# that *parses* and fails verification is the only way to exercise the `broken`
+# arm, and building one means touching CMS. Already in the graph via `dpp-seal`.
+cms            = { version = "0.2", default-features = false }
+der            = "0.7"
 criterion      = { workspace = true }
 uuid           = { workspace = true }
 testcontainers = { workspace = true }
