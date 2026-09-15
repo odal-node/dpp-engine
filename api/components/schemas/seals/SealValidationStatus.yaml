@@ -13,11 +13,17 @@ description: >-
 
   **`totalPassed` is not among the values, and cannot be.** That indication
   requires, among other conditions, that the constraints applicable to the
-  signer's certificate have been positively validated — and this node validates
-  no certificate: no validity window, no revocation, no trust anchor. So a seal
-  that demonstrably covers this signature reports `indeterminate`: nothing has
-  failed, and not everything has been checked. Reading `coversThisSignature` as a
-  validation pass is the misreading this object exists to prevent.
+  signer's certificate have been positively validated — a certificate path built
+  and validated to a trust anchor, under a policy.
+
+
+  This node checks the certificate's validity window and whatever revocation
+  material the seal carries (see `certificate`), and it checks one issuer
+  signature against a Trusted List entry. It builds no path and applies no policy
+  constraints. So a seal that demonstrably covers this signature reports
+  `indeterminate`: nothing has failed, and not everything has been checked.
+  Reading `coversThisSignature` as a validation pass is the misreading this
+  object exists to prevent.
 required:
   - indication
 properties:

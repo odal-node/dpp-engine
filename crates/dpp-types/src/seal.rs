@@ -627,12 +627,17 @@ pub enum SealBinding {
 ///
 /// The standard has three. **This enum has two**, and the missing one is the
 /// point: `TOTAL-PASSED` requires, among other things, that the constraints
-/// applicable to the signer's certificate "have been positively validated". This
-/// node checks format and cryptography and does not build or validate a
-/// certificate chain — no validity window, no revocation, no trust anchor. A
-/// seal can therefore be as sound as this node can establish and still not have
-/// passed, and an enum that could express `totalPassed` would eventually be
-/// asked to.
+/// applicable to the signer's certificate "have been positively validated" —
+/// which means a certificate path built and validated to a trust anchor, under
+/// a policy, at the right moment.
+///
+/// This node checks format, cryptography, the certificate's validity window and
+/// whatever revocation material the seal carries. It builds no path: the issuer
+/// signature check in `qualification` is one link against a Trusted List entry,
+/// not a validated chain, and nothing applies the policy constraints clause
+/// 5.1.3 also requires. A seal can therefore be as sound as this node can
+/// establish and still not have passed, and an enum that could express
+/// `totalPassed` would eventually be asked to.
 ///
 /// Making that unrepresentable is the honest encoding of what the node does
 /// today. Reg. (EU) No 910/2014 Art. 32(1)(b), reached for seals by Art. 40,

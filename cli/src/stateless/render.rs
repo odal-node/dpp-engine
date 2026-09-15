@@ -1070,8 +1070,12 @@ pub fn render_seal_summary(summary: &serde_json::Value) {
                 println!("              would come from the same certificate");
             }
             if a("broken") == 0 {
+                // "all signatures verify", not "all verify": the certificate
+                // line above may have just reported that some of them were made
+                // under a certificate that was not valid. Those seals verify and
+                // are worth nothing, and one line must not unsay the other.
                 println!(
-                    "Stored seals: {} checked, all verify (as of {at})",
+                    "Stored seals: {} checked, all signatures verify (as of {at})",
                     a("checked")
                 );
             } else {

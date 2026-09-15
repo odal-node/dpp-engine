@@ -3679,7 +3679,7 @@ mod fixtures {
             certificate: Some(certificate_standing()),
             // A `&'static str` constant on the response type; the fixture only
             // needs a value of the right shape for the key set.
-            verification: "not validated by this node",
+            verification: "not validated by this node — see the note on the route",
         }
     }
 

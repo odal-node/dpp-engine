@@ -172,12 +172,13 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
   **It never says `totalPassed`, and the type cannot express it.** Clause 5.1.3
   puts "the constraints applicable to the signer's certificate have been
-  positively validated" among that indication's conditions, and this node
-  validates no certificate — no validity window, no revocation, no trust anchor
-  (#323). So a seal that demonstrably covers this passport's signature reports
-  `indeterminate`: nothing has failed, and not everything has been checked.
-  Reading `coversThisSignature` as a validation pass is exactly the misreading
-  this makes impossible.
+  positively validated" among that indication's conditions — a certificate path
+  built and validated to a trust anchor, under a policy. This node builds none.
+  (The certificate's *validity window* and its revocation material are checked;
+  that arrived with #323, later in this entry.) So a seal that demonstrably
+  covers this passport's signature reports `indeterminate`: nothing has failed,
+  and not everything has been checked. Reading `coversThisSignature` as a
+  validation pass is exactly the misreading this makes impossible.
 
   The rest of the mapping: a broken seal is `totalFailed` / `sigCryptoFailure`,
   and the standard makes that verdict **stable** — additional validation data

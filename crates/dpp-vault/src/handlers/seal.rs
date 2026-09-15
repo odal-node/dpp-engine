@@ -274,10 +274,16 @@ pub struct SealResponse {
     pub verification: &'static str,
 }
 
-const NOT_VALIDATED: &str = "not validated by this node — a detached CAdES must be checked by an independent AdES \
-     validator against the EU Trusted List. `coverage` answers a narrower question from this \
-     node's own records and is not a substitute: it reports which digest was requested, while \
-     only the validator establishes which digest the CAdES actually covers. Compare the two.";
+const NOT_VALIDATED: &str = "not validated by this node — a full verdict needs an independent AdES validator against \
+     the EU Trusted List. What *is* checked is in the fields beside this one: `binding` opens the \
+     CAdES and reports the digest it covers, after verifying the signature over the attribute \
+     naming it; `certificate` reports the signing certificate's validity window and whatever \
+     revocation material the seal carries; `validation` restates both in ETSI EN 319 102-1's \
+     terms. What is not: no certificate path is built to a trust anchor, no validation policy is \
+     applied, and whether the issuer is a qualified provider is a Trusted List question asked \
+     elsewhere — which is why `totalPassed` is unreachable here by construction. `coverage` is \
+     weaker again, reporting which digest this node's own records say was requested; compare it \
+     with `binding`, because the two can disagree.";
 
 /// Whether the stored seal covers the passport's current signature.
 ///
