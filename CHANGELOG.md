@@ -51,6 +51,36 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ### Added
 
+- **A seal's reading is now also reported in ETSI EN 319 102-1's vocabulary** —
+  `validation` on `GET /api/v1/dpp/{dppId}/seal` and in the evidence dossier's
+  `qualifiedSeal`, with the audit's counts documented in the same terms.
+
+  That standard is what CIR (EU) 2025/1945 points at for validating a qualified
+  seal, so it is the vocabulary an auditor's own tooling reports in. The field is
+  derived from `binding` and checks nothing extra.
+
+  **It never says `totalPassed`, and the type cannot express it.** Clause 5.1.3
+  puts "the constraints applicable to the signer's certificate have been
+  positively validated" among that indication's conditions, and this node
+  validates no certificate — no validity window, no revocation, no trust anchor
+  (#323). So a seal that demonstrably covers this passport's signature reports
+  `indeterminate`: nothing has failed, and not everything has been checked.
+  Reading `coversThisSignature` as a validation pass is exactly the misreading
+  this makes impossible.
+
+  The rest of the mapping: a broken seal is `totalFailed` / `sigCryptoFailure`,
+  and the standard makes that verdict **stable** — additional validation data
+  cannot lift it — which is the principled reason a replacement seal is worth
+  buying for those and for nothing else. A seal over a superseded signature is
+  `totalFailed` / `hashFailure` *against this passport's current signature*,
+  while remaining a sound attestation of the signature it does cover. An
+  unreadable seal is `indeterminate` with no sub-indication: none of table 6
+  fits, which is the standard's own custom-diagnostic case, and `binding` is the
+  diagnostic.
+
+  `QualifiedSealMember` in the dossier schema was five fields behind what the
+  dossier actually carries; it now documents all of them.
+
 - **The seal audit now survives a restart, bounds what a pass is about, and has
   a configurable cadence** (#328).
 

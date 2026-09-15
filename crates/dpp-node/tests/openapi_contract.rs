@@ -477,6 +477,7 @@ fn object_cases() -> Vec<ObjectCase> {
     case!("SealResponse", fixtures::seal_response());
     case!("SealOrigin", fixtures::seal_origin());
     case!("SealBinding", fixtures::seal_binding());
+    case!("SealValidationStatus", fixtures::seal_validation_status());
     case!("ArchivalFreshness", fixtures::archival_freshness());
     case!("SealAuditReport", fixtures::seal_audit_report());
     case!("SealRepairResponse", fixtures::seal_repair_response());
@@ -3583,6 +3584,7 @@ mod fixtures {
             // unchecked.
             origin: Some(seal_origin()),
             binding: seal_binding(),
+            validation: seal_binding().validation_status(),
             // A `&'static str` constant on the response type; the fixture only
             // needs a value of the right shape for the key set.
             verification: "not validated by this node",
@@ -3636,6 +3638,17 @@ mod fixtures {
         dpp_types::SealBinding::CoversAnotherDigest {
             covered: "7".repeat(64),
         }
+    }
+
+    /// The `indeterminate` half of the vocabulary, with its `null`
+    /// sub-indication.
+    ///
+    /// Chosen over `notIntact` deliberately: the nullable field is the one a
+    /// schema can get wrong without any fixture noticing, and this is also the
+    /// answer a *sound* seal gets — the value most likely to be misread, and so
+    /// the one worth pinning against the spec.
+    pub fn seal_validation_status() -> dpp_types::SealValidationStatus {
+        dpp_types::SealBinding::CoversThisSignature.validation_status()
     }
 
     /// A self-issued origin — what the local development backend produces.

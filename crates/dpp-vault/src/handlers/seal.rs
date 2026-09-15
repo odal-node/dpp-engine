@@ -210,6 +210,20 @@ pub struct SealResponse {
     /// seal with no outbox row, where the records can say nothing and the bytes
     /// can say everything.
     pub binding: dpp_types::SealBinding,
+    /// The field above, restated in ETSI EN 319 102-1's vocabulary.
+    ///
+    /// Derived from `binding` and adding no checking — a translation for readers
+    /// whose validation tooling speaks that vocabulary, which is the one CIR
+    /// (EU) 2025/1945 points at for qualified seals.
+    ///
+    /// **It never says `totalPassed`, and cannot.** That indication requires the
+    /// signer's certificate constraints to have been positively validated, and
+    /// this node validates no certificate — so a seal that is demonstrably over
+    /// this signature reports `indeterminate`: nothing has failed, and not
+    /// everything has been checked. Reading that as a defect would be a
+    /// misreading; reading `coversThisSignature` as a validation pass was the
+    /// misreading this field exists to prevent.
+    pub validation: dpp_types::SealValidationStatus,
     /// What **this seal's own certificate** says about who issued it.
     ///
     /// The first question a reader has and the one nothing here could answer
@@ -325,6 +339,16 @@ pub async fn seal_handler(
         None => None,
     };
     let coverage = coverage_of(sealed_payload_hash.as_deref(), &payload_hash);
+    // Read once and reused: `validation` is a restatement of `binding`, and two
+    // separate calls could in principle disagree — which would put a response on
+    // the wire contradicting itself in two fields that must mean the same thing.
+    let binding = state
+        .service
+        .seal_inspector
+        .as_ref()
+        .map_or(dpp_types::SealBinding::Unknown, |i| {
+            i.binding(seal, &payload_hash)
+        });
 
     // Has responsibility moved since this passport was sealed? Only a *completed*
     // handover counts: an initiated one that nobody accepted has moved nothing,
@@ -390,13 +414,8 @@ pub async fn seal_handler(
                 .seal_inspector
                 .as_ref()
                 .and_then(|i| i.origin(seal)),
-            binding: state
-                .service
-                .seal_inspector
-                .as_ref()
-                .map_or(dpp_types::SealBinding::Unknown, |i| {
-                    i.binding(seal, &payload_hash)
-                }),
+            binding: binding.clone(),
+            validation: binding.validation_status(),
             verification: NOT_VALIDATED,
         }),
     )

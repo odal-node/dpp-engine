@@ -36,7 +36,14 @@ properties:
     description: Seals opened.
   sound:
     type: integer
-    description: Seals covering their passport's current signature.
+    description: >-
+      Seals covering their passport's current signature.
+
+
+      In EN 319 102-1's terms this is `indeterminate`, **not** `totalPassed`:
+      nothing about these seals has failed, and their certificates have not been
+      validated by this node. See `validation` on
+      `GET /api/v1/dpp/{dppId}/seal`.
   superseded:
     type: integer
     description: >-
@@ -44,18 +51,32 @@ properties:
       sealing, which is **not** a defect — the seal remains a valid attestation
       of the signature it covers, and `GET /api/v1/dpp/{dppId}/seal` reports it
       per passport as `coverage`.
+
+
+      `totalFailed` / `hashFailure` when the question asked is about the
+      passport's *current* signature, which is the question this walk asks.
   broken:
     type: integer
     description: >-
       Seals whose own signature does not verify. **The finding.** Those passports
       are published and, in substance, unsealed — and invisible to
       `unsealedPublished`, which asks only whether a seal is present.
+
+
+      `totalFailed` / `sigCryptoFailure`, and EN 319 102-1 makes that verdict
+      stable: no additional validation data can lift it. That is what makes a
+      replacement seal worth buying for these and for nothing else here —
+      `POST /api/v1/dpp/{dppId}/seal/repair`.
   unreadable:
     type: integer
     description: >-
       Seals this node could not read — a placeholder, or a format it does not
       parse. **Not a finding.** Treating "cannot check" as "broken" would make
       every seal from a backend emitting an unparsed format look like corruption.
+
+
+      `indeterminate` with a custom diagnostic: a limit of the reader, not a
+      defect in the seal.
   brokenPassports:
     type: array
     items:

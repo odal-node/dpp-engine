@@ -817,6 +817,27 @@ pub fn render_seal_status(seal: &serde_json::Value, id: &str) {
         _ => println!("  Binding       : not read — no digest recoverable from the envelope"),
     }
 
+    // The same reading in the standard's words, because that is the vocabulary
+    // an auditor's own tooling reports in — and because `PROVEN` above is the
+    // line most likely to be read as "validated", which it is not.
+    if let Some(validation) = seal.get("validation") {
+        let indication = field(validation, "indication").unwrap_or_default();
+        let sub = field(validation, "subIndication");
+        match (indication.as_str(), sub.as_deref()) {
+            ("totalFailed", Some(sub)) => {
+                println!("  EN 319 102-1  : TOTAL-FAILED / {}", sub.to_uppercase());
+            }
+            ("totalFailed", None) => println!("  EN 319 102-1  : TOTAL-FAILED"),
+            ("indeterminate", _) => {
+                println!("  EN 319 102-1  : INDETERMINATE — nothing has failed, and this node");
+                println!(
+                    "                  validates no certificate, so nothing has passed either"
+                );
+            }
+            _ => {}
+        }
+    }
+
     // Whether the long-term protection is still live. Silent for a seal that
     // was never archived: `B-LT` was not promised it, and a line about renewal
     // would imply an obligation nobody took on.

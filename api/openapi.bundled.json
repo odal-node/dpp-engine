@@ -6383,6 +6383,7 @@
           "currentPayloadHash",
           "coverage",
           "binding",
+          "validation",
           "archival",
           "verification"
         ],
@@ -6468,6 +6469,9 @@
           },
           "binding": {
             "$ref": "#/components/schemas/SealBinding"
+          },
+          "validation": {
+            "$ref": "#/components/schemas/SealValidationStatus"
           },
           "origin": {
             "oneOf": [
@@ -6767,7 +6771,7 @@
       },
       "QualifiedSealMember": {
         "type": "object",
-        "description": "The passport's eIDAS qualified seal as carried inside an evidence dossier:\nthe seal envelope plus the JWS it was computed over and that payload's hash,\nso a verifier holding only the dossier has both the CAdES and the preimage to\ncheck it against.\n\nIncluded because a dossier is what an authority is handed, and the seal is its\none member carrying an Art. 35(2) presumption — and because it is unreachable\notherwise: the seal is stripped from `fullView` and `publicView` alike, since\nit covers the full-payload signature rather than any redaction. Bound into\n`contentHashes` like every other member.\n\n⚠️ **This shape is described here but not enforced anywhere.** The field is\nheld as untyped JSON on the dossier record, so no Rust type declares these\nthree members and the OpenAPI contract test has nothing to compare them\nagainst. Treat the property list as documentation of intent, not as a\nguarantee. Giving the dossier a real type for this member would close that,\nand is the only thing that would.\n",
+        "description": "The passport's eIDAS qualified seal as carried inside an evidence dossier:\nthe seal envelope plus the JWS it was computed over and that payload's hash,\nso a verifier holding only the dossier has both the CAdES and the preimage to\ncheck it against.\n\nIncluded because a dossier is what an authority is handed, and the seal is its\none member carrying an Art. 35(2) presumption — and because it is unreachable\notherwise: the seal is stripped from `fullView` and `publicView` alike, since\nit covers the full-payload signature rather than any redaction. Bound into\n`contentHashes` like every other member.\n\n⚠️ **This shape is described here but not enforced anywhere.** The field is\nheld as untyped JSON on the dossier record, so no Rust type declares these\nmembers and the OpenAPI contract test has nothing to compare them against.\nTreat the property list as documentation of intent, not as a guarantee. Giving\nthe dossier a real type for this member would close that, and is the only thing\nthat would — and it is worth doing: this list had fallen five fields behind\nwhat the dossier actually carries before anyone read the two side by side.\n",
         "properties": {
           "seal": {
             "type": "object",
@@ -6781,6 +6785,41 @@
             "type": "string",
             "pattern": "^[0-9a-f]{64}$",
             "description": "SHA-256 of the sealed payload, lowercase hex."
+          },
+          "binding": {
+            "$ref": "#/components/schemas/SealBinding"
+          },
+          "validation": {
+            "$ref": "#/components/schemas/SealValidationStatus"
+          },
+          "origin": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/SealOrigin"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "What the seal's own certificate says about who issued it — the one fact that decides whether anything else in this member carries weight."
+          },
+          "evidencedLevel": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The baseline level the seal's **bytes** carry, which is not necessarily the level this node asked for. A seal weaker than ordered is otherwise visible only in a drain log no dossier reader has."
+          },
+          "attestedSealedAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "A timestamp authority's statement of when the seal was made, read out of the token inside the CAdES and checked. `seal.sealedAt` beside it is the sealing node's own clock, which is an unattested claim by the party that bought the seal."
+          },
+          "archival": {
+            "$ref": "#/components/schemas/ArchivalFreshness"
           }
         }
       },
@@ -8977,6 +9016,35 @@
           }
         }
       },
+      "SealValidationStatus": {
+        "type": "object",
+        "description": "`binding` restated in the vocabulary of ETSI EN 319 102-1 clause 5.1.3 — the procedures standard CIR (EU) 2025/1945 points at for validating a qualified electronic seal.\n\nA translation, not a second opinion: it is derived from `binding` and adds no checking of its own. It is here because these findings travel to readers whose validation tooling speaks this vocabulary, and because the translation makes explicit something our own field names let a reader assume.\n\n**`totalPassed` is not among the values, and cannot be.** That indication requires, among other conditions, that the constraints applicable to the signer's certificate have been positively validated — and this node validates no certificate: no validity window, no revocation, no trust anchor. So a seal that demonstrably covers this signature reports `indeterminate`: nothing has failed, and not everything has been checked. Reading `coversThisSignature` as a validation pass is the misreading this object exists to prevent.",
+        "required": [
+          "indication"
+        ],
+        "properties": {
+          "indication": {
+            "type": "string",
+            "enum": [
+              "totalFailed",
+              "indeterminate"
+            ],
+            "description": "`totalFailed`: the signature is demonstrably not valid. The standard makes this **stable** — the same inputs always yield the same answer, and additional validation data cannot lift it to a pass; only additional proofs of existence can change a result at all. That stability is what makes a broken seal safe to spend a replacement on.\n\n`indeterminate`: the available information is insufficient to decide. Not a weaker `totalFailed` — under CIR (EU) 2025/1945 it is its own technical outcome, \"neither an EU qualified electronic signature, nor an EU qualified electronic seal\", to be reported as such rather than collapsed into either neighbour."
+          },
+          "subIndication": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "sigCryptoFailure",
+              "hashFailure",
+              null
+            ],
+            "description": "The table 6 value qualifying the indication, where one applies.\n\n`sigCryptoFailure`: the signature value could not be verified with the public key in the signing certificate — a seal this node reports as `notIntact`.\n\n`hashFailure`: a hash of signed data does not match. Reported for a seal that is intact over a *different* digest, because validating **this passport's current signature** against it fails on the hash. The seal remains a sound attestation of the signature it does cover, which is why the node counts it apart and refuses to repair it.\n\n`null` is the standard's own custom-diagnostic case: no table 6 value fits, so `binding` carries the diagnostic instead of stretching one that nearly does. The two `null` cases are different diagnostics — \"the certificate was never checked\" and \"these bytes could not be read\" — and `binding` keeps them apart."
+          }
+        }
+      },
       "SealOrigin": {
         "type": "object",
         "description": "What a stored seal's own certificate says about who issued it — read out of the seal's bytes, never from this node's configuration. The two are different facts: configuration records what the operator intended, and a seal restored from a backup or made before a backend change was not produced by whatever is configured now.\n\n**Not a qualification verdict.** Establishing that a seal is qualified needs the issuer matched against an EU Trusted List *and* the issuer's signature over this certificate verified; neither is done to produce this. What it does answer completely, and without a network, is whether anybody issued the certificate at all.",
@@ -9035,19 +9103,19 @@
           },
           "sound": {
             "type": "integer",
-            "description": "Seals covering their passport's current signature."
+            "description": "Seals covering their passport's current signature.\n\nIn EN 319 102-1's terms this is `indeterminate`, **not** `totalPassed`: nothing about these seals has failed, and their certificates have not been validated by this node. See `validation` on `GET /api/v1/dpp/{dppId}/seal`."
           },
           "superseded": {
             "type": "integer",
-            "description": "Seals over a different digest. Ordinarily a passport re-published after sealing, which is **not** a defect — the seal remains a valid attestation of the signature it covers, and `GET /api/v1/dpp/{dppId}/seal` reports it per passport as `coverage`."
+            "description": "Seals over a different digest. Ordinarily a passport re-published after sealing, which is **not** a defect — the seal remains a valid attestation of the signature it covers, and `GET /api/v1/dpp/{dppId}/seal` reports it per passport as `coverage`.\n\n`totalFailed` / `hashFailure` when the question asked is about the passport's *current* signature, which is the question this walk asks."
           },
           "broken": {
             "type": "integer",
-            "description": "Seals whose own signature does not verify. **The finding.** Those passports are published and, in substance, unsealed — and invisible to `unsealedPublished`, which asks only whether a seal is present."
+            "description": "Seals whose own signature does not verify. **The finding.** Those passports are published and, in substance, unsealed — and invisible to `unsealedPublished`, which asks only whether a seal is present.\n\n`totalFailed` / `sigCryptoFailure`, and EN 319 102-1 makes that verdict stable: no additional validation data can lift it. That is what makes a replacement seal worth buying for these and for nothing else here — `POST /api/v1/dpp/{dppId}/seal/repair`."
           },
           "unreadable": {
             "type": "integer",
-            "description": "Seals this node could not read — a placeholder, or a format it does not parse. **Not a finding.** Treating \"cannot check\" as \"broken\" would make every seal from a backend emitting an unparsed format look like corruption."
+            "description": "Seals this node could not read — a placeholder, or a format it does not parse. **Not a finding.** Treating \"cannot check\" as \"broken\" would make every seal from a backend emitting an unparsed format look like corruption.\n\n`indeterminate` with a custom diagnostic: a limit of the reader, not a defect in the seal."
           },
           "brokenPassports": {
             "type": "array",

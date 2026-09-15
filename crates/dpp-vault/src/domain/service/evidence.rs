@@ -206,6 +206,15 @@ impl PassportService {
         let qualified_seal = passport.seal.as_ref().and_then(|seal| {
             let jws = passport.jws_signature.as_ref()?;
             let payload_hash = crate::domain::service::seal::seal_digest(&passport)?;
+            // Read once: `binding` and `validation` below must agree, and two
+            // separate calls could in principle answer differently — which would
+            // put a dossier on the record contradicting itself.
+            let binding = self
+                .seal_inspector
+                .as_ref()
+                .map_or(dpp_types::SealBinding::Unknown, |i| {
+                    i.binding(seal, &payload_hash)
+                });
             Some(serde_json::json!({
                 "seal": seal,
                 // Served so a verifier holding only this file has both the CAdES
@@ -226,12 +235,17 @@ impl PassportService {
                 // Reported rather than allowed to block generation: a dossier
                 // must be producible in whatever state the passport is actually
                 // in, and saying so plainly beats refusing to say anything.
-                "binding": self
-                    .seal_inspector
-                    .as_ref()
-                    .map_or(dpp_types::SealBinding::Unknown, |i| {
-                        i.binding(seal, &payload_hash)
-                    }),
+                "binding": binding,
+                // The same reading in ETSI EN 319 102-1's words — the vocabulary
+                // an auditor's own validation tooling reports in, and the one
+                // CIR (EU) 2025/1945 points at for qualified seals. Derived, not
+                // a second check.
+                //
+                // It never says `totalPassed`: that requires the signer's
+                // certificate to have been validated, which this node does not
+                // do. A dossier reader seeing `coversThisSignature` and no such
+                // caveat could reasonably conclude otherwise.
+                "validation": binding.validation_status(),
                 // Who issued the certificate behind the seal.
                 //
                 // The dossier already named *which* certificate, as a thumbprint

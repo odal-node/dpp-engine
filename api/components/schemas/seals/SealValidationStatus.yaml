@@ -1,0 +1,70 @@
+type: object
+description: >-
+  `binding` restated in the vocabulary of ETSI EN 319 102-1 clause 5.1.3 — the
+  procedures standard CIR (EU) 2025/1945 points at for validating a qualified
+  electronic seal.
+
+
+  A translation, not a second opinion: it is derived from `binding` and adds no
+  checking of its own. It is here because these findings travel to readers whose
+  validation tooling speaks this vocabulary, and because the translation makes
+  explicit something our own field names let a reader assume.
+
+
+  **`totalPassed` is not among the values, and cannot be.** That indication
+  requires, among other conditions, that the constraints applicable to the
+  signer's certificate have been positively validated — and this node validates
+  no certificate: no validity window, no revocation, no trust anchor. So a seal
+  that demonstrably covers this signature reports `indeterminate`: nothing has
+  failed, and not everything has been checked. Reading `coversThisSignature` as a
+  validation pass is the misreading this object exists to prevent.
+required:
+  - indication
+properties:
+  indication:
+    type: string
+    enum:
+      - totalFailed
+      - indeterminate
+    description: >-
+      `totalFailed`: the signature is demonstrably not valid. The standard makes
+      this **stable** — the same inputs always yield the same answer, and
+      additional validation data cannot lift it to a pass; only additional proofs
+      of existence can change a result at all. That stability is what makes a
+      broken seal safe to spend a replacement on.
+
+
+      `indeterminate`: the available information is insufficient to decide. Not a
+      weaker `totalFailed` — under CIR (EU) 2025/1945 it is its own technical
+      outcome, "neither an EU qualified electronic signature, nor an EU qualified
+      electronic seal", to be reported as such rather than collapsed into either
+      neighbour.
+  subIndication:
+    type:
+      - string
+      - 'null'
+    enum:
+      - sigCryptoFailure
+      - hashFailure
+      - null
+    description: >-
+      The table 6 value qualifying the indication, where one applies.
+
+
+      `sigCryptoFailure`: the signature value could not be verified with the
+      public key in the signing certificate — a seal this node reports as
+      `notIntact`.
+
+
+      `hashFailure`: a hash of signed data does not match. Reported for a seal
+      that is intact over a *different* digest, because validating **this
+      passport's current signature** against it fails on the hash. The seal
+      remains a sound attestation of the signature it does cover, which is why
+      the node counts it apart and refuses to repair it.
+
+
+      `null` is the standard's own custom-diagnostic case: no table 6 value fits,
+      so `binding` carries the diagnostic instead of stretching one that nearly
+      does. The two `null` cases are different diagnostics — "the certificate was
+      never checked" and "these bytes could not be read" — and `binding` keeps
+      them apart.

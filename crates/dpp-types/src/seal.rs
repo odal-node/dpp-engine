@@ -100,13 +100,28 @@ pub struct SealAuditReport {
     /// Seals opened.
     pub checked: u64,
     /// Seals covering their passport's current signature.
+    ///
+    /// EN 319 102-1 `INDETERMINATE`, not `TOTAL-PASSED` — see
+    /// [`SealBinding::validation_status`]. Nothing about these seals has failed;
+    /// their certificates have not been validated.
     pub sound: u64,
     /// Seals over a different digest — ordinarily a passport re-published after
     /// sealing, which is not a defect.
+    ///
+    /// `TOTAL-FAILED` / `HASH_FAILURE` when the question asked is about this
+    /// passport's *current* signature, which is the question this walk asks.
     pub superseded: u64,
     /// Seals whose own signature does not verify.
+    ///
+    /// `TOTAL-FAILED` / `SIG_CRYPTO_FAILURE`, and the standard makes that
+    /// verdict stable: no additional validation data can lift it. That is what
+    /// makes a replacement worth buying for these and for nothing else here.
     pub broken: u64,
     /// Seals this node could not read. Not a finding.
+    ///
+    /// `INDETERMINATE` with a custom diagnostic — the format is one this node
+    /// does not parse, which is a limit of the reader rather than a defect in
+    /// the seal.
     pub unreadable: u64,
     /// The passports carrying a broken seal, so an operator can act rather than
     /// grep a log.
@@ -592,6 +607,130 @@ pub enum SealBinding {
     Unknown,
 }
 
+/// The main status indication of a validation process, as ETSI EN 319 102-1
+/// clause 5.1.3 defines it.
+///
+/// The standard has three. **This enum has two**, and the missing one is the
+/// point: `TOTAL-PASSED` requires, among other things, that the constraints
+/// applicable to the signer's certificate "have been positively validated". This
+/// node checks format and cryptography and does not build or validate a
+/// certificate chain — no validity window, no revocation, no trust anchor. A
+/// seal can therefore be as sound as this node can establish and still not have
+/// passed, and an enum that could express `totalPassed` would eventually be
+/// asked to.
+///
+/// Making that unrepresentable is the honest encoding of what the node does
+/// today. Reg. (EU) No 910/2014 Art. 32(1)(b), reached for seals by Art. 40,
+/// is the requirement that is missing, and implementing it is what would make a
+/// third variant meaningful.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ValidationIndication {
+    /// The signature is demonstrably not valid, and no further data can change
+    /// that.
+    ///
+    /// The standard is explicit that this is stable: the same inputs always
+    /// yield the same answer, and *additional validation data* cannot lift a
+    /// `TOTAL-FAILED` to a pass — only additional proofs of existence can change
+    /// a result at all. That stability is what makes it safe to spend money on a
+    /// replacement seal for one, and it is why the repair route refuses
+    /// everything else.
+    TotalFailed,
+    /// The available information is insufficient to decide.
+    ///
+    /// Not a weaker "failed". Under CIR (EU) 2025/1945 — the act that pins how a
+    /// qualified seal is validated — an indeterminate result is its own
+    /// technical outcome, "neither an EU qualified electronic signature, nor an
+    /// EU qualified electronic seal", and is to be reported as such rather than
+    /// collapsed into either neighbour.
+    Indeterminate,
+}
+
+/// The sub-indication qualifying a [`ValidationIndication`], from EN 319 102-1
+/// table 6.
+///
+/// Only the two this node can actually justify are modelled. Where none of the
+/// table's values fits, the standard's own instruction is to report a custom
+/// diagnostic instead — and [`SealBinding`] beside this *is* that diagnostic, in
+/// machine-readable form, which is why the field is optional here rather than
+/// stretched to a value that nearly fits.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ValidationSubIndication {
+    /// The signature value could not be verified with the public key in the
+    /// signing certificate.
+    SigCryptoFailure,
+    /// A hash of signed data does not match the value in the signature — here,
+    /// the passport's current signature against the digest the seal covers.
+    HashFailure,
+}
+
+/// What this node's reading of a seal amounts to in EN 319 102-1's vocabulary.
+///
+/// A translation, not a second opinion: every value is derived from
+/// [`SealBinding`] and adds no checking. It exists because the audit's findings
+/// travel to readers whose tooling speaks that vocabulary, and because the
+/// translation makes one thing explicit that our own names let a reader assume —
+/// that a sound seal here has **not** passed validation, it has merely not
+/// failed it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SealValidationStatus {
+    /// The main indication.
+    pub indication: ValidationIndication,
+    /// The sub-indication, where one from table 6 applies. `null` means the
+    /// standard's custom-diagnostic case, and `binding` carries the diagnostic.
+    pub sub_indication: Option<ValidationSubIndication>,
+}
+
+impl SealBinding {
+    /// This reading, stated in EN 319 102-1's terms.
+    ///
+    /// The mapping, and why each one:
+    ///
+    /// | This node | Indication | Sub-indication |
+    /// |---|---|---|
+    /// | `coversThisSignature` | `indeterminate` | — |
+    /// | `coversAnotherDigest` | `totalFailed` | `hashFailure` |
+    /// | `notIntact` | `totalFailed` | `sigCryptoFailure` |
+    /// | `unknown` | `indeterminate` | — |
+    ///
+    /// **A sound seal is `indeterminate`, not passed**, for the reason
+    /// [`ValidationIndication`] gives: the certificate has not been validated,
+    /// so the strongest honest answer is that nothing has failed yet.
+    ///
+    /// **A superseded seal is `totalFailed`**, which reads oddly until the
+    /// question is stated precisely: validating *this passport's current
+    /// signature* against that seal fails on the hash, exactly as table 6
+    /// describes. The seal itself is intact and is a perfectly good attestation
+    /// of the signature it does cover — which is why this node reports it
+    /// separately and does not alarm on it, and why a repair is refused.
+    ///
+    /// Both `indeterminate` cases are the custom-diagnostic case, and they are
+    /// not the same diagnostic: one is "the certificate was never checked", the
+    /// other "these bytes could not be read". `binding` keeps them apart.
+    #[must_use]
+    pub fn validation_status(&self) -> SealValidationStatus {
+        let (indication, sub_indication) = match self {
+            Self::CoversThisSignature | Self::Unknown => {
+                (ValidationIndication::Indeterminate, None)
+            }
+            Self::CoversAnotherDigest { .. } => (
+                ValidationIndication::TotalFailed,
+                Some(ValidationSubIndication::HashFailure),
+            ),
+            Self::NotIntact => (
+                ValidationIndication::TotalFailed,
+                Some(ValidationSubIndication::SigCryptoFailure),
+            ),
+        };
+        SealValidationStatus {
+            indication,
+            sub_indication,
+        }
+    }
+}
+
 /// How much life is left in a seal's archival timestamp.
 ///
 /// An archival timestamp is what keeps a `B-LTA` seal verifiable after its
@@ -732,4 +871,82 @@ pub trait SealInspector: Send + Sync {
         envelope: &SealedEnvelope,
         now: DateTime<Utc>,
     ) -> ArchivalFreshness;
+}
+
+#[cfg(test)]
+mod validation_vocabulary {
+    use super::*;
+
+    /// **The one that matters: a sound seal has not passed.**
+    ///
+    /// EN 319 102-1 clause 5.1.3 puts "the constraints applicable to the
+    /// signer's certificate have been positively validated" among the conditions
+    /// for `TOTAL-PASSED`, and this node validates no certificate. Reporting a
+    /// pass would claim a check nobody ran — the same failure as reporting a
+    /// zero for an audit that has not completed, one level down.
+    #[test]
+    fn a_seal_this_node_calls_sound_is_indeterminate_not_passed() {
+        let status = SealBinding::CoversThisSignature.validation_status();
+        assert_eq!(status.indication, ValidationIndication::Indeterminate);
+        assert_eq!(
+            status.sub_indication, None,
+            "no table 6 value says 'the certificate was never checked' — that is the \
+             standard's custom-diagnostic case, and `binding` is the diagnostic"
+        );
+    }
+
+    /// A broken seal is the stable verdict, and the whole basis of the repair
+    /// route: more validation data cannot lift a `TOTAL-FAILED`.
+    #[test]
+    fn a_broken_seal_is_total_failed_on_the_cryptography() {
+        let status = SealBinding::NotIntact.validation_status();
+        assert_eq!(status.indication, ValidationIndication::TotalFailed);
+        assert_eq!(
+            status.sub_indication,
+            Some(ValidationSubIndication::SigCryptoFailure)
+        );
+    }
+
+    /// Against *this passport's current signature*, a superseded seal fails on
+    /// the hash. It remains a sound attestation of the signature it covers,
+    /// which is why the node counts it apart and refuses to repair it.
+    #[test]
+    fn a_superseded_seal_fails_on_the_hash_of_this_signature() {
+        let status = SealBinding::CoversAnotherDigest {
+            covered: "ab".repeat(32),
+        }
+        .validation_status();
+        assert_eq!(status.indication, ValidationIndication::TotalFailed);
+        assert_eq!(
+            status.sub_indication,
+            Some(ValidationSubIndication::HashFailure)
+        );
+    }
+
+    /// "Cannot read" is not "failed" — the distinction CIR (EU) 2025/1945 makes
+    /// a technical outcome in its own right, and the reason repairing one is
+    /// refused.
+    #[test]
+    fn an_unreadable_seal_is_indeterminate_not_failed() {
+        let status = SealBinding::Unknown.validation_status();
+        assert_eq!(status.indication, ValidationIndication::Indeterminate);
+        assert_eq!(status.sub_indication, None);
+    }
+
+    /// The wire strings are the standard's names in this API's casing, and
+    /// consumers key on them.
+    #[test]
+    fn the_vocabulary_serialises_to_the_documented_strings() {
+        let json = serde_json::to_value(SealBinding::NotIntact.validation_status()).unwrap();
+        assert_eq!(json["indication"], "totalFailed");
+        assert_eq!(json["subIndication"], "sigCryptoFailure");
+
+        let sound = serde_json::to_value(SealBinding::CoversThisSignature.validation_status())
+            .expect("serialises");
+        assert_eq!(sound["indication"], "indeterminate");
+        assert!(
+            sound["subIndication"].is_null(),
+            "the custom-diagnostic case must be visibly empty, not filled with a near fit"
+        );
+    }
 }

@@ -12,6 +12,7 @@ required:
   - currentPayloadHash
   - coverage
   - binding
+  - validation
   - archival
   - verification
 properties:
@@ -125,6 +126,8 @@ properties:
     $ref: ./SealCoverage.yaml
   binding:
     $ref: ./SealBinding.yaml
+  validation:
+    $ref: ./SealValidationStatus.yaml
   origin:
     oneOf:
       - $ref: ./SealOrigin.yaml
