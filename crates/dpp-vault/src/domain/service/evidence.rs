@@ -75,7 +75,10 @@ impl PassportService {
         // rather than serialising to bytes and re-parsing through
         // `verify_dossier_json`, which exists for the *uploaded-document* path
         // where the input genuinely starts as untyped bytes.
-        Ok(crate::domain::verify::verify_dossier(&record.dossier))
+        Ok(crate::domain::verify::verify_dossier(
+            &record.dossier,
+            self.seal_inspector.as_deref(),
+        ))
     }
 
     /// Assemble the evidence dossier for a passport. Requires the passport to

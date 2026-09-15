@@ -75,6 +75,23 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   exactly where an ANSI escape would be put to forge output under the CLI's own
   labels.
 
+- **Verifying a dossier now checks its seal, rather than only hashing it.** The
+  verifier ran eight checks and none looked at the seal — it was covered by
+  `content_integrity`, which catches substitution and says nothing about whether
+  the seal means anything. `qualified_seal` is now a check of its own.
+
+  It needs no database, no node and no network: a dossier carries the CAdES
+  **and** the compact JWS that seal should cover, which is the point of the
+  format, since whoever opens the file is usually neither the issuer nor the
+  node. Nothing stored in the dossier is trusted to answer it — neither its
+  `payloadHash` nor the `binding` the generator wrote — both are recomputed from
+  `signedOverJws`. The generator's claim is evidence of what it believed; this
+  check says whether it was right.
+
+  `Absent` rather than `Fail` wherever the question could not be put: no seal, no
+  seal reader supplied, or bytes this build cannot parse. A dossier marked failed
+  because nobody looked would be worse than one marked unchecked.
+
 - **The evidence dossier now states whether its seal covers the signature it is
   served beside.** The dossier carries the seal, the passport's compact JWS and
   its digest, so a verifier holding only that file has everything needed. The JWS

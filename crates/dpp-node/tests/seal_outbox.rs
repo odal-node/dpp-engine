@@ -793,6 +793,27 @@ async fn a_locally_sealed_passport_reports_that_no_provider_issued_it() {
         "the dossier must say whether the seal covers the JWS it serves beside it: {seal_section}"
     );
 
+    // And verifying that dossier **checks** the claim rather than reading it
+    // back. The generator's `binding` says what it believed; the verifier
+    // recomputes the digest from `signedOverJws` and opens the seal itself, so
+    // this is the whole chain closing on a file that needs no database, no node
+    // and no network to check.
+    let report = service
+        .verify_evidence(record.id)
+        .await
+        .expect("dossier verifies");
+    let seal_check = report
+        .checks
+        .iter()
+        .find(|c| c.name == "qualified_seal")
+        .expect("the verifier runs a seal check");
+    assert!(
+        matches!(seal_check.status, dpp_types::evidence::CheckStatus::Pass),
+        "the dossier's own seal must check out: {:?}",
+        seal_check.status
+    );
+    println!("dossier   : qualified_seal = Pass");
+
     // ── The verdict, read out of the stored seal ────────────────────────────
     let verdict = qualify(&der, &[], seal.sealed_at).expect("a readable CAdES seal");
 
