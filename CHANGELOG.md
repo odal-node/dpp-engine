@@ -51,6 +51,31 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ### Added
 
+- **A life status that contradicts its own lineage is now reported.** The
+  plausibility lint gains `lineage.life_status_unsupported`, from
+  `dpp_rules::lineage::check_life_status_consistency`: a unit claiming
+  `remanufactured` whose only `derivedFrom` edge says `repurposing`, an
+  `original` that claims a predecessor at all, or a status outside the five
+  Annex XIII point 4(c) enumerates.
+
+  Advisory rather than a refusal at create, which is what the rule is shaped for.
+  Reg. (EU) 2023/1542 Art. 77(7) permits several predecessors with nothing
+  forcing them to share an operation, so a unit built from one repurposed and one
+  remanufactured predecessor has no unambiguous derived status — the status is
+  stored and then checked, and the check asks that **at least one** edge support
+  the claim rather than that every edge agree.
+
+  **These are envelope checks, so they run without product group data.**
+  `LintResult::compute` is handed only `productGroupData`, so the obvious wiring
+  — append to whatever the pack produced — reports nothing at all for a passport
+  carrying none, which is a fail-open: the envelope fields are there and
+  contradict each other either way. `packVersion` continues to name the
+  product-group pack, which is the only versioned rule set involved.
+
+  The create/update path and `POST /dpp/{dppId}/lint` now compute the result
+  through one function. They did not before, so a check added to one and not the
+  other would have made the route disagree with the record it re-checks.
+
 - **The passport response now serves `serialNumber`, `lifeStatus` and
   `responsibleOperator`.** All three are modelled on the core aggregate and were
   being dropped at the API boundary, so a client reading a passport could not see

@@ -310,13 +310,13 @@ pub(super) fn apply_compliance(passport: &mut Passport, registry: &dyn Complianc
     }
 }
 
-/// Backfill `lint_result` from the `dpp-rules` plausibility lint pack.
-/// Unlike `apply_compliance`, always overwrites — the pack is cheap to
+/// Backfill `lint_result` from the plausibility lint.
+/// Unlike `apply_compliance`, always overwrites — the checks are cheap to
 /// re-run and freshness (not preserving a caller-supplied value) is the
-/// point. A no-op when the passport carries no product group data.
+/// point. A no-op when there is nothing to report.
 pub(super) fn apply_lint(passport: &mut Passport) {
-    if let Some(product_group_data) = passport.product_group_data.as_ref() {
-        passport.lint_result = Some(dpp_domain::LintResult::compute(product_group_data));
+    if let Some(result) = super::lint::compute_lint(passport) {
+        passport.lint_result = Some(result);
     }
 }
 
