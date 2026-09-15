@@ -884,6 +884,35 @@ pub fn render_seal_absent(id: &str) {
     println!("  Sealing runs off a drain after publish — it is not part of the publish call.");
 }
 
+/// Render what a repair queued.
+///
+/// Says that a seal is being bought, because it is: this is the one command
+/// here that spends. The node's own note travels with the response and is
+/// printed rather than paraphrased — it is written where the rule lives.
+pub fn render_seal_repair(repair: &serde_json::Value, id: &str) {
+    let action = field(repair, "action").unwrap_or_else(|| "queued".to_owned());
+    println!("Repair queued for {}", plain(id));
+    match action.as_str() {
+        // The distinction the response draws, and the one an operator paying
+        // for seals cares about.
+        "rearmed" => println!(
+            "  {}  the broken seal's row was re-armed — a replacement will be bought",
+            style("REARMED").yellow().bold()
+        ),
+        _ => println!(
+            "  {}  this signature had never been sealed, so nothing is bought twice",
+            style("QUEUED").green().bold()
+        ),
+    }
+    if let Some(hash) = field(repair, "payloadHash") {
+        println!("  Covers: {hash}");
+    }
+    if let Some(note) = field(repair, "note") {
+        println!("  {note}");
+    }
+    println!("  The node's drain buys it; watch `odal seal status {id}`.");
+}
+
 /// Render the operator-wide sealing summary.
 ///
 /// Leads with the passport count, not the row counts. An operator asking about
@@ -927,9 +956,11 @@ pub fn render_seal_summary(summary: &serde_json::Value) {
     // zero: a pass walks the estate over several minutes and starts over, so a
     // node that has just restarted has genuinely not looked yet.
     match summary.get("audit").filter(|a| !a.is_null()) {
-        None => println!(
-            "Stored seals: not audited yet — no pass has completed since this node started"
-        ),
+        None => {
+            println!("Stored seals: not audited yet — no pass over them has completed");
+            println!("              this is not the same as 'none broken': a pass walks the");
+            println!("              whole estate, and until one finishes nothing has looked");
+        }
         Some(audit) => {
             let a = |k: &str| {
                 audit
@@ -974,6 +1005,10 @@ pub fn render_seal_summary(summary: &serde_json::Value) {
                 {
                     println!("                … list truncated; see `broken` for the total");
                 }
+                // The finding is only useful beside what to do about it, and the
+                // route re-checks before acting — so a name from a report that
+                // has since been repaired costs nothing but a refusal.
+                println!("              repair one with: odal seal repair <id>");
             }
         }
     }

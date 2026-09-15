@@ -51,6 +51,46 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ### Added
 
+- **The seal audit now survives a restart, bounds what a pass is about, and has
+  a configurable cadence** (#328).
+
+  Three changes to the same walk, each fixing something the first version of it
+  could not.
+
+  **Its position and its last result are stored** (`ops/pg/0038`). Keeping only
+  the result would not have been enough: the failure worth fixing is a node whose
+  estate takes longer to walk than the node goes between restarts, and such a
+  node never produces a result to keep — it would start from the beginning every
+  time, for ever, while doing every bit of the work. With the cursor stored, the
+  walk accumulates instead. `audit: null` now means *no pass has ever completed
+  against this database*, rather than none since this process started.
+
+  **A pass is a statement about the seals that existed when it began.** Seals are
+  written while a walk runs, and which of them a pass happened to see depended on
+  where its cursor had reached — so "checked 1,204" described a population nobody
+  could name. Skipping the newer ones costs no coverage: the drain checks a
+  seal's binding before accepting it, so one written mid-walk was verified as it
+  landed. A seal that cannot be dated is kept, because not knowing when something
+  was sealed is not a reason to stop looking at it.
+
+  **`SEAL_AUDIT_BATCH` and `SEAL_AUDIT_INTERVAL_SECS`** set the rate, and the
+  boot log now says what the configured rate buys for this node's estate —
+  warning when a full walk would take longer than 24 hours. That ceiling is not
+  ours: CIR (EU) 2025/1945, which pins how a qualified seal is validated under
+  Art. 32(3) and Art. 40 of Reg. (EU) No 910/2014, allows revocation information
+  for a signing certificate to be at most 24 hours old, so a slower walk could
+  not support that check once this node performs it (it does not yet — #323). An
+  unparseable value fails the boot rather than falling back to the default:
+  believing seals are checked hourly while they are checked daily is the failure
+  this whole surface exists to prevent.
+
+- **`odal seal repair <id>`** — the CLI half of the repair route below. Reports
+  whether the broken seal's row was re-armed or the signature was simply queued
+  for the first time, and prints the node's own note about what it costs. A
+  refusal is an error rather than a printed verdict: the operator asked for an
+  action and the node declining to spend is not a quieter kind of success. The
+  audit block in `odal seal status` now points at it beside each named passport.
+
 - **`POST /api/v1/dpp/{dppId}/seal/repair`** (admin) — re-seal a passport whose
   stored seal does not verify (#328).
 
@@ -91,11 +131,12 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   a worthless seal is present.
 
   **`null` means no pass has completed, not that nothing is wrong.** The pass
-  walks the estate in bounded batches and starts over, so the report is empty for
-  a while after a restart and absent entirely where no audit runs. Reporting a
-  zero for a check that has not run would be the one answer worse than reporting
-  nothing. `completedAt` travels with it, because on a large deployment these
-  numbers are hours old by construction.
+  walks the estate in bounded batches and starts over, so the report is empty
+  until the first one finishes and absent entirely where no audit runs (it now
+  survives a restart — see below). Reporting a zero for a check that has not run
+  would be the one answer worse than reporting nothing. `completedAt` travels
+  with it, because on a large deployment these numbers are hours old by
+  construction.
 
   The list of broken passports is capped and says so through `truncated`: a node
   with thousands of broken seals has one problem, not thousands, and the count
