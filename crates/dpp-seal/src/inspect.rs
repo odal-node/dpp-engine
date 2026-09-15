@@ -12,7 +12,7 @@
 //! to link this crate to ask.
 
 use base64::Engine as _;
-use dpp_domain::seal::{SealFormat, SealedEnvelope};
+use dpp_domain::seal::{SealConformanceLevel, SealFormat, SealedEnvelope};
 use dpp_types::{SealBinding, SealInspector, SealOrigin};
 
 use crate::cades;
@@ -119,6 +119,16 @@ impl SealInspector for CadesInspector {
             SealBinding::CoversThisSignature
         } else {
             SealBinding::CoversAnotherDigest { covered }
+        }
+    }
+    fn evidenced_level(&self, envelope: &SealedEnvelope) -> Option<SealConformanceLevel> {
+        let der = self.readable(envelope)?;
+        match cades::evidenced_level(&der) {
+            Ok(level) => level,
+            Err(e) => {
+                tracing::warn!(error = %e, "stored seal could not be read; level not evidenced");
+                None
+            }
         }
     }
 }

@@ -5199,6 +5199,21 @@ components:
             - string
             - 'null'
           description: Hex SHA-256 of the certificate the seal names as its signer, **as reported by the seal** — read out of the CAdES, never verified. It answers *which* certificate to ask about, not whether that certificate was qualified or on the EU Trusted List. Null when the seal predates extraction or could not be parsed.
+        conformanceLevel:
+          oneOf:
+            - $ref: '#/components/schemas/SealConformanceLevel'
+            - type: 'null'
+          description: The baseline level this node **asked** for, recorded on the envelope. A record of intent; `null` for a seal stored before the field existed.
+        evidencedLevel:
+          oneOf:
+            - $ref: '#/components/schemas/SealConformanceLevel'
+            - type: 'null'
+          description: |-
+            The baseline level the seal's **bytes** carry.
+
+            The pair is the point. A provider enabled for a weaker profile than was paid for returns a seal that is correct in every record this node keeps and stops verifying when its signing certificate expires — years later, on a passport that is retention-locked and cannot be re-sealed. Serving both makes that answerable from the seal rather than from a log nobody kept.
+
+            A floor, not a conformance verdict: it reports that the distinguishing material for a level is present, never that the material was validated. `null` when the bytes could not be read.
         placeholder:
           type: boolean
           description: True when this is a placeholder with no legal validity.

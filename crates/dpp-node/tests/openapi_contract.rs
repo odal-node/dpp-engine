@@ -3561,6 +3561,11 @@ mod fixtures {
             seal_value: "MIIB...".into(),
             sealed_at: ts(),
             signing_cert_ref: Some("5".repeat(64)),
+            conformance_level: Some(SealConformanceLevel::BaselineLta),
+            // Populated and deliberately **different** from the level above: the
+            // downgrade is the case these two fields exist to make visible, so
+            // the fixture is the one where they disagree.
+            evidenced_level: Some(SealConformanceLevel::BaselineT),
             placeholder: false,
             current_jws: "eyJhbGciOiJFZERTQSJ9..iii".into(),
             current_payload_hash: "6".repeat(64),

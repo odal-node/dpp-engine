@@ -32,7 +32,9 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use dpp_domain::{DppError, passport::PassportId, seal::SealedEnvelope};
+use dpp_domain::{
+    DppError, passport::PassportId, seal::SealConformanceLevel, seal::SealedEnvelope,
+};
 
 /// The digest a qualified seal is applied over: hex SHA-256 of a passport's
 /// compact JWS.
@@ -338,4 +340,20 @@ pub trait SealInspector: Send + Sync {
     /// signature, so a comparison made without it is a comparison against a value
     /// anybody could have written.
     fn binding(&self, envelope: &SealedEnvelope, payload_hash: &str) -> SealBinding;
+
+    /// The baseline level the envelope's **bytes** carry, as distinct from the
+    /// level recorded on it.
+    ///
+    /// `SealedEnvelope::conformance_level` records what this node *asked* for.
+    /// This reports what arrived. The two disagreeing is a downgrade — a
+    /// provider enabled for a weaker profile than was paid for — and it is the
+    /// failure that matters most, because it lands on a retention-locked
+    /// passport that cannot be re-sealed and only shows years later when the
+    /// signing certificate expires.
+    ///
+    /// A floor, not a conformance verdict: it reports that the *distinguishing
+    /// material* for a level is present, never that the material was validated.
+    ///
+    /// `None` when the bytes cannot be read.
+    fn evidenced_level(&self, envelope: &SealedEnvelope) -> Option<SealConformanceLevel>;
 }

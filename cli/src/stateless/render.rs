@@ -665,6 +665,24 @@ pub fn render_seal_status(seal: &serde_json::Value, id: &str) {
     }
 
     println!("  Format        : {}", s("format"));
+
+    // Both levels, and loudly when they differ. A seal below the level it was
+    // bought at is correct in every record this node keeps and stops verifying
+    // when its certificate expires — on a passport that cannot be re-sealed.
+    let asked = s("conformanceLevel");
+    let evidenced = s("evidencedLevel");
+    if evidenced == "-" {
+        println!("  Level         : {asked} requested; the bytes could not be read");
+    } else if asked == "-" || asked == evidenced {
+        println!("  Level         : {evidenced}");
+    } else {
+        println!(
+            "  Level         : {}  requested {asked}, the bytes carry {evidenced}",
+            style("DOWNGRADED").red().bold()
+        );
+        println!("                  this seal carries less validation material than was paid for");
+    }
+
     println!("  Sealed at     : {}", s("sealedAt"));
 
     // The certificate the seal names as its signer — which certificate to ask

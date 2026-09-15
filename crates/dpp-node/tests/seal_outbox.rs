@@ -753,6 +753,17 @@ async fn a_locally_sealed_passport_reports_that_no_provider_issued_it() {
             .as_deref(),
         Some(expected_digest.as_str())
     );
+    // The level the route will serve, from the bytes rather than the record.
+    assert_eq!(
+        inspector.evidenced_level(&seal),
+        Some(SealConformanceLevel::BaselineLta),
+        "requested LTA and the bytes must carry LTA, or the seal route reports a downgrade"
+    );
+    assert_eq!(
+        seal.conformance_level,
+        Some(SealConformanceLevel::BaselineLta)
+    );
+
     println!("binding   : coversThisSignature ({expected_digest})");
 
     // ── And the dossier an authority is actually handed says so ─────────────

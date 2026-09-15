@@ -113,6 +113,24 @@ pub struct SealResponse {
     ///
     /// `null` when the seal predates extraction or could not be parsed.
     pub signing_cert_ref: Option<String>,
+    /// The baseline level this node **asked** for, recorded on the envelope.
+    ///
+    /// `null` for a seal stored before the field existed. A record of intent —
+    /// read `evidencedLevel` for what actually arrived.
+    pub conformance_level: Option<dpp_domain::seal::SealConformanceLevel>,
+    /// The baseline level the seal's **bytes** carry.
+    ///
+    /// The pair is the point. A provider enabled for a weaker profile than was
+    /// paid for returns a seal that is correct in every record this node keeps
+    /// and stops verifying when its signing certificate expires — years later,
+    /// on a passport that is retention-locked and cannot be re-sealed. The drain
+    /// logs that mismatch when it happens; serving both here makes it answerable
+    /// afterwards, from the seal rather than from a log nobody kept.
+    ///
+    /// A floor, not a conformance verdict: it reports that the distinguishing
+    /// material for a level is present, never that the material was validated.
+    /// `null` when the bytes could not be read.
+    pub evidenced_level: Option<dpp_domain::seal::SealConformanceLevel>,
     /// True when this is a `GhostSeal` placeholder with no legal validity.
     pub placeholder: bool,
     /// The passport's **current** compact JWS.
@@ -307,6 +325,12 @@ pub async fn seal_handler(
             seal_value: seal.seal_value.clone(),
             sealed_at: seal.sealed_at,
             signing_cert_ref: seal.signing_cert_ref.clone(),
+            conformance_level: seal.conformance_level,
+            evidenced_level: state
+                .service
+                .seal_inspector
+                .as_ref()
+                .and_then(|i| i.evidenced_level(seal)),
             placeholder: seal.placeholder,
             current_jws: jws,
             current_payload_hash: payload_hash.clone(),

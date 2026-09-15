@@ -51,6 +51,18 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ### Added
 
+- **The seal route now reports both the level asked for and the level the bytes
+  carry.** `conformanceLevel` is what this node requested, recorded on the
+  envelope; `evidencedLevel` is what `cades::evidenced_level` finds in the CAdES.
+  Neither was served at all.
+
+  The pair is the point. A provider enabled for a weaker profile than was paid
+  for returns a seal that is correct in every record this node keeps and stops
+  verifying when its signing certificate expires — years later, on a passport
+  that is retention-locked and cannot be re-sealed. The drain already logs that
+  mismatch as it happens; serving both makes it answerable afterwards, from the
+  seal rather than from a log nobody kept. The CLI calls it `DOWNGRADED`.
+
 - **`odal seal status` and `odal seal status --all` render the new fields.** The
   CLI is the surface a sandbox demo is driven from, and it showed none of them:
   who issued the seal, whether it binds to the passport, or what tier the
