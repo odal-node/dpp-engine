@@ -507,7 +507,18 @@ pub async fn seal_repair_handler(
         );
     };
 
-    let payload_hash = seal_digest(&passport).unwrap_or_default();
+    // Not `unwrap_or_default()`, which the read route above can afford and this
+    // one cannot: an empty digest here would be written onto a queue row and the
+    // drain would go and buy a seal over nothing. A sealed passport with no
+    // signature should be unreachable — the seal is applied to the signature —
+    // so this is a refusal rather than a repair.
+    let Some(payload_hash) = seal_digest(&passport) else {
+        return validation_error(
+            "This passport carries a seal but no signature, so there is no digest for a \
+             replacement to cover. That combination should not occur; repairing it would queue a \
+             seal over nothing.",
+        );
+    };
 
     // Checked now, not read from the audit's list. A stale finding would buy a
     // seal for a passport that has since been repaired or re-published.

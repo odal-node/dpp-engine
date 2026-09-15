@@ -641,8 +641,10 @@ paths:
             which: the seal verifies; it is intact but covers a superseded signature,
             whose replacement is already queued by the re-publish that caused it;
             there is no seal at all, which the node's own sweep covers at no extra
-            cost; the seal could not be read, so it cannot be shown to be broken; or
-            this node has no sealing backend, so a queued repair would never drain.
+            cost; the seal could not be read, so it cannot be shown to be broken;
+            this node has no sealing backend, so a queued repair would never drain;
+            or the passport carries a seal and no signature, which should not occur
+            and for which a replacement would cover nothing.
           content:
             application/problem+json:
               schema:
