@@ -49,21 +49,36 @@
 //! travelling beside them. What the relabelling breaks is the certificate's own
 //! signature, which is exactly what this now checks.
 //!
+//! ## The certificate's own standing is a different question, asked elsewhere
+//!
+//! Art. 32(1)(b), reached for seals by Art. 40, has two limbs: the certificate
+//! must have been **issued by a qualified trust service provider**, and it must
+//! have been **valid at the time of signing**. This module answers the first —
+//! it is the trusted list question, and the list is the only thing that can
+//! answer it.
+//!
+//! The second is answerable from the seal alone, so it lives with the rest of
+//! the certificate reading in [`crate::cades::certificate_standing`]: the
+//! validity window judged against an attested sealing time, and revocation read
+//! from the CRLs the seal carries. This module deliberately does not fold that
+//! in. A caller wanting the whole of (b) asks both, which keeps each answer
+//! traceable to the evidence it came from — a trusted list, or the bytes.
+//!
 //! ## Still not `SealChecks::QualifiedValidation`
 //!
-//! Two conditions of Art. 32(1) remain unchecked, and neither is a matter of
-//! degree:
+//! Conditions of Art. 32(1) remain unchecked, and none is a matter of degree:
 //!
-//! - **The certificate's own validity window.** Nothing here reads `notBefore`
-//!   or `notAfter`, so a certificate that had expired when the seal was made
-//!   still reports as qualified. The trusted list is asked what the *issuer's*
-//!   status was at sealing time; the certificate is asked nothing.
-//! - **Revocation.** Art. 32(1)(e) wants the certificate not revoked at the time
-//!   of sealing. No CRL is read and no OCSP responder is consulted.
+//! - **(f), the creation device.** [`CreationDevice`] reports what Annex III(j)
+//!   *declares*, which is the certificate's word for it. Nothing confirms it,
+//!   and nothing could from bytes alone.
+//! - **(c) and (d)** — that the validation data corresponds to what the relying
+//!   party was given, and that the data representing the seal creator is
+//!   correctly provided — are about the presentation, not the envelope.
+//! - **(h)**, the Art. 26 requirements for an advanced seal.
 //!
 //! So nothing in this module returns a
 //! [`SealChecks`](dpp_domain::seal::SealChecks). A rung would be claimed by
-//! whoever wired it up next, and the two missing conditions would go with it.
+//! whoever wired it up next, and the missing conditions would go with it.
 
 use base64::Engine as _;
 use chrono::{DateTime, Utc};
@@ -280,9 +295,14 @@ impl std::fmt::Display for SealQualification {
                         "; the provider does not hold Art. 39a remote QSCD management"
                     )?;
                 }
+                // The certificate's own validity and revocation are no longer
+                // unchecked — they are simply not this verdict's subject, and
+                // `cades::certificate_standing` reports them separately. Saying
+                // "not checked" here would now be false, and saying nothing
+                // would let this read as the whole of Art. 32(1)(b).
                 write!(
                     f,
-                    " — issuer signature verified; certificate validity and revocation not checked"
+                    " — issuer signature verified; the certificate's own validity                      window and revocation are reported separately"
                 )
             }
         }

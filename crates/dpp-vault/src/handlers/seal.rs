@@ -224,6 +224,27 @@ pub struct SealResponse {
     /// misreading; reading `coversThisSignature` as a validation pass was the
     /// misreading this field exists to prevent.
     pub validation: dpp_types::SealValidationStatus,
+    /// **Was the signing certificate valid when the seal was made?**
+    ///
+    /// The second limb of Reg. (EU) No 910/2014 Art. 32(1)(b), reached for seals
+    /// by Art. 40 — the first being whether a qualified provider issued it,
+    /// which is a Trusted List question this route does not ask.
+    ///
+    /// Two answers in one: where the sealing moment falls in the certificate's
+    /// validity window, and what the seal's own revocation material says. The
+    /// moment itself travels with them, because the whole verdict turns on it —
+    /// an attested time makes an out-of-window certificate a failure, and an
+    /// unattested one leaves it merely unproven, since certificates expire and
+    /// sealed passports outlive them.
+    ///
+    /// **Revocation is read from the seal, never fetched.** A CRL distribution
+    /// point is a URL inside a certificate an operator was handed. The long-term
+    /// profiles carry the material for exactly this reason, so a `B-LT` or
+    /// `B-LTA` seal can be answered and a `B-B` one reports that it could not
+    /// ask.
+    ///
+    /// `null` when the seal could not be read.
+    pub certificate: Option<dpp_types::CertificateStanding>,
     /// What **this seal's own certificate** says about who issued it.
     ///
     /// The first question a reader has and the one nothing here could answer
@@ -349,6 +370,11 @@ pub async fn seal_handler(
         .map_or(dpp_types::SealBinding::Unknown, |i| {
             i.binding(seal, &payload_hash)
         });
+    let certificate = state
+        .service
+        .seal_inspector
+        .as_ref()
+        .and_then(|i| i.certificate_standing(seal, chrono::Utc::now()));
 
     // Has responsibility moved since this passport was sealed? Only a *completed*
     // handover counts: an initiated one that nobody accepted has moved nothing,
@@ -415,7 +441,8 @@ pub async fn seal_handler(
                 .as_ref()
                 .and_then(|i| i.origin(seal)),
             binding: binding.clone(),
-            validation: binding.validation_status(),
+            validation: dpp_types::SealValidationStatus::of(&binding, certificate.as_ref()),
+            certificate,
             verification: NOT_VALIDATED,
         }),
     )

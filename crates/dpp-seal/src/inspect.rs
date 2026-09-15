@@ -167,6 +167,25 @@ impl SealInspector for CadesInspector {
             }
         }
     }
+
+    fn certificate_standing(
+        &self,
+        envelope: &SealedEnvelope,
+        now: chrono::DateTime<chrono::Utc>,
+    ) -> Option<dpp_types::CertificateStanding> {
+        let der = self.readable(envelope)?;
+        match cades::certificate_standing(&der, now) {
+            Ok(standing) => Some(standing),
+            // Nothing is reported rather than a standing built on a guess. A
+            // seal that will not parse has no certificate to speak about, and
+            // saying "not revoked, window unknown" would be an assurance drawn
+            // from bytes nobody could read.
+            Err(e) => {
+                tracing::warn!(error = %e, "stored seal could not be read; certificate standing unknown");
+                None
+            }
+        }
+    }
 }
 
 impl CadesInspector {

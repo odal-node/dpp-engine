@@ -128,6 +128,10 @@ properties:
     $ref: ./SealBinding.yaml
   validation:
     $ref: ./SealValidationStatus.yaml
+  certificate:
+    oneOf:
+      - $ref: ./CertificateStanding.yaml
+      - type: 'null'
   origin:
     oneOf:
       - $ref: ./SealOrigin.yaml

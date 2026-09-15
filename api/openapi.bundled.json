@@ -6473,6 +6473,16 @@
           "validation": {
             "$ref": "#/components/schemas/SealValidationStatus"
           },
+          "certificate": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/CertificateStanding"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "origin": {
             "oneOf": [
               {
@@ -6791,6 +6801,16 @@
           },
           "validation": {
             "$ref": "#/components/schemas/SealValidationStatus"
+          },
+          "certificate": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/CertificateStanding"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "origin": {
             "oneOf": [
@@ -9042,6 +9062,108 @@
               null
             ],
             "description": "The table 6 value qualifying the indication, where one applies.\n\n`sigCryptoFailure`: the signature value could not be verified with the public key in the signing certificate — a seal this node reports as `notIntact`.\n\n`hashFailure`: a hash of signed data does not match. Reported for a seal that is intact over a *different* digest, because validating **this passport's current signature** against it fails on the hash. The seal remains a sound attestation of the signature it does cover, which is why the node counts it apart and refuses to repair it.\n\n`null` is the standard's own custom-diagnostic case: no table 6 value fits, so `binding` carries the diagnostic instead of stretching one that nearly does. The two `null` cases are different diagnostics — \"the certificate was never checked\" and \"these bytes could not be read\" — and `binding` keeps them apart."
+          }
+        }
+      },
+      "ValidityWindow": {
+        "type": "object",
+        "description": "A certificate's validity window, and where the sealing moment falls in it.\n\nThe window travels with the verdict so a reader can check the arithmetic rather than take it on trust — and because the two dates are what an auditor compares against a Trusted List entry when asking the other half of Art. 32(1)(b).",
+        "required": [
+          "notBefore",
+          "notAfter",
+          "standing"
+        ],
+        "properties": {
+          "notBefore": {
+            "type": "string",
+            "format": "date-time",
+            "description": "The certificate's `notBefore`."
+          },
+          "notAfter": {
+            "type": "string",
+            "format": "date-time",
+            "description": "The certificate's `notAfter`."
+          },
+          "standing": {
+            "type": "string",
+            "enum": [
+              "inside",
+              "expired",
+              "notYetValid"
+            ],
+            "description": "Where the judged moment falls in the window. `expired` and `notYetValid` are findings only when that moment is attested — see `judgedAt`."
+          }
+        }
+      },
+      "JudgedTime": {
+        "type": "object",
+        "description": "The moment a certificate's standing was judged against, and whether anything proves it.\n\nRegulation (EU) No 910/2014 Art. 32(1)(b), reached for seals by Art. 40, asks whether the certificate was valid **at the time of signing**. The whole verdict therefore turns on which moment is used and what that moment is worth.",
+        "required": [
+          "at",
+          "attested"
+        ],
+        "properties": {
+          "at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "The moment used."
+          },
+          "attested": {
+            "type": "boolean",
+            "description": "True when the moment came from a timestamp token inside the seal, whose signature and imprint were both checked. False means it is the node's own clock — the validation time, not the signing time.\n\nThis separates a failure from an open question. ETSI EN 319 102-1 treats a time nothing proves as no time at all, which is why a verdict resting on an unattested moment is reported with a `NO_POE` sub-indication rather than as `totalFailed`. Without it, every seal whose certificate has since expired — eventually all of them — would read as invalid."
+          }
+        }
+      },
+      "RevocationStanding": {
+        "type": "object",
+        "description": "What the seal's own revocation material says about its signing certificate.\n\n**Read from the seal, never fetched.** A CRL distribution point is a URL inside a certificate an operator was handed, and following one would have this node issue requests to an address chosen by whoever produced the seal. ETSI EN 319 122-1 puts revocation values in `SignedData.crls` from `B-LT` upward for exactly this reason: a seal meant to be checkable years later carries what is needed to check it, offline.",
+        "required": [
+          "status"
+        ],
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "notRevoked",
+              "revoked",
+              "notAvailable",
+              "unusable"
+            ],
+            "description": "`notRevoked` — a CRL from this certificate's issuer, whose own signature verifies under a certificate the seal carries, does not list it.\n\n`revoked` — that CRL lists it, and `at` says when. Whether this condemns the seal depends on `judgedAt`: a certificate revoked *after* a seal was made does not unmake it.\n\n`notAvailable` — the seal carries no revocation material for this certificate. Ordinary below `B-LT` and **not a defect**.\n\n`unusable` — material was present and could not be relied on: an unparseable list, or one whose signature does not verify. Distinct from `notAvailable` because something claiming to be authoritative failed, which is worth looking at. A CRL wearing the issuer's name but signed by another key lands here and never on `notRevoked` — an unsigned list could otherwise *clear* a revoked certificate."
+          },
+          "asOf": {
+            "type": "string",
+            "format": "date-time",
+            "description": "With `notRevoked`, the CRL's `thisUpdate` — the moment its statement is about. A list issued before the seal was made cannot rule out a later revocation, and this is here so a reader can see which question was actually answered."
+          },
+          "at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "With `revoked`, when the issuer says it was revoked."
+          },
+          "reason": {
+            "type": "string",
+            "description": "With `unusable`, what failed."
+          }
+        }
+      },
+      "CertificateStanding": {
+        "type": "object",
+        "description": "**Was the seal's signing certificate valid when the seal was made?**\n\nThe second limb of Regulation (EU) No 910/2014 Art. 32(1)(b), reached for seals by Art. 40. The first limb — whether a qualified trust service provider issued it — is a Trusted List question and is not answered here.\n\nTwo findings and the moment they were judged against, because the moment is what decides them: a certificate outside its window is a failure when a timestamp proves the seal was made outside it, and merely unproven otherwise. Certificates expire, sealed passports outlive them by years, and an expired certificate today says nothing about a seal made while it was good.",
+        "required": [
+          "validity",
+          "judgedAt",
+          "revocation"
+        ],
+        "properties": {
+          "validity": {
+            "$ref": "#/components/schemas/ValidityWindow"
+          },
+          "judgedAt": {
+            "$ref": "#/components/schemas/JudgedTime"
+          },
+          "revocation": {
+            "$ref": "#/components/schemas/RevocationStanding"
           }
         }
       },

@@ -817,6 +817,70 @@ pub fn render_seal_status(seal: &serde_json::Value, id: &str) {
         _ => println!("  Binding       : not read — no digest recoverable from the envelope"),
     }
 
+    // Whether the certificate itself stood up when the seal was made — the
+    // second limb of Art. 32(1)(b), and the question a reader asks immediately
+    // after "does the seal cover this passport".
+    if let Some(cert) = seal.get("certificate").filter(|c| !c.is_null()) {
+        let attested = cert
+            .get("judgedAt")
+            .and_then(|j| j.get("attested"))
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false);
+        // The qualifier is the whole point: the same observation is a finding
+        // against a proven sealing time and an open question against a guess.
+        let basis = if attested {
+            "at the attested sealing time"
+        } else {
+            "as of now — nothing attests when this seal was made"
+        };
+        match cert
+            .get("validity")
+            .and_then(|v| v.get("standing"))
+            .and_then(serde_json::Value::as_str)
+        {
+            Some("inside") => println!("  Certificate   : within its validity window {basis}"),
+            Some("expired") => println!(
+                "  Certificate   : {}  outside its validity window {basis}",
+                style("EXPIRED").red().bold()
+            ),
+            Some("notYetValid") => println!(
+                "  Certificate   : {}  not yet valid {basis}",
+                style("NOT YET VALID").red().bold()
+            ),
+            _ => {}
+        }
+        match cert
+            .get("revocation")
+            .and_then(|r| r.get("status"))
+            .and_then(serde_json::Value::as_str)
+        {
+            Some("revoked") => println!(
+                "  Revocation    : {}  the issuer's own list names this certificate",
+                style("REVOKED").red().bold()
+            ),
+            Some("notRevoked") => {
+                let as_of = cert
+                    .get("revocation")
+                    .and_then(|r| field(r, "asOf"))
+                    .unwrap_or_else(|| "-".to_owned());
+                println!("  Revocation    : not listed, as of {as_of}");
+            }
+            // Said plainly rather than left blank: "no CRL travelled with this
+            // seal" and "the certificate is fine" are different facts.
+            Some("notAvailable") => {
+                println!("  Revocation    : not asked — the seal carries no revocation material")
+            }
+            Some("unusable") => {
+                let reason = cert
+                    .get("revocation")
+                    .and_then(|r| field(r, "reason"))
+                    .unwrap_or_default();
+                println!("  Revocation    : {}  {reason}", style("UNUSABLE").yellow());
+            }
+            _ => {}
+        }
+    }
+
     // The same reading in the standard's words, because that is the vocabulary
     // an auditor's own tooling reports in — and because `PROVEN` above is the
     // line most likely to be read as "validated", which it is not.
@@ -828,11 +892,13 @@ pub fn render_seal_status(seal: &serde_json::Value, id: &str) {
                 println!("  EN 319 102-1  : TOTAL-FAILED / {}", sub.to_uppercase());
             }
             ("totalFailed", None) => println!("  EN 319 102-1  : TOTAL-FAILED"),
-            ("indeterminate", _) => {
-                println!("  EN 319 102-1  : INDETERMINATE — nothing has failed, and this node");
-                println!(
-                    "                  validates no certificate, so nothing has passed either"
-                );
+            ("indeterminate", Some(sub)) => {
+                println!("  EN 319 102-1  : INDETERMINATE / {}", sub.to_uppercase());
+            }
+            ("indeterminate", None) => {
+                println!("  EN 319 102-1  : INDETERMINATE — nothing has failed, and the chain");
+                println!("                  is not validated to a trust anchor, so nothing has");
+                println!("                  passed either");
             }
             _ => {}
         }

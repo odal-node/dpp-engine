@@ -215,6 +215,14 @@ impl PassportService {
                 .map_or(dpp_types::SealBinding::Unknown, |i| {
                     i.binding(seal, &payload_hash)
                 });
+            // Stamped at generation like every other finding here: judged
+            // against an attested sealing time where the seal carries one, and
+            // against this clock otherwise — which is why the moment used
+            // travels inside the answer.
+            let certificate = self
+                .seal_inspector
+                .as_ref()
+                .and_then(|i| i.certificate_standing(seal, chrono::Utc::now()));
             Some(serde_json::json!({
                 "seal": seal,
                 // Served so a verifier holding only this file has both the CAdES
@@ -245,7 +253,12 @@ impl PassportService {
                 // certificate to have been validated, which this node does not
                 // do. A dossier reader seeing `coversThisSignature` and no such
                 // caveat could reasonably conclude otherwise.
-                "validation": binding.validation_status(),
+                "validation": dpp_types::SealValidationStatus::of(&binding, certificate.as_ref()),
+                // Whether the certificate was valid when the seal was made —
+                // Art. 32(1)(b)'s second limb, and the question an authority
+                // holding this file would otherwise have to answer by finding a
+                // CRL from years ago. A `B-LT` seal carries one; this reads it.
+                "certificate": certificate,
                 // Who issued the certificate behind the seal.
                 //
                 // The dossier already named *which* certificate, as a thumbprint

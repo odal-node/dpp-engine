@@ -51,6 +51,46 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ### Added
 
+- **The seal certificate's validity window and revocation are now checked**
+  (#323) — `certificate` on `GET /api/v1/dpp/{dppId}/seal` and in the evidence
+  dossier's `qualifiedSeal`.
+
+  The second limb of Reg. (EU) No 910/2014 Art. 32(1)(b), reached for seals by
+  Art. 40: a qualified certificate must have been **valid at the time of
+  signing**. Nothing read `notBefore`/`notAfter`, and no revocation list was ever
+  consulted, so a seal made with a long-expired or revoked certificate reached
+  the same verdict as one made yesterday.
+
+  **The verdict turns on which moment is used.** The moment is the *attested*
+  sealing time — the timestamp token inside the seal, whose signature and imprint
+  are both checked — and this node's clock only as a marked fallback. An
+  out-of-window certificate is `totalFailed` / `expired` against a proven moment
+  and `indeterminate` / `outOfBoundsNoPoe` against an unproven one, because
+  certificates expire, sealed passports outlive them by years, and an expired
+  certificate today says nothing about a seal made while it was good. The same
+  asymmetry applies to revocation: a certificate revoked *after* a seal was made
+  does not unmake the seal.
+
+  **Revocation is read from the seal, never fetched.** A CRL distribution point
+  is a URL inside a certificate an operator was handed, and following one would
+  have a background task issue requests to an address the input chooses. ETSI
+  EN 319 122-1 puts revocation values in `SignedData.crls` from `B-LT` upward
+  precisely so a long-term seal can be checked offline — so a `B-LT` or `B-LTA`
+  seal is answerable and a `B-B` one honestly reports `indeterminate` /
+  `tryLater`.
+
+  **A CRL is checked before it is believed, in both directions.** It must come
+  from the certificate's own issuer *and* verify under a certificate the seal
+  carries. The obvious attack is forging a revocation; the less obvious one is
+  the reverse — an unsigned empty list would otherwise *clear* a revoked
+  certificate — and
+  `a_crl_naming_the_issuer_but_signed_by_another_key_is_unusable` pins it. That
+  is the same asymmetry #323 was opened about, one level down.
+
+  Still not `SealChecks::QualifiedValidation`: Art. 32(1)(f) is a declaration
+  this node cannot confirm, and (c), (d) and (h) are unasked. What changed is
+  that two of the gaps named in that issue are now closed rather than listed.
+
 - **A seal's reading is now also reported in ETSI EN 319 102-1's vocabulary** —
   `validation` on `GET /api/v1/dpp/{dppId}/seal` and in the evidence dossier's
   `qualifiedSeal`, with the audit's counts documented in the same terms.

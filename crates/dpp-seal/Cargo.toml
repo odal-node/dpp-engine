@@ -89,5 +89,9 @@ x509-verify  = { version = "0.4.8", default-features = false, features = [
 
 [dev-dependencies]
 tempfile     = "3"
+# `rcgen` takes its dates as `time::OffsetDateTime` and does not re-export the
+# type, so the certificate-standing tests — which turn on a certificate's
+# `notBefore`/`notAfter` — need it directly. Already in the graph via `rcgen`.
+time         = { version = "0.3", default-features = false }
 tokio = { workspace = true }
 axum  = { workspace = true }

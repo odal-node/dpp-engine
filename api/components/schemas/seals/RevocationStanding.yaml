@@ -1,0 +1,58 @@
+type: object
+description: >-
+  What the seal's own revocation material says about its signing certificate.
+
+
+  **Read from the seal, never fetched.** A CRL distribution point is a URL inside
+  a certificate an operator was handed, and following one would have this node
+  issue requests to an address chosen by whoever produced the seal. ETSI
+  EN 319 122-1 puts revocation values in `SignedData.crls` from `B-LT` upward for
+  exactly this reason: a seal meant to be checkable years later carries what is
+  needed to check it, offline.
+required:
+  - status
+properties:
+  status:
+    type: string
+    enum:
+      - notRevoked
+      - revoked
+      - notAvailable
+      - unusable
+    description: >-
+      `notRevoked` — a CRL from this certificate's issuer, whose own signature
+      verifies under a certificate the seal carries, does not list it.
+
+
+      `revoked` — that CRL lists it, and `at` says when. Whether this condemns the
+      seal depends on `judgedAt`: a certificate revoked *after* a seal was made
+      does not unmake it.
+
+
+      `notAvailable` — the seal carries no revocation material for this
+      certificate. Ordinary below `B-LT` and **not a defect**.
+
+
+      `unusable` — material was present and could not be relied on: an
+      unparseable list, or one whose signature does not verify. Distinct from
+      `notAvailable` because something claiming to be authoritative failed, which
+      is worth looking at. A CRL wearing the issuer's name but signed by another
+      key lands here and never on `notRevoked` — an unsigned list could otherwise
+      *clear* a revoked certificate.
+  asOf:
+    type: string
+    format: date-time
+    description: >-
+      With `notRevoked`, the CRL's `thisUpdate` — the moment its statement is
+      about. A list issued before the seal was made cannot rule out a later
+      revocation, and this is here so a reader can see which question was
+      actually answered.
+  at:
+    type: string
+    format: date-time
+    description: >-
+      With `revoked`, when the issuer says it was revoked.
+  reason:
+    type: string
+    description: >-
+      With `unusable`, what failed.

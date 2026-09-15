@@ -73,6 +73,17 @@ impl SealInspector for ScriptedInspector {
     ) -> ArchivalFreshness {
         ArchivalFreshness::NotArchived
     }
+
+    /// Nothing: this suite is about the repair route's judgement of the
+    /// *binding*, and a scripted certificate standing would only add a second
+    /// scripted value for the handler to ignore.
+    fn certificate_standing(
+        &self,
+        _envelope: &SealedEnvelope,
+        _now: DateTime<Utc>,
+    ) -> Option<dpp_types::CertificateStanding> {
+        None
+    }
 }
 
 /// A vault whose stored seals all read as `verdict`.

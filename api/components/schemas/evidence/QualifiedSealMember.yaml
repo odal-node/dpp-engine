@@ -33,6 +33,10 @@ properties:
     $ref: ../seals/SealBinding.yaml
   validation:
     $ref: ../seals/SealValidationStatus.yaml
+  certificate:
+    oneOf:
+      - $ref: ../seals/CertificateStanding.yaml
+      - type: 'null'
   origin:
     oneOf:
       - $ref: ../seals/SealOrigin.yaml

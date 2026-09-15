@@ -35,7 +35,10 @@ use cms::content_info::ContentInfo;
 use cms::signed_data::{SignedData, SignerInfo};
 use der::{Decode as _, Encode as _};
 use dpp_domain::seal::SealConformanceLevel;
-use dpp_types::{CreationDevice, SealOrigin};
+use dpp_types::{
+    CertificateStanding, CreationDevice, JudgedTime, RevocationStanding, SealOrigin,
+    ValidityWindow, WindowStanding,
+};
 use x509_cert::Certificate;
 
 use crate::error::SealError;
@@ -62,16 +65,20 @@ struct Signed {
     /// **time-stamp token**, which is itself a `SignedData` and carries its
     /// `TSTInfo` here; reading an attested sealing time means reaching it.
     econtent: Option<Vec<u8>>,
-    /// Whether `SignedData.crls` carried anything.
+    /// Whatever `SignedData.crls` carried, as certificate revocation lists.
     ///
-    /// Captured here because the enclosing `SignedData` is dropped when this is
-    /// built, and it is the modern home of the revocation material that
-    /// distinguishes a long-term seal — see [`evidenced_level`]. A boolean
-    /// rather than the values themselves: nothing in this crate reads them, and
-    /// carrying them would invite a caller to treat "revocation data is present"
-    /// as "revocation was checked", which is the confusion this whole module is
-    /// arranged to prevent.
-    crls_present: bool,
+    /// Held rather than counted. This was a boolean for as long as nothing read
+    /// the values — the reasoning being that carrying them would invite a caller
+    /// to treat "revocation data is present" as "revocation was checked", which
+    /// is the confusion this module is arranged to prevent. [`certificate_standing`]
+    /// now actually reads them, so the distinction is made by what that function
+    /// returns instead: presence alone reports `NotAvailable` until a CRL is
+    /// found that covers this certificate and verifies under its issuer.
+    ///
+    /// Only the `crl` choice is kept. `other` is a container for formats this
+    /// crate cannot read — an OCSP response among them — and keeping an
+    /// unreadable value would have to be reported as material this node checked.
+    crls: Vec<x509_cert::crl::CertificateList>,
 }
 
 /// `id-ce-subjectKeyIdentifier` — RFC 5280 §4.2.1.2.
@@ -161,7 +168,15 @@ fn parse(seal_der: &[u8]) -> Result<Signed, SealError> {
             .as_ref()
             .and_then(|c| c.decode_as::<der::asn1::OctetString>().ok())
             .map(|o| o.as_bytes().to_vec()),
-        crls_present: sd.crls.as_ref().is_some_and(|c| !c.0.as_slice().is_empty()),
+        crls: sd.crls.as_ref().map_or_else(Vec::new, |c| {
+            c.0.as_slice()
+                .iter()
+                .filter_map(|choice| match choice {
+                    cms::revocation::RevocationInfoChoice::Crl(crl) => Some(crl.clone()),
+                    cms::revocation::RevocationInfoChoice::Other(_) => None,
+                })
+                .collect()
+        }),
     })
 }
 
@@ -274,7 +289,7 @@ pub fn evidenced_level(seal_der: &[u8]) -> Result<Option<SealConformanceLevel>, 
     };
 
     let timestamped = has(ID_AA_SIGNATURE_TIME_STAMP_TOKEN);
-    let long_term = signed.crls_present || has(ID_AA_ETS_REVOCATION_VALUES);
+    let long_term = !signed.crls.is_empty() || has(ID_AA_ETS_REVOCATION_VALUES);
     let archived = has(ID_AA_ETS_ARCHIVE_TIMESTAMP_V3) || has(ID_AA_ETS_ARCHIVE_TIMESTAMP_V2);
 
     Ok(Some(match (timestamped, long_term, archived) {
@@ -1160,6 +1175,494 @@ fn creation_device(tbs: &x509_cert::TbsCertificate) -> CreationDevice {
         CreationDevice::DeclaresQualifiedDevice
     } else {
         CreationDevice::NoQualifiedDevice
+    }
+}
+
+/// What this node can establish about the seal certificate's own standing:
+/// its validity window, and what the seal's revocation material says.
+///
+/// # The second limb of Art. 32(1)(b)
+///
+/// Reg. (EU) No 910/2014 Art. 32(1)(b), reached for seals by Art. 40, asks two
+/// things of the certificate: that a qualified provider issued it, and that it
+/// **was valid at the time of signing**. Whether the issuer is qualified is a
+/// trusted list question and lives in [`crate::qualification`]. This is the
+/// other half, and until now nothing asked it — a certificate that had expired
+/// or been revoked when the seal was made still reached the top verdict.
+///
+/// # Which moment, and what it is worth
+///
+/// "At the time of signing" is only answerable if the signing time is known, and
+/// a seal's own claim about when it was made is worth nothing. So the moment
+/// used is the **attested** one — the checked timestamp token, which a seal
+/// carries from `B-T` upward — and `now` is the fallback, marked unattested.
+///
+/// That mark is load-bearing. A verdict reached against an unproven moment is
+/// reported with a `NO_POE` sub-indication rather than as a failure, because a
+/// certificate that has expired *since* the seal was made says nothing bad about
+/// the seal: certificates expire, and sealed passports outlive them by years.
+///
+/// # Revocation is read from the seal, never fetched
+///
+/// The CRL distribution point in a certificate is a URL chosen by whoever issued
+/// it, and this certificate arrived inside a seal an operator was handed.
+/// Fetching it would have a background task make requests to an address the
+/// input controls. The long-term profiles remove the need: ETSI EN 319 122-1
+/// puts revocation values in `SignedData.crls` from `B-LT` upward precisely so a
+/// seal can be checked years later, offline.
+///
+/// So a `B-LT` or `B-LTA` seal can be answered, and a `B-B` or `B-T` seal
+/// reports `NotAvailable` — which is not a defect, only a question this material
+/// cannot answer.
+///
+/// # Errors
+///
+/// Propagates a seal that will not parse. Everything narrower — no CRL, a CRL
+/// from another issuer, one whose signature does not verify — is a value, not an
+/// error: they are answers about the seal rather than failures to read it.
+pub fn certificate_standing(
+    seal_der: &[u8],
+    now: DateTime<Utc>,
+) -> Result<CertificateStanding, SealError> {
+    let signed = parse(seal_der)?;
+
+    let judged_at = match attested_sealing_time(seal_der)? {
+        Some(at) => JudgedTime { at, attested: true },
+        None => JudgedTime {
+            at: now,
+            attested: false,
+        },
+    };
+
+    let validity = &signed.certificate.tbs_certificate.validity;
+    let (Some(not_before), Some(not_after)) = (
+        instant_of(validity.not_before),
+        instant_of(validity.not_after),
+    ) else {
+        // Not a verdict of "invalid" — a refusal to guess. A window this cannot
+        // read is a malformed certificate, and reporting it as expired or as
+        // valid would both be inventions.
+        return Err(malformed("the certificate's validity window is unreadable"));
+    };
+    let standing = if judged_at.at < not_before {
+        WindowStanding::NotYetValid
+    } else if judged_at.at > not_after {
+        WindowStanding::Expired
+    } else {
+        WindowStanding::Inside
+    };
+
+    Ok(CertificateStanding {
+        validity: ValidityWindow {
+            not_before,
+            not_after,
+            standing,
+        },
+        judged_at,
+        revocation: revocation_from(&signed),
+    })
+}
+
+/// An ASN.1 `Time` as an instant.
+///
+/// Both of its encodings carry an absolute moment in UTC, so this is a unit
+/// conversion and not a timezone decision. `None` only for a value outside the
+/// representable range, which a caller reports rather than papers over: a
+/// certificate whose window cannot be read has not been shown to be valid.
+fn instant_of(t: x509_cert::time::Time) -> Option<DateTime<Utc>> {
+    to_utc(t.to_unix_duration().as_secs())
+}
+
+/// What the seal's embedded CRLs say about its signing certificate.
+///
+/// Every step can only narrow the answer, and each narrowing is reported as what
+/// it is. A CRL from another issuer says nothing about this certificate; one
+/// whose signature does not verify is not evidence of anything, and treating
+/// either as "not revoked" would manufacture an assurance out of material that
+/// carries none.
+fn revocation_from(signed: &Signed) -> RevocationStanding {
+    let issuer = &signed.certificate.tbs_certificate.issuer;
+    let serial = &signed.certificate.tbs_certificate.serial_number;
+
+    let mut last_problem: Option<String> = None;
+    for crl in &signed.crls {
+        if &crl.tbs_cert_list.issuer != issuer {
+            // Not a problem, just not about this certificate: a seal may carry
+            // the CRLs for every certificate in its chain.
+            continue;
+        }
+
+        // The CRL must be signed by the same issuer, checked against a
+        // certificate the seal carries. Without that, a revocation list is a
+        // list of numbers anybody could have written — and an attacker able to
+        // add one could *unrevoke* a certificate by shipping an empty CRL.
+        let Some(issuer_cert) = signed
+            .chain
+            .iter()
+            .find(|c| &c.tbs_certificate.subject == issuer)
+        else {
+            last_problem = Some("the CRL's issuer certificate is not in the seal".to_owned());
+            continue;
+        };
+        let key = match verifying_key(issuer_cert) {
+            Ok(k) => k,
+            Err(e) => {
+                last_problem = Some(format!("no verifier for the CRL issuer's key: {e}"));
+                continue;
+            }
+        };
+        if let Err(e) = key.verify(crl) {
+            last_problem = Some(format!("the CRL's own signature does not verify: {e}"));
+            continue;
+        }
+
+        if let Some(entry) = crl
+            .tbs_cert_list
+            .revoked_certificates
+            .as_ref()
+            .and_then(|r| r.iter().find(|e| &e.serial_number == serial))
+        {
+            let Some(at) = instant_of(entry.revocation_date) else {
+                last_problem = Some("the revocation date is unreadable".to_owned());
+                continue;
+            };
+            return RevocationStanding::Revoked { at };
+        }
+        let Some(as_of) = instant_of(crl.tbs_cert_list.this_update) else {
+            last_problem = Some("the CRL's thisUpdate is unreadable".to_owned());
+            continue;
+        };
+        return RevocationStanding::NotRevoked { as_of };
+    }
+
+    match last_problem {
+        Some(reason) => RevocationStanding::Unusable { reason },
+        None => RevocationStanding::NotAvailable,
+    }
+}
+
+// ─── The certificate's own standing ──────────────────────────────────────────
+
+/// A CA, a leaf it issued, and whatever CRLs a test wants to embed.
+///
+/// Real certificates and a real CRL signature, because every assertion below is
+/// about whether a signature checks out. A fixture that faked one would be
+/// testing the fixture.
+#[cfg(test)]
+mod standing_tests {
+    use super::*;
+    use time::OffsetDateTime;
+
+    /// Seconds, as `rcgen`'s date type.
+    fn at(offset_days: i64) -> OffsetDateTime {
+        OffsetDateTime::from_unix_timestamp(Utc::now().timestamp() + offset_days * 86_400)
+            .expect("a representable date")
+    }
+
+    struct Issued {
+        ca: rcgen::CertifiedIssuer<'static, rcgen::KeyPair>,
+        leaf_der: Vec<u8>,
+        leaf_serial: rcgen::SerialNumber,
+    }
+
+    /// A CA and a leaf whose validity window is `from`..`to`, in days from now.
+    fn issue(from: i64, to: i64) -> Issued {
+        issue_from("Test Issuing CA", from, to)
+    }
+
+    /// The same, under a chosen CA name — so a test can produce either a
+    /// genuinely different issuer or a different key wearing the same name.
+    fn issue_from(ca_name: &str, from: i64, to: i64) -> Issued {
+        fn key() -> rcgen::KeyPair {
+            rcgen::KeyPair::generate_for(&rcgen::PKCS_ECDSA_P256_SHA256).expect("key")
+        }
+        let mut ca_params =
+            rcgen::CertificateParams::new(vec![ca_name.to_owned()]).expect("params");
+        ca_params.is_ca = rcgen::IsCa::Ca(rcgen::BasicConstraints::Unconstrained);
+        ca_params
+            .distinguished_name
+            .push(rcgen::DnType::CommonName, ca_name);
+        // A CA that may sign CRLs, or `rcgen` refuses to make one with it.
+        ca_params.key_usages = vec![
+            rcgen::KeyUsagePurpose::KeyCertSign,
+            rcgen::KeyUsagePurpose::CrlSign,
+        ];
+        ca_params.not_before = at(-3650);
+        ca_params.not_after = at(3650);
+        let ca = rcgen::CertifiedIssuer::self_signed(ca_params, key()).expect("a CA");
+
+        let mut leaf_params =
+            rcgen::CertificateParams::new(vec!["Test Sealing Certificate".to_owned()])
+                .expect("params");
+        leaf_params
+            .distinguished_name
+            .push(rcgen::DnType::CommonName, "Test Sealing Certificate");
+        leaf_params.not_before = at(from);
+        leaf_params.not_after = at(to);
+        let leaf_serial = leaf_params.serial_number.clone().unwrap_or_else(|| {
+            let s = rcgen::SerialNumber::from(42u64);
+            leaf_params.serial_number = Some(s.clone());
+            s
+        });
+        let leaf = leaf_params
+            .signed_by(&key(), &*ca)
+            .expect("a leaf signed by the CA");
+
+        Issued {
+            ca,
+            leaf_der: leaf.der().to_vec(),
+            leaf_serial,
+        }
+    }
+
+    /// A CRL from `issued`'s CA, listing the leaf as revoked `days` from now
+    /// when `revoked` is set.
+    fn crl(issued: &Issued, revoked: Option<i64>) -> x509_cert::crl::CertificateList {
+        let params = rcgen::CertificateRevocationListParams {
+            this_update: at(0),
+            next_update: at(30),
+            crl_number: rcgen::SerialNumber::from(1u64),
+            issuing_distribution_point: None,
+            key_identifier_method: rcgen::KeyIdMethod::Sha256,
+            revoked_certs: revoked
+                .map(|days| rcgen::RevokedCertParams {
+                    serial_number: issued.leaf_serial.clone(),
+                    revocation_time: at(days),
+                    reason_code: Some(rcgen::RevocationReason::KeyCompromise),
+                    invalidity_date: None,
+                })
+                .into_iter()
+                .collect(),
+        };
+        let der = params
+            .signed_by(&issued.ca)
+            .expect("a signed CRL")
+            .der()
+            .to_vec();
+        x509_cert::crl::CertificateList::from_der(&der).expect("the CRL parses")
+    }
+
+    /// A seal carrying `certificates` and `crls`, built from a real local seal
+    /// so the CMS structure is one this crate actually produces.
+    fn seal_with(
+        certificates: &[Vec<u8>],
+        crls: &[x509_cert::crl::CertificateList],
+    ) -> (Vec<u8>, tempfile::TempDir) {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let id = crate::local::LocalIdentity::load_or_create(dir.path()).expect("identity");
+        let der = id.sign_detached(&[0x22; 32]).expect("sign");
+
+        let info = ContentInfo::from_der(&der).expect("CMS");
+        let mut sd: SignedData = info.content.decode_as().expect("SignedData");
+
+        let parsed: Vec<Certificate> = certificates
+            .iter()
+            .map(|d| Certificate::from_der(d).expect("a certificate"))
+            .collect();
+        let mut certs = der::asn1::SetOfVec::new();
+        for c in &parsed {
+            certs
+                .insert(cms::cert::CertificateChoices::Certificate(c.clone()))
+                .expect("certificate");
+        }
+        sd.certificates = Some(cms::signed_data::CertificateSet(certs));
+
+        // The signer must name the certificate under test, or the parser refuses
+        // the seal before any of this is reached.
+        let mut signers = sd.signer_infos.0.as_slice().to_vec();
+        signers[0].sid = cms::signed_data::SignerIdentifier::IssuerAndSerialNumber(
+            cms::cert::IssuerAndSerialNumber {
+                issuer: parsed[0].tbs_certificate.issuer.clone(),
+                serial_number: parsed[0].tbs_certificate.serial_number.clone(),
+            },
+        );
+        let mut set = der::asn1::SetOfVec::new();
+        set.insert(signers.remove(0)).expect("signer");
+        sd.signer_infos = cms::signed_data::SignerInfos::from(set);
+
+        if !crls.is_empty() {
+            let mut choices = der::asn1::SetOfVec::new();
+            for crl in crls {
+                choices
+                    .insert(cms::revocation::RevocationInfoChoice::Crl(crl.clone()))
+                    .expect("crl");
+            }
+            sd.crls = Some(cms::revocation::RevocationInfoChoices(choices));
+        }
+
+        let reencoded = ContentInfo {
+            content_type: const_oid::db::rfc5911::ID_SIGNED_DATA,
+            content: der::Any::encode_from(&sd).expect("encode"),
+        }
+        .to_der()
+        .expect("re-encode");
+        (reencoded, dir)
+    }
+
+    /// **A certificate that expired before now is reported expired.**
+    ///
+    /// The gap #323 named: nothing read `notAfter`, so a seal made with a
+    /// long-dead certificate reached the same verdict as one made yesterday.
+    #[test]
+    fn an_expired_certificate_is_seen_to_be_expired() {
+        let issued = issue(-400, -30);
+        let (seal, _dir) = seal_with(&[issued.leaf_der.clone(), issued.ca.der().to_vec()], &[]);
+
+        let standing = certificate_standing(&seal, Utc::now()).expect("readable");
+        assert_eq!(standing.validity.standing, WindowStanding::Expired);
+        assert!(standing.validity.not_after < Utc::now());
+        assert!(
+            !standing.judged_at.attested,
+            "a local seal carries a timestamp from a TSA this node also runs, but nothing \
+             here attests to a *provider's* time — the flag is what stops an unproven \
+             moment being reported as a failure"
+        );
+    }
+
+    /// A certificate valid now is inside its window, and the window is reported
+    /// so a reader can check the arithmetic rather than trust the verdict.
+    #[test]
+    fn a_current_certificate_is_inside_its_window() {
+        let issued = issue(-30, 400);
+        let (seal, _dir) = seal_with(&[issued.leaf_der.clone(), issued.ca.der().to_vec()], &[]);
+
+        let standing = certificate_standing(&seal, Utc::now()).expect("readable");
+        assert_eq!(standing.validity.standing, WindowStanding::Inside);
+        assert!(standing.validity.not_before < standing.validity.not_after);
+    }
+
+    /// **A revoked certificate is found, from the seal's own CRL.**
+    ///
+    /// No network: the CRL travels inside the seal, which is what ETSI's
+    /// long-term profiles put it there for.
+    #[test]
+    fn a_revoked_certificate_is_found_in_the_seals_own_crl() {
+        let issued = issue(-30, 400);
+        let revocation = crl(&issued, Some(-1));
+        let (seal, _dir) = seal_with(
+            &[issued.leaf_der.clone(), issued.ca.der().to_vec()],
+            &[revocation],
+        );
+
+        let standing = certificate_standing(&seal, Utc::now()).expect("readable");
+        match standing.revocation {
+            RevocationStanding::Revoked { at } => assert!(at < Utc::now()),
+            other => panic!("expected a revocation, got {other:?}"),
+        }
+    }
+
+    /// A CRL that covers the certificate and does not list it says so, and says
+    /// *as of when* — a CRL older than the seal cannot rule out a later
+    /// revocation, and the field is there so a reader can see which question was
+    /// answered.
+    #[test]
+    fn a_clean_crl_reports_the_moment_it_speaks_for() {
+        let issued = issue(-30, 400);
+        let (seal, _dir) = seal_with(
+            &[issued.leaf_der.clone(), issued.ca.der().to_vec()],
+            &[crl(&issued, None)],
+        );
+
+        let standing = certificate_standing(&seal, Utc::now()).expect("readable");
+        match standing.revocation {
+            RevocationStanding::NotRevoked { as_of } => {
+                assert!((Utc::now() - as_of).num_minutes().abs() < 5);
+            }
+            other => panic!("expected a clean CRL, got {other:?}"),
+        }
+    }
+
+    /// **A CRL nobody signed for is not evidence.**
+    ///
+    /// The attack this closes is the interesting direction: an empty CRL
+    /// *unrevokes* a certificate. Anyone able to add one to a seal could turn a
+    /// revoked certificate into a clean report, so the list's own signature is
+    /// checked against a certificate the seal carries before a word of it is
+    /// believed.
+    #[test]
+    fn a_crl_whose_signature_does_not_verify_is_unusable() {
+        let issued = issue(-30, 400);
+        let mut tampered = crl(&issued, Some(-1));
+        // Drop the revocation, leaving the signature over the original content.
+        tampered.tbs_cert_list.revoked_certificates = None;
+        let (seal, _dir) = seal_with(
+            &[issued.leaf_der.clone(), issued.ca.der().to_vec()],
+            &[tampered],
+        );
+
+        let standing = certificate_standing(&seal, Utc::now()).expect("readable");
+        match standing.revocation {
+            RevocationStanding::Unusable { reason } => {
+                assert!(
+                    reason.contains("signature"),
+                    "the reason must name what failed: {reason}"
+                );
+            }
+            other => panic!("a tampered CRL must not be believed, got {other:?}"),
+        }
+    }
+
+    /// A seal carrying no revocation material says so, and that is not a defect:
+    /// `B-B` and `B-T` seals are not required to carry any.
+    #[test]
+    fn a_seal_with_no_crl_reports_that_it_could_not_ask() {
+        let issued = issue(-30, 400);
+        let (seal, _dir) = seal_with(&[issued.leaf_der.clone(), issued.ca.der().to_vec()], &[]);
+
+        let standing = certificate_standing(&seal, Utc::now()).expect("readable");
+        assert_eq!(standing.revocation, RevocationStanding::NotAvailable);
+    }
+
+    /// A CRL from a different issuer is silently not about this certificate —
+    /// neither an answer nor a problem. A seal legitimately carries the CRLs for
+    /// every certificate in its chain.
+    #[test]
+    fn a_crl_from_another_issuer_is_not_an_answer() {
+        let issued = issue(-30, 400);
+        let other = issue_from("Some Other CA", -30, 400);
+        let (seal, _dir) = seal_with(
+            &[issued.leaf_der.clone(), issued.ca.der().to_vec()],
+            &[crl(&other, Some(-1))],
+        );
+
+        let standing = certificate_standing(&seal, Utc::now()).expect("readable");
+        assert_eq!(
+            standing.revocation,
+            RevocationStanding::NotAvailable,
+            "another CA's list says nothing about this certificate, in either direction"
+        );
+    }
+
+    /// **A CRL wearing the issuer's name, signed by another key, is refused.**
+    ///
+    /// The same asymmetry #323 was opened about, one level down: a name is not a
+    /// signature. Matching a CRL to a certificate by issuer name alone would let
+    /// anyone who can put bytes in a seal revoke a certificate they do not
+    /// control — or, worse in the other direction, clear a revoked one by
+    /// shipping an empty list under the right name.
+    ///
+    /// The answer is `unusable` rather than `notAvailable` on purpose: something
+    /// claiming to be authoritative was there and did not check out, which is
+    /// worth looking at. Silence would file it beside "no CRL was included",
+    /// which is an ordinary state of a `B-T` seal.
+    #[test]
+    fn a_crl_naming_the_issuer_but_signed_by_another_key_is_unusable() {
+        let issued = issue(-30, 400);
+        // Same subject name, freshly generated key.
+        let impostor = issue(-30, 400);
+        let (seal, _dir) = seal_with(
+            &[issued.leaf_der.clone(), issued.ca.der().to_vec()],
+            &[crl(&impostor, Some(-1))],
+        );
+
+        let standing = certificate_standing(&seal, Utc::now()).expect("readable");
+        match standing.revocation {
+            RevocationStanding::Unusable { reason } => assert!(
+                reason.contains("signature"),
+                "the reason must name what failed: {reason}"
+            ),
+            other => panic!("a CRL under a borrowed name must not be believed, got {other:?}"),
+        }
     }
 }
 

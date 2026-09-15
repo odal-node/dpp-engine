@@ -663,6 +663,38 @@ pub enum ValidationSubIndication {
     /// A hash of signed data does not match the value in the signature — here,
     /// the passport's current signature against the digest the seal covers.
     HashFailure,
+    /// The signing certificate was revoked before the seal was made, and a
+    /// timestamp proves the order.
+    Revoked,
+    /// The signing certificate had expired when the seal was made, and a
+    /// timestamp proves it.
+    Expired,
+    /// The signing certificate was not yet valid when the seal was made, and a
+    /// timestamp proves it.
+    NotYetValid,
+    /// The certificate is revoked, and nothing here proves the seal was made
+    /// before that.
+    ///
+    /// `NO_POE` throughout table 6 means *no proof of existence*: without an
+    /// attested time the seal cannot be placed on either side of the revocation,
+    /// and a revoked certificate does not retroactively unmake a seal it made
+    /// while valid. Reporting this as a failure would condemn every sound seal
+    /// from a provider that later rotated a key.
+    RevokedNoPoe,
+    /// The certificate is outside its validity window, and nothing here proves
+    /// the seal was made while it was inside.
+    ///
+    /// The ordinary state of a long-lived seal: certificates expire, sealed
+    /// passports are kept for a decade, and a `B-B` seal carries no time anybody
+    /// can trust. It is what an archival timestamp exists to fix.
+    OutOfBoundsNoPoe,
+    /// Revocation information was not available, so the question could not be
+    /// asked.
+    ///
+    /// Not a defect in the seal. A `B-B` or `B-T` seal is not required to carry
+    /// revocation material — ETSI EN 319 122-1 puts it in `SignedData.crls` from
+    /// `B-LT` upward — and this node reads only what the seal carries.
+    TryLater,
 }
 
 /// What this node's reading of a seal amounts to in EN 319 102-1's vocabulary.
@@ -711,22 +743,186 @@ impl SealBinding {
     /// other "these bytes could not be read". `binding` keeps them apart.
     #[must_use]
     pub fn validation_status(&self) -> SealValidationStatus {
-        let (indication, sub_indication) = match self {
-            Self::CoversThisSignature | Self::Unknown => {
-                (ValidationIndication::Indeterminate, None)
-            }
-            Self::CoversAnotherDigest { .. } => (
-                ValidationIndication::TotalFailed,
-                Some(ValidationSubIndication::HashFailure),
-            ),
-            Self::NotIntact => (
-                ValidationIndication::TotalFailed,
-                Some(ValidationSubIndication::SigCryptoFailure),
-            ),
+        SealValidationStatus::of(self, None)
+    }
+}
+
+/// Where a certificate's validity window sits relative to the moment being asked
+/// about.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum WindowStanding {
+    /// The moment falls inside `notBefore`..`notAfter`.
+    Inside,
+    /// It is after `notAfter`.
+    Expired,
+    /// It is before `notBefore`.
+    NotYetValid,
+}
+
+/// A certificate's validity window, and where the sealing moment falls in it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ValidityWindow {
+    /// The certificate's `notBefore`.
+    pub not_before: DateTime<Utc>,
+    /// The certificate's `notAfter`.
+    pub not_after: DateTime<Utc>,
+    /// Where the judged moment falls.
+    pub standing: WindowStanding,
+}
+
+/// The moment a certificate's standing was judged against, and whether anything
+/// proves it.
+///
+/// Reg. (EU) No 910/2014 Art. 32(1)(b), reached for seals by Art. 40, asks
+/// whether the certificate was valid **at the time of signing** — so the whole
+/// answer turns on which time is used and what that time is worth.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct JudgedTime {
+    /// The moment used.
+    pub at: DateTime<Utc>,
+    /// True when it came from a timestamp token inside the seal, checked.
+    ///
+    /// False means it is this node's clock — the validation time, not the
+    /// signing time. Every verdict resting on an unattested moment is reported
+    /// with a `NO_POE` sub-indication for exactly this reason: EN 319 102-1
+    /// treats a time nothing proves as no time at all, and so does this.
+    pub attested: bool,
+}
+
+/// What the seal's own revocation material says about its certificate.
+///
+/// **Read from the seal, never fetched.** A CRL distribution point is a URL
+/// inside a certificate an operator was handed, and following one would make a
+/// background task issue requests to an address chosen by whoever produced the
+/// seal. The long-term profiles exist precisely so this is unnecessary: ETSI
+/// EN 319 122-1 puts revocation values in `SignedData.crls` from `B-LT` upward,
+/// so a seal meant to be checkable years later carries what is needed to check
+/// it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+// `rename_all` renames the *variants*; the fields inside them need
+// `rename_all_fields`, or `as_of` ships as `as_of` while the spec documents
+// `asOf`. The same trap put `lapsed_at` on the wire once already — see
+// `ArchivalFreshness`, which carries both attributes for the same reason.
+#[serde(
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase",
+    tag = "status"
+)]
+pub enum RevocationStanding {
+    /// A CRL covering this certificate lists it as not revoked.
+    NotRevoked {
+        /// The CRL's `thisUpdate` — the moment its statement is about.
+        ///
+        /// A CRL issued *before* the seal was made cannot show a revocation that
+        /// happened after it. Carried so a reader can see which question was
+        /// actually answered rather than assuming the strongest one.
+        as_of: DateTime<Utc>,
+    },
+    /// The certificate appears on a CRL as revoked.
+    Revoked {
+        /// When the CA says it was revoked.
+        at: DateTime<Utc>,
+    },
+    /// The seal carries no revocation material for this certificate.
+    ///
+    /// Ordinary below `B-LT`, and not a defect.
+    NotAvailable,
+    /// Material is present and cannot be relied on.
+    Unusable {
+        /// Why — an unparseable CRL, one from another issuer, or one whose own
+        /// signature does not verify. Separate from [`Self::NotAvailable`]
+        /// because something was there and failed, which is worth looking at.
+        reason: String,
+    },
+}
+
+/// What this node can establish about the seal's signing certificate.
+///
+/// Art. 32(1)(b) has two limbs — issued by a qualified provider, and **valid at
+/// the time of signing** — and this answers the second. The first is a trusted
+/// list question, answered elsewhere.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CertificateStanding {
+    /// The certificate's window, and where the judged moment falls in it.
+    pub validity: ValidityWindow,
+    /// The moment judged against, and whether anything proves it.
+    pub judged_at: JudgedTime,
+    /// What the seal's own revocation material says.
+    pub revocation: RevocationStanding,
+}
+
+impl SealValidationStatus {
+    /// The EN 319 102-1 status for a seal, from everything this node checked.
+    ///
+    /// # The order is the point
+    ///
+    /// A seal can fail in several ways at once, and the reported answer must be
+    /// the one that decides the outcome. Cryptography first: a signature that
+    /// does not verify makes every later question moot, because the attributes
+    /// those questions read sit inside it. Then the certificate, whose failures
+    /// are `TOTAL-FAILED` only when a timestamp proves the ordering — without
+    /// one they are indeterminate, and reporting them as failures would condemn
+    /// every sound seal whose certificate has since expired, which is all of
+    /// them eventually.
+    ///
+    /// # Passing is still not reachable
+    ///
+    /// Even with the window checked and the CRL read, `TOTAL-PASSED` needs the
+    /// whole of clause 5.1.3's list — the format check, the policy constraints,
+    /// and a certificate chain validated to a trust anchor.
+    /// [`ValidationIndication`] therefore still has two variants, and a seal
+    /// that survives every check here reports `indeterminate`.
+    #[must_use]
+    pub fn of(binding: &SealBinding, certificate: Option<&CertificateStanding>) -> Self {
+        use ValidationSubIndication as Sub;
+
+        let failed = |sub| Self {
+            indication: ValidationIndication::TotalFailed,
+            sub_indication: Some(sub),
         };
-        SealValidationStatus {
-            indication,
-            sub_indication,
+        let unsure = |sub| Self {
+            indication: ValidationIndication::Indeterminate,
+            sub_indication: sub,
+        };
+
+        match binding {
+            SealBinding::NotIntact => return failed(Sub::SigCryptoFailure),
+            SealBinding::CoversAnotherDigest { .. } => return failed(Sub::HashFailure),
+            SealBinding::CoversThisSignature | SealBinding::Unknown => {}
+        }
+
+        let Some(cert) = certificate else {
+            return unsure(None);
+        };
+        let proven = cert.judged_at.attested;
+
+        // Revocation before the window, because a revoked certificate is the
+        // stronger statement: expiry is scheduled and ordinary, revocation is
+        // someone saying this key should not have been used.
+        match &cert.revocation {
+            RevocationStanding::Revoked { at } if proven && *at <= cert.judged_at.at => {
+                return failed(Sub::Revoked);
+            }
+            RevocationStanding::Revoked { .. } => return unsure(Some(Sub::RevokedNoPoe)),
+            RevocationStanding::NotRevoked { .. } => {}
+            // Both mean the question could not be answered, which table 6 calls
+            // `TRY_LATER` — it may be answerable when the material is there.
+            RevocationStanding::NotAvailable | RevocationStanding::Unusable { .. } => {
+                return unsure(Some(Sub::TryLater));
+            }
+        }
+
+        match (cert.validity.standing, proven) {
+            (WindowStanding::Inside, _) => unsure(None),
+            (WindowStanding::Expired, true) => failed(Sub::Expired),
+            (WindowStanding::NotYetValid, true) => failed(Sub::NotYetValid),
+            (WindowStanding::Expired | WindowStanding::NotYetValid, false) => {
+                unsure(Some(Sub::OutOfBoundsNoPoe))
+            }
         }
     }
 }
@@ -871,6 +1067,28 @@ pub trait SealInspector: Send + Sync {
         envelope: &SealedEnvelope,
         now: DateTime<Utc>,
     ) -> ArchivalFreshness;
+
+    /// What the seal's own certificate's standing was when the seal was made.
+    ///
+    /// The second limb of Reg. (EU) No 910/2014 Art. 32(1)(b), reached for seals
+    /// by Art. 40: a qualified certificate must have been **valid at the time of
+    /// signing**. Whether its issuer was a qualified provider is the other limb
+    /// and a trusted list question; this one is answerable from the seal alone.
+    ///
+    /// `now` is a parameter for the same reason it is on
+    /// [`Self::archival_freshness`] — so the answer is a function of its inputs.
+    /// It is used only as the fallback moment, and only when the seal carries no
+    /// attested time; [`JudgedTime::attested`] says which happened, and that
+    /// distinction decides whether an out-of-window certificate is a failure or
+    /// merely unproven.
+    ///
+    /// `None` when the bytes cannot be read — never a verdict of valid or
+    /// invalid, for the reason every other question here returns an option.
+    fn certificate_standing(
+        &self,
+        envelope: &SealedEnvelope,
+        now: DateTime<Utc>,
+    ) -> Option<CertificateStanding>;
 }
 
 #[cfg(test)]
@@ -931,6 +1149,157 @@ mod validation_vocabulary {
         let status = SealBinding::Unknown.validation_status();
         assert_eq!(status.indication, ValidationIndication::Indeterminate);
         assert_eq!(status.sub_indication, None);
+    }
+
+    fn standing(
+        window: WindowStanding,
+        attested: bool,
+        revocation: RevocationStanding,
+    ) -> CertificateStanding {
+        let at = "2027-06-01T00:00:00Z"
+            .parse::<DateTime<Utc>>()
+            .expect("a time");
+        CertificateStanding {
+            validity: ValidityWindow {
+                not_before: "2026-01-01T00:00:00Z".parse().expect("a time"),
+                not_after: "2027-01-01T00:00:00Z".parse().expect("a time"),
+                standing: window,
+            },
+            judged_at: JudgedTime { at, attested },
+            revocation,
+        }
+    }
+
+    fn clean() -> RevocationStanding {
+        RevocationStanding::NotRevoked {
+            as_of: "2027-06-01T00:00:00Z".parse().expect("a time"),
+        }
+    }
+
+    /// **An expired certificate fails only when a timestamp proves the order.**
+    ///
+    /// Art. 32(1)(b) asks whether the certificate was valid *at the time of
+    /// signing*, so the verdict turns entirely on whether the signing time is
+    /// known. With an attested time the seal was made after expiry and that is a
+    /// failure; without one, all that is known is that the certificate is
+    /// expired *now* — which is the eventual state of every certificate, and
+    /// says nothing about a seal made years earlier.
+    #[test]
+    fn an_expired_certificate_fails_only_against_a_proven_time() {
+        let proven = standing(WindowStanding::Expired, true, clean());
+        let status = SealValidationStatus::of(&SealBinding::CoversThisSignature, Some(&proven));
+        assert_eq!(status.indication, ValidationIndication::TotalFailed);
+        assert_eq!(
+            status.sub_indication,
+            Some(ValidationSubIndication::Expired)
+        );
+
+        let unproven = standing(WindowStanding::Expired, false, clean());
+        let status = SealValidationStatus::of(&SealBinding::CoversThisSignature, Some(&unproven));
+        assert_eq!(
+            status.indication,
+            ValidationIndication::Indeterminate,
+            "without a proof of existence this must not read as a failure"
+        );
+        assert_eq!(
+            status.sub_indication,
+            Some(ValidationSubIndication::OutOfBoundsNoPoe)
+        );
+    }
+
+    /// The same rule for revocation, and the asymmetry matters more here: a
+    /// certificate revoked *after* a seal was made does not unmake the seal.
+    #[test]
+    fn a_revoked_certificate_fails_only_against_a_proven_time() {
+        let revoked_before = RevocationStanding::Revoked {
+            at: "2027-01-05T00:00:00Z".parse().expect("a time"),
+        };
+        let proven = standing(WindowStanding::Inside, true, revoked_before.clone());
+        let status = SealValidationStatus::of(&SealBinding::CoversThisSignature, Some(&proven));
+        assert_eq!(status.indication, ValidationIndication::TotalFailed);
+        assert_eq!(
+            status.sub_indication,
+            Some(ValidationSubIndication::Revoked)
+        );
+
+        let unproven = standing(WindowStanding::Inside, false, revoked_before);
+        let status = SealValidationStatus::of(&SealBinding::CoversThisSignature, Some(&unproven));
+        assert_eq!(status.indication, ValidationIndication::Indeterminate);
+        assert_eq!(
+            status.sub_indication,
+            Some(ValidationSubIndication::RevokedNoPoe)
+        );
+    }
+
+    /// A revocation *after* the attested sealing time is not a finding at all —
+    /// the seal was made while the certificate was good.
+    #[test]
+    fn a_revocation_after_sealing_does_not_condemn_the_seal() {
+        let later = RevocationStanding::Revoked {
+            at: "2027-12-01T00:00:00Z".parse().expect("a time"),
+        };
+        let cert = standing(WindowStanding::Inside, true, later);
+        let status = SealValidationStatus::of(&SealBinding::CoversThisSignature, Some(&cert));
+        assert_eq!(status.indication, ValidationIndication::Indeterminate);
+        assert_eq!(
+            status.sub_indication,
+            Some(ValidationSubIndication::RevokedNoPoe),
+            "reported, because a reader should see it — but not as a failure"
+        );
+    }
+
+    /// No revocation material is `TRY_LATER`: the question could not be asked,
+    /// which is the ordinary state of a `B-B` or `B-T` seal.
+    #[test]
+    fn a_seal_carrying_no_revocation_material_is_try_later() {
+        let cert = standing(
+            WindowStanding::Inside,
+            true,
+            RevocationStanding::NotAvailable,
+        );
+        let status = SealValidationStatus::of(&SealBinding::CoversThisSignature, Some(&cert));
+        assert_eq!(status.indication, ValidationIndication::Indeterminate);
+        assert_eq!(
+            status.sub_indication,
+            Some(ValidationSubIndication::TryLater)
+        );
+    }
+
+    /// **The cryptography decides first.**
+    ///
+    /// A seal whose signature does not verify is `SIG_CRYPTO_FAILURE` whatever
+    /// the certificate says — and it must be, because the attributes every other
+    /// question reads sit inside that signature. Reporting the revocation
+    /// instead would hand a reader a finding drawn from bytes nothing vouches
+    /// for.
+    #[test]
+    fn a_broken_signature_outranks_every_certificate_finding() {
+        let revoked = standing(
+            WindowStanding::Expired,
+            true,
+            RevocationStanding::Revoked {
+                at: "2026-06-01T00:00:00Z".parse().expect("a time"),
+            },
+        );
+        let status = SealValidationStatus::of(&SealBinding::NotIntact, Some(&revoked));
+        assert_eq!(
+            status.sub_indication,
+            Some(ValidationSubIndication::SigCryptoFailure)
+        );
+    }
+
+    /// Everything checked, nothing wrong — and still not a pass, because the
+    /// chain has not been validated to a trust anchor and the policy constraints
+    /// have not been applied.
+    #[test]
+    fn a_certificate_that_survives_every_check_is_still_only_indeterminate() {
+        let cert = standing(WindowStanding::Inside, true, clean());
+        let status = SealValidationStatus::of(&SealBinding::CoversThisSignature, Some(&cert));
+        assert_eq!(status.indication, ValidationIndication::Indeterminate);
+        assert_eq!(
+            status.sub_indication, None,
+            "nothing in table 6 applies, so this is the custom-diagnostic case"
+        );
     }
 
     /// The wire strings are the standard's names in this API's casing, and

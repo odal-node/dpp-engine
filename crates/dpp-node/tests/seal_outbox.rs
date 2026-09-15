@@ -920,6 +920,62 @@ async fn a_locally_sealed_passport_reports_that_no_provider_issued_it() {
         "origin    : selfIssued={} issuer={}",
         served.self_issued, served.issuer
     );
+
+    // ── The certificate's own standing, end to end ──────────────────────────
+    //
+    // Art. 32(1)(b)'s second limb, against a seal this workspace actually
+    // produced rather than a fixture. It exercises the whole revocation path:
+    // the local backend emits a real, signed, empty CRL under its own name at
+    // `B-LTA`, so reaching `notRevoked` means the list was matched to the
+    // certificate's issuer *and* its signature verified — a CRL that failed
+    // either check would report `unusable`, and one that was absent
+    // `notAvailable`.
+    let standing = service
+        .seal_inspector
+        .as_ref()
+        .expect("the inspector is wired")
+        .certificate_standing(&seal, Utc::now())
+        .expect("a readable CAdES seal");
+
+    assert_eq!(
+        standing.validity.standing,
+        dpp_types::WindowStanding::Inside,
+        "a seal made moments ago is inside its certificate's window"
+    );
+    match standing.revocation {
+        dpp_types::RevocationStanding::NotRevoked { as_of } => {
+            assert!(
+                (Utc::now() - as_of).num_minutes().abs() < 5,
+                "the CRL the local backend embeds speaks for right now"
+            );
+        }
+        other => panic!("the local backend's own CRL must be usable, got {other:?}"),
+    }
+
+    // And the verdict over all of it. Everything this node can check passes,
+    // and the answer is still `indeterminate` — the chain is not validated to a
+    // trust anchor, so `TOTAL-PASSED` is not reachable and the type cannot
+    // express it. A development seal reporting a pass is exactly the confusion
+    // this whole surface is arranged to prevent.
+    let binding = service
+        .seal_inspector
+        .as_ref()
+        .expect("the inspector is wired")
+        .binding(&seal, &expected_digest);
+    let status = dpp_types::SealValidationStatus::of(&binding, Some(&standing));
+    assert_eq!(
+        status.indication,
+        dpp_types::ValidationIndication::Indeterminate
+    );
+    assert_eq!(
+        status.sub_indication, None,
+        "nothing failed, so no table 6 value applies"
+    );
+
+    println!(
+        "certificate: window={:?} revocation={:?}",
+        standing.validity.standing, standing.revocation
+    );
 }
 
 /// **A seal corrupted at rest is found, repaired, and the replacement binds.**

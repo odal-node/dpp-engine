@@ -289,6 +289,16 @@ const UNCHECKED: &[(&str, &str)] = &[
          the only thing that would actually close it",
     ),
     (
+        "RevocationStanding",
+        "an internally-tagged enum whose four variants carry three different \
+         payload fields (`asOf`, `at`, `reason`), so no single fixture can emit \
+         the union of documented properties and the key-set comparison reports \
+         the other three as undocumented. The wire form of every variant is \
+         pinned instead by `every_revocation_standing_serialises_as_documented`, \
+         which also checks the documented property list against what the \
+         variants can actually emit",
+    ),
+    (
         "ResponsibilityBasis",
         "a `oneOf` of a string enum and an externally-tagged object          (`OtherUnionLaw`, which carries a citation), the same shape as          `CredentialRole` below and unexpressible by either checker for the same          reason. The wire form of each variant is pinned instead by          `every_responsibility_basis_serialises_as_documented`",
     ),
@@ -478,6 +488,9 @@ fn object_cases() -> Vec<ObjectCase> {
     case!("SealOrigin", fixtures::seal_origin());
     case!("SealBinding", fixtures::seal_binding());
     case!("SealValidationStatus", fixtures::seal_validation_status());
+    case!("CertificateStanding", fixtures::certificate_standing());
+    case!("ValidityWindow", fixtures::certificate_standing().validity);
+    case!("JudgedTime", fixtures::certificate_standing().judged_at);
     case!("ArchivalFreshness", fixtures::archival_freshness());
     case!("SealAuditReport", fixtures::seal_audit_report());
     case!("SealRepairResponse", fixtures::seal_repair_response());
@@ -1038,6 +1051,81 @@ fn deactivation_reason_documents_every_kind() {
         "DeactivationReason `kind` discriminators disagree.\n  spec: {}\n  code: {}",
         joined(&documented),
         joined(&emitted)
+    );
+}
+
+/// `RevocationStanding` is `UNCHECKED` above: its variants carry three different
+/// payload fields, so a single fixture cannot emit the union the key-set
+/// comparison expects. This pins what that comparison could not — the wire form
+/// of every variant, and that the schema documents exactly the fields they can
+/// emit between them.
+///
+/// The property that matters is the one a reader of the spec relies on: which
+/// field to read for which `status`. Getting that wrong would send an auditor to
+/// `at` for a CRL's `thisUpdate`, which is a different date about a different
+/// question.
+#[test]
+fn every_revocation_standing_serialises_as_documented() {
+    let spec = spec();
+    let schema = &schemas(&spec)["RevocationStanding"];
+    let documented: BTreeSet<String> = schema["properties"]
+        .as_object()
+        .expect("RevocationStanding documents properties")
+        .keys()
+        .cloned()
+        .collect();
+
+    let ts = fixtures::certificate_standing().judged_at.at;
+    let cases: &[(dpp_types::RevocationStanding, &str, Option<&str>)] = &[
+        (
+            dpp_types::RevocationStanding::NotRevoked { as_of: ts },
+            "notRevoked",
+            Some("asOf"),
+        ),
+        (
+            dpp_types::RevocationStanding::Revoked { at: ts },
+            "revoked",
+            Some("at"),
+        ),
+        (
+            dpp_types::RevocationStanding::NotAvailable,
+            "notAvailable",
+            None,
+        ),
+        (
+            dpp_types::RevocationStanding::Unusable {
+                reason: "the CRL's own signature does not verify".to_owned(),
+            },
+            "unusable",
+            Some("reason"),
+        ),
+    ];
+
+    let mut emitted: BTreeSet<String> = BTreeSet::new();
+    for (value, status, payload) in cases {
+        let json = serde_json::to_value(value).expect("serialises");
+        let object = json.as_object().expect("an object");
+        assert_eq!(
+            object["status"], *status,
+            "the tag is what a reader switches on: {json}"
+        );
+        match payload {
+            Some(field) => assert!(
+                object.contains_key(*field),
+                "`{status}` must carry `{field}`: {json}"
+            ),
+            None => assert_eq!(
+                object.len(),
+                1,
+                "`{status}` answers nothing further and must carry nothing further: {json}"
+            ),
+        }
+        emitted.extend(object.keys().cloned());
+    }
+
+    assert_eq!(
+        documented, emitted,
+        "the schema must document exactly the fields these variants emit"
     );
 }
 
@@ -3584,7 +3672,11 @@ mod fixtures {
             // unchecked.
             origin: Some(seal_origin()),
             binding: seal_binding(),
-            validation: seal_binding().validation_status(),
+            validation: dpp_types::SealValidationStatus::of(
+                &seal_binding(),
+                Some(&certificate_standing()),
+            ),
+            certificate: Some(certificate_standing()),
             // A `&'static str` constant on the response type; the fixture only
             // needs a value of the right shape for the key set.
             verification: "not validated by this node",
@@ -3637,6 +3729,28 @@ mod fixtures {
     pub fn seal_binding() -> dpp_types::SealBinding {
         dpp_types::SealBinding::CoversAnotherDigest {
             covered: "7".repeat(64),
+        }
+    }
+
+    /// A certificate that is revoked and expired, judged against an attested
+    /// moment.
+    ///
+    /// The loaded variant of every optional part: a revocation date to compare,
+    /// a window that has been left, and `attested: true`, which is what turns
+    /// those from observations into findings. A fixture where nothing had
+    /// happened would check the key set and none of the values.
+    pub fn certificate_standing() -> dpp_types::CertificateStanding {
+        dpp_types::CertificateStanding {
+            validity: dpp_types::ValidityWindow {
+                not_before: ts(),
+                not_after: ts(),
+                standing: dpp_types::WindowStanding::Expired,
+            },
+            judged_at: dpp_types::JudgedTime {
+                at: ts(),
+                attested: true,
+            },
+            revocation: dpp_types::RevocationStanding::Revoked { at: ts() },
         }
     }
 
