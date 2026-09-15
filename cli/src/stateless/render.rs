@@ -249,13 +249,15 @@ pub fn render_passport_list(page: &PassportPage) {
     );
     println!("{}", "─".repeat(86));
     for r in &page.rows {
+        // A forged row is the worst case in a table: the columns line up, so a
+        // fabricated line is indistinguishable from a real passport.
         println!(
             "{:<10} {:<32} {:<9} {:<18} {}",
-            r.status,
-            truncate(&r.product_name, 32),
-            r.product_group,
-            r.batch.as_deref().unwrap_or("—"),
-            r.updated
+            plain(&r.status),
+            plain(&truncate(&r.product_name, 32)),
+            plain(&r.product_group),
+            plain(r.batch.as_deref().unwrap_or("—")),
+            plain(&r.updated)
         );
     }
     print!("\n{} shown", page.rows.len());
@@ -269,7 +271,14 @@ pub fn render_passport_list(page: &PassportPage) {
 /// browser's "View details"). Shows the full ID and QR link.
 pub fn render_passport_details(doc: &serde_json::Value) {
     let s = |k: &str| doc.get(k).and_then(|v| v.as_str());
-    let line = |label: &str, val: &str| println!("  {:<14}{}", format!("{label}:"), val);
+    // Sanitised here rather than at each call site: every value below is a
+    // product document's own text — a manufacturer name, a batch reference, a
+    // facility label — which arrives from an import, an API caller or a
+    // supply-chain peer. Guarding the one place they are all printed means a
+    // field added later cannot miss it.
+    let line = |label: &str, val: &str| {
+        println!("  {:<14}{}", format!("{label}:"), plain(val));
+    };
 
     line("Product", s("productName").unwrap_or("—"));
     line("Status", s("status").unwrap_or("—"));
@@ -420,13 +429,34 @@ pub fn render_history(entries: &[PassportAuditEntry], id: &str) {
     }
     println!("{:<26}  {:<12}  ACTOR", "TIMESTAMP", "ACTION");
     for e in entries {
-        println!("{:<26}  {:<12}  {}", e.timestamp, e.action, e.actor);
+        // `actor` is whatever authenticated — a user id this node was handed,
+        // not one it chose.
+        println!(
+            "{:<26}  {:<12}  {}",
+            e.timestamp,
+            plain(&e.action),
+            plain(&e.actor)
+        );
     }
 }
 
 /// Read an integer field from a stats response, defaulting to 0.
 fn stat_i64(v: &serde_json::Value, key: &str) -> i64 {
     v.get(key).and_then(serde_json::Value::as_i64).unwrap_or(0)
+}
+
+/// Read a string field from a node response, sanitised.
+///
+/// The safe path made the **short** path, which is the only version of this
+/// rule that survives the next person adding a field. Reading with
+/// `get(..).as_str()` and printing the result is one line shorter than reading
+/// it and remembering [`plain`]; making the sanitised form the convenient one
+/// removes the choice rather than documenting it.
+fn field(value: &serde_json::Value, key: &str) -> Option<String> {
+    value
+        .get(key)
+        .and_then(serde_json::Value::as_str)
+        .map(plain)
 }
 
 /// Strip control characters from a node-supplied string before it is printed.
@@ -442,9 +472,11 @@ fn stat_i64(v: &serde_json::Value, key: &str) -> i64 {
 /// timestamp byte-identical and a tampered one visibly wrong, which is the
 /// right outcome for a field whose only job is to be read at a glance.
 ///
-/// Scope: this guards the field this module added. The passport-document
-/// strings rendered further up have the same shape and predate it — widening
-/// the fix is its own change, not one to smuggle in here.
+/// Scope: **every** node-supplied string this module prints, now. It began as a
+/// guard on one field, with the passport-document strings left for their own
+/// change — this is that change. Where a renderer reads or prints through a
+/// shared helper, the helper sanitises, so a field added later inherits it
+/// instead of needing to remember.
 fn plain(s: &str) -> String {
     s.chars().filter(|c| !c.is_control()).collect()
 }
@@ -644,12 +676,7 @@ pub fn render_schema_check(result: &SchemaCheckResult) {
 /// passport was re-published after sealing and the seal still covers the
 /// signature it was bought for.
 pub fn render_seal_status(seal: &serde_json::Value, id: &str) {
-    let s = |key: &str| {
-        seal.get(key)
-            .and_then(serde_json::Value::as_str)
-            .unwrap_or("-")
-            .to_owned()
-    };
+    let s = |key: &str| field(seal, key).unwrap_or_else(|| "-".to_owned());
     let placeholder = seal
         .get("placeholder")
         .and_then(serde_json::Value::as_bool)
@@ -690,15 +717,9 @@ pub fn render_seal_status(seal: &serde_json::Value, id: &str) {
     // A third party's statement of when, as opposed to ours. Absent below B-T,
     // and absent for a token that failed its checks — which is not the same as
     // a seal made at an unknown time, but is the same answer: we cannot say.
-    match seal
-        .get("attestedSealedAt")
-        .and_then(serde_json::Value::as_str)
-    {
+    match field(seal, "attestedSealedAt") {
         Some(at) => {
-            println!(
-                "  Attested at   : {}  by the timestamp inside the seal",
-                plain(at)
-            );
+            println!("  Attested at   : {at}  by the timestamp inside the seal");
         }
         None => println!("  Attested at   : none — no timestamp token this node could check"),
     }
@@ -706,10 +727,7 @@ pub fn render_seal_status(seal: &serde_json::Value, id: &str) {
     // The certificate the seal names as its signer — which certificate to ask
     // about, not whether it was qualified. Absent for seals made before the
     // extraction landed, or when the CAdES could not be parsed.
-    match seal
-        .get("signingCertRef")
-        .and_then(serde_json::Value::as_str)
-    {
+    match field(seal, "signingCertRef") {
         Some(cert) => println!("  Signing cert  : {cert}"),
         None => println!("  Signing cert  : not recorded (predates extraction, or unparseable)"),
     }
@@ -728,12 +746,7 @@ pub fn render_seal_status(seal: &serde_json::Value, id: &str) {
             // is not something this node chose the bytes of — so a name
             // carrying ANSI escapes or newlines could repaint the lines around
             // it and forge output under the CLI's own labels.
-            let issuer = plain(
-                origin
-                    .get("issuer")
-                    .and_then(serde_json::Value::as_str)
-                    .unwrap_or("-"),
-            );
+            let issuer = field(origin, "issuer").unwrap_or_else(|| "-".to_owned());
             if self_issued {
                 println!(
                     "  Issued by     : {}  {issuer}",
@@ -785,12 +798,9 @@ pub fn render_seal_status(seal: &serde_json::Value, id: &str) {
             println!("                  current signature, and the signature over them verifies");
         }
         "coversAnotherDigest" => {
-            let covered = plain(
-                binding
-                    .and_then(|b| b.get("covered"))
-                    .and_then(serde_json::Value::as_str)
-                    .unwrap_or("-"),
-            );
+            let covered = binding
+                .and_then(|b| field(b, "covered"))
+                .unwrap_or_else(|| "-".to_owned());
             println!(
                 "  Binding       : {}  the seal covers {covered},",
                 style("OTHER DIGEST").yellow().bold()
@@ -947,6 +957,38 @@ mod node_supplied_text {
             out.contains("CN=Acme"),
             "the readable part must survive: {out:?}"
         );
+    }
+
+    /// The table renderers are the worst case, so the sweep reached them.
+    ///
+    /// A forged row in `odal list` lines up with the real ones: the columns are
+    /// padded, so a fabricated passport is indistinguishable from a genuine one
+    /// at a glance. That is a different failure from a mangled field, and it is
+    /// why this went past the field that started it.
+    #[test]
+    fn a_product_name_cannot_forge_a_table_row() {
+        let forged = plain("Widget\nfake-row    Totally Real Product");
+        assert!(
+            !forged.contains('\n'),
+            "a newline would open a second line under the table's own columns: {forged:?}"
+        );
+        assert!(
+            forged.contains("Widget"),
+            "the readable part survives: {forged:?}"
+        );
+    }
+
+    /// The reading helper sanitises, so a field added later inherits it.
+    ///
+    /// This is the part meant to outlast the sweep. Auditing every call site
+    /// once fixes today; making the short way the safe way is what stops the
+    /// next field being added unguarded.
+    #[test]
+    fn reading_a_field_sanitises_it() {
+        let v = serde_json::json!({ "issuer": "CN=Acme\u{1b}[2Kfake" });
+        let read = super::field(&v, "issuer").expect("present");
+        assert!(!read.contains('\u{1b}'), "escape survived: {read:?}");
+        assert_eq!(super::field(&v, "absent"), None);
     }
 
     /// A newline in the field would let a node forge extra CLI output lines

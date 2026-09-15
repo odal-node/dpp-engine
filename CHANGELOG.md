@@ -432,6 +432,20 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ### Fixed
 
+- **Every node-supplied string the CLI prints is now sanitised** (#327). The
+  ANSI/newline guard covered one field by design, with the passport-document
+  strings deliberately left for their own change; this is that change. A string
+  carrying `ESC[2K` can erase the line it is printed on and rewrite it, and one
+  carrying a newline can forge whole additional lines under the CLI's own
+  labels — and those strings arrive from imports, API callers and supply-chain
+  peers, not from the node's own choosing.
+
+  The worst case is a table: `odal list` pads its columns, so a forged row is
+  indistinguishable from a real passport at a glance. Guarding happens at the
+  shared read and print helpers rather than at each call site, so a field added
+  later inherits it — `field()` reads and sanitises in one step, which makes the
+  safe path the short path.
+
 - **Signature checking covered none of the certificates a real provider uses.**
   `verify_against_embedded_certificate` understood P-256 only — what the local
   development backend emits, and **not one** of the 373 qualified-CA certificates
