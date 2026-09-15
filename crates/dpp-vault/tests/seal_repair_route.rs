@@ -97,6 +97,12 @@ async fn vault_reading(dal: &PgDal, verdict: SealBinding) -> String {
 
 /// A published, signed passport carrying no seal yet.
 async fn seed(dal: &PgDal) -> PassportId {
+    seed_with(dal, Some(JWS), None).await
+}
+
+/// The same, with the signature and the seal chosen by the caller — for the one
+/// state that has to be built rather than reached.
+async fn seed_with(dal: &PgDal, jws: Option<&str>, seal: Option<SealedEnvelope>) -> PassportId {
     let passport = Passport {
         id: PassportId::new(),
         batch_id: None,
@@ -121,7 +127,7 @@ async fn seed(dal: &PgDal) -> PassportId {
         product_group_data: None,
         status: PassportStatus::Published,
         qr_code_url: None,
-        jws_signature: Some(JWS.to_owned()),
+        jws_signature: jws.map(ToOwned::to_owned),
         public_jws_signature: None,
         disclosure_signatures: Default::default(),
         created_at: Utc::now(),
@@ -141,7 +147,7 @@ async fn seed(dal: &PgDal) -> PassportId {
         operator_identifier: None,
         responsible_operator: None,
         facility: None,
-        seal: None,
+        seal,
     };
     let id = passport.id;
     PgPassportRepo::new(dal.clone())
@@ -477,6 +483,43 @@ async fn an_unreadable_seal_is_refused() {
         "the refusal must distinguish unreadable from broken: {body}"
     );
     assert_eq!(counts(&pg.dal).await.pending, 0);
+}
+
+/// **A passport carrying a seal and no signature is refused, not queued over
+/// nothing.**
+///
+/// The state should be unreachable — a seal is applied to a signature — so the
+/// route treats it as a refusal rather than repairing it. It has to be built by
+/// hand for exactly that reason, and it is built because the `422` is documented
+/// on the route: an error condition that is described and never constructed is a
+/// claim about behaviour that nothing checks.
+///
+/// What it guards is small and sharp: the digest would otherwise be empty, and
+/// the drain would be sent to buy a seal over nothing.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_seal_with_no_signature_to_cover_is_refused() {
+    let pg = start_postgres().await;
+    let base = vault_reading(&pg.dal, SealBinding::NotIntact).await;
+    let id = seed_with(&pg.dal, None, Some(envelope())).await;
+
+    let client = TestClient::new(&base, make_jwt(&op()));
+    let resp = client
+        .post_json(
+            &format!("/api/v1/dpp/{id}/seal/repair"),
+            serde_json::json!({}),
+        )
+        .await;
+    assert_eq!(resp.status(), 422);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert!(
+        detail(&body).contains("no signature"),
+        "the refusal must name what is missing: {body}"
+    );
+    assert_eq!(
+        counts(&pg.dal).await.pending,
+        0,
+        "and nothing may be queued over an empty digest"
+    );
 }
 
 /// A passport with no seal is the sweep's job, and the sweep costs nothing
