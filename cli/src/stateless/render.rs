@@ -678,6 +678,99 @@ pub fn render_seal_status(seal: &serde_json::Value, id: &str) {
         None => println!("  Signing cert  : not recorded (predates extraction, or unparseable)"),
     }
 
+    // Who issued the certificate — the question an operator asks first, and the
+    // one that used to be answerable only by reading the node's configuration.
+    match seal.get("origin") {
+        Some(origin) if !origin.is_null() => {
+            let self_issued = origin
+                .get("selfIssued")
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(false);
+            // Sanitised, and this is the sharpest case in the file: the issuer
+            // is a distinguished name read out of a certificate **inside a
+            // seal**. A provider's certificate, or a seal handed to this node,
+            // is not something this node chose the bytes of — so a name
+            // carrying ANSI escapes or newlines could repaint the lines around
+            // it and forge output under the CLI's own labels.
+            let issuer = plain(
+                origin
+                    .get("issuer")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("-"),
+            );
+            if self_issued {
+                println!(
+                    "  Issued by     : {}  {issuer}",
+                    style("SELF-SIGNED").yellow().bold()
+                );
+                println!(
+                    "                  nobody issued this certificate — it attests that a key \
+                     this node holds"
+                );
+                println!("                  signed a digest, and carries no legal weight");
+            } else {
+                println!("  Issued by     : {issuer}");
+            }
+            let device = match origin
+                .get("creationDevice")
+                .and_then(serde_json::Value::as_str)
+            {
+                Some("declaresQualifiedDevice") => {
+                    "declares a qualified creation device (Annex III(j))"
+                }
+                Some("noQualifiedDevice") => {
+                    "a qualified certificate, but its key is not in a qualified device"
+                }
+                Some("notAQualifiedCertificate") => {
+                    "not presenting as a qualified certificate at all"
+                }
+                _ => "-",
+            };
+            println!("  Key device    : {device}");
+        }
+        _ => println!(
+            "  Issued by     : not read (placeholder, unparsed format, or unreadable bytes)"
+        ),
+    }
+
+    // Whether the seal's own bytes cover this passport. Distinct from Coverage
+    // below, which answers from this node's records.
+    let binding = seal.get("binding");
+    let result = binding
+        .and_then(|b| b.get("result"))
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("unknown");
+    match result {
+        "coversThisSignature" => {
+            println!(
+                "  Binding       : {}  the seal's own signed attributes cover this passport's",
+                style("PROVEN").green().bold()
+            );
+            println!("                  current signature, and the signature over them verifies");
+        }
+        "coversAnotherDigest" => {
+            let covered = plain(
+                binding
+                    .and_then(|b| b.get("covered"))
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("-"),
+            );
+            println!(
+                "  Binding       : {}  the seal covers {covered},",
+                style("OTHER DIGEST").yellow().bold()
+            );
+            println!("                  not this passport's current signature");
+        }
+        "notIntact" => {
+            println!(
+                "  Binding       : {}  the signature over the seal's attributes does not",
+                style("BROKEN").red().bold()
+            );
+            println!("                  verify, so nothing it says about what it covers holds");
+        }
+        _ => println!("  Binding       : not read — no digest recoverable from the envelope"),
+    }
+
     let coverage = s("coverage");
     let note = match coverage.as_str() {
         "current" => "covers the passport's current signature".to_owned(),
@@ -737,6 +830,21 @@ pub fn render_seal_summary(summary: &serde_json::Value) {
         return;
     }
 
+    match summary.get("trustMode").and_then(serde_json::Value::as_str) {
+        Some("live") => println!("Sealing tier: {}", style("live").green()),
+        Some("sandbox") => println!(
+            "Sealing tier: {}  a real provider, on its test certificate",
+            style("sandbox").yellow()
+        ),
+        Some("ghost") => println!(
+            "Sealing tier: {}  these seals carry no legal weight whatsoever",
+            style("ghost").red().bold()
+        ),
+        // Not the same as `ghost`: a port nobody resolved versus one that landed
+        // on a placeholder. Only the second blocks a production boot.
+        _ => println!("Sealing tier: not reported by this node"),
+    }
+
     let unsealed = n("unsealedPublished");
     println!("Sealing");
     if unsealed == 0 {
@@ -786,6 +894,23 @@ mod node_supplied_text {
         let out = plain("2026-09-10\u{1b}[2J\u{1b}[H");
         assert!(!out.contains('\u{1b}'), "escape survived: {out:?}");
         assert_eq!(out, "2026-09-10[2J[H");
+    }
+
+    /// A distinguished name is the sharpest case, and it is now rendered.
+    ///
+    /// `render_seal_status` prints the issuer read out of a certificate **inside
+    /// a seal**. That is the least node-chosen string this module displays — a
+    /// provider's certificate, or a seal handed to this node from elsewhere — so
+    /// it is exactly the field an attacker would put escapes in.
+    #[test]
+    fn a_distinguished_name_carrying_escapes_is_defanged() {
+        let out = plain("CN=Acme\u{1b}[2K\rO=Qualified CA");
+        assert!(!out.contains('\u{1b}'), "escape survived: {out:?}");
+        assert!(!out.contains('\r'), "carriage return survived: {out:?}");
+        assert!(
+            out.contains("CN=Acme"),
+            "the readable part must survive: {out:?}"
+        );
     }
 
     /// A newline in the field would let a node forge extra CLI output lines

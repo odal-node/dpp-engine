@@ -51,6 +51,18 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ### Added
 
+- **`odal seal status` and `odal seal status --all` render the new fields.** The
+  CLI is the surface a sandbox demo is driven from, and it showed none of them:
+  who issued the seal, whether it binds to the passport, or what tier the
+  configured backend resolved to. `SELF-SIGNED`, `PROVEN`, `BROKEN` and `ghost`
+  are called out rather than left to be inferred from a field name.
+
+  The issuer is passed through the existing `plain()` sanitiser, and it is the
+  sharpest case in that module: a distinguished name read out of a certificate
+  **inside a seal** is the least node-chosen string the CLI displays, so it is
+  exactly where an ANSI escape would be put to forge output under the CLI's own
+  labels.
+
 - **The evidence dossier now states whether its seal covers the signature it is
   served beside.** The dossier carries the seal, the passport's compact JWS and
   its digest, so a verifier holding only that file has everything needed. The JWS
