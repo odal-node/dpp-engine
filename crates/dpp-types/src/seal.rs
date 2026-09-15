@@ -249,6 +249,61 @@ pub struct SealOrigin {
     pub creation_device: CreationDevice,
 }
 
+/// Whether a seal's own bytes say it covers a particular signature.
+///
+/// # Why this exists beside the outbox record
+///
+/// A node records the digest it *asked* a backend to seal, and that record is
+/// genuinely useful: it survives a seal that will not parse, and it spots a
+/// re-published passport with a string comparison and no AdES tooling. But it is
+/// a statement about this node's own bookkeeping. A seal restored from a backup
+/// has no such row; a seal stored against the wrong passport has a row that
+/// agrees with itself and nothing else.
+///
+/// A detached CAdES says what it covers in exactly one place — the
+/// `messageDigest` signed attribute, RFC 5652 §11.2 — and that attribute is
+/// *inside* the signature. Reading it turns "this seal is for this passport"
+/// from a claim resting on our records into a fact checkable against the seal.
+///
+/// The two answers can disagree, and **the disagreement is the finding**: it
+/// means the records and the bytes describe different things, which no single
+/// source could have told anyone.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", tag = "result")]
+pub enum SealBinding {
+    /// The seal names this exact signature, and its attributes verify under the
+    /// certificate it carries.
+    ///
+    /// The strongest statement this node can make without an external validator:
+    /// whatever else is true of the seal's *trust*, it is demonstrably a seal
+    /// over this passport's current signature and not over anything else.
+    CoversThisSignature,
+    /// The seal is intact and names a different digest.
+    ///
+    /// Ordinary after a re-publish — the passport re-signed, so its current
+    /// signature is not the one sealed. It is also what a seal stored against the
+    /// wrong passport looks like, and the two are indistinguishable from here;
+    /// what distinguishes them is whether an outbox row exists saying this digest
+    /// was ever requested for this passport.
+    CoversAnotherDigest {
+        /// The hex SHA-256 the seal actually covers.
+        covered: String,
+    },
+    /// The signature over the seal's attributes does not verify.
+    ///
+    /// No digest is reported, deliberately: the attribute naming it is inside a
+    /// signature that failed, so its contents are not evidence of anything. A
+    /// caller shown a digest here would be shown a number that nothing vouches
+    /// for.
+    NotIntact,
+    /// The bytes could not be read, or carry no digest at all.
+    ///
+    /// A placeholder seal, an unparsed format, or a signature with no signed
+    /// attributes — a seal whose digest is not inside it and cannot be recovered
+    /// from the envelope alone. **Never** to be read as a mismatch.
+    Unknown,
+}
+
 /// Reads a stored seal's certificate.
 ///
 /// # Why this is a port rather than a function
@@ -272,4 +327,15 @@ pub trait SealInspector: Send + Sync {
     /// **never** that the seal was self-issued, which is a finding and must come
     /// from a certificate that was actually examined.
     fn origin(&self, envelope: &SealedEnvelope) -> Option<SealOrigin>;
+
+    /// Whether the envelope's own bytes say it covers `payload_hash`.
+    ///
+    /// `payload_hash` is the hex SHA-256 the caller wants to test against — for
+    /// a passport, [`digest_for_jws`] of its current compact JWS.
+    ///
+    /// The implementation must check the seal's signature as well as reading the
+    /// digest out of it. The attribute naming the digest sits inside that
+    /// signature, so a comparison made without it is a comparison against a value
+    /// anybody could have written.
+    fn binding(&self, envelope: &SealedEnvelope, payload_hash: &str) -> SealBinding;
 }

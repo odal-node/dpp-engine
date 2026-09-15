@@ -301,6 +301,65 @@ pub fn signer_certificate_thumbprint(seal_der: &[u8]) -> Result<Option<String>, 
     Ok(Some(hex::encode(Sha256::digest(&der))))
 }
 
+/// The digest the seal actually covers, read out of its signed attributes.
+///
+/// # Why this is the binding, and the outbox row is not
+///
+/// A detached CAdES says what it covers in exactly one place: the
+/// `messageDigest` signed attribute, RFC 5652 §11.2. Everything else is
+/// bookkeeping. This node records what it *asked* a backend to seal, and that
+/// record is genuinely useful — it survives when the seal does not parse, and it
+/// is how a re-published passport is spotted without any AdES tooling — but it
+/// is a statement about our own outbox, not about the bytes. The two can
+/// disagree, and only one of them is evidence.
+///
+/// Reading it turns "this seal is for this passport" from a claim resting on our
+/// own records into something checkable against the seal itself.
+///
+/// # Only meaningful alongside the signature
+///
+/// This attribute is *inside* the signature, which is what makes it worth
+/// reading — but nothing here checks that signature. A caller comparing this
+/// digest without also calling [`verify_against_embedded_certificate`] is
+/// trusting a value anyone could have edited. Both, or neither.
+///
+/// `Ok(None)` when the bytes are not a readable seal, or carry no signed
+/// attributes at all — a seal whose digest is not inside it, which is a
+/// different finding from one that names the wrong digest.
+///
+/// # Errors
+///
+/// [`SealError::Backend`] when the attribute is present but malformed. That is
+/// not a "no" — a caller must not read it as a mismatch.
+pub fn covered_digest(seal_der: &[u8]) -> Result<Option<Vec<u8>>, SealError> {
+    let Ok(signed) = parse(seal_der) else {
+        return Ok(None);
+    };
+    let Some(attrs) = signed.signer.signed_attrs.as_ref() else {
+        return Ok(None);
+    };
+    let Some(attr) = attrs
+        .iter()
+        .find(|a| a.oid == const_oid::db::rfc5911::ID_MESSAGE_DIGEST)
+    else {
+        return Ok(None);
+    };
+
+    // RFC 5652 §11.2: exactly one value, an OCTET STRING. More than one is
+    // malformed rather than ambiguous, and picking the first would invent an
+    // answer to a question the seal did not settle.
+    let [value] = attr.values.as_slice() else {
+        return Err(malformed(format!(
+            "the messageDigest attribute carries {} values, not one",
+            attr.values.len()
+        )));
+    };
+    let octets: der::asn1::OctetString = value
+        .decode_as()
+        .map_err(|e| malformed(format!("the messageDigest is not an OCTET STRING: {e}")))?;
+    Ok(Some(octets.as_bytes().to_vec()))
+}
+
 /// Check the signature against the certificate the seal carries.
 ///
 /// A `true` means the signature over the signed attributes verifies under the

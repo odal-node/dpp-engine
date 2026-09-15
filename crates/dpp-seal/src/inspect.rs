@@ -13,7 +13,7 @@
 
 use base64::Engine as _;
 use dpp_domain::seal::{SealFormat, SealedEnvelope};
-use dpp_types::{SealInspector, SealOrigin};
+use dpp_types::{SealBinding, SealInspector, SealOrigin};
 
 use crate::cades;
 
@@ -75,6 +75,67 @@ impl SealInspector for CadesInspector {
                 None
             }
         }
+    }
+
+    /// # The order of the two checks
+    ///
+    /// The signature is checked **first**, and a failure short-circuits without
+    /// reporting a digest. The digest lives in an attribute inside that
+    /// signature: reading it out of a seal whose signature does not verify and
+    /// then comparing it would be comparing against a value anybody could have
+    /// written, and reporting it would hand a caller a number that nothing
+    /// vouches for.
+    fn binding(&self, envelope: &SealedEnvelope, payload_hash: &str) -> SealBinding {
+        let Some(der) = self.readable(envelope) else {
+            return SealBinding::Unknown;
+        };
+
+        match cades::verify_against_embedded_certificate(&der) {
+            Ok(true) => {}
+            Ok(false) => return SealBinding::NotIntact,
+            Err(e) => {
+                // A seal carrying no signed attributes lands here: its digest is
+                // not inside it and cannot be recovered from the envelope alone.
+                // That is unknown, not broken.
+                tracing::warn!(error = %e, "stored seal could not be checked; binding not read");
+                return SealBinding::Unknown;
+            }
+        }
+
+        let covered = match cades::covered_digest(&der) {
+            Ok(Some(d)) => hex::encode(d),
+            Ok(None) => return SealBinding::Unknown,
+            Err(e) => {
+                tracing::warn!(error = %e, "stored seal names no readable digest");
+                return SealBinding::Unknown;
+            }
+        };
+
+        // Compared case-insensitively on the hex rather than on bytes: the value
+        // arrives as a string from an outbox row and a wire field, and a seal
+        // that matched or not depending on who upper-cased it would be a very
+        // confusing bug to meet.
+        if covered.eq_ignore_ascii_case(payload_hash) {
+            SealBinding::CoversThisSignature
+        } else {
+            SealBinding::CoversAnotherDigest { covered }
+        }
+    }
+}
+
+impl CadesInspector {
+    /// The seal's DER, when there is something readable to work with.
+    ///
+    /// Shared by both questions so they cannot disagree about which envelopes
+    /// are worth opening — a placeholder that yielded no origin but did yield a
+    /// binding would be incoherent.
+    fn readable(&self, envelope: &SealedEnvelope) -> Option<Vec<u8>> {
+        if envelope.placeholder || envelope.format != SealFormat::Cades {
+            return None;
+        }
+        base64::engine::general_purpose::STANDARD
+            .decode(&envelope.seal_value)
+            .ok()
     }
 }
 
@@ -147,6 +208,143 @@ mod tests {
                     false
                 ))
                 .is_none()
+        );
+    }
+
+    // ─── What the seal says it covers ────────────────────────────────────────
+
+    /// The digest a local seal was taken over, hex-encoded.
+    fn digest_hex(bytes: &[u8]) -> String {
+        hex::encode(bytes)
+    }
+
+    /// A seal reports the signature it actually covers.
+    ///
+    /// The whole point: this comes out of the seal's own `messageDigest`
+    /// attribute, not out of any record this node keeps, so it holds for a seal
+    /// restored from a backup or produced somewhere else entirely.
+    #[test]
+    fn a_seal_reports_the_signature_it_actually_covers() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let id = crate::local::LocalIdentity::load_or_create(dir.path()).expect("identity");
+        let digest = [0x11; 32];
+        let der = id.sign_detached(&digest).expect("sign");
+        let e = envelope(
+            base64::engine::general_purpose::STANDARD.encode(&der),
+            SealFormat::Cades,
+            false,
+        );
+
+        assert_eq!(
+            CadesInspector::new().binding(&e, &digest_hex(&digest)),
+            SealBinding::CoversThisSignature
+        );
+    }
+
+    /// Asked about a different signature, the same seal says so.
+    ///
+    /// What a re-published passport looks like: the passport re-signed, so its
+    /// current signature is not the one sealed. The digest the seal *does* cover
+    /// is reported, because a caller holding it can go and find which version it
+    /// belongs to.
+    #[test]
+    fn a_seal_asked_about_another_signature_reports_the_one_it_covers() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let id = crate::local::LocalIdentity::load_or_create(dir.path()).expect("identity");
+        let digest = [0x11; 32];
+        let der = id.sign_detached(&digest).expect("sign");
+        let e = envelope(
+            base64::engine::general_purpose::STANDARD.encode(&der),
+            SealFormat::Cades,
+            false,
+        );
+
+        let SealBinding::CoversAnotherDigest { covered } =
+            CadesInspector::new().binding(&e, &digest_hex(&[0x22; 32]))
+        else {
+            panic!("this seal covers a different digest");
+        };
+        assert_eq!(covered, digest_hex(&digest));
+    }
+
+    /// **A seal cannot be retargeted by editing what it says it covers.**
+    ///
+    /// The attack this check exists to stop, and the reason the signature is
+    /// verified before the digest is read. Rewriting the `messageDigest`
+    /// attribute to name another passport's signature is trivial — the attribute
+    /// is plain DER — but it sits *inside* the signature, so the edit breaks it.
+    ///
+    /// Note what is reported: `NotIntact`, with **no digest**. Reporting the
+    /// forged value would hand a caller a number that nothing vouches for, and
+    /// reporting `CoversAnotherDigest` would describe a broken seal as merely
+    /// out of date.
+    #[test]
+    fn a_seal_cannot_be_retargeted_by_editing_the_digest_it_names() {
+        use cms::content_info::ContentInfo;
+        use cms::signed_data::SignedData;
+        use der::{Decode as _, Encode as _};
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let id = crate::local::LocalIdentity::load_or_create(dir.path()).expect("identity");
+        let der = id.sign_detached(&[0x11; 32]).expect("sign");
+
+        let target = [0x22; 32];
+        let info = ContentInfo::from_der(&der).expect("CMS");
+        let mut sd: SignedData = info.content.decode_as().expect("SignedData");
+        let mut signers = sd.signer_infos.0.as_slice().to_vec();
+
+        let attrs = signers[0].signed_attrs.as_ref().expect("signed attributes");
+        let mut rebuilt = der::asn1::SetOfVec::new();
+        for a in attrs.iter() {
+            let a = if a.oid == const_oid::db::rfc5911::ID_MESSAGE_DIGEST {
+                let mut values = der::asn1::SetOfVec::new();
+                values
+                    .insert(
+                        der::Any::encode_from(
+                            &der::asn1::OctetString::new(target.as_slice()).expect("octets"),
+                        )
+                        .expect("any"),
+                    )
+                    .expect("value");
+                x509_cert::attr::Attribute { oid: a.oid, values }
+            } else {
+                a.clone()
+            };
+            rebuilt.insert(a).expect("attribute");
+        }
+        signers[0].signed_attrs = Some(rebuilt);
+
+        let mut set = der::asn1::SetOfVec::new();
+        set.insert(signers.remove(0)).expect("signer");
+        sd.signer_infos = cms::signed_data::SignerInfos::from(set);
+        let forged = ContentInfo {
+            content_type: const_oid::db::rfc5911::ID_SIGNED_DATA,
+            content: der::Any::encode_from(&sd).expect("encode"),
+        }
+        .to_der()
+        .expect("re-encode");
+
+        let e = envelope(
+            base64::engine::general_purpose::STANDARD.encode(&forged),
+            SealFormat::Cades,
+            false,
+        );
+
+        assert_eq!(
+            CadesInspector::new().binding(&e, &digest_hex(&target)),
+            SealBinding::NotIntact,
+            "the edit must break the signature rather than succeed in retargeting the seal"
+        );
+    }
+
+    /// A placeholder binds to nothing, and says so rather than denying.
+    #[test]
+    fn a_placeholder_binds_to_nothing_rather_than_mismatching() {
+        let e = envelope("Z2hvc3Q=".to_owned(), SealFormat::Cades, true);
+        assert_eq!(
+            CadesInspector::new().binding(&e, &digest_hex(&[0x11; 32])),
+            SealBinding::Unknown,
+            "an unread seal must never report as covering something else"
         );
     }
 

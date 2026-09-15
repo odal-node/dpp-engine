@@ -6313,6 +6313,7 @@
           "currentJws",
           "currentPayloadHash",
           "coverage",
+          "binding",
           "verification"
         ],
         "properties": {
@@ -6361,6 +6362,9 @@
           },
           "coverage": {
             "$ref": "#/components/schemas/SealCoverage"
+          },
+          "binding": {
+            "$ref": "#/components/schemas/SealBinding"
           },
           "origin": {
             "oneOf": [
@@ -8782,6 +8786,29 @@
           },
           "passportScope": {
             "$ref": "#/components/schemas/PassportScopeReport"
+          }
+        }
+      },
+      "SealBinding": {
+        "type": "object",
+        "description": "Whether the seal's **own bytes** say it covers this passport's current signature.\n\nA detached CAdES states what it covers in exactly one place — the `messageDigest` signed attribute, RFC 5652 §11.2 — and that attribute sits *inside* the signature. This reports what it says, after checking the signature over it. That ordering is the whole point: the attribute is plain DER and trivial to rewrite, but rewriting it breaks the signature, so a seal cannot be retargeted at another passport by editing what it claims to cover.\n\nRead it beside `coverage`, which answers the same question from this node's own outbox records. Those records survive a seal that will not parse and need no cryptography; this needs both and is evidence. **Where the two disagree, the disagreement is the finding** — the records and the bytes are describing different things, which neither source could have revealed alone.",
+        "required": [
+          "result"
+        ],
+        "properties": {
+          "result": {
+            "type": "string",
+            "enum": [
+              "coversThisSignature",
+              "coversAnotherDigest",
+              "notIntact",
+              "unknown"
+            ],
+            "description": "`coversThisSignature`: the seal names this exact signature and its attributes verify under the certificate it carries. The strongest statement this node can make without an external validator — whatever is true of the seal's *trust*, it is demonstrably a seal over this passport and not over anything else.\n\n`coversAnotherDigest`: the seal is intact and names a different digest. Ordinary after a re-publish, since the passport re-signed. It is also what a seal stored against the wrong passport looks like, and the two are indistinguishable from the bytes alone; what separates them is whether an outbox row says this digest was ever requested for this passport.\n\n`notIntact`: the signature over the seal's attributes does not verify, so nothing the seal says about what it covers can be relied on.\n\n`unknown`: the bytes could not be read, or carry no digest at all — a placeholder, an unparsed format, or a signature with no signed attributes. **Never** to be read as a mismatch."
+          },
+          "covered": {
+            "type": "string",
+            "description": "Hex SHA-256 the seal actually covers. Present only with `coversAnotherDigest`, so a caller holding it can find which version of the passport it belongs to.\n\nDeliberately absent from `notIntact`: the attribute naming it sits inside a signature that failed, so reporting it would hand the caller a number that nothing vouches for."
           }
         }
       },

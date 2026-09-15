@@ -670,7 +670,9 @@ async fn a_locally_sealed_passport_reports_that_no_provider_issued_it() {
     let draft = draft_passport();
     let id = draft.id;
     passport_repo.create(draft).await.expect("create draft");
-    service.publish(id, &auth()).await.expect("publish");
+    let published = service.publish(id, &auth()).await.expect("publish");
+    let jws = published.jws_signature.clone().expect("publish signs");
+    let expected_digest = hex::encode(Sha256::digest(jws.as_bytes()));
 
     // The local backend: a key and a self-signed certificate generated per node.
     let seal_dir = tempfile::tempdir().expect("temp dir");
@@ -717,6 +719,37 @@ async fn a_locally_sealed_passport_reports_that_no_provider_issued_it() {
         Some(SealConformanceLevel::BaselineLta),
         "the local backend must emit the material an LTA seal carries, not merely claim the level"
     );
+
+    // ── That the seal is bound to THIS passport, from its own bytes ─────────
+    //
+    // The question a demo has to be able to answer: not "is there a seal on this
+    // passport" — anyone can store bytes in a column — but "does this seal
+    // actually cover this passport's signature?"
+    //
+    // Answered here without consulting the outbox row that bought it. The seal
+    // states what it covers in its own signed attributes, and the signature over
+    // those attributes is checked before they are read, so the answer survives a
+    // restore from backup and cannot be forged by editing the claim.
+    let inspector = service
+        .seal_inspector
+        .as_ref()
+        .expect("the inspector is wired");
+    assert_eq!(
+        inspector.binding(&seal, &expected_digest),
+        dpp_types::SealBinding::CoversThisSignature,
+        "the stored seal must demonstrably cover this passport's current signature"
+    );
+    // And the node's own record agrees, which is the cross-check: the bytes and
+    // the bookkeeping describing the same thing is what makes either believable.
+    assert_eq!(
+        seal_outbox
+            .sealed_digest(id)
+            .await
+            .expect("record")
+            .as_deref(),
+        Some(expected_digest.as_str())
+    );
+    println!("binding   : coversThisSignature ({expected_digest})");
 
     // ── The verdict, read out of the stored seal ────────────────────────────
     let verdict = qualify(&der, &[], seal.sealed_at).expect("a readable CAdES seal");

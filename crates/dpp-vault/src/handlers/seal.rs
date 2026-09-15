@@ -130,8 +130,31 @@ pub struct SealResponse {
     /// the CAdES actually covers. The two agreeing is the cross-check.
     pub sealed_payload_hash: Option<String>,
 
-    /// Whether the stored seal covers the passport's current signature.
+    /// Whether the stored seal covers the passport's current signature,
+    /// **according to this node's own outbox records**.
+    ///
+    /// Read `binding` beside it. This field answers from the row that bought the
+    /// seal; that one answers from the seal's own bytes. They are the same
+    /// question asked of two different sources, and where they disagree the
+    /// disagreement is the finding — the records and the bytes are describing
+    /// different things, which neither source could have revealed alone.
     pub coverage: SealCoverage,
+    /// Whether the seal's **own bytes** say it covers this passport's current
+    /// signature.
+    ///
+    /// A detached CAdES states what it covers in exactly one place — the
+    /// `messageDigest` signed attribute, inside the signature — and this reports
+    /// what that attribute says, after checking the signature over it. It is the
+    /// strongest statement this node can make without an external validator:
+    /// whatever is true of the seal's *trust*, `coversThisSignature` means it is
+    /// demonstrably a seal over this passport and not over anything else.
+    ///
+    /// It is deliberately not folded into `coverage`. That field survives a seal
+    /// that will not parse and needs no cryptography; this one is evidence and
+    /// needs both. Collapsing them would lose the case that matters most — a
+    /// seal with no outbox row, where the records can say nothing and the bytes
+    /// can say everything.
+    pub binding: dpp_types::SealBinding,
     /// What **this seal's own certificate** says about who issued it.
     ///
     /// The first question a reader has and the one nothing here could answer
@@ -286,7 +309,7 @@ pub async fn seal_handler(
             signing_cert_ref: seal.signing_cert_ref.clone(),
             placeholder: seal.placeholder,
             current_jws: jws,
-            current_payload_hash: payload_hash,
+            current_payload_hash: payload_hash.clone(),
             sealed_payload_hash,
             coverage,
             origin: state
@@ -294,6 +317,13 @@ pub async fn seal_handler(
                 .seal_inspector
                 .as_ref()
                 .and_then(|i| i.origin(seal)),
+            binding: state
+                .service
+                .seal_inspector
+                .as_ref()
+                .map_or(dpp_types::SealBinding::Unknown, |i| {
+                    i.binding(seal, &payload_hash)
+                }),
             verification: NOT_VALIDATED,
         }),
     )

@@ -73,7 +73,7 @@ pub use scan::{
     ScanPruneCounts, ScanTelemetryRepository,
 };
 pub use seal::{
-    CreationDevice, SealInspector, SealOrigin, SealOutbox, SealOutboxCounts, SealRow,
+    CreationDevice, SealBinding, SealInspector, SealOrigin, SealOutbox, SealOutboxCounts, SealRow,
     digest_for_jws,
 };
 pub use snapshot::{

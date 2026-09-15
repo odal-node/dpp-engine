@@ -476,6 +476,7 @@ fn object_cases() -> Vec<ObjectCase> {
     case!("DailyScanCount", fixtures::daily_scan_count());
     case!("SealResponse", fixtures::seal_response());
     case!("SealOrigin", fixtures::seal_origin());
+    case!("SealBinding", fixtures::seal_binding());
     case!("SealDeclarer", fixtures::seal_declarer());
     case!("SealSummaryResponse", fixtures::seal_summary_response());
     case!("InstalledPlugin", fixtures::installed_plugin());
@@ -3571,9 +3572,20 @@ mod fixtures {
             // `SealOrigin.yaml` — so the schema this exists to pin would go
             // unchecked.
             origin: Some(seal_origin()),
+            binding: seal_binding(),
             // A `&'static str` constant on the response type; the fixture only
             // needs a value of the right shape for the key set.
             verification: "not validated by this node",
+        }
+    }
+
+    /// The variant carrying a payload, so the optional field is checked too.
+    ///
+    /// `coversThisSignature` would satisfy a key-set check while never comparing
+    /// `covered` against the schema — and that field is the one a caller acts on.
+    pub fn seal_binding() -> dpp_types::SealBinding {
+        dpp_types::SealBinding::CoversAnotherDigest {
+            covered: "7".repeat(64),
         }
     }
 

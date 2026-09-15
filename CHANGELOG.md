@@ -51,6 +51,33 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ### Added
 
+- **A seal can now be proven bound to its passport, from the seal's own bytes.**
+  `GET /api/v1/dpp/{dppId}/seal` gains **`binding`**: whether the stored seal
+  actually covers this passport's current signature, read out of its
+  `messageDigest` signed attribute (RFC 5652 §11.2) after checking the signature
+  over it.
+
+  Until now the only seal-to-passport link was an outbox row recording what this
+  node *asked* a backend to seal. That record is useful — it survives a seal that
+  will not parse, and spots a re-published passport with a string comparison —
+  but it is bookkeeping, not evidence. A seal restored from a backup has no such
+  row; a seal stored against the wrong passport has a row that agrees with itself
+  and nothing else. The route's own note said as much: *"only the validator
+  establishes which digest the CAdES actually covers."* The node can now do it.
+
+  **The signature is checked before the digest is read**, and that ordering is
+  the point. The attribute is plain DER and trivial to rewrite, but it sits
+  inside the signature, so rewriting it breaks the seal rather than retargeting
+  it. `a_seal_cannot_be_retargeted_by_editing_the_digest_it_names` forges exactly
+  that edit; with the check removed it reports `coversThisSignature`, which is
+  what makes the test worth keeping. `notIntact` therefore reports **no** digest:
+  a value inside a failed signature is not evidence of anything.
+
+  `coverage` stays beside it, answering the same question from this node's
+  records. They are not folded together on purpose — one needs no cryptography
+  and survives an unreadable seal, the other is evidence — and **where they
+  disagree, the disagreement is the finding**.
+
 - **The local development backend now emits the whole `B-LTA` structure, and
   the conformance default is per-backend.** It advertised `BaselineB` only, so
   every path above that level — the drain's downgrade check, the boot

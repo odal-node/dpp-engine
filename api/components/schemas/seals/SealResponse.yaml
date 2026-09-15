@@ -11,6 +11,7 @@ required:
   - currentJws
   - currentPayloadHash
   - coverage
+  - binding
   - verification
 properties:
   declaredBy:
@@ -63,6 +64,8 @@ properties:
       Null for a seal restored from a backup or produced elsewhere.
   coverage:
     $ref: ./SealCoverage.yaml
+  binding:
+    $ref: ./SealBinding.yaml
   origin:
     oneOf:
       - $ref: ./SealOrigin.yaml
