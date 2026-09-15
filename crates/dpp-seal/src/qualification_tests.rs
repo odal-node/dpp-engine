@@ -185,9 +185,16 @@ fn a_locally_signed_seal_needs_no_trusted_list_to_be_recognised() {
     assert_eq!(with_list, without);
 }
 
-/// An issuer no list names is reported as unlisted, not as unknown.
+/// A seal carrying one certificate and naming an unlisted issuer reports that
+/// the **chain could not be followed**, not that the provider is unlisted.
+///
+/// The two readings are different accusations. "No list names this issuer" is a
+/// statement about the Union's lists; "the seal did not carry the certificate
+/// that would have led to one" is a statement about the seal. Only the second is
+/// supportable here, because the certificate above this one — listed or not —
+/// was never shipped.
 #[test]
-fn an_issuer_no_list_names_is_not_listed() {
+fn a_seal_whose_chain_runs_out_reports_that_rather_than_an_unlisted_issuer() {
     let issuer: x509_cert::name::Name = "CN=Definitely Not A Qualified CA,C=FI"
         .parse()
         .expect("a name");
@@ -195,10 +202,21 @@ fn an_issuer_no_list_names_is_not_listed() {
 
     let verdict = qualify(&seal, &[finnish_list()], Utc::now()).expect("readable seal");
 
-    let IssuerStanding::NotListed { issuer } = &verdict.issuer else {
-        panic!("nothing lists that name: {:?}", verdict.issuer);
+    let IssuerStanding::ChainIncomplete {
+        issuer,
+        missing_issuer,
+    } = &verdict.issuer
+    else {
+        panic!(
+            "the seal carries no certificate for its issuer: {:?}",
+            verdict.issuer
+        );
     };
     assert!(issuer.contains("Definitely Not A Qualified CA"));
+    assert_eq!(
+        issuer, missing_issuer,
+        "with one certificate in the seal, the name it needs next is its own issuer"
+    );
     assert!(
         verdict.is_provider_seal(),
         "an issuer other than the subject means somebody issued it, listed or not"
@@ -399,22 +417,71 @@ fn an_intermediate_carried_by_the_seal_reaches_a_listed_root() {
     );
 }
 
-/// Without the intermediate, the same leaf cannot reach the same root.
+/// **Without the intermediate, the same leaf cannot reach the same root — and
+/// the verdict says so in those terms.**
 ///
-/// The control for the test above — it is what shows the walk did the work
-/// rather than the name matching by luck. A seal stripped of its chain is also
-/// the realistic failure: `NotListed`, because nothing consulted carries the
-/// issuer's name.
+/// The control for the test above, and the scenario this distinction exists
+/// for: the root *is* listed, the leaf *was* issued under it, and the only thing
+/// wrong is that the seal did not carry the link between. Reporting an unlisted
+/// provider here would point an operator at their QTSP's qualification when the
+/// remedy is a generator setting — ETSI EN 319 122-1 clause 5.2.1 asks for those
+/// intermediates where a signature is to be validated through a Trusted List.
 #[test]
-fn the_same_leaf_without_its_intermediate_does_not_reach_the_root() {
+fn a_leaf_stripped_of_its_intermediate_reports_an_incomplete_chain() {
     let chain = test_chain(true);
     let (seal, _dir) = seal_carrying(std::slice::from_ref(&chain.leaf));
 
     let verdict = qualify(&seal, &[list_naming(&chain.root)], Utc::now()).expect("readable seal");
 
+    let IssuerStanding::ChainIncomplete { missing_issuer, .. } = &verdict.issuer else {
+        panic!(
+            "the listed root is two links up and the middle one is gone: {:?}",
+            verdict.issuer
+        );
+    };
+    assert!(
+        missing_issuer.contains("Test Intermediate CA"),
+        "the report must name what was missing, or it cannot be acted on: {missing_issuer}"
+    );
+
+    // And the strong statement is still available where it is earned: put the
+    // intermediate back and the same leaf reaches the listed root.
+    let intermediate = chain.intermediate.clone().expect("an intermediate");
+    let (whole, _dir) = seal_carrying(&[chain.leaf.clone(), intermediate]);
+    assert!(
+        matches!(
+            qualify(&whole, &[list_naming(&chain.root)], Utc::now())
+                .expect("readable seal")
+                .issuer,
+            IssuerStanding::QualifiedAtSealing { .. }
+        ),
+        "the gap was the only thing in the way"
+    );
+}
+
+/// **A complete chain that no list names is still `NotListed`.**
+///
+/// The other side of the distinction, and the reason `ChainIncomplete` is not
+/// simply a softer wording for the same finding. Here the seal carries its whole
+/// path up to a certificate that issued itself: everything it has to say about
+/// its own provenance has been said, nothing is missing, and no consulted list
+/// names any of it. That is a finding about the lists, and it is safe to make.
+#[test]
+fn a_complete_chain_to_an_unlisted_root_is_still_unlisted() {
+    let chain = test_chain(true);
+    let intermediate = chain.intermediate.clone().expect("an intermediate");
+    let (seal, _dir) = seal_carrying(&[chain.leaf.clone(), intermediate, chain.root.clone()]);
+
+    // Finland's real list rather than a second built one: `test_chain` names
+    // every root it makes "Test Root CA", so a hand-built list would collide on
+    // the name and report `SignatureNotFromListedCa` — a listed CA carrying that
+    // name which did not sign this. That is the correct answer to a different
+    // question, and it is not the one under test here.
+    let verdict = qualify(&seal, &[finnish_list()], Utc::now()).expect("readable seal");
+
     assert!(
         matches!(verdict.issuer, IssuerStanding::NotListed { .. }),
-        "no listed name matches the leaf's issuer once the intermediate is gone: {:?}",
+        "the chain is whole and ends at a root nobody lists: {:?}",
         verdict.issuer
     );
 }

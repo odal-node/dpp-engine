@@ -51,6 +51,25 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ### Added
 
+- **A seal whose certificate chain runs out is reported as such, not as an
+  unlisted provider** (#323). The third gap that issue named.
+
+  Matching already considered every issuer name the seal's embedded certificates
+  refer to, so a seal carrying its intermediates reaches a listed root several
+  links up. A seal that does *not* carry them used to report `notListed` — a
+  statement about the Union's Trusted Lists — when the supportable statement was
+  about the seal: the link that would have led to a listed CA was never shipped.
+
+  `IssuerStanding::ChainIncomplete` now says which, and names the certificate
+  that was missing so it can be acted on. The remedy is the provider's generator
+  setting, not their qualification: ETSI EN 319 122-1 clause 5.2.1 asks for those
+  intermediates where a signature is to be validated through a Trusted List.
+
+  The strong finding is kept where it is earned — a chain that ends at a
+  self-issued root no list names is still `notListed`, and
+  `a_complete_chain_to_an_unlisted_root_is_still_unlisted` pins that the two did
+  not collapse into one.
+
 - **The seal certificate's validity window and revocation are now checked**
   (#323) — `certificate` on `GET /api/v1/dpp/{dppId}/seal` and in the evidence
   dossier's `qualifiedSeal`.

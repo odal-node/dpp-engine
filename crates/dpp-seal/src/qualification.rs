@@ -49,6 +49,21 @@
 //! travelling beside them. What the relabelling breaks is the certificate's own
 //! signature, which is exactly what this now checks.
 //!
+//! ## A chain that runs out is not a finding about the lists
+//!
+//! Matching considers every issuer name the seal's embedded certificates refer
+//! to, so a seal carrying its intermediates reaches a listed root two or more
+//! links up. A seal that does **not** carry them is a different state, and
+//! [`IssuerStanding::ChainIncomplete`] reports it as one: the walk ran out of
+//! links, so a listed CA may sit above the gap and "no list names this issuer"
+//! would be an accusation drawn from a certificate nobody shipped.
+//!
+//! Which state a seal is in is decided by where its chain ends —
+//! [`crate::cades::chain_terminus`] — not by whether the lookup happened to
+//! fail. Nothing is fetched to fill the gap: the material a verifier is expected
+//! to have is what the seal carries and what the lists publish, and an AIA URL
+//! inside an untrusted certificate is not something a node should be dialling.
+//!
 //! ## The certificate's own standing is a different question, asked elsewhere
 //!
 //! Art. 32(1)(b), reached for seals by Art. 40, has two limbs: the certificate
@@ -118,6 +133,32 @@ pub enum IssuerStanding {
     NotListed {
         /// The issuer name the certificate carries.
         issuer: String,
+    },
+    /// The seal did not carry enough certificates to reach a root, and no list
+    /// names any issuer it does refer to.
+    ///
+    /// **Weaker than [`Self::NotListed`], deliberately.** There, the chain ends
+    /// at a certificate that issued itself: everything the seal has to say about
+    /// its own provenance has been said, and no consulted list names it. Here
+    /// the walk ran out of links — the certificate that would have led somewhere
+    /// was never shipped — so a listed CA may well sit above the gap, and
+    /// reporting an unlisted provider would be an accusation drawn from an
+    /// absence.
+    ///
+    /// The distinction is not academic: Member States do not publish the same
+    /// thing. Most Italian entries are self-signed roots, so a seal from an
+    /// Italian provider is expected to reach its listed CA through an
+    /// intermediate — and a provider that omits that intermediate produces
+    /// exactly this state. ETSI EN 319 122-1 clause 5.2.1 asks generators to
+    /// include those intermediates where the signature is to be validated
+    /// through a Trusted List, which is the remedy an operator seeing this
+    /// should ask their provider for.
+    ChainIncomplete {
+        /// The issuer name the seal certificate carries.
+        issuer: String,
+        /// The name the walk needed next and the seal did not carry. Equal to
+        /// `issuer` when the seal carries only its signing certificate.
+        missing_issuer: String,
     },
     /// A listed CA carries this name, and **did not sign this certificate**.
     ///
@@ -238,6 +279,13 @@ impl std::fmt::Display for SealQualification {
             IssuerStanding::NotListed { issuer } => write!(
                 f,
                 "issued by {issuer}, which no consulted Trusted List names as a qualified CA"
+            ),
+            IssuerStanding::ChainIncomplete {
+                issuer,
+                missing_issuer,
+            } => write!(
+                f,
+                "issued by {issuer}; the seal does not carry a certificate for {missing_issuer},                  so no path to a listed CA could be followed — ask the provider to include the                  intermediates (ETSI EN 319 122-1 clause 5.2.1)"
             ),
             IssuerStanding::SignatureNotFromListedCa {
                 issuer, territory, ..
@@ -362,7 +410,29 @@ fn standing(
     let names = crate::cades::chain_issuer_names(seal_der).unwrap_or_default();
     let candidates = find_issuer_candidates(&names, lists);
     let Some(first) = candidates.first() else {
-        return IssuerStanding::NotListed { issuer };
+        // Nothing matched — but *why* nothing matched decides what may be said.
+        // A chain that ends at a self-issued root has told its whole story, and
+        // "no list names it" is a finding about that story. A chain that simply
+        // ran out has not, and the same sentence would be an accusation drawn
+        // from a certificate nobody shipped.
+        return match crate::cades::chain_terminus(seal_der) {
+            Ok(crate::cades::ChainTerminus::Truncated { missing_issuer }) => {
+                IssuerStanding::ChainIncomplete {
+                    issuer,
+                    missing_issuer,
+                }
+            }
+            // A complete chain, or a seal that stopped parsing between here and
+            // the read above — which cannot happen, and if it did, the weaker
+            // statement is the safe one.
+            Ok(crate::cades::ChainTerminus::SelfIssuedRoot { .. }) => {
+                IssuerStanding::NotListed { issuer }
+            }
+            Err(_) => IssuerStanding::ChainIncomplete {
+                issuer: issuer.clone(),
+                missing_issuer: issuer,
+            },
+        };
     };
     // Where the path cannot be pinned to one candidate, the name that was
     // matched is reported from the first. They all carry the same subject name

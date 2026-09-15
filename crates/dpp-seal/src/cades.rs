@@ -1178,6 +1178,79 @@ fn creation_device(tbs: &x509_cert::TbsCertificate) -> CreationDevice {
     }
 }
 
+/// Where the certificate chain the seal carries comes to an end.
+///
+/// Two endings, and telling them apart is what separates a finding from an
+/// absence of one. A chain that reaches a self-issued certificate is complete as
+/// far as the seal is concerned: everything needed to judge it is present, and a
+/// verdict about it is a verdict about the whole path. A chain that simply runs
+/// out is not — the link that would have led somewhere was never shipped, and
+/// anything concluded from its absence is a guess.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ChainTerminus {
+    /// The walk reached a certificate that issued itself.
+    SelfIssuedRoot {
+        /// Its subject, which is also its issuer.
+        subject: String,
+    },
+    /// The walk stopped because the seal carries no certificate with the name it
+    /// needed next.
+    ///
+    /// ETSI EN 319 122-1 clause 5.2.1 asks a generator to include the signing
+    /// certificate (a *shall*) and, where the signature is meant to be validated
+    /// through a Trusted List, the intermediates between it and a listed CA (a
+    /// *should*, and only for certificates "not available to verifiers"). So a
+    /// seal in this state is not necessarily non-conformant — but it is one this
+    /// node cannot follow, and the honest report says which of those it is.
+    Truncated {
+        /// The issuer name the walk needed and could not find.
+        missing_issuer: String,
+    },
+}
+
+/// Follow the seal's embedded certificates up from its signer, and say how far
+/// they go.
+///
+/// Deliberately makes no judgement about trust: it answers only whether the
+/// material to judge the chain is present. The trusted list question is asked
+/// elsewhere, and asking it against a chain that ran out is how "we could not
+/// look" turns into "we looked and found nothing".
+///
+/// # Errors
+///
+/// Propagates a seal that will not parse.
+pub fn chain_terminus(seal_der: &[u8]) -> Result<ChainTerminus, SealError> {
+    let signed = parse(seal_der)?;
+    let mut current = &signed.certificate;
+
+    for _ in 0..MAX_PATH_LENGTH {
+        if current.tbs_certificate.issuer == current.tbs_certificate.subject {
+            return Ok(ChainTerminus::SelfIssuedRoot {
+                subject: current.tbs_certificate.subject.to_string(),
+            });
+        }
+        // The same climb `check_path_to` makes, and it must stay the same: a
+        // walk that found a link the other could not would report a complete
+        // chain the verifier then failed to follow.
+        let Some(next) = signed.chain.iter().find(|c| {
+            c.tbs_certificate.subject == current.tbs_certificate.issuer
+                && c.tbs_certificate.subject != current.tbs_certificate.subject
+        }) else {
+            return Ok(ChainTerminus::Truncated {
+                missing_issuer: current.tbs_certificate.issuer.to_string(),
+            });
+        };
+        current = next;
+    }
+
+    // A loop, or a chain longer than the walk allows. Reported as truncated
+    // rather than as a root: what is certain is that this walk did not reach
+    // one.
+    Ok(ChainTerminus::Truncated {
+        missing_issuer: current.tbs_certificate.issuer.to_string(),
+    })
+}
+
 /// What this node can establish about the seal certificate's own standing:
 /// its validity window, and what the seal's revocation material says.
 ///
