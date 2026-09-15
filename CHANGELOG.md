@@ -12,6 +12,52 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ### Breaking
 
+- **`publishReadiness.passportScope.status` reports five answers where it
+  reported three.** *(Breaking: `voluntary` is gone. A record the article does
+  not reach now answers `notCovered`, `belowThreshold` or `notYetBinding`
+  depending on **why**, and an industrial battery with no declared capacity
+  answers `capacityUnknown` instead of `required`. A client matching on
+  `voluntary` sees a value it does not know; one treating anything but `required`
+  as "no duty" is still correct.)*
+
+  Art. 77(1) was modelled twice — once in `dpp_rules::batteries::passport_scope`
+  and once in this repository, under a note calling itself a core candidate
+  parked here "so the two repositories are not edited in the same breath". Core
+  owns it now, so the copy is gone and this side keeps only what core's function
+  cannot decide: whether the record is a battery at all, which date to hand it,
+  whether the content gate runs, and what to tell an operator.
+
+  **The two copies had already drifted, and one of them was wrong.** The local
+  rule read only the product-group data, so it never saw `placedOnMarketDate` —
+  and Art. 77(1) reaches batteries placed on the market **from 18 February
+  2027**. A battery placed before that was reported as in scope. It now answers
+  `notYetBinding`.
+
+  The wider vocabulary is the point rather than a side effect. "This category
+  never owes one", "this unit is under the threshold", "we cannot tell" and "not
+  yet" are four different sentences to put in front of an operator, and only some
+  of them describe something they can change. Collapsing them into one
+  `voluntary` reported an exemption the Regulation grants for reasons it does not
+  distinguish.
+
+  An unstated `placedOnMarketDate` is read as **inside** the binding period —
+  the same fail-closed direction an undeclared capacity gets. A draft being
+  prepared today for a product that will be placed on the market later has no
+  date, and answering `notYetBinding` would tell its operator they owe nothing on
+  the strength of an unfilled field.
+
+  Unchanged: this node still applies the category content gate to a passport the
+  article does not reach, and still says so. Narrowing that gate is core's
+  change — `check_mandatory_content` runs inside `Passport::transition_to` and
+  this side calls it and cannot skip it.
+
+- **A gate now connects `passportScope.status` to its published enum.** The field
+  crosses the API as a plain string, so the object check compares its *type* and
+  the enum check cannot reach it at all — that one enumerates Rust enums. A stale
+  value survived exactly that gap while this change was being written: the
+  contract fixture went on emitting `voluntary` after the vocabulary widened, and
+  every existing check passed.
+
 - **`parentPassportRef` is gone; second-life lineage is `derivedFrom`.**
   *(Breaking: `CreatePassportRequest.parentPassportRef` and
   `PassportResponse.parentPassportRef` are removed. The replacement is

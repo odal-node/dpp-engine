@@ -89,17 +89,13 @@ fn readiness_of(passport: &dpp_domain::passport::Passport) -> PublishReadiness {
         }));
     }
 
-    let obligation = passport_scope::scope_of(passport.product_group_data.as_ref());
+    let scope = passport_scope::scope_of(passport);
     PublishReadiness {
         ready: blockers.is_empty(),
         blockers,
         passport_scope: PassportScopeReport {
-            status: match obligation {
-                passport_scope::PassportScope::Required => "required",
-                passport_scope::PassportScope::Voluntary => "voluntary",
-                passport_scope::PassportScope::NotApplicable => "notApplicable",
-            },
-            note: passport_scope::scope_note(obligation, passport.product_group_data.as_ref()),
+            status: passport_scope::wire_status(scope),
+            note: passport_scope::scope_note(scope, passport.product_group_data.as_ref()),
         },
     }
 }
