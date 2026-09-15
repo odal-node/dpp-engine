@@ -469,6 +469,12 @@ pub fn spawn_seal_audit(outbox: Arc<dyn SealOutbox>) {
         // acceptance cannot come to disagree about what a sound seal is.
         let inspector = dpp_seal::CadesInspector::new();
         let mut cursor = None;
+        // Accumulated across the whole walk, not per batch. The gauge has to
+        // answer "how many broken seals does this node hold", and a value set
+        // from a 100-row batch answers "how many were in the last hundred" —
+        // which flaps between passes and reads as zero most of the time on an
+        // estate where the answer is not zero.
+        let mut walk = dpp_node::infra::seal_drain::SealAudit::default();
         loop {
             tokio::time::sleep(SWEEP_INTERVAL).await;
             let (audit, next) = dpp_node::infra::seal_drain::audit_seals_once(
@@ -479,10 +485,11 @@ pub fn spawn_seal_audit(outbox: Arc<dyn SealOutbox>) {
             )
             .await;
 
-            // An empty batch means the walk reached the end. Restart it rather
-            // than stopping: a seal sound today can be corrupt tomorrow, and a
-            // pass that ran once would only ever catch what was already broken.
-            cursor = next;
+            walk.checked += audit.checked;
+            walk.sound += audit.sound;
+            walk.superseded += audit.superseded;
+            walk.broken += audit.broken;
+            walk.unreadable += audit.unreadable;
 
             if audit.broken > 0 {
                 tracing::error!(
@@ -491,15 +498,26 @@ pub fn spawn_seal_audit(outbox: Arc<dyn SealOutbox>) {
                     "stored seals do not verify — those passports are published and, in \
                      substance, unsealed, and `unsealedPublished` cannot see them"
                 );
-            } else {
-                tracing::debug!(
-                    checked = audit.checked,
-                    sound = audit.sound,
-                    superseded = audit.superseded,
-                    unreadable = audit.unreadable,
-                    "seal audit pass"
-                );
             }
+
+            // An empty batch means the walk reached the end. Publish the total,
+            // then start again from the beginning: a seal sound today can be
+            // corrupt tomorrow, and a pass that ran once would only ever catch
+            // what was already broken.
+            if next.is_none() {
+                metrics::gauge!("seal_broken_total").set(walk.broken as f64);
+                metrics::gauge!("seal_unreadable_total").set(walk.unreadable as f64);
+                tracing::debug!(
+                    checked = walk.checked,
+                    sound = walk.sound,
+                    superseded = walk.superseded,
+                    broken = walk.broken,
+                    unreadable = walk.unreadable,
+                    "seal audit completed a pass over every stored seal"
+                );
+                walk = dpp_node::infra::seal_drain::SealAudit::default();
+            }
+            cursor = next;
         }
     });
 }

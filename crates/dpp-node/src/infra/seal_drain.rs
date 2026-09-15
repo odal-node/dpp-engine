@@ -275,7 +275,11 @@ pub async fn audit_seals_once(
         }
     }
 
-    metrics::gauge!("seal_broken_total").set(audit.broken as f64);
+    // No gauge here, deliberately. This function sees **one batch**, and a gauge
+    // set from a batch flaps: three after a batch carrying three, zero after the
+    // next clean one, on an estate where both are true at once. The quantity an
+    // operator can act on is "broken seals in the last complete pass", which
+    // only the caller owning the walk can know — see `spawn_seal_audit`.
     (audit, cursor)
 }
 
