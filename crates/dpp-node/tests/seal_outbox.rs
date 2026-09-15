@@ -834,9 +834,8 @@ async fn a_locally_sealed_passport_reports_that_no_provider_issued_it() {
         (chrono::Utc::now() - attested).num_seconds().abs() < 300,
         "the attested time should be about now: {attested}"
     );
-    assert_eq!(
+    assert!(
         seal_section["attestedSealedAt"].as_str().is_some(),
-        true,
         "and the dossier must carry it: {seal_section}"
     );
     println!("attested  : {attested}");
@@ -999,7 +998,7 @@ async fn a_seal_corrupted_at_rest_is_found_and_repaired() {
 
     let key_dir = tempfile::tempdir().expect("temp dir");
     let store =
-        dpp_crypto::keystore::KeyStore::open(&key_dir.path().join("keystore.json"), "test-pass")
+        dpp_crypto::keystore::KeyStore::open(key_dir.path().join("keystore.json"), "test-pass")
             .expect("keystore");
     store.generate_key("root").expect("generate key");
     let identity = Arc::new(dpp_vc::LocalIdentityService::new(
@@ -1486,7 +1485,7 @@ async fn a_seal_made_under_an_invalid_certificate_is_found_and_not_called_broken
 
     let key_dir = tempfile::tempdir().expect("temp dir");
     let store =
-        dpp_crypto::keystore::KeyStore::open(&key_dir.path().join("keystore.json"), "test-pass")
+        dpp_crypto::keystore::KeyStore::open(key_dir.path().join("keystore.json"), "test-pass")
             .expect("keystore");
     store.generate_key("root").expect("generate key");
     let identity = Arc::new(dpp_vc::LocalIdentityService::new(
