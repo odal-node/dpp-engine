@@ -52,16 +52,69 @@ fn seal_issued_by(issuer: x509_cert::name::Name) -> (Vec<u8>, tempfile::TempDir)
         panic!("the local backend embeds an X.509 certificate");
     };
     cert.tbs_certificate.issuer = issuer;
+    let relabelled = cert.clone();
 
     let mut set = der::asn1::SetOfVec::new();
     set.insert(choices.remove(0)).expect("certificate");
     sd.certificates = Some(cms::signed_data::CertificateSet(set));
+    // The `SignerInfo` names its certificate by issuer and serial, so relabelling
+    // the certificate without re-pointing the signer would leave a seal naming a
+    // certificate it does not carry — which the parser rejects outright, and
+    // which is a different, less interesting failure than the one under test.
+    name_signer(&mut sd, &relabelled);
 
-    let info = ContentInfo {
+    (reencode(sd), dir)
+}
+
+/// Point the seal's single `SignerInfo` at `certificate`.
+fn name_signer(sd: &mut SignedData, certificate: &x509_cert::Certificate) {
+    let mut signers = sd.signer_infos.0.as_slice().to_vec();
+    signers[0].sid = cms::signed_data::SignerIdentifier::IssuerAndSerialNumber(
+        cms::cert::IssuerAndSerialNumber {
+            issuer: certificate.tbs_certificate.issuer.clone(),
+            serial_number: certificate.tbs_certificate.serial_number.clone(),
+        },
+    );
+    let mut set = der::asn1::SetOfVec::new();
+    set.insert(signers.remove(0)).expect("signer");
+    sd.signer_infos = cms::signed_data::SignerInfos::from(set);
+}
+
+/// Re-encode a modified `SignedData` as a detached CAdES seal.
+fn reencode(sd: SignedData) -> Vec<u8> {
+    ContentInfo {
         content_type: const_oid::db::rfc5911::ID_SIGNED_DATA,
         content: der::Any::encode_from(&sd).expect("encode"),
-    };
-    (info.to_der().expect("re-encode"), dir)
+    }
+    .to_der()
+    .expect("re-encode")
+}
+
+/// A seal carrying exactly `certificates`, the first being the signer's.
+///
+/// The CMS signature is left as the local backend made it and no longer matches
+/// the certificate now named — which is fine and deliberate, because `qualify`
+/// asks who issued the certificate, not whether the seal verifies. The two are
+/// separate questions and a helper that conflated them would hide it.
+fn seal_carrying(certificates: &[Vec<u8>]) -> (Vec<u8>, tempfile::TempDir) {
+    let (der, dir) = local_seal();
+    let info = ContentInfo::from_der(&der).expect("CMS");
+    let mut sd: SignedData = info.content.decode_as().expect("SignedData");
+
+    let parsed: Vec<x509_cert::Certificate> = certificates
+        .iter()
+        .map(|d| x509_cert::Certificate::from_der(d).expect("a certificate"))
+        .collect();
+
+    let mut set = der::asn1::SetOfVec::new();
+    for c in &parsed {
+        set.insert(cms::cert::CertificateChoices::Certificate(c.clone()))
+            .expect("certificate");
+    }
+    sd.certificates = Some(cms::signed_data::CertificateSet(set));
+    name_signer(&mut sd, &parsed[0]);
+
+    (reencode(sd), dir)
 }
 
 /// A qualified CA that Finland lists as granted right now, and its subject name.
@@ -152,67 +205,56 @@ fn an_issuer_no_list_names_is_not_listed() {
     );
 }
 
-/// **Naming a listed CA is enough to reach the top verdict.**
+/// **A certificate relabelled with a listed CA's name is caught.**
 ///
-/// The limitation the module documentation describes, pinned as a test rather
-/// than left as prose — because prose next to a variant called
-/// `QualifiedAtSealing` is what gets skimmed.
+/// The case the path check exists for, and one that reached the top verdict
+/// before it. A seal minted by the local development backend has its certificate
+/// relabelled to carry a genuinely qualified Finnish CA's name; nothing else
+/// about it is touched, and that CA never saw it.
 ///
-/// This seal was minted by the local development backend. Its certificate was
-/// then relabelled to carry a genuinely qualified Finnish CA's name, and nothing
-/// else about it was touched — the CA never saw it. [`qualify`] reports
-/// `QualifiedAtSealing` anyway, because it matches a name and builds no
-/// certificate path.
-///
-/// **And the seal still verifies.** That is the part worth pausing on. A CMS
-/// signature covers the signed attributes, not the certificate travelling beside
-/// them, so relabelling the issuer leaves it intact; what the relabelling breaks
-/// is the *certificate's own* signature, made by its issuer over its
-/// `tbsCertificate`, and nothing in this crate checks that. So the two questions
-/// this workspace can answer today — *does it verify* and *who does it name* —
-/// both come back clean on a seal that is neither qualified nor issued by anyone.
-///
-/// That is the correct behaviour for what these functions claim to be, and it is
-/// exactly why nothing here returns a `SealChecks` rung. The step that closes the
-/// gap is path verification: checking the issuer's signature over this
-/// certificate, which is the one check that would fail here.
+/// **The seal still verifies as a seal**, which is the part worth pausing on. A
+/// CMS signature covers the signed attributes, not the certificate travelling
+/// beside them, so relabelling the issuer leaves it intact. What the relabelling
+/// breaks is the *certificate's own* signature, made by its issuer over its
+/// `tbsCertificate` — so this check is the only thing in the workspace that
+/// notices.
 #[test]
-fn naming_a_listed_ca_reaches_the_top_verdict_without_any_path_check() {
+fn a_certificate_relabelled_with_a_listed_cas_name_is_caught() {
     let (provider_name, ca_subject) = granted_finnish_ca();
     let (seal, _dir) = seal_issued_by(ca_subject);
 
     let verdict = qualify(&seal, &[finnish_list()], Utc::now()).expect("readable seal");
 
-    let IssuerStanding::QualifiedAtSealing {
+    let IssuerStanding::SignatureNotFromListedCa {
         provider,
         territory,
         ..
     } = &verdict.issuer
     else {
-        panic!("a name match reaches this verdict: {:?}", verdict.issuer);
+        panic!(
+            "no listed key signed this certificate: {:?}",
+            verdict.issuer
+        );
     };
     assert_eq!(provider.as_deref(), Some(provider_name.as_str()));
     assert_eq!(territory.as_deref(), Some("FI"));
 
     assert!(
         crate::cades::verify_against_embedded_certificate(&seal).expect("checkable"),
-        "and the signature still verifies, because it covers the signed attributes \
-         rather than the certificate beside them — so neither check this crate can \
-         run today notices the relabelling"
+        "and the seal itself still verifies, which is why the certificate's own \
+         signature has to be checked separately"
     );
 }
 
-/// A seal predating the list's history is not granted, and not known either.
+/// A forgery is reported as a forgery, not as a date problem.
 ///
-/// Art. 32(1)(b) asks about the time of sealing. A present-tense check would
-/// certify a seal made before its issuer was ever qualified, so the same
-/// certificate that passes above fails here on the date alone.
-///
-/// The status is `None` rather than a withdrawn status: the list is silent about
-/// 1999, which is a different finding from a recorded refusal, and the type keeps
-/// them apart.
+/// Ordering, stated as a test. The same relabelled certificate, dated to a
+/// moment the list says nothing about: were the status consulted first, this
+/// would come back `NotQualifiedAtSealing` and read as paperwork trouble with an
+/// otherwise sound seal. The path is checked first because the status of a CA
+/// that did not issue a certificate is beside the point.
 #[test]
-fn a_seal_older_than_the_lists_history_is_not_qualified() {
+fn a_forged_certificate_is_reported_as_forged_rather_than_as_a_date_problem() {
     let (_, ca_subject) = granted_finnish_ca();
     let (seal, _dir) = seal_issued_by(ca_subject);
 
@@ -220,6 +262,183 @@ fn a_seal_older_than_the_lists_history_is_not_qualified() {
         .parse::<DateTime<Utc>>()
         .expect("a time");
     let verdict = qualify(&seal, &[finnish_list()], long_ago).expect("readable seal");
+
+    assert!(
+        matches!(
+            verdict.issuer,
+            IssuerStanding::SignatureNotFromListedCa { .. }
+        ),
+        "the path is checked before the status: {:?}",
+        verdict.issuer
+    );
+}
+
+// ─── A certificate authority whose key the test holds ────────────────────────
+
+/// A root, an optional intermediate, and a certificate genuinely issued under them.
+struct TestChain {
+    /// The root's DER — what a trusted list would carry.
+    root: Vec<u8>,
+    /// The intermediate's DER, when the leaf was issued one level down.
+    intermediate: Option<Vec<u8>>,
+    /// The leaf certificate's DER.
+    leaf: Vec<u8>,
+}
+
+/// Generate a certificate authority and a certificate it really issued.
+///
+/// The only way to exercise the **positive** path today. No published trusted
+/// list carries a CA whose private key a test can hold, and this workspace can
+/// obtain no QTSP credential, so every real-data test can only reach the failure
+/// branches. Here the test is the authority, and a real signature is checked to
+/// be really recognised.
+///
+/// P-256 because that is what `rcgen` generates. The published population is
+/// RSA, P-384 and P-521 — see `trustlist::ca_key_survey` — so this exercises the
+/// mechanism rather than the algorithms, and the algorithm coverage is a feature
+/// list in `Cargo.toml` pinned to that measurement.
+fn test_chain(with_intermediate: bool) -> TestChain {
+    fn params(name: &str, is_ca: bool) -> rcgen::CertificateParams {
+        let mut params = rcgen::CertificateParams::new(vec![name.to_owned()]).expect("params");
+        if is_ca {
+            params.is_ca = rcgen::IsCa::Ca(rcgen::BasicConstraints::Unconstrained);
+        }
+        params
+            .distinguished_name
+            .push(rcgen::DnType::CommonName, name);
+        params
+    }
+    fn key() -> rcgen::KeyPair {
+        rcgen::KeyPair::generate_for(&rcgen::PKCS_ECDSA_P256_SHA256).expect("key")
+    }
+
+    let root = rcgen::CertifiedIssuer::self_signed(params("Test Root CA", true), key())
+        .expect("a self-signed root");
+
+    let intermediate = with_intermediate.then(|| {
+        rcgen::CertifiedIssuer::signed_by(params("Test Intermediate CA", true), key(), &root)
+            .expect("an intermediate signed by the root")
+    });
+
+    let leaf_key = key();
+    let leaf_params = params("Test Sealing Certificate", false);
+    let leaf = match &intermediate {
+        Some(issuer) => leaf_params.signed_by(&leaf_key, &**issuer),
+        None => leaf_params.signed_by(&leaf_key, &*root),
+    }
+    .expect("a leaf signed by its issuer");
+
+    TestChain {
+        root: root.der().to_vec(),
+        intermediate: intermediate.map(|i| i.der().to_vec()),
+        leaf: leaf.der().to_vec(),
+    }
+}
+
+/// A trusted list naming `ca_der` as a qualified CA, granted since 2000.
+fn list_naming(ca_der: &[u8]) -> VerifiedTrustedList {
+    use dpp_domain::trusted_list::{TrustServiceHistory, TrustServiceStatusPeriod};
+
+    let service = crate::trustlist::ListedService {
+        service_type: TrustServiceType::new(TrustServiceType::QUALIFIED_CERTIFICATE_CA),
+        name: Some("Test Qualified CA".to_owned()),
+        history: TrustServiceHistory::new(vec![TrustServiceStatusPeriod {
+            status: TrustServiceStatus::Granted,
+            starting_at: "2000-01-01T00:00:00Z".parse().expect("a time"),
+        }]),
+        certificates: vec![base64::engine::general_purpose::STANDARD.encode(ca_der)],
+    };
+    VerifiedTrustedList::asserted_for_tests(
+        crate::trustlist::UnverifiedTrustedList {
+            territory: Some("FI".to_owned()),
+            providers: vec![crate::trustlist::ListedProvider {
+                name: Some("Test Provider Oy".to_owned()),
+                services: vec![service],
+            }],
+        },
+        "test",
+    )
+}
+
+/// A certificate a listed CA really issued reaches the top verdict.
+///
+/// The positive case, which could not be written before the path check existed:
+/// `QualifiedAtSealing` now means the issuer is established, not merely claimed.
+#[test]
+fn a_certificate_a_listed_ca_really_issued_is_qualified() {
+    let chain = test_chain(false);
+    let (seal, _dir) = seal_carrying(std::slice::from_ref(&chain.leaf));
+
+    let verdict = qualify(&seal, &[list_naming(&chain.root)], Utc::now()).expect("readable seal");
+
+    let IssuerStanding::QualifiedAtSealing { provider, .. } = &verdict.issuer else {
+        panic!("a genuinely issued certificate: {:?}", verdict.issuer);
+    };
+    assert_eq!(provider.as_deref(), Some("Test Provider Oy"));
+}
+
+/// The walk climbs an intermediate the seal carries to reach a listed root.
+///
+/// Not a refinement. Member States do not publish the same thing: Italy's list
+/// is 194 self-signed roots out of 203 entries, so for most Italian providers
+/// the listed certificate is **not** the one that issued the seal. Without this,
+/// those seals report `NotListed` — which looks like an unlisted provider and is
+/// in fact a missing hop.
+#[test]
+fn an_intermediate_carried_by_the_seal_reaches_a_listed_root() {
+    let chain = test_chain(true);
+    let intermediate = chain.intermediate.clone().expect("an intermediate");
+    let (seal, _dir) = seal_carrying(&[chain.leaf.clone(), intermediate]);
+
+    let verdict = qualify(&seal, &[list_naming(&chain.root)], Utc::now()).expect("readable seal");
+
+    assert!(
+        matches!(verdict.issuer, IssuerStanding::QualifiedAtSealing { .. }),
+        "the root is two links up, and the seal carries the link between: {:?}",
+        verdict.issuer
+    );
+}
+
+/// Without the intermediate, the same leaf cannot reach the same root.
+///
+/// The control for the test above — it is what shows the walk did the work
+/// rather than the name matching by luck. A seal stripped of its chain is also
+/// the realistic failure: `NotListed`, because nothing consulted carries the
+/// issuer's name.
+#[test]
+fn the_same_leaf_without_its_intermediate_does_not_reach_the_root() {
+    let chain = test_chain(true);
+    let (seal, _dir) = seal_carrying(std::slice::from_ref(&chain.leaf));
+
+    let verdict = qualify(&seal, &[list_naming(&chain.root)], Utc::now()).expect("readable seal");
+
+    assert!(
+        matches!(verdict.issuer, IssuerStanding::NotListed { .. }),
+        "no listed name matches the leaf's issuer once the intermediate is gone: {:?}",
+        verdict.issuer
+    );
+}
+
+/// A seal predating the list's history is not granted, and not known either.
+///
+/// Art. 32(1)(b) asks about the time of sealing. A present-tense check would
+/// certify a seal made before its issuer was ever qualified, so the same
+/// genuinely issued certificate that passes above fails here on the date alone —
+/// and it is genuinely issued, so it reaches the status check rather than
+/// stopping at the path.
+///
+/// The status is `None` rather than a withdrawn status: the list is silent about
+/// 1999, which is a different finding from a recorded refusal, and the type keeps
+/// them apart.
+#[test]
+fn a_seal_older_than_the_lists_history_is_not_qualified() {
+    let chain = test_chain(false);
+    let (seal, _dir) = seal_carrying(std::slice::from_ref(&chain.leaf));
+
+    let long_ago = "1999-01-01T00:00:00Z"
+        .parse::<DateTime<Utc>>()
+        .expect("a time");
+    let verdict = qualify(&seal, &[list_naming(&chain.root)], long_ago).expect("readable seal");
 
     let IssuerStanding::NotQualifiedAtSealing { status, .. } = &verdict.issuer else {
         panic!("nothing was granted in 1999: {:?}", verdict.issuer);

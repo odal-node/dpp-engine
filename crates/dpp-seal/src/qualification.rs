@@ -29,35 +29,48 @@
 //! Two legs, so two fields rather than one ladder: they are independent, and a
 //! seal can hold either without the other.
 //!
-//! ## This does not produce `SealChecks::QualifiedValidation`
+//! ## The issuer is verified, not merely named
 //!
-//! Stated here because the gap is one step and is easy to overlook once the
-//! verdict reads `QualifiedAtSealing`.
+//! Matching starts from the name — the seal certificate's issuer distinguished
+//! name against the subject of a CA certificate the list carries — and **does
+//! not stop there**. Every listed certificate under that name is then tried as a
+//! verifier of the CA's signature over this certificate's `tbsCertificate`, and
+//! only a certificate that actually verifies reaches
+//! [`IssuerStanding::QualifiedAtSealing`].
 //!
-//! The issuer is matched by **name**: the seal certificate's issuer
-//! distinguished name against the subject of a CA certificate the list carries.
-//! That identifies which listed CA the seal *claims* to come from. It does not
-//! verify that the CA actually issued it — no certificate path is built and no
-//! signature of the CA over the seal certificate is checked. Anyone can mint a
-//! self-signed certificate bearing a listed CA's name, and it would land in
-//! [`IssuerStanding::QualifiedAtSealing`] here.
+//! Every listed certificate, because a certificate authority rotating its key
+//! publishes the old and the new together under one subject name. Stopping at
+//! the first would report a genuine seal as unsigned, intermittently, and only
+//! for providers mid-rotation.
 //!
-//! So this is a **trust-status report about a named issuer**, not a validation.
-//! It is the right input to a qualified validation and the wrong thing to mistake
-//! for one, which is why nothing in this module returns a
-//! [`SealChecks`](dpp_domain::seal::SealChecks) at all — a rung would be claimed
-//! by whoever wired it up next, and the missing step would go with it.
+//! Before that check existed, a self-signed certificate relabelled with a listed
+//! CA's name reached the top verdict — and **still verified as a seal**, because
+//! a CMS signature covers the signed attributes rather than the certificate
+//! travelling beside them. What the relabelling breaks is the certificate's own
+//! signature, which is exactly what this now checks.
 //!
-//! Path verification is the work that closes it, and it needs a signature
-//! verifier covering the algorithms real QTSP certificate authorities use — RSA
-//! among them, which this crate cannot do today.
+//! ## Still not `SealChecks::QualifiedValidation`
+//!
+//! Two conditions of Art. 32(1) remain unchecked, and neither is a matter of
+//! degree:
+//!
+//! - **The certificate's own validity window.** Nothing here reads `notBefore`
+//!   or `notAfter`, so a certificate that had expired when the seal was made
+//!   still reports as qualified. The trusted list is asked what the *issuer's*
+//!   status was at sealing time; the certificate is asked nothing.
+//! - **Revocation.** Art. 32(1)(e) wants the certificate not revoked at the time
+//!   of sealing. No CRL is read and no OCSP responder is consulted.
+//!
+//! So nothing in this module returns a
+//! [`SealChecks`](dpp_domain::seal::SealChecks). A rung would be claimed by
+//! whoever wired it up next, and the two missing conditions would go with it.
 
 use base64::Engine as _;
 use chrono::{DateTime, Utc};
 use der::{Decode as _, Encode as _};
 use dpp_domain::trusted_list::{TrustServiceStatus, TrustServiceType};
 
-use crate::cades::{SignerCertificate, signer_certificate};
+use crate::cades::{IssuerCheck, SignerCertificate, signer_certificate};
 use crate::error::SealError;
 use crate::trustlist::VerifiedTrustedList;
 use dpp_types::CreationDevice;
@@ -91,8 +104,45 @@ pub enum IssuerStanding {
         /// The issuer name the certificate carries.
         issuer: String,
     },
+    /// A listed CA carries this name, and **did not sign this certificate**.
+    ///
+    /// The forgery finding. Every listed certificate under that name was tried —
+    /// a CA mid-rotation publishes several — and none of their keys verifies the
+    /// signature over this certificate's `tbsCertificate`.
+    ///
+    /// Distinct from [`Self::NotListed`], which says nobody listed carries the
+    /// name at all. Here somebody does, and the seal is claiming to be theirs.
+    SignatureNotFromListedCa {
+        /// The issuer name the certificate claims.
+        issuer: String,
+        /// The provider whose name was claimed.
+        provider: Option<String>,
+        /// The list carrying that name.
+        territory: Option<String>,
+    },
+    /// A listed CA carries this name and the signature could not be checked.
+    ///
+    /// **Not an accusation, and never to be read as one.** The usual cause is a
+    /// key algorithm this build does not verify; a CA certificate that will not
+    /// parse is the other. Reporting it as
+    /// [`Self::SignatureNotFromListedCa`] would call a possibly-genuine seal a
+    /// forgery on the strength of a check that never ran — the same mistake as
+    /// reading an unknown trusted-list status as a withdrawn one.
+    PathUnverifiable {
+        /// The issuer name the certificate claims.
+        issuer: String,
+        /// The provider whose name was claimed.
+        provider: Option<String>,
+        /// The list carrying that name.
+        territory: Option<String>,
+        /// Why no candidate could be checked.
+        reason: String,
+    },
     /// The issuer is a listed CA, but was not granted qualified status when the
     /// seal was made.
+    ///
+    /// Reached only once the path verifies: this CA did issue the certificate,
+    /// and was not qualified at the time.
     NotQualifiedAtSealing {
         /// The issuer name.
         issuer: String,
@@ -109,11 +159,14 @@ pub enum IssuerStanding {
         /// how "we do not know" becomes "it was not qualified".
         status: Option<TrustServiceStatus>,
     },
-    /// The issuer was a granted qualified CA when the seal was made.
+    /// A granted qualified CA issued this certificate, and was granted when the
+    /// seal was made.
     ///
-    /// **This is not a qualified-seal verdict** — see the module documentation.
-    /// The issuer was matched by name, so this says the seal claims an issuer
-    /// that was genuinely qualified at the time, not that the issuer signed it.
+    /// The issuer's signature over this certificate's `tbsCertificate` verifies
+    /// under a key the trusted list publishes for it, so the name is not merely
+    /// claimed. What is still **not** established here: the certificate's own
+    /// validity window at sealing time, and whether it had been revoked — see
+    /// the module documentation.
     QualifiedAtSealing {
         /// The issuer name.
         issuer: String,
@@ -171,6 +224,30 @@ impl std::fmt::Display for SealQualification {
                 f,
                 "issued by {issuer}, which no consulted Trusted List names as a qualified CA"
             ),
+            IssuerStanding::SignatureNotFromListedCa {
+                issuer, territory, ..
+            } => {
+                write!(f, "claims {issuer}, a CA listed")?;
+                if let Some(t) = territory {
+                    write!(f, " in {t}")?;
+                }
+                write!(
+                    f,
+                    " — but no certificate that list publishes for that name signed this one"
+                )
+            }
+            IssuerStanding::PathUnverifiable {
+                issuer,
+                territory,
+                reason,
+                ..
+            } => {
+                write!(f, "claims {issuer}, a CA listed")?;
+                if let Some(t) = territory {
+                    write!(f, " in {t}")?;
+                }
+                write!(f, " — the signature could not be checked: {reason}")
+            }
             IssuerStanding::NotQualifiedAtSealing {
                 issuer,
                 territory,
@@ -203,7 +280,10 @@ impl std::fmt::Display for SealQualification {
                         "; the provider does not hold Art. 39a remote QSCD management"
                     )?;
                 }
-                write!(f, " — issuer matched by name, no certificate path verified")
+                write!(
+                    f,
+                    " — issuer signature verified; certificate validity and revocation not checked"
+                )
             }
         }
     }
@@ -234,13 +314,14 @@ pub fn qualify(
 ) -> Result<SealQualification, SealError> {
     let certificate = signer_certificate(seal_der)?;
     Ok(SealQualification {
-        issuer: standing(&certificate, lists, sealed_at),
+        issuer: standing(seal_der, &certificate, lists, sealed_at),
         creation_device: certificate.creation_device,
     })
 }
 
 /// The issuer's standing, given a certificate already read.
 fn standing(
+    seal_der: &[u8],
     certificate: &SignerCertificate,
     lists: &[VerifiedTrustedList],
     sealed_at: DateTime<Utc>,
@@ -252,8 +333,43 @@ fn standing(
     }
 
     let issuer = certificate.issuer.clone();
-    let Some(found) = find_issuer(certificate, lists) else {
+    // Candidates are chosen against **every** issuer name the seal's embedded
+    // certificates refer to, not only the signer's own. Where a Member State
+    // publishes self-signed roots, the anchor's subject matches an
+    // intermediate's issuer one link further up, and filtering on the signer's
+    // issuer alone would select nothing and report an unlisted provider — with
+    // the chain to prove otherwise sitting inside the seal.
+    let names = crate::cades::chain_issuer_names(seal_der).unwrap_or_default();
+    let candidates = find_issuer_candidates(&names, lists);
+    let Some(first) = candidates.first() else {
         return IssuerStanding::NotListed { issuer };
+    };
+    // Where the path cannot be pinned to one candidate, the name that was
+    // matched is reported from the first. They all carry the same subject name
+    // — that is what made them candidates — so the provider and territory are
+    // the answer to "whose name is on this", which is the question those
+    // variants are reporting on.
+    let provider = first.provider.name.clone();
+    let territory = first.territory.clone();
+
+    let (found, unverifiable) = verify_path(seal_der, &candidates);
+    let Some(found) = found else {
+        return match unverifiable {
+            // Never collapsed into the variant below. "We could not check" and
+            // "this CA did not sign it" are opposite findings, and only one of
+            // them is an accusation.
+            Some(reason) => IssuerStanding::PathUnverifiable {
+                issuer,
+                provider,
+                territory,
+                reason,
+            },
+            None => IssuerStanding::SignatureNotFromListedCa {
+                issuer,
+                provider,
+                territory,
+            },
+        };
     };
 
     let status = found.service.history.status_at(sealed_at).cloned();
@@ -277,64 +393,108 @@ fn standing(
     }
 }
 
-/// The listed CA service whose certificate carries the seal's issuer name.
-struct Found<'a> {
+/// Which candidate actually signed the certificate, and why none could be checked.
+///
+/// Returns the first candidate whose key verifies. The second value is the first
+/// reason a candidate could not be checked at all, and it is only meaningful
+/// when no candidate verified — it is what separates *nobody here signed this*
+/// from *we were unable to ask*.
+fn verify_path<'a>(
+    seal_der: &[u8],
+    candidates: &'a [Candidate<'a>],
+) -> (Option<&'a Candidate<'a>>, Option<String>) {
+    let mut unverifiable = None;
+    for candidate in candidates {
+        match crate::cades::check_path_to(seal_der, &candidate.certificate_der) {
+            Ok(IssuerCheck::Verified) => return (Some(candidate), None),
+            Ok(IssuerCheck::NotSignedByThisIssuer) => {}
+            Ok(IssuerCheck::Unverifiable(why)) => {
+                if unverifiable.is_none() {
+                    unverifiable = Some(why);
+                }
+            }
+            // The seal parsed once already to get here, so this is not reachable
+            // by a malformed seal. Recorded as unverifiable rather than ignored,
+            // because the one thing it must not become is an accusation.
+            Err(e) => {
+                if unverifiable.is_none() {
+                    unverifiable = Some(e.to_string());
+                }
+            }
+        }
+    }
+    (None, unverifiable)
+}
+
+/// A listed CA certificate carrying the seal certificate's issuer name.
+struct Candidate<'a> {
     provider: &'a crate::trustlist::ListedProvider,
     service: &'a crate::trustlist::ListedService,
     territory: Option<String>,
+    /// The CA certificate's DER, for the signature check.
+    certificate_der: Vec<u8>,
 }
 
-/// Find the CA entry naming this certificate's issuer.
+/// Every listed CA certificate whose subject is an issuer name the seal refers to.
 ///
-/// Matched on the DER of the distinguished name, which is exact: a certificate's
-/// issuer field is copied from the issuing CA's subject field, so the encodings
-/// agree where the relationship is real. Exact matching is stricter than the
-/// RFC 5280 name-comparison rules, so a Member State that re-encoded a name would
-/// produce a miss — reported as [`IssuerStanding::NotListed`], which understates
-/// the issuer's standing rather than overstating it.
+/// **All of them, not the first.** A certificate authority rotating its key
+/// publishes the old and the new certificate together, under the same subject
+/// name, so relying parties do not break at the cutover — the trusted list
+/// module already records that Finland names five signing certificates for this
+/// reason. Stopping at the first match would verify against whichever the list
+/// happened to order first and report a genuine seal as unsigned, intermittently
+/// and only for providers mid-rotation.
+///
+/// Matched on the DER of the distinguished name, which is exact. That is
+/// stricter than RFC 5280's comparison rules, so a Member State that re-encoded
+/// a name would produce no candidates — reported as
+/// [`IssuerStanding::NotListed`], which understates the issuer's standing rather
+/// than overstating it.
 ///
 /// Only [`TrustServiceType::QUALIFIED_CERTIFICATE_CA`] entries are considered.
-/// That is the service type Art. 32(1)(a)–(b) turns on, and a provider listed for
-/// some other qualified service is not thereby a qualified CA.
-///
-/// The first match wins. A CA certificate appearing in two Member States' lists
-/// would be a defect in the lists rather than an ambiguity to resolve here.
-fn find_issuer<'a>(
-    certificate: &SignerCertificate,
+/// That is the service type Art. 32(1)(a)–(b) turns on, and a provider listed
+/// for some other qualified service is not thereby a qualified CA.
+fn find_issuer_candidates<'a>(
+    issuer_names: &[Vec<u8>],
     lists: &'a [VerifiedTrustedList],
-) -> Option<Found<'a>> {
+) -> Vec<Candidate<'a>> {
+    let mut found = Vec::new();
     for list in lists {
         for (provider, services) in
             list.providers_offering(TrustServiceType::QUALIFIED_CERTIFICATE_CA)
         {
             for service in services {
-                if service
-                    .certificates
-                    .iter()
-                    .any(|c| subject_der(c).is_some_and(|s| s == certificate.issuer_der))
-                {
-                    return Some(Found {
-                        provider,
-                        service,
-                        territory: list.territory().map(str::to_owned),
-                    });
+                for c in &service.certificates {
+                    let Some(der) = decoded(c) else { continue };
+                    if subject_der(&der).is_some_and(|s| issuer_names.contains(&s)) {
+                        found.push(Candidate {
+                            provider,
+                            service,
+                            territory: list.territory().map(str::to_owned),
+                            certificate_der: der,
+                        });
+                    }
                 }
             }
         }
     }
-    None
+    found
 }
 
-/// DER of a base64 certificate's subject name, or `None` if it will not parse.
+/// A base64 certificate's DER, or `None` if it will not decode.
 ///
 /// A list entry that cannot be read is skipped rather than fatal. One
-/// unparseable certificate among thousands must not stop the others being
+/// unparseable certificate among hundreds must not stop the others being
 /// searched, and the consequence of skipping is a miss — the safe direction.
-fn subject_der(base64_certificate: &str) -> Option<Vec<u8>> {
-    let der = base64::engine::general_purpose::STANDARD
+fn decoded(base64_certificate: &str) -> Option<Vec<u8>> {
+    base64::engine::general_purpose::STANDARD
         .decode(base64_certificate.trim())
-        .ok()?;
-    x509_cert::Certificate::from_der(&der)
+        .ok()
+}
+
+/// A certificate's subject name, DER-encoded.
+fn subject_der(der: &[u8]) -> Option<Vec<u8>> {
+    x509_cert::Certificate::from_der(der)
         .ok()?
         .tbs_certificate
         .subject

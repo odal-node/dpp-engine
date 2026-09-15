@@ -51,6 +51,54 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ### Added
 
+- **A seal's certificate path is now verified, so the top verdict means the
+  issuer is established rather than claimed.** `dpp_seal::qualification` matched
+  an issuer by *name* and stopped there, so a self-signed certificate relabelled
+  with a listed CA's name reached the top verdict — and still verified as a seal,
+  because a CMS signature covers the signed attributes rather than the
+  certificate travelling beside them.
+
+  `cades::check_path_to` now walks from the seal's signer up through the
+  certificates the seal carries to a trust anchor the list publishes, verifying
+  every link. Intermediates come **only from the seal**: a path completed by a
+  document fetched over the network is not a path.
+
+  Two new findings, kept apart deliberately. `SignatureNotFromListedCa` is the
+  forgery — a listed CA carries that name and did not sign this. `PathUnverifiable`
+  is *not an accusation*: the check could not be run at all. Collapsing them
+  would either brand a lawful seal a forgery or let an unrunnable check read as a
+  clean miss. The path is also checked **before** the trusted-list status, so a
+  forgery is reported as a forgery rather than as a date problem.
+
+  Sized by measurement rather than assumption, and the assumption was wrong
+  twice over. Across the 373 qualified-CA certificates in the lists this
+  workspace can verify, **96.8% are RSA**, and the elliptic-curve remainder is
+  P-384 and P-521 with **not one P-256** — so the `p256` already here covered
+  none of them. `x509-verify` is pinned to exactly those algorithms; `k256`,
+  Ed25519, DSA and the broken-hash features are off. The measurement is kept as
+  `crates/dpp-seal/tests/ca_key_survey.rs` so it re-checks itself when a Member
+  State republishes.
+
+  Two further findings drove the design. Member States do not publish the same
+  thing — Italy's list is 194 self-signed **roots** out of 203, while Finland's
+  and France's carry issuing CAs directly — so candidate selection considers
+  every issuer name the seal's chain refers to, not just the signer's own.
+  Without that the walk never starts and an Italian provider reports as unlisted.
+  And `SignedData.certificates` is a SET with no meaningful order, so the signer
+  is now located by its `SignerInfo` identifier rather than taken from position
+  zero; a real provider's seal travelling with its chain could previously report
+  an intermediate as the signing certificate.
+
+  Still not `SealChecks::QualifiedValidation`, and the module says why: the
+  certificate's own validity window is never read, and revocation is never
+  consulted.
+
+  **RUSTSEC-2023-0071** (`rsa`, no fix available) is registered in
+  `.cargo/audit.toml` as `reachable-but-mitigated`. The Marvin Attack recovers a
+  key by timing private-key operations; this workspace holds no RSA key and
+  performs no RSA private-key operation, so there is nothing to recover. The
+  entry voids itself the moment one appears.
+
 - **The seal routes now say whether a seal is worth anything, and they answer
   two different questions.**
 

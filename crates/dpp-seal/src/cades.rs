@@ -5,14 +5,24 @@
 //! ASN.1 handling across two of them is how the two quietly stop agreeing about
 //! what a seal contains.
 //!
-//! # Everything here is *reported*, never *verified*
+//! # What is *reported* and what is *verified*, kept apart by name
 //!
-//! This module reads a structure. It builds no certificate chain, contacts no
-//! Trusted List, and checks no revocation — so a certificate it names is the one
-//! the seal **claims** signed it, on the seal's own word. For a qualified seal
-//! that claim is worth checking and this module cannot check it; establishing
-//! that the certificate was qualified, and current, at the moment of sealing is
-//! an independent AdES validator's job.
+//! Most of this module reads a structure and reports what it found. A
+//! certificate it names is the one the seal **claims** signed it, on the seal's
+//! own word — [`signer_certificate`], [`evidenced_level`] and
+//! [`signer_certificate_thumbprint`] all work that way, and are named so the
+//! distinction survives a skim.
+//!
+//! [`check_path_to`] is the exception, and the only one. It verifies signatures:
+//! given a trust anchor established elsewhere, it walks from the seal's signer up
+//! through the certificates the seal carries and checks that each link was really
+//! signed by the one above it. That is a genuine cryptographic result, not a
+//! report.
+//!
+//! It still does **not** make a seal qualified. No validity window is read and no
+//! revocation is consulted, so a certificate that had expired or been revoked at
+//! the moment of sealing passes this check. Establishing *that* remains an
+//! independent AdES validator's job.
 //!
 //! The distinction is the whole reason this is a separate module with its own
 //! vocabulary. A convenience field that reads as verification while verifying
@@ -33,10 +43,18 @@ fn malformed(what: impl std::fmt::Display) -> SealError {
     SealError::Backend(format!("cannot read the seal: {what}"))
 }
 
-/// The one signer and the certificate it travels with.
+/// The signer, its certificate, and everything else the seal carries.
 struct Signed {
     signer: SignerInfo,
     certificate: Certificate,
+    /// Every X.509 certificate embedded in the seal, the signer's included.
+    ///
+    /// A real CAdES seal usually travels with its issuing chain, which is what
+    /// makes a path to a trusted list's anchor reachable without fetching
+    /// anything: Italy's list publishes self-signed **roots**, so the
+    /// intermediate that actually issued a seal certificate will be found here
+    /// or nowhere.
+    chain: Vec<Certificate>,
     /// Whether `SignedData.crls` carried anything.
     ///
     /// Captured here because the enclosing `SignedData` is dropped when this is
@@ -49,7 +67,40 @@ struct Signed {
     crls_present: bool,
 }
 
-/// Parse a detached CMS `SignedData` down to its single signer and certificate.
+/// `id-ce-subjectKeyIdentifier` — RFC 5280 §4.2.1.2.
+const ID_CE_SUBJECT_KEY_IDENTIFIER: const_oid::ObjectIdentifier =
+    const_oid::ObjectIdentifier::new_unwrap("2.5.29.14");
+
+/// Which embedded certificate the `SignerInfo` actually names.
+///
+/// **Not simply the first.** RFC 5652 makes `SignedData.certificates` a SET, so
+/// its order carries no meaning, and a seal travelling with its issuing chain
+/// may well list an intermediate before the end-entity certificate. Taking
+/// `[0]` happens to work for a seal carrying exactly one certificate — which is
+/// every seal this crate produces — and silently reports the wrong certificate
+/// for a real provider's seal, which is the case that matters.
+fn signer_certificate_of<'a>(
+    signer: &SignerInfo,
+    certs: &'a [Certificate],
+) -> Option<&'a Certificate> {
+    match &signer.sid {
+        cms::signed_data::SignerIdentifier::IssuerAndSerialNumber(ias) => certs.iter().find(|c| {
+            c.tbs_certificate.issuer == ias.issuer
+                && c.tbs_certificate.serial_number == ias.serial_number
+        }),
+        cms::signed_data::SignerIdentifier::SubjectKeyIdentifier(ski) => certs.iter().find(|c| {
+            c.tbs_certificate
+                .extensions
+                .as_ref()
+                .and_then(|e| e.iter().find(|e| e.extn_id == ID_CE_SUBJECT_KEY_IDENTIFIER))
+                // The extension wraps the key identifier in an OCTET STRING, so
+                // its DER is a 2-byte header plus the bytes the SignerInfo names.
+                .is_some_and(|e| e.extn_value.as_bytes().ends_with(ski.0.as_bytes()))
+        }),
+    }
+}
+
+/// Parse a detached CMS `SignedData` down to its single signer and certificates.
 ///
 /// One signer is not a simplification: this crate sends one digest per request
 /// and a response bearing more than one signature does not answer the request
@@ -74,13 +125,29 @@ fn parse(seal_der: &[u8]) -> Result<Signed, SealError> {
         .certificates
         .as_ref()
         .ok_or_else(|| malformed("it carries no certificate"))?;
-    let Some(CertificateChoices::Certificate(certificate)) = certs.0.as_slice().first() else {
+    let chain: Vec<Certificate> = certs
+        .0
+        .as_slice()
+        .iter()
+        .filter_map(|c| match c {
+            CertificateChoices::Certificate(c) => Some(c.clone()),
+            _ => None,
+        })
+        .collect();
+    if chain.is_empty() {
         return Err(malformed("it carries no X.509 certificate"));
-    };
+    }
+
+    // A seal naming a certificate it does not carry cannot be read: the
+    // alternative is to guess, and a guess here misattributes the seal.
+    let certificate = signer_certificate_of(signer, &chain)
+        .ok_or_else(|| malformed("it names a signer certificate it does not carry"))?
+        .clone();
 
     Ok(Signed {
         signer: signer.clone(),
-        certificate: certificate.clone(),
+        certificate,
+        chain,
         crls_present: sd.crls.as_ref().is_some_and(|c| !c.0.as_slice().is_empty()),
     })
 }
@@ -387,6 +454,225 @@ pub fn signer_certificate(seal_der: &[u8]) -> Result<SignerCertificate, SealErro
         issuer_der,
         creation_device: creation_device(tbs),
     })
+}
+
+/// Whether a given certificate authority actually signed the seal's certificate.
+///
+/// Three outcomes rather than a boolean, because *this CA did not sign it* and
+/// *the check could not be run* send a reader in opposite directions. Collapsing
+/// them would either brand a lawful seal a forgery or let an unrunnable check
+/// read as a clean miss — the same split [`super::trustlist`] draws between a
+/// document signed by the wrong key and one altered after signing.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum IssuerCheck {
+    /// The issuer's public key verifies its signature over the seal
+    /// certificate's `tbsCertificate`. This CA issued it.
+    Verified,
+    /// The signature does not verify under this issuer's key.
+    ///
+    /// Not an error: it is a finding, and the one that catches a certificate
+    /// relabelled with a listed CA's name.
+    NotSignedByThisIssuer,
+    /// The check could not be run at all.
+    ///
+    /// An unreadable issuer certificate, or a key algorithm this build does not
+    /// verify — see the `x509-verify` feature list in `Cargo.toml`, which is
+    /// pinned to the algorithms actually measured in the published lists. Never
+    /// to be reported as either of the above.
+    Unverifiable(String),
+}
+
+/// The DER of every issuer name the seal's embedded certificates refer to.
+///
+/// What a caller needs to decide **which** trust anchors are worth trying. The
+/// signer's own issuer is not enough on its own: where a trusted list publishes
+/// self-signed roots — Italy's does, for 194 of its 203 entries — the anchor's
+/// subject matches the *intermediate's* issuer, one link further up, and a
+/// caller filtering on the signer's issuer alone would find no candidate and
+/// report an unlisted provider.
+///
+/// Duplicates are removed; order is not meaningful.
+///
+/// # Errors
+///
+/// [`SealError::Backend`] when the seal cannot be read.
+pub fn chain_issuer_names(seal_der: &[u8]) -> Result<Vec<Vec<u8>>, SealError> {
+    let signed = parse(seal_der)?;
+    let mut names: Vec<Vec<u8>> = Vec::new();
+    for certificate in &signed.chain {
+        if let Ok(der) = certificate.tbs_certificate.issuer.to_der()
+            && !names.contains(&der)
+        {
+            names.push(der);
+        }
+    }
+    Ok(names)
+}
+
+/// How far a certificate path may be walked before it is treated as a loop.
+///
+/// Real chains are two or three links. The cap is not a tuning parameter: the
+/// certificates come out of a seal an operator was handed, so a hostile one may
+/// carry a chain shaped to make this walk expensive.
+const MAX_PATH_LENGTH: usize = 8;
+
+/// Check whether the seal's certificate chains to `anchor_certificate_der`.
+///
+/// **A path check against one anchor, not a path builder.** The trust anchor is
+/// established elsewhere — the Official Journal anchors the list of trusted
+/// lists, which anchors each national list, which carries this certificate — so
+/// what remains is whether the seal's signer chains up to it.
+///
+/// Intermediates are taken **only from the seal itself**. A CAdES seal normally
+/// travels with its issuing chain, and nothing here fetches a certificate over
+/// the network: a path completed by a document an attacker could serve is not a
+/// path. This matters more than it sounds, because Member States do not publish
+/// the same thing — Italy's list carries self-signed roots, so an intermediate
+/// is needed to reach them, while Finland's and France's carry the issuing CAs
+/// directly and the walk finishes in one step.
+///
+/// Every link is verified. Reaching the anchor by name alone would let any
+/// embedded certificate claim any issuer, which is the hole this whole function
+/// exists to close.
+///
+/// Signatures are verified with the tolerant comparison rather than the strict
+/// one: the strict variant refuses a non-normalised ECDSA signature, which is
+/// lawful in X.509 and emitted by real certificate authorities. Using it would
+/// reject genuine certificates as forgeries.
+///
+/// Nothing here checks a validity window or consults revocation.
+///
+/// # Errors
+///
+/// [`SealError::Backend`] when the *seal* cannot be read. A problem with the
+/// *anchor* is [`IssuerCheck::Unverifiable`], not an error: the seal is fine and
+/// one candidate among several could not be checked.
+pub fn check_path_to(
+    seal_der: &[u8],
+    anchor_certificate_der: &[u8],
+) -> Result<IssuerCheck, SealError> {
+    let signed = parse(seal_der)?;
+
+    let anchor = match Certificate::from_der(anchor_certificate_der) {
+        Ok(c) => c,
+        Err(e) => {
+            return Ok(IssuerCheck::Unverifiable(format!(
+                "the anchor certificate does not parse: {e}"
+            )));
+        }
+    };
+    let anchor_key = match x509_verify::VerifyingKey::try_from(&anchor) {
+        Ok(k) => k,
+        Err(e) => {
+            return Ok(IssuerCheck::Unverifiable(format!(
+                "no verifier for the anchor's key: {e}"
+            )));
+        }
+    };
+
+    let mut current = &signed.certificate;
+    let mut seen: Vec<&x509_cert::name::Name> = Vec::new();
+    for _ in 0..MAX_PATH_LENGTH {
+        // The anchor first, so a chain that also embeds a copy of it cannot
+        // lengthen the walk.
+        if current.tbs_certificate.issuer == anchor.tbs_certificate.subject {
+            return Ok(verified_under(&anchor, &anchor_key, current));
+        }
+
+        // Otherwise climb one link, using only what the seal carries. A
+        // certificate is never its own issuer here: a self-signed certificate
+        // that is not the anchor terminates the walk rather than looping.
+        let Some(next) = signed.chain.iter().find(|c| {
+            c.tbs_certificate.subject == current.tbs_certificate.issuer
+                && c.tbs_certificate.subject != current.tbs_certificate.subject
+        }) else {
+            return Ok(IssuerCheck::NotSignedByThisIssuer);
+        };
+        if seen.contains(&&next.tbs_certificate.subject) {
+            return Ok(IssuerCheck::Unverifiable(
+                "the embedded certificates form a loop".to_owned(),
+            ));
+        }
+        seen.push(&current.tbs_certificate.subject);
+
+        // The intermediate must have signed the certificate below it, or the
+        // chain is decoration.
+        let key = match x509_verify::VerifyingKey::try_from(next) {
+            Ok(k) => k,
+            Err(e) => {
+                return Ok(IssuerCheck::Unverifiable(format!(
+                    "no verifier for an intermediate's key: {e}"
+                )));
+            }
+        };
+        match verified_under(next, &key, current) {
+            IssuerCheck::Verified => {}
+            other => return Ok(other),
+        }
+        current = next;
+    }
+
+    Ok(IssuerCheck::Unverifiable(format!(
+        "the certificate path is longer than {MAX_PATH_LENGTH} links"
+    )))
+}
+
+/// The signature-algorithm family an OID belongs to, where it is one this
+/// module can reason about.
+///
+/// Prefix matching on the arc rather than an enumeration of every OID: RSA's
+/// signature algorithms all sit under `1.2.840.113549.1.1`, alongside the key
+/// algorithm itself, and ECDSA's under `1.2.840.10045`. A new hash in either
+/// family lands in the right place without an edit here, and an OID from
+/// neither family is simply unknown, which is the honest answer.
+fn algorithm_family(oid: &str) -> Option<&'static str> {
+    if oid.starts_with("1.2.840.113549.1.1.") {
+        Some("RSA")
+    } else if oid.starts_with("1.2.840.10045.") {
+        Some("ECDSA")
+    } else if oid == "1.3.101.112" || oid == "1.3.101.113" {
+        Some("EdDSA")
+    } else {
+        None
+    }
+}
+
+/// One link: did `issuer` sign `certificate`?
+fn verified_under(
+    issuer: &Certificate,
+    key: &x509_verify::VerifyingKey,
+    certificate: &Certificate,
+) -> IssuerCheck {
+    // Settle an algorithm mismatch here rather than letting the verifier report
+    // it as an unrecognised OID. A certificate authority holding an RSA key
+    // cannot have produced an ECDSA signature, so that pairing is a **definite**
+    // non-match — and reporting it as "could not be checked" would leave the
+    // commonest forgery, a self-signed P-256 certificate relabelled with an
+    // RSA-keyed CA's name, looking like a gap in this build's algorithm support.
+    let signature_family = algorithm_family(&certificate.signature_algorithm.oid.to_string());
+    let key_family = algorithm_family(
+        &issuer
+            .tbs_certificate
+            .subject_public_key_info
+            .algorithm
+            .oid
+            .to_string(),
+    );
+    if let (Some(signature), Some(k)) = (signature_family, key_family)
+        && signature != k
+    {
+        return IssuerCheck::NotSignedByThisIssuer;
+    }
+
+    match key.verify(certificate) {
+        Ok(()) => IssuerCheck::Verified,
+        // `verify` folds "does not verify" and "cannot verify this algorithm"
+        // into one error type, so the signature-level one is named explicitly
+        // and everything else stays unverifiable. Guessing the other way round
+        // would report a forgery whenever a new algorithm appeared.
+        Err(x509_verify::Error::Verification) => IssuerCheck::NotSignedByThisIssuer,
+        Err(e) => IssuerCheck::Unverifiable(format!("the check could not be run: {e}")),
+    }
 }
 
 /// The Annex III(j) indication, read off the QCStatements extension.

@@ -11,9 +11,34 @@
 # contract.
 
 [advisories]
-# Empty by design. RUSTSEC-2023-0071 (`rsa`, reached only through the
-# never-enabled `sqlx-mysql`) was suppressed here until the sqlx 0.8 -> 0.9
-# bump pruned both crates from Cargo.lock — exactly the `release-on` condition
-# that entry recorded. The advisory no longer fires, so the entry is deleted
-# rather than left suppressed.
-ignore = []
+# --- RUSTSEC-2023-0071 --------------------------------------------------
+# crate:      rsa 0.9.10
+# path:       dpp-seal -> x509-verify -> rsa
+# class:      reachable-but-mitigated
+# rationale:  The Marvin Attack is a timing sidechannel in RSA **private
+#             key** operations — it recovers a key by timing an attacker's
+#             decryption or signing queries against it. This workspace
+#             performs no RSA private-key operation anywhere: it holds no
+#             RSA key at all. Its own keys are Ed25519 (JWS) and P-256 (the
+#             local seal backend), and `rsa` is reached solely to verify a
+#             certificate authority's signature over a seal certificate,
+#             using a public key read out of a published EU Trusted List.
+#             Verification touches no secret, so there is no key to recover
+#             and no oracle to time. `x509-verify` is pinned to the
+#             algorithms measured in the published lists — RSA is 96.8% of
+#             373 qualified-CA certificates, so dropping RSA is not an
+#             option; see crates/dpp-seal/tests/ca_key_survey.rs.
+#             THIS ENTRY IS VOID THE MOMENT ANY RSA PRIVATE-KEY OPERATION
+#             APPEARS — signing, decrypting, or key generation. The
+#             mitigation is the absence of a private key, not a workaround.
+# anchor:     crates/dpp-seal/src/cades.rs::verified_under
+# owner:      LKSNDRTMLKV
+# recorded:   2026-09-15
+# expires:    2027-03-15
+# release-on: `rsa` ships a constant-time fix, or `x509-verify` is replaced
+#             by a verifier whose RSA implementation carries no advisory
+#             (ring / aws-lc-rs), or this workspace stops verifying RSA
+#             signatures.
+ignore = [
+    "RUSTSEC-2023-0071",
+]
