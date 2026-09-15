@@ -279,6 +279,149 @@ pub fn verify_against_embedded_certificate(seal_der: &[u8]) -> Result<bool, Seal
     Ok(vk.verify(&to_verify, &sig).is_ok())
 }
 
+// ─── Who issued it, and where its key lives ──────────────────────────────────
+
+/// `id-pe-qcStatements` — the extension a qualified certificate carries.
+///
+/// RFC 3739 §3.2.6, as profiled by ETSI EN 319 412-5. Its absence is itself a
+/// finding: a certificate with no QCStatements at all is not claiming to be a
+/// qualified certificate.
+const ID_PE_QC_STATEMENTS: const_oid::ObjectIdentifier =
+    const_oid::ObjectIdentifier::new_unwrap("1.3.6.1.5.5.7.1.3");
+
+/// `esi4-qcStatement-4` — the key resides in a qualified creation device.
+///
+/// ETSI EN 319 412-5 §4.2.2. **This is the Annex III(j) indication**: Art. 32(1)(f)
+/// (reached for seals through Art. 40) requires that the seal was created by a
+/// qualified electronic seal creation device, and Annex III(j) requires the
+/// certificate to say so "in a form suitable for automated processing". This OID
+/// is that form.
+const ID_ETSI_QCS_QC_SSCD: const_oid::ObjectIdentifier =
+    const_oid::ObjectIdentifier::new_unwrap("0.4.0.1862.1.4");
+
+/// One `QCStatement`, of which only the identifier is read.
+///
+/// RFC 3739 §3.2.6. The optional `statementInfo` is decoded so the structure
+/// parses, and then ignored — presence of the identifier is the whole signal,
+/// and reading further would invite treating a declaration as a verification.
+#[derive(der::Sequence)]
+struct QcStatement {
+    id: const_oid::ObjectIdentifier,
+    #[asn1(optional = "true")]
+    _info: Option<der::Any>,
+}
+
+/// What the certificate declares about the device holding its private key.
+///
+/// A **declaration**, never a verification. The certificate says where its key
+/// lives; nothing here confirms it, and nothing could — that assurance comes
+/// from the issuing QTSP's conformity assessment, not from bytes. The names say
+/// `Declares` for that reason.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CreationDevice {
+    /// The certificate carries the Annex III(j) indication.
+    DeclaresQualifiedDevice,
+    /// It carries QCStatements, but not that one.
+    ///
+    /// A qualified certificate whose key is not in a qualified device. Lawful,
+    /// and enough for Art. 40a, which omits the device leg — but not for the
+    /// Art. 32/40 pair.
+    NoQualifiedDevice,
+    /// It carries no QCStatements extension at all.
+    ///
+    /// Distinguished from [`Self::NoQualifiedDevice`] because it is a different
+    /// finding: this certificate is not presenting itself as a qualified
+    /// certificate in the first place. A self-signed development certificate
+    /// lands here.
+    NotAQualifiedCertificate,
+}
+
+/// The signer certificate's issuer, subject, and Annex III(j) indication.
+///
+/// Read out of the seal rather than taken from configuration, deliberately. A
+/// node knows which backend it was told to use; it does not thereby know what
+/// the returned bytes contain, and a verdict founded on a configuration flag
+/// attests the operator's intent rather than the seal. Everything here comes
+/// from the certificate the seal carries.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SignerCertificate {
+    /// The issuer distinguished name, RFC 4514, for reading.
+    pub issuer: String,
+    /// The subject distinguished name, RFC 4514, for reading.
+    pub subject: String,
+    /// DER of the issuer distinguished name, for matching.
+    ///
+    /// The bytes rather than the string, because this is what gets compared
+    /// against a listed CA's *subject* and a string comparison would depend on
+    /// how two independent implementations chose to escape a name.
+    pub issuer_der: Vec<u8>,
+    /// Whether issuer and subject are the same name — a self-signed certificate.
+    ///
+    /// The structural test for "nobody issued this to us". It is a property of
+    /// the certificate, so it cannot be misconfigured into being false.
+    pub self_issued: bool,
+    /// What the certificate declares about the creation device.
+    pub creation_device: CreationDevice,
+}
+
+/// Read the signer certificate's issuer, subject and device indication.
+///
+/// Says nothing about whether the seal verifies — that is
+/// [`verify_against_embedded_certificate`], and the two are deliberately
+/// separate: *who issued this* and *does it check out* are different questions,
+/// and a caller that wants a trust verdict needs both answered rather than one
+/// standing in for the other.
+///
+/// # Errors
+///
+/// [`SealError::Backend`] when the bytes are not a readable CMS seal.
+pub fn signer_certificate(seal_der: &[u8]) -> Result<SignerCertificate, SealError> {
+    let signed = parse(seal_der)?;
+    let tbs = &signed.certificate.tbs_certificate;
+
+    let issuer_der = tbs
+        .issuer
+        .to_der()
+        .map_err(|e| malformed(format!("cannot re-encode the issuer name: {e}")))?;
+    let subject_der = tbs
+        .subject
+        .to_der()
+        .map_err(|e| malformed(format!("cannot re-encode the subject name: {e}")))?;
+
+    Ok(SignerCertificate {
+        issuer: tbs.issuer.to_string(),
+        subject: tbs.subject.to_string(),
+        self_issued: issuer_der == subject_der,
+        issuer_der,
+        creation_device: creation_device(tbs),
+    })
+}
+
+/// The Annex III(j) indication, read off the QCStatements extension.
+///
+/// An unparseable extension reports [`CreationDevice::NoQualifiedDevice`] rather
+/// than failing: the statement was not found, which is what the variant says,
+/// and the failure direction that matters is never reporting a device that was
+/// not declared.
+fn creation_device(tbs: &x509_cert::TbsCertificate) -> CreationDevice {
+    let Some(ext) = tbs
+        .extensions
+        .as_ref()
+        .and_then(|e| e.iter().find(|e| e.extn_id == ID_PE_QC_STATEMENTS))
+    else {
+        return CreationDevice::NotAQualifiedCertificate;
+    };
+
+    let declared = Vec::<QcStatement>::from_der(ext.extn_value.as_bytes())
+        .is_ok_and(|s| s.iter().any(|s| s.id == ID_ETSI_QCS_QC_SSCD));
+
+    if declared {
+        CreationDevice::DeclaresQualifiedDevice
+    } else {
+        CreationDevice::NoQualifiedDevice
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

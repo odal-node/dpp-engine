@@ -51,6 +51,31 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ### Added
 
+- **A seal now says, out of its own bytes, whether a provider issued it.**
+  `dpp_seal::qualification::qualify` reports the two legs Art. 32(1) needs —
+  reached for seals through Art. 40 — against verified national trusted lists:
+  who issued the certificate and whether that issuer was a granted qualified CA
+  **at the time of sealing**, plus the Annex III(j) indication of where the key
+  lives, read off the certificate's QCStatements.
+
+  The distinction it exists for is local versus provider. A node running the
+  local development backend produces seals that verify perfectly and mean
+  nothing legally, and the only way to tell before was to read the node's
+  configuration — which records what the operator intended, not what came back.
+  Self-issuance is a property of the certificate, so it is decided before any
+  trusted list is consulted and a node with no network still knows.
+
+  **It is not a qualified-seal verdict, and nothing here returns a
+  `SealChecks`.** The issuer is matched by *name*, so the verdict says which
+  listed CA a seal claims, not that the CA signed it; no certificate path is
+  built. `naming_a_listed_ca_reaches_the_top_verdict_without_any_path_check`
+  pins that by relabelling a self-signed development certificate with a real
+  Finnish qualified CA's name and watching it reach the top verdict — while the
+  seal still verifies, because a CMS signature covers the signed attributes and
+  not the certificate travelling beside them. Closing the gap means verifying
+  the issuer's signature over the certificate, which needs a verifier for the
+  algorithms real QTSP certificate authorities use.
+
 - **A life status that contradicts its own lineage is now reported.** The
   plausibility lint gains `lineage.life_status_unsupported`, from
   `dpp_rules::lineage::check_life_status_consistency`: a unit claiming

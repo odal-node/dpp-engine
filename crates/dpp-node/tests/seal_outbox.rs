@@ -19,6 +19,12 @@
 //! the returned `.p7s` validates against the EU Trusted List. Those need the
 //! provider's sandbox, and no local test can stand in for them.
 //!
+//! The last test here runs the same loop over the **local** backend instead,
+//! which produces genuine detached CAdES rather than a stand-in, and reads
+//! `dpp_seal::qualification`'s verdict off the seal that lands in the database.
+//! That is the one part of the Trusted List question answerable without a
+//! provider: whether anybody issued the certificate at all.
+//!
 //! Run: `just seal-sim` (or
 //! `cargo test -p dpp-node --features integration-tests --test seal_outbox -- --nocapture`)
 
@@ -604,5 +610,130 @@ async fn a_wrong_key_is_rejected_and_the_row_stays_pending() {
     assert!(
         unsealed.seal.is_none(),
         "a rejected call must never leave a seal on the passport"
+    );
+}
+
+/// A real passport's seal says, out of its own bytes, that no provider issued it.
+///
+/// The question an operator asks before relying on anything: *is this seal worth
+/// something?* Until now the only way to answer it was to read the node's
+/// configuration — which records what the operator intended, not what came back.
+/// `dpp_seal::qualification` answers it from the seal instead.
+///
+/// Everything here is the real path: real PostgreSQL, real Ed25519 publish, the
+/// real outbox and drain, and the real local backend producing genuine detached
+/// CAdES. The verdict is then read off the bytes that landed in the database.
+///
+/// No Trusted List is consulted, and that is deliberate rather than a shortcut —
+/// a self-issued certificate is recognised as such before any list is reached, so
+/// a node that cannot get to the network still knows its seals carry no legal
+/// weight. The list lookups are exercised against real published lists in
+/// `dpp_seal::qualification`'s own tests.
+#[tokio::test]
+async fn a_locally_sealed_passport_reports_that_no_provider_issued_it() {
+    use dpp_seal::cades::CreationDevice;
+    use dpp_seal::qualification::{IssuerStanding, qualify};
+
+    let _pg = start_pg().await;
+    let dal = _pg.dal.clone();
+
+    let key_dir = tempfile::tempdir().expect("temp dir");
+    let key_path = key_dir.path().join("keystore.json");
+    let store = dpp_crypto::keystore::KeyStore::open(&key_path, "test-pass").expect("keystore");
+    store.generate_key("root").expect("generate key");
+    let identity = Arc::new(dpp_vc::LocalIdentityService::new(
+        Arc::new(store),
+        "root".to_owned(),
+        "seal-sim.example.com".to_owned(),
+    ));
+
+    let passport_repo = Arc::new(PgPassportRepo::new(dal.clone()));
+    let seal_outbox = Arc::new(PgSealOutboxRepo::new(dal.clone()));
+    let service = PassportService::new(
+        passport_repo.clone(),
+        identity,
+        Arc::new(dpp_domain::PassthroughRegistry::new()) as Arc<dyn ComplianceRegistry>,
+        Arc::new(PgAuditRepo::new(dal.clone())),
+        Arc::new(dpp_common::event::NoOpEventBus),
+        Arc::new(GhostRegistrySync),
+        Arc::new(GhostArchive),
+        OperatorIdentity {
+            legal_name: "Test Operator GmbH".to_owned(),
+            country: "MK".to_owned(),
+        },
+    )
+    .with_seal_outbox(seal_outbox.clone());
+
+    let draft = draft_passport();
+    let id = draft.id;
+    passport_repo.create(draft).await.expect("create draft");
+    service.publish(id, &auth()).await.expect("publish");
+
+    // The local backend: a key and a self-signed certificate generated per node.
+    let seal_dir = tempfile::tempdir().expect("temp dir");
+    let backend =
+        dpp_seal::local::LocalIdentity::load_or_create(seal_dir.path()).expect("identity");
+    let adapter: Arc<dyn SealPort> = Arc::new(QtspSealAdapter::new(backend));
+
+    let outbox_dyn: Arc<dyn SealOutbox> = seal_outbox.clone();
+    let stats = drain_once(
+        &outbox_dyn,
+        &adapter,
+        &dpp_domain::seal::SealCredentialRef {
+            qtsp_id: dpp_seal::local::config::PROVIDER.to_owned(),
+            credential_id: "node".to_owned(),
+        },
+        // What this backend actually offers: it seals on its own behalf, and
+        // emits the signature alone.
+        SealMode::OperatorSeal,
+        SealConformanceLevel::BaselineB,
+        10,
+    )
+    .await;
+    assert_eq!(stats.sealed, 1, "the drain must seal the queued row");
+
+    let sealed = passport_repo
+        .find_by_id(id)
+        .await
+        .expect("read back")
+        .expect("passport exists");
+    let seal = sealed.seal.clone().expect("seal landed on the passport");
+    let der = BASE64
+        .decode(&seal.seal_value)
+        .expect("the seal is base64 DER");
+
+    // ── The verdict, read out of the stored seal ────────────────────────────
+    let verdict = qualify(&der, &[], seal.sealed_at).expect("a readable CAdES seal");
+
+    println!("\n═══ QUALIFICATION OF THE STORED SEAL ═══");
+    println!("passportId : {id}");
+    println!("verdict    : {verdict}");
+
+    let IssuerStanding::SelfIssued { subject } = &verdict.issuer else {
+        panic!("the local backend is self-signed: {:?}", verdict.issuer);
+    };
+    assert!(!subject.is_empty(), "and the certificate names itself");
+    assert!(
+        !verdict.is_provider_seal(),
+        "no provider stands behind this passport's seal"
+    );
+    assert_eq!(
+        verdict.creation_device,
+        CreationDevice::NotAQualifiedCertificate,
+        "and the certificate makes no Annex III(j) claim about where its key lives"
+    );
+
+    // The backend's own verdict says the same thing from the other direction:
+    // the bytes check out, and that is the whole of what they prove. The two
+    // must not be able to disagree — a seal that verified *and* reported a
+    // provider behind it would be the failure this pair exists to make visible.
+    let verification = adapter.verify(&seal).await.expect("verifiable");
+    assert_eq!(
+        verification.checks,
+        dpp_domain::seal::SealChecks::SignatureOnly
+    );
+    assert!(
+        !verification.is_qualified_pass(),
+        "a self-signed development seal is never a qualified pass"
     );
 }
