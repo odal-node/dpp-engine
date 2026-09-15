@@ -242,6 +242,8 @@ async fn start_node_with_ruleset(
         // The trust posture is asserted through the authenticated node-state
         // route, not the public probe.
         trust: Some(trust.clone()),
+        // No audit task in this harness, so no completed pass to report.
+        seal_audit: None,
         ruleset_admin: Some(ruleset.clone()),
         idempotency: None,
     };

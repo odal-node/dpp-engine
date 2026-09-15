@@ -174,6 +174,8 @@ async fn main() -> anyhow::Result<()> {
     let credentials_live = credential_trust != TrustMode::Ghost;
 
     // ── eIDAS qualified seal ─────────────────────────────────────────────────
+    // Shared between the audit task that fills it and the route that reports it.
+    let seal_audit = Arc::new(dpp_types::SealAuditLog::default());
     let seal_wiring = dpp_node::infra::seal::from_env()?;
     let sealing_live = seal_wiring.drains;
 
@@ -357,6 +359,7 @@ async fn main() -> anyhow::Result<()> {
         // Reported on the authenticated `/vault/api/v1/node/state`, not on the
         // public `/health` — see `dpp_node::router::node_health`.
         trust: Some(trust.clone()),
+        seal_audit: Some(seal_audit.clone()),
         // The port, not a version snapshot — `/node/state` reads the version in
         // force at the moment it is asked, and `POST /ruleset/reload` reaches
         // the same channel this booted from.
@@ -413,7 +416,7 @@ async fn main() -> anyhow::Result<()> {
     // Read-only, and deliberately outside the `sealing_live` guard above: a node
     // that has stopped sealing still holds the seals it bought, and those are
     // exactly the ones nobody is watching any more.
-    boot::tasks::spawn_seal_audit(db.seal_outbox.clone());
+    boot::tasks::spawn_seal_audit(db.seal_outbox.clone(), seal_audit.clone());
     // Continuity tier: only spawn when object storage is configured — without a
     // store there is nothing to reconcile against (and the vault never enqueues).
     if let Some(store) = snapshot_store {

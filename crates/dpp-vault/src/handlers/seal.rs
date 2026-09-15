@@ -447,6 +447,19 @@ pub struct SealSummaryResponse {
     /// nobody wired and a port that landed on a placeholder are different states,
     /// and only the second blocks a production boot.
     pub trust_mode: Option<&'static str>,
+    /// What the last completed pass over every stored seal found.
+    ///
+    /// The counts above describe **outbox rows** and passports carrying *no*
+    /// seal. This describes seals that exist and do not stand up — a condition
+    /// neither of those can see, because both ask the database whether the seal
+    /// member is absent and a worthless seal is present.
+    ///
+    /// `null` means **no pass has completed**, not that nothing is wrong. A pass
+    /// walks the estate in bounded batches and starts over, so this is empty for
+    /// a while after a restart and its `completedAt` is hours old by construction
+    /// on a large deployment. Reporting a zero here for a check that has not run
+    /// would be the one answer worse than reporting nothing.
+    pub audit: Option<dpp_types::SealAuditReport>,
 }
 
 /// The port name the composition root files the sealing backend under.
@@ -485,6 +498,10 @@ pub async fn seal_summary_handler(
                 exhausted: 0,
                 sealing_configured: false,
                 trust_mode: seal_trust_mode(&state),
+                // Reported even with no outbox: a node that has stopped sealing
+                // still holds the seals it bought, and those are exactly the
+                // ones nothing else is watching.
+                audit: state.seal_audit.as_ref().and_then(|a| a.last()),
             }),
         )
             .into_response();
@@ -508,6 +525,7 @@ pub async fn seal_summary_handler(
             exhausted: counts.exhausted,
             sealing_configured: true,
             trust_mode: seal_trust_mode(&state),
+            audit: state.seal_audit.as_ref().and_then(|a| a.last()),
         }),
     )
         .into_response()

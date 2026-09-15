@@ -923,6 +923,61 @@ pub fn render_seal_summary(summary: &serde_json::Value) {
         _ => println!("Sealing tier: not reported by this node"),
     }
 
+    // What the last completed pass over every stored seal found. Absent is not
+    // zero: a pass walks the estate over several minutes and starts over, so a
+    // node that has just restarted has genuinely not looked yet.
+    match summary.get("audit").filter(|a| !a.is_null()) {
+        None => println!(
+            "Stored seals: not audited yet — no pass has completed since this node started"
+        ),
+        Some(audit) => {
+            let a = |k: &str| {
+                audit
+                    .get(k)
+                    .and_then(serde_json::Value::as_i64)
+                    .unwrap_or(0)
+            };
+            let at = field(audit, "completedAt").unwrap_or_else(|| "-".to_owned());
+            if a("broken") == 0 {
+                println!(
+                    "Stored seals: {} checked, all verify (as of {at})",
+                    a("checked")
+                );
+            } else {
+                println!(
+                    "Stored seals: {}  {} of {} do not verify (as of {at})",
+                    style("BROKEN").red().bold(),
+                    a("broken"),
+                    a("checked")
+                );
+                println!(
+                    "              those passports are published and, in substance, unsealed —"
+                );
+                println!(
+                    "              and invisible to the count below, which asks only whether a"
+                );
+                println!("              seal is present");
+                for id in audit
+                    .get("brokenPassports")
+                    .and_then(serde_json::Value::as_array)
+                    .map(Vec::as_slice)
+                    .unwrap_or_default()
+                {
+                    if let Some(id) = id.as_str() {
+                        println!("                {}", plain(id));
+                    }
+                }
+                if audit
+                    .get("truncated")
+                    .and_then(serde_json::Value::as_bool)
+                    .unwrap_or(false)
+                {
+                    println!("                … list truncated; see `broken` for the total");
+                }
+            }
+        }
+    }
+
     let unsealed = n("unsealedPublished");
     println!("Sealing");
     if unsealed == 0 {

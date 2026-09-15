@@ -436,7 +436,21 @@ pub fn spawn_seal_sweep(outbox: Arc<dyn SealOutbox>) {
 /// CPU on a background task that is in no hurry — the walk continues from its
 /// cursor on the next tick, so a large estate is covered over several passes
 /// rather than in one.
-const SEAL_AUDIT_BATCH: i64 = 100;
+const SEAL_AUDIT_BATCH: i64 = 200;
+
+/// How often an audit pass runs.
+///
+/// Its own cadence rather than [`SWEEP_INTERVAL`], which is hourly because the
+/// sweep is a backstop for a rare divergence. This is a **scan that wants to
+/// finish**: nothing it reports is usable until the walk has been all the way
+/// round, and at the sweep's cadence a modest estate would take most of a day —
+/// which is also how long a restart would leave the report blank.
+///
+/// Together with [`SEAL_AUDIT_BATCH`] this is the knob: a pass covers
+/// `SEAL_AUDIT_BATCH` seals every interval, so the freshness of the report is
+/// the estate divided by that rate. A pass is one query plus a few hundred
+/// signature checks, which is why it can afford to be this frequent.
+const SEAL_AUDIT_INTERVAL: std::time::Duration = std::time::Duration::from_secs(60);
 
 /// Spawn the stored-seal audit.
 ///
@@ -463,7 +477,7 @@ const SEAL_AUDIT_BATCH: i64 = 100;
 ///
 /// So a finding is logged at `error` and counted on `seal_broken_total`. Repair
 /// is its own change.
-pub fn spawn_seal_audit(outbox: Arc<dyn SealOutbox>) {
+pub fn spawn_seal_audit(outbox: Arc<dyn SealOutbox>, log: Arc<dpp_types::SealAuditLog>) {
     tokio::spawn(async move {
         // The same reader the drain uses to accept a seal, so the audit and the
         // acceptance cannot come to disagree about what a sound seal is.
@@ -476,7 +490,7 @@ pub fn spawn_seal_audit(outbox: Arc<dyn SealOutbox>) {
         // estate where the answer is not zero.
         let mut walk = dpp_node::infra::seal_drain::SealAudit::default();
         loop {
-            tokio::time::sleep(SWEEP_INTERVAL).await;
+            tokio::time::sleep(SEAL_AUDIT_INTERVAL).await;
             let (audit, next) = dpp_node::infra::seal_drain::audit_seals_once(
                 &outbox,
                 &inspector,
@@ -490,6 +504,11 @@ pub fn spawn_seal_audit(outbox: Arc<dyn SealOutbox>) {
             walk.superseded += audit.superseded;
             walk.broken += audit.broken;
             walk.unreadable += audit.unreadable;
+            for id in audit.broken_passports {
+                if walk.broken_passports.len() < dpp_node::infra::seal_drain::MAX_NAMED_BROKEN {
+                    walk.broken_passports.push(id);
+                }
+            }
 
             if audit.broken > 0 {
                 tracing::error!(
@@ -507,6 +526,16 @@ pub fn spawn_seal_audit(outbox: Arc<dyn SealOutbox>) {
             if next.is_none() {
                 metrics::gauge!("seal_broken_total").set(walk.broken as f64);
                 metrics::gauge!("seal_unreadable_total").set(walk.unreadable as f64);
+                log.record(dpp_types::SealAuditReport {
+                    completed_at: chrono::Utc::now(),
+                    checked: walk.checked,
+                    sound: walk.sound,
+                    superseded: walk.superseded,
+                    broken: walk.broken,
+                    unreadable: walk.unreadable,
+                    truncated: (walk.broken_passports.len() as u64) < walk.broken,
+                    broken_passports: walk.broken_passports.clone(),
+                });
                 tracing::debug!(
                     checked = walk.checked,
                     sound = walk.sound,

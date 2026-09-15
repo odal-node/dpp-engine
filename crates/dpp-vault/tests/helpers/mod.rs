@@ -333,6 +333,9 @@ async fn start_vault_with_identity(
         // These tests exercise the vault in isolation, with no composition
         // root resolving trust ports or a ruleset.
         trust: None,
+        // No audit task in a test harness, and so no report — which is the
+        // honest answer rather than a clean one nothing produced.
+        seal_audit: None,
         ruleset_admin: None,
         // Off by default: these suites exercise handlers, not retry semantics.
         // `dpp-common`'s `idempotency_flow` suite drives the middleware itself.

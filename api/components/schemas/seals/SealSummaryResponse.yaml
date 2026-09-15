@@ -22,6 +22,19 @@ properties:
     description: Rows that gave up after exhausting their retries.
   sealingConfigured:
     type: boolean
+  audit:
+    oneOf:
+      - $ref: ./SealAuditReport.yaml
+      - type: 'null'
+    description: >-
+      What the last completed pass over every stored seal found.
+
+
+      **`null` means no pass has completed**, not that nothing is wrong. The pass
+      walks the estate in bounded batches and starts over, so this is empty for a
+      while after a restart, and absent entirely on a deployment that runs no
+      audit. Reporting a zero here for a check that has not run would be the one
+      answer worse than reporting nothing.
   trustMode:
     type:
       - string

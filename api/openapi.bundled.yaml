@@ -5285,6 +5285,14 @@ components:
           description: Rows that gave up after exhausting their retries.
         sealingConfigured:
           type: boolean
+        audit:
+          oneOf:
+            - $ref: '#/components/schemas/SealAuditReport'
+            - type: 'null'
+          description: |-
+            What the last completed pass over every stored seal found.
+
+            **`null` means no pass has completed**, not that nothing is wrong. The pass walks the estate in bounded batches and starts over, so this is empty for a while after a restart, and absent entirely on a deployment that runs no audit. Reporting a zero here for a check that has not run would be the one answer worse than reporting nothing.
         trustMode:
           type:
             - string
@@ -7507,6 +7515,52 @@ components:
             `noQualifiedDevice`: it carries qualified-certificate statements but not that one. Lawful, and enough for Art. 40a — validation of an *advanced* seal based on a qualified certificate, which omits the device leg — but not for the Art. 32/40 pair.
 
             `notAQualifiedCertificate`: it carries no qualified-certificate statements at all, so it is not presenting itself as a qualified certificate in the first place. A self-signed development certificate lands here.
+    SealAuditReport:
+      type: object
+      description: |-
+        What the last completed pass over **every stored seal** found.
+
+        The counts beside this describe outbox rows and passports carrying *no* seal. This describes seals that exist and do not stand up — a condition neither can see, because both ask the database whether the seal member is absent, and a worthless seal is present.
+
+        Whether a stored seal stands up is cryptographic rather than relational: open the CAdES, verify the signature, read the digest it covers. So it is found by a background pass that walks the estate in bounded batches and starts over, not by a query.
+      required:
+        - completedAt
+        - checked
+        - sound
+        - superseded
+        - broken
+        - unreadable
+        - brokenPassports
+        - truncated
+      properties:
+        completedAt:
+          type: string
+          format: date-time
+          description: When the pass finished. The age of this is the age of every number below it — a pass takes as long as the estate divided by the audit's throughput, so on a large deployment these are hours old by construction. Fine for a condition that does not appear suddenly, and stated rather than implied.
+        checked:
+          type: integer
+          description: Seals opened.
+        sound:
+          type: integer
+          description: Seals covering their passport's current signature.
+        superseded:
+          type: integer
+          description: Seals over a different digest. Ordinarily a passport re-published after sealing, which is **not** a defect — the seal remains a valid attestation of the signature it covers, and `GET /api/v1/dpp/{dppId}/seal` reports it per passport as `coverage`.
+        broken:
+          type: integer
+          description: Seals whose own signature does not verify. **The finding.** Those passports are published and, in substance, unsealed — and invisible to `unsealedPublished`, which asks only whether a seal is present.
+        unreadable:
+          type: integer
+          description: Seals this node could not read — a placeholder, or a format it does not parse. **Not a finding.** Treating "cannot check" as "broken" would make every seal from a backend emitting an unparsed format look like corruption.
+        brokenPassports:
+          type: array
+          items:
+            type: string
+            format: uuid
+          description: The passports carrying a broken seal, so an operator can act rather than search a log. Capped — see `truncated`. A node with thousands of broken seals has one problem, not thousands; `broken` states its size, and a list long enough to prove that is a list nobody reads.
+        truncated:
+          type: boolean
+          description: True when `brokenPassports` was cut short. Stated rather than left to be inferred from the length matching the cap, which is an inference that is right until the cap changes.
     AmendRequest:
       type: object
       description: |

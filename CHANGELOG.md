@@ -51,6 +51,26 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ### Added
 
+- **`GET /api/v1/seal` now reports what the seal audit found, and names the
+  passports** (#328). The counts beside it describe outbox rows and passports
+  carrying *no* seal; `audit` describes seals that exist and do not stand up — a
+  condition neither can see, since both ask whether the seal member is absent and
+  a worthless seal is present.
+
+  **`null` means no pass has completed, not that nothing is wrong.** The pass
+  walks the estate in bounded batches and starts over, so the report is empty for
+  a while after a restart and absent entirely where no audit runs. Reporting a
+  zero for a check that has not run would be the one answer worse than reporting
+  nothing. `completedAt` travels with it, because on a large deployment these
+  numbers are hours old by construction.
+
+  The list of broken passports is capped and says so through `truncated`: a node
+  with thousands of broken seals has one problem, not thousands, and the count
+  states its size. The audit also got its own cadence — a minute rather than the
+  sweep's hour — because it is a scan that wants to finish rather than a backstop
+  for a rare divergence, and nothing it reports is usable until the walk has been
+  all the way round.
+
 - **A stored seal that is broken is now found, rather than looking healthy**
   (part of #328). The repair sweep and the operator rollup both ask the database
   whether a passport's `seal` member is **absent** — so a seal that is present

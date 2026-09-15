@@ -478,6 +478,7 @@ fn object_cases() -> Vec<ObjectCase> {
     case!("SealOrigin", fixtures::seal_origin());
     case!("SealBinding", fixtures::seal_binding());
     case!("ArchivalFreshness", fixtures::archival_freshness());
+    case!("SealAuditReport", fixtures::seal_audit_report());
     case!("SealDeclarer", fixtures::seal_declarer());
     case!("SealSummaryResponse", fixtures::seal_summary_response());
     case!("InstalledPlugin", fixtures::installed_plugin());
@@ -3587,6 +3588,24 @@ mod fixtures {
         }
     }
 
+    /// A pass that found something, with the list truncated.
+    ///
+    /// The populated shape rather than a clean one: a report with no findings
+    /// leaves `brokenPassports` empty, which would check the array's presence
+    /// and never its element type.
+    pub fn seal_audit_report() -> dpp_types::SealAuditReport {
+        dpp_types::SealAuditReport {
+            completed_at: ts(),
+            checked: 1200,
+            sound: 1180,
+            superseded: 17,
+            broken: 2,
+            unreadable: 1,
+            broken_passports: vec![PassportId::new()],
+            truncated: true,
+        }
+    }
+
     /// The variant carrying a date, so the optional field is checked too.
     ///
     /// `lapsed` rather than `current`: both carry a date, and this is the one a
@@ -3627,6 +3646,7 @@ mod fixtures {
             exhausted: 0,
             sealing_configured: true,
             trust_mode: Some("live"),
+            audit: Some(seal_audit_report()),
         }
     }
 

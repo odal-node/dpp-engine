@@ -189,8 +189,16 @@ pub async fn drain_once(
     stats
 }
 
+/// How many broken passports one walk names before it stops collecting.
+///
+/// A node with thousands of broken seals has one problem, not thousands; the
+/// count says how big it is, and a list long enough to prove that is a list
+/// nobody reads. Bounded here rather than at the route so the memory is bounded
+/// too — a walk over a damaged estate must not accumulate an id per row.
+pub const MAX_NAMED_BROKEN: usize = 100;
+
 /// What one audit pass found.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct SealAudit {
     /// Seals opened.
     pub checked: u64,
@@ -203,6 +211,11 @@ pub struct SealAudit {
     pub broken: u64,
     /// Seals this node could not read. Not a finding, and not counted as one.
     pub unreadable: u64,
+    /// The passports carrying a broken seal, up to [`MAX_NAMED_BROKEN`].
+    ///
+    /// `broken` keeps counting after this stops filling, so the two together say
+    /// "this many, and here are the first hundred".
+    pub broken_passports: Vec<dpp_domain::passport::PassportId>,
 }
 
 /// Open a bounded batch of stored seals and report what they are worth.
@@ -264,6 +277,9 @@ pub async fn audit_seals_once(
             dpp_types::SealBinding::CoversAnotherDigest { .. } => audit.superseded += 1,
             dpp_types::SealBinding::NotIntact => {
                 audit.broken += 1;
+                if audit.broken_passports.len() < MAX_NAMED_BROKEN {
+                    audit.broken_passports.push(row.passport_id);
+                }
                 tracing::error!(
                     passport_id = %row.passport_id,
                     "stored seal does not verify — this passport is published and, in \

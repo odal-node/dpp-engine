@@ -79,6 +79,93 @@ pub struct SealOutboxCounts {
     pub exhausted: i64,
 }
 
+/// What a completed pass over every stored seal found.
+///
+/// Reported as a whole rather than as a running total, because the useful
+/// quantity is "how many broken seals does this node hold" and that is only
+/// answerable once the walk has been all the way round. A figure accumulated
+/// mid-walk answers "how many in the part seen so far", which reads as a
+/// smaller number than the truth and falls to zero every time the walk restarts.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SealAuditReport {
+    /// When the pass finished.
+    ///
+    /// The age of this is the age of every number below it. A pass takes as long
+    /// as the estate divided by the audit's throughput, so on a large deployment
+    /// these are hours old by construction — which is fine for a condition that
+    /// does not appear suddenly, and worth stating rather than implying
+    /// freshness.
+    pub completed_at: DateTime<Utc>,
+    /// Seals opened.
+    pub checked: u64,
+    /// Seals covering their passport's current signature.
+    pub sound: u64,
+    /// Seals over a different digest — ordinarily a passport re-published after
+    /// sealing, which is not a defect.
+    pub superseded: u64,
+    /// Seals whose own signature does not verify.
+    pub broken: u64,
+    /// Seals this node could not read. Not a finding.
+    pub unreadable: u64,
+    /// The passports carrying a broken seal, so an operator can act rather than
+    /// grep a log.
+    ///
+    /// Capped — see [`Self::truncated`]. A node with thousands of broken seals
+    /// has one problem, not thousands, and the count above already states its
+    /// size; a list long enough to prove that is a list nobody reads.
+    pub broken_passports: Vec<PassportId>,
+    /// True when [`Self::broken_passports`] was cut short.
+    ///
+    /// Stated rather than left to be inferred from the length matching the cap,
+    /// which is the kind of inference that is right until the cap changes.
+    pub truncated: bool,
+}
+
+/// The last completed audit pass, shared between the task that runs it and the
+/// route that reports it.
+///
+/// # Why this is held in memory rather than stored
+///
+/// The findings are **derived**: they can be recomputed from the seals at any
+/// time, and the only reason not to recompute them on demand is that opening
+/// every CAdES would give a read route unpredictable latency. That makes this a
+/// cache, and a cache is a poor candidate for a table — a repaired seal would
+/// leave a stale row until the next walk, and the row would need invalidating by
+/// something that already knows the answer.
+///
+/// The cost is that a restart empties it. That is why [`Self::last`] returns an
+/// `Option` and the route reports the absence rather than a zero: **"no pass has
+/// completed" and "no broken seals" are different**, and serving the second when
+/// the first is true is how a monitoring surface reassures an operator about
+/// something it has not looked at.
+#[derive(Debug, Default)]
+pub struct SealAuditLog(std::sync::RwLock<Option<SealAuditReport>>);
+
+impl SealAuditLog {
+    /// Publish the result of a completed pass.
+    pub fn record(&self, report: SealAuditReport) {
+        // A poisoned lock means a panic while holding it. Recovering is right
+        // here: the data is a cache of a derived value, so the worst a poisoned
+        // read can serve is a stale report, and refusing to record would leave
+        // the route permanently blind for a reason unrelated to seals.
+        let mut slot = self
+            .0
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        *slot = Some(report);
+    }
+
+    /// The last completed pass, if there has been one.
+    #[must_use]
+    pub fn last(&self) -> Option<SealAuditReport> {
+        self.0
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+    }
+}
+
 /// One sealed passport, as an audit pass needs to see it.
 #[derive(Debug, Clone)]
 pub struct SealedPassport {
