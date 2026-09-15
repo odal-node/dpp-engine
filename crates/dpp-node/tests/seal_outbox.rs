@@ -812,6 +812,19 @@ async fn a_locally_sealed_passport_reports_that_no_provider_issued_it() {
         "the dossier's own seal must check out: {:?}",
         seal_check.status
     );
+    // The two facts that decide whether anything else in that section carries
+    // weight, and which used to be recoverable only by parsing the CAdES by hand.
+    assert_eq!(
+        seal_section["origin"]["selfIssued"].as_bool(),
+        Some(true),
+        "a dossier must say on its face that its seal was signed by the node itself"
+    );
+    assert_eq!(
+        seal_section["evidencedLevel"].as_str(),
+        Some("baseline-lta"),
+        "and what the bytes actually carry: {seal_section}"
+    );
+
     println!("dossier   : qualified_seal = Pass");
 
     // ── The verdict, read out of the stored seal ────────────────────────────

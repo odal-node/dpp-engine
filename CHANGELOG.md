@@ -75,6 +75,15 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   exactly where an ANSI escape would be put to forge output under the CLI's own
   labels.
 
+- **The dossier now says who issued its seal, and what level the bytes carry.**
+  It named *which* certificate — a thumbprint, enough to ask an auditor's
+  question about and not enough to answer the first one anybody has. A
+  self-signed development seal and a QTSP's were otherwise the same field, and
+  telling them apart meant parsing the CAdES by hand. `qualifiedSeal.origin` is
+  the fact that decides whether anything else in that section carries weight, so
+  it travels with it. `qualifiedSeal.evidencedLevel` joins it, because a seal
+  weaker than ordered was visible only in a drain log no dossier reader has.
+
 - **Verifying a dossier now checks its seal, rather than only hashing it.** The
   verifier ran eight checks and none looked at the seal — it was covered by
   `content_integrity`, which catches substitution and says nothing about whether

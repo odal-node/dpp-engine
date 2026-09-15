@@ -232,6 +232,25 @@ impl PassportService {
                     .map_or(dpp_types::SealBinding::Unknown, |i| {
                         i.binding(seal, &payload_hash)
                     }),
+                // Who issued the certificate behind the seal.
+                //
+                // The dossier already named *which* certificate, as a thumbprint
+                // — enough to ask an auditor's question about, and not enough to
+                // answer the first one anybody actually has. A self-signed
+                // development seal and a QTSP's are the same field otherwise, and
+                // telling them apart meant parsing the CAdES by hand.
+                //
+                // The one fact that decides whether anything else in this section
+                // carries weight, so it travels with it rather than being
+                // recoverable from it.
+                "origin": self.seal_inspector.as_ref().and_then(|i| i.origin(seal)),
+                // What the bytes carry, beside what was asked for — a seal
+                // weaker than ordered is otherwise visible only in a drain log
+                // that no dossier reader has.
+                "evidencedLevel": self
+                    .seal_inspector
+                    .as_ref()
+                    .and_then(|i| i.evidenced_level(seal)),
             }))
         });
 
