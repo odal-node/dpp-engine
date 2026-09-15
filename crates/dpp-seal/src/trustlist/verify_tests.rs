@@ -133,3 +133,111 @@ fn the_not_anchored_message_tells_an_operator_what_to_do() {
     assert!(rendered.contains("refresh"), "says what to do: {rendered}");
     assert!(rendered.contains("AAAA"), "and what was offered");
 }
+
+/// The transform profile CID (EU) 2015/1505 Annex I mandates is asserted, and a
+/// document that misses it is rejected *for that reason*.
+///
+/// # Why each case asserts the variant and not merely an error
+///
+/// Altering the XML also breaks the signature, so every case below would fail
+/// somehow with no profile check at all. `NonConformantProfile` rather than
+/// `SignatureInvalid` is what proves the gate ran — and that it ran *first*, so
+/// a chain the law does not permit is refused before anything canonicalises it.
+/// A valid signature must not be able to excuse a non-conformant chain, and
+/// asserting only "it errored" could not tell the two apart.
+///
+/// Tampered in memory rather than through text tooling: these documents use CRLF
+/// terminators, and a line-oriented edit rewrites every line, which makes a
+/// rejection prove nothing about the change that was intended.
+///
+/// The positive control is `the_published_lotl_verifies` above — the real
+/// document passes its own mandated profile, so these cases test the check
+/// rather than a fixture that never conformed.
+///
+/// # This was confirmed, not assumed
+///
+/// With the profile check removed, all four cases still fail — for four
+/// unrelated, incidental reasons: a dangling ID reference, a digest mismatch, a
+/// signature mismatch, and an XPath *resource* ceiling. So `is_err()` alone
+/// would have passed against a verifier doing none of this.
+///
+/// The last of those is the sharpest evidence that the gap was real rather than
+/// theoretical: the injected XPath transform was **evaluated** — 5800 context
+/// evaluations before a resource limit stopped it — which is `xml-sec` honouring
+/// a transform the law does not permit. A cheaper XPath would not have hit that
+/// limit at all.
+mod signature_profile {
+    use super::*;
+
+    const CONFORMANT: &str = "<ds:Transforms><ds:Transform Algorithm=\"http://www.w3.org/2000/09/xmldsig#enveloped-signature\"/><ds:Transform Algorithm=\"http://www.w3.org/2001/10/xml-exc-c14n#\"/></ds:Transforms>";
+
+    fn lotl_with(transforms: &str) -> String {
+        assert_eq!(
+            EU_LOTL.matches(CONFORMANT).count(),
+            1,
+            "the fixture no longer carries the transform chain these cases rewrite"
+        );
+        EU_LOTL.replace(CONFORMANT, transforms)
+    }
+
+    fn rejection(xml: &str) -> LotlRejected {
+        verify_lotl(xml).expect_err("a non-conformant signature must be refused")
+    }
+
+    #[test]
+    fn a_third_transform_is_refused() {
+        let extra = CONFORMANT.replace(
+            "</ds:Transforms>",
+            "<ds:Transform Algorithm=\"http://www.w3.org/TR/1999/REC-xpath-19991116\"><ds:XPath>true()</ds:XPath></ds:Transform></ds:Transforms>",
+        );
+        let err = rejection(&lotl_with(&extra));
+        assert!(
+            matches!(err, LotlRejected::NonConformantProfile(ref why) if why.contains("exactly two")),
+            "an extra XPath transform is the wrapping case this exists for, got: {err}"
+        );
+    }
+
+    #[test]
+    fn the_two_transforms_in_the_wrong_order_are_refused() {
+        let swapped = "<ds:Transforms><ds:Transform Algorithm=\"http://www.w3.org/2001/10/xml-exc-c14n#\"/><ds:Transform Algorithm=\"http://www.w3.org/2000/09/xmldsig#enveloped-signature\"/></ds:Transforms>";
+        let err = rejection(&lotl_with(swapped));
+        assert!(
+            matches!(err, LotlRejected::NonConformantProfile(ref why) if why.contains("in that order")),
+            "the clause fixes the order, got: {err}"
+        );
+    }
+
+    #[test]
+    fn inclusive_canonicalization_is_refused() {
+        let inclusive = CONFORMANT.replace(
+            "http://www.w3.org/2001/10/xml-exc-c14n#",
+            "http://www.w3.org/TR/2001/REC-xml-c14n-20010315",
+        );
+        let err = rejection(&lotl_with(&inclusive));
+        assert!(
+            matches!(err, LotlRejected::NonConformantProfile(ref why) if why.contains("in that order")),
+            "the clause names exclusive canonicalization specifically, got: {err}"
+        );
+    }
+
+    /// Without a `URI=""` reference nothing in the signature covers the whole
+    /// document — which is the wrapping outcome itself, not a shape quibble.
+    #[test]
+    fn a_reference_that_no_longer_covers_the_document_is_refused() {
+        const WHOLE_DOCUMENT: &str = "<ds:Reference Id=\"ref-enveloped-signature\" URI=\"\">";
+        assert_eq!(
+            EU_LOTL.matches(WHOLE_DOCUMENT).count(),
+            1,
+            "the fixture no longer carries the document-wide reference this case rewrites"
+        );
+        let xml = EU_LOTL.replace(
+            WHOLE_DOCUMENT,
+            "<ds:Reference Id=\"ref-enveloped-signature\" URI=\"#not-the-document\">",
+        );
+        let err = rejection(&xml);
+        assert!(
+            matches!(err, LotlRejected::NonConformantProfile(ref why) if why.contains("covers the")),
+            "a signature covering something other than the document must be refused, got: {err}"
+        );
+    }
+}

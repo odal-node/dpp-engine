@@ -1,7 +1,7 @@
 //! Verifying the list of trusted lists against the pinned anchor.
 
 use base64::Engine as _;
-use roxmltree::Document;
+use roxmltree::{Document, Node};
 use xml_sec::xmldsig::{DefaultKeyResolver, DsigStatus, VerifyContext};
 
 use super::anchor::{EU_LOTL_ANCHOR, LotlAnchor};
@@ -41,6 +41,15 @@ pub enum LotlRejected {
     /// Not a stale pin. The document has been altered, truncated, or was never
     /// signed by the key it names.
     SignatureInvalid(String),
+    /// The signature is not shaped the way CID (EU) 2015/1505 Annex I requires.
+    ///
+    /// Distinct from [`Self::SignatureInvalid`] on purpose, and the distinction
+    /// is the whole reason this variant exists: a signature can verify
+    /// perfectly and still cover something other than the document being read,
+    /// because the transform chain decides what "the document" means. An
+    /// operator seeing this has a conformance problem at the publisher, not a
+    /// tampered file — and the two send them to different people.
+    NonConformantProfile(String),
 }
 
 impl std::fmt::Display for LotlRejected {
@@ -61,6 +70,11 @@ impl std::fmt::Display for LotlRejected {
             Self::SignatureInvalid(why) => {
                 write!(f, "the signature does not verify: {why}")
             }
+            Self::NonConformantProfile(why) => write!(
+                f,
+                "the signature does not follow the profile CID (EU) 2015/1505 Annex I \
+                 mandates: {why}"
+            ),
         }
     }
 }
@@ -161,6 +175,13 @@ pub fn verify_lotl_with(xml: &str, anchor: &LotlAnchor) -> Result<VerifiedLotl, 
         });
     }
 
+    // Before the signature, for the same reason the anchor is: this decides
+    // what a signature would even be covering, and handing an arbitrary
+    // transform chain to the canonicaliser is the thing the profile exists to
+    // prevent. A valid signature must not be able to excuse a chain the law
+    // does not permit.
+    check_signature_profile(xml).map_err(LotlRejected::NonConformantProfile)?;
+
     let resolver = DefaultKeyResolver::default();
     let outcome = VerifyContext::new()
         .key_resolver(&resolver)
@@ -219,6 +240,11 @@ pub enum TrustedListRejected {
     },
     /// The certificate is named, and the signature does not verify with it.
     SignatureInvalid(String),
+    /// The signature is not shaped the way CID (EU) 2015/1505 Annex I requires.
+    ///
+    /// Same distinction as [`LotlRejected::NonConformantProfile`]: a shape
+    /// problem at the Member State's publisher, not an altered document.
+    NonConformantProfile(String),
 }
 
 impl std::fmt::Display for TrustedListRejected {
@@ -240,6 +266,10 @@ impl std::fmt::Display for TrustedListRejected {
                  or this document is not theirs"
             ),
             Self::SignatureInvalid(why) => write!(f, "the signature does not verify: {why}"),
+            Self::NonConformantProfile(why) => write!(
+                f,
+                "the signature does not follow the profile CID (EU) 2015/1505 Annex I \n                 mandates: {why}"
+            ),
         }
     }
 }
@@ -335,6 +365,10 @@ pub fn verify_trusted_list(
         });
     }
 
+    // Same ordering and the same reason as the LOTL path: the profile decides
+    // what the signature covers, so it is checked before one is computed.
+    check_signature_profile(xml).map_err(TrustedListRejected::NonConformantProfile)?;
+
     let resolver = DefaultKeyResolver::default();
     let outcome = VerifyContext::new()
         .key_resolver(&resolver)
@@ -366,6 +400,119 @@ pub fn verify_trusted_list(
 /// Read with the same local-name matching the rest of this module uses: the
 /// signature is in the `ds:` namespace by convention rather than by requirement,
 /// and a publisher is free to bind a different prefix.
+/// The enveloped-signature transform, the first of the two the profile mandates.
+const ENVELOPED_SIGNATURE: &str = "http://www.w3.org/2000/09/xmldsig#enveloped-signature";
+/// Exclusive canonicalization, the second.
+const EXCLUSIVE_C14N: &str = "http://www.w3.org/2001/10/xml-exc-c14n#";
+
+/// Check the signature against the transform profile the law mandates.
+///
+/// ✅ COMPLIANCE-PIN: CID (EU) 2015/1505 Annex I, Chapter II, the "Signature
+/// element (clause B.1), General (clause B.1.0)" section inserted by CID (EU)
+/// 2025/2164, Annex, point (3). Applicable since 29 April 2026 (its Art. 2).
+///
+/// The clause is a **closed profile**: `ds:SignedInfo` shall contain a
+/// `ds:Reference` with `URI=""` — referring to the entire document — and that
+/// reference shall contain only one `ds:Transforms`, which shall contain two
+/// `ds:Transform`, the first enveloped-signature and the second exclusive
+/// canonicalization.
+///
+/// # Why this is asserted rather than left to the verifier
+///
+/// Transforms decide *what was actually signed*, so a permissive transform chain
+/// is the classic signature-wrapping surface: a signature that validates
+/// perfectly can cover something other than the document being read. The
+/// narrowness of the profile is the point of it.
+///
+/// `xml-sec` does not constrain this by default, and that was checked rather
+/// than assumed. Its `TransformPolicy::allowed_algorithms` is documented as
+/// "`None` accepts every implemented algorithm" and defaults to `None`, and the
+/// implemented set includes XPath and XPath Filter 2.0 — the two most expressive
+/// ways to change what a reference covers. `max_transforms_per_reference`
+/// defaults to 64. So this assertion is known-necessary, not known-redundant.
+///
+/// Tightening `allowed_algorithms` to these two URIs would refuse a
+/// non-conformant chain *during* verification rather than beside it, which is
+/// stronger. It is deliberately not done here: the acceptance bar for that is
+/// the full set of lists from the LOTL's own pointers, not the two fixtures in
+/// this repository, because one Member State using a different canonicalization
+/// for its XAdES reference would stop verifying.
+///
+/// # What it deliberately does not constrain
+///
+/// Only the `URI=""` reference. Both published documents carry a **second**
+/// reference, to the XAdES `SignedProperties`, with its own single
+/// exclusive-c14n transform. The clause governs the reference over the whole
+/// document and says nothing about the others, so constraining them would refuse
+/// every real trusted list — including the Commission's own.
+fn check_signature_profile(xml: &str) -> Result<(), String> {
+    let doc = Document::parse(xml).map_err(|e| format!("not XML: {e}"))?;
+
+    let signed_info = doc
+        .descendants()
+        .find(|n| n.is_element() && n.tag_name().name() == "SignedInfo")
+        .ok_or_else(|| "the signature carries no SignedInfo".to_owned())?;
+
+    // Direct children only. A `Reference` nested deeper is not one `SignedInfo`
+    // presents to the verifier, and counting it would let an unrelated element
+    // change the verdict.
+    let whole_document: Vec<Node> = signed_info
+        .children()
+        .filter(|n| {
+            n.is_element() && n.tag_name().name() == "Reference" && n.attribute("URI") == Some("")
+        })
+        .collect();
+
+    let reference = match whole_document.as_slice() {
+        [one] => *one,
+        [] => {
+            return Err(
+                "no ds:Reference with URI=\"\" — nothing in this signature covers the \
+                        whole document"
+                    .to_owned(),
+            );
+        }
+        many => {
+            return Err(format!(
+                "{} ds:Reference elements carry URI=\"\" — two document-wide references leave it \
+                 ambiguous which one was checked",
+                many.len()
+            ));
+        }
+    };
+
+    let transform_sets: Vec<Node> = reference
+        .children()
+        .filter(|n| n.is_element() && n.tag_name().name() == "Transforms")
+        .collect();
+    if transform_sets.len() != 1 {
+        return Err(format!(
+            "the URI=\"\" reference carries {} ds:Transforms elements, and the profile allows \
+             exactly one",
+            transform_sets.len()
+        ));
+    }
+
+    let algorithms: Vec<&str> = transform_sets[0]
+        .children()
+        .filter(|n| n.is_element() && n.tag_name().name() == "Transform")
+        .map(|n| n.attribute("Algorithm").unwrap_or_default())
+        .collect();
+
+    match algorithms.as_slice() {
+        [ENVELOPED_SIGNATURE, EXCLUSIVE_C14N] => Ok(()),
+        [first, second] => Err(format!(
+            "the URI=\"\" reference transforms are [{first}, {second}], and the profile requires \
+             [{ENVELOPED_SIGNATURE}, {EXCLUSIVE_C14N}] in that order"
+        )),
+        other => Err(format!(
+            "the URI=\"\" reference carries {} ds:Transform elements, and the profile requires \
+             exactly two",
+            other.len()
+        )),
+    }
+}
+
 fn signing_certificate(xml: &str) -> Result<String, LotlRejected> {
     let doc = Document::parse(xml).map_err(|e| LotlRejected::Malformed(format!("not XML: {e}")))?;
 
