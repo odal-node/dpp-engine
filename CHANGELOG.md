@@ -51,6 +51,17 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ### Added
 
+- **The evidence dossier now states whether its seal covers the signature it is
+  served beside.** The dossier carries the seal, the passport's compact JWS and
+  its digest, so a verifier holding only that file has everything needed. The JWS
+  is the passport's **current** one — and a passport re-published after sealing
+  carries a seal over the *previous* signature until the drain catches up, a
+  window with no end if the drain has exhausted. Pairing the two silently handed
+  an authority a seal that does not verify against the document beside it, which
+  reads as tampering rather than as the stale seal it is. `qualifiedSeal.binding`
+  now says which. Reported rather than blocking generation: a dossier must be
+  producible in whatever state the passport is actually in.
+
 - **A seal can now be proven bound to its passport, from the seal's own bytes.**
   `GET /api/v1/dpp/{dppId}/seal` gains **`binding`**: whether the stored seal
   actually covers this passport's current signature, read out of its

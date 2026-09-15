@@ -202,12 +202,33 @@ impl PassportService {
         // than any redaction of it. `None` when the seal is still queued.
         let qualified_seal = passport.seal.as_ref().and_then(|seal| {
             let jws = passport.jws_signature.as_ref()?;
+            let payload_hash = crate::domain::service::seal::seal_digest(&passport)?;
             Some(serde_json::json!({
                 "seal": seal,
                 // Served so a verifier holding only this file has both the CAdES
                 // and what it should be checked against, with no reconstruction.
                 "signedOverJws": jws,
-                "payloadHash": crate::domain::service::seal::seal_digest(&passport)?,
+                "payloadHash": payload_hash,
+                // Whether the seal actually covers the signature served beside
+                // it — and this is not decoration.
+                //
+                // The JWS above is the passport's *current* one. A passport
+                // re-published after sealing carries a seal over the previous
+                // signature until the drain catches up, and if the drain is
+                // exhausted that window has no end. A dossier pairing the two
+                // silently would hand an authority a seal that does not verify
+                // against the document beside it — which reads as tampering,
+                // rather than as the stale seal it is.
+                //
+                // Reported rather than allowed to block generation: a dossier
+                // must be producible in whatever state the passport is actually
+                // in, and saying so plainly beats refusing to say anything.
+                "binding": self
+                    .seal_inspector
+                    .as_ref()
+                    .map_or(dpp_types::SealBinding::Unknown, |i| {
+                        i.binding(seal, &payload_hash)
+                    }),
             }))
         });
 

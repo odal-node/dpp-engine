@@ -665,7 +665,11 @@ async fn a_locally_sealed_passport_reports_that_no_provider_issued_it() {
     .with_seal_outbox(seal_outbox.clone())
     // Wired exactly as the composition root wires it, and unconditionally for
     // the same reason: reading a stored seal is not sealing.
-    .with_seal_inspector(Arc::new(dpp_seal::CadesInspector::new()));
+    .with_seal_inspector(Arc::new(dpp_seal::CadesInspector::new()))
+    // So the dossier an authority is handed can be generated and inspected.
+    .with_evidence_store(Arc::new(dpp_dal::pg::PgEvidenceDossierRepo::new(
+        dal.clone(),
+    )));
 
     let draft = draft_passport();
     let id = draft.id;
@@ -750,6 +754,33 @@ async fn a_locally_sealed_passport_reports_that_no_provider_issued_it() {
         Some(expected_digest.as_str())
     );
     println!("binding   : coversThisSignature ({expected_digest})");
+
+    // ── And the dossier an authority is actually handed says so ─────────────
+    //
+    // The dossier serves the seal beside the passport's *current* JWS. Those are
+    // the same thing here, and are not always: a passport re-published after
+    // sealing carries a seal over the previous signature until the drain catches
+    // up. Pairing them silently would hand an authority a seal that does not
+    // verify against the document beside it — which reads as tampering rather
+    // than as the stale seal it is. So the dossier states the relationship.
+    let record = service
+        .generate_evidence(id, &auth())
+        .await
+        .expect("dossier generated");
+    let seal_section = record
+        .dossier
+        .qualified_seal
+        .clone()
+        .expect("a sealed passport's dossier carries its seal");
+    assert_eq!(
+        seal_section["payloadHash"].as_str(),
+        Some(expected_digest.as_str())
+    );
+    assert_eq!(
+        seal_section["binding"]["result"].as_str(),
+        Some("coversThisSignature"),
+        "the dossier must say whether the seal covers the JWS it serves beside it: {seal_section}"
+    );
 
     // ── The verdict, read out of the stored seal ────────────────────────────
     let verdict = qualify(&der, &[], seal.sealed_at).expect("a readable CAdES seal");
