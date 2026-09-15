@@ -24,6 +24,7 @@ use cms::content_info::ContentInfo;
 use cms::signed_data::{SignedData, SignerInfo};
 use der::{Decode as _, Encode as _};
 use dpp_domain::seal::SealConformanceLevel;
+use dpp_types::{CreationDevice, SealOrigin};
 use x509_cert::Certificate;
 
 use crate::error::SealError;
@@ -311,31 +312,6 @@ struct QcStatement {
     _info: Option<der::Any>,
 }
 
-/// What the certificate declares about the device holding its private key.
-///
-/// A **declaration**, never a verification. The certificate says where its key
-/// lives; nothing here confirms it, and nothing could — that assurance comes
-/// from the issuing QTSP's conformity assessment, not from bytes. The names say
-/// `Declares` for that reason.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CreationDevice {
-    /// The certificate carries the Annex III(j) indication.
-    DeclaresQualifiedDevice,
-    /// It carries QCStatements, but not that one.
-    ///
-    /// A qualified certificate whose key is not in a qualified device. Lawful,
-    /// and enough for Art. 40a, which omits the device leg — but not for the
-    /// Art. 32/40 pair.
-    NoQualifiedDevice,
-    /// It carries no QCStatements extension at all.
-    ///
-    /// Distinguished from [`Self::NoQualifiedDevice`] because it is a different
-    /// finding: this certificate is not presenting itself as a qualified
-    /// certificate in the first place. A self-signed development certificate
-    /// lands here.
-    NotAQualifiedCertificate,
-}
-
 /// The signer certificate's issuer, subject, and Annex III(j) indication.
 ///
 /// Read out of the seal rather than taken from configuration, deliberately. A
@@ -362,6 +338,22 @@ pub struct SignerCertificate {
     pub self_issued: bool,
     /// What the certificate declares about the creation device.
     pub creation_device: CreationDevice,
+}
+
+impl SignerCertificate {
+    /// The shareable half — everything but the bytes used for matching.
+    ///
+    /// [`Self::issuer_der`] stays behind: it exists so a listed CA's subject can
+    /// be compared exactly, which is this crate's business and nobody else's.
+    #[must_use]
+    pub fn origin(&self) -> SealOrigin {
+        SealOrigin {
+            subject: self.subject.clone(),
+            issuer: self.issuer.clone(),
+            self_issued: self.self_issued,
+            creation_device: self.creation_device,
+        }
+    }
 }
 
 /// Read the signer certificate's issuer, subject and device indication.

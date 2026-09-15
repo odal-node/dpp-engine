@@ -24,7 +24,7 @@
 //! - **Art. 32(1)(f)** — the seal was created by a qualified electronic seal
 //!   creation device, which **Annex III(j)** requires the certificate to declare
 //!   in machine-processable form. Answered here by
-//!   [`CreationDevice`](crate::cades::CreationDevice).
+//!   [`CreationDevice`](dpp_types::CreationDevice).
 //!
 //! Two legs, so two fields rather than one ladder: they are independent, and a
 //! seal can hold either without the other.
@@ -57,9 +57,10 @@ use chrono::{DateTime, Utc};
 use der::{Decode as _, Encode as _};
 use dpp_domain::trusted_list::{TrustServiceStatus, TrustServiceType};
 
-use crate::cades::{CreationDevice, SignerCertificate, signer_certificate};
+use crate::cades::{SignerCertificate, signer_certificate};
 use crate::error::SealError;
 use crate::trustlist::VerifiedTrustedList;
+use dpp_types::CreationDevice;
 
 /// What the Trusted Lists say about the certificate's issuer.
 ///

@@ -2672,6 +2672,7 @@ dependencies = [
  "der 0.7.10",
  "dpp-common",
  "dpp-domain",
+ "dpp-types",
  "hex",
  "hmac 0.13.0",
  "p256 0.13.2",

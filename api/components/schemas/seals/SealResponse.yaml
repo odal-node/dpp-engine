@@ -63,6 +63,23 @@ properties:
       Null for a seal restored from a backup or produced elsewhere.
   coverage:
     $ref: ./SealCoverage.yaml
+  origin:
+    oneOf:
+      - $ref: ./SealOrigin.yaml
+      - type: 'null'
+    description: >-
+      What **this seal's own certificate** says about who issued it: did a
+      provider issue it, or did the node sign it itself?
+
+
+      Null means **not read** — a placeholder seal, a format this node does not
+      parse, unreadable bytes, or a deployment with no inspector wired. Never
+      read null as "not self-issued": that is a finding, and it only comes from
+      a certificate that was actually examined.
+
+
+      For what the *currently configured* backend produces, which is a different
+      question, see `trustMode` on `GET /api/v1/seal`.
   verification:
     type: string
     description: >-

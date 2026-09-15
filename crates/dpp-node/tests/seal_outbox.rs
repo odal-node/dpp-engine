@@ -631,8 +631,8 @@ async fn a_wrong_key_is_rejected_and_the_row_stays_pending() {
 /// `dpp_seal::qualification`'s own tests.
 #[tokio::test]
 async fn a_locally_sealed_passport_reports_that_no_provider_issued_it() {
-    use dpp_seal::cades::CreationDevice;
     use dpp_seal::qualification::{IssuerStanding, qualify};
+    use dpp_types::CreationDevice;
 
     let _pg = start_pg().await;
     let dal = _pg.dal.clone();
@@ -662,7 +662,10 @@ async fn a_locally_sealed_passport_reports_that_no_provider_issued_it() {
             country: "MK".to_owned(),
         },
     )
-    .with_seal_outbox(seal_outbox.clone());
+    .with_seal_outbox(seal_outbox.clone())
+    // Wired exactly as the composition root wires it, and unconditionally for
+    // the same reason: reading a stored seal is not sealing.
+    .with_seal_inspector(Arc::new(dpp_seal::CadesInspector::new()));
 
     let draft = draft_passport();
     let id = draft.id;
@@ -735,5 +738,33 @@ async fn a_locally_sealed_passport_reports_that_no_provider_issued_it() {
     assert!(
         !verification.is_qualified_pass(),
         "a self-signed development seal is never a qualified pass"
+    );
+
+    // ── What the seal read route will serve ─────────────────────────────────
+    //
+    // The same finding reached the way the HTTP handler reaches it: off the
+    // service's inspector, over the envelope as stored. This pins the service
+    // wiring and the value; the response's own shape is pinned by the OpenAPI
+    // contract gate, and the handler between them is a single `and_then`.
+    let served = service
+        .seal_inspector
+        .as_ref()
+        .expect("the inspector is wired")
+        .origin(&seal)
+        .expect("a readable CAdES seal");
+
+    assert!(
+        served.self_issued,
+        "the seal route must report that nothing issued this certificate"
+    );
+    assert_eq!(served.issuer, served.subject);
+    assert_eq!(
+        served.creation_device,
+        CreationDevice::NotAQualifiedCertificate
+    );
+
+    println!(
+        "origin    : selfIssued={} issuer={}",
+        served.self_issued, served.issuer
     );
 }

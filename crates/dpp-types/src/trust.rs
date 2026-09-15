@@ -138,6 +138,18 @@ impl NodeTrustReport {
         Self { profile, ports }
     }
 
+    /// The tier one named port resolved to, if the composition root resolved it.
+    ///
+    /// `None` means the port was never resolved — a deployment that wires no such
+    /// adapter at all — which is **not** the same as `Ghost`, a port that was
+    /// resolved and landed on a placeholder. A caller reporting "not configured"
+    /// and one reporting "configured with a stand-in" are telling an operator two
+    /// different things, and only one of them is a boot blocker.
+    #[must_use]
+    pub fn mode_of(&self, port: &str) -> Option<TrustMode> {
+        self.ports.iter().find(|p| p.port == port).map(|p| p.mode)
+    }
+
     /// Required ports that resolved to `Ghost` — the production boot blockers.
     #[must_use]
     pub fn ghosted_required(&self) -> Vec<&'static str> {
@@ -273,6 +285,32 @@ mod tests {
             ports(TrustMode::Ghost, TrustMode::Ghost, TrustMode::Ghost),
         );
         assert!(report.enforce_profile().is_ok());
+    }
+
+    #[test]
+    fn a_named_port_reports_its_own_mode() {
+        let report = NodeTrustReport::new(
+            NodeProfile::Development,
+            ports(TrustMode::Live, TrustMode::Ghost, TrustMode::Sandbox),
+        );
+        assert_eq!(report.mode_of("seal"), Some(TrustMode::Live));
+        assert_eq!(report.mode_of("registry_sync"), Some(TrustMode::Ghost));
+    }
+
+    /// A port nobody resolved is `None`, not `Ghost`.
+    ///
+    /// The distinction a caller serves to an operator: "this deployment wires no
+    /// such adapter" and "this deployment wired a placeholder" are different
+    /// states, and only the second refuses a production boot. Defaulting the
+    /// first to `Ghost` would report a blocker that does not exist — and, worse,
+    /// would make a *renamed* port indistinguishable from a ghosted one.
+    #[test]
+    fn a_port_that_was_never_resolved_is_none_rather_than_ghost() {
+        let report = NodeTrustReport::new(
+            NodeProfile::Development,
+            ports(TrustMode::Live, TrustMode::Live, TrustMode::Live),
+        );
+        assert_eq!(report.mode_of("no_such_port"), None);
     }
 
     #[test]

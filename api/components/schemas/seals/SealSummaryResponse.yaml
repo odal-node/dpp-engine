@@ -22,3 +22,31 @@ properties:
     description: Rows that gave up after exhausting their retries.
   sealingConfigured:
     type: boolean
+  trustMode:
+    type:
+      - string
+      - 'null'
+    enum:
+      - ghost
+      - sandbox
+      - live
+      - null
+    description: >-
+      The tier the **currently configured** sealing backend resolved to. The
+      counts say how much sealing is outstanding; this says whether the sealing
+      that does happen is worth anything — a node can sit at
+      `unsealedPublished: 0` while every one of those seals was signed by a key
+      it generated itself, and no count would show it.
+
+
+      A different question from the per-passport `origin`, and neither
+      substitutes for the other: this describes the backend running now, that
+      describes the certificate inside one stored seal. A node moved from a
+      local backend to a QTSP last week reports `live` here and
+      `selfIssued: true` on everything sealed before the move, and both are
+      correct.
+
+
+      Null on a deployment that resolved no seal port at all. That is **not**
+      `ghost`: a port nobody wired and a port that landed on a placeholder are
+      different states, and only the second blocks a production boot.

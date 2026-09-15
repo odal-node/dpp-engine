@@ -115,3 +115,12 @@ wasm-pack.log
 
 # generated API reference (build artifact — never commit/publish pre-managed-infra)
 api/openapi.html
+
+# Trusted-list documents kept locally rather than committed.
+#
+# Verifying the published lists that need the vendored `xml-sec` fork means
+# holding ~5 MB of XML each, and the tests that read them skip cleanly when they
+# are absent. Without this rule a plain `git add crates/dpp-seal/` recommits
+# 60k lines of XML — which is not hypothetical, it is how this rule came to be
+# written twice.
+crates/dpp-seal/tests/fixtures/local/*.xml

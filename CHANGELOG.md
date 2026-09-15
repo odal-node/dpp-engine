@@ -51,6 +51,36 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ### Added
 
+- **The seal routes now say whether a seal is worth anything, and they answer
+  two different questions.**
+
+  `GET /api/v1/dpp/{dppId}/seal` gains **`origin`** — what *this stored seal's*
+  certificate says: its subject, its issuer, whether the two are the same name
+  (`selfIssued`), and the Annex III(j) `creationDevice` indication. Read from
+  the stored bytes, so it is right about a seal restored from a backup or made
+  before the backend was changed. `null` means **not read** — a placeholder, an
+  unparsed format, unreadable bytes — and never "not self-issued", which is a
+  finding and only comes from a certificate that was examined.
+
+  `GET /api/v1/seal` gains **`trustMode`** — the tier the *currently configured*
+  backend resolved to (`ghost`, `sandbox`, `live`). The counts beside it say how
+  much sealing is outstanding; this says whether the sealing that does happen is
+  worth anything. A node can sit at `unsealedPublished: 0` while every one of
+  those seals was signed by a key it generated itself, and no count would show
+  it. `null` means no seal port was resolved at all, which is **not** `ghost`.
+
+  Neither substitutes for the other. A node moved from the local backend to a
+  QTSP last week reports `live` on the summary and `selfIssued: true` on
+  everything sealed before the move, and both are correct.
+
+  Reading a certificate is answered through a new `dpp_types::SealInspector`
+  port rather than by linking the seal adapter into the services that serve
+  seals — that crate also carries an HTTP client and an XML signature verifier,
+  which is a disproportionate dependency for reading a distinguished name. The
+  inspector is wired unconditionally, deliberately not behind the same guard as
+  the sealing outbox: a node that no longer seals still holds seals whose origin
+  a reader needs, and those are the least self-explanatory ones.
+
 - **A seal now says, out of its own bytes, whether a provider issued it.**
   `dpp_seal::qualification::qualify` reports the two legs Art. 32(1) needs —
   reached for seals through Art. 40 — against verified national trusted lists:

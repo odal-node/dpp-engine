@@ -6362,6 +6362,17 @@
           "coverage": {
             "$ref": "#/components/schemas/SealCoverage"
           },
+          "origin": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/SealOrigin"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "What **this seal's own certificate** says about who issued it: did a provider issue it, or did the node sign it itself?\n\nNull means **not read** — a placeholder seal, a format this node does not parse, unreadable bytes, or a deployment with no inspector wired. Never read null as \"not self-issued\": that is a finding, and it only comes from a certificate that was actually examined.\n\nFor what the *currently configured* backend produces, which is a different question, see `trustMode` on `GET /api/v1/seal`."
+          },
           "verification": {
             "type": "string",
             "description": "Stated, not implied: this node did not cryptographically validate the CAdES. A detached CAdES must be checked by an independent AdES validator against the EU Trusted List."
@@ -6395,6 +6406,19 @@
           },
           "sealingConfigured": {
             "type": "boolean"
+          },
+          "trustMode": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "ghost",
+              "sandbox",
+              "live",
+              null
+            ],
+            "description": "The tier the **currently configured** sealing backend resolved to. The counts say how much sealing is outstanding; this says whether the sealing that does happen is worth anything — a node can sit at `unsealedPublished: 0` while every one of those seals was signed by a key it generated itself, and no count would show it.\n\nA different question from the per-passport `origin`, and neither substitutes for the other: this describes the backend running now, that describes the certificate inside one stored seal. A node moved from a local backend to a QTSP last week reports `live` here and `selfIssued: true` on everything sealed before the move, and both are correct.\n\nNull on a deployment that resolved no seal port at all. That is **not** `ghost`: a port nobody wired and a port that landed on a placeholder are different states, and only the second blocks a production boot."
           }
         }
       },
@@ -8758,6 +8782,39 @@
           },
           "passportScope": {
             "$ref": "#/components/schemas/PassportScopeReport"
+          }
+        }
+      },
+      "SealOrigin": {
+        "type": "object",
+        "description": "What a stored seal's own certificate says about who issued it — read out of the seal's bytes, never from this node's configuration. The two are different facts: configuration records what the operator intended, and a seal restored from a backup or made before a backend change was not produced by whatever is configured now.\n\n**Not a qualification verdict.** Establishing that a seal is qualified needs the issuer matched against an EU Trusted List *and* the issuer's signature over this certificate verified; neither is done to produce this. What it does answer completely, and without a network, is whether anybody issued the certificate at all.",
+        "required": [
+          "subject",
+          "issuer",
+          "selfIssued",
+          "creationDevice"
+        ],
+        "properties": {
+          "subject": {
+            "type": "string",
+            "description": "The certificate's subject distinguished name, RFC 4514."
+          },
+          "issuer": {
+            "type": "string",
+            "description": "The certificate's issuer distinguished name, RFC 4514."
+          },
+          "selfIssued": {
+            "type": "boolean",
+            "description": "Whether issuer and subject are the same name — the structural test for \"nobody issued this to us\", and a property of the certificate that no environment variable can change. True means the seal attests that a key this node holds signed a digest and **nothing else**: it carries no legal weight, and no Trusted List would give it any."
+          },
+          "creationDevice": {
+            "type": "string",
+            "enum": [
+              "declaresQualifiedDevice",
+              "noQualifiedDevice",
+              "notAQualifiedCertificate"
+            ],
+            "description": "What the certificate declares about the device holding its private key — a declaration, never a verification.\n\n`declaresQualifiedDevice`: the certificate carries the Annex III(j) indication that Regulation (EU) No 910/2014 Art. 32(1)(f), reached for seals through Art. 40, requires.\n\n`noQualifiedDevice`: it carries qualified-certificate statements but not that one. Lawful, and enough for Art. 40a — validation of an *advanced* seal based on a qualified certificate, which omits the device leg — but not for the Art. 32/40 pair.\n\n`notAQualifiedCertificate`: it carries no qualified-certificate statements at all, so it is not presenting itself as a qualified certificate in the first place. A self-signed development certificate lands here."
           }
         }
       },

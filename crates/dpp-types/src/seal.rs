@@ -29,6 +29,7 @@
 //! produces a different JWS, hence a different digest, hence a distinct row.
 
 use async_trait::async_trait;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use dpp_domain::{DppError, passport::PassportId, seal::SealedEnvelope};
@@ -182,4 +183,93 @@ pub trait SealOutbox: Send + Sync {
     /// condition and shares this predicate, but adds its own guards for rows the
     /// drain already owns — those belong to the repair, not to the question.
     async fn unsealed_published_count(&self) -> Result<i64, DppError>;
+}
+
+// ─── Reading a stored seal ────────────────────────────────────────────────────
+
+/// What a seal's certificate declares about the device holding its private key.
+///
+/// A **declaration**, never a verification. The certificate says where its key
+/// lives; nothing confirms it, and nothing could from bytes alone — that
+/// assurance comes from the issuing QTSP's conformity assessment. The name says
+/// `Declares` for that reason.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum CreationDevice {
+    /// The certificate carries the Annex III(j) indication.
+    ///
+    /// Regulation (EU) No 910/2014 Art. 32(1)(f), reached for seals through
+    /// Art. 40, requires that the seal was created by a qualified electronic seal
+    /// creation device, and Annex III(j) requires the certificate to say so in a
+    /// form suitable for automated processing.
+    DeclaresQualifiedDevice,
+    /// It carries qualified-certificate statements, but not that one.
+    ///
+    /// Lawful, and enough for Art. 40a — validation of an *advanced* seal based
+    /// on a qualified certificate, which omits the device leg — but not for the
+    /// Art. 32/40 pair.
+    NoQualifiedDevice,
+    /// It carries no qualified-certificate statements at all.
+    ///
+    /// A different finding from [`Self::NoQualifiedDevice`]: this certificate is
+    /// not presenting itself as a qualified certificate in the first place. A
+    /// self-signed development certificate lands here.
+    NotAQualifiedCertificate,
+}
+
+/// What a stored seal's own certificate says about who issued it.
+///
+/// **Read out of the seal, never from configuration.** A node knows which
+/// backend it was *told* to use, which attests the operator's intent rather than
+/// the bytes that came back — and a seal restored from a backup, or made before
+/// a backend was changed, was not produced by the backend running now.
+///
+/// Nothing here is a qualification verdict. Establishing that a seal is
+/// qualified needs the issuer matched against an EU Trusted List *and* the
+/// issuer's signature over this certificate verified; neither is done to produce
+/// this. What it does answer, completely and without a network, is whether
+/// anybody issued the certificate at all.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SealOrigin {
+    /// The certificate's subject distinguished name, RFC 4514.
+    pub subject: String,
+    /// The certificate's issuer distinguished name, RFC 4514.
+    pub issuer: String,
+    /// Whether issuer and subject are the same name.
+    ///
+    /// The structural test for "nobody issued this to us", and the one an
+    /// operator asks first. True means the seal attests that a key this node
+    /// holds signed a digest, and **nothing else** — it carries no legal weight
+    /// and no Trusted List will give it any.
+    ///
+    /// A property of the certificate, so no environment variable can change it.
+    pub self_issued: bool,
+    /// What the certificate declares about the creation device (Annex III(j)).
+    pub creation_device: CreationDevice,
+}
+
+/// Reads a stored seal's certificate.
+///
+/// # Why this is a port rather than a function
+///
+/// Parsing CMS and X.509 needs ASN.1 machinery that belongs with the seal
+/// adapter, beside the code that produces seals in the first place — one home
+/// for certificate handling, so two places cannot disagree about what a seal
+/// says. The services that *serve* seals sit above that adapter and must not
+/// link it: the crate carrying it also carries an HTTP client and an XML
+/// signature verifier, which is a disproportionate dependency for reading a
+/// distinguished name.
+///
+/// So the question is declared here, where every consumer already looks, and
+/// answered by whichever adapter the composition root resolved — the same
+/// arrangement [`SealOutbox`] uses, and for the same reason.
+pub trait SealInspector: Send + Sync {
+    /// What the envelope's certificate says, or `None` if it cannot be read.
+    ///
+    /// `None` for a placeholder envelope, for a format this adapter does not
+    /// parse, and for bytes that will not decode. All three mean *not read* —
+    /// **never** that the seal was self-issued, which is a finding and must come
+    /// from a certificate that was actually examined.
+    fn origin(&self, envelope: &SealedEnvelope) -> Option<SealOrigin>;
 }

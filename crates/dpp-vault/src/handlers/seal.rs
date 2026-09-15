@@ -132,6 +132,30 @@ pub struct SealResponse {
 
     /// Whether the stored seal covers the passport's current signature.
     pub coverage: SealCoverage,
+    /// What **this seal's own certificate** says about who issued it.
+    ///
+    /// The first question a reader has and the one nothing here could answer
+    /// before: did a provider issue the certificate behind this seal, or did the
+    /// node sign it itself? `selfIssued: true` means the seal attests that a key
+    /// this node holds signed a digest, and nothing more — no legal weight, and
+    /// no Trusted List would give it any.
+    ///
+    /// Read from the stored bytes, not from configuration, because those are
+    /// different facts. A seal made before the backend was changed, or restored
+    /// from a backup, was not produced by whatever is configured now — see
+    /// `trustMode` on `GET /api/v1/seal`, which answers the other question.
+    ///
+    /// `null` means **not read**: a placeholder seal, a format this node does not
+    /// parse, unreadable bytes, or a deployment with no inspector wired. Never
+    /// read it as "not self-issued" — that is a finding and only comes from a
+    /// certificate that was actually examined.
+    ///
+    /// **Not a qualification verdict.** Establishing that a seal is qualified
+    /// needs the issuer matched against an EU Trusted List *and* the issuer's
+    /// signature over this certificate verified. Neither is done here, and
+    /// `selfIssued: false` says only that some name other than the subject's
+    /// appears in the issuer field.
+    pub origin: Option<dpp_types::SealOrigin>,
     /// Stated, not implied: this node did not cryptographically validate the
     /// CAdES, and says so rather than letting the response read as a verdict.
     pub verification: &'static str,
@@ -265,6 +289,11 @@ pub async fn seal_handler(
             current_payload_hash: payload_hash,
             sealed_payload_hash,
             coverage,
+            origin: state
+                .service
+                .seal_inspector
+                .as_ref()
+                .and_then(|i| i.origin(seal)),
             verification: NOT_VALIDATED,
         }),
     )
@@ -295,6 +324,43 @@ pub struct SealSummaryResponse {
     /// nothing outstanding. Stated so a reader cannot mistake "not sealing" for
     /// "all sealed".
     pub sealing_configured: bool,
+    /// The tier the **currently configured** sealing backend resolved to:
+    /// `ghost`, `sandbox` or `live`.
+    ///
+    /// The counts above say how much sealing is outstanding. This says whether
+    /// the sealing that *does* happen is worth anything — a node can sit at
+    /// `unsealedPublished: 0` while every one of those seals was signed by a key
+    /// it generated itself, and no count would show it.
+    ///
+    /// **A different question from the per-passport `origin`, and neither
+    /// substitutes for the other.** This describes the backend running now; that
+    /// describes the certificate inside one stored seal. A node moved from the
+    /// local backend to a QTSP last week reports `live` here and
+    /// `selfIssued: true` on everything sealed before the move, and both are
+    /// correct.
+    ///
+    /// `null` on a deployment that resolved no seal port at all — the standalone
+    /// vault, which has no composition root. That is **not** `ghost`: a port
+    /// nobody wired and a port that landed on a placeholder are different states,
+    /// and only the second blocks a production boot.
+    pub trust_mode: Option<&'static str>,
+}
+
+/// The port name the composition root files the sealing backend under.
+///
+/// A literal because the trust report keys on `&'static str` names chosen at the
+/// composition root, and this crate cannot see that module. A rename there would
+/// silently yield `null` here, which
+/// `the_seal_port_name_matches_what_the_node_registers` catches instead.
+pub const SEAL_TRUST_PORT: &str = "seal";
+
+/// The tier the configured sealing backend resolved to, if one was resolved.
+fn seal_trust_mode(state: &AppState) -> Option<&'static str> {
+    state
+        .trust
+        .as_ref()
+        .and_then(|t| t.mode_of(SEAL_TRUST_PORT))
+        .map(|m| m.as_str())
 }
 
 /// `GET /api/v1/seal` — operator-wide sealing state.
@@ -315,6 +381,7 @@ pub async fn seal_summary_handler(
                 sealed: 0,
                 exhausted: 0,
                 sealing_configured: false,
+                trust_mode: seal_trust_mode(&state),
             }),
         )
             .into_response();
@@ -337,6 +404,7 @@ pub async fn seal_summary_handler(
             sealed: counts.sealed,
             exhausted: counts.exhausted,
             sealing_configured: true,
+            trust_mode: seal_trust_mode(&state),
         }),
     )
         .into_response()
@@ -369,6 +437,60 @@ mod tests {
     #[test]
     fn no_record_is_unknown_rather_than_superseded() {
         assert_eq!(coverage_of(None, A), SealCoverage::Unknown);
+    }
+
+    /// The origin's wire shape is a published contract, camelCase included.
+    #[test]
+    fn origin_serialises_to_the_documented_shape() {
+        let origin = dpp_types::SealOrigin {
+            subject: "CN=a".to_owned(),
+            issuer: "CN=b".to_owned(),
+            self_issued: false,
+            creation_device: dpp_types::CreationDevice::DeclaresQualifiedDevice,
+        };
+        let j = serde_json::to_value(&origin).expect("serialise");
+        assert_eq!(j["subject"], "CN=a");
+        assert_eq!(j["issuer"], "CN=b");
+        assert_eq!(j["selfIssued"], false);
+        assert_eq!(j["creationDevice"], "declaresQualifiedDevice");
+    }
+
+    /// Every creation-device value has a stable wire name.
+    ///
+    /// Enumerated rather than spot-checked because the two negative ones are the
+    /// pair most easily confused, and a reader who cannot tell them apart loses
+    /// the distinction between *this certificate is not a qualified certificate*
+    /// and *it is one, whose key is not in a qualified device*.
+    #[test]
+    fn every_creation_device_value_has_a_stable_wire_name() {
+        use dpp_types::CreationDevice as D;
+        let rendered = |d: D| serde_json::to_string(&d).expect("serialise");
+        assert_eq!(
+            rendered(D::DeclaresQualifiedDevice),
+            "\"declaresQualifiedDevice\""
+        );
+        assert_eq!(rendered(D::NoQualifiedDevice), "\"noQualifiedDevice\"");
+        assert_eq!(
+            rendered(D::NotAQualifiedCertificate),
+            "\"notAQualifiedCertificate\""
+        );
+    }
+
+    /// An absent origin serialises as `null`, never as a defaulted finding.
+    ///
+    /// The failure this guards is a `#[serde(skip_serializing_if)]` or a
+    /// `#[serde(default)]` added later for tidiness: either would turn "we could
+    /// not read this seal" into a field that looks like it was read, and
+    /// `selfIssued` would then be absent rather than unknown. `null` is the
+    /// answer the route documents, so it has to actually appear.
+    #[test]
+    fn an_unread_origin_is_null_rather_than_omitted_or_defaulted() {
+        let j = serde_json::to_value(serde_json::json!({
+            "origin": Option::<dpp_types::SealOrigin>::None,
+        }))
+        .expect("serialise");
+        assert!(j.get("origin").is_some(), "the key must be present");
+        assert!(j["origin"].is_null(), "and its value must be null");
     }
 
     /// The wire values are part of the published contract.

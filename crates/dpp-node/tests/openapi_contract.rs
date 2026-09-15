@@ -475,6 +475,7 @@ fn object_cases() -> Vec<ObjectCase> {
     case!("OperatorScanStats", fixtures::operator_scan_stats());
     case!("DailyScanCount", fixtures::daily_scan_count());
     case!("SealResponse", fixtures::seal_response());
+    case!("SealOrigin", fixtures::seal_origin());
     case!("SealDeclarer", fixtures::seal_declarer());
     case!("SealSummaryResponse", fixtures::seal_summary_response());
     case!("InstalledPlugin", fixtures::installed_plugin());
@@ -3564,9 +3565,29 @@ mod fixtures {
             current_payload_hash: "6".repeat(64),
             sealed_payload_hash: Some("6".repeat(64)),
             coverage: SealCoverage::Current,
+            // Populated rather than `None`, deliberately. A null would still
+            // carry the `origin` key and satisfy a top-level key-set check,
+            // while never once comparing the nested object against
+            // `SealOrigin.yaml` — so the schema this exists to pin would go
+            // unchecked.
+            origin: Some(seal_origin()),
             // A `&'static str` constant on the response type; the fixture only
             // needs a value of the right shape for the key set.
             verification: "not validated by this node",
+        }
+    }
+
+    /// A self-issued origin — what the local development backend produces.
+    ///
+    /// The negative case is the realistic one: nothing in this workspace can
+    /// mint a certificate a provider actually issued, and a fixture claiming
+    /// otherwise would pin a shape no code here can produce.
+    pub fn seal_origin() -> dpp_types::SealOrigin {
+        dpp_types::SealOrigin {
+            subject: "CN=Odal Node local development seal".into(),
+            issuer: "CN=Odal Node local development seal".into(),
+            self_issued: true,
+            creation_device: dpp_types::CreationDevice::NotAQualifiedCertificate,
         }
     }
 
@@ -3577,6 +3598,7 @@ mod fixtures {
             sealed: 40,
             exhausted: 0,
             sealing_configured: true,
+            trust_mode: Some("live"),
         }
     }
 

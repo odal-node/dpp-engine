@@ -1,0 +1,59 @@
+type: object
+description: >-
+  What a stored seal's own certificate says about who issued it — read out of
+  the seal's bytes, never from this node's configuration. The two are different
+  facts: configuration records what the operator intended, and a seal restored
+  from a backup or made before a backend change was not produced by whatever is
+  configured now.
+
+
+  **Not a qualification verdict.** Establishing that a seal is qualified needs
+  the issuer matched against an EU Trusted List *and* the issuer's signature
+  over this certificate verified; neither is done to produce this. What it does
+  answer completely, and without a network, is whether anybody issued the
+  certificate at all.
+required:
+  - subject
+  - issuer
+  - selfIssued
+  - creationDevice
+properties:
+  subject:
+    type: string
+    description: The certificate's subject distinguished name, RFC 4514.
+  issuer:
+    type: string
+    description: The certificate's issuer distinguished name, RFC 4514.
+  selfIssued:
+    type: boolean
+    description: >-
+      Whether issuer and subject are the same name — the structural test for
+      "nobody issued this to us", and a property of the certificate that no
+      environment variable can change. True means the seal attests that a key
+      this node holds signed a digest and **nothing else**: it carries no legal
+      weight, and no Trusted List would give it any.
+  creationDevice:
+    type: string
+    enum:
+      - declaresQualifiedDevice
+      - noQualifiedDevice
+      - notAQualifiedCertificate
+    description: >-
+      What the certificate declares about the device holding its private key — a
+      declaration, never a verification.
+
+
+      `declaresQualifiedDevice`: the certificate carries the Annex III(j)
+      indication that Regulation (EU) No 910/2014 Art. 32(1)(f), reached for
+      seals through Art. 40, requires.
+
+
+      `noQualifiedDevice`: it carries qualified-certificate statements but not
+      that one. Lawful, and enough for Art. 40a — validation of an *advanced*
+      seal based on a qualified certificate, which omits the device leg — but
+      not for the Art. 32/40 pair.
+
+
+      `notAQualifiedCertificate`: it carries no qualified-certificate statements
+      at all, so it is not presenting itself as a qualified certificate in the
+      first place. A self-signed development certificate lands here.
