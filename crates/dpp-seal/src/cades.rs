@@ -1586,10 +1586,40 @@ mod standing_tests {
         assert!(standing.validity.not_after < Utc::now());
         assert!(
             !standing.judged_at.attested,
-            "a local seal carries a timestamp from a TSA this node also runs, but nothing \
-             here attests to a *provider's* time — the flag is what stops an unproven \
-             moment being reported as a failure"
+            "this fixture seals at B-B, which carries no timestamp at all — so the moment \
+             is this clock, and the flag says so. `Expired` here is an observation; only \
+             the attested case turns it into a finding"
         );
+    }
+
+    /// **An LTA seal's certificate is judged against its attested time.**
+    ///
+    /// The two readers must agree: `certificate_standing` calls
+    /// `attested_sealing_time` for its moment, and the `attested` flag it sets is
+    /// what decides whether an out-of-window certificate is a failure or an open
+    /// question. A disagreement here would be invisible — the verdict would
+    /// simply be the weaker one, for ever, on every seal that carries a
+    /// timestamp.
+    #[test]
+    fn an_lta_seals_certificate_is_judged_against_its_attested_time() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let id = crate::local::LocalIdentity::load_or_create(dir.path()).expect("identity");
+        let seal = id
+            .sign_detached_at(&[0x33; 32], SealConformanceLevel::BaselineLta)
+            .expect("sign");
+
+        let attested = attested_sealing_time(&seal).expect("readable");
+        assert!(
+            attested.is_some(),
+            "an LTA seal carries a timestamp whose signature and imprint both check out"
+        );
+
+        let standing = certificate_standing(&seal, Utc::now()).expect("readable");
+        assert!(
+            standing.judged_at.attested,
+            "the standing must be judged against that time, not against this clock"
+        );
+        assert_eq!(Some(standing.judged_at.at), attested);
     }
 
     /// A certificate valid now is inside its window, and the window is reported
