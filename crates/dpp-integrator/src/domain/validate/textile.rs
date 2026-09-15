@@ -197,6 +197,7 @@ mod tests {
         assert_eq!(req.product_name, "Organic Cotton Tee");
         assert_eq!(req.manufacturer.name, "EcoWear");
         assert_eq!(req.manufacturer.address, "BD");
+        assert_eq!(req.manufacturer.country.as_deref(), Some("BD"));
     }
 
     fn textile_row() -> HashMap<String, String> {

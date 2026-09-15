@@ -1078,11 +1078,40 @@ fn every_responsibility_basis_serialises_as_documented() {
     assert_eq!(
         documented,
         emitted,
-        "ResponsibilityBasis variants disagree.
-  spec: {}
-  code: {}",
+        "ResponsibilityBasis variants disagree.\n  spec: {}\n  code: {}",
         joined(&documented),
         joined(&emitted)
+    );
+
+    // The tag alone is not the contract. `otherUnionLaw` exists precisely to
+    // carry the citation — a basis that cannot say which law it is says nothing
+    // at all — so the arm that documents it must require that field and type it,
+    // and the value this build emits must actually carry it.
+    let arm = arms
+        .iter()
+        .find(|arm| arm["properties"]["otherUnionLaw"].is_object())
+        .expect("no oneOf arm documents the otherUnionLaw payload");
+    let payload = &arm["properties"]["otherUnionLaw"];
+
+    assert_eq!(
+        payload["required"].as_array().map(Vec::as_slice),
+        Some(&[serde_json::json!("citation")][..]),
+        "the otherUnionLaw payload must require exactly `citation`"
+    );
+    assert_eq!(
+        payload["properties"]["citation"]["type"].as_str(),
+        Some("string"),
+        "`citation` must be documented as a string"
+    );
+
+    let emitted_payload = serde_json::to_value(dpp_domain::ResponsibilityBasis::OtherUnionLaw {
+        citation: "Article 7 of Regulation (EU) 2017/745".to_owned(),
+    })
+    .expect("OtherUnionLaw serialises");
+    assert_eq!(
+        emitted_payload["otherUnionLaw"]["citation"].as_str(),
+        Some("Article 7 of Regulation (EU) 2017/745"),
+        "the emitted variant must carry its citation under the documented key"
     );
 }
 

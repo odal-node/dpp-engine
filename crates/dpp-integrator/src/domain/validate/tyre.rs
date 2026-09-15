@@ -151,6 +151,8 @@ mod tests {
         let row = tyre_row();
         let req = validate_tyre_row(&row, 1).expect("valid tyre row");
         assert_eq!(req.product_group, Some(ProductGroup::Tyre));
+        assert_eq!(req.manufacturer.country.as_deref(), Some("DE"));
+        assert_eq!(req.manufacturer.address, "DE");
         match req.product_group_data.unwrap() {
             ProductGroupData::Tyre(d) => {
                 assert_eq!(d.tyre_class, "C1");

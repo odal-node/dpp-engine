@@ -43,7 +43,11 @@ async fn lint_findings_surface_and_never_block_publish() {
     let id = passport["id"].as_str().unwrap();
 
     // 1. Findings surface on create, tagged with the pack version.
-    assert_eq!(passport["lintResult"]["packVersion"], "1.0.0");
+    assert_eq!(
+        passport["lintResult"]["packVersion"],
+        dpp_rules::lint::LINT_PACK_VERSION,
+        "the served result must be tagged with the pack this build actually ran"
+    );
     let findings = passport["lintResult"]["findings"]
         .as_array()
         .expect("findings array");
@@ -93,7 +97,10 @@ async fn lint_findings_surface_and_never_block_publish() {
     assert_eq!(resp.status(), 200);
     let relinted: serde_json::Value = resp.json().await.unwrap();
     assert_eq!(relinted["status"], "active");
-    assert_eq!(relinted["lintResult"]["packVersion"], "1.0.0");
+    assert_eq!(
+        relinted["lintResult"]["packVersion"],
+        dpp_rules::lint::LINT_PACK_VERSION
+    );
     assert!(
         relinted["lintResult"]["findings"]
             .as_array()
@@ -131,7 +138,11 @@ async fn clean_product_group_data_produces_no_findings() {
     assert_eq!(resp.status(), 201);
     let passport: serde_json::Value = resp.json().await.unwrap();
 
-    assert_eq!(passport["lintResult"]["packVersion"], "1.0.0");
+    assert_eq!(
+        passport["lintResult"]["packVersion"],
+        dpp_rules::lint::LINT_PACK_VERSION,
+        "the served result must be tagged with the pack this build actually ran"
+    );
     // `findings` is omitted entirely (skip_serializing_if = "Vec::is_empty")
     // when there are none — absent, not an empty array.
     assert!(passport["lintResult"]["findings"].is_null());

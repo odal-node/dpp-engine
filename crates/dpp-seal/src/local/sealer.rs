@@ -554,6 +554,11 @@ mod tests {
         assert_eq!(env.format, SealFormat::Cades);
         assert!(!env.placeholder, "these bytes verify — they are not a stub");
         assert_eq!(
+            env.conformance_level,
+            Some(SealConformanceLevel::BaselineB),
+            "the envelope must record the level that was requested — and for this \n             backend that is also the level the bytes carry"
+        );
+        assert_eq!(
             env.signing_cert_ref.as_deref(),
             Some(id.cert_thumbprint().as_str()),
             "the envelope must name the certificate that signed it"

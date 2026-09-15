@@ -471,12 +471,12 @@ pub(crate) fn validate_component_ref(c: &ComponentRef, index: usize) -> Result<(
 
 #[cfg(test)]
 mod tests {
-    use super::{apply_compliance, apply_patch};
+    use super::{apply_compliance, apply_patch, validate_component_ref};
     use chrono::Utc;
     use dpp_domain::{
         compliance::{ComplianceError, ComplianceErrorKind, ComplianceResult},
         error::DppError,
-        passport::{ManufacturerInfo, Passport, PassportId},
+        passport::{ComponentRef, ManufacturerInfo, Passport, PassportId},
         ports::compliance::ComplianceRegistry,
         product_group::{ProductGroup, ProductGroupData},
         status::PassportStatus,
@@ -678,6 +678,63 @@ mod tests {
             assert!(
                 apply_patch(&mut p, &serde_json::json!({ "componentRefs": bad })).is_err(),
                 "{bad} must be refused"
+            );
+        }
+    }
+
+    /// A quantity is a number that ends up in the signed publish payload, and
+    /// `serde_json` refuses to serialise a non-finite one — so an unchecked NaN
+    /// or infinity arrives quietly and fails much later at publish, with an
+    /// error naming serialisation rather than the field that caused it. A
+    /// negative amount of a constituent is not a thing an assembly can contain.
+    #[test]
+    fn a_component_quantity_must_be_finite_and_non_negative() {
+        let good = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+        let qualified = |value: f64| {
+            serde_json::json!([{
+                "reference": { "uri": "https://id.example/dpp/a", "publicJwsHash": good },
+                "quantity": { "value": value, "unit": "kg" }
+            }])
+        };
+
+        let mut p = stub();
+        assert!(
+            apply_patch(
+                &mut p,
+                &serde_json::json!({ "componentRefs": qualified(2.0) })
+            )
+            .is_ok(),
+            "a positive quantity on the qualified shape is accepted"
+        );
+
+        let mut p = stub();
+        assert!(
+            apply_patch(
+                &mut p,
+                &serde_json::json!({ "componentRefs": qualified(-1.0) })
+            )
+            .is_err(),
+            "a negative quantity must be refused"
+        );
+
+        // NaN and infinity cannot be written as JSON, so they never arrive
+        // through `apply_patch` and the rule is checked where it lives instead.
+        let reference = dpp_domain::passport::PassportRef {
+            uri: "https://id.example/dpp/a".to_owned(),
+            public_jws_hash: good.to_owned(),
+        };
+        for value in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            let c = ComponentRef {
+                reference: reference.clone(),
+                quantity: Some(dpp_domain::passport::Quantity {
+                    value,
+                    unit: Some("kg".to_owned()),
+                }),
+                role: None,
+            };
+            assert!(
+                validate_component_ref(&c, 0).is_err(),
+                "{value} must be refused"
             );
         }
     }

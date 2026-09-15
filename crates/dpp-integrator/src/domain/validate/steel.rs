@@ -150,6 +150,8 @@ mod tests {
         let row = steel_row();
         let req = validate_steel_row(&row, 1).expect("valid steel row");
         assert_eq!(req.product_group, Some(ProductGroup::Steel));
+        assert_eq!(req.manufacturer.country.as_deref(), Some("DE"));
+        assert_eq!(req.manufacturer.address, "DE");
         match req.product_group_data.unwrap() {
             ProductGroupData::Steel(d) => {
                 assert_eq!(d.co2e_per_tonne_steel, 1.85);

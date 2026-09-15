@@ -226,6 +226,11 @@ mod tests {
         let row = aluminium_row();
         let req = validate_aluminium_row(&row, 1).expect("valid aluminium row");
         assert_eq!(req.product_group, Some(ProductGroup::Aluminium));
+        // The country column reaches the field that can be checked against
+        // ISO 3166-1, and still backs `address`, which this template has nothing
+        // better to put in.
+        assert_eq!(req.manufacturer.country.as_deref(), Some("NO"));
+        assert_eq!(req.manufacturer.address, "NO");
         match req.product_group_data.unwrap() {
             ProductGroupData::Aluminium(d) => {
                 assert_eq!(d.recycled_content_pct, 75.0);
