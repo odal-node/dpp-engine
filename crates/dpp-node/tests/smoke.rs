@@ -786,8 +786,14 @@ async fn publish_battery(
         }
     });
     if let Some(p) = parent {
-        body["parentPassportRef"] =
-            serde_json::json!({ "uri": p.uri, "publicJwsHash": p.public_jws_hash });
+        // `derivedFrom` replaced the single `parentPassportRef`, and `operation`
+        // is required per edge: Art. 77(7) attaches different consequences to
+        // each of the four, so an edge that does not name one records less than
+        // the article asks for. There is deliberately no default to fall back on.
+        body["derivedFrom"] = serde_json::json!([{
+            "reference": { "uri": p.uri, "publicJwsHash": p.public_jws_hash },
+            "operation": "repurposing"
+        }]);
     }
     let created: serde_json::Value = client
         .post(format!("{base}/vault/api/v1/dpp"))
@@ -897,9 +903,15 @@ async fn second_life_successor_verifies_against_pinned_parent() {
         .await
         .expect("successor public view is JSON");
     assert_eq!(
-        successor_public["parentPassportRef"]["uri"].as_str(),
+        successor_public["derivedFrom"][0]["reference"]["uri"].as_str(),
         Some(cited_uri.as_str()),
-        "parentPassportRef must survive into the public view"
+        "derivedFrom must survive into the public view"
+    );
+    assert_eq!(
+        successor_public["derivedFrom"][0]["operation"].as_str(),
+        Some("repurposing"),
+        "the operation is the half that carries the legal consequence, so it has \
+         to survive with the reference rather than beside it"
     );
 
     // A fetch closure bridging the cited https URL to the local node's parent JSON.
@@ -1006,10 +1018,20 @@ async fn local_component_cycle_is_rejected() {
         .json()
         .await
         .expect("B is JSON");
+    // The create above sent the **bare** ref shape — `uri` and `publicJwsHash`
+    // at the top level, no `reference` key — which is what a caller written
+    // against the shape this replaced sends. It is accepted, and read back in
+    // the current qualified shape. Both halves are worth pinning: the tolerance
+    // is why a peer that has not upgraded is not refused, and the response shape
+    // is what a client now has to parse.
     assert_eq!(
-        b["componentRefs"][0]["uri"].as_str(),
+        b["componentRefs"][0]["reference"]["uri"].as_str(),
         Some(ref_to_a.as_str()),
         "componentRefs must round-trip through create + read"
+    );
+    assert!(
+        b["componentRefs"][0]["uri"].is_null(),
+        "the reference belongs under `reference`, not at the top level"
     );
 
     // Updating A to list B closes the A → B → A cycle → refused with 422.

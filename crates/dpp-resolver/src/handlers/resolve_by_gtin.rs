@@ -246,15 +246,31 @@ fn build_linkset(
             ]
         }]
     });
-    if let Some(parent_uri) = passport
-        .get("parentPassportRef")
-        .and_then(|r| r.get("uri"))
-        .and_then(serde_json::Value::as_str)
+    // Lineage: one `predecessor` relation per predecessor cited. Art. 77(7) is
+    // plural on both sides, so `derivedFrom` is a list and a second-life unit
+    // may name several.
+    let predecessor_links: Vec<serde_json::Value> = passport
+        .get("derivedFrom")
+        .and_then(serde_json::Value::as_array)
+        .map(|edges| edges.iter().filter_map(ref_uri).map(ld_link).collect())
+        .or_else(|| {
+            // The shape `derivedFrom` replaced, still reachable here. What this
+            // function is handed is a **signed** public view, and one published
+            // before the change cannot be regenerated without breaking the
+            // signature over it — so the old key is not legacy tolerance, it is
+            // the only form those passports will ever have.
+            passport
+                .get("parentPassportRef")
+                .and_then(ref_uri)
+                .map(|uri| vec![ld_link(uri)])
+        })
+        .unwrap_or_default();
+    if !predecessor_links.is_empty()
         && let Some(inner) = linkset["linkset"][0].as_object_mut()
     {
         inner.insert(
             Gs1LinkType::Predecessor.as_gs1_uri().to_owned(),
-            serde_json::json!([{ "href": parent_uri, "type": "application/ld+json" }]),
+            serde_json::Value::Array(predecessor_links),
         );
     }
     // Bill of materials: one `hasComponent` relation per constituent passport, so
@@ -262,12 +278,7 @@ fn build_linkset(
     let component_links: Vec<serde_json::Value> = passport
         .get("componentRefs")
         .and_then(serde_json::Value::as_array)
-        .map(|refs| {
-            refs.iter()
-                .filter_map(|c| c.get("uri").and_then(serde_json::Value::as_str))
-                .map(|uri| serde_json::json!({ "href": uri, "type": "application/ld+json" }))
-                .collect()
-        })
+        .map(|refs| refs.iter().filter_map(ref_uri).map(ld_link).collect())
         .unwrap_or_default();
     if !component_links.is_empty()
         && let Some(inner) = linkset["linkset"][0].as_object_mut()
@@ -278,6 +289,31 @@ fn build_linkset(
         );
     }
     linkset
+}
+
+/// The URI out of a cross-operator reference, in either shape it may arrive in.
+///
+/// The current one wraps the reference under `reference` so the entry can carry
+/// qualifiers beside it — a component's quantity, a derivation's operation. The
+/// bare one put `uri` at the top level.
+///
+/// Both are read because what reaches this module is a **signed** public view.
+/// A passport published before the shape changed cannot be rewritten into the
+/// new one without invalidating the signature over it, so its entries stay bare
+/// for as long as the passport exists. Reading only the current shape drops
+/// every relation on those passports — silently, since a missing key is
+/// indistinguishable here from a passport that cites nothing.
+fn ref_uri(value: &serde_json::Value) -> Option<&str> {
+    value
+        .get("reference")
+        .and_then(|r| r.get("uri"))
+        .or_else(|| value.get("uri"))
+        .and_then(serde_json::Value::as_str)
+}
+
+/// One GS1 linkset target for a passport URI.
+fn ld_link(uri: &str) -> serde_json::Value {
+    serde_json::json!({ "href": uri, "type": "application/ld+json" })
 }
 
 async fn fetch_by_gtin(state: &AppState, gtin: &str) -> Result<Value, StatusCode> {
@@ -339,8 +375,62 @@ mod tests {
         );
     }
 
+    /// The hrefs of one relation, in order.
+    fn hrefs<'a>(ls: &'a serde_json::Value, relation: &str) -> Vec<&'a str> {
+        ls["linkset"][0][relation]
+            .as_array()
+            .unwrap_or_else(|| panic!("{relation} relation present"))
+            .iter()
+            .filter_map(|c| c["href"].as_str())
+            .collect()
+    }
+
+    /// Art. 77(7) is plural on both sides, so a second-life unit may cite
+    /// several predecessors and each earns its own relation.
     #[test]
-    fn build_linkset_advertises_predecessor_when_cited() {
+    fn build_linkset_advertises_every_predecessor_cited() {
+        let passport = serde_json::json!({
+            "derivedFrom": [
+                {
+                    "reference": {
+                        "uri": "https://id.other-op.example/dpp/parent-xyz",
+                        "publicJwsHash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+                    },
+                    "operation": "repurposing"
+                },
+                {
+                    "reference": {
+                        "uri": "https://id.other-op.example/dpp/parent-abc",
+                        "publicJwsHash": "b1946ac92492d2347c6235b4d2611184e1946ac92492d2347c6235b4d2611184"
+                    },
+                    "operation": "remanufacturing"
+                }
+            ]
+        });
+        let ls = build_linkset(
+            "https://id.odal-node.io",
+            "09506000134352",
+            "abc-123",
+            &passport,
+        );
+        assert_eq!(
+            hrefs(&ls, "https://ref.odal-node.io/voc/predecessor"),
+            [
+                "https://id.other-op.example/dpp/parent-xyz",
+                "https://id.other-op.example/dpp/parent-abc"
+            ]
+        );
+    }
+
+    /// A signed public view published before the lineage shape changed still
+    /// resolves.
+    ///
+    /// It cannot be rewritten into the current shape — the signature covers it —
+    /// so reading only `derivedFrom` would drop the relation for as long as that
+    /// passport exists, and drop it *silently*: an absent key looks exactly like
+    /// a passport that cites no predecessor.
+    #[test]
+    fn build_linkset_still_reads_a_frozen_pre_change_lineage_view() {
         let passport = serde_json::json!({
             "parentPassportRef": {
                 "uri": "https://id.other-op.example/dpp/parent-xyz",
@@ -353,10 +443,36 @@ mod tests {
             "abc-123",
             &passport,
         );
-        let predecessor = &ls["linkset"][0]["https://ref.odal-node.io/voc/predecessor"];
         assert_eq!(
-            predecessor[0]["href"].as_str().unwrap(),
-            "https://id.other-op.example/dpp/parent-xyz"
+            hrefs(&ls, "https://ref.odal-node.io/voc/predecessor"),
+            ["https://id.other-op.example/dpp/parent-xyz"]
+        );
+    }
+
+    /// Both component shapes resolve, for the same reason lineage's two do.
+    #[test]
+    fn build_linkset_advertises_components_in_either_shape() {
+        let passport = serde_json::json!({
+            "componentRefs": [
+                {
+                    "reference": { "uri": "https://id.a.example/dpp/mod-1", "publicJwsHash": "aa" },
+                    "quantity": { "value": 2.0, "unit": "kg" }
+                },
+                { "uri": "https://id.b.example/dpp/mod-2", "publicJwsHash": "bb" }
+            ]
+        });
+        let ls = build_linkset(
+            "https://id.odal-node.io",
+            "09506000134352",
+            "pack-1",
+            &passport,
+        );
+        assert_eq!(
+            hrefs(&ls, "https://ref.odal-node.io/voc/hasComponent"),
+            [
+                "https://id.a.example/dpp/mod-1",
+                "https://id.b.example/dpp/mod-2"
+            ]
         );
     }
 
@@ -364,8 +480,12 @@ mod tests {
     fn build_linkset_advertises_each_component() {
         let passport = serde_json::json!({
             "componentRefs": [
-                { "uri": "https://id.a.example/dpp/mod-1", "publicJwsHash": "aa" },
-                { "uri": "https://id.b.example/dpp/mod-2", "publicJwsHash": "bb" }
+                {
+                    "reference": { "uri": "https://id.a.example/dpp/mod-1", "publicJwsHash": "aa" }
+                },
+                {
+                    "reference": { "uri": "https://id.b.example/dpp/mod-2", "publicJwsHash": "bb" }
+                }
             ]
         });
         let ls = build_linkset(

@@ -559,12 +559,18 @@ mod tests {
     // ── the allow-list ───────────────────────────────────────────────────────
 
     /// The finding this change exists for. `facility`, `operatorIdentifier`,
-    /// `commodityCode` and `parentPassportRef` are modelled `Passport` fields
-    /// that the repository's protected list did not cover, so a `write`-scope
-    /// caller could set them through `PUT` — bypassing the **admin**-only routes
-    /// and the GLN / LEI / tariff validators that own them — and they rode into
-    /// the signed publish payload from there. `facility` in particular is a
-    /// `Public`-tier field, so it reached the anonymous public view.
+    /// `commodityCode` and the lineage edge — `derivedFrom` now, and
+    /// `parentPassportRef` when this was written — are modelled `Passport`
+    /// fields that the repository's protected list did not cover, so a
+    /// `write`-scope caller could set them through `PUT`, bypassing the
+    /// **admin**-only routes and the GLN / LEI / tariff validators that own
+    /// them, and they rode into the signed publish payload from there.
+    /// `facility` in particular is a `Public`-tier field, so it reached the
+    /// anonymous public view.
+    ///
+    /// The lineage key is named here as a *modelled* field, which is what makes
+    /// it worth asserting: an unknown key is refused by the allow-list for a
+    /// weaker reason and would leave the real case untested.
     #[test]
     fn registry_identity_fields_never_reach_the_delta() {
         let mut p = stub();
@@ -573,7 +579,10 @@ mod tests {
             "facility": { "scheme": "gln", "value": "NOT-A-GLN", "name": "Anywhere" },
             "operatorIdentifier": "not-an-eori",
             "commodityCode": "not-a-tariff-code",
-            "parentPassportRef": { "uri": "http://10.0.0.1/x", "publicJwsHash": "z" },
+            "derivedFrom": [{
+                "reference": { "uri": "http://10.0.0.1/x", "publicJwsHash": "z" },
+                "operation": "repurposing"
+            }],
         });
         let applied = apply_patch(&mut p, &patch).expect("the recognised field applies");
         let delta = super::delta_for(&p, &applied);
@@ -583,7 +592,7 @@ mod tests {
             "facility",
             "operatorIdentifier",
             "commodityCode",
-            "parentPassportRef",
+            "derivedFrom",
         ] {
             assert!(
                 !delta.contains_key(smuggled),
