@@ -1,0 +1,73 @@
+post:
+  operationId: repairDppSeal
+  summary: Re-seal a passport whose stored seal does not verify
+  description: |
+    Queues a replacement seal for a passport whose stored seal is broken, and
+    refuses unless it demonstrably is.
+
+    **This buys a second seal for a digest already paid for.** The node's own
+    repair sweep deliberately cannot do that — it only queues passports
+    carrying *no seal at all*, which is what lets it run unattended without
+    spending money twice. A broken seal is the case where spending it again is
+    right: the row was paid for and carries nothing, so the passport is
+    published and, in substance, unsealed. That is a decision for whoever pays,
+    taken per passport, which is why it is a route rather than a background
+    loop.
+
+    **The seal is opened and checked at the moment of the request**, never read
+    from the audit's list. A stale finding would buy a seal for a passport that
+    has since been repaired or re-published.
+
+    Not idempotency-keyed, and does not need to be: a seal row is keyed by
+    `(passportId, payloadHash)`, so a retried request re-arms a row that is
+    already queued, which is a no-op. A second repair after the replacement
+    lands is refused, because the new seal verifies.
+
+    The replacement covers the passport's **current** signature. Where the
+    passport was re-published since the broken seal was made, that signature has
+    never been sealed, so nothing is re-bought and `action` is `queued` rather
+    than `rearmed`.
+  tags:
+    - DPP Management
+  security:
+    - BearerApiKey: []
+    - BasicAuth: []
+  parameters:
+    - name: dppId
+      in: path
+      required: true
+      schema:
+        $ref: ../../components/schemas/passport/DppId.yaml
+  responses:
+    '200':
+      description: A replacement seal has been queued.
+      content:
+        application/json:
+          schema:
+            $ref: ../../components/schemas/seals/SealRepairResponse.yaml
+    '401':
+      $ref: ../../components/responses/Unauthorized.yaml
+    '403':
+      $ref: ../../components/responses/Forbidden.yaml
+    '404':
+      description: |
+        No passport with that id. Distinct from `422`, which means the passport
+        exists and is not in a state this repairs.
+      content:
+        application/problem+json:
+          schema:
+            $ref: ../../components/schemas/errors/Problem.yaml
+    '422':
+      description: |
+        The passport exists and there is nothing here to repair. The detail says
+        which: the seal verifies; it is intact but covers a superseded signature,
+        whose replacement is already queued by the re-publish that caused it;
+        there is no seal at all, which the node's own sweep covers at no extra
+        cost; the seal could not be read, so it cannot be shown to be broken; or
+        this node has no sealing backend, so a queued repair would never drain.
+      content:
+        application/problem+json:
+          schema:
+            $ref: ../../components/schemas/errors/Problem.yaml
+    '400':
+      $ref: ../../components/responses/BadRequest.yaml

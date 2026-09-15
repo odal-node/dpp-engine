@@ -483,6 +483,9 @@ mod tests {
         ) -> Result<Vec<dpp_types::SealedPassport>, DppError> {
             Ok(Vec::new())
         }
+        async fn rearm_sealed(&self, _p: PassportId, _h: &str, _r: &str) -> Result<bool, DppError> {
+            unreachable!("the drain never repairs")
+        }
         async fn unsealed_published_count(&self) -> Result<i64, DppError> {
             // These tests drive the drain, which never asks. A passport-level
             // count has no meaning against a fake holding only rows.
@@ -709,6 +712,14 @@ mod tests {
                 _after: Option<PassportId>,
             ) -> Result<Vec<dpp_types::SealedPassport>, DppError> {
                 Ok(self.0.clone())
+            }
+            async fn rearm_sealed(
+                &self,
+                _p: PassportId,
+                _h: &str,
+                _r: &str,
+            ) -> Result<bool, DppError> {
+                unreachable!("the audit must not repair")
             }
             async fn enqueue(&self, _p: PassportId, _h: &str) -> Result<(), DppError> {
                 unreachable!("the audit must not queue anything")

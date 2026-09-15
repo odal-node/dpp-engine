@@ -39,7 +39,7 @@ use serde::Serialize;
 use crate::domain::service::seal::seal_digest;
 use crate::{middleware::auth::AuthContext, state::AppState};
 
-use super::error::{internal_error, not_found_error, parse_passport_id};
+use super::error::{internal_error, not_found_error, parse_passport_id, validation_error};
 
 /// Who declared the content a seal covers, which is not who sealed it.
 ///
@@ -398,6 +398,184 @@ pub async fn seal_handler(
                     i.binding(seal, &payload_hash)
                 }),
             verification: NOT_VALIDATED,
+        }),
+    )
+        .into_response()
+}
+
+/// What a repair did.
+#[derive(Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum SealRepairAction {
+    /// A `sealed` row was re-armed — the one path that buys a second seal for a
+    /// digest already paid for, justified because the first is worthless.
+    Rearmed,
+    /// A row was queued the ordinary way. The passport was re-published since
+    /// the broken seal was made, so the signature now needing a seal has never
+    /// been sealed and nothing is being re-bought.
+    Queued,
+}
+
+/// The outcome of repairing one passport's seal.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SealRepairResponse {
+    /// What happened.
+    pub action: SealRepairAction,
+    /// The digest the replacement seal will cover — the passport's **current**
+    /// signature, not whatever the broken seal covered.
+    pub payload_hash: String,
+    /// Stated rather than implied, like every other note on this surface.
+    pub note: &'static str,
+}
+
+const REPAIR_NOTE: &str = "a replacement seal has been queued; the node's drain will buy it from the \
+     configured backend and overwrite the broken one. This costs a seal — the row was already paid \
+     for once, and buying a second is justified only because the first does not verify. Nothing is \
+     re-bought where the passport was re-published since, because that signature has never been \
+     sealed.";
+
+/// `POST /api/v1/dpp/{dppId}/seal/repair` — re-seal a passport whose stored seal
+/// does not verify.
+///
+/// # Why this is a route and not a sweep
+///
+/// The repair sweep carries a guarantee stated in its own code: it cannot
+/// double-bill, because it only queues passports carrying **no seal at all**.
+/// Repairing a broken seal breaks exactly that — the row was paid for, and
+/// buying a second seal is justified only because the first is worthless. That
+/// is a decision for whoever pays, taken per passport, not one for a background
+/// loop to take on their behalf on the strength of a check that has not yet met
+/// a real provider's seal.
+///
+/// # It refuses unless the seal is demonstrably broken
+///
+/// The guard that makes crossing that line safe, and the reason this cannot be
+/// driven from a stale list: the seal is opened and checked **now**, at the
+/// moment of the request. A sound seal, a superseded one, and one this node
+/// cannot read are all refused with `422`, because none of them establishes that
+/// what is stored is worthless.
+///
+/// # Not idempotency-keyed, and why
+///
+/// A seal row is keyed by `(passport_id, payload_hash)`, so a retried request
+/// re-arms a row that is already `pending` — which is a no-op, since the re-arm
+/// only moves `sealed` rows. The natural key already provides what a key would,
+/// and a second repair after the replacement lands is refused by the check
+/// above, because the new seal verifies.
+///
+/// `404` when the passport does not exist. `422` when it exists and is not in a
+/// state this repairs — the same split the transfer routes draw.
+pub async fn seal_repair_handler(
+    State(state): State<AppState>,
+    Extension(auth): Extension<AuthContext>,
+    Path(dpp_id): Path<String>,
+) -> impl IntoResponse {
+    if let Some(resp) = super::error::require_admin(&auth) {
+        return resp;
+    }
+    let passport_id = match parse_passport_id(&dpp_id) {
+        Ok(id) => id,
+        Err(resp) => return resp,
+    };
+    let passport = match state.service.find_by_id(passport_id).await {
+        Ok(p) => p,
+        Err(dpp_domain::DppError::NotFound(_)) => return not_found_error("DPP not found."),
+        Err(e) => return internal_error(e),
+    };
+
+    let Some(seal) = passport.seal.as_ref() else {
+        return validation_error(
+            "This passport carries no seal, so there is nothing to repair. A published passport \
+             with no seal is queued by the node's own sweep, which costs nothing extra because \
+             no seal was ever bought for it.",
+        );
+    };
+    let Some(outbox) = state.service.seal_outbox.as_ref() else {
+        // Queueing here would create a row nothing consumes and answer "repaired"
+        // to an operator for whom nothing will happen.
+        return validation_error(
+            "This node has no sealing backend configured, so a queued repair would never drain. \
+             Configure SEAL_PROVIDER before repairing.",
+        );
+    };
+    let Some(inspector) = state.service.seal_inspector.as_ref() else {
+        return validation_error(
+            "This node cannot read seals, so it cannot establish that this one is broken. \
+             Repairing on an unchecked seal would buy a second seal for an artifact that may be \
+             perfectly sound.",
+        );
+    };
+
+    let payload_hash = seal_digest(&passport).unwrap_or_default();
+
+    // Checked now, not read from the audit's list. A stale finding would buy a
+    // seal for a passport that has since been repaired or re-published.
+    match inspector.binding(seal, &payload_hash) {
+        dpp_types::SealBinding::NotIntact => {}
+        dpp_types::SealBinding::CoversThisSignature => {
+            return validation_error(
+                "This seal verifies and covers this passport's current signature. There is \
+                 nothing to repair, and re-sealing would buy a second seal for a sound one.",
+            );
+        }
+        dpp_types::SealBinding::CoversAnotherDigest { .. } => {
+            return validation_error(
+                "This seal is intact and covers a different signature — the passport was \
+                 re-published after it was made. The signature now needing a seal has its own \
+                 queue row from that re-publish; there is nothing here to repair.",
+            );
+        }
+        dpp_types::SealBinding::Unknown => {
+            return validation_error(
+                "This seal could not be read, so it cannot be shown to be broken. An unreadable \
+                 seal is not the same as a worthless one — it may be a format this node does not \
+                 parse.",
+            );
+        }
+    }
+
+    // Which path applies turns on whether a `sealed` row still holds the current
+    // digest. If the passport was re-published since, the digest now needing a
+    // seal has never been sealed, so this is an ordinary queue and buys nothing
+    // twice.
+    let already_sealed = match outbox.sealed_digest(passport_id).await {
+        Ok(d) => d.as_deref() == Some(payload_hash.as_str()),
+        Err(e) => return internal_error(e),
+    };
+
+    let action = if already_sealed {
+        let reason = format!("repaired by {}: stored seal did not verify", auth.user_id);
+        match outbox
+            .rearm_sealed(passport_id, &payload_hash, &reason)
+            .await
+        {
+            Ok(true) => SealRepairAction::Rearmed,
+            // Lost a race with a concurrent repair, or the row moved. Either way
+            // a repair is in flight, which is what was asked for.
+            Ok(false) => SealRepairAction::Queued,
+            Err(e) => return internal_error(e),
+        }
+    } else {
+        if let Err(e) = outbox.enqueue(passport_id, &payload_hash).await {
+            return internal_error(e);
+        }
+        SealRepairAction::Queued
+    };
+
+    tracing::warn!(
+        passport_id = %passport_id,
+        actor = %auth.user_id,
+        ?action,
+        "seal repair queued — a second seal will be bought for this passport"
+    );
+
+    (
+        StatusCode::OK,
+        Json(SealRepairResponse {
+            action,
+            payload_hash,
+            note: REPAIR_NOTE,
         }),
     )
         .into_response()

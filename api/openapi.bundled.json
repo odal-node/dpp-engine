@@ -714,6 +714,75 @@
         }
       }
     },
+    "/vault/api/v1/dpp/{dppId}/seal/repair": {
+      "post": {
+        "operationId": "repairDppSeal",
+        "summary": "Re-seal a passport whose stored seal does not verify",
+        "description": "Queues a replacement seal for a passport whose stored seal is broken, and\nrefuses unless it demonstrably is.\n\n**This buys a second seal for a digest already paid for.** The node's own\nrepair sweep deliberately cannot do that — it only queues passports\ncarrying *no seal at all*, which is what lets it run unattended without\nspending money twice. A broken seal is the case where spending it again is\nright: the row was paid for and carries nothing, so the passport is\npublished and, in substance, unsealed. That is a decision for whoever pays,\ntaken per passport, which is why it is a route rather than a background\nloop.\n\n**The seal is opened and checked at the moment of the request**, never read\nfrom the audit's list. A stale finding would buy a seal for a passport that\nhas since been repaired or re-published.\n\nNot idempotency-keyed, and does not need to be: a seal row is keyed by\n`(passportId, payloadHash)`, so a retried request re-arms a row that is\nalready queued, which is a no-op. A second repair after the replacement\nlands is refused, because the new seal verifies.\n\nThe replacement covers the passport's **current** signature. Where the\npassport was re-published since the broken seal was made, that signature has\nnever been sealed, so nothing is re-bought and `action` is `queued` rather\nthan `rearmed`.\n",
+        "tags": [
+          "DPP Management"
+        ],
+        "security": [
+          {
+            "BearerApiKey": []
+          },
+          {
+            "BasicAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "dppId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/DppId"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "A replacement seal has been queued.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SealRepairResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "description": "No passport with that id. Distinct from `422`, which means the passport\nexists and is not in a state this repairs.\n",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The passport exists and there is nothing here to repair. The detail says\nwhich: the seal verifies; it is intact but covers a superseded signature,\nwhose replacement is already queued by the re-publish that caused it;\nthere is no seal at all, which the node's own sweep covers at no extra\ncost; the seal could not be read, so it cannot be shown to be broken; or\nthis node has no sealing backend, so a queued repair would never drain.\n",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/vault/api/v1/seal": {
       "get": {
         "operationId": "getSealSummary",
@@ -6511,6 +6580,33 @@
           "superseded",
           "unknown"
         ]
+      },
+      "SealRepairResponse": {
+        "type": "object",
+        "description": "The outcome of repairing one passport's seal.",
+        "required": [
+          "action",
+          "payloadHash",
+          "note"
+        ],
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "rearmed",
+              "queued"
+            ],
+            "description": "`rearmed`: a `sealed` row was re-armed — the one path that buys a second seal for a digest already paid for, justified because the first does not verify.\n\n`queued`: a row was queued the ordinary way. The passport was re-published since the broken seal was made, so the signature now needing a seal has never been sealed and nothing is being re-bought."
+          },
+          "payloadHash": {
+            "type": "string",
+            "description": "Hex SHA-256 the replacement seal will cover — the passport's **current** signature, not whatever the broken seal covered."
+          },
+          "note": {
+            "type": "string",
+            "description": "Stated rather than implied, like every other note on this surface: what was queued, what it will cost, and why spending it is right here."
+          }
+        }
       },
       "EvidenceDossier": {
         "type": "object",

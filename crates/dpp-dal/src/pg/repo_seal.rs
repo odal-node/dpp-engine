@@ -303,6 +303,40 @@ impl SealOutbox for PgSealOutboxRepo {
         Ok(row.get::<i64, _>("unsealed"))
     }
 
+    async fn rearm_sealed(
+        &self,
+        passport_id: PassportId,
+        payload_hash: &str,
+        reason: &str,
+    ) -> Result<bool, DppError> {
+        // The mirror of `enqueue`'s clause: that one re-arms `exhausted` and
+        // refuses everything else; this one re-arms `sealed` and refuses
+        // everything else. Neither touches `pending` — a row the drain already
+        // owns must not have its backoff reset underneath it.
+        //
+        // The reason is written onto the row rather than only logged, because
+        // this is the one place a seal is bought twice for the same digest and
+        // the record of why should sit beside the row that spent the money.
+        let result = sqlx::query(
+            r#"UPDATE odal.seal_outbox
+               SET status = 'pending',
+                   attempts = 0,
+                   next_attempt_at = now(),
+                   message = $3,
+                   updated_at = now()
+               WHERE passport_id = $1
+                 AND payload_hash = $2
+                 AND status = 'sealed'"#,
+        )
+        .bind(passport_id.0)
+        .bind(payload_hash)
+        .bind(reason)
+        .execute(self.dal.pool())
+        .await
+        .map_err(db_err)?;
+        Ok(result.rows_affected() > 0)
+    }
+
     async fn sealed_passports(
         &self,
         limit: i64,

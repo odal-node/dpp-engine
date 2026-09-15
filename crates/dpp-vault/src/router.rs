@@ -52,7 +52,7 @@ use crate::{
         registry_status::{passport_registry_handler, registry_rollup_handler},
         ruleset::reload_ruleset_handler,
         scan_ingest::{scan_ingest_handler, scan_ingest_mtls},
-        seal::{seal_handler, seal_summary_handler},
+        seal::{seal_handler, seal_repair_handler, seal_summary_handler},
         stats::{operator_stats_handler, passport_stats_handler},
         supersede::supersede_handler,
         suspend::suspend_handler,
@@ -128,6 +128,11 @@ pub fn build(state: AppState) -> Router {
         // every audience view — it covers the full-payload signature, so it
         // verifies against no redaction.
         .route("/dpp/{dppId}/seal", get(seal_handler))
+        // Re-seal a passport whose stored seal does not verify. Admin, and it
+        // refuses unless the seal is demonstrably broken — it buys a second
+        // seal for a digest already paid for, which is only right when the
+        // first is worthless.
+        .route("/dpp/{dppId}/seal/repair", post(seal_repair_handler))
         // The operator-wide counterpart: the per-passport route cannot answer
         // "is anything unsealed" without already knowing which passport to ask.
         .route("/seal", get(seal_summary_handler))

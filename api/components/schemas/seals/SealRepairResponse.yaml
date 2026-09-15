@@ -1,0 +1,32 @@
+type: object
+description: >-
+  The outcome of repairing one passport's seal.
+required:
+  - action
+  - payloadHash
+  - note
+properties:
+  action:
+    type: string
+    enum:
+      - rearmed
+      - queued
+    description: >-
+      `rearmed`: a `sealed` row was re-armed — the one path that buys a second
+      seal for a digest already paid for, justified because the first does not
+      verify.
+
+
+      `queued`: a row was queued the ordinary way. The passport was re-published
+      since the broken seal was made, so the signature now needing a seal has
+      never been sealed and nothing is being re-bought.
+  payloadHash:
+    type: string
+    description: >-
+      Hex SHA-256 the replacement seal will cover — the passport's **current**
+      signature, not whatever the broken seal covered.
+  note:
+    type: string
+    description: >-
+      Stated rather than implied, like every other note on this surface: what was
+      queued, what it will cost, and why spending it is right here.

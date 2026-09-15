@@ -293,6 +293,36 @@ pub trait SealOutbox: Send + Sync {
     /// drain already owns — those belong to the repair, not to the question.
     async fn unsealed_published_count(&self) -> Result<i64, DppError>;
 
+    /// Re-arm a **sealed** row so its passport is sealed again.
+    ///
+    /// # This deliberately crosses the line [`Self::enqueue`] holds
+    ///
+    /// `enqueue` re-arms only `exhausted` rows, and says why: a `sealed` row
+    /// "has an artifact that was paid for, so re-queueing it buys the same
+    /// attestation twice". That reasoning is sound wherever the artifact is
+    /// worth something. It is exactly wrong where the artifact is a seal that
+    /// does not verify — there the row is paid for **and** carries nothing, and
+    /// the passport is published and, in substance, unsealed.
+    ///
+    /// So this is the one path that re-arms a `sealed` row, and it is the
+    /// caller's job to have established that the seal is worthless first. The
+    /// store cannot check that — whether a seal stands up is cryptographic — so
+    /// the guarantee lives at the call site and nowhere else.
+    ///
+    /// Returns whether a row actually moved. `false` means there was no `sealed`
+    /// row for that digest, which is not an error: the passport may have been
+    /// re-published, or a repair may already be queued.
+    ///
+    /// # Errors
+    ///
+    /// Propagates the store's own failure.
+    async fn rearm_sealed(
+        &self,
+        passport_id: PassportId,
+        payload_hash: &str,
+        reason: &str,
+    ) -> Result<bool, DppError>;
+
     /// Sealed passports, in id order, for an audit pass to read.
     ///
     /// # Why "unsealed" is not the only failure worth finding

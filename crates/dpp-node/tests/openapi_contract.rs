@@ -479,6 +479,7 @@ fn object_cases() -> Vec<ObjectCase> {
     case!("SealBinding", fixtures::seal_binding());
     case!("ArchivalFreshness", fixtures::archival_freshness());
     case!("SealAuditReport", fixtures::seal_audit_report());
+    case!("SealRepairResponse", fixtures::seal_repair_response());
     case!("SealDeclarer", fixtures::seal_declarer());
     case!("SealSummaryResponse", fixtures::seal_summary_response());
     case!("InstalledPlugin", fixtures::installed_plugin());
@@ -3585,6 +3586,19 @@ mod fixtures {
             // A `&'static str` constant on the response type; the fixture only
             // needs a value of the right shape for the key set.
             verification: "not validated by this node",
+        }
+    }
+
+    /// The `rearmed` outcome — the one that spends money.
+    ///
+    /// `queued` is the milder half of the pair, so the fixture is the other: if
+    /// the wire name for crossing the double-billing line ever drifted, that is
+    /// the one worth catching.
+    pub fn seal_repair_response() -> dpp_vault::handlers::seal::SealRepairResponse {
+        dpp_vault::handlers::seal::SealRepairResponse {
+            action: dpp_vault::handlers::seal::SealRepairAction::Rearmed,
+            payload_hash: "9".repeat(64),
+            note: "a replacement seal has been queued",
         }
     }
 

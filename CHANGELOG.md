@@ -51,6 +51,39 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ### Added
 
+- **`POST /api/v1/dpp/{dppId}/seal/repair`** (admin) — re-seal a passport whose
+  stored seal does not verify (#328).
+
+  **This buys a second seal for a digest already paid for**, which is why it is a
+  route and not a sweep. The repair sweep cannot do it and says so in its own
+  code: it only queues passports carrying *no seal at all*, which is what lets it
+  run unattended without spending money twice. A broken seal is the case where
+  spending it again is right — the row was paid for and carries nothing, so the
+  passport is published and, in substance, unsealed. That decision belongs to
+  whoever pays, taken per passport.
+
+  **It refuses unless the seal is demonstrably broken**, and the seal is opened
+  and checked *at the moment of the request* rather than read from the audit's
+  list, which could be hours old. A sound seal, a superseded one, one this node
+  cannot read, a passport with no seal, and a node with no sealing backend
+  configured are each refused with a `422` saying which — that last one because
+  queueing where nothing drains would answer "repaired" to an operator for whom
+  nothing will happen.
+
+  The replacement covers the passport's **current** signature. Where the passport
+  was re-published since, that signature has never been sealed, so nothing is
+  re-bought and the action is `queued` rather than `rearmed`.
+
+  Not idempotency-keyed and does not need to be: a seal row is keyed by
+  `(passport_id, payload_hash)`, so a retried request re-arms a row that is
+  already pending, which is a no-op — and a second repair after the replacement
+  lands is refused because the new seal verifies.
+
+  `SealOutbox::rearm_sealed` is the only path that moves a `sealed` row, and
+  `rearm_sealed_leaves_rows_the_drain_owns_alone` pins that it moves nothing
+  else: a `pending` row re-armed underneath the drain would have its backoff
+  reset on every call.
+
 - **`GET /api/v1/seal` now reports what the seal audit found, and names the
   passports** (#328). The counts beside it describe outbox rows and passports
   carrying *no* seal; `audit` describes seals that exist and do not stand up — a

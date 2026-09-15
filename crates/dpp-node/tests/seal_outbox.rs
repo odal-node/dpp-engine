@@ -921,3 +921,230 @@ async fn a_locally_sealed_passport_reports_that_no_provider_issued_it() {
         served.self_issued, served.issuer
     );
 }
+
+/// **A seal corrupted at rest is found, repaired, and the replacement binds.**
+///
+/// The whole loop the audit and the repair route exist for, against real
+/// Postgres. Corruption at rest is the failure this addresses — a bad restore, a
+/// truncated column, a disk that lied — and it is invisible to every count the
+/// node reports, because those ask whether a seal is *present* and a corrupt one
+/// is.
+///
+/// The corruption is applied with raw SQL on purpose. Going through
+/// `mark_sealed` would write a well-formed envelope and close a row, which is
+/// the one thing that cannot produce the state under test; the point is a
+/// passport whose stored bytes changed underneath the node.
+#[tokio::test]
+async fn a_seal_corrupted_at_rest_is_found_and_repaired() {
+    use dpp_types::SealInspector as _;
+
+    let _pg = start_pg().await;
+    let dal = _pg.dal.clone();
+
+    let key_dir = tempfile::tempdir().expect("temp dir");
+    let store =
+        dpp_crypto::keystore::KeyStore::open(&key_dir.path().join("keystore.json"), "test-pass")
+            .expect("keystore");
+    store.generate_key("root").expect("generate key");
+    let identity = Arc::new(dpp_vc::LocalIdentityService::new(
+        Arc::new(store),
+        "root".to_owned(),
+        "seal-sim.example.com".to_owned(),
+    ));
+
+    let passport_repo = Arc::new(PgPassportRepo::new(dal.clone()));
+    let seal_outbox = Arc::new(PgSealOutboxRepo::new(dal.clone()));
+    let service = PassportService::new(
+        passport_repo.clone(),
+        identity,
+        Arc::new(dpp_domain::PassthroughRegistry::new()) as Arc<dyn ComplianceRegistry>,
+        Arc::new(PgAuditRepo::new(dal.clone())),
+        Arc::new(dpp_common::event::NoOpEventBus),
+        Arc::new(GhostRegistrySync),
+        Arc::new(GhostArchive),
+        OperatorIdentity {
+            legal_name: "Test Operator GmbH".to_owned(),
+            country: "MK".to_owned(),
+        },
+    )
+    .with_seal_outbox(seal_outbox.clone())
+    .with_seal_inspector(Arc::new(dpp_seal::CadesInspector::new()));
+
+    let draft = draft_passport();
+    let id = draft.id;
+    passport_repo.create(draft).await.expect("create draft");
+    let published = service.publish(id, &auth()).await.expect("publish");
+    let expected_digest = hex::encode(Sha256::digest(
+        published.jws_signature.as_ref().expect("signed").as_bytes(),
+    ));
+
+    let seal_dir = tempfile::tempdir().expect("temp dir");
+    let backend =
+        dpp_seal::local::LocalIdentity::load_or_create(seal_dir.path()).expect("identity");
+    let adapter: Arc<dyn SealPort> = Arc::new(QtspSealAdapter::new(backend));
+    let outbox_dyn: Arc<dyn SealOutbox> = seal_outbox.clone();
+    let key_ref = dpp_domain::seal::SealCredentialRef {
+        qtsp_id: dpp_seal::local::config::PROVIDER.to_owned(),
+        credential_id: "node".to_owned(),
+    };
+    let drained = drain_once(
+        &outbox_dyn,
+        &adapter,
+        &key_ref,
+        SealMode::OperatorSeal,
+        SealConformanceLevel::BaselineLta,
+        10,
+    )
+    .await;
+    assert_eq!(drained.sealed, 1);
+
+    let inspector = dpp_seal::CadesInspector::new();
+    let sound = passport_repo
+        .find_by_id(id)
+        .await
+        .unwrap()
+        .unwrap()
+        .seal
+        .expect("sealed");
+    assert_eq!(
+        inspector.binding(&sound, &expected_digest),
+        dpp_types::SealBinding::CoversThisSignature
+    );
+
+    // ── Corrupt it where it lies ────────────────────────────────────────────
+    //
+    // One byte of the signature flipped, re-encoded. The structure survives, so
+    // the seal still parses and reaches the signature check — which is what
+    // makes this `broken` rather than `unreadable`, and the two are treated very
+    // differently downstream.
+    let corrupted = {
+        use der::{Decode as _, Encode as _};
+        let bytes = BASE64.decode(&sound.seal_value).expect("base64");
+        let info = cms::content_info::ContentInfo::from_der(&bytes).expect("CMS");
+        let mut sd: cms::signed_data::SignedData = info.content.decode_as().expect("SignedData");
+        let mut signers = sd.signer_infos.0.as_slice().to_vec();
+        let mut sig = signers[0].signature.as_bytes().to_vec();
+        let last = sig.len() - 1;
+        sig[last] ^= 0xff;
+        signers[0].signature = der::asn1::OctetString::new(sig).expect("octets");
+        let mut set = der::asn1::SetOfVec::new();
+        set.insert(signers.remove(0)).expect("signer");
+        sd.signer_infos = cms::signed_data::SignerInfos::from(set);
+        BASE64.encode(
+            cms::content_info::ContentInfo {
+                content_type: info.content_type,
+                content: der::Any::encode_from(&sd).expect("encode"),
+            }
+            .to_der()
+            .expect("re-encode"),
+        )
+    };
+    sqlx::query("UPDATE odal.passport SET doc = jsonb_set(doc, '{seal,sealValue}', $1::jsonb) WHERE id = $2")
+        .bind(serde_json::to_string(&corrupted).expect("json"))
+        .bind(id.0)
+        .execute(dal.pool())
+        .await
+        .expect("corrupt the stored seal");
+
+    // ── Every existing count still calls it healthy ─────────────────────────
+    assert_eq!(
+        seal_outbox.unsealed_published_count().await.unwrap(),
+        0,
+        "the count asks whether a seal is present, and a corrupt one is"
+    );
+
+    // ── The audit finds it ──────────────────────────────────────────────────
+    let (audit, _) =
+        dpp_node::infra::seal_drain::audit_seals_once(&outbox_dyn, &inspector, 100, None).await;
+    assert_eq!(audit.broken, 1, "the audit must see what the counts cannot");
+    assert_eq!(audit.broken_passports, vec![id], "and name it");
+
+    // ── Repair: re-arm the sealed row, then drain ───────────────────────────
+    //
+    // This is the step that spends money, and the one `enqueue` refuses: the row
+    // is `sealed`, so the ordinary path leaves it alone.
+    seal_outbox
+        .enqueue(id, &expected_digest)
+        .await
+        .expect("enqueue is a no-op here");
+    assert_eq!(
+        seal_outbox.status_counts().await.unwrap().pending,
+        0,
+        "enqueue must NOT move a sealed row — that guarantee is what makes the sweep safe"
+    );
+
+    assert!(
+        seal_outbox
+            .rearm_sealed(id, &expected_digest, "test: stored seal did not verify")
+            .await
+            .expect("rearm"),
+        "the repair path does move it"
+    );
+
+    let repaired = drain_once(
+        &outbox_dyn,
+        &adapter,
+        &key_ref,
+        SealMode::OperatorSeal,
+        SealConformanceLevel::BaselineLta,
+        10,
+    )
+    .await;
+    assert_eq!(repaired.sealed, 1, "the replacement was bought");
+
+    let after = passport_repo
+        .find_by_id(id)
+        .await
+        .unwrap()
+        .unwrap()
+        .seal
+        .expect("sealed");
+    assert_eq!(
+        inspector.binding(&after, &expected_digest),
+        dpp_types::SealBinding::CoversThisSignature,
+        "and it covers the same signature the broken one was meant to"
+    );
+    assert_ne!(
+        after.seal_value, corrupted,
+        "the corrupt bytes are gone, not merely re-marked"
+    );
+
+    let (clean, _) =
+        dpp_node::infra::seal_drain::audit_seals_once(&outbox_dyn, &inspector, 100, None).await;
+    assert_eq!(clean.broken, 0, "and the audit agrees it is fixed");
+}
+
+/// `rearm_sealed` moves **only** `sealed` rows.
+///
+/// The guard that keeps the repair path from becoming a way to disturb rows the
+/// drain owns. A `pending` row re-armed underneath the drain would have its
+/// backoff reset on every call, turning a failing row into a hot loop — which is
+/// the reasoning `enqueue` already gives for refusing the same thing.
+#[tokio::test]
+async fn rearm_sealed_leaves_rows_the_drain_owns_alone() {
+    let _pg = start_pg().await;
+    let outbox = PgSealOutboxRepo::new(_pg.dal.clone());
+    // A real passport: `seal_outbox.passport_id` carries a foreign key, so a
+    // row cannot be queued for an id nothing owns.
+    let passport_repo = PgPassportRepo::new(_pg.dal.clone());
+    let draft = draft_passport();
+    let id = draft.id;
+    passport_repo.create(draft).await.expect("create draft");
+    let digest = "ab".repeat(32);
+
+    outbox.enqueue(id, &digest).await.expect("queue");
+    assert_eq!(outbox.status_counts().await.unwrap().pending, 1);
+
+    assert!(
+        !outbox
+            .rearm_sealed(id, &digest, "should not apply")
+            .await
+            .expect("rearm"),
+        "a pending row is the drain's, and must not be re-armed underneath it"
+    );
+    assert_eq!(
+        outbox.status_counts().await.unwrap().pending,
+        1,
+        "and it is still exactly where it was"
+    );
+}
