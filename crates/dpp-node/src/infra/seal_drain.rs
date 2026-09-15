@@ -260,7 +260,10 @@ pub struct SealAudit {
 /// take on their behalf on the strength of a check that has never met a real
 /// provider's seal.
 ///
-/// So this counts and names them. Repair is its own change.
+/// So this counts and names them, and an operator decides per passport through
+/// `POST /api/v1/dpp/{dppId}/seal/repair` — which re-checks the seal at the
+/// moment of the request rather than trusting this list, because a finding here
+/// can be hours old.
 ///
 /// # What is not a finding
 ///
