@@ -51,6 +51,36 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ### Added
 
+- **The local development backend now emits the whole `B-LTA` structure, and
+  the conformance default is per-backend.** It advertised `BaselineB` only, so
+  every path above that level — the drain's downgrade check, the boot
+  conformance probe, anything reading a long-term seal — could be exercised only
+  against a provider nobody can currently buy from.
+
+  The node now generates a local timestamping authority beside its sealing key
+  and emits what ETSI EN 319 122-1 V1.3.1 Table 1 requires at each level: a
+  `signature-time-stamp` from `B-T`, revocation material in `SignedData.crls`
+  from `B-LT` — **not** the `revocation-values` attribute, which that table marks
+  "shall not be present" at these levels — and an `archive-time-stamp-v3` at
+  `B-LTA`. The TSA certificate travels with the seal so its tokens can be
+  checked.
+
+  **The shape of a long-term seal, not the substance of one.** Every signature,
+  timestamp and revocation list is made by a key this node generated for itself.
+  The TSA certificate's organisation field reads `NOT A QUALIFIED TIMESTAMP` and
+  its policy identifier is deliberately unregistered, so a validator that looks
+  sees at once what it has; the backend still resolves to the `Ghost` trust tier,
+  and `qualify` still reports `SelfIssued`. Two departures from conformance are
+  documented rather than glossed: the archive timestamp's imprint is taken over
+  the signer's encoded form rather than clause 5.5.3's concatenation, and no
+  `ats-hash-index-v3` is produced.
+
+  **`SEAL_CONFORMANCE_LEVEL` now defaults to the backend's own level rather than
+  the node's**, `LTA` for all three today. A default that cannot depend on the
+  backend is one that will eventually contradict it — which is exactly what had
+  happened — and the remedy then reads as "lower your level to suit the backend"
+  rather than "name a backend that can do the job".
+
 - **A seal's certificate path is now verified, so the top verdict means the
   issuer is established rather than claimed.** `dpp_seal::qualification` matched
   an issuer by *name* and stopped there, so a self-signed certificate relabelled

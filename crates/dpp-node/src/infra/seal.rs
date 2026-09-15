@@ -10,7 +10,7 @@
 //! | Variable                  | Values                   | Meaning                          |
 //! |---------------------------|--------------------------|----------------------------------|
 //! | `SEAL_PROVIDER`           | unset / `qtsp` / `local` | Which backend to build           |
-//! | `SEAL_CONFORMANCE_LEVEL`  | `B` / `T` / `LT` / `LTA` | Baseline level to request (`LT`) |
+//! | `SEAL_CONFORMANCE_LEVEL`  | `B` / `T` / `LT` / `LTA` | Baseline level to request (default: the backend's own, `LTA` for all of them today) |
 //!
 //! Each backend then reads its own variables — see `dpp_seal::eideasy::config`
 //! and `dpp_seal::local::config`. A partial or unrecognised configuration is an
@@ -203,14 +203,22 @@ fn derived_profile(pinned: Option<&str>, level: SealConformanceLevel) -> Option<
     dpp_seal::eideasy::profile_for_level(level).map(ToOwned::to_owned)
 }
 
-/// Read `SEAL_CONFORMANCE_LEVEL`, defaulting to `B-LT`.
+/// Read `SEAL_CONFORMANCE_LEVEL`, falling back to the backend's own default.
 ///
-/// An unrecognised value fails the boot rather than falling back to the default,
-/// which would let a deployment that asked for `B-LTA` and misspelled it seal at
-/// a lower level than it believes it is sealing at.
-fn conformance_level_from_env() -> Result<SealConformanceLevel> {
+/// **The default belongs to the backend, not to the node.** A default that
+/// cannot depend on which backend is wired is a default that will eventually
+/// contradict one: it fails the boot, from a value nobody chose, and the
+/// operator is pointed at lowering the level to suit a backend rather than at
+/// the backend. Every backend wired today reaches `B-LTA`; one that does not —
+/// a plan that only covers `B-T`, a future adapter — names its own here instead
+/// of forcing the whole node down to meet it.
+///
+/// An unrecognised value fails the boot rather than falling back, which would
+/// let a deployment that asked for `B-LTA` and misspelled it seal at a lower
+/// level than it believes it is sealing at.
+fn conformance_level_from_env(default: SealConformanceLevel) -> Result<SealConformanceLevel> {
     let Ok(raw) = std::env::var("SEAL_CONFORMANCE_LEVEL") else {
-        return Ok(SealConformanceLevel::BaselineLt);
+        return Ok(default);
     };
     match raw.trim().to_ascii_uppercase().as_str() {
         "B" | "B-B" | "BASELINE_B" => Ok(SealConformanceLevel::BaselineB),
@@ -236,9 +244,15 @@ pub fn from_env() -> Result<SealWiring> {
 }
 
 fn wiring_from_env() -> Result<SealWiring> {
-    let conformance_level = conformance_level_from_env()?;
+    // Read *after* the provider, so each backend can name the level it should
+    // reach by default. Reading it first is what made a node-wide default able
+    // to contradict the backend it was wired against.
     match dpp_seal::SealProvider::from_env().context("seal provider")? {
         dpp_seal::SealProvider::Qtsp => {
+            // A provider is bought from, so ask for everything: `B-LTA` is the
+            // only level that keeps a seal verifiable past its own signing
+            // certificate, which a retention-locked passport outlives.
+            let conformance_level = conformance_level_from_env(SealConformanceLevel::BaselineLta)?;
             let mut cfg =
                 dpp_seal::eideasy::EideasyConfig::from_env().context("QTSP seal configuration")?;
             // Derive the provider's profile from the level actually requested,
@@ -289,6 +303,12 @@ fn wiring_from_env() -> Result<SealWiring> {
             })
         }
         dpp_seal::SealProvider::Local => {
+            // The same level as a provider, deliberately. This backend emits the
+            // whole `B-LTA` structure — signature timestamp, revocation material,
+            // archive timestamp — so a sandbox exercises the shape a real seal
+            // has rather than a stripped-down one that hides every path above
+            // `B-B`. It remains legally nothing; see the `Ghost` tier below.
+            let conformance_level = conformance_level_from_env(SealConformanceLevel::BaselineLta)?;
             let cfg =
                 dpp_seal::local::LocalConfig::from_env().context("local seal configuration")?;
             let backend = dpp_seal::local::LocalIdentity::load_or_create(&cfg.key_path)
@@ -317,6 +337,11 @@ fn wiring_from_env() -> Result<SealWiring> {
             })
         }
         dpp_seal::SealProvider::None => {
+            // Nothing drains here, so the level is only ever used by the
+            // capability probe. `GhostSeal` advertises every level, so this
+            // agrees with the others rather than being a special case to
+            // remember.
+            let conformance_level = conformance_level_from_env(SealConformanceLevel::BaselineLta)?;
             tracing::info!("eIDAS seal: ghost (no provider) — set SEAL_PROVIDER to enable sealing");
             let port: Arc<dyn SealPort> =
                 Arc::new(dpp_seal::QtspSealAdapter::new(dpp_seal::ghost::GhostSeal));

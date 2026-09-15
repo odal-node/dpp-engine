@@ -267,17 +267,52 @@ mod tests {
             report.combinations_checked > 0,
             "a kit run that exercised no combination proves nothing"
         );
-        // A note, not a failure, and one worth pinning: this backend is
-        // self-signed with no timestamp, so `BaselineB` is the only level it can
-        // honestly advertise — and the kit says out loud that such a seal stops
-        // verifying inside the retention period of anything it covers.
+        // This backend now advertises every baseline level, including ones that
+        // outlive the signing certificate, so the kit no longer notes that its
+        // seals expire with it. That note was about *levels*, and the levels
+        // genuinely changed.
+        //
+        // What did **not** change is the only thing that ever mattered about
+        // these seals, so it is pinned here instead. A structurally complete
+        // `B-LTA` envelope signed by a key this node generated for itself is
+        // still worth nothing: the verdict is founded on
+        // `SealChecks::SignatureOnly` and is not a qualified pass. An `LTA` that
+        // ever started reading as a qualified one would be this change's failure
+        // mode, and this is where it would be caught.
+        let sealed = adapter
+            .seal(SealRequest {
+                payload_hash: "ab".repeat(32),
+                mode: SealMode::OperatorSeal,
+                key_ref: SealCredentialRef {
+                    qtsp_id: "local".into(),
+                    credential_id: "node".into(),
+                },
+                sig_format: SealFormat::Cades,
+                conformance_level: SealConformanceLevel::BaselineLta,
+                envelope: SealEnvelope::Detached,
+            })
+            .await
+            .expect("the local backend seals at LTA");
+
+        let verdict = adapter.verify(&sealed).await.expect("verifiable");
+        assert_eq!(verdict.checks, dpp_domain::seal::SealChecks::SignatureOnly);
         assert!(
-            report
-                .notes
-                .iter()
-                .any(|n| n.contains("certificate expiry")),
-            "the kit must still report that these seals do not outlive the certificate: {:?}",
-            report.notes
+            !verdict.is_qualified_pass(),
+            "a locally signed LTA envelope is structurally complete and legally nothing"
         );
+        assert_eq!(
+            dpp_seal_level(&sealed),
+            Some(SealConformanceLevel::BaselineLta),
+            "and the bytes must actually carry the LTA material, or the level is a claim"
+        );
+    }
+
+    /// The level the seal's own bytes evidence.
+    fn dpp_seal_level(env: &SealedEnvelope) -> Option<SealConformanceLevel> {
+        use base64::Engine as _;
+        let der = base64::engine::general_purpose::STANDARD
+            .decode(&env.seal_value)
+            .expect("base64");
+        crate::cades::evidenced_level(&der).expect("readable")
     }
 }

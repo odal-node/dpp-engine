@@ -686,10 +686,10 @@ async fn a_locally_sealed_passport_reports_that_no_provider_issued_it() {
             qtsp_id: dpp_seal::local::config::PROVIDER.to_owned(),
             credential_id: "node".to_owned(),
         },
-        // What this backend actually offers: it seals on its own behalf, and
-        // emits the signature alone.
+        // What this backend actually offers: it seals on its own behalf, at
+        // every baseline level.
         SealMode::OperatorSeal,
-        SealConformanceLevel::BaselineB,
+        SealConformanceLevel::BaselineLta,
         10,
     )
     .await;
@@ -704,6 +704,19 @@ async fn a_locally_sealed_passport_reports_that_no_provider_issued_it() {
     let der = BASE64
         .decode(&seal.seal_value)
         .expect("the seal is base64 DER");
+
+    // ── The level the bytes actually evidence ───────────────────────────────
+    //
+    // Not the level that was requested, and not the one recorded on the
+    // envelope: what `cades::evidenced_level` finds in the CAdES itself. This
+    // is the assertion that makes the local backend a usable stand-in — a
+    // sandbox run exercises the structure a provider's seal has, rather than a
+    // `B-B` envelope that skips every path above it.
+    assert_eq!(
+        dpp_seal::cades::evidenced_level(&der).expect("readable"),
+        Some(SealConformanceLevel::BaselineLta),
+        "the local backend must emit the material an LTA seal carries, not merely claim the level"
+    );
 
     // ── The verdict, read out of the stored seal ────────────────────────────
     let verdict = qualify(&der, &[], seal.sealed_at).expect("a readable CAdES seal");
