@@ -558,6 +558,30 @@ mod tests {
 
     // ── the allow-list ───────────────────────────────────────────────────────
 
+    /// Nothing this route advertises as patchable may be refused by the
+    /// repository.
+    ///
+    /// The two lists are written in different crates for different reasons —
+    /// `PATCHABLE_FIELDS` names what `PUT` may change, the repository guard
+    /// names what a delta may carry — and they met only at runtime, in an error
+    /// a caller saw. `componentRefs` sits on both, which is why this is asserted
+    /// against the **effective** guard rather than core's raw
+    /// `PROTECTED_PATCH_FIELDS`: this build deliberately diverges from that list
+    /// for exactly that key, and comparing against it would fail on the
+    /// divergence instead of on a real contradiction.
+    #[test]
+    fn every_patchable_field_is_one_the_repository_accepts() {
+        let refused: Vec<&str> = super::PATCHABLE_FIELDS
+            .into_iter()
+            .filter(|k| dpp_dal::protected_fields::is_protected_patch_field(k))
+            .collect();
+        assert!(
+            refused.is_empty(),
+            "PUT advertises {refused:?} as patchable and the repository refuses them, so the \
+             request is accepted, validated, serialised into the delta and then rejected"
+        );
+    }
+
     /// The finding this change exists for. `facility`, `operatorIdentifier`,
     /// `commodityCode` and the lineage edge — `derivedFrom` now, and
     /// `parentPassportRef` when this was written — are modelled `Passport`

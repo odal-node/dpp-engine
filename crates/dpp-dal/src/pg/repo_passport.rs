@@ -23,63 +23,6 @@ use dpp_domain::{
 
 use super::{PgDal, db_err};
 
-/// Fields `patch_fields` refuses to modify: passport identity, lifecycle state,
-/// retention lock, signatures, seal, registry identity, and upward lineage. Each
-/// is governed by the publish pipeline / `update_status` / a dedicated transition
-/// method, and several back a scalar column that this JSONB-merge path does not
-/// rewrite — allowing them here would both bypass the state machine and desync
-/// the doc from its enforcing column (e.g. flipping `retentionLocked` in the doc
-/// while the `retention_locked` column stays `false`). Serialized (camelCase)
-/// names.
-///
-/// # Derived from core, never restated
-///
-/// This backend overrides `patch_fields`, so it does not inherit core's default
-/// guard — but it still owes callers that guard's contract. It therefore reads
-/// `dpp_domain::PROTECTED_PATCH_FIELDS` and applies exactly the divergences
-/// declared below, rather than keeping a second list.
-///
-/// It used to keep one, and that list fell **three entries short** of core's:
-/// `operatorIdentifier`, `facility` and the lineage edge then called
-/// `parentPassportRef` were protected by core and not here, which on
-/// PostgreSQL — the only backend that ships — made them writable through
-/// `PUT /dpp/{id}` and carried them into the signed publish payload. A second
-/// list is a second thing to keep right, and nothing was keeping it right: the
-/// one test covering this path asserted two keys, both of which were in both
-/// lists the whole time.
-///
-/// The one divergence, and why it is deliberate:
-///
-/// - **`componentRefs` is removed here.** Core protects the lineage edges
-///   because patching them on a *published* passport would leave the served body
-///   no longer verifying against its own signature. This path accepts drafts
-///   only (`update` refuses any non-`Draft` status), and a draft has no
-///   signature to break — a bill of materials is editable while it is still
-///   being assembled, which is the point of a draft. Its *upward* sibling
-///   `derivedFrom` stays protected, because nothing applies it: it is stamped at
-///   create and read at verify.
-///
-/// **`productGroup` used to be added here** and is not any more: core 0.20.0
-/// protects it directly. The local reason still holds — it backs a real scalar
-/// column this JSONB merge does not rewrite, so patching it in the doc would
-/// desync the two — it is simply no longer a *divergence*, and a declared
-/// exception that no longer excepts anything reads as a deliberate difference
-/// while being none.
-///
-/// `protected_patch_derivation_tests` holds both halves honest — the guard must
-/// equal core's value plus/minus these entries, and an entry that no longer
-/// diverges from core must be deleted rather than left as a stale exception.
-/// That is exactly how the `productGroup` entry above came to be removed.
-const ADDED_HERE: [&str; 0] = [];
-const REMOVED_HERE: [&str; 1] = ["componentRefs"];
-
-fn is_protected_patch_field(key: &str) -> bool {
-    if REMOVED_HERE.contains(&key) {
-        return false;
-    }
-    ADDED_HERE.contains(&key) || dpp_domain::PROTECTED_PATCH_FIELDS.contains(&key)
-}
-
 /// Apply a passport update (scalar columns + `doc`) inside a caller-supplied
 /// transaction. Shared by [`PgPassportRepo::update`] and the transactional
 /// outbox's `commit_publish`, so the publish-write and the outbox insert commit
@@ -412,24 +355,9 @@ impl PassportRepository for PgPassportRepo {
         // Reject protected/state-machine fields up front: they are set only via
         // the publish pipeline / update_status and back scalar columns this path
         // does not rewrite, so patching them would bypass the state machine and
-        // desync the doc from its enforcing column.
-        if let Some(obj) = delta.as_object() {
-            let mut forbidden: Vec<&str> = obj
-                .keys()
-                .map(String::as_str)
-                .filter(|k| is_protected_patch_field(k))
-                .collect();
-            if !forbidden.is_empty() {
-                forbidden.sort_unstable();
-                return Err(DppError::Validation(
-                    format!(
-                        "patch_fields cannot modify protected field(s): {}",
-                        forbidden.join(", ")
-                    )
-                    .into(),
-                ));
-            }
-        }
+        // desync the doc from its enforcing column. The rule itself lives in
+        // `crate::protected_fields` so the in-memory backend answers with it too.
+        crate::protected_fields::refuse_protected(&delta)?;
 
         let mut tx = self.dal.begin().await?;
         // Row lock makes concurrent patches serialise instead of clobbering.
@@ -536,53 +464,5 @@ impl PassportRepository for PgPassportRepo {
         .map_err(db_err)?;
         tx.commit().await.map_err(db_err)?;
         Ok(total.max(0) as u64)
-    }
-}
-
-#[cfg(test)]
-mod protected_patch_derivation_tests {
-    use super::{ADDED_HERE, REMOVED_HERE, is_protected_patch_field};
-
-    /// The backend's guard must equal core's, plus/minus exactly the declared
-    /// divergences — and it is checked against core's live value, not a copy.
-    ///
-    /// This is the test the hand-typed list never had. Its predecessor asserted
-    /// two keys (`retentionLocked`, `status`), both of which were present in
-    /// both lists the whole time, so the three entries that actually drifted
-    /// were covered by nothing.
-    #[test]
-    fn guard_equals_core_plus_declared_divergences() {
-        for key in dpp_domain::PROTECTED_PATCH_FIELDS {
-            let expected = !REMOVED_HERE.contains(key);
-            assert_eq!(
-                is_protected_patch_field(key),
-                expected,
-                "core protects `{key}`; this backend must too unless it is in REMOVED_HERE"
-            );
-        }
-        for key in ADDED_HERE {
-            assert!(
-                is_protected_patch_field(key),
-                "`{key}` is declared as added here but is not protected"
-            );
-        }
-    }
-
-    /// A divergence that no longer diverges is a stale exception — it reads as a
-    /// deliberate difference while being none, and hides the next real one.
-    #[test]
-    fn declared_divergences_are_real() {
-        for key in ADDED_HERE {
-            assert!(
-                !dpp_domain::PROTECTED_PATCH_FIELDS.contains(&key),
-                "`{key}` is in ADDED_HERE but core already protects it — drop the entry"
-            );
-        }
-        for key in REMOVED_HERE {
-            assert!(
-                dpp_domain::PROTECTED_PATCH_FIELDS.contains(&key),
-                "`{key}` is in REMOVED_HERE but core does not protect it — drop the entry"
-            );
-        }
     }
 }

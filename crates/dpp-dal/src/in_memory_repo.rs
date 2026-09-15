@@ -100,6 +100,47 @@ impl PassportRepository for InMemoryPassportRepo {
         Ok(passport)
     }
 
+    /// Merge a delta, refusing the same fields the Postgres backend refuses.
+    ///
+    /// Overridden rather than inherited. Core's default guard reads
+    /// `PROTECTED_PATCH_FIELDS` undiverged, and this build deliberately diverges
+    /// from it — so inheriting meant this double refused a `componentRefs` patch
+    /// that production accepts. A suite asserting the refusal proved something
+    /// true only of the double, which is the one thing a double must never do.
+    ///
+    /// Null-removal is matched too: the database path deletes a key whose value
+    /// is `null`, while core's default `extend`s it in as `Value::Null`. The two
+    /// agree for an `Option` field and part company for a `Vec`, so the cheaper
+    /// behaviour is not the same behaviour.
+    async fn patch_fields(
+        &self,
+        id: PassportId,
+        delta: serde_json::Value,
+    ) -> Result<Passport, DppError> {
+        crate::protected_fields::refuse_protected(&delta)?;
+
+        let mut g = self.store.lock().unwrap();
+        let passport = g
+            .get(&id)
+            .ok_or_else(|| DppError::NotFound(id.to_string()))?;
+
+        let mut doc = serde_json::to_value(passport)
+            .map_err(|e| DppError::Internal(format!("serialize: {e}")))?;
+        if let (serde_json::Value::Object(dm), serde_json::Value::Object(pm)) = (&delta, &mut doc) {
+            for (k, v) in dm {
+                if v.is_null() {
+                    pm.remove(k);
+                } else {
+                    pm.insert(k.clone(), v.clone());
+                }
+            }
+        }
+        let patched: Passport = serde_json::from_value(doc)
+            .map_err(|e| DppError::Internal(format!("deserialize: {e}")))?;
+        g.insert(id, patched.clone());
+        Ok(patched)
+    }
+
     async fn update_status(
         &self,
         id: PassportId,
@@ -133,5 +174,55 @@ impl PassportRepository for InMemoryPassportRepo {
         _facility_id: Option<&str>,
     ) -> Result<u64, DppError> {
         Ok(self.store.lock().unwrap().len() as u64)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::InMemoryPassportRepo;
+    use dpp_domain::error::DppError;
+    use dpp_domain::passport::PassportId;
+    use dpp_domain::ports::passport_repo::PassportRepository;
+
+    /// This double must refuse exactly what the database refuses.
+    ///
+    /// It inherited core's undiverged default before, so it rejected a
+    /// `componentRefs` patch that Postgres accepts — and every suite built on it
+    /// proved that rejection. Asserted here without storing a passport: the
+    /// guard runs *before* the lookup, so a protected key answers `Validation`
+    /// on an empty repository while an allowed one gets as far as `NotFound`.
+    /// That difference is the whole question, and it needs no fixture.
+    #[tokio::test]
+    async fn the_double_applies_the_same_patch_guard_as_the_database() {
+        let repo = InMemoryPassportRepo::default();
+        let id = PassportId::new();
+
+        assert!(
+            matches!(
+                repo.patch_fields(id, serde_json::json!({ "status": "active" }))
+                    .await,
+                Err(DppError::Validation(_))
+            ),
+            "a protected key must be refused before the lookup"
+        );
+
+        assert!(
+            matches!(
+                repo.patch_fields(id, serde_json::json!({ "componentRefs": [] }))
+                    .await,
+                Err(DppError::NotFound(_))
+            ),
+            "the declared divergence must reach the lookup, not be refused — this is \
+             the case that used to disagree with Postgres"
+        );
+
+        assert!(
+            matches!(
+                repo.patch_fields(id, serde_json::json!({ "productName": "x" }))
+                    .await,
+                Err(DppError::NotFound(_))
+            ),
+            "an ordinary patchable field must reach the lookup"
+        );
     }
 }
