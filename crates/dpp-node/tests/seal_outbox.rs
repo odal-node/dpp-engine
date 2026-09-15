@@ -1148,3 +1148,84 @@ async fn rearm_sealed_leaves_rows_the_drain_owns_alone() {
         "and it is still exactly where it was"
     );
 }
+
+/// A minimal envelope, to close a row.
+///
+/// Nothing reads these bytes: the test below is about what the *row* records,
+/// and the seal-reading path has its own suites against real CAdES.
+fn envelope_for_a_closed_row() -> dpp_domain::seal::SealedEnvelope {
+    dpp_domain::seal::SealedEnvelope {
+        format: dpp_domain::seal::SealFormat::Cades,
+        seal_value: "BASE64-NOT-READ-HERE".into(),
+        signing_cert_ref: None,
+        conformance_level: None,
+        sealed_at: Utc::now(),
+        placeholder: false,
+    }
+}
+
+/// **A re-armed row says why it was re-armed, on the row.**
+///
+/// This is the one place the node buys a seal for a digest it has already paid
+/// for, and the reason is written onto the row rather than only logged. A log
+/// line is the wrong home for it: logs rotate, and the question this answers —
+/// *why does this passport have two seal rows for one signature* — is asked
+/// months later by whoever is reconciling an invoice, against the database.
+///
+/// It also survives the drain: `message` is what the row carries until an
+/// attempt overwrites it, so the record is legible for as long as the repair is
+/// outstanding, which is when anyone would look.
+#[tokio::test]
+async fn a_rearmed_row_records_why_it_was_rearmed() {
+    let _pg = start_pg().await;
+    let outbox = PgSealOutboxRepo::new(_pg.dal.clone());
+    let passport_repo = PgPassportRepo::new(_pg.dal.clone());
+    let draft = draft_passport();
+    let id = draft.id;
+    passport_repo.create(draft).await.expect("create draft");
+    let digest = "cd".repeat(32);
+
+    outbox.enqueue(id, &digest).await.expect("queue");
+    let row = outbox
+        .due(10)
+        .await
+        .expect("due")
+        .into_iter()
+        .find(|r| r.passport_id == id)
+        .expect("the queued row is due");
+    outbox
+        .mark_sealed(row.id, &envelope_for_a_closed_row())
+        .await
+        .expect("close the row");
+
+    let reason = "repaired by user-ops: stored seal did not verify";
+    assert!(
+        outbox
+            .rearm_sealed(id, &digest, reason)
+            .await
+            .expect("rearm"),
+        "a sealed row is the one thing this moves"
+    );
+
+    let message: Option<String> =
+        sqlx::query_scalar("SELECT message FROM odal.seal_outbox WHERE passport_id = $1")
+            .bind(id.0)
+            .fetch_one(_pg.dal.pool())
+            .await
+            .expect("read the row back");
+    assert_eq!(
+        message.as_deref(),
+        Some(reason),
+        "the row must carry the reason a second seal is being bought"
+    );
+
+    // And the retry state was reset, or the replacement would inherit the
+    // backoff of a row that had already succeeded.
+    let attempts: i32 =
+        sqlx::query_scalar("SELECT attempts FROM odal.seal_outbox WHERE passport_id = $1")
+            .bind(id.0)
+            .fetch_one(_pg.dal.pool())
+            .await
+            .expect("read attempts");
+    assert_eq!(attempts, 0);
+}
