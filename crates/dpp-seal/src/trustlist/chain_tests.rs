@@ -6,14 +6,36 @@ use dpp_domain::trusted_list::TrustServiceType;
 const EU_LOTL: &str = include_str!("../../tests/fixtures/eu-lotl.xml");
 const FI_LIST: &str = include_str!("../../tests/fixtures/fi-trusted-list.xml");
 
-/// The pointer the verified LOTL carries for Finland.
-fn finnish_pointer() -> super::model::TrustedListPointer {
+/// Italy and France — the two largest published lists, and the two the vendored
+/// `xml-sec` fork exists for.
+///
+/// Every other document in the set verifies on the published crate. These two
+/// carry 65 540 and 65 541 XML node-set entries against a compile-time ceiling
+/// of 65 536, so without the fork they fail as a canonicaliser that stops before
+/// the end of the document — not as a bad signature. Four and five nodes over.
+///
+/// They are committed rather than fetched for the same reason every other
+/// fixture here is: a test that reaches 27 Member States' web servers fails for
+/// reasons that have nothing to do with this crate.
+const IT_LIST: &str = include_str!("../../tests/fixtures/it-trusted-list.xml");
+const FR_LIST: &str = include_str!("../../tests/fixtures/fr-trusted-list.xml");
+
+/// The pointer the verified LOTL carries for `territory`.
+fn pointer_for(territory: &str) -> super::model::TrustedListPointer {
     let lotl = verify_lotl(EU_LOTL).expect("the LOTL verifies");
     lotl.pointers()
         .iter()
-        .find(|p| p.territory.as_deref() == Some("FI"))
-        .expect("the LOTL points at Finland")
+        .find(|p| {
+            p.territory.as_deref() == Some(territory)
+                && p.mime_type.as_deref() != Some("application/pdf")
+        })
+        .unwrap_or_else(|| panic!("the LOTL points at {territory}"))
         .clone()
+}
+
+/// The pointer for Finland, which most of these tests use.
+fn finnish_pointer() -> super::model::TrustedListPointer {
+    pointer_for("FI")
 }
 
 /// The chain closes: a national list verifies against a verified LOTL.
@@ -270,4 +292,111 @@ fn each_signature_names_exactly_one_certificate() {
              no longer unambiguous — see this test's note"
         );
     }
+}
+
+/// The `xml-sec` in this build is the fork, not the registry crate.
+///
+/// Said explicitly because the way this breaks is quiet. `[patch.crates-io]`
+/// applies only while the fork's version satisfies the requirement in
+/// `dpp-seal/Cargo.toml`. Bump that requirement past the fork — which is exactly
+/// what someone will do the day upstream publishes — and Cargo emits an
+/// **unused patch warning, not an error**, and silently resolves to the registry
+/// crate.
+///
+/// Without this, the only symptom is Italy and France failing verification, and
+/// a reader has to infer the cause from two country names. With it, the
+/// diagnostic says which of the two situations they are in: upstream shipped the
+/// fix and the stanza should go, or the ceiling is back.
+///
+/// Read from `Cargo.lock` rather than probed at runtime because the resolved
+/// source is a build fact, and the lock is where the build records it.
+///
+/// **Editing the lock does not reproduce the failure**, which is the first thing
+/// anyone will try: `cargo` reconciles the lockfile against the manifest before
+/// building, so a hand-edited source line is rewritten back to the fork and this
+/// passes. That is a property of the check being sound rather than a gap — the
+/// lock always describes the build that actually ran. The real trigger is a
+/// requirement bump once upstream publishes a version the fork does not satisfy,
+/// which cannot be simulated today because `0.1.16` is still the latest
+/// published. The assertion itself was confirmed by inverting it.
+#[test]
+fn the_patched_xml_sec_is_the_one_that_resolved() {
+    let lock = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../Cargo.lock"));
+    let entry = lock
+        .split("[[package]]")
+        .find(|p| p.contains("name = \"xml-sec\""))
+        .expect("xml-sec is in the lockfile");
+
+    assert!(
+        entry.contains("source = \"git+https://github.com/odal-node/xml-sec.git"),
+        "`xml-sec` resolved to the registry crate, so the [patch.crates-io] stanza in the \
+         workspace manifest is not applying — most likely because the requirement in \
+         dpp-seal/Cargo.toml moved past the fork's version. If upstream \
+         structured-world/xml-sec#158 has shipped, delete the stanza and the fork together; \
+         if it has not, the node-set ceiling is back and Italy and France stop verifying.\n\n\
+         Lock entry:\n{entry}"
+    );
+}
+
+/// The two documents the vendored `xml-sec` fork exists for actually verify.
+///
+/// This is the claim the fork rests on, and until now it rested on a bug report
+/// rather than on a green test. Remove the `[patch.crates-io]` stanza from the
+/// workspace manifest and this test fails — which is the point of it. Confirmed
+/// by doing exactly that, not assumed.
+///
+/// Why it is worth a test of its own rather than another row in the chain test:
+/// the failure it guards against is silent. A `[patch]` stops applying when the
+/// underlying requirement moves past the fork's version — Cargo then emits an
+/// **unused patch warning, not an error**, and resolves to the registry crate.
+/// The only symptom would be two Member States failing verification, with
+/// nothing to say why.
+#[test]
+fn the_two_largest_lists_verify_which_is_what_the_fork_is_for() {
+    for (territory, xml) in [("IT", IT_LIST), ("FR", FR_LIST)] {
+        let pointer = pointer_for(territory);
+        assert!(
+            !pointer.certificates.is_empty(),
+            "the LOTL names {territory}'s signing certificates"
+        );
+
+        let verified = verify_trusted_list(xml, &pointer)
+            .unwrap_or_else(|e| panic!("{territory}'s list must verify: {e}"));
+        assert_eq!(verified.territory(), Some(territory));
+        assert!(
+            !verified.providers().is_empty(),
+            "{territory} lists providers"
+        );
+    }
+}
+
+/// The fetch cap must admit the documents this crate exists to verify.
+///
+/// The cap and the fork were sized independently and disagreed. The fork raises
+/// a node-set ceiling so Italy and France verify; the cap was measured against
+/// "roughly 140 KiB to over 600 KiB" — a range that excluded the two largest
+/// lists in the set — and refused to download either of them. So the fork's
+/// entire purpose was unreachable through this crate's own fetch path, and
+/// nothing noticed, because the chain tests read fixtures and never call
+/// `fetch_trusted_list`.
+///
+/// Asserted against the fixtures rather than a remembered number so the cap
+/// cannot drift below a document already in the repository. The committed bytes
+/// are line-ending normalised and therefore slightly **smaller** than the wire
+/// form, which is one reason the cap carries headroom rather than hugging this
+/// figure.
+#[test]
+fn the_fetch_cap_admits_the_largest_list_in_the_set() {
+    let largest = [EU_LOTL, FI_LIST, IT_LIST, FR_LIST]
+        .into_iter()
+        .map(str::len)
+        .max()
+        .expect("fixtures");
+
+    assert!(
+        super::fetch::MAX_TRUSTED_LIST_BYTES >= largest,
+        "the cap is {} bytes and the largest committed list is {largest}; a cap below a \
+         document this crate ships a fixture of refuses it before verification is attempted",
+        super::fetch::MAX_TRUSTED_LIST_BYTES
+    );
 }
