@@ -456,17 +456,23 @@ const SEAL_AUDIT_INTERVAL: std::time::Duration = std::time::Duration::from_secs(
 
 /// The ceiling the cadence should be read against.
 ///
-/// Not ours: CIR (EU) 2025/1945 — the implementing act that pins how a qualified
-/// seal is validated, through Art. 32(3) and Art. 40 of Reg. (EU) No 910/2014 —
-/// adapts the EU validation policy so that revocation information for the
-/// signing certificate may be **at most 24 hours old**. A node whose walk takes
-/// longer than that cannot, by construction, hold a validation that meets the
-/// policy, however the checks themselves are implemented.
+/// **A day to notice a corrupt seal**, which is the outer bound worth accepting
+/// for a condition an operator can do nothing about until they are told. A walk
+/// slower than this leaves a passport that is published and, in substance,
+/// unsealed sitting unreported for longer than anyone would choose.
 ///
-/// This node does not check revocation yet, so today the number is not a
-/// compliance claim — it is the design target the cadence has to be able to
-/// reach before that check can mean anything, and the reason a boot that cannot
-/// reach it says so.
+/// The number is borrowed rather than invented: CIR (EU) 2025/1945 — the act
+/// that pins how a qualified seal is validated, through Art. 32(3) and Art. 40
+/// of Reg. (EU) No 910/2014 — caps revocation information for the signing
+/// certificate at 24 hours old.
+///
+/// **That cap does not currently bind this walk, and the difference matters.**
+/// The revocation material this node reads is the CRL *inside* the seal: fixed
+/// at sealing time, immutable, and the whole point of the long-term profiles.
+/// Re-reading it hourly rather than daily learns nothing new about revocation.
+/// The cap would bind the day this node fetches *fresh* revocation data to
+/// validate a current signature — which it does not do, and will not without
+/// the outbound path that implies.
 const SEAL_AUDIT_TARGET_WRAP: std::time::Duration = std::time::Duration::from_secs(24 * 60 * 60);
 
 /// The batch and interval this node's audit will actually run at.
@@ -677,9 +683,9 @@ pub fn spawn_seal_audit(
                     wrap_hours = wrap.as_secs() / 3600,
                     "a full pass over this node's stored seals takes longer than 24h at the \
                      configured cadence — raise SEAL_AUDIT_BATCH or lower \
-                     SEAL_AUDIT_INTERVAL_SECS. The EU validation policy allows revocation \
-                     information for a signing certificate to be at most 24h old, so a slower \
-                     walk cannot support that check once this node performs it"
+                     SEAL_AUDIT_INTERVAL_SECS. A seal that stops verifying is invisible to \
+                     every other number this node reports, so the walk is the only thing that \
+                     will ever say so, and this is how long that takes"
                 );
             } else {
                 tracing::info!(
