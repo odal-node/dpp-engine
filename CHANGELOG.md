@@ -133,6 +133,33 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ### Fixed
 
+- **The two repository backends disagreed about which fields a patch may
+  carry.** *(No change to how a node behaves: the PostgreSQL backend was and
+  remains the one that ships. What changes is that the test double now agrees
+  with it.)*
+
+  `patch_fields`' protected-field rule lived inside `pg::repo_passport`, private
+  to that module. `InMemoryPassportRepo` does not override `patch_fields`, so it
+  inherited core's **undiverged** default — and this build deliberately diverges
+  from that default for `componentRefs`, which is editable here because the
+  update path accepts drafts only and a draft has no signature to break.
+
+  So PostgreSQL accepted a `componentRefs` patch and the double refused it. A
+  suite built on the double proved the opposite of production, which is the one
+  thing a double must never do — and it left the divergence simultaneously
+  deliberate and untested.
+
+  The rule now lives in `dpp_dal::protected_fields` and both backends consult it.
+  Two checks keep it that way: the double is asserted to refuse exactly what the
+  guard refuses, and `PUT`'s `PATCHABLE_FIELDS` allow-list is asserted to contain
+  nothing the repository would reject — the contradiction the two lists could
+  previously only reveal at runtime, in an error a caller saw.
+
+  The smoke test that PUTs `componentRefs` also gained the case it was missing: a
+  valid, acyclic update **succeeding**. It asserted only the cycle rejection, and
+  the cycle guard runs first — so a `componentRefs` key the repository refused
+  outright would have failed identically and the test would still have passed.
+
 - **A node publishing the current `componentRefs` shape was reported as having
   tampered with its passport.** `verify_tree` parsed each child entry as a bare
   `PassportRef`. An entry it could not parse is reported as `MalformedRef`, which

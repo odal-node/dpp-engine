@@ -1034,6 +1034,34 @@ async fn local_component_cycle_is_rejected() {
         "the reference belongs under `reference`, not at the top level"
     );
 
+    // A valid, acyclic componentRefs update succeeds.
+    //
+    // Without this the test proves only that *something* refuses the request
+    // below. The cycle guard runs before the repository's protected-field check,
+    // so a `componentRefs` key the repository refused outright would fail in
+    // exactly the same way and the cycle assertion would still pass — which is
+    // how the two lists came to disagree about this field unnoticed.
+    //
+    // A cross-operator URI resolves to no local passport, so it is a leaf here
+    // and cannot close a cycle; its reachability is a verify-time question.
+    let cross_operator = "https://id.other-op.example/dpp/019723f4-1a2b-7c3d-8e4f-5a6b7c8d9e0f";
+    let resp = client
+        .put(format!("{base}/vault/api/v1/dpp/{a_id}"))
+        .bearer_auth(&token)
+        .json(&serde_json::json!({
+            "componentRefs": [{ "uri": cross_operator, "publicJwsHash": "a".repeat(64) }]
+        }))
+        .send()
+        .await
+        .expect("acyclic update request failed");
+    let status = resp.status();
+    let body = resp.text().await.unwrap_or_default();
+    assert_eq!(
+        status,
+        reqwest::StatusCode::OK,
+        "a componentRefs update that closes no local cycle must succeed: {body}"
+    );
+
     // Updating A to list B closes the A → B → A cycle → refused with 422.
     let ref_to_b = format!("https://id.odal-node.io/dpp/{b_id}");
     let resp = client

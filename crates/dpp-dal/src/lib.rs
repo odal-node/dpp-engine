@@ -4,6 +4,10 @@
 //! one concrete struct per domain aggregate and re-exports them at crate root.
 pub mod pg;
 
+/// Which fields `patch_fields` refuses, shared by every backend so the two
+/// cannot answer differently.
+pub mod protected_fields;
+
 /// Shared throwaway-Postgres harness for integration suites across the
 /// workspace. Dev-only: gated behind `test-harness`, which nothing outside a
 /// `[dev-dependencies]` entry may enable.
