@@ -1,0 +1,41 @@
+description: >-
+  Which law makes an operator the responsible one.
+
+  Carried beside the operator rather than on it: the same company can be an
+  Art. 4 responsible operator for one product and a general product-safety
+  responsible person for another, so the basis is a property of the pairing.
+
+  Stated rather than inferred. Inferring it from the product group works for two
+  groups and is a guess for every other.
+oneOf:
+  - type: string
+    enum:
+      - marketSurveillanceArt4
+    description: >-
+      Article 4 of Regulation (EU) 2019/1020 (market surveillance). Applies only
+      to products subject to the instruments listed in Art. 4(5). The tasks are
+      those in Art. 4(3).
+  - type: string
+    enum:
+      - generalProductSafety
+    description: Regulation (EU) 2023/988 (general product safety).
+  - type: object
+    required:
+      - otherUnionLaw
+    description: >-
+      "Similar tasks pursuant to other Union law applicable to the product" —
+      Annex III(k)'s own catch-all.
+    properties:
+      otherUnionLaw:
+        type: object
+        required:
+          - citation
+        properties:
+          citation:
+            type: string
+            description: >-
+              The instrument and provision, as it would be cited. Carried
+              because the point of this variant is that the law is not one of
+              the two named, and a basis that cannot say which law it is says
+              nothing at all.
+            example: Article 7 of Regulation (EU) 2017/745

@@ -136,11 +136,12 @@ mod tests {
     use async_trait::async_trait;
     use chrono::Utc;
     use dpp_domain::DppError;
+    use dpp_domain::operator::{OperatorRole, ResponsibleOperator};
     use dpp_domain::passport::PassportId;
     use dpp_domain::ports::registry_sync::{
         RegistrationRequest, RegistryIdentifiers, RegistryRecord,
     };
-    use dpp_domain::transfer::{OperatorRole, ResponsibleOperator, TransferChain, TransferReason};
+    use dpp_domain::transfer::{TransferChain, TransferReason};
     use dpp_types::{
         RegistryStatusIntent, RegistrySyncCounts, RegistrySyncRow, RegistrySyncStatus,
         RegistryTransferCounts, RegistryTransferRow, RegistryTransferStatus,
@@ -154,6 +155,9 @@ mod tests {
             role: OperatorRole::Manufacturer,
             eu_operator_id: None,
             eu_operator_id_scheme: None,
+            registered_trade_name: None,
+            postal_address: None,
+            electronic_address: None,
             country: "DE".to_owned(),
         }
     }

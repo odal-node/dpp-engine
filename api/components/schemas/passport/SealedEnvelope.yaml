@@ -17,6 +17,20 @@ properties:
   signingCertRef:
     type: string
     description: Reference to the signing certificate chain.
+  conformanceLevel:
+    allOf:
+      - $ref: ./SealConformanceLevel.yaml
+    description: >-
+      The baseline level this seal was **requested** at.
+
+      A record of what was asked for, not proof of what arrived — the same
+      standing as `signingCertRef`, which names the certificate the seal claims
+      rather than one anybody verified. What the bytes actually carry is read out
+      of the envelope by a validator, and the two agreeing is the cross-check.
+
+      Absent means **not recorded** — an envelope written before this field
+      existed, or a seal restored from a backup or produced elsewhere. It never
+      means the level was low.
   sealedAt:
     type: string
     format: date-time

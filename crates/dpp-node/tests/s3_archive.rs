@@ -132,6 +132,7 @@ fn make_passport() -> Passport {
     Passport {
         id: PassportId::new(),
         batch_id: None,
+        serial_number: None,
         product_name: "Test Battery".into(),
         product_group: ProductGroup::Battery,
         applicable_instruments: Vec::new(),
@@ -139,6 +140,9 @@ fn make_passport() -> Passport {
         manufacturer: ManufacturerInfo {
             name: "Test Co".into(),
             address: "Berlin, DE".into(),
+            registered_trade_name: None,
+            electronic_address: None,
+            country: None,
             did_web_url: None,
         },
         materials: vec![],
@@ -160,12 +164,14 @@ fn make_passport() -> Passport {
         retention_locked: true,
         version: 1,
         supersedes_id: None,
-        parent_passport_ref: None,
+        derived_from: Vec::new(),
         component_refs: Vec::new(),
+        life_status: None,
         retention_until: None,
         product_id: None,
         commodity_code: None,
         operator_identifier: None,
+        responsible_operator: None,
         facility: None,
         seal: None,
     }

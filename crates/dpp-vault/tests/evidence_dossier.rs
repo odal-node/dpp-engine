@@ -20,10 +20,11 @@ use dpp_dal::in_memory_repo::InMemoryPassportRepo;
 use dpp_domain::{
     DppError, GhostArchive, GhostRegistrySync, PassthroughRegistry,
     eol::{DeactivationReason, EolEvent},
+    operator::{OperatorRole, ResponsibleOperator},
     passport::{FacilitySnapshot, ManufacturerInfo, Passport, PassportId},
     product_group::ProductGroup,
     status::PassportStatus,
-    transfer::{OperatorRole, ResponsibleOperator, TransferChain, TransferReason},
+    transfer::{TransferChain, TransferReason},
 };
 use dpp_types::{
     api_key::ApiKeyScope,
@@ -213,6 +214,7 @@ fn draft_passport() -> Passport {
     Passport {
         id: PassportId::new(),
         batch_id: None,
+        serial_number: None,
         product_name: "Evidence Dossier Test Widget".into(),
         product_group: ProductGroup::Textile,
         applicable_instruments: Vec::new(),
@@ -220,6 +222,9 @@ fn draft_passport() -> Passport {
         manufacturer: ManufacturerInfo {
             name: "Evidence Test GmbH".into(),
             address: "Berlin, DE".into(),
+            registered_trade_name: None,
+            electronic_address: None,
+            country: None,
             did_web_url: None,
         },
         materials: vec![],
@@ -241,8 +246,9 @@ fn draft_passport() -> Passport {
         retention_locked: false,
         version: 1,
         supersedes_id: None,
-        parent_passport_ref: None,
+        derived_from: Vec::new(),
         component_refs: Vec::new(),
+        life_status: None,
         retention_until: None,
         product_id: None,
         commodity_code: None,
@@ -250,6 +256,7 @@ fn draft_passport() -> Passport {
         // this harness) — sidesteps the Annex III in-force completeness gate
         // regardless of whether "textile" happens to be in force.
         operator_identifier: Some("did:web:evidence-test.example.com".into()),
+        responsible_operator: None,
         facility: Some(FacilitySnapshot {
             scheme: "gln".into(),
             value: "1234567890128".into(),
@@ -305,6 +312,9 @@ async fn publish_transfer_eol_then_generate_verifies_and_persists() {
         role: OperatorRole::Distributor,
         eu_operator_id: None,
         eu_operator_id_scheme: None,
+        registered_trade_name: None,
+        postal_address: None,
+        electronic_address: None,
         country: "DE".into(),
     };
     service

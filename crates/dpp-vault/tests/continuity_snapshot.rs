@@ -198,6 +198,7 @@ fn draft_passport() -> Passport {
     Passport {
         id: PassportId::new(),
         batch_id: None,
+        serial_number: None,
         product_name: "Continuity Snapshot Widget".into(),
         product_group: ProductGroup::Textile,
         applicable_instruments: Vec::new(),
@@ -205,6 +206,9 @@ fn draft_passport() -> Passport {
         manufacturer: ManufacturerInfo {
             name: "Snapshot Test GmbH".into(),
             address: "Berlin, DE".into(),
+            registered_trade_name: None,
+            electronic_address: None,
+            country: None,
             did_web_url: None,
         },
         materials: vec![],
@@ -226,14 +230,16 @@ fn draft_passport() -> Passport {
         retention_locked: false,
         version: 1,
         supersedes_id: None,
-        parent_passport_ref: None,
+        derived_from: Vec::new(),
         component_refs: Vec::new(),
+        life_status: None,
         retention_until: None,
         product_id: None,
         commodity_code: None,
         // Set directly (no registry reader in this harness) so the Annex III /
         // Art. 13 completeness gate at publish is satisfied.
         operator_identifier: Some("did:web:snapshot-test.example.com".into()),
+        responsible_operator: None,
         facility: Some(FacilitySnapshot {
             scheme: "gln".into(),
             value: "1234567890128".into(),

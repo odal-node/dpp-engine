@@ -8,10 +8,11 @@ use dpp_registry::{EuRegistryResponse, RegistryStatusCode};
 use uuid::Uuid;
 
 use dpp_domain::DppError;
+use dpp_domain::operator::{OperatorRole, ResponsibleOperator};
 use dpp_domain::ports::registry_sync::{
     RegistrationGranularity, RegistrationRequest, RegistryStatus, RegistrySyncPort,
 };
-use dpp_domain::transfer::{OperatorRole, ResponsibleOperator, TransferReason, TransferRecord};
+use dpp_domain::transfer::{TransferReason, TransferRecord};
 
 use super::client::EuRegistrySync;
 use super::config::EuRegistrySyncConfig;
@@ -674,6 +675,9 @@ fn responsible(did: &str, name: &str, country: &str) -> ResponsibleOperator {
         role: OperatorRole::Manufacturer,
         eu_operator_id: None,
         eu_operator_id_scheme: None,
+        registered_trade_name: None,
+        postal_address: None,
+        electronic_address: None,
         country: country.to_owned(),
     }
 }

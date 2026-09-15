@@ -19,7 +19,7 @@
 
 use std::collections::{HashSet, VecDeque};
 
-use dpp_domain::passport::PassportRef;
+use dpp_domain::passport::{ComponentRef, PassportRef};
 use serde::Serialize;
 use serde_json::Value;
 
@@ -55,7 +55,7 @@ pub struct TreeReport {
 /// `component_refs`). `fetch` returns the JSON at a URL or `Err(())`; production
 /// wires the SSRF-guarded fetch, tests wire a fixture map.
 pub async fn verify_tree<F, Fut>(
-    root_refs: &[PassportRef],
+    root_refs: &[ComponentRef],
     fetch: F,
     depth_cap: usize,
     node_cap: usize,
@@ -66,8 +66,12 @@ where
 {
     let mut nodes = Vec::new();
     let mut seen: HashSet<String> = HashSet::new();
-    let mut queue: VecDeque<(PassportRef, Vec<String>)> =
-        root_refs.iter().cloned().map(|r| (r, Vec::new())).collect();
+    // Only the reference is walked: `quantity` and `role` qualify an edge, and
+    // neither changes which node is fetched or what its pin must match.
+    let mut queue: VecDeque<(PassportRef, Vec<String>)> = root_refs
+        .iter()
+        .map(|c| (c.reference.clone(), Vec::new()))
+        .collect();
     let mut fetched = 0usize;
 
     while let Some((reference, parent_path)) = queue.pop_front() {
@@ -155,8 +159,18 @@ where
     let mut malformed = Vec::new();
     if let Some(arr) = json.get("componentRefs").and_then(Value::as_array) {
         for (i, c) in arr.iter().enumerate() {
-            match serde_json::from_value::<PassportRef>(c.clone()) {
-                Ok(r) => children.push(r),
+            // Read as `ComponentRef`, whose `Deserialize` accepts both the
+            // qualified shape and the bare `PassportRef` it replaced. Reading
+            // the bare type here instead would refuse every entry a node on the
+            // current shape publishes — and a rejected entry is reported as
+            // `MalformedRef`, which grades as an integrity violation. This
+            // passport belongs to another operator and is signed, so it cannot
+            // be rewritten to suit us: the node would be accusing a correct,
+            // unforgeable document of tampering over a version difference.
+            // Nodes here are independent per-operator deployments, so that skew
+            // is the steady state rather than a migration window.
+            match serde_json::from_value::<ComponentRef>(c.clone()) {
+                Ok(r) => children.push(r.reference),
                 Err(_) => malformed.push(i),
             }
         }
@@ -184,11 +198,64 @@ mod tests {
         serde_json::json!({ "publicJwsSignature": jws, "componentRefs": refs })
     }
 
-    fn r(uri: &str, jws: &str) -> PassportRef {
-        PassportRef {
-            uri: uri.to_string(),
-            public_jws_hash: pin(jws),
+    fn r(uri: &str, jws: &str) -> ComponentRef {
+        ComponentRef {
+            reference: PassportRef {
+                uri: uri.to_string(),
+                public_jws_hash: pin(jws),
+            },
+            quantity: None,
+            role: None,
         }
+    }
+
+    /// The same node, publishing `componentRefs` in the **qualified** shape.
+    ///
+    /// `node_json` above emits the bare shape this type replaced, so between the
+    /// two every walk is exercised against both forms a peer may serve.
+    fn node_json_qualified(jws: &str, children: &[(&str, &str)]) -> Value {
+        let refs: Vec<Value> = children
+            .iter()
+            .map(|(uri, cjws)| {
+                serde_json::json!({
+                    "reference": { "uri": uri, "publicJwsHash": pin(cjws) },
+                    "quantity": { "value": 2.0, "unit": "kg" },
+                    "role": "cell",
+                })
+            })
+            .collect();
+        serde_json::json!({ "publicJwsSignature": jws, "componentRefs": refs })
+    }
+
+    /// A peer serving the qualified shape is walked, not accused of tampering.
+    ///
+    /// The reader here used to be `PassportRef`, which cannot parse a qualified
+    /// entry — every child came back `MalformedRef`, which this report grades as
+    /// an integrity violation. Those passports belong to other operators and are
+    /// signed, so they cannot be rewritten to suit this node: it would have gone
+    /// on reporting correct, unforgeable documents as broken for as long as they
+    /// existed. Asserting `verified` alone would pass on an empty walk, so the
+    /// node count is checked too — the child has to actually be followed.
+    #[tokio::test]
+    async fn a_qualified_component_ref_is_followed_not_called_malformed() {
+        let map = HashMap::from([
+            (
+                "u://c1".into(),
+                node_json_qualified("c1sig", &[("u://leaf", "leafsig")]),
+            ),
+            ("u://leaf".into(), node_json("leafsig", &[])),
+        ]);
+        let report = verify_tree(&[r("u://c1", "c1sig")], fetcher(map), 6, DEFAULT_NODE_CAP).await;
+        assert!(
+            report.verified,
+            "a qualified componentRefs entry must verify: {:?}",
+            report.nodes
+        );
+        assert_eq!(
+            report.nodes.len(),
+            2,
+            "the child must be walked, not skipped"
+        );
     }
 
     fn fetcher(map: HashMap<String, Value>) -> impl Fn(String) -> Ready<Result<Value, ()>> {

@@ -71,8 +71,8 @@ pub fn validate_battery_row(
     let product_name = require_str(row, "productName", row_num, &mut errors);
     let gtin_raw = require_str(row, "gtin", row_num, &mut errors);
     let batch_id = require_str(row, "batchId", row_num, &mut errors);
-    // Manufacturer headers vary across templates (camelCase vs snake_case, and
-    // `manufacturerCountry` vs a full `manufacturer_address`). Accept all aliases.
+    // Manufacturer headers vary across templates in casing (camelCase vs
+    // snake_case), so each group below accepts both spellings.
     let manufacturer_name = require_aliased(
         row,
         &["manufacturerName", "manufacturer_name"],
@@ -80,18 +80,25 @@ pub fn validate_battery_row(
         row_num,
         &mut errors,
     );
-    let manufacturer_address = require_aliased(
-        row,
-        &[
-            "manufacturerCountry",
-            "manufacturerAddress",
-            "manufacturer_country",
-            "manufacturer_address",
-        ],
-        "manufacturerCountry",
-        row_num,
-        &mut errors,
-    );
+    // Read as two groups rather than one merged alias list. The headers mean
+    // different things — `manufacturerCountry` states a country, and
+    // `manufacturerAddress` a postal address — and merging them meant a row's
+    // value landed in `address` with nothing downstream able to tell which of
+    // the two it held. `ManufacturerInfo::country` is the field that can be
+    // checked against ISO 3166-1, so the distinction has somewhere to go.
+    let manufacturer_country =
+        aliased(row, &["manufacturerCountry", "manufacturer_country"]).cloned();
+    let manufacturer_postal =
+        aliased(row, &["manufacturerAddress", "manufacturer_address"]).cloned();
+    // Still one required field between them, reported under the same canonical
+    // name as before, so a template that supplies either keeps importing.
+    if manufacturer_country.is_none() && manufacturer_postal.is_none() {
+        errors.push(RowError {
+            row: row_num,
+            field: "manufacturerCountry".to_owned(),
+            message: "manufacturerCountry is required".to_owned(),
+        });
+    }
     let did_web_url = aliased(
         row,
         &[
@@ -345,8 +352,16 @@ pub fn validate_battery_row(
         manufacturer: ManufacturerInfo {
             name: manufacturer_name
                 .expect("field verified present by errors.is_empty() guard above"),
-            address: manufacturer_address
+            // A real postal address when the row carried one, otherwise the
+            // country, which is what this field held for every battery row
+            // before `country` existed. `address` is required and the create
+            // route refuses an empty one, so it is never left blank.
+            address: manufacturer_postal
+                .or_else(|| manufacturer_country.clone())
                 .expect("field verified present by errors.is_empty() guard above"),
+            registered_trade_name: None,
+            electronic_address: None,
+            country: manufacturer_country,
             did_web_url,
         },
         materials: (!materials.is_empty()).then_some(materials),
@@ -364,7 +379,7 @@ pub fn validate_battery_row(
         // referenced passport's public signature, and a hash cannot be authored
         // by hand — an invented one produces a link that fails verification.
         // Absent because the format cannot carry them, not by oversight.
-        parent_passport_ref: None,
+        derived_from: Vec::new(),
         component_refs: Vec::new(),
     })
 }
@@ -400,6 +415,13 @@ mod tests {
         let row = battery_row();
         let req = validate_battery_row(&row, 1).expect("valid row should succeed");
         assert_eq!(req.product_name, "EV Battery 48V");
+        // This template supplies a country header and no postal address, so the
+        // country reaches the field that can be checked against ISO 3166-1.
+        // `address` keeps carrying it too: it is required, the create route
+        // refuses an empty one, and this template has nothing better to put
+        // there.
+        assert_eq!(req.manufacturer.country.as_deref(), Some("DE"));
+        assert_eq!(req.manufacturer.address, "DE");
         assert_eq!(req.product_group, Some(ProductGroup::Battery));
         match req.product_group_data.unwrap() {
             ProductGroupData::Battery(b) => {
@@ -478,6 +500,11 @@ mod tests {
         // Manufacturer aliases resolved (snake_case + full address + did:web).
         assert_eq!(req.manufacturer.name, "GreenCell GmbH");
         assert!(req.manufacturer.address.contains("Berlin"));
+        // A postal-address header states an address and not a country, so
+        // nothing is invented for `country` — the whole point of reading the two
+        // header groups apart. Asserting `address` alone would pass either way,
+        // since it falls back to the country when no address is supplied.
+        assert_eq!(req.manufacturer.country, None);
         assert_eq!(
             req.manufacturer.did_web_url.as_deref(),
             Some("https://greencell.example/.well-known/did.json")

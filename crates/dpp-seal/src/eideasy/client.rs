@@ -197,6 +197,14 @@ impl SealBackend for EideasyClient {
             format: SealFormat::Cades,
             seal_value,
             signing_cert_ref,
+            // What was **asked for**, which is what this field records — not what
+            // the bytes turned out to carry. `QtspSealAdapter` checks
+            // `SealCapabilities::can_produce` before dispatching, and this
+            // adapter advertises exactly `level_for_profile(signature_profile)`,
+            // so reaching here means the request named the profile's own level.
+            // The independent reading lives in `cades::evidenced_level`, and the
+            // two disagreeing is the downgrade the drain alarms on.
+            conformance_level: Some(req.conformance_level),
             sealed_at: Utc::now(),
             placeholder: false,
         })

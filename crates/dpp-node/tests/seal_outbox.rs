@@ -157,6 +157,7 @@ fn draft_passport() -> Passport {
     Passport {
         id: PassportId::new(),
         batch_id: Some("LOT-SEAL-SIM-1".into()),
+        serial_number: None,
         product_name: "Seal Simulation Battery".into(),
         product_group: ProductGroup::Battery,
         applicable_instruments: Vec::new(),
@@ -164,6 +165,9 @@ fn draft_passport() -> Passport {
         manufacturer: ManufacturerInfo {
             name: "Odal Simulation GmbH".into(),
             address: "Skopje, MK".into(),
+            registered_trade_name: None,
+            electronic_address: None,
+            country: None,
             did_web_url: None,
         },
         materials: vec![],
@@ -206,8 +210,9 @@ fn draft_passport() -> Passport {
         retention_locked: false,
         version: 1,
         supersedes_id: None,
-        parent_passport_ref: None,
+        derived_from: Vec::new(),
         component_refs: Vec::new(),
+        life_status: None,
         retention_until: None,
         product_id: None,
         commodity_code: None,
@@ -215,6 +220,7 @@ fn draft_passport() -> Passport {
         // registry identity. Set here because the simulation has no operator
         // config to backfill from — the gate itself is correct and stays armed.
         operator_identifier: Some("LEI:529900T8BM49AURSDO55".into()),
+        responsible_operator: None,
         facility: Some(dpp_domain::passport::FacilitySnapshot {
             scheme: "gln".into(),
             value: "4035600210708".into(),

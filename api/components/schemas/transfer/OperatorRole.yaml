@@ -5,6 +5,7 @@ enum:
   - importer
   - distributor
   - authorisedRepresentative
+  - fulfilmentServiceProvider
   - remanufacturer
   - repurposer
   - preparerForReuse

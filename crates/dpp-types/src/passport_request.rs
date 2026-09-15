@@ -1,6 +1,6 @@
 //! [`CreatePassportRequest`] — the body of `POST /vault/api/v1/dpp`.
 
-use dpp_domain::passport::{ManufacturerInfo, MaterialEntry, PassportRef};
+use dpp_domain::passport::{ComponentRef, DerivationRef, ManufacturerInfo, MaterialEntry};
 use dpp_domain::product_group::{ProductGroup, ProductGroupData};
 use serde::{Deserialize, Serialize};
 
@@ -28,11 +28,11 @@ use serde::{Deserialize, Serialize};
 /// # What the importer still cannot fill
 ///
 /// Sharing the type does not mean every field arrives from a spreadsheet. A CSV
-/// column cannot express a cross-operator passport reference — `parentPassportRef`
+/// column cannot express a cross-operator passport reference — `derivedFrom`
 /// and `componentRefs` each carry a URI *and* a hash of the referenced passport's
 /// public signature, and inventing either would produce a link that fails
-/// verification. Those stay `None`/empty on the import path, and that is a
-/// property of CSV, not an oversight.
+/// verification. Those stay empty on the import path, and that is a property of
+/// CSV, not an oversight.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CreatePassportRequest {
@@ -80,14 +80,22 @@ pub struct CreatePassportRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub supersedes_id: Option<dpp_domain::passport::PassportId>,
 
-    /// Cross-operator predecessor this passport derives from (second-life
-    /// successor linkage). Shape-validated on receipt; the hash is checked
-    /// against the fetched parent at verify time.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub parent_passport_ref: Option<PassportRef>,
-    /// Cross-operator references to this product's constituent passports (its
-    /// bill of materials). Shape-validated on receipt; local cycles and
-    /// over-depth are refused by the service.
+    /// Cross-operator predecessors this passport derives from (second-life
+    /// successor linkage), each naming the Art. 77(7) operation that produced
+    /// this unit from it. Shape-validated on receipt; the hash is checked
+    /// against the fetched predecessor at verify time.
+    ///
+    /// A list, and not the single `parentPassportRef` it replaces, because
+    /// Art. 77(7) is plural on both sides — one second-life unit may derive from
+    /// several predecessors. The operation is required per entry: the article
+    /// attaches different consequences to each, so an edge that does not say
+    /// which one occurred records less than it asks for.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub component_refs: Vec<PassportRef>,
+    pub derived_from: Vec<DerivationRef>,
+    /// Cross-operator references to this product's constituent passports (its
+    /// bill of materials), each optionally qualified by how much of it the
+    /// assembly contains and in what role. Shape-validated on receipt; local
+    /// cycles and over-depth are refused by the service.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub component_refs: Vec<ComponentRef>,
 }

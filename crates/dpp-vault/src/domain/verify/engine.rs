@@ -619,10 +619,9 @@ mod tests {
 
     #[test]
     fn tampered_transfer_signature_flips_only_transfer_chain() {
+        use dpp_domain::operator::{OperatorRole, ResponsibleOperator};
         use dpp_domain::passport::PassportId;
-        use dpp_domain::transfer::{
-            OperatorRole, ResponsibleOperator, TransferChain, TransferReason, TransferRecord,
-        };
+        use dpp_domain::transfer::{TransferChain, TransferReason, TransferRecord};
 
         let signing_key = SigningKey::from_bytes(&[9u8; 32]);
         let from_key = SigningKey::from_bytes(&[3u8; 32]);
@@ -635,6 +634,9 @@ mod tests {
             role: OperatorRole::Distributor,
             eu_operator_id: None,
             eu_operator_id_scheme: None,
+            registered_trade_name: None,
+            postal_address: None,
+            electronic_address: None,
             country: "DE".into(),
         };
         let mut record = TransferRecord {
@@ -742,10 +744,9 @@ mod tests {
         // an unknown field inside it parses fine and is silently dropped by
         // serde. `deny_unknown_fields` on our own types can't catch this;
         // `input_fidelity` must.
+        use dpp_domain::operator::{OperatorRole, ResponsibleOperator};
         use dpp_domain::passport::PassportId;
-        use dpp_domain::transfer::{
-            OperatorRole, ResponsibleOperator, TransferChain, TransferReason, TransferRecord,
-        };
+        use dpp_domain::transfer::{TransferChain, TransferReason, TransferRecord};
 
         let signing_key = SigningKey::from_bytes(&[9u8; 32]);
         let mut dossier = valid_dossier(&signing_key);
@@ -755,6 +756,9 @@ mod tests {
             role: OperatorRole::Distributor,
             eu_operator_id: None,
             eu_operator_id_scheme: None,
+            registered_trade_name: None,
+            postal_address: None,
+            electronic_address: None,
             country: "DE".into(),
         };
         let record = TransferRecord {

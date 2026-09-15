@@ -320,6 +320,8 @@ async fn verify_refuses_rather_than_guessing() {
         format: SealFormat::Cades,
         seal_value: MOCK_P7S.into(),
         signing_cert_ref: None,
+        // Not recorded: this fixture asserts nothing about the level.
+        conformance_level: None,
         sealed_at: chrono::Utc::now(),
         placeholder: false,
     };

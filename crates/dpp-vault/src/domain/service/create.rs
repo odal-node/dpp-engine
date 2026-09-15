@@ -10,7 +10,7 @@ use std::collections::HashSet;
 use dpp_domain::{
     error::DppError,
     graph::{ComponentEdges, DEFAULT_DEPTH_CAP, EdgeRejection, check_edge},
-    passport::{Passport, PassportId, PassportRef},
+    passport::{ComponentRef, Passport, PassportId},
     ports::compliance::ComplianceRegistry,
     product_group::{CarbonFootprint, ProductGroupData, RepairabilityScore},
     status::PassportStatus,
@@ -221,7 +221,7 @@ impl PassportService {
             let children: Vec<PassportId> = p
                 .component_refs
                 .iter()
-                .filter_map(|r| local_component_id(&r.uri))
+                .filter_map(|r| local_component_id(&r.reference.uri))
                 .collect();
             for &c in &children {
                 stack.push(c);
@@ -237,11 +237,11 @@ impl PassportService {
     async fn guard_component_graph(
         &self,
         parent: PassportId,
-        component_refs: &[PassportRef],
+        component_refs: &[ComponentRef],
     ) -> Result<(), DppError> {
         let local_children: Vec<PassportId> = component_refs
             .iter()
-            .filter_map(|r| local_component_id(&r.uri))
+            .filter_map(|r| local_component_id(&r.reference.uri))
             .collect();
         if local_children.is_empty() {
             return Ok(());
@@ -422,7 +422,7 @@ pub(super) fn apply_patch(
         applied.push("productGroupData");
     }
     if let Some(v) = obj.get("componentRefs") {
-        let refs: Vec<PassportRef> = serde_json::from_value(v.clone())
+        let refs: Vec<ComponentRef> = serde_json::from_value(v.clone())
             .map_err(|e| DppError::Validation(format!("invalid componentRefs: {e}").into()))?;
         // Same shape check the create path applies: every ref is fetched
         // cross-operator at verify time, so an `http` or internal URI is a
@@ -440,7 +440,20 @@ pub(super) fn apply_patch(
 
 /// `https` + the SSRF shape guard on the URI, and a lowercase-hex SHA-256 pin —
 /// the create path's `validate_passport_ref`, applied on update too.
-fn validate_component_ref(r: &PassportRef, index: usize) -> Result<(), String> {
+pub(crate) fn validate_component_ref(c: &ComponentRef, index: usize) -> Result<(), String> {
+    // A quantity is a number that ends up in the signed publish payload, and
+    // `serde_json` refuses to serialise a non-finite one — so an unchecked NaN
+    // or infinity arrives here quietly and fails much later, at publish, with an
+    // error that names serialisation rather than the field that caused it. A
+    // negative amount of a constituent is not a thing an assembly can contain.
+    if let Some(q) = &c.quantity
+        && (!q.value.is_finite() || q.value < 0.0)
+    {
+        return Err(format!(
+            "componentRefs[{index}].quantity.value must be a finite, non-negative number"
+        ));
+    }
+    let r = &c.reference;
     dpp_common::url_guard::validate_public_https_url(&r.uri)
         .map_err(|e| format!("componentRefs[{index}].uri: {e}"))?;
     let pin = &r.public_jws_hash;
@@ -473,6 +486,7 @@ mod tests {
         Passport {
             id: PassportId::new(),
             batch_id: None,
+            serial_number: None,
             product_name: "Test".into(),
             product_group: ProductGroup::Battery,
             applicable_instruments: Vec::new(),
@@ -480,6 +494,9 @@ mod tests {
             manufacturer: ManufacturerInfo {
                 name: "ACME".into(),
                 address: "1 Street".into(),
+                registered_trade_name: None,
+                electronic_address: None,
+                country: None,
                 did_web_url: None,
             },
             materials: vec![],
@@ -501,12 +518,14 @@ mod tests {
             retention_locked: false,
             version: 1,
             supersedes_id: None,
-            parent_passport_ref: None,
+            derived_from: Vec::new(),
             component_refs: Vec::new(),
+            life_status: None,
             retention_until: None,
             product_id: None,
             commodity_code: None,
             operator_identifier: None,
+            responsible_operator: None,
             facility: None,
             seal: None,
         }

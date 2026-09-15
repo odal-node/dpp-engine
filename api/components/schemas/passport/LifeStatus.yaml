@@ -1,0 +1,20 @@
+type: string
+description: >-
+  Where a unit sits in its product life — original, or the second-life operation
+  that produced it, or waste. Regulation (EU) 2023/1542, Annex XIII point 4(c).
+
+  Orthogonal to `status`, which is the passport record's own lifecycle
+  (draft/published/…). A published passport can be `waste`; a draft cannot be
+  `superseded`.
+
+  Not derived from `derivedFrom`. Art. 77(7) permits several predecessors with
+  nothing forcing them to share an operation, so a unit built from one
+  repurposed and one remanufactured predecessor has no unambiguous derived
+  status. The claim is stored and then checked: at least one derivation edge
+  must support it.
+enum:
+  - original
+  - repurposed
+  - re-used
+  - remanufactured
+  - waste

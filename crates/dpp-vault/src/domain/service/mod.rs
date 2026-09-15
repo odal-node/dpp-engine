@@ -21,6 +21,9 @@
 
 mod amend;
 mod create;
+/// The component-reference rule, shared with the create handler so the two
+/// entry points cannot drift apart on what a valid BOM entry is.
+pub(crate) use create::validate_component_ref;
 mod eol;
 mod evidence;
 mod lifecycle;
@@ -417,6 +420,7 @@ mod snapshot_render_tests {
         Passport {
             id: PassportId::new(),
             batch_id: None,
+            serial_number: None,
             product_name: "Snapshot Test".into(),
             product_group: ProductGroup::Battery,
             applicable_instruments: Vec::new(),
@@ -424,6 +428,9 @@ mod snapshot_render_tests {
             manufacturer: ManufacturerInfo {
                 name: "ACME".into(),
                 address: "1 Street".into(),
+                registered_trade_name: None,
+                electronic_address: None,
+                country: None,
                 did_web_url: None,
             },
             materials: vec![],
@@ -445,12 +452,14 @@ mod snapshot_render_tests {
             retention_locked: true,
             version: 1,
             supersedes_id: None,
-            parent_passport_ref: None,
+            derived_from: Vec::new(),
             component_refs: Vec::new(),
+            life_status: None,
             retention_until: None,
             product_id: None,
             commodity_code: None,
             operator_identifier: None,
+            responsible_operator: None,
             facility: None,
             seal: None,
         }

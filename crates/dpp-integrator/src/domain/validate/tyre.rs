@@ -76,8 +76,18 @@ pub fn validate_tyre_row(
         manufacturer: ManufacturerInfo {
             name: manufacturer_name
                 .expect("field verified present by errors.is_empty() guard above"),
+            // This template collects a country and no postal address, so
+            // `address` carries the country — as it did before `country`
+            // existed. Kept populated because `address` is required and the
+            // create route refuses an empty one; the gap is the template's, not
+            // this mapping's. The country now also reaches the field that can
+            // actually be checked against ISO 3166-1.
             address: manufacturer_country
+                .clone()
                 .expect("field verified present by errors.is_empty() guard above"),
+            registered_trade_name: None,
+            electronic_address: None,
+            country: manufacturer_country,
             did_web_url: None,
         },
         materials: None,
@@ -109,7 +119,7 @@ pub fn validate_tyre_row(
         // referenced passport's public signature, and a hash cannot be authored
         // by hand — an invented one produces a link that fails verification.
         // Absent because the format cannot carry them, not by oversight.
-        parent_passport_ref: None,
+        derived_from: Vec::new(),
         component_refs: Vec::new(),
     })
 }

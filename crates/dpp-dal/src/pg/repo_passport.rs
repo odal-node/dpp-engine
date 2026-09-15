@@ -36,35 +36,41 @@ use super::{PgDal, db_err};
 ///
 /// This backend overrides `patch_fields`, so it does not inherit core's default
 /// guard — but it still owes callers that guard's contract. It therefore reads
-/// `dpp_domain::PROTECTED_PATCH_FIELDS` and applies exactly the two divergences
+/// `dpp_domain::PROTECTED_PATCH_FIELDS` and applies exactly the divergences
 /// declared below, rather than keeping a second list.
 ///
 /// It used to keep one, and that list fell **three entries short** of core's:
-/// `operatorIdentifier`, `facility` and `parentPassportRef` were protected by
-/// core and not here, which on PostgreSQL — the only backend that ships — made
-/// them writable through `PUT /dpp/{id}` and carried them into the signed
-/// publish payload. A second list is a second thing to keep right, and nothing
-/// was keeping it right: the one test covering this path asserted two keys, both
-/// of which were in both lists the whole time.
+/// `operatorIdentifier`, `facility` and the lineage edge then called
+/// `parentPassportRef` were protected by core and not here, which on
+/// PostgreSQL — the only backend that ships — made them writable through
+/// `PUT /dpp/{id}` and carried them into the signed publish payload. A second
+/// list is a second thing to keep right, and nothing was keeping it right: the
+/// one test covering this path asserted two keys, both of which were in both
+/// lists the whole time.
 ///
-/// The two divergences, and why each is deliberate:
+/// The one divergence, and why it is deliberate:
 ///
-/// - **`product_group` is added here.** It backs a real scalar column that this JSONB
-///   merge does not rewrite, so patching it in the doc would desync the two.
-///   Core has no column to protect.
 /// - **`componentRefs` is removed here.** Core protects the lineage edges
 ///   because patching them on a *published* passport would leave the served body
 ///   no longer verifying against its own signature. This path accepts drafts
 ///   only (`update` refuses any non-`Draft` status), and a draft has no
 ///   signature to break — a bill of materials is editable while it is still
 ///   being assembled, which is the point of a draft. Its *upward* sibling
-///   `parentPassportRef` stays protected, because nothing applies it: it is
-///   stamped at create and read at verify.
+///   `derivedFrom` stays protected, because nothing applies it: it is stamped at
+///   create and read at verify.
+///
+/// **`productGroup` used to be added here** and is not any more: core 0.20.0
+/// protects it directly. The local reason still holds — it backs a real scalar
+/// column this JSONB merge does not rewrite, so patching it in the doc would
+/// desync the two — it is simply no longer a *divergence*, and a declared
+/// exception that no longer excepts anything reads as a deliberate difference
+/// while being none.
 ///
 /// `protected_patch_derivation_tests` holds both halves honest — the guard must
 /// equal core's value plus/minus these entries, and an entry that no longer
 /// diverges from core must be deleted rather than left as a stale exception.
-const ADDED_HERE: [&str; 1] = ["productGroup"];
+/// That is exactly how the `productGroup` entry above came to be removed.
+const ADDED_HERE: [&str; 0] = [];
 const REMOVED_HERE: [&str; 1] = ["componentRefs"];
 
 fn is_protected_patch_field(key: &str) -> bool {

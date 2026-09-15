@@ -124,6 +124,8 @@ mod tests {
             format: dpp_domain::seal::SealFormat::Cades,
             seal_value: "p7s".into(),
             signing_cert_ref: None,
+            // Not recorded: this fixture asserts nothing about the level.
+            conformance_level: None,
             sealed_at: chrono::Utc::now(),
             placeholder: false,
         };
@@ -201,6 +203,8 @@ mod tests {
                     format: SealFormat::Cades,
                     seal_value: "p7s".into(),
                     signing_cert_ref: None,
+                    // Not recorded: this fixture asserts nothing about the level.
+                    conformance_level: None,
                     sealed_at: chrono::Utc::now(),
                     placeholder: false,
                 })

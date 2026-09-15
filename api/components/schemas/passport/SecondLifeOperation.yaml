@@ -1,0 +1,28 @@
+type: string
+description: >-
+  Which second-life operation produced a unit from a predecessor, as
+  Regulation (EU) 2023/1542 defines them.
+
+  Required on every derivation edge: Art. 77(7) attaches different legal
+  consequences to each operation, so an edge that does not say which one
+  occurred records less than the article asks for.
+enum:
+  - preparationForReuse
+  - preparationForRepurposing
+  - repurposing
+  - remanufacturing
+x-enum-descriptions:
+  preparationForReuse: >-
+    Art. 3(29) — preparing for re-use as defined in Art. 3, point (16), of
+    Directive 2008/98/EC.
+  preparationForRepurposing: >-
+    Art. 3(30) — a waste battery, or parts thereof, prepared so that it can be
+    used for a different purpose than the one it was designed for.
+  repurposing: >-
+    Art. 3(31) — a battery that is not a waste battery, or parts thereof, used
+    for a purpose other than the one it was designed for. Differs from
+    `preparationForRepurposing` by the waste status of the input.
+  remanufacturing: >-
+    Art. 3(32) — disassembly and evaluation of all cells and modules, and re-use
+    of a number of them, to restore capacity to at least 90 % of the original
+    rated capacity, for the same purpose as originally designed.

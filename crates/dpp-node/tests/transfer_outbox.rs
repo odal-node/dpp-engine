@@ -25,11 +25,12 @@ use uuid::Uuid;
 use dpp_dal::pg::{PgDal, PgPassportRepo, PgRegistryTransferRepo, sqlx};
 use dpp_dal::test_harness::start_pg;
 use dpp_domain::{
+    operator::{OperatorRole, ResponsibleOperator},
     passport::{ManufacturerInfo, Passport, PassportId},
     ports::passport_repo::PassportRepository,
     product_group::ProductGroup,
     status::PassportStatus,
-    transfer::{OperatorRole, ResponsibleOperator, TransferChain, TransferReason, TransferRecord},
+    transfer::{TransferChain, TransferReason, TransferRecord},
 };
 use dpp_types::{RegistryTransferOutbox, RegistryTransferStatus};
 
@@ -39,6 +40,7 @@ fn published_passport() -> Passport {
     Passport {
         id: PassportId::new(),
         batch_id: None,
+        serial_number: None,
         product_name: "Transferred Battery".into(),
         product_group: ProductGroup::Battery,
         applicable_instruments: Vec::new(),
@@ -46,6 +48,9 @@ fn published_passport() -> Passport {
         manufacturer: ManufacturerInfo {
             name: "TestCorp GmbH".into(),
             address: "Berlin, DE".into(),
+            registered_trade_name: None,
+            electronic_address: None,
+            country: None,
             did_web_url: None,
         },
         materials: vec![],
@@ -67,12 +72,14 @@ fn published_passport() -> Passport {
         retention_locked: false,
         version: 1,
         supersedes_id: None,
-        parent_passport_ref: None,
+        derived_from: Vec::new(),
         component_refs: Vec::new(),
+        life_status: None,
         retention_until: None,
         product_id: None,
         commodity_code: None,
         operator_identifier: Some("did:web:test.example".into()),
+        responsible_operator: None,
         facility: None,
         seal: None,
     }
@@ -85,6 +92,9 @@ fn operator(did: &str, name: &str) -> ResponsibleOperator {
         role: OperatorRole::Manufacturer,
         eu_operator_id: None,
         eu_operator_id_scheme: None,
+        registered_trade_name: None,
+        postal_address: None,
+        electronic_address: None,
         country: "DE".to_owned(),
     }
 }

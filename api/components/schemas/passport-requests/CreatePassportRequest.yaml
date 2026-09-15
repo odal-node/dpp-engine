@@ -87,16 +87,24 @@ properties:
       in either case, so a differing declaration is already false about the
       body it accompanies.
     example: 2.6.0
-  parentPassportRef:
-    $ref: ../passport/PassportRef.yaml
+  derivedFrom:
+    type: array
+    items:
+      $ref: ../passport/DerivationRef.yaml
+    description: >-
+      Cross-operator predecessors this passport derives from (second-life
+      successor linkage), each naming the operation that produced this unit from
+      it. A list rather than the single `parentPassportRef` it replaces, because
+      Regulation (EU) 2023/1542 Art. 77(7) permits several predecessors.
   componentRefs:
     type: array
     items:
-      $ref: ../passport/PassportRef.yaml
+      $ref: ../passport/ComponentRef.yaml
     description: >-
       Cross-operator references to this product's constituent passports (its
-      bill of materials). Local cycles / over-depth are refused at
-      create/update; immutable after publish.
+      bill of materials), each optionally qualified by how much and in what
+      role. Local cycles / over-depth are refused at create/update; immutable
+      after publish.
   commodityCode:
     type: string
     description: >-

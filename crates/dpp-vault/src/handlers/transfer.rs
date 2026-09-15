@@ -7,7 +7,8 @@ use axum::{
     http::StatusCode,
     response::IntoResponse,
 };
-use dpp_domain::transfer::{ResponsibleOperator, TransferReason};
+use dpp_domain::operator::ResponsibleOperator;
+use dpp_domain::transfer::TransferReason;
 use serde::{Deserialize, Serialize};
 
 use crate::{middleware::auth::AuthContext, state::AppState};

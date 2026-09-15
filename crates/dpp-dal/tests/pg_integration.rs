@@ -52,6 +52,7 @@ fn make_passport() -> Passport {
     Passport {
         id: PassportId::new(),
         batch_id: Some("LOT-PG-1".into()),
+        serial_number: None,
         product_name: "PG Parity Battery".into(),
         product_group: ProductGroup::Battery,
         applicable_instruments: Vec::new(),
@@ -59,6 +60,9 @@ fn make_passport() -> Passport {
         manufacturer: ManufacturerInfo {
             name: "TestCorp GmbH".into(),
             address: "Berlin, DE".into(),
+            registered_trade_name: None,
+            electronic_address: None,
+            country: None,
             did_web_url: None,
         },
         materials: vec![],
@@ -80,12 +84,14 @@ fn make_passport() -> Passport {
         retention_locked: false,
         version: 1,
         supersedes_id: None,
-        parent_passport_ref: None,
+        derived_from: Vec::new(),
         component_refs: Vec::new(),
+        life_status: None,
         retention_until: None,
         product_id: None,
         commodity_code: None,
         operator_identifier: None,
+        responsible_operator: None,
         facility: None,
         seal: None,
     }

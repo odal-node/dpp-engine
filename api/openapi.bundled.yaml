@@ -3905,6 +3905,15 @@ components:
           type:
             - string
             - 'null'
+        serialNumber:
+          type:
+            - string
+            - 'null'
+          description: |-
+            The serial of the physical unit this passport covers, as the manufacturer stamps or records it. Meaningful where `granularity` is `item` — "one passport per physical unit".
+            **Not the serial in the resolver URL.** A GS1 Digital Link carrier is `/01/{gtin}/21/{serial}` and AI 21 is a serial number, but the value there is derived from this passport's own UUID to fit GS1's length cap. That value identifies the *record*; this identifies the *product*, and nothing reconciles the two.
+            Absent means not stated.
+          example: NW-48V-000123
         productName:
           type: string
           example: EcoCell Pro 48V
@@ -4007,15 +4016,22 @@ components:
           allOf:
             - $ref: '#/components/schemas/DppId'
           description: The passport this record supersedes. Absent for first versions.
-        parentPassportRef:
-          allOf:
-            - $ref: '#/components/schemas/PassportRef'
-          description: Cross-operator reference to the predecessor this passport derives from (second-life successor linkage).
+        derivedFrom:
+          type: array
+          description: |-
+            Cross-operator references to the predecessors this passport derives from (second-life successor linkage), each naming the operation that produced this unit from it.
+            A list rather than the single `parentPassportRef` it replaces: Regulation (EU) 2023/1542 Art. 77(7) is plural on both sides — "linked to the battery passport or passports of the original battery or batteries" — so one second-life unit may derive from several predecessors.
+          items:
+            $ref: '#/components/schemas/DerivationRef'
         componentRefs:
           type: array
-          description: 'Cross-operator references to the constituent passports this product is assembled from — its bill of materials. The inverse edge of `parentPassportRef`: these point down to many constituents, that points up to one predecessor.'
+          description: |-
+            Cross-operator references to the constituent passports this product is assembled from — its bill of materials, each qualified by how much and in what role. The inverse edge of `derivedFrom`: these point down to the constituents, those point up to the predecessors.
+            Distinct from `materials`, which lists substances by weight. These point at other products that have passports of their own.
           items:
-            $ref: '#/components/schemas/PassportRef'
+            $ref: '#/components/schemas/ComponentRef'
+        lifeStatus:
+          $ref: '#/components/schemas/LifeStatus'
         retentionUntil:
           type: string
           format: date-time
@@ -4032,6 +4048,10 @@ components:
           type: string
           description: 'EORI or national economic-operator identifier for the responsible party (Regulation (EU) 2024/1781 Annex III(k); issuance mechanics in Art. 12). **Frozen at publish — this is the operator that published the passport, not necessarily the one responsible for it now.** A transfer of responsibility does not rewrite it and cannot: published content is immutable and covered by the signature over it. For current responsibility, read the transfer chain.'
           example: DE123456789
+        responsibleOperator:
+          allOf:
+            - $ref: '#/components/schemas/ResponsibleOperatorSnapshot'
+          description: 'Who is answerable for this product and under which law (Regulation (EU) 2024/1781 Annex III(k)). Frozen at publish for the same reason as `operatorIdentifier`: published content is covered by the signature over it, so a later transfer mints a new version rather than rewriting this one.'
         facility:
           allOf:
             - $ref: '#/components/schemas/FacilitySnapshot'
@@ -4106,6 +4126,25 @@ components:
         address:
           type: string
           example: Hauptstraße 1, 10115 Berlin
+        registeredTradeName:
+          type:
+            - string
+            - 'null'
+          description: Registered trade name or trade mark, where it differs from `name`. Art. 27(6) names it separately from the legal name — "name, registered trade name or registered trade mark" — because the two routinely differ, and the one a reader holding the product sees is the trading one. Absent means not stated, including the common case where the legal name is the trading name.
+          example: Nordwerk
+        electronicAddress:
+          type:
+            - string
+            - 'null'
+          description: 'Electronic means of contact — an email address or a contact URL. Not `didWebUrl`: a DID document resolves keys, and nothing in it need be a mailbox or a form, so treating it as one would satisfy Art. 27(6) on paper while leaving a reader with no way to reach anybody.'
+          example: compliance@nordwerk.example
+        country:
+          type:
+            - string
+            - 'null'
+          pattern: ^[A-Z]{2}$
+          description: 'ISO 3166-1 alpha-2 country of the manufacturer, upper case. Structural rather than descriptive: whether an operator is established in the Union separates a manufacturer from an importer or an authorised representative, and that decides who carries the passport obligation. Before this field existed the country was written into `address`, where nothing downstream could tell it apart from a postal address. Absent means not stated — never stateless.'
+          example: DE
         didWebUrl:
           type: string
           format: uri
@@ -4212,6 +4251,85 @@ components:
           type: string
           pattern: ^[0-9a-f]{64}$
           description: Lowercase hex SHA-256 of the referenced passport's public JWS.
+    Quantity:
+      type: object
+      required:
+        - value
+      description: How much of a constituent an assembly contains.
+      properties:
+        value:
+          type: number
+          minimum: 0
+          description: The amount, in `unit`. Refused on create and update when it is negative or not finite — a non-finite number cannot be serialised into the signed publish payload, so an unchecked one fails much later with an error that names serialisation rather than the field that caused it.
+          example: 2
+        unit:
+          type:
+            - string
+            - 'null'
+          description: The unit `value` is expressed in. A free string because the vocabulary is the product group's to define, not the passport envelope's. Absent where the declaring operator stated a bare count.
+          example: kg
+    ComponentRef:
+      type: object
+      required:
+        - reference
+      description: |-
+        One entry in a bill of materials: a cross-operator reference to a constituent passport, qualified by how much of it the assembly contains and in what role.
+        Readers must also accept the earlier shape this replaced — a bare `PassportRef` (`uri` and `publicJwsHash` at the top level, with no `reference` key). The two are disjoint, so accepting both requires no guessing. The tolerance is not optional: `componentRefs` is part of the **signed public view** that other operators' nodes fetch, those passports are signed and cannot be rewritten by anyone, and a reader that refuses the older shape reports a correct, unforgeable document as a malformed reference — which verification grades as an integrity violation. Nodes are independent per-operator deployments, so version skew is the steady state rather than a migration window. Writers emit only this shape.
+      properties:
+        reference:
+          allOf:
+            - $ref: '#/components/schemas/PassportRef'
+          description: Where to fetch the constituent's passport, and the hash pinning its signed public view.
+        quantity:
+          allOf:
+            - $ref: '#/components/schemas/Quantity'
+          description: How much of this constituent the assembly contains. Absent where the declaring operator did not state one.
+        role:
+          type:
+            - string
+            - 'null'
+          description: What part this constituent plays, in whatever terms the product group uses — "cell", "outer shell", "warp yarn". A free string because the vocabulary is the product group's to define.
+          example: cell
+    SecondLifeOperation:
+      type: string
+      description: |-
+        Which second-life operation produced a unit from a predecessor, as Regulation (EU) 2023/1542 defines them.
+        Required on every derivation edge: Art. 77(7) attaches different legal consequences to each operation, so an edge that does not say which one occurred records less than the article asks for.
+      enum:
+        - preparationForReuse
+        - preparationForRepurposing
+        - repurposing
+        - remanufacturing
+      x-enum-descriptions:
+        preparationForReuse: Art. 3(29) — preparing for re-use as defined in Art. 3, point (16), of Directive 2008/98/EC.
+        preparationForRepurposing: Art. 3(30) — a waste battery, or parts thereof, prepared so that it can be used for a different purpose than the one it was designed for.
+        repurposing: Art. 3(31) — a battery that is not a waste battery, or parts thereof, used for a purpose other than the one it was designed for. Differs from `preparationForRepurposing` by the waste status of the input.
+        remanufacturing: Art. 3(32) — disassembly and evaluation of all cells and modules, and re-use of a number of them, to restore capacity to at least 90 % of the original rated capacity, for the same purpose as originally designed.
+    DerivationRef:
+      type: object
+      required:
+        - reference
+        - operation
+      description: One predecessor a second-life unit derives from, and the operation that produced this unit from it.
+      properties:
+        reference:
+          allOf:
+            - $ref: '#/components/schemas/PassportRef'
+          description: Where to fetch the predecessor's passport, and the hash pinning its signed public view.
+        operation:
+          $ref: '#/components/schemas/SecondLifeOperation'
+    LifeStatus:
+      type: string
+      description: |-
+        Where a unit sits in its product life — original, or the second-life operation that produced it, or waste. Regulation (EU) 2023/1542, Annex XIII point 4(c).
+        Orthogonal to `status`, which is the passport record's own lifecycle (draft/published/…). A published passport can be `waste`; a draft cannot be `superseded`.
+        Not derived from `derivedFrom`. Art. 77(7) permits several predecessors with nothing forcing them to share an operation, so a unit built from one repurposed and one remanufactured predecessor has no unambiguous derived status. The claim is stored and then checked: at least one derivation edge must support it.
+      enum:
+        - original
+        - repurposed
+        - re-used
+        - remanufactured
+        - waste
     CarbonFootprint:
       type: object
       description: A CO₂-equivalent figure with the LCA context needed to read it. A bare number is not comparable across products — the lifecycle stage and system boundary are what make two figures mean the same thing.
@@ -4449,6 +4567,13 @@ components:
         signingCertRef:
           type: string
           description: Reference to the signing certificate chain.
+        conformanceLevel:
+          allOf:
+            - $ref: '#/components/schemas/SealConformanceLevel'
+          description: |-
+            The baseline level this seal was **requested** at.
+            A record of what was asked for, not proof of what arrived — the same standing as `signingCertRef`, which names the certificate the seal claims rather than one anybody verified. What the bytes actually carry is read out of the envelope by a validator, and the two agreeing is the cross-check.
+            Absent means **not recorded** — an envelope written before this field existed, or a seal restored from a backup or produced elsewhere. It never means the level was low.
         sealedAt:
           type: string
           format: date-time
@@ -4463,6 +4588,21 @@ components:
         - PADES
         - CADES
         - XADES
+    SealConformanceLevel:
+      type: string
+      description: |-
+        How much validation material a seal carries with it — the AdES baseline levels, named as the CSC API names them. They are cumulative: each adds to the one before.
+        The level decides whether a verifier years from now can still establish that the seal was valid when it was made. A `baseline-b` seal stops verifying when its signing certificate expires, ESPR retention outlives certificate lifetimes comfortably, the seal is bought once, and the document it covers is retention-locked — so the choice cannot be corrected afterwards by re-sealing.
+      enum:
+        - baseline-b
+        - baseline-t
+        - baseline-lt
+        - baseline-lta
+      x-enum-descriptions:
+        baseline-b: '`AdES-B-B` — the signature alone. No timestamp, no validation material. Verifiable only while the signing certificate is valid and its status is still resolvable. Adequate for a short-lived attestation, not for a passport.'
+        baseline-t: '`AdES-B-T` — adds a trusted timestamp, so the signing time is established independently of the signer''s clock.'
+        baseline-lt: '`AdES-B-LT` — adds the certificates and revocation data a verifier needs, so the seal remains verifiable after the signing certificate expires. The first level that survives certificate expiry, and therefore the first that suits a retention-locked document.'
+        baseline-lta: '`AdES-B-LTA` — adds archival timestamps, extending validity past the cryptographic lifetime of the algorithms themselves.'
     CreatePassportRequest:
       type: object
       required:
@@ -4541,13 +4681,16 @@ components:
             in either case, so a differing declaration is already false about the
             body it accompanies.
           example: 2.6.0
-        parentPassportRef:
-          $ref: '#/components/schemas/PassportRef'
+        derivedFrom:
+          type: array
+          items:
+            $ref: '#/components/schemas/DerivationRef'
+          description: Cross-operator predecessors this passport derives from (second-life successor linkage), each naming the operation that produced this unit from it. A list rather than the single `parentPassportRef` it replaces, because Regulation (EU) 2023/1542 Art. 77(7) permits several predecessors.
         componentRefs:
           type: array
           items:
-            $ref: '#/components/schemas/PassportRef'
-          description: Cross-operator references to this product's constituent passports (its bill of materials). Local cycles / over-depth are refused at create/update; immutable after publish.
+            $ref: '#/components/schemas/ComponentRef'
+          description: Cross-operator references to this product's constituent passports (its bill of materials), each optionally qualified by how much and in what role. Local cycles / over-depth are refused at create/update; immutable after publish.
         commodityCode:
           type: string
           description: Customs tariff classification — HS-6, CN-8 or TARIC-10 (6, 8 or 10 digits, no separators). Registration data the EU registry verifies against the ranges its product group permits.
@@ -4688,6 +4831,8 @@ components:
         - remanufacturing
         - repurposing
         - preparationForReuse
+        - preparationForRepurposing
+        - wasteHandover
         - import
         - insolvencySuccession
     PassportListResponse:
@@ -4920,6 +5065,24 @@ components:
             - string
             - 'null'
           description: Scheme euOperatorId is expressed in — "vat", "lei", "eori", "duns".
+        registeredTradeName:
+          type:
+            - string
+            - 'null'
+          description: Registered trade name or trade mark, where it differs from `name`.
+          example: Nordwerk
+        postalAddress:
+          type:
+            - string
+            - 'null'
+          description: Postal address at which the operator can be contacted. Distinct from `country`, which is the establishment country the registry matches on.
+          example: Hauptstrasse 1, 10115 Berlin, DE
+        electronicAddress:
+          type:
+            - string
+            - 'null'
+          description: Electronic means of contact — an email address or a contact URL.
+          example: compliance@nordwerk.example
         country:
           type: string
           pattern: ^[A-Z]{2}$
@@ -4942,11 +5105,53 @@ components:
         - importer
         - distributor
         - authorisedRepresentative
+        - fulfilmentServiceProvider
         - remanufacturer
         - repurposer
         - preparerForReuse
         - repairer
         - recycler
+    ResponsibilityBasis:
+      description: |-
+        Which law makes an operator the responsible one.
+        Carried beside the operator rather than on it: the same company can be an Art. 4 responsible operator for one product and a general product-safety responsible person for another, so the basis is a property of the pairing.
+        Stated rather than inferred. Inferring it from the product group works for two groups and is a guess for every other.
+      oneOf:
+        - type: string
+          enum:
+            - marketSurveillanceArt4
+          description: Article 4 of Regulation (EU) 2019/1020 (market surveillance). Applies only to products subject to the instruments listed in Art. 4(5). The tasks are those in Art. 4(3).
+        - type: string
+          enum:
+            - generalProductSafety
+          description: Regulation (EU) 2023/988 (general product safety).
+        - type: object
+          required:
+            - otherUnionLaw
+          description: '"Similar tasks pursuant to other Union law applicable to the product" — Annex III(k)''s own catch-all.'
+          properties:
+            otherUnionLaw:
+              type: object
+              required:
+                - citation
+              properties:
+                citation:
+                  type: string
+                  description: The instrument and provision, as it would be cited. Carried because the point of this variant is that the law is not one of the two named, and a basis that cannot say which law it is says nothing at all.
+                  example: Article 7 of Regulation (EU) 2017/745
+    ResponsibleOperatorSnapshot:
+      type: object
+      required:
+        - operator
+        - basis
+      description: |-
+        Annex III(k)'s elements as the passport carries them: who is answerable for the product, and under which law.
+        A snapshot, not a live pointer. A published passport is signed, so the operator recorded in it is the one that version was issued under — a later transfer of responsibility mints a new version rather than rewriting this.
+      properties:
+        operator:
+          $ref: '#/components/schemas/ResponsibleOperator'
+        basis:
+          $ref: '#/components/schemas/ResponsibilityBasis'
     SealResponse:
       type: object
       description: The eIDAS seal, plus what is needed to check it — and an explicit statement of what this node did **not** check.
