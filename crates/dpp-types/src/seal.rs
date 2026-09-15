@@ -117,6 +117,19 @@ pub struct SealAuditReport {
     /// verdict stable: no additional validation data can lift it. That is what
     /// makes a replacement worth buying for these and for nothing else here.
     pub broken: u64,
+    /// Seals whose signature is sound and whose **certificate** was not, at the
+    /// moment they were made.
+    ///
+    /// `TOTAL-FAILED` with a certificate sub-indication — revoked before
+    /// sealing, or outside its validity window, with an attested time to prove
+    /// the order. Where nothing attests the moment, the finding is indeterminate
+    /// and the seal stays in [`Self::sound`]: a certificate that has expired
+    /// since is the ordinary state of an old seal, not a defect in it.
+    ///
+    /// Apart from `broken` because the two need opposite actions: a broken seal
+    /// is worth replacing, and one made under a revoked certificate would only
+    /// be replaced by another from the same certificate.
+    pub certificate_failed: u64,
     /// Seals this node could not read. Not a finding.
     ///
     /// `INDETERMINATE` with a custom diagnostic — the format is one this node
@@ -233,6 +246,8 @@ pub struct SealAuditProgress {
     pub superseded: u64,
     /// Broken so far.
     pub broken: u64,
+    /// Certificate-failed so far.
+    pub certificate_failed: u64,
     /// Unreadable so far.
     pub unreadable: u64,
     /// The broken passports named so far, capped by the caller.

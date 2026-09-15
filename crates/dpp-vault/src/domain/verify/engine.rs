@@ -242,7 +242,32 @@ fn qualified_seal_status(
     let expected = dpp_types::digest_for_jws(jws);
 
     match seals.binding(&envelope, &expected) {
-        dpp_types::SealBinding::CoversThisSignature => CheckStatus::Pass,
+        dpp_types::SealBinding::CoversThisSignature => {
+            // The signature holds. Whether the certificate behind it did is a
+            // separate question, and passing without asking it would put a
+            // `Pass` on a dossier whose seal was made under a certificate its CA
+            // had already revoked — the one reader of this file who cannot
+            // check that for themselves is the one it is written for.
+            //
+            // Recomputed from the envelope rather than read from the dossier's
+            // own `certificate` member: a stored finding is the generator's
+            // word, and this check exists to be independent of it.
+            let certificate = seals.certificate_standing(&envelope, chrono::Utc::now());
+            let status = dpp_types::SealValidationStatus::of(
+                &dpp_types::SealBinding::CoversThisSignature,
+                certificate.as_ref(),
+            );
+            match status.indication {
+                dpp_types::ValidationIndication::TotalFailed => CheckStatus::Fail(format!(
+                    "the seal covers this signature, and its certificate was not valid when the                      seal was made ({:?}) — ETSI EN 319 102-1 reports this as TOTAL-FAILED, and                      re-sealing would not help: the replacement would come from the same                      certificate",
+                    status.sub_indication
+                )),
+                // Everything this node checks, checked. Not a statement that the
+                // seal is qualified: no chain was validated to a trust anchor,
+                // which is what `TOTAL-PASSED` would need.
+                dpp_types::ValidationIndication::Indeterminate => CheckStatus::Pass,
+            }
+        }
         dpp_types::SealBinding::CoversAnotherDigest { covered } => CheckStatus::Fail(format!(
             "the seal covers {covered}, not the signature served with it ({expected}) — the \
              passport was most likely re-published after sealing"

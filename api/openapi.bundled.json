@@ -9209,6 +9209,7 @@
           "sound",
           "superseded",
           "broken",
+          "certificateFailed",
           "unreadable",
           "brokenPassports",
           "truncated"
@@ -9234,6 +9235,10 @@
           "broken": {
             "type": "integer",
             "description": "Seals whose own signature does not verify. **The finding.** Those passports are published and, in substance, unsealed — and invisible to `unsealedPublished`, which asks only whether a seal is present.\n\n`totalFailed` / `sigCryptoFailure`, and EN 319 102-1 makes that verdict stable: no additional validation data can lift it. That is what makes a replacement seal worth buying for these and for nothing else here — `POST /api/v1/dpp/{dppId}/seal/repair`."
+          },
+          "certificateFailed": {
+            "type": "integer",
+            "description": "Seals whose signature is sound and whose **certificate** was not, at the moment they were made — revoked before sealing, or outside its validity window, with an attested time to prove the order. `totalFailed` with a certificate sub-indication.\n\nCounted apart from `broken` because the two need opposite responses. A broken seal is worth replacing; a seal made under a revoked certificate would only be replaced by another from the same certificate, so `POST /api/v1/dpp/{dppId}/seal/repair` refuses it and says why.\n\nWhere nothing attests when the seal was made, the same observation is *indeterminate* rather than a failure and the seal stays in `sound`: a certificate that has expired since is the ordinary state of an old seal."
           },
           "unreadable": {
             "type": "integer",

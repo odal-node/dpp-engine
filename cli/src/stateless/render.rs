@@ -1056,6 +1056,19 @@ pub fn render_seal_summary(summary: &serde_json::Value) {
                     .unwrap_or(0)
             };
             let at = field(audit, "completedAt").unwrap_or_else(|| "-".to_owned());
+            // Reported on its own line rather than folded into the broken count:
+            // the two need different responses, and repair refuses this one.
+            if a("certificateFailed") > 0 {
+                println!(
+                    "Stored seals: {}  {} were made under a certificate that was not valid",
+                    style("CERTIFICATE").red().bold(),
+                    a("certificateFailed")
+                );
+                println!(
+                    "              at the time — re-sealing does not help, since the replacement"
+                );
+                println!("              would come from the same certificate");
+            }
             if a("broken") == 0 {
                 println!(
                     "Stored seals: {} checked, all verify (as of {at})",

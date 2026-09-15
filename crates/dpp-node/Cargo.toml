@@ -102,6 +102,10 @@ futures        = "0.3"
 sqlx           = { version = "0.9", default-features = false, features = ["runtime-tokio", "postgres"] }
 cms            = { version = "0.2", default-features = false }
 der            = "0.7"
+# To move a stored seal certificate's validity window into the past, which is the
+# cheapest way to produce a seal that verifies and whose certificate did not.
+# Already in the graph via `dpp-seal`.
+x509-cert      = "0.2"
 criterion      = { workspace = true }
 uuid           = { workspace = true }
 testcontainers = { workspace = true }

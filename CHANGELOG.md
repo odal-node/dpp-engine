@@ -51,6 +51,40 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ### Added
 
+- **The seal audit, the dossier verifier and the repair route now act on the
+  certificate's standing** (#329). The check existed and was served; nothing
+  decided anything with it, so a seal made under a certificate that had been
+  revoked — or had expired, with an attested time to prove it — was counted
+  `sound`, passed the dossier's `qualifiedSeal` check, and was refused by the
+  repair route with "this seal verifies".
+
+  `certificateFailed` is its own count on the audit report, its own gauge
+  (`seal_certificate_failed`) and its own line in `odal seal status`, **apart
+  from `broken`**, because the two need opposite responses: a broken seal is
+  worth replacing, and a seal made under a revoked certificate would only be
+  replaced by another from the same certificate. The repair route says exactly
+  that instead of sending the operator away satisfied.
+
+  Where nothing attests *when* the seal was made, the same observation stays
+  `indeterminate` and the seal stays in `sound` — a certificate that has expired
+  since is the ordinary state of an old seal, not a defect in it.
+
+- **A timestamp is refused when its authority's certificate could not have made
+  it** (#331). The token's signature verifies for ever and `genTime` is whatever
+  the signer wrote, so the authority's validity window is the only thing inside a
+  token that limits when it could have been produced — and nothing read it.
+
+  That mattered more after #322 than before: `judgedAt.attested` is what decides
+  whether a certificate finding is a failure or an open question, so a token
+  minted under any key at all could move an expired certificate back inside its
+  window. The imprint check binds a token to this signature; it does not stop
+  someone who can edit a stored seal from minting their own.
+
+  Both timestamp readers now apply it — the signature timestamp and the archival
+  one. **The other half is still open**: whether the authority is one anybody
+  trusts is a Trusted List question about the `TSA/QTST` service type (Art. 42),
+  which needs #324.
+
 - **A seal whose certificate chain runs out is reported as such, not as an
   unlisted provider** (#323). The third gap that issue named.
 

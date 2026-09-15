@@ -1319,6 +1319,7 @@ async fn an_audit_walk_and_its_last_report_outlive_the_process() {
             sound: 598,
             superseded: 1,
             broken: 1,
+            certificate_failed: 0,
             unreadable: 0,
             broken_passports: vec![id],
         })
@@ -1347,6 +1348,7 @@ async fn an_audit_walk_and_its_last_report_outlive_the_process() {
         sound: 1198,
         superseded: 1,
         broken: 1,
+        certificate_failed: 0,
         unreadable: 0,
         truncated: false,
         broken_passports: vec![id],
@@ -1456,4 +1458,189 @@ async fn a_walk_skips_seals_written_after_it_began() {
         "an undateable seal stays in the walk: {orphaned:?}"
     );
     assert_eq!(orphaned[0].passport_id, ids[0]);
+}
+
+/// **A seal whose certificate was not valid when it was made is found by the
+/// audit, and is not called broken.**
+///
+/// The condition #329 was filed for. The signature holds and the seal covers its
+/// passport perfectly — every count the node reports says healthy — while the
+/// certificate that made it had expired before the attested moment, which
+/// ETSI EN 319 102-1 reports as `TOTAL-FAILED`.
+///
+/// The tamper is the cheapest one that produces the state: the seal
+/// certificate's validity window is moved into the past. **The CMS signature
+/// does not break**, because it covers the signed attributes and not the
+/// certificate travelling beside them — the same asymmetry that lets a
+/// relabelled issuer through, one field along.
+///
+/// Counted apart from `broken` on purpose: a broken seal is worth replacing, and
+/// this one is not, since the replacement would come from the same certificate.
+#[tokio::test]
+async fn a_seal_made_under_an_invalid_certificate_is_found_and_not_called_broken() {
+    use der::{Decode as _, Encode as _};
+    use dpp_types::SealInspector as _;
+
+    let _pg = start_pg().await;
+    let dal = _pg.dal.clone();
+
+    let key_dir = tempfile::tempdir().expect("temp dir");
+    let store =
+        dpp_crypto::keystore::KeyStore::open(&key_dir.path().join("keystore.json"), "test-pass")
+            .expect("keystore");
+    store.generate_key("root").expect("generate key");
+    let identity = Arc::new(dpp_vc::LocalIdentityService::new(
+        Arc::new(store),
+        "root".to_owned(),
+        "seal-sim.example.com".to_owned(),
+    ));
+
+    let passport_repo = Arc::new(PgPassportRepo::new(dal.clone()));
+    let seal_outbox = Arc::new(PgSealOutboxRepo::new(dal.clone()));
+    let service = PassportService::new(
+        passport_repo.clone(),
+        identity,
+        Arc::new(dpp_domain::PassthroughRegistry::new()) as Arc<dyn ComplianceRegistry>,
+        Arc::new(PgAuditRepo::new(dal.clone())),
+        Arc::new(dpp_common::event::NoOpEventBus),
+        Arc::new(GhostRegistrySync),
+        Arc::new(GhostArchive),
+        OperatorIdentity {
+            legal_name: "Test Operator GmbH".to_owned(),
+            country: "MK".to_owned(),
+        },
+    )
+    .with_seal_outbox(seal_outbox.clone())
+    .with_seal_inspector(Arc::new(dpp_seal::CadesInspector::new()));
+
+    let draft = draft_passport();
+    let id = draft.id;
+    passport_repo.create(draft).await.expect("create draft");
+    let published = service.publish(id, &auth()).await.expect("publish");
+    let expected_digest = hex::encode(Sha256::digest(
+        published.jws_signature.as_ref().expect("signed").as_bytes(),
+    ));
+
+    let seal_dir = tempfile::tempdir().expect("temp dir");
+    let backend =
+        dpp_seal::local::LocalIdentity::load_or_create(seal_dir.path()).expect("identity");
+    let adapter: Arc<dyn SealPort> = Arc::new(QtspSealAdapter::new(backend));
+    let outbox_dyn: Arc<dyn SealOutbox> = seal_outbox.clone();
+    let key_ref = dpp_domain::seal::SealCredentialRef {
+        qtsp_id: dpp_seal::local::config::PROVIDER.to_owned(),
+        credential_id: "node".to_owned(),
+    };
+    // LTA, so the seal carries a timestamp: without an attested moment the same
+    // certificate would be `indeterminate` rather than a finding, which is the
+    // distinction the audit relies on.
+    assert_eq!(
+        drain_once(
+            &outbox_dyn,
+            &adapter,
+            &key_ref,
+            SealMode::OperatorSeal,
+            SealConformanceLevel::BaselineLta,
+            10,
+        )
+        .await
+        .sealed,
+        1
+    );
+
+    // ── Move the certificate's window into the past ─────────────────────────
+    let sound = passport_repo
+        .find_by_id(id)
+        .await
+        .unwrap()
+        .unwrap()
+        .seal
+        .expect("sealed");
+    let backdated = {
+        let bytes = BASE64.decode(&sound.seal_value).expect("base64");
+        let info = cms::content_info::ContentInfo::from_der(&bytes).expect("CMS");
+        let mut sd: cms::signed_data::SignedData = info.content.decode_as().expect("SignedData");
+        let certs = sd.certificates.as_ref().expect("a certificate");
+        let mut choices = certs.0.as_slice().to_vec();
+        let cms::cert::CertificateChoices::Certificate(cert) = &mut choices[0] else {
+            panic!("the local backend embeds an X.509 certificate");
+        };
+        let secs = |days: i64| {
+            std::time::Duration::from_secs(
+                u64::try_from(Utc::now().timestamp() - days * 86_400).expect("after 1970"),
+            )
+        };
+        cert.tbs_certificate.validity = x509_cert::time::Validity {
+            not_before: x509_cert::time::Time::GeneralTime(
+                der::asn1::GeneralizedTime::from_unix_duration(secs(730)).expect("a date"),
+            ),
+            not_after: x509_cert::time::Time::GeneralTime(
+                der::asn1::GeneralizedTime::from_unix_duration(secs(365)).expect("a date"),
+            ),
+        };
+        let mut set = der::asn1::SetOfVec::new();
+        set.insert(choices.remove(0)).expect("certificate");
+        sd.certificates = Some(cms::signed_data::CertificateSet(set));
+        BASE64.encode(
+            cms::content_info::ContentInfo {
+                content_type: info.content_type,
+                content: der::Any::encode_from(&sd).expect("encode"),
+            }
+            .to_der()
+            .expect("re-encode"),
+        )
+    };
+    sqlx::query("UPDATE odal.passport SET doc = jsonb_set(doc, '{seal,sealValue}', $1::jsonb) WHERE id = $2")
+        .bind(serde_json::to_string(&backdated).expect("json"))
+        .bind(id.0)
+        .execute(dal.pool())
+        .await
+        .expect("backdate the stored certificate");
+
+    // ── Every existing signal still says healthy ────────────────────────────
+    let inspector = dpp_seal::CadesInspector::new();
+    let stored = passport_repo
+        .find_by_id(id)
+        .await
+        .unwrap()
+        .unwrap()
+        .seal
+        .expect("sealed");
+    assert_eq!(
+        inspector.binding(&stored, &expected_digest),
+        dpp_types::SealBinding::CoversThisSignature,
+        "the signature still holds — that is what makes this invisible"
+    );
+    assert_eq!(seal_outbox.unsealed_published_count().await.unwrap(), 0);
+
+    // ── The audit sees it, and files it apart from broken ───────────────────
+    let (audit, _) =
+        dpp_node::infra::seal_drain::audit_seals_once(&outbox_dyn, &inspector, 100, None, None)
+            .await;
+    assert_eq!(
+        audit.certificate_failed, 1,
+        "the certificate was not valid at the attested moment"
+    );
+    assert_eq!(
+        audit.broken, 0,
+        "and this is not a broken seal: replacing it would buy another from the same certificate"
+    );
+    assert_eq!(audit.sound, 0, "nor is it sound");
+
+    // ── And the verdict says which, in the standard's words ─────────────────
+    let standing = inspector
+        .certificate_standing(&stored, Utc::now())
+        .expect("readable");
+    let status = dpp_types::SealValidationStatus::of(
+        &inspector.binding(&stored, &expected_digest),
+        Some(&standing),
+    );
+    assert_eq!(
+        status.indication,
+        dpp_types::ValidationIndication::TotalFailed
+    );
+    assert_eq!(
+        status.sub_indication,
+        Some(dpp_types::ValidationSubIndication::Expired),
+        "an attested time proves the seal was made after the window closed"
+    );
 }

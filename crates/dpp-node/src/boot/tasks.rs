@@ -629,6 +629,7 @@ pub fn spawn_seal_audit(
                             sound: progress.sound,
                             superseded: progress.superseded,
                             broken: progress.broken,
+                            certificate_failed: progress.certificate_failed,
                             unreadable: progress.unreadable,
                             broken_passports: progress.broken_passports,
                         };
@@ -681,6 +682,7 @@ pub fn spawn_seal_audit(
             walk.sound += audit.sound;
             walk.superseded += audit.superseded;
             walk.broken += audit.broken;
+            walk.certificate_failed += audit.certificate_failed;
             walk.unreadable += audit.unreadable;
             for id in audit.broken_passports {
                 if walk.broken_passports.len() < dpp_node::infra::seal_drain::MAX_NAMED_BROKEN {
@@ -709,12 +711,17 @@ pub fn spawn_seal_audit(
                 // counter gets `rate()` applied to it, which means nothing.
                 metrics::gauge!("seal_broken").set(walk.broken as f64);
                 metrics::gauge!("seal_unreadable").set(walk.unreadable as f64);
+                // Its own gauge, not folded into `seal_broken`: the two need
+                // different responses, and an operator alerting on one should
+                // not be woken by the other.
+                metrics::gauge!("seal_certificate_failed").set(walk.certificate_failed as f64);
                 let report = dpp_types::SealAuditReport {
                     completed_at: chrono::Utc::now(),
                     checked: walk.checked,
                     sound: walk.sound,
                     superseded: walk.superseded,
                     broken: walk.broken,
+                    certificate_failed: walk.certificate_failed,
                     unreadable: walk.unreadable,
                     truncated: (walk.broken_passports.len() as u64) < walk.broken,
                     broken_passports: walk.broken_passports.clone(),
@@ -732,6 +739,7 @@ pub fn spawn_seal_audit(
                     sound = walk.sound,
                     superseded = walk.superseded,
                     broken = walk.broken,
+                    certificate_failed = walk.certificate_failed,
                     unreadable = walk.unreadable,
                     "seal audit completed a pass over every stored seal"
                 );
@@ -748,6 +756,7 @@ pub fn spawn_seal_audit(
                         sound: walk.sound,
                         superseded: walk.superseded,
                         broken: walk.broken,
+                        certificate_failed: walk.certificate_failed,
                         unreadable: walk.unreadable,
                         broken_passports: walk.broken_passports.clone(),
                     })

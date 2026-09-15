@@ -571,6 +571,26 @@ pub async fn seal_repair_handler(
     match inspector.binding(seal, &payload_hash) {
         dpp_types::SealBinding::NotIntact => {}
         dpp_types::SealBinding::CoversThisSignature => {
+            // "Nothing to repair" is right, and on its own it is misleading for
+            // one case: a seal whose signature holds and whose *certificate* had
+            // been revoked or had expired when it was made. Something is wrong
+            // there, repair cannot fix it — a replacement would come from the
+            // same certificate — and an operator sent away with "this seal
+            // verifies" would not learn either fact.
+            let certificate = inspector.certificate_standing(seal, chrono::Utc::now());
+            let status = dpp_types::SealValidationStatus::of(
+                &dpp_types::SealBinding::CoversThisSignature,
+                certificate.as_ref(),
+            );
+            if status.indication == dpp_types::ValidationIndication::TotalFailed {
+                return validation_error(
+                    "This seal verifies, and the certificate that made it was not valid at the \
+                     time — revoked, or outside its validity window, with an attested time to \
+                     prove it. Re-sealing does not repair that: the replacement would come from \
+                     the same certificate. The passport needs a seal from a credential that was \
+                     valid, which is a provider question rather than a queue one.",
+                );
+            }
             return validation_error(
                 "This seal verifies and covers this passport's current signature. There is \
                  nothing to repair, and re-sealing would buy a second seal for a sound one.",

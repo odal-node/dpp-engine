@@ -3708,6 +3708,7 @@ mod fixtures {
             sound: 1180,
             superseded: 17,
             broken: 2,
+            certificate_failed: 1,
             unreadable: 1,
             broken_passports: vec![PassportId::new()],
             truncated: true,

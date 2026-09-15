@@ -202,8 +202,28 @@ pub const MAX_NAMED_BROKEN: usize = 100;
 pub struct SealAudit {
     /// Seals opened.
     pub checked: u64,
-    /// Seals that cover their passport's current signature.
+    /// Seals that cover their passport's current signature **and** whose
+    /// certificate nothing has been shown to fail.
+    ///
+    /// The second half is weaker than it looks, deliberately. A certificate that
+    /// is expired *now* with nothing attesting when the seal was made stays
+    /// here: EN 319 102-1 calls that indeterminate, not failed, and treating it
+    /// otherwise would eventually condemn every seal this node holds.
     pub sound: u64,
+    /// Seals whose signature is sound and whose **certificate** was not, at the
+    /// moment they were made.
+    ///
+    /// Revoked before sealing, or outside its validity window, with an attested
+    /// time to prove the order — `TOTAL-FAILED` under EN 319 102-1 with a
+    /// certificate sub-indication.
+    ///
+    /// Counted apart from [`Self::broken`] because the two need opposite
+    /// actions. A broken seal is repairable: buy another one, and the
+    /// replacement is sound. A seal made under a revoked certificate is not —
+    /// the same backend would produce another seal under the same certificate —
+    /// so folding these into `broken` would put them in front of a repair route
+    /// that cannot help them.
+    pub certificate_failed: u64,
     /// Seals over a **different** digest — ordinarily a passport re-published
     /// after sealing, which is not a defect.
     pub superseded: u64,
@@ -285,8 +305,28 @@ pub async fn audit_seals_once(
 
     for row in &batch {
         audit.checked += 1;
-        match inspector.binding(&row.seal, &row.payload_hash) {
-            dpp_types::SealBinding::CoversThisSignature => audit.sound += 1,
+        let binding = inspector.binding(&row.seal, &row.payload_hash);
+        match &binding {
+            dpp_types::SealBinding::CoversThisSignature => {
+                // The signature holds; the certificate behind it is a separate
+                // question, and one nothing asked until now. A seal made under a
+                // certificate its CA had already revoked covers its passport
+                // perfectly and is worth nothing.
+                let certificate = inspector.certificate_standing(&row.seal, chrono::Utc::now());
+                let status = dpp_types::SealValidationStatus::of(&binding, certificate.as_ref());
+                if status.indication == dpp_types::ValidationIndication::TotalFailed {
+                    audit.certificate_failed += 1;
+                    tracing::error!(
+                        passport_id = %row.passport_id,
+                        sub_indication = ?status.sub_indication,
+                        "a stored seal's certificate was not valid when the seal was made — \
+                         the seal covers its passport and carries no weight. Re-sealing does \
+                         not help: the replacement would come from the same certificate"
+                    );
+                } else {
+                    audit.sound += 1;
+                }
+            }
             dpp_types::SealBinding::CoversAnotherDigest { .. } => audit.superseded += 1,
             dpp_types::SealBinding::NotIntact => {
                 audit.broken += 1;

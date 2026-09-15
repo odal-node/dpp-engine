@@ -47,7 +47,7 @@ fn op() -> String {
 const JWS: &str = "header.payload.signature";
 
 /// An inspector whose verdict is whatever the test says it is.
-struct ScriptedInspector(SealBinding);
+struct ScriptedInspector(SealBinding, Option<dpp_types::CertificateStanding>);
 
 impl SealInspector for ScriptedInspector {
     fn origin(&self, _envelope: &SealedEnvelope) -> Option<SealOrigin> {
@@ -74,15 +74,12 @@ impl SealInspector for ScriptedInspector {
         ArchivalFreshness::NotArchived
     }
 
-    /// Nothing: this suite is about the repair route's judgement of the
-    /// *binding*, and a scripted certificate standing would only add a second
-    /// scripted value for the handler to ignore.
     fn certificate_standing(
         &self,
         _envelope: &SealedEnvelope,
         _now: DateTime<Utc>,
     ) -> Option<dpp_types::CertificateStanding> {
-        None
+        self.1.clone()
     }
 }
 
@@ -91,7 +88,7 @@ async fn vault_reading(dal: &PgDal, verdict: SealBinding) -> String {
     start_vault_with_seal(
         dal.clone(),
         SealWiring {
-            inspector: Some(Arc::new(ScriptedInspector(verdict))),
+            inspector: Some(Arc::new(ScriptedInspector(verdict, None))),
             outbox: true,
         },
     )
@@ -362,6 +359,64 @@ async fn a_sound_seal_is_refused() {
     );
 }
 
+/// **A seal whose certificate was not valid when it was made is refused, and
+/// told why.**
+///
+/// "This seal verifies" is true and, on its own, misleading here: something *is*
+/// wrong, and repair is not the remedy — a replacement would be bought from the
+/// same backend under the same certificate. An operator sent away with the sound
+/// message would learn neither fact.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_seal_made_under_an_invalid_certificate_is_refused_with_its_own_reason() {
+    let pg = start_postgres().await;
+    let at = Utc::now();
+    let revoked = dpp_types::CertificateStanding {
+        validity: dpp_types::ValidityWindow {
+            not_before: at - chrono::Duration::days(400),
+            not_after: at + chrono::Duration::days(400),
+            standing: dpp_types::WindowStanding::Inside,
+        },
+        // Attested, because that is what makes this a finding rather than an
+        // open question — the unproven case is deliberately left alone.
+        judged_at: dpp_types::JudgedTime { at, attested: true },
+        revocation: dpp_types::RevocationStanding::Revoked {
+            at: at - chrono::Duration::days(1),
+        },
+    };
+    let base = start_vault_with_seal(
+        pg.dal.clone(),
+        SealWiring {
+            inspector: Some(Arc::new(ScriptedInspector(
+                SealBinding::CoversThisSignature,
+                Some(revoked),
+            ))),
+            outbox: true,
+        },
+    )
+    .await;
+    let id = seed(&pg.dal).await;
+    seal_it(&pg.dal, id, &dpp_types::digest_for_jws(JWS)).await;
+
+    let client = TestClient::new(&base, make_jwt(&op()));
+    let resp = client
+        .post_json(
+            &format!("/api/v1/dpp/{id}/seal/repair"),
+            serde_json::json!({}),
+        )
+        .await;
+    assert_eq!(resp.status(), 422);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert!(
+        detail(&body).contains("same certificate"),
+        "the refusal must say why re-sealing is not the remedy: {body}"
+    );
+    assert_eq!(
+        counts(&pg.dal).await.pending,
+        0,
+        "and nothing may be queued on the way to refusing"
+    );
+}
+
 /// An **intact** seal over another digest is an ordinary re-publish, not damage.
 /// The signature now needing a seal already has its own row from that publish,
 /// so there is nothing here to repair — and the seal being repaired would still
@@ -490,7 +545,7 @@ async fn a_node_with_no_sealing_backend_refuses_to_repair() {
     let base = start_vault_with_seal(
         pg.dal.clone(),
         SealWiring {
-            inspector: Some(Arc::new(ScriptedInspector(SealBinding::NotIntact))),
+            inspector: Some(Arc::new(ScriptedInspector(SealBinding::NotIntact, None))),
             outbox: false,
         },
     )

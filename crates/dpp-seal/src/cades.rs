@@ -606,6 +606,18 @@ pub fn attested_sealing_time(seal_der: &[u8]) -> Result<Option<DateTime<Utc>>, S
         return Ok(None);
     };
 
+    // And that the authority's own certificate was valid when it says it
+    // stamped. Without this, a token minted under an expired certificate — or
+    // one built by whoever edited the seal — carries the same weight as a real
+    // one, and this time is what decides whether a certificate finding is a
+    // failure or an open question.
+    let Some(gen_time) = to_utc(info.gen_time.to_unix_duration().as_secs()) else {
+        return Ok(None);
+    };
+    if !stamped_within_its_certificate(&token, gen_time) {
+        return Ok(None);
+    }
+
     // And that it is a timestamp **of this signature**, not merely a valid one.
     //
     // EN 319 122-1 clause 5.3: the imprint is over the `SignerInfo` signature
@@ -621,10 +633,36 @@ pub fn attested_sealing_time(seal_der: &[u8]) -> Result<Option<DateTime<Utc>>, S
             return Ok(None);
         }
     }
-    Ok(to_utc(info.gen_time.to_unix_duration().as_secs()))
+    Ok(Some(gen_time))
 }
 
 /// Whether a parsed structure's signature holds under its own certificate.
+/// Was the authority's certificate valid at the moment the token claims?
+///
+/// A timestamp is a statement by a certificate holder, and a statement made
+/// after that certificate expired — or before it began — is not one the
+/// certificate supports. Nothing else in a token is self-limiting: the signature
+/// verifies for ever, and `genTime` is whatever the signer wrote.
+///
+/// **This is the local half of checking an authority.** The other half — whether
+/// anyone trusts it — is a Trusted List question about the `TSA/QTST` service
+/// type (Reg. (EU) No 910/2014 Art. 42), which this node cannot yet ask. A
+/// self-signed authority's token passes here, and that is correct: its
+/// certificate is genuinely valid, it is simply nobody's.
+///
+/// A window that cannot be read is refused rather than assumed: a token whose
+/// authority certificate will not parse is not evidence of a time.
+fn stamped_within_its_certificate(token: &Signed, gen_time: DateTime<Utc>) -> bool {
+    let validity = &token.certificate.tbs_certificate.validity;
+    let (Some(not_before), Some(not_after)) = (
+        instant_of(validity.not_before),
+        instant_of(validity.not_after),
+    ) else {
+        return false;
+    };
+    (not_before..=not_after).contains(&gen_time)
+}
+
 fn signature_holds(signed: &Signed) -> Result<bool, SealError> {
     let Some(signed_attrs) = signed.signer.signed_attrs.as_ref() else {
         return Ok(false);
@@ -808,6 +846,14 @@ fn archival_token(value: &der::Any) -> Option<(DateTime<Utc>, DateTime<Utc>)> {
     let info = TstInfo::from_der(content).ok()?;
 
     let made_at = to_utc(info.gen_time.to_unix_duration().as_secs())?;
+    // The same rule the signature timestamp uses. Here it also keeps the two
+    // halves of this answer consistent: `expires` below is read off the very
+    // certificate being checked, so a token stamped outside that window would
+    // have this seal reported as archived until a date its own authority could
+    // not have vouched for.
+    if !stamped_within_its_certificate(&token, made_at) {
+        return None;
+    }
     let expires = to_utc(
         token
             .certificate
@@ -1590,6 +1636,131 @@ mod standing_tests {
              is this clock, and the flag says so. `Expired` here is an observation; only \
              the attested case turns it into a finding"
         );
+    }
+
+    /// **A timestamp minted under a certificate that could not have made it is
+    /// not a time.**
+    ///
+    /// The token's own signature verifies for ever and `genTime` is whatever the
+    /// signer wrote, so the authority's validity window is the only thing in the
+    /// token that limits when it could have been made. Without the check, anyone
+    /// able to edit a stored seal can attach a timestamp of their own choosing —
+    /// they cannot steal someone else's, because the imprint binds it to this
+    /// signature, but they can mint one — and an attested moment is what turns a
+    /// certificate finding from an open question into a failure, or from a
+    /// failure into nothing at all.
+    ///
+    /// The tamper here is the cheapest possible: the authority's certificate is
+    /// relabelled with a window that ended before the token's own `genTime`.
+    /// Nothing about the token's signature breaks, for the same reason
+    /// relabelling a seal certificate's issuer does not break the seal — a CMS
+    /// signature covers the signed attributes, not the certificate beside them.
+    #[test]
+    fn a_token_stamped_outside_its_authoritys_window_is_not_a_time() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let id = crate::local::LocalIdentity::load_or_create(dir.path()).expect("identity");
+        let seal = id
+            .sign_detached_at(&[0x44; 32], SealConformanceLevel::BaselineLta)
+            .expect("sign");
+        assert!(
+            attested_sealing_time(&seal).expect("readable").is_some(),
+            "the fixture must start with a time, or this proves nothing"
+        );
+
+        let tampered = with_backdated_tsa_certificate(&seal);
+
+        assert_eq!(
+            attested_sealing_time(&tampered).expect("readable"),
+            None,
+            "a token its authority's certificate could not have made is not a time"
+        );
+        // And the consequence, which is the reason this matters: with no
+        // attested moment the certificate is judged against this clock and every
+        // finding drawn from it is reported as unproven rather than as a
+        // failure.
+        let standing = certificate_standing(&tampered, Utc::now()).expect("readable");
+        assert!(!standing.judged_at.attested);
+    }
+
+    /// The same seal with the timestamp authority's certificate given a window
+    /// that closed before the token was stamped.
+    fn with_backdated_tsa_certificate(seal_der: &[u8]) -> Vec<u8> {
+        let info = ContentInfo::from_der(seal_der).expect("CMS");
+        let mut sd: SignedData = info.content.decode_as().expect("SignedData");
+
+        let mut signers = sd.signer_infos.0.as_slice().to_vec();
+        let attrs = signers[0]
+            .unsigned_attrs
+            .as_ref()
+            .expect("an LTA seal carries unsigned attributes");
+        let mut rebuilt = der::asn1::SetOfVec::new();
+        for attr in attrs.iter() {
+            if attr.oid != ID_AA_SIGNATURE_TIME_STAMP_TOKEN {
+                rebuilt.insert(attr.clone()).expect("attribute");
+                continue;
+            }
+
+            let token_der = attr.values.as_slice()[0].to_der().expect("token DER");
+            let token_info = ContentInfo::from_der(&token_der).expect("token CMS");
+            let mut token: SignedData = token_info.content.decode_as().expect("token SignedData");
+
+            // A window that ended a year ago, so `genTime` (now) falls outside
+            // it however the clock is read.
+            let long_ago = std::time::Duration::from_secs(
+                u64::try_from(Utc::now().timestamp()).expect("after 1970") - 730 * 86_400,
+            );
+            let until = std::time::Duration::from_secs(
+                u64::try_from(Utc::now().timestamp()).expect("after 1970") - 365 * 86_400,
+            );
+            let certs = token
+                .certificates
+                .as_ref()
+                .expect("the token's certificate");
+            let mut choices = certs.0.as_slice().to_vec();
+            let cms::cert::CertificateChoices::Certificate(cert) = &mut choices[0] else {
+                panic!("the local TSA embeds an X.509 certificate");
+            };
+            cert.tbs_certificate.validity = x509_cert::time::Validity {
+                not_before: x509_cert::time::Time::GeneralTime(
+                    der::asn1::GeneralizedTime::from_unix_duration(long_ago).expect("a date"),
+                ),
+                not_after: x509_cert::time::Time::GeneralTime(
+                    der::asn1::GeneralizedTime::from_unix_duration(until).expect("a date"),
+                ),
+            };
+            let mut set = der::asn1::SetOfVec::new();
+            set.insert(choices.remove(0)).expect("certificate");
+            token.certificates = Some(cms::signed_data::CertificateSet(set));
+
+            let mut values = der::asn1::SetOfVec::new();
+            values
+                .insert(
+                    der::Any::encode_from(&ContentInfo {
+                        content_type: const_oid::db::rfc5911::ID_SIGNED_DATA,
+                        content: der::Any::encode_from(&token).expect("encode token"),
+                    })
+                    .expect("wrap token"),
+                )
+                .expect("value");
+            rebuilt
+                .insert(x509_cert::attr::Attribute {
+                    oid: attr.oid,
+                    values,
+                })
+                .expect("attribute");
+        }
+        signers[0].unsigned_attrs = Some(x509_cert::attr::Attributes::from(rebuilt));
+
+        let mut set = der::asn1::SetOfVec::new();
+        set.insert(signers.remove(0)).expect("signer");
+        sd.signer_infos = cms::signed_data::SignerInfos::from(set);
+
+        ContentInfo {
+            content_type: const_oid::db::rfc5911::ID_SIGNED_DATA,
+            content: der::Any::encode_from(&sd).expect("encode"),
+        }
+        .to_der()
+        .expect("re-encode")
     }
 
     /// **An LTA seal's certificate is judged against its attested time.**

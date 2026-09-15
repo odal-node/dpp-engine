@@ -2540,6 +2540,7 @@ dependencies = [
  "url",
  "uuid",
  "wat",
+ "x509-cert 0.2.5",
  "zeroize",
 ]
 
