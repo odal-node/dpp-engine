@@ -408,11 +408,25 @@ paths:
       operationId: relintDpp
       summary: Re-check plausibility-lint findings
       description: |
-        Recomputes the `dpp-rules` plausibility lint pack against the DPP's
-        current product group data and persists the refreshed `lintResult` (pack
-        version, findings, assessed-at timestamp). Findings are non-binding —
+        Recomputes the plausibility lint and persists the refreshed `lintResult`
+        (pack version, findings, assessed-at timestamp). Findings are non-binding —
         arithmetic and physical-plausibility checks distinct from binding
         compliance rules — and never gate publish or any other transition.
+
+        Two sets of checks run. The `dpp-rules` plausibility **pack** runs against
+        the DPP's current product group data, and `packVersion` names its version.
+        The **envelope** checks run against fields every product group carries, so
+        they apply to a DPP with no product group data at all: today that is
+        `lineage.life_status_unsupported`, which reports a `lifeStatus` that the
+        record's own `derivedFrom` edges do not support — a unit claiming
+        `remanufactured` whose only edge says `repurposing`, or an `original` that
+        claims a predecessor at all.
+
+        The status is stored and then checked rather than derived from the edges.
+        Regulation (EU) 2023/1542 Art. 77(7) permits several predecessors with
+        nothing forcing them to share an operation, so a unit built from one
+        repurposed and one remanufactured predecessor has no unambiguous derived
+        status; the check asks that **at least one** edge support the claim.
 
         Works regardless of DPP status, including `active` (published):
         re-checking does not retroactively affect the passport's JWS
