@@ -416,7 +416,11 @@ async fn main() -> anyhow::Result<()> {
     // Read-only, and deliberately outside the `sealing_live` guard above: a node
     // that has stopped sealing still holds the seals it bought, and those are
     // exactly the ones nobody is watching any more.
-    boot::tasks::spawn_seal_audit(db.seal_outbox.clone(), seal_audit.clone());
+    boot::tasks::spawn_seal_audit(
+        db.seal_outbox.clone(),
+        seal_audit.clone(),
+        Some(db.seal_audit.clone()),
+    )?;
     // Continuity tier: only spawn when object storage is configured — without a
     // store there is nothing to reconcile against (and the vault never enqueues).
     if let Some(store) = snapshot_store {

@@ -436,6 +436,7 @@ pub fn spawn_seal_sweep(outbox: Arc<dyn SealOutbox>) {
 /// CPU on a background task that is in no hurry — the walk continues from its
 /// cursor on the next tick, so a large estate is covered over several passes
 /// rather than in one.
+/// Overridable with `SEAL_AUDIT_BATCH` — see [`seal_audit_cadence`].
 const SEAL_AUDIT_BATCH: i64 = 200;
 
 /// How often an audit pass runs.
@@ -450,7 +451,92 @@ const SEAL_AUDIT_BATCH: i64 = 200;
 /// `SEAL_AUDIT_BATCH` seals every interval, so the freshness of the report is
 /// the estate divided by that rate. A pass is one query plus a few hundred
 /// signature checks, which is why it can afford to be this frequent.
+/// Overridable with `SEAL_AUDIT_INTERVAL_SECS` — see [`seal_audit_cadence`].
 const SEAL_AUDIT_INTERVAL: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// The ceiling the cadence should be read against.
+///
+/// Not ours: CIR (EU) 2025/1945 — the implementing act that pins how a qualified
+/// seal is validated, through Art. 32(3) and Art. 40 of Reg. (EU) No 910/2014 —
+/// adapts the EU validation policy so that revocation information for the
+/// signing certificate may be **at most 24 hours old**. A node whose walk takes
+/// longer than that cannot, by construction, hold a validation that meets the
+/// policy, however the checks themselves are implemented.
+///
+/// This node does not check revocation yet, so today the number is not a
+/// compliance claim — it is the design target the cadence has to be able to
+/// reach before that check can mean anything, and the reason a boot that cannot
+/// reach it says so.
+const SEAL_AUDIT_TARGET_WRAP: std::time::Duration = std::time::Duration::from_secs(24 * 60 * 60);
+
+/// The batch and interval this node's audit will actually run at.
+///
+/// # Why these are configurable
+///
+/// Together they are the only knob on how fresh the stored-seal report can be:
+/// a pass covers `batch` seals every `interval`, so a full walk takes the estate
+/// divided by that rate, and the report is that old at worst. The defaults suit
+/// a node holding thousands of seals. One holding a million would be walking for
+/// days — long enough that the answer describes an estate that has moved on, and
+/// far past [`SEAL_AUDIT_TARGET_WRAP`].
+///
+/// # An unparseable value fails the boot rather than falling back
+///
+/// The default is a fine value, so falling back to it is tempting. It is also
+/// exactly the failure this whole surface exists to prevent: an operator who set
+/// a cadence, believes their seals are checked at it, and is running at some
+/// other one because of a typo. A node told to do something it cannot parse
+/// should say so, not quietly do something else.
+///
+/// # Errors
+///
+/// An unparseable or out-of-range `SEAL_AUDIT_BATCH` / `SEAL_AUDIT_INTERVAL_SECS`.
+fn seal_audit_cadence() -> anyhow::Result<(i64, std::time::Duration)> {
+    fn read<T>(name: &str, default: T, min: T, max: T) -> anyhow::Result<T>
+    where
+        T: std::str::FromStr + PartialOrd + std::fmt::Display + Copy,
+    {
+        let Ok(raw) = std::env::var(name) else {
+            return Ok(default);
+        };
+        let raw = raw.trim();
+        let Ok(value) = raw.parse::<T>() else {
+            anyhow::bail!("{name} '{raw}' is not a whole number (expected {min}..={max})");
+        };
+        anyhow::ensure!(
+            value >= min && value <= max,
+            "{name} '{value}' is out of range (expected {min}..={max})"
+        );
+        Ok(value)
+    }
+
+    let batch = read("SEAL_AUDIT_BATCH", SEAL_AUDIT_BATCH, 1, 10_000)?;
+    // An hour is the ceiling because a pass this task cannot run within one is
+    // not a cadence, it is a manual job with extra steps; one second is the
+    // floor because the pass does real cryptographic work per row.
+    let interval = read(
+        "SEAL_AUDIT_INTERVAL_SECS",
+        SEAL_AUDIT_INTERVAL.as_secs(),
+        1,
+        3_600,
+    )?;
+    Ok((batch, std::time::Duration::from_secs(interval)))
+}
+
+/// How long a full walk of `sealed` seals takes at this cadence.
+///
+/// The `+ 1` is the empty batch that proves the end: a walk publishes when a
+/// batch comes back with nothing in it, so the pass that finds nothing is part
+/// of the round trip.
+fn projected_wrap(sealed: i64, batch: i64, interval: std::time::Duration) -> std::time::Duration {
+    let batch = batch.max(1);
+    // Rounded up, not down: a final part-full batch is still a whole pass. The
+    // floor version under-reported the wrap for every estate that is not an
+    // exact multiple of the batch, which is nearly all of them.
+    let full = sealed.div_euclid(batch) + i64::from(sealed.rem_euclid(batch) > 0);
+    let passes = full + 1;
+    interval.saturating_mul(u32::try_from(passes).unwrap_or(u32::MAX))
+}
 
 /// Spawn the stored-seal audit.
 ///
@@ -475,9 +561,32 @@ const SEAL_AUDIT_INTERVAL: std::time::Duration = std::time::Duration::from_secs(
 /// behalf, on the strength of a check that has not yet met a real provider's
 /// seal.
 ///
-/// So a finding is logged at `error` and gauged on `seal_broken`. Repair
-/// is its own change.
-pub fn spawn_seal_audit(outbox: Arc<dyn SealOutbox>, log: Arc<dpp_types::SealAuditLog>) {
+/// So a finding is logged at `error` and gauged on `seal_broken`. Repair is its
+/// own route, driven by an operator.
+///
+/// # The walk survives a restart
+///
+/// A pass publishes only when it reaches the end, so both the position and the
+/// result are worth keeping across a restart. Without the position, a node whose
+/// estate takes longer to walk than it goes between deployments starts again
+/// from the beginning every time and never publishes anything at all, while
+/// doing every bit of the work. Without the result, the operator surface says
+/// "no pass has completed" for a whole walk after each restart, which on a large
+/// estate is hours and reads exactly like an audit that is not running.
+///
+/// `store` is optional so a node without one still audits; it simply forgets
+/// across restarts, which is the old behaviour and still honest.
+///
+/// # Errors
+///
+/// An unusable `SEAL_AUDIT_BATCH` / `SEAL_AUDIT_INTERVAL_SECS` — see
+/// [`seal_audit_cadence`].
+pub fn spawn_seal_audit(
+    outbox: Arc<dyn SealOutbox>,
+    log: Arc<dpp_types::SealAuditLog>,
+    store: Option<Arc<dyn dpp_types::SealAuditStore>>,
+) -> anyhow::Result<()> {
+    let (batch_size, interval) = seal_audit_cadence()?;
     tokio::spawn(async move {
         // The same reader the drain uses to accept a seal, so the audit and the
         // acceptance cannot come to disagree about what a sound seal is.
@@ -489,13 +598,82 @@ pub fn spawn_seal_audit(outbox: Arc<dyn SealOutbox>, log: Arc<dpp_types::SealAud
         // which flaps between passes and reads as zero most of the time on an
         // estate where the answer is not zero.
         let mut walk = dpp_node::infra::seal_drain::SealAudit::default();
+        // The moment this walk began, and the bound every batch is read against,
+        // so one pass is a statement about exactly the seals that existed then.
+        let mut started_at = chrono::Utc::now();
+
+        if let Some(store) = store.as_ref() {
+            match store.load().await {
+                Ok((progress, report)) => {
+                    // The report first: it is what the operator surface serves,
+                    // and it should be answerable before the first batch runs.
+                    if let Some(report) = report {
+                        tracing::info!(
+                            completed_at = %report.completed_at,
+                            checked = report.checked,
+                            broken = report.broken,
+                            "restored the last completed seal audit"
+                        );
+                        log.record(report);
+                    }
+                    if let Some(progress) = progress {
+                        tracing::info!(
+                            started_at = %progress.started_at,
+                            checked = progress.checked,
+                            "resuming the seal audit walk where it left off"
+                        );
+                        cursor = progress.cursor;
+                        started_at = progress.started_at;
+                        walk = dpp_node::infra::seal_drain::SealAudit {
+                            checked: progress.checked,
+                            sound: progress.sound,
+                            superseded: progress.superseded,
+                            broken: progress.broken,
+                            unreadable: progress.unreadable,
+                            broken_passports: progress.broken_passports,
+                        };
+                    }
+                }
+                // A cache that cannot be read costs a walk, not the audit.
+                Err(e) => tracing::warn!(error = %e, "could not read the stored seal audit"),
+            }
+        }
+
+        // What the configured cadence actually buys, said once at boot against
+        // the estate this node holds — the number is meaningless without it.
+        if let Ok(counts) = outbox.status_counts().await {
+            let wrap = projected_wrap(counts.sealed, batch_size, interval);
+            if wrap > SEAL_AUDIT_TARGET_WRAP {
+                tracing::warn!(
+                    sealed = counts.sealed,
+                    batch = batch_size,
+                    interval_secs = interval.as_secs(),
+                    wrap_hours = wrap.as_secs() / 3600,
+                    "a full pass over this node's stored seals takes longer than 24h at the \
+                     configured cadence — raise SEAL_AUDIT_BATCH or lower \
+                     SEAL_AUDIT_INTERVAL_SECS. The EU validation policy allows revocation \
+                     information for a signing certificate to be at most 24h old, so a slower \
+                     walk cannot support that check once this node performs it"
+                );
+            } else {
+                tracing::info!(
+                    sealed = counts.sealed,
+                    batch = batch_size,
+                    interval_secs = interval.as_secs(),
+                    wrap_mins = wrap.as_secs() / 60,
+                    "seal audit cadence"
+                );
+            }
+        }
+
         loop {
-            tokio::time::sleep(SEAL_AUDIT_INTERVAL).await;
+            tokio::time::sleep(interval).await;
             let (audit, next) = dpp_node::infra::seal_drain::audit_seals_once(
                 &outbox,
                 &inspector,
-                SEAL_AUDIT_BATCH,
+                batch_size,
                 cursor,
+                Some(started_at),
             )
             .await;
 
@@ -531,7 +709,7 @@ pub fn spawn_seal_audit(outbox: Arc<dyn SealOutbox>, log: Arc<dpp_types::SealAud
                 // counter gets `rate()` applied to it, which means nothing.
                 metrics::gauge!("seal_broken").set(walk.broken as f64);
                 metrics::gauge!("seal_unreadable").set(walk.unreadable as f64);
-                log.record(dpp_types::SealAuditReport {
+                let report = dpp_types::SealAuditReport {
                     completed_at: chrono::Utc::now(),
                     checked: walk.checked,
                     sound: walk.sound,
@@ -540,7 +718,15 @@ pub fn spawn_seal_audit(outbox: Arc<dyn SealOutbox>, log: Arc<dpp_types::SealAud
                     unreadable: walk.unreadable,
                     truncated: (walk.broken_passports.len() as u64) < walk.broken,
                     broken_passports: walk.broken_passports.clone(),
-                });
+                };
+                log.record(report.clone());
+                if let Some(store) = store.as_ref()
+                    && let Err(e) = store.complete(&report).await
+                {
+                    // Served from memory regardless; what is lost is the answer
+                    // surviving the next restart.
+                    tracing::warn!(error = %e, "could not store the completed seal audit");
+                }
                 tracing::debug!(
                     checked = walk.checked,
                     sound = walk.sound,
@@ -550,10 +736,30 @@ pub fn spawn_seal_audit(outbox: Arc<dyn SealOutbox>, log: Arc<dpp_types::SealAud
                     "seal audit completed a pass over every stored seal"
                 );
                 walk = dpp_node::infra::seal_drain::SealAudit::default();
+                // The next walk describes the estate as it is now, including
+                // everything sealed while this one was running.
+                started_at = chrono::Utc::now();
+            } else if let Some(store) = store.as_ref()
+                && let Err(e) = store
+                    .save_progress(&dpp_types::SealAuditProgress {
+                        started_at,
+                        cursor: next,
+                        checked: walk.checked,
+                        sound: walk.sound,
+                        superseded: walk.superseded,
+                        broken: walk.broken,
+                        unreadable: walk.unreadable,
+                        broken_passports: walk.broken_passports.clone(),
+                    })
+                    .await
+            {
+                // The walk carries on in memory; only its survival is lost.
+                tracing::warn!(error = %e, "could not store the seal audit's position");
             }
             cursor = next;
         }
     });
+    Ok(())
 }
 
 /// Spawn the continuity tier's repair sweep.
@@ -688,4 +894,115 @@ pub fn spawn_ruleset_poll(
             dpp_node::infra::ruleset::reload_and_report(&active, false).await;
         }
     });
+}
+
+#[cfg(test)]
+mod seal_audit_cadence_tests {
+    use serial_test::serial;
+
+    use super::*;
+
+    // env::set_var/remove_var are unsafe in edition 2024 (process-global, not
+    // thread-safe). Sound here: every test is #[serial], so no two run
+    // concurrently.
+    fn clear() {
+        unsafe {
+            std::env::remove_var("SEAL_AUDIT_BATCH");
+            std::env::remove_var("SEAL_AUDIT_INTERVAL_SECS");
+        }
+    }
+
+    #[test]
+    #[serial]
+    fn the_defaults_are_what_ships() {
+        clear();
+        let (batch, interval) = seal_audit_cadence().expect("defaults parse");
+        assert_eq!(batch, SEAL_AUDIT_BATCH);
+        assert_eq!(interval, SEAL_AUDIT_INTERVAL);
+    }
+
+    #[test]
+    #[serial]
+    fn a_configured_cadence_is_honoured() {
+        clear();
+        unsafe {
+            std::env::set_var("SEAL_AUDIT_BATCH", " 2000 ");
+            std::env::set_var("SEAL_AUDIT_INTERVAL_SECS", "10");
+        }
+        let (batch, interval) = seal_audit_cadence().expect("parses");
+        assert_eq!(
+            batch, 2000,
+            "surrounding whitespace is not a typo worth failing on"
+        );
+        assert_eq!(interval.as_secs(), 10);
+        clear();
+    }
+
+    /// **A value that cannot be read fails the boot rather than falling back.**
+    ///
+    /// The default is a perfectly good cadence, which is exactly why falling
+    /// back to it is the wrong move: the operator would be told nothing and
+    /// would believe their seals were being checked at the rate they set.
+    #[test]
+    #[serial]
+    fn an_unparseable_cadence_is_refused() {
+        clear();
+        unsafe { std::env::set_var("SEAL_AUDIT_INTERVAL_SECS", "60s") };
+        let err = seal_audit_cadence().expect_err("'60s' is not a number of seconds");
+        assert!(
+            err.to_string().contains("SEAL_AUDIT_INTERVAL_SECS"),
+            "the message must name the variable: {err}"
+        );
+        clear();
+    }
+
+    /// Zero is the interesting rejection: it reads as "off", and would be a
+    /// busy loop hammering the database with no sleep between passes.
+    #[test]
+    #[serial]
+    fn an_out_of_range_cadence_is_refused() {
+        clear();
+        unsafe { std::env::set_var("SEAL_AUDIT_INTERVAL_SECS", "0") };
+        assert!(seal_audit_cadence().is_err(), "zero seconds is a busy loop");
+        unsafe {
+            std::env::remove_var("SEAL_AUDIT_INTERVAL_SECS");
+            std::env::set_var("SEAL_AUDIT_BATCH", "0");
+        }
+        assert!(
+            seal_audit_cadence().is_err(),
+            "a zero batch never advances the cursor and never wraps"
+        );
+        clear();
+    }
+
+    /// The arithmetic behind the boot warning, including the empty batch that
+    /// proves the end of the walk.
+    #[test]
+    fn a_walk_costs_one_pass_per_batch_plus_the_one_that_finds_nothing() {
+        let minute = std::time::Duration::from_secs(60);
+        assert_eq!(
+            projected_wrap(0, 200, minute),
+            minute,
+            "an empty estate still takes the pass that discovers it is empty"
+        );
+        assert_eq!(projected_wrap(200, 200, minute), 2 * minute);
+        assert_eq!(projected_wrap(201, 200, minute), 3 * minute);
+    }
+
+    /// The case the warning exists for: an estate large enough that the shipped
+    /// cadence cannot get round it inside the day.
+    #[test]
+    fn a_large_estate_outruns_the_default_cadence() {
+        let wrap = projected_wrap(1_000_000, SEAL_AUDIT_BATCH, SEAL_AUDIT_INTERVAL);
+        assert!(
+            wrap > SEAL_AUDIT_TARGET_WRAP,
+            "a million seals at 200/min is days, and the operator must be told: {wrap:?}"
+        );
+        // And that the knob is the answer, not a rewrite.
+        let tuned = projected_wrap(1_000_000, 10_000, std::time::Duration::from_secs(10));
+        assert!(
+            tuned < SEAL_AUDIT_TARGET_WRAP,
+            "the same estate fits inside the day at a cadence the range allows: {tuned:?}"
+        );
+    }
 }

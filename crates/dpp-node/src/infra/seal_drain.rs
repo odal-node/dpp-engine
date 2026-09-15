@@ -251,14 +251,27 @@ pub struct SealAudit {
 ///
 /// A seal this node **cannot read** is not a finding either. Treating "cannot
 /// check" as "broken" would make every seal from a backend emitting a format
-/// this node does not parse look like corruption.
+/// this node does not parse look like corruption. EU law keeps the same three
+/// answers apart: CIR (EU) 2025/1945, which pins how a qualified seal is to be
+/// validated, makes *indeterminate* its own technical outcome — neither valid
+/// nor invalid — and requires it to be reported as such.
+///
+/// # `sealed_before` bounds what the pass is about
+///
+/// Seals are written while a walk runs, and which of them a pass happens to see
+/// otherwise depends on where its cursor had reached. Passing the walk's start
+/// time makes the pass a statement about exactly the seals that existed then,
+/// and costs no coverage: the drain checks a seal's binding before accepting it,
+/// so one written during the walk was verified as it landed and is covered by
+/// the next pass anyway.
 pub async fn audit_seals_once(
     outbox: &Arc<dyn SealOutbox>,
     inspector: &dyn dpp_types::SealInspector,
     limit: i64,
     after: Option<dpp_domain::passport::PassportId>,
+    sealed_before: Option<chrono::DateTime<chrono::Utc>>,
 ) -> (SealAudit, Option<dpp_domain::passport::PassportId>) {
-    let batch = match outbox.sealed_passports(limit, after).await {
+    let batch = match outbox.sealed_passports(limit, after, sealed_before).await {
         Ok(b) => b,
         Err(e) => {
             tracing::warn!(error = %e, "seal audit could not read stored seals");
@@ -480,6 +493,7 @@ mod tests {
             &self,
             _limit: i64,
             _after: Option<PassportId>,
+            _sealed_before: Option<chrono::DateTime<chrono::Utc>>,
         ) -> Result<Vec<dpp_types::SealedPassport>, DppError> {
             Ok(Vec::new())
         }
@@ -710,6 +724,7 @@ mod tests {
                 &self,
                 _limit: i64,
                 _after: Option<PassportId>,
+                _sealed_before: Option<chrono::DateTime<chrono::Utc>>,
             ) -> Result<Vec<dpp_types::SealedPassport>, DppError> {
                 Ok(self.0.clone())
             }
@@ -821,7 +836,7 @@ mod tests {
         ]));
 
         let (audit, cursor) =
-            audit_seals_once(&outbox, &dpp_seal::CadesInspector::new(), 100, None).await;
+            audit_seals_once(&outbox, &dpp_seal::CadesInspector::new(), 100, None, None).await;
 
         assert_eq!(audit.checked, 4);
         assert_eq!(audit.sound, 1);

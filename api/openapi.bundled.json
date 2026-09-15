@@ -6523,7 +6523,7 @@
                 "type": "null"
               }
             ],
-            "description": "What the last completed pass over every stored seal found.\n\n**`null` means no pass has completed**, not that nothing is wrong. The pass walks the estate in bounded batches and starts over, so this is empty for a while after a restart, and absent entirely on a deployment that runs no audit. Reporting a zero here for a check that has not run would be the one answer worse than reporting nothing."
+            "description": "What the last completed pass over every stored seal found.\n\n**`null` means no pass has completed**, not that nothing is wrong. The pass walks the estate in bounded batches and starts over, so this is empty until the first one finishes, and absent entirely on a deployment that runs no audit. Reporting a zero here for a check that has not run would be the one answer worse than reporting nothing.\n\nA node that keeps its audit state restores the last completed report at boot, so a restart no longer empties this. Where it is still `null` after a deployment, the honest reading is that no pass has ever finished against this database — on a large estate, check the audit's cadence before concluding anything about the seals."
           },
           "trustMode": {
             "type": [

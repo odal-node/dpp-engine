@@ -1055,7 +1055,8 @@ async fn a_seal_corrupted_at_rest_is_found_and_repaired() {
 
     // ── The audit finds it ──────────────────────────────────────────────────
     let (audit, _) =
-        dpp_node::infra::seal_drain::audit_seals_once(&outbox_dyn, &inspector, 100, None).await;
+        dpp_node::infra::seal_drain::audit_seals_once(&outbox_dyn, &inspector, 100, None, None)
+            .await;
     assert_eq!(audit.broken, 1, "the audit must see what the counts cannot");
     assert_eq!(audit.broken_passports, vec![id], "and name it");
 
@@ -1110,7 +1111,8 @@ async fn a_seal_corrupted_at_rest_is_found_and_repaired() {
     );
 
     let (clean, _) =
-        dpp_node::infra::seal_drain::audit_seals_once(&outbox_dyn, &inspector, 100, None).await;
+        dpp_node::infra::seal_drain::audit_seals_once(&outbox_dyn, &inspector, 100, None, None)
+            .await;
     assert_eq!(clean.broken, 0, "and the audit agrees it is fixed");
 }
 
@@ -1228,4 +1230,174 @@ async fn a_rearmed_row_records_why_it_was_rearmed() {
             .await
             .expect("read attempts");
     assert_eq!(attempts, 0);
+}
+
+/// **A completed pass survives a restart, and so does an unfinished one.**
+///
+/// Both halves matter for different reasons. The report is what the operator
+/// surface serves, and without it a restart makes the node say "no pass has
+/// completed" for a whole walk — hours on a large estate, and indistinguishable
+/// from an audit that is not running. The *position* is the one that saves a
+/// node whose estate takes longer to walk than it goes between restarts: without
+/// it, such a node starts from the beginning for ever and publishes nothing at
+/// all, while doing every bit of the work.
+#[tokio::test]
+async fn an_audit_walk_and_its_last_report_outlive_the_process() {
+    use dpp_types::SealAuditStore as _;
+
+    let _pg = start_pg().await;
+    let store = dpp_dal::pg::PgSealAuditRepo::new(_pg.dal.clone());
+
+    // A node that has never finished a walk reports neither — the state the
+    // route renders as `audit: null`.
+    let (progress, report) = store.load().await.expect("load");
+    assert!(progress.is_none() && report.is_none());
+
+    let started = Utc::now();
+    let id = PassportId::new();
+    store
+        .save_progress(&dpp_types::SealAuditProgress {
+            started_at: started,
+            cursor: Some(id),
+            checked: 600,
+            sound: 598,
+            superseded: 1,
+            broken: 1,
+            unreadable: 0,
+            broken_passports: vec![id],
+        })
+        .await
+        .expect("save progress");
+
+    let (progress, report) = store.load().await.expect("load");
+    let progress = progress.expect("the walk is still in flight");
+    assert_eq!(progress.cursor, Some(id), "a restart resumes, not restarts");
+    assert_eq!(progress.checked, 600, "and keeps the totals it had counted");
+    assert_eq!(
+        progress.started_at.timestamp(),
+        started.timestamp(),
+        "including the moment the walk began, which bounds what it is about"
+    );
+    assert!(
+        report.is_none(),
+        "a walk in flight is not a result — publishing a partial count would read \
+         exactly like a complete one"
+    );
+
+    // Completing publishes the report and clears the walk.
+    let completed = dpp_types::SealAuditReport {
+        completed_at: Utc::now(),
+        checked: 1200,
+        sound: 1198,
+        superseded: 1,
+        broken: 1,
+        unreadable: 0,
+        truncated: false,
+        broken_passports: vec![id],
+    };
+    store.complete(&completed).await.expect("complete");
+
+    let (progress, report) = store.load().await.expect("load");
+    assert!(
+        progress.is_none(),
+        "a finished walk must not be resumable, or a restart would 'continue' from \
+         its own end and publish a second report having checked nothing"
+    );
+    let report = report.expect("the completed pass is served after a restart");
+    assert_eq!(report.checked, 1200);
+    assert_eq!(report.broken_passports, vec![id], "and still names them");
+}
+
+/// **A pass describes the seals that existed when it started.**
+///
+/// Seals land while a walk runs, and which of them a pass happens to see would
+/// otherwise depend on where its cursor had reached — so two consecutive passes
+/// disagree for reasons that have nothing to do with the seals. The bound makes
+/// the population nameable. It costs no coverage: the drain checks a seal's
+/// binding before accepting it, so one written mid-walk was verified as it
+/// landed, and the next pass covers it anyway.
+#[tokio::test]
+async fn a_walk_skips_seals_written_after_it_began() {
+    let _pg = start_pg().await;
+    let outbox = PgSealOutboxRepo::new(_pg.dal.clone());
+    let passport_repo = PgPassportRepo::new(_pg.dal.clone());
+
+    // Two sealed passports, both closed through the outbox exactly as the drain
+    // closes them.
+    let mut ids = Vec::new();
+    for _ in 0..2 {
+        let draft = draft_passport();
+        let id = draft.id;
+        passport_repo.create(draft).await.expect("create draft");
+        // Published with a signature, or the walk's own query skips it.
+        sqlx::query(
+            "UPDATE odal.passport SET published_at = now(),
+               doc = jsonb_set(doc, '{jwsSignature}', '\"header.payload.sig\"'::jsonb, true)
+             WHERE id = $1",
+        )
+        .bind(id.0)
+        .execute(_pg.dal.pool())
+        .await
+        .expect("publish");
+        let digest = dpp_types::digest_for_jws("header.payload.sig");
+        outbox.enqueue(id, &digest).await.expect("queue");
+        let row = outbox
+            .due(10)
+            .await
+            .expect("due")
+            .into_iter()
+            .find(|r| r.passport_id == id)
+            .expect("queued row is due");
+        outbox
+            .mark_sealed(row.id, &envelope_for_a_closed_row())
+            .await
+            .expect("seal");
+        ids.push(id);
+    }
+
+    let unbounded = outbox
+        .sealed_passports(10, None, None)
+        .await
+        .expect("walk everything");
+    assert_eq!(unbounded.len(), 2, "both seals exist");
+
+    // A walk that started before either was sealed sees neither.
+    let bounded = outbox
+        .sealed_passports(10, None, Some(Utc::now() - chrono::Duration::hours(1)))
+        .await
+        .expect("bounded walk");
+    assert!(
+        bounded.is_empty(),
+        "seals written after the walk began are not this pass's business"
+    );
+
+    // And one that started now sees both, because both predate it.
+    let after = outbox
+        .sealed_passports(10, None, Some(Utc::now() + chrono::Duration::seconds(1)))
+        .await
+        .expect("bounded walk");
+    assert_eq!(after.len(), 2);
+
+    // A seal that cannot be dated is kept rather than skipped: not knowing when
+    // something was sealed is not a reason to stop looking at it.
+    //
+    // Produced by clearing the row's `sealed_at` rather than removing the row,
+    // because the app role deliberately holds no DELETE on this table — the row
+    // is the record that a seal was bought. A seal written before the outbox
+    // carried timestamps arrives in exactly this state.
+    sqlx::query("UPDATE odal.seal_outbox SET sealed_at = NULL WHERE passport_id = $1")
+        .bind(ids[0].0)
+        .execute(_pg.dal.pool())
+        .await
+        .expect("undate the seal");
+    let orphaned = outbox
+        .sealed_passports(10, None, Some(Utc::now() - chrono::Duration::hours(1)))
+        .await
+        .expect("bounded walk");
+    assert_eq!(
+        orphaned.len(),
+        1,
+        "an undateable seal stays in the walk: {orphaned:?}"
+    );
+    assert_eq!(orphaned[0].passport_id, ids[0]);
 }

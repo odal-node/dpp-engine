@@ -16,11 +16,15 @@
 //! already produced and already billed, and the next pass would buy it again.
 
 use async_trait::async_trait;
+use chrono::{DateTime, Utc};
 use sqlx::Row;
 use uuid::Uuid;
 
 use dpp_domain::{DppError, passport::PassportId, seal::SealedEnvelope};
-use dpp_types::{SealOutbox, SealOutboxCounts, SealRow, SealedPassport};
+use dpp_types::{
+    SealAuditProgress, SealAuditReport, SealAuditStore, SealOutbox, SealOutboxCounts, SealRow,
+    SealedPassport,
+};
 
 use super::{PgDal, db_err, require_updated};
 
@@ -341,6 +345,7 @@ impl SealOutbox for PgSealOutboxRepo {
         &self,
         limit: i64,
         after: Option<PassportId>,
+        sealed_before: Option<DateTime<Utc>>,
     ) -> Result<Vec<SealedPassport>, DppError> {
         // The mirror image of the count above: passports that DO carry a seal.
         // Whether that seal stands up is not a question SQL can ask, so the rows
@@ -351,6 +356,15 @@ impl SealOutbox for PgSealOutboxRepo {
         // Deriving it in SQL would be a second implementation of what a seal
         // covers, which is the drift that buys seals over digests nothing else
         // recognises.
+        // The `sealed_before` bound is expressed against `seal_outbox.sealed_at`
+        // — a real timestamptz column — rather than against the `sealedAt`
+        // inside the envelope. Casting a JSON string to timestamptz would put a
+        // malformed value one row carries in charge of whether the audit runs at
+        // all, and there is no safe cast to fall back on.
+        //
+        // The clause is a NOT EXISTS for the same reason it is not a join: a
+        // passport with no outbox row is **kept**. Not knowing when a seal was
+        // made is not a reason to stop looking at it.
         let rows = sqlx::query(
             r#"SELECT p.id, p.doc->'seal' AS seal, p.doc->>'jwsSignature' AS jws
                FROM odal.passport p
@@ -358,11 +372,18 @@ impl SealOutbox for PgSealOutboxRepo {
                  AND p.doc->'seal' IS NOT NULL
                  AND p.doc->>'jwsSignature' IS NOT NULL
                  AND ($1::uuid IS NULL OR p.id > $1::uuid)
+                 AND ($3::timestamptz IS NULL OR NOT EXISTS (
+                       SELECT 1 FROM odal.seal_outbox s
+                       WHERE s.passport_id = p.id
+                         AND s.status = 'sealed'
+                         AND s.sealed_at >= $3::timestamptz
+                     ))
                ORDER BY p.id
                LIMIT $2"#,
         )
         .bind(after.map(|p| p.0))
         .bind(limit)
+        .bind(sealed_before)
         .fetch_all(self.dal.pool())
         .await
         .map_err(db_err)?;
@@ -387,5 +408,93 @@ impl SealOutbox for PgSealOutboxRepo {
             });
         }
         Ok(out)
+    }
+}
+
+/// PostgreSQL implementation of [`SealAuditStore`] (`ops/pg/0038`).
+///
+/// One row, overwritten in place. It carries a cache of derived data, and that
+/// shapes every decision here: a value that will not deserialise is treated as
+/// absent rather than as an error, because the alternative is a node that
+/// refuses to audit its seals on account of a stale row it could simply
+/// recompute.
+pub struct PgSealAuditRepo {
+    dal: PgDal,
+}
+
+impl PgSealAuditRepo {
+    /// Construct a repo sharing the given pool handle.
+    pub fn new(dal: PgDal) -> Self {
+        Self { dal }
+    }
+}
+
+#[async_trait]
+impl SealAuditStore for PgSealAuditRepo {
+    async fn load(&self) -> Result<(Option<SealAuditProgress>, Option<SealAuditReport>), DppError> {
+        let row = sqlx::query("SELECT progress, report FROM odal.seal_audit_state WHERE id = 1")
+            .fetch_optional(self.dal.pool())
+            .await
+            .map_err(db_err)?;
+        let Some(row) = row else {
+            return Ok((None, None));
+        };
+
+        // Read each half independently. A progress written by an older shape
+        // must not cost the report beside it, which is the half an operator is
+        // actually looking at.
+        let progress = row
+            .get::<Option<serde_json::Value>, _>("progress")
+            .and_then(|v| match serde_json::from_value::<SealAuditProgress>(v) {
+                Ok(p) => Some(p),
+                Err(e) => {
+                    tracing::warn!(error = %e, "stored seal-audit progress is unreadable; the walk restarts");
+                    None
+                }
+            });
+        let report = row
+            .get::<Option<serde_json::Value>, _>("report")
+            .and_then(|v| match serde_json::from_value::<SealAuditReport>(v) {
+                Ok(r) => Some(r),
+                Err(e) => {
+                    tracing::warn!(error = %e, "stored seal-audit report is unreadable; reported as no completed pass");
+                    None
+                }
+            });
+        Ok((progress, report))
+    }
+
+    async fn save_progress(&self, progress: &SealAuditProgress) -> Result<(), DppError> {
+        let value = serde_json::to_value(progress)
+            .map_err(|e| DppError::Serialisation(format!("seal audit progress: {e}")))?;
+        sqlx::query(
+            r#"INSERT INTO odal.seal_audit_state (id, progress)
+               VALUES (1, $1)
+               ON CONFLICT (id) DO UPDATE SET progress = $1, updated_at = now()"#,
+        )
+        .bind(value)
+        .execute(self.dal.pool())
+        .await
+        .map_err(db_err)?;
+        Ok(())
+    }
+
+    async fn complete(&self, report: &SealAuditReport) -> Result<(), DppError> {
+        let value = serde_json::to_value(report)
+            .map_err(|e| DppError::Serialisation(format!("seal audit report: {e}")))?;
+        // The progress is cleared in the same statement that stores the report.
+        // Left behind, it would be a finished walk that a restart picks up and
+        // "continues" from its own end — one empty batch, then a second report
+        // claiming to have checked nothing.
+        sqlx::query(
+            r#"INSERT INTO odal.seal_audit_state (id, progress, report)
+               VALUES (1, NULL, $1)
+               ON CONFLICT (id) DO UPDATE SET progress = NULL, report = $1, updated_at = now()"#,
+        )
+        .bind(value)
+        .execute(self.dal.pool())
+        .await
+        .map_err(db_err)?;
+        Ok(())
     }
 }

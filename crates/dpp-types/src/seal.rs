@@ -134,18 +134,28 @@ pub struct SealAuditReport {
 /// leave a stale row until the next walk, and the row would need invalidating by
 /// something that already knows the answer.
 ///
-/// The cost is that a restart empties it. That is why [`Self::last`] returns an
-/// `Option` and the route reports the absence rather than a zero: **"no pass has
-/// completed" and "no broken seals" are different**, and serving the second when
-/// the first is true is how a monitoring surface reassures an operator about
-/// something it has not looked at.
+/// [`Self::last`] returns an `Option` and the route reports the absence rather
+/// than a zero: **"no pass has completed" and "no broken seals" are different**,
+/// and serving the second when the first is true is how a monitoring surface
+/// reassures an operator about something it has not looked at. EU law draws the
+/// same line for validation generally — CIR (EU) 2025/1945, which pins the
+/// validation standards for qualified seals, makes *indeterminate* a distinct
+/// technical outcome from valid and from invalid, and requires it to be reported
+/// as such rather than collapsed into either.
 ///
-/// The sharp edge of that, stated so it is not discovered: a walk only publishes
-/// when it reaches the end, so a deployment whose estate takes longer to walk
-/// than it goes between restarts would **never** produce a report. The route
-/// would say `null` for ever, which is at least honest — but the fix is the
-/// audit's batch and interval, not this type, and noticing it means watching for
-/// a `null` that never fills rather than for an alarm.
+/// # This is seeded from storage, not only from the running process
+///
+/// A restart empties the slot, and used to leave the route blind for the length
+/// of a whole walk — hours on a large estate, and indistinguishable from an
+/// audit that is not running. Worse, a deployment whose estate takes longer to
+/// walk than it goes between restarts would never publish anything at all.
+///
+/// So a node that keeps a [`SealAuditStore`] loads the last stored report into
+/// this at boot and stores each new one. `None` then means what it says: **no
+/// pass has ever completed against this database**, not merely none since this
+/// process started. Nodes without a store keep the old behaviour, which is the
+/// honest degradation — the absence is still the truth about what this process
+/// knows.
 #[derive(Debug, Default)]
 pub struct SealAuditLog(std::sync::RwLock<Option<SealAuditReport>>);
 
@@ -171,6 +181,97 @@ impl SealAuditLog {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .clone()
     }
+}
+
+/// A walk that has started and not yet reached the end.
+///
+/// The audit covers the estate in batches, so between the first batch and the
+/// last there is a partial result that is **not** publishable: a count from half
+/// the estate reads exactly like a count from all of it, and the difference is
+/// the whole value of the number. This is that half-finished state, kept so it
+/// can be picked up again rather than thrown away.
+///
+/// # Why this is stored and the report alone would not be enough
+///
+/// The failure it exists for is a node whose estate takes longer to walk than
+/// the node goes between restarts. Storing only the finished report does not
+/// help there, because the finished report is exactly what such a node never
+/// produces — it would begin again from the start every time, for ever, and
+/// report nothing while doing a great deal of work. Keeping the cursor makes the
+/// progress survive, so the walk finishes eventually however often the process
+/// is replaced.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SealAuditProgress {
+    /// When this walk began — and the bound it passes to
+    /// [`SealOutbox::sealed_passports`], so the pass describes exactly the seals
+    /// that existed at that moment.
+    pub started_at: DateTime<Utc>,
+    /// The last passport the walk has looked at. `None` means it is at the
+    /// beginning.
+    pub cursor: Option<PassportId>,
+    /// Seals opened so far in this walk.
+    pub checked: u64,
+    /// Sound so far.
+    pub sound: u64,
+    /// Intact over a superseded signature so far.
+    pub superseded: u64,
+    /// Broken so far.
+    pub broken: u64,
+    /// Unreadable so far.
+    pub unreadable: u64,
+    /// The broken passports named so far, capped by the caller.
+    pub broken_passports: Vec<PassportId>,
+}
+
+/// Where a node keeps what its seal audit has found and how far it has got.
+///
+/// # This is a cache with one job the cache argument does not cover
+///
+/// The findings are derived and recomputable, which is why they are *also* held
+/// in [`SealAuditLog`] in memory and served from there. Storing them buys two
+/// things memory cannot:
+///
+/// - a restart no longer erases the answer, so the route stops saying "no pass
+///   has completed" for the length of a whole walk after every deployment —
+///   which on a large estate is hours, and is indistinguishable from an audit
+///   that is not running;
+/// - a walk survives the restart too, so progress accumulates instead of
+///   resetting.
+///
+/// What it deliberately does **not** become is a record of validations. Under
+/// Reg. (EU) No 910/2014 Art. 33, reached for seals by Art. 40, a *qualified*
+/// validation service is a QTSP service whose result carries the provider's own
+/// advanced signature or seal. Nothing here is signed and nothing here is
+/// qualified; this is a node's own housekeeping, and a stored row must not be
+/// presented as an attestation that a seal was valid at a moment in time.
+#[async_trait]
+pub trait SealAuditStore: Send + Sync {
+    /// Read back the walk in progress and the last completed report.
+    ///
+    /// Both are independently optional: a node that has never finished a walk
+    /// has progress and no report, and a node that finished one and has not
+    /// started the next has a report and no progress.
+    ///
+    /// # Errors
+    ///
+    /// Propagates the store's own failure.
+    async fn load(&self) -> Result<(Option<SealAuditProgress>, Option<SealAuditReport>), DppError>;
+
+    /// Save the walk's position after a batch, leaving the last report alone.
+    ///
+    /// # Errors
+    ///
+    /// Propagates the store's own failure.
+    async fn save_progress(&self, progress: &SealAuditProgress) -> Result<(), DppError>;
+
+    /// Publish a completed pass: store `report` and clear the progress, so a
+    /// restart starts the next walk cleanly rather than resuming a finished one.
+    ///
+    /// # Errors
+    ///
+    /// Propagates the store's own failure.
+    async fn complete(&self, report: &SealAuditReport) -> Result<(), DppError>;
 }
 
 /// One sealed passport, as an audit pass needs to see it.
@@ -342,6 +443,25 @@ pub trait SealOutbox: Send + Sync {
     /// UUIDv7 and time-ordered, so a cursor is stable against rows arriving
     /// mid-walk, which an offset is not.
     ///
+    /// # `sealed_before` pins what a pass is a statement *about*
+    ///
+    /// A walk takes minutes to hours, and seals are written while it runs. Which
+    /// of those a pass happens to see depends on where its cursor had reached —
+    /// so without a bound, "checked 1,204" describes a population nobody can
+    /// name, and two consecutive passes disagree for reasons that are not about
+    /// the seals.
+    ///
+    /// Passing the moment the walk started makes the pass a statement about
+    /// exactly the seals that existed then. Skipping the newer ones costs
+    /// nothing in coverage: the drain checks a seal's binding before it accepts
+    /// it, so a seal written during the walk was verified as it landed, and the
+    /// next pass covers it anyway.
+    ///
+    /// `None` walks everything, which is what a caller doing a one-off sweep
+    /// wants. A passport whose seal cannot be dated is **included** either way:
+    /// not knowing when something was sealed is not a reason to stop looking at
+    /// it.
+    ///
     /// # Errors
     ///
     /// Propagates the store's own failure.
@@ -349,6 +469,7 @@ pub trait SealOutbox: Send + Sync {
         &self,
         limit: i64,
         after: Option<PassportId>,
+        sealed_before: Option<DateTime<Utc>>,
     ) -> Result<Vec<SealedPassport>, DppError>;
 }
 

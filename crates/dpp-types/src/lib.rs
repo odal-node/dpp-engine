@@ -73,8 +73,9 @@ pub use scan::{
     ScanPruneCounts, ScanTelemetryRepository,
 };
 pub use seal::{
-    ArchivalFreshness, CreationDevice, SealAuditLog, SealAuditReport, SealBinding, SealInspector,
-    SealOrigin, SealOutbox, SealOutboxCounts, SealRow, SealedPassport, digest_for_jws,
+    ArchivalFreshness, CreationDevice, SealAuditLog, SealAuditProgress, SealAuditReport,
+    SealAuditStore, SealBinding, SealInspector, SealOrigin, SealOutbox, SealOutboxCounts, SealRow,
+    SealedPassport, digest_for_jws,
 };
 pub use snapshot::{
     SnapshotOutbox, SnapshotOutboxCounts, SnapshotReconcileRow, SnapshotReconcileStatus,
