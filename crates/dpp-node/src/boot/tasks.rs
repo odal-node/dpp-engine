@@ -492,11 +492,35 @@ const SEAL_AUDIT_TARGET_WRAP: std::time::Duration = std::time::Duration::from_se
 ///
 /// An unparseable or out-of-range `SEAL_AUDIT_BATCH` / `SEAL_AUDIT_INTERVAL_SECS`.
 fn seal_audit_cadence() -> anyhow::Result<(i64, std::time::Duration)> {
-    fn read<T>(name: &str, default: T, min: T, max: T) -> anyhow::Result<T>
+    seal_audit_cadence_from(|name| std::env::var(name).ok())
+}
+
+/// The whole of [`seal_audit_cadence`]'s rule over an arbitrary lookup.
+///
+/// Split out so it is testable as a pure function, the same arrangement
+/// `dpp_seal::config::SealProvider::resolve` uses and for the same reasons:
+/// exercising it through the real environment means mutating process-global
+/// state from a test, which is `unsafe` under Rust 2024, forces the tests to
+/// serialise against one another, and lets a stray variable in a developer's
+/// shell decide the result.
+///
+/// # Errors
+///
+/// An unparseable or out-of-range value.
+fn seal_audit_cadence_from(
+    get: impl Fn(&str) -> Option<String>,
+) -> anyhow::Result<(i64, std::time::Duration)> {
+    fn read<T>(
+        get: &impl Fn(&str) -> Option<String>,
+        name: &str,
+        default: T,
+        min: T,
+        max: T,
+    ) -> anyhow::Result<T>
     where
         T: std::str::FromStr + PartialOrd + std::fmt::Display + Copy,
     {
-        let Ok(raw) = std::env::var(name) else {
+        let Some(raw) = get(name) else {
             return Ok(default);
         };
         let raw = raw.trim();
@@ -510,11 +534,12 @@ fn seal_audit_cadence() -> anyhow::Result<(i64, std::time::Duration)> {
         Ok(value)
     }
 
-    let batch = read("SEAL_AUDIT_BATCH", SEAL_AUDIT_BATCH, 1, 10_000)?;
+    let batch = read(&get, "SEAL_AUDIT_BATCH", SEAL_AUDIT_BATCH, 1, 10_000)?;
     // An hour is the ceiling because a pass this task cannot run within one is
     // not a cadence, it is a manual job with extra steps; one second is the
     // floor because the pass does real cryptographic work per row.
     let interval = read(
+        &get,
         "SEAL_AUDIT_INTERVAL_SECS",
         SEAL_AUDIT_INTERVAL.as_secs(),
         1,
@@ -907,44 +932,45 @@ pub fn spawn_ruleset_poll(
 
 #[cfg(test)]
 mod seal_audit_cadence_tests {
-    use serial_test::serial;
-
     use super::*;
 
-    // env::set_var/remove_var are unsafe in edition 2024 (process-global, not
-    // thread-safe). Sound here: every test is #[serial], so no two run
-    // concurrently.
-    fn clear() {
-        unsafe {
-            std::env::remove_var("SEAL_AUDIT_BATCH");
-            std::env::remove_var("SEAL_AUDIT_INTERVAL_SECS");
+    /// A lookup standing in for the process environment.
+    ///
+    /// Nothing here calls `set_var`: the rule is a pure function over this, so
+    /// the tests run in parallel, cannot be changed by a developer's shell, and
+    /// need no `unsafe`.
+    fn env(vars: &[(&str, &str)]) -> impl Fn(&str) -> Option<String> + use<> {
+        let owned: Vec<(String, String)> = vars
+            .iter()
+            .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
+            .collect();
+        move |name| {
+            owned
+                .iter()
+                .find(|(k, _)| k == name)
+                .map(|(_, v)| v.clone())
         }
     }
 
     #[test]
-    #[serial]
     fn the_defaults_are_what_ships() {
-        clear();
-        let (batch, interval) = seal_audit_cadence().expect("defaults parse");
+        let (batch, interval) = seal_audit_cadence_from(env(&[])).expect("defaults parse");
         assert_eq!(batch, SEAL_AUDIT_BATCH);
         assert_eq!(interval, SEAL_AUDIT_INTERVAL);
     }
 
     #[test]
-    #[serial]
     fn a_configured_cadence_is_honoured() {
-        clear();
-        unsafe {
-            std::env::set_var("SEAL_AUDIT_BATCH", " 2000 ");
-            std::env::set_var("SEAL_AUDIT_INTERVAL_SECS", "10");
-        }
-        let (batch, interval) = seal_audit_cadence().expect("parses");
+        let (batch, interval) = seal_audit_cadence_from(env(&[
+            ("SEAL_AUDIT_BATCH", " 2000 "),
+            ("SEAL_AUDIT_INTERVAL_SECS", "10"),
+        ]))
+        .expect("parses");
         assert_eq!(
             batch, 2000,
             "surrounding whitespace is not a typo worth failing on"
         );
         assert_eq!(interval.as_secs(), 10);
-        clear();
     }
 
     /// **A value that cannot be read fails the boot rather than falling back.**
@@ -953,35 +979,27 @@ mod seal_audit_cadence_tests {
     /// back to it is the wrong move: the operator would be told nothing and
     /// would believe their seals were being checked at the rate they set.
     #[test]
-    #[serial]
     fn an_unparseable_cadence_is_refused() {
-        clear();
-        unsafe { std::env::set_var("SEAL_AUDIT_INTERVAL_SECS", "60s") };
-        let err = seal_audit_cadence().expect_err("'60s' is not a number of seconds");
+        let err = seal_audit_cadence_from(env(&[("SEAL_AUDIT_INTERVAL_SECS", "60s")]))
+            .expect_err("'60s' is not a number of seconds");
         assert!(
             err.to_string().contains("SEAL_AUDIT_INTERVAL_SECS"),
             "the message must name the variable: {err}"
         );
-        clear();
     }
 
     /// Zero is the interesting rejection: it reads as "off", and would be a
     /// busy loop hammering the database with no sleep between passes.
     #[test]
-    #[serial]
     fn an_out_of_range_cadence_is_refused() {
-        clear();
-        unsafe { std::env::set_var("SEAL_AUDIT_INTERVAL_SECS", "0") };
-        assert!(seal_audit_cadence().is_err(), "zero seconds is a busy loop");
-        unsafe {
-            std::env::remove_var("SEAL_AUDIT_INTERVAL_SECS");
-            std::env::set_var("SEAL_AUDIT_BATCH", "0");
-        }
         assert!(
-            seal_audit_cadence().is_err(),
+            seal_audit_cadence_from(env(&[("SEAL_AUDIT_INTERVAL_SECS", "0")])).is_err(),
+            "zero seconds is a busy loop"
+        );
+        assert!(
+            seal_audit_cadence_from(env(&[("SEAL_AUDIT_BATCH", "0")])).is_err(),
             "a zero batch never advances the cursor and never wraps"
         );
-        clear();
     }
 
     /// The arithmetic behind the boot warning, including the empty batch that
