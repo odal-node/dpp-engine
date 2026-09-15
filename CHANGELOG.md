@@ -288,6 +288,22 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ### Fixed
 
+- **The QTSP seal profile now follows the level actually requested.**
+  `SEAL_CONFORMANCE_LEVEL` defaults to `LT` while this provider's
+  `signature_profile` defaulted to `CAdES_BASELINE_T`, so a node configured for
+  the provider and nothing else **refused to boot**. That refusal was correct —
+  every published passport would have enqueued a seal row that could never drain
+  — but it named `SEAL_CONFORMANCE_LEVEL` as the thing to change, pointing an
+  operator at *lowering* the level to meet a default they never chose, giving up
+  long-term validation material to do it.
+
+  The composition root now derives the profile from the requested level unless
+  the operator pinned one, which is left alone: someone who names a profile has
+  said something specific, and the capability probe already refuses a boot where
+  it contradicts the level. `profile_for_level` and `level_for_profile` are
+  pinned as inverses — drift between them would have the node request `LT`,
+  receive `T`, and record the request.
+
 - **The two repository backends disagreed about which fields a patch may
   carry.** *(No change to how a node behaves: the PostgreSQL backend was and
   remains the one that ships. What changes is that the test double now agrees

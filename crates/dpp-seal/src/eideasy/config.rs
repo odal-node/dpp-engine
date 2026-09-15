@@ -76,7 +76,13 @@ pub const ENV_GROUP: &str = "SEAL_EIDEASY_*";
 const ENV_BASE_URL: &str = "SEAL_EIDEASY_BASE_URL";
 const ENV_CLIENT_ID: &str = "SEAL_EIDEASY_CLIENT_ID";
 const ENV_HMAC_KEY: &str = "SEAL_EIDEASY_HMAC_KEY";
-const ENV_SIGNATURE_PROFILE: &str = "SEAL_EIDEASY_SIGNATURE_PROFILE";
+/// The profile override.
+///
+/// Public because the composition root needs to know whether the operator set
+/// it. When they did not, the profile is derived from the conformance level
+/// they *did* ask for — see [`crate::eideasy::profile_for_level`] — and a
+/// hard-coded default here would silently contradict that.
+pub const ENV_SIGNATURE_PROFILE: &str = "SEAL_EIDEASY_SIGNATURE_PROFILE";
 
 /// Whether any variable of this backend's group is set.
 pub fn any_env_set(get: &impl Fn(&str) -> Option<String>) -> bool {

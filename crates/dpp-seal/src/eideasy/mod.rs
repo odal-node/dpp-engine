@@ -54,7 +54,7 @@ pub mod types;
 #[cfg(test)]
 mod tests;
 
-pub use client::EideasyClient;
+pub use client::{EideasyClient, profile_for_level};
 pub use config::{EideasyConfig, EideasyEnvironment};
 pub use error::{AuthHint, EideasyError};
 pub use types::{EsealFile, EsealRequest, EsealResponse, EsealSignatureOut, MIME_JSON, MIME_PDF};
