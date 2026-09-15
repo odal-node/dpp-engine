@@ -683,7 +683,25 @@ pub fn render_seal_status(seal: &serde_json::Value, id: &str) {
         println!("                  this seal carries less validation material than was paid for");
     }
 
-    println!("  Sealed at     : {}", s("sealedAt"));
+    println!(
+        "  Sealed at     : {}  (this node's clock, unattested)",
+        s("sealedAt")
+    );
+    // A third party's statement of when, as opposed to ours. Absent below B-T,
+    // and absent for a token that failed its checks — which is not the same as
+    // a seal made at an unknown time, but is the same answer: we cannot say.
+    match seal
+        .get("attestedSealedAt")
+        .and_then(serde_json::Value::as_str)
+    {
+        Some(at) => {
+            println!(
+                "  Attested at   : {}  by the timestamp inside the seal",
+                plain(at)
+            );
+        }
+        None => println!("  Attested at   : none — no timestamp token this node could check"),
+    }
 
     // The certificate the seal names as its signer — which certificate to ask
     // about, not whether it was qualified. Absent for seals made before the

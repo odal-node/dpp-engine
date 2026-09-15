@@ -3561,6 +3561,7 @@ mod fixtures {
             seal_value: "MIIB...".into(),
             sealed_at: ts(),
             signing_cert_ref: Some("5".repeat(64)),
+            attested_sealed_at: Some(ts()),
             conformance_level: Some(SealConformanceLevel::BaselineLta),
             // Populated and deliberately **different** from the level above: the
             // downgrade is the case these two fields exist to make visible, so

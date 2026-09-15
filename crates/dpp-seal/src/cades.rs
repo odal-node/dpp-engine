@@ -29,6 +29,7 @@
 //! nothing is worse than an absent one, because an absent field prompts the
 //! question and a populated one settles it wrongly.
 
+use chrono::{DateTime, Utc};
 use cms::cert::CertificateChoices;
 use cms::content_info::ContentInfo;
 use cms::signed_data::{SignedData, SignerInfo};
@@ -55,6 +56,12 @@ struct Signed {
     /// intermediate that actually issued a seal certificate will be found here
     /// or nowhere.
     chain: Vec<Certificate>,
+    /// The encapsulated content, when the structure carries one.
+    ///
+    /// Absent for a detached seal — that is what detached means. Present for a
+    /// **time-stamp token**, which is itself a `SignedData` and carries its
+    /// `TSTInfo` here; reading an attested sealing time means reaching it.
+    econtent: Option<Vec<u8>>,
     /// Whether `SignedData.crls` carried anything.
     ///
     /// Captured here because the enclosing `SignedData` is dropped when this is
@@ -148,6 +155,12 @@ fn parse(seal_der: &[u8]) -> Result<Signed, SealError> {
         signer: signer.clone(),
         certificate,
         chain,
+        econtent: sd
+            .encap_content_info
+            .econtent
+            .as_ref()
+            .and_then(|c| c.decode_as::<der::asn1::OctetString>().ok())
+            .map(|o| o.as_bytes().to_vec()),
         crls_present: sd.crls.as_ref().is_some_and(|c| !c.0.as_slice().is_empty()),
     })
 }
@@ -463,31 +476,183 @@ pub fn verify_against_embedded_certificate(seal_der: &[u8]) -> Result<bool, Seal
         ));
     };
 
-    let key = verifying_key(&signed.certificate)?;
+    // One implementation of "does this signature hold", shared with the
+    // timestamp token's own check. A second copy is how two places come to
+    // disagree about it, and this one decides whether a seal is bound to its
+    // passport.
+    let _ = signed_attrs;
+    signature_holds(&signed)
+}
 
-    // Re-encode as SET OF, matching what was signed (RFC 5652 §5.4) rather than
-    // the `[0] IMPLICIT` form the attributes take inside `SignerInfo`. Verifying
-    // the wrong one fails against every correct seal in existence.
+// ─── When it was sealed, as attested rather than claimed ─────────────────────
+
+/// `id-ct-TSTInfo` — the content type of a time-stamp token's payload.
+///
+/// RFC 3161 §2.4.2.
+pub(crate) const ID_CT_TST_INFO: const_oid::ObjectIdentifier =
+    const_oid::ObjectIdentifier::new_unwrap("1.2.840.113549.1.9.16.1.4");
+
+/// `MessageImprint` — RFC 3161 §2.4.1.
+#[derive(der::Sequence)]
+pub(crate) struct MessageImprint {
+    pub(crate) hash_algorithm: x509_cert::spki::AlgorithmIdentifierOwned,
+    pub(crate) hashed_message: der::asn1::OctetString,
+}
+
+/// `TSTInfo` — RFC 3161 §2.4.2.
+///
+/// Defined here, in the module that owns CMS and X.509 handling, and used by
+/// the local timestamping authority for writing. One definition: a reader and a
+/// writer with separate copies is the drift this module's header warns about,
+/// and it would show up as tokens this node emits and cannot read back.
+///
+/// The optional tail — `accuracy`, `ordering`, `nonce`, `tsa`, `extensions` — is
+/// omitted. Reading stops at `genTime` because that is the only field anything
+/// here asks about; a token carrying more still parses, since DER decoding of a
+/// SEQUENCE ignores what it was not asked for.
+#[derive(der::Sequence)]
+pub(crate) struct TstInfo {
+    pub(crate) version: u8,
+    pub(crate) policy: const_oid::ObjectIdentifier,
+    pub(crate) message_imprint: MessageImprint,
+    pub(crate) serial_number: u64,
+    pub(crate) gen_time: der::asn1::GeneralizedTime,
+}
+
+/// The time a timestamp authority attests the seal was made.
+///
+/// # Why this is not `SealedEnvelope::sealed_at`
+///
+/// That field is **this node's clock when the backend answered** — an unattested
+/// claim by the party that bought the seal, and the seal route says so. From
+/// `B-T` upward the envelope carries an RFC 3161 token whose `genTime` is a
+/// third party's statement about when the signature existed. That is the only
+/// place in a seal an attested time can be, and until now nothing read it.
+///
+/// # The token's own signature is checked first, and it has to be
+///
+/// The `signature-time-stamp` attribute is an **unsigned** attribute: the seal's
+/// own signature does not cover it, so anyone holding the bytes can replace the
+/// whole token. What stops a forged time is the token's own signature over its
+/// own content — so that is verified, and the `messageDigest` binding the
+/// signature to the `TSTInfo` is checked, before `genTime` is read.
+///
+/// # What this still does not establish
+///
+/// That the authority is **trusted**, or **qualified**. Regulation (EU)
+/// No 910/2014 Art. 42 makes a qualified electronic time stamp a service of a
+/// QTSP, and Art. 41(2) attaches the presumption of accuracy to that — which is
+/// a Trusted List question about the `TSA/QTST` service type, and is not asked
+/// here. A self-signed authority's token verifies perfectly and means nothing,
+/// which is exactly what this crate's own development sealer produces.
+///
+/// `Ok(None)` when there is no timestamp at all (a `B-B` seal), when the token
+/// cannot be read, or when its signature does not hold. A time that failed its
+/// check must never be reported as a time.
+///
+/// # Errors
+///
+/// [`SealError::Backend`] when the seal itself cannot be read.
+pub fn attested_sealing_time(seal_der: &[u8]) -> Result<Option<DateTime<Utc>>, SealError> {
+    let signed = parse(seal_der)?;
+    let Some(attrs) = signed.signer.unsigned_attrs.as_ref() else {
+        return Ok(None);
+    };
+    let Some(attr) = attrs
+        .iter()
+        .find(|a| a.oid == ID_AA_SIGNATURE_TIME_STAMP_TOKEN)
+    else {
+        return Ok(None);
+    };
+    let [value] = attr.values.as_slice() else {
+        return Ok(None);
+    };
+    let Ok(token_der) = value.to_der() else {
+        return Ok(None);
+    };
+    let Ok(token) = parse(&token_der) else {
+        return Ok(None);
+    };
+
+    // The token signs its own payload, so both legs have to hold: the signature
+    // over the signed attributes, and the digest inside them over the content.
+    // Checking only the first would let the TSTInfo be swapped for another.
+    if !signature_holds(&token).unwrap_or(false) {
+        return Ok(None);
+    }
+    let Some(content) = token.econtent.as_ref() else {
+        return Ok(None);
+    };
+    if !digest_matches(&token, content) {
+        return Ok(None);
+    }
+
+    let Ok(info) = TstInfo::from_der(content) else {
+        return Ok(None);
+    };
+
+    // And that it is a timestamp **of this signature**, not merely a valid one.
+    //
+    // EN 319 122-1 clause 5.3: the imprint is over the `SignerInfo` signature
+    // value, without its ASN.1 tag and length. Without this leg a genuine token
+    // lifted from another seal — internally sound, signed by a real authority,
+    // saying a different time — would be accepted, and an unsigned attribute is
+    // exactly where such a swap is free to make.
+    {
+        use sha2::{Digest as _, Sha256};
+        if info.message_imprint.hashed_message.as_bytes()
+            != Sha256::digest(signed.signer.signature.as_bytes()).as_slice()
+        {
+            return Ok(None);
+        }
+    }
+    let seconds = info.gen_time.to_unix_duration().as_secs();
+    Ok(DateTime::from_timestamp(
+        i64::try_from(seconds).unwrap_or(i64::MAX),
+        0,
+    ))
+}
+
+/// Whether a parsed structure's signature holds under its own certificate.
+fn signature_holds(signed: &Signed) -> Result<bool, SealError> {
+    let Some(signed_attrs) = signed.signer.signed_attrs.as_ref() else {
+        return Ok(false);
+    };
+    let key = verifying_key(&signed.certificate)?;
     let to_verify = signed_attrs
         .to_der()
         .map_err(|e| malformed(format!("cannot re-encode the signed attributes: {e}")))?;
-
     let signature = x509_verify::SignatureRef::new(
         &signed.signer.signature_algorithm,
         signed.signer.signature.as_bytes(),
     );
-
-    let message = x509_verify::MessageOwned::from(to_verify);
-    match key.verify(x509_verify::VerifyInfo::new(message, signature)) {
+    match key.verify(x509_verify::VerifyInfo::new(
+        x509_verify::MessageOwned::from(to_verify),
+        signature,
+    )) {
         Ok(()) => Ok(true),
         Err(x509_verify::Error::Verification) => Ok(false),
-        // An algorithm this build cannot check is **not** a failed signature.
-        // Returning `false` would report a possibly-sound seal as broken, and the
-        // binding built on this would call it retargeted.
         Err(e) => Err(malformed(format!(
             "the signature could not be checked: {e}"
         ))),
     }
+}
+
+/// Whether the signed `messageDigest` matches `content`.
+fn digest_matches(signed: &Signed, content: &[u8]) -> bool {
+    use sha2::{Digest as _, Sha256};
+
+    signed
+        .signer
+        .signed_attrs
+        .as_ref()
+        .and_then(|a| {
+            a.iter()
+                .find(|a| a.oid == const_oid::db::rfc5911::ID_MESSAGE_DIGEST)
+        })
+        .and_then(|a| a.values.as_slice().first())
+        .and_then(|v| v.decode_as::<der::asn1::OctetString>().ok())
+        .is_some_and(|d| d.as_bytes() == Sha256::digest(content).as_slice())
 }
 
 // ─── Who issued it, and where its key lives ──────────────────────────────────
@@ -883,6 +1048,106 @@ mod tests {
             signer_certificate_thumbprint(&seal).unwrap(),
             Some(id.cert_thumbprint()),
             "the certificate read out of a seal must be the one that signed it"
+        );
+    }
+
+    // ─── attested sealing time ───────────────────────────────────────────────
+
+    /// A timestamped seal reports a time a third party attests, not our clock.
+    #[test]
+    fn a_timestamped_seal_reports_an_attested_time() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let id = crate::local::LocalIdentity::load_or_create(dir.path()).expect("identity");
+        let der = id
+            .sign_detached_at(&[0x11; 32], SealConformanceLevel::BaselineT)
+            .expect("sign");
+
+        let attested = attested_sealing_time(&der)
+            .expect("readable")
+            .expect("a B-T seal carries a timestamp");
+
+        let drift = (chrono::Utc::now() - attested).num_seconds().abs();
+        assert!(
+            drift < 300,
+            "the attested time should be about now: {attested}"
+        );
+    }
+
+    /// A `B-B` seal carries no timestamp, and reports none rather than a guess.
+    ///
+    /// The distinction the whole function exists for: no attested time is a
+    /// different answer from the node's own clock, and `SealedEnvelope::sealed_at`
+    /// is the latter.
+    #[test]
+    fn a_seal_with_no_timestamp_attests_no_time() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let id = crate::local::LocalIdentity::load_or_create(dir.path()).expect("identity");
+        let der = id.sign_detached(&[0x11; 32]).expect("sign");
+
+        assert_eq!(attested_sealing_time(&der).expect("readable"), None);
+    }
+
+    /// **A genuine token lifted from another seal is refused.**
+    ///
+    /// The attack the imprint check exists for, and the reason verifying the
+    /// token's own signature is not enough on its own. `signature-time-stamp` is
+    /// an *unsigned* attribute — the seal's signature does not cover it — so
+    /// swapping the whole token costs nothing. The token moved here is perfectly
+    /// valid: real authority, sound signature, real `genTime`. It is simply a
+    /// timestamp of a *different* signature.
+    ///
+    /// EN 319 122-1 clause 5.3 says the imprint is over this `SignerInfo`'s
+    /// signature value, so checking it is what ties the time to this seal.
+    #[test]
+    fn a_timestamp_token_from_another_seal_is_refused() {
+        use cms::content_info::ContentInfo;
+        use cms::signed_data::SignedData;
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let id = crate::local::LocalIdentity::load_or_create(dir.path()).expect("identity");
+        let mine = id
+            .sign_detached_at(&[0x11; 32], SealConformanceLevel::BaselineT)
+            .expect("sign");
+        // A second seal over different content, so its timestamp covers a
+        // different signature value.
+        let theirs = id
+            .sign_detached_at(&[0x22; 32], SealConformanceLevel::BaselineT)
+            .expect("sign");
+
+        let borrowed = {
+            let info = ContentInfo::from_der(&theirs).expect("CMS");
+            let sd: SignedData = info.content.decode_as().expect("SignedData");
+            sd.signer_infos.0.as_slice()[0]
+                .unsigned_attrs
+                .as_ref()
+                .expect("a B-T seal has unsigned attributes")
+                .iter()
+                .find(|a| a.oid == ID_AA_SIGNATURE_TIME_STAMP_TOKEN)
+                .expect("a signature timestamp")
+                .clone()
+        };
+
+        let info = ContentInfo::from_der(&mine).expect("CMS");
+        let mut sd: SignedData = info.content.decode_as().expect("SignedData");
+        let mut signers = sd.signer_infos.0.as_slice().to_vec();
+        let mut attrs = der::asn1::SetOfVec::new();
+        attrs.insert(borrowed).expect("attribute");
+        signers[0].unsigned_attrs = Some(attrs);
+        let mut set = der::asn1::SetOfVec::new();
+        set.insert(signers.remove(0)).expect("signer");
+        sd.signer_infos = cms::signed_data::SignerInfos::from(set);
+
+        let swapped = ContentInfo {
+            content_type: const_oid::db::rfc5911::ID_SIGNED_DATA,
+            content: der::Any::encode_from(&sd).expect("encode"),
+        }
+        .to_der()
+        .expect("re-encode");
+
+        assert_eq!(
+            attested_sealing_time(&swapped).expect("readable"),
+            None,
+            "a valid token over someone else's signature must not become this seal's time"
         );
     }
 

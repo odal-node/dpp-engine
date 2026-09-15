@@ -75,6 +75,32 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   exactly where an ANSI escape would be put to forge output under the CLI's own
   labels.
 
+- **A seal's attested time is now read, having been pointed at and never
+  reached.** `sealedAt` is the sealing node's own clock — an unattested claim by
+  the party that bought the seal — and that field's documentation has always said
+  the only place an attested time can be is the time-stamp token inside
+  `sealValue`. Nothing read it. `attestedSealedAt` now does, on the seal route
+  and in the dossier.
+
+  **Checked, not merely read.** The `signature-time-stamp` attribute is
+  *unsigned*: the seal's own signature does not cover it, so swapping the whole
+  token costs nothing. So the token's own signature is verified, and its imprint
+  is matched against this seal's signature per EN 319 122-1 clause 5.3 — without
+  that second leg a genuine token lifted from another seal, sound in every way
+  and saying a different time, would be accepted.
+  `a_timestamp_token_from_another_seal_is_refused` does exactly that swap;
+  with the imprint check removed it reports the other seal's time.
+
+  **Attested is not trusted.** A qualified time stamp is a QTSP's service
+  (Art. 42) with the presumption of accuracy attached (Art. 41(2)); establishing
+  that is a Trusted List question about the `TSA/QTST` service type, which this
+  node cannot yet ask. A self-signed authority's token verifies perfectly and
+  means nothing — which is what the local backend produces.
+
+  The `TSTInfo` ASN.1 now has **one** definition, in `cades`, used by the local
+  authority for writing and the reader for reading; and the signature check that
+  both the seal and its token need is one function rather than two copies.
+
 - **The dossier now says who issued its seal, and what level the bytes carry.**
   It named *which* certificate — a thumbprint, enough to ask an auditor's
   question about and not enough to answer the first one anybody has. A

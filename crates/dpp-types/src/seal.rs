@@ -29,6 +29,7 @@
 //! produces a different JWS, hence a different digest, hence a distinct row.
 
 use async_trait::async_trait;
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
@@ -356,4 +357,24 @@ pub trait SealInspector: Send + Sync {
     ///
     /// `None` when the bytes cannot be read.
     fn evidenced_level(&self, envelope: &SealedEnvelope) -> Option<SealConformanceLevel>;
+
+    /// The time a timestamp authority attests the seal was made.
+    ///
+    /// Not [`SealedEnvelope::sealed_at`], which is the sealing node's own clock
+    /// when the backend answered — an unattested claim by the party that bought
+    /// the seal. From `B-T` upward the envelope carries a time-stamp token, and
+    /// that token is the only place in a seal an attested time can be.
+    ///
+    /// The implementation must check the token's own signature **and** that its
+    /// imprint covers this seal's signature. The attribute carrying it is
+    /// *unsigned*, so swapping in a genuine token from another seal costs
+    /// nothing and would otherwise be accepted.
+    ///
+    /// `None` for a `B-B` seal, and for a token that fails either check — a time
+    /// that did not survive checking must not be reported as a time.
+    ///
+    /// Says nothing about whether the authority is **trusted** or **qualified**:
+    /// Art. 42 makes a qualified time stamp a QTSP service, which is a Trusted
+    /// List question about the `TSA/QTST` service type and is not asked here.
+    fn attested_sealing_time(&self, envelope: &SealedEnvelope) -> Option<DateTime<Utc>>;
 }

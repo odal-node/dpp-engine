@@ -131,6 +131,19 @@ impl SealInspector for CadesInspector {
             }
         }
     }
+    fn attested_sealing_time(
+        &self,
+        envelope: &SealedEnvelope,
+    ) -> Option<chrono::DateTime<chrono::Utc>> {
+        let der = self.readable(envelope)?;
+        match cades::attested_sealing_time(&der) {
+            Ok(at) => at,
+            Err(e) => {
+                tracing::warn!(error = %e, "stored seal could not be read; no attested time");
+                None
+            }
+        }
+    }
 }
 
 impl CadesInspector {

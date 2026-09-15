@@ -825,6 +825,22 @@ async fn a_locally_sealed_passport_reports_that_no_provider_issued_it() {
         "and what the bytes actually carry: {seal_section}"
     );
 
+    // A third party's statement of when this was sealed, checked rather than
+    // read: the token's signature holds and its imprint covers this signature.
+    let attested = inspector
+        .attested_sealing_time(&seal)
+        .expect("an LTA seal carries a timestamp this node can check");
+    assert!(
+        (chrono::Utc::now() - attested).num_seconds().abs() < 300,
+        "the attested time should be about now: {attested}"
+    );
+    assert_eq!(
+        seal_section["attestedSealedAt"].as_str().is_some(),
+        true,
+        "and the dossier must carry it: {seal_section}"
+    );
+    println!("attested  : {attested}");
+
     println!("dossier   : qualified_seal = Pass");
 
     // ── The verdict, read out of the stored seal ────────────────────────────

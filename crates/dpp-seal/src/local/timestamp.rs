@@ -45,11 +45,7 @@ use x509_cert::Certificate;
 
 use crate::error::SealError;
 
-/// `id-ct-TSTInfo` — the content type of a time-stamp token's payload.
-///
-/// RFC 3161 §2.4.2.
-const ID_CT_TST_INFO: const_oid::ObjectIdentifier =
-    const_oid::ObjectIdentifier::new_unwrap("1.2.840.113549.1.9.16.1.4");
+use crate::cades::ID_CT_TST_INFO;
 
 /// The policy this development authority stamps under, deliberately unregistered.
 ///
@@ -61,29 +57,6 @@ const ID_CT_TST_INFO: const_oid::ObjectIdentifier =
 /// intent: the fastest way to be honest about a simulated authority is to make
 /// the simulation legible in the bytes.
 pub const DEVELOPMENT_TSA_POLICY: &str = "1.2.3.4.1";
-
-/// `MessageImprint` — RFC 3161 §2.4.1.
-#[derive(der::Sequence)]
-struct MessageImprint {
-    hash_algorithm: x509_cert::spki::AlgorithmIdentifierOwned,
-    hashed_message: der::asn1::OctetString,
-}
-
-/// `TSTInfo` — RFC 3161 §2.4.2.
-///
-/// The optional tail — `accuracy`, `ordering`, `nonce`, `tsa`, `extensions` — is
-/// omitted rather than defaulted. `ordering` has a DEFAULT of `FALSE` which DER
-/// forbids encoding, and the rest are genuinely optional; a field this authority
-/// cannot say anything true about is better absent than filled with a
-/// placeholder that reads as a claim.
-#[derive(der::Sequence)]
-struct TstInfo {
-    version: u8,
-    policy: const_oid::ObjectIdentifier,
-    message_imprint: MessageImprint,
-    serial_number: u64,
-    gen_time: der::asn1::GeneralizedTime,
-}
 
 /// A locally generated timestamping identity: one key, one self-signed
 /// certificate carrying the timestamping extended key usage.
@@ -143,11 +116,11 @@ impl LocalTsa {
             parameters: None,
         };
 
-        let info = TstInfo {
+        let info = crate::cades::TstInfo {
             version: 1,
             policy: const_oid::ObjectIdentifier::new(DEVELOPMENT_TSA_POLICY)
                 .map_err(|e| SealError::Config(format!("the TSA policy OID is malformed: {e}")))?,
-            message_imprint: MessageImprint {
+            message_imprint: crate::cades::MessageImprint {
                 hash_algorithm: sha256.clone(),
                 hashed_message: OctetString::new(imprint)
                     .map_err(|e| SealError::Config(format!("cannot encode the imprint: {e}")))?,

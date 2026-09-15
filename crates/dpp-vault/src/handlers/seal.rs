@@ -113,6 +113,29 @@ pub struct SealResponse {
     ///
     /// `null` when the seal predates extraction or could not be parsed.
     pub signing_cert_ref: Option<String>,
+    /// **When a timestamp authority attests the seal was made.**
+    ///
+    /// `sealedAt` above is this node's own clock and an unattested claim by the
+    /// party that bought the seal. This is a third party's statement, read out
+    /// of the time-stamp token in `sealValue` — which the documentation for that
+    /// field has always said was the only place an attested time can be, and
+    /// which nothing read until now.
+    ///
+    /// Checked, not merely read. The token's own signature is verified, and its
+    /// imprint is matched against this seal's signature: the attribute carrying
+    /// it is *unsigned*, so a genuine token lifted from another seal would
+    /// otherwise be accepted and would report someone else's time as this one's.
+    ///
+    /// `null` for a `B-B` seal, which carries no token, and for a token that
+    /// failed either check.
+    ///
+    /// **Attested is not trusted.** Art. 42 makes a qualified time stamp a
+    /// QTSP's service and Art. 41(2) attaches the presumption of accuracy to
+    /// that; establishing it is a Trusted List question about the `TSA/QTST`
+    /// service type, which this node cannot yet ask. A self-signed authority's
+    /// token verifies perfectly and means nothing — which is exactly what the
+    /// local development backend produces.
+    pub attested_sealed_at: Option<chrono::DateTime<chrono::Utc>>,
     /// The baseline level this node **asked** for, recorded on the envelope.
     ///
     /// `null` for a seal stored before the field existed. A record of intent —
@@ -325,6 +348,11 @@ pub async fn seal_handler(
             seal_value: seal.seal_value.clone(),
             sealed_at: seal.sealed_at,
             signing_cert_ref: seal.signing_cert_ref.clone(),
+            attested_sealed_at: state
+                .service
+                .seal_inspector
+                .as_ref()
+                .and_then(|i| i.attested_sealing_time(seal)),
             conformance_level: seal.conformance_level,
             evidenced_level: state
                 .service

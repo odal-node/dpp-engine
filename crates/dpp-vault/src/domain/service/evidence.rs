@@ -251,6 +251,14 @@ impl PassportService {
                     .seal_inspector
                     .as_ref()
                     .and_then(|i| i.evidenced_level(seal)),
+                // A third party's statement of when this was sealed, as opposed
+                // to `seal.sealedAt`, which is the sealing node's own clock. An
+                // authority reading a dossier has no other way to reach it — the
+                // token is inside the CAdES.
+                "attestedSealedAt": self
+                    .seal_inspector
+                    .as_ref()
+                    .and_then(|i| i.attested_sealing_time(seal)),
             }))
         });
 
