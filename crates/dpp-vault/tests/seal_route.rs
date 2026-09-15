@@ -239,6 +239,43 @@ async fn a_sealed_passport_is_not_reported_as_unsealed() {
     assert_eq!(body["unsealedPublished"], 0);
 }
 
+/// **A node whose audit has not completed a pass reports nothing, not zero.**
+///
+/// The audit walks every stored seal in bounded batches and publishes only when
+/// it wraps, so `audit` is absent for a while after every restart. A zero there
+/// would read as "checked, nothing wrong" — the one answer worse than silence,
+/// because it is the answer an operator would act on. The counts beside it stay
+/// populated, which is the point: they describe rows and absent seals, and a
+/// worthless seal is present, so nothing in them can cover for a missing report.
+///
+/// This harness wires no audit task at all, which is the same state a freshly
+/// booted node is in.
+#[tokio::test(flavor = "multi_thread")]
+async fn an_audit_that_has_not_completed_a_pass_reports_nothing_rather_than_zero() {
+    let pg = start_postgres().await;
+    let base = start_vault(pg.dal.clone()).await;
+    seed(&pg.dal, Some(envelope()), Some(JWS)).await;
+    let client = TestClient::new(&base, make_jwt(&op()));
+
+    let resp = client.get("/api/v1/seal").await;
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = resp.json().await.unwrap();
+
+    assert!(
+        body["audit"].is_null(),
+        "no completed pass must serve null, never a report with zeroes: {body}"
+    );
+    assert!(
+        body.get("audit").is_some(),
+        "and the field must be present and null rather than omitted, so a reader \
+         cannot mistake an old client for a clean estate"
+    );
+    assert_eq!(
+        body["unsealedPublished"], 0,
+        "the counts are unaffected — they answer a different question"
+    );
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn the_summary_route_requires_authentication() {
     let pg = start_postgres().await;
