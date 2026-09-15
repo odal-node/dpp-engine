@@ -134,6 +134,26 @@ pub async fn drain_once(
         match outcome {
             Ok(envelope) => {
                 report_shortfall(&envelope, conformance_level, &row.passport_id);
+                if let Some(why) = covers_something_else(&envelope, &row.payload_hash) {
+                    metrics::counter!("seal_total", "outcome" => "misbound").increment(1);
+                    tracing::error!(
+                        passport_id = %row.passport_id,
+                        requested = %row.payload_hash,
+                        %why,
+                        "the seal that came back does not cover the digest it was bought for — \
+                         not stored. The passport stays visibly unsealed, which is true, rather \
+                         than carrying a seal that attests to something else"
+                    );
+                    back_off_or_exhaust(
+                        outbox,
+                        row.id,
+                        row.attempts,
+                        format!("seal does not cover the requested digest: {why}"),
+                        &mut stats,
+                    )
+                    .await;
+                    continue;
+                }
                 match outbox.mark_sealed(row.id, &envelope).await {
                     Ok(()) => {
                         metrics::counter!("seal_total", "outcome" => "sealed").increment(1);
@@ -167,6 +187,46 @@ pub async fn drain_once(
         }
     }
     stats
+}
+
+/// Refuse a seal that does not cover the digest it was bought for.
+///
+/// `Some(reason)` means do not store it.
+///
+/// # Why this one refuses where `report_shortfall` only warns
+///
+/// The two failures look similar and are not. A downgraded seal is still a seal
+/// **over the right passport** — weaker than ordered, but real, and re-buying
+/// gets the same weak thing, so warning and keeping it is right.
+///
+/// A seal over the wrong digest is not a seal for this passport at all. Storing
+/// it would leave a passport that *looks* sealed and is not, and the read route
+/// would report it as `coversAnotherDigest` — indistinguishable from the
+/// ordinary case of a passport re-published after sealing. A provider error
+/// would arrive disguised as routine staleness.
+///
+/// So it is not stored. The row backs off and eventually exhausts, and the
+/// passport stays in `unsealedPublished`, which is the honest state and one the
+/// rollup already surfaces.
+///
+/// # What is deliberately not refused
+///
+/// `Unknown` — a placeholder, or a format this node does not parse. "Cannot
+/// check" must never become "reject", or the first backend emitting something
+/// other than CAdES would be unable to seal anything at all.
+///
+/// The check runs through the same `CadesInspector` the read route uses, so the
+/// drain and the route cannot come to disagree about what covering means.
+fn covers_something_else(envelope: &SealedEnvelope, requested: &str) -> Option<String> {
+    use dpp_types::SealInspector as _;
+
+    match dpp_seal::CadesInspector::new().binding(envelope, requested) {
+        dpp_types::SealBinding::CoversThisSignature | dpp_types::SealBinding::Unknown => None,
+        dpp_types::SealBinding::CoversAnotherDigest { covered } => {
+            Some(format!("it covers {covered}"))
+        }
+        dpp_types::SealBinding::NotIntact => Some("its signature does not verify".to_owned()),
+    }
 }
 
 /// Say so when a seal carries less than was asked for.
@@ -402,6 +462,113 @@ mod tests {
     ///
     /// The shortfall is reported, and that is *all* it does. The seal exists and
     /// has been billed, so failing the row would back it off and buy the same
+    /// **A seal over the wrong digest is not stored, however well-formed it is.**
+    ///
+    /// A provider answering with a seal over some other document — a mix-up, a
+    /// request crossed with another client's, a bug — used to be written onto
+    /// the passport unexamined, because nothing compared what came back against
+    /// what was asked for. The passport would then *look* sealed while carrying
+    /// an attestation about something else, and the read route would call it
+    /// `coversAnotherDigest`, which is indistinguishable from the ordinary case
+    /// of a passport re-published after sealing. A provider error would arrive
+    /// disguised as routine staleness.
+    ///
+    /// Refused, unlike a downgrade: a weak seal still covers the right passport
+    /// and re-buying gets the same weak thing, whereas this is not a seal for
+    /// this passport at all. The row backs off and the passport stays in
+    /// `unsealedPublished`, which is true.
+    ///
+    /// Real CAdES bytes again, over a genuinely different digest — a stub would
+    /// exercise the unreadable path, which is the one case deliberately allowed
+    /// through.
+    #[tokio::test]
+    async fn a_seal_over_the_wrong_digest_is_refused_rather_than_stored() {
+        struct WrongDigest(String);
+
+        #[async_trait]
+        impl SealPort for WrongDigest {
+            async fn seal(&self, _req: SealRequest) -> Result<SealedEnvelope, DppError> {
+                Ok(SealedEnvelope {
+                    format: SealFormat::Cades,
+                    seal_value: self.0.clone(),
+                    signing_cert_ref: None,
+                    conformance_level: Some(SealConformanceLevel::BaselineB),
+                    sealed_at: chrono::Utc::now(),
+                    placeholder: false,
+                })
+            }
+            async fn verify(&self, _e: &SealedEnvelope) -> Result<SealVerification, DppError> {
+                unreachable!("the drain never verifies")
+            }
+            fn capabilities(&self) -> SealCapabilities {
+                SealCapabilities {
+                    supported_formats: vec![SealFormat::Cades],
+                    supported_modes: vec![SealMode::ProviderSeal],
+                    supported_levels: SealConformanceLevel::ALL.to_vec(),
+                    supported_envelopes: vec![SealEnvelope::Detached],
+                }
+            }
+        }
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let identity =
+            dpp_seal::local::LocalIdentity::load_or_create(dir.path()).expect("identity");
+        // Sealed over a digest that is emphatically not the row's.
+        let der = identity.sign_detached(&[0x99; 32]).expect("sign");
+        let elsewhere = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &der);
+
+        let outbox = Arc::new(FakeOutbox {
+            rows: Mutex::new(vec![row(0)]),
+            ..Default::default()
+        });
+        let stats = drain_once(
+            &(outbox.clone() as Arc<dyn SealOutbox>),
+            &(Arc::new(WrongDigest(elsewhere)) as Arc<dyn SealPort>),
+            &test_key_ref(),
+            SealMode::ProviderSeal,
+            SealConformanceLevel::BaselineB,
+            10,
+        )
+        .await;
+
+        assert_eq!(stats.sealed, 0, "it must not be recorded as a sealed row");
+        assert!(
+            outbox.sealed.lock().unwrap().is_empty(),
+            "and nothing may be written onto the passport"
+        );
+        assert_eq!(stats.retried, 1);
+        assert!(
+            outbox.failed.lock().unwrap()[0].contains("does not cover the requested digest"),
+            "the reason must name the mismatch, not a transport failure: {:?}",
+            outbox.failed.lock().unwrap()
+        );
+    }
+
+    /// An unreadable seal is stored, because "cannot check" is not "reject".
+    ///
+    /// The line the check must not cross. A backend emitting a format this node
+    /// does not parse — JAdES, PAdES — would otherwise be unable to seal
+    /// anything at all, refused by a check that never ran rather than by a
+    /// finding.
+    #[tokio::test]
+    async fn a_seal_this_node_cannot_read_is_still_stored() {
+        let (outbox, seal) = fakes(false, false, 0);
+        let stats = drain_once(
+            &(outbox.clone() as Arc<dyn SealOutbox>),
+            &(seal as Arc<dyn SealPort>),
+            &test_key_ref(),
+            SealMode::ProviderSeal,
+            SealConformanceLevel::BaselineLt,
+            10,
+        )
+        .await;
+
+        assert_eq!(
+            stats.sealed, 1,
+            "an envelope whose coverage cannot be determined must still be recorded"
+        );
+    }
+
     /// weaker seal again on the next pass — paying twice to record the problem
     /// twice. The same reasoning as the produced-but-unrecorded path, reached
     /// from the other side.
@@ -444,7 +611,13 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         let identity =
             dpp_seal::local::LocalIdentity::load_or_create(dir.path()).expect("identity");
-        let der = identity.sign_detached(&[0x11; 32]).expect("sign");
+        // Over the digest the row actually asks for. A double that sealed some
+        // other digest would now be refused before the level is ever considered
+        // — correctly, and it would make this test assert the wrong refusal.
+        let requested = row(0).payload_hash;
+        let der = identity
+            .sign_detached(&hex::decode(&requested).expect("the row's digest is hex"))
+            .expect("sign");
         let b_level = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &der);
 
         assert_eq!(
@@ -454,7 +627,10 @@ mod tests {
         );
 
         let outbox = Arc::new(FakeOutbox {
-            rows: Mutex::new(vec![row(0)]),
+            rows: Mutex::new(vec![SealRow {
+                payload_hash: requested,
+                ..row(0)
+            }]),
             ..Default::default()
         });
         let stats = drain_once(

@@ -380,6 +380,41 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ### Fixed
 
+- **Signature checking covered none of the certificates a real provider uses.**
+  `verify_against_embedded_certificate` understood P-256 only — what the local
+  development backend emits, and **not one** of the 373 qualified-CA certificates
+  measured in the published trusted lists. That was worse than a missing feature:
+  the digest a seal covers lives in an attribute *inside* its signature, so a
+  signature this node could not check took the whole seal-to-passport binding
+  with it, degrading to "unknown" exactly when a real provider seal first
+  arrived. It now uses the same verifier as the path check, so the accepted
+  algorithms are one list rather than two that can drift.
+
+  Doing that surfaced a real listed CA this build still could not verify: the
+  French notaries' delegated authority omits the `NULL` `AlgorithmIdentifier`
+  parameters that RFC 3279 §2.3.1 requires for `rsaEncryption`, and the strict
+  SPKI decoder refuses it. An absent NULL is now supplied before decoding, which
+  **changes no key material** — the modulus and exponent live in the BIT STRING
+  and are untouched. `every_listed_qualified_ca_yields_a_usable_verifier` holds
+  the line at every published CA (373/373), so a future non-conformance is caught
+  rather than quietly joining the set whose seals cannot be checked.
+
+- **A seal that does not cover the digest it was bought for is no longer
+  stored.** Nothing compared the returned envelope against the request. A
+  provider answering with a seal over another document — a mix-up, a crossed
+  request, a bug — was written onto the passport unexamined, leaving it *looking*
+  sealed while carrying an attestation about something else. The read route would
+  then call it `coversAnotherDigest`, which is indistinguishable from a passport
+  re-published after sealing: a provider error arriving disguised as routine
+  staleness.
+
+  Refused, unlike a downgrade — a weak seal still covers the right passport and
+  re-buying gets the same weak thing, whereas this is not a seal for this
+  passport at all. The row backs off and the passport stays in
+  `unsealedPublished`, which is true. A seal this node **cannot read** is still
+  stored: "cannot check" must not become "reject", or a backend emitting a format
+  this node does not parse could never seal anything.
+
 - **The QTSP seal profile now follows the level actually requested.**
   `SEAL_CONFORMANCE_LEVEL` defaults to `LT` while this provider's
   `signature_profile` defaulted to `CAdES_BASELINE_T`, so a node configured for

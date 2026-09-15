@@ -115,6 +115,65 @@ fn the_listed_qualified_cas_are_overwhelmingly_rsa() {
     );
 }
 
+/// **Every listed qualified CA yields a usable verifier.**
+///
+/// The survey above says what algorithms are out there; this says we can
+/// actually check a signature made with them. It is the test that would have
+/// caught the real gap: `verify_against_embedded_certificate` was P-256 only,
+/// which covers the local development backend and **none** of the certificates
+/// below — so the first real provider seal would have failed to verify, taken
+/// the seal-to-passport binding with it (the digest lives inside the signature),
+/// and reported "unknown" rather than anything alarming.
+///
+/// Run over the real published certificates rather than a fixture, because the
+/// question is whether this build copes with what Member States actually
+/// publish, and that is not a thing a fixture can answer.
+#[test]
+fn every_listed_qualified_ca_yields_a_usable_verifier() {
+    let mut checked = 0;
+    let mut unusable = Vec::new();
+
+    for (territory, xml) in available_lists() {
+        let list = verified(&xml, territory);
+        for (_, services) in list.providers_offering(TrustServiceType::QUALIFIED_CERTIFICATE_CA) {
+            for service in services {
+                for c in &service.certificates {
+                    let Some(der) = base64::engine::general_purpose::STANDARD
+                        .decode(c.trim())
+                        .ok()
+                    else {
+                        continue;
+                    };
+                    let Ok(cert) = x509_cert::Certificate::from_der(&der) else {
+                        continue;
+                    };
+                    checked += 1;
+                    if !dpp_seal::cades::can_verify_signatures_of(&der) {
+                        unusable.push(format!(
+                            "{territory} oid={} subject={}",
+                            cert.tbs_certificate.subject_public_key_info.algorithm.oid,
+                            cert.tbs_certificate.subject,
+                        ));
+                    }
+                }
+            }
+        }
+    }
+
+    println!(
+        "{checked} listed qualified-CA certificates, {} this build cannot verify",
+        unusable.len()
+    );
+    assert!(
+        checked > 0,
+        "no certificate was checked, so this proves nothing"
+    );
+    assert!(
+        unusable.is_empty(),
+        "this build cannot verify signatures from these listed CAs, so a seal issued under          one would report as unverifiable rather than as sound: {unusable:?}"
+    );
+}
+
 /// The same survey across the larger lists held locally, when they are present.
 ///
 /// Finland alone is a sample of one, and sizing work from the sample that

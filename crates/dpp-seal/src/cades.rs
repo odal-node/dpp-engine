@@ -369,11 +369,86 @@ pub fn covered_digest(seal_der: &[u8]) -> Result<Option<Vec<u8>>, SealError> {
 /// only a fragment of it depends on the certificate, which is why the decision to
 /// report it as a verdict belongs to the backend rather than here.
 ///
-/// Only P-256 is understood, which is what this crate's local backend produces.
-pub fn verify_against_embedded_certificate(seal_der: &[u8]) -> Result<bool, SealError> {
-    use p256::ecdsa::VerifyingKey;
-    use p256::ecdsa::signature::Verifier as _;
+/// `rsaEncryption` — RFC 8017. Its `AlgorithmIdentifier` parameters must be NULL.
+const RSA_ENCRYPTION: const_oid::ObjectIdentifier =
+    const_oid::ObjectIdentifier::new_unwrap("1.2.840.113549.1.1.1");
 
+/// Build a verifier for a certificate's public key.
+///
+/// # Why this is not just `VerifyingKey::try_from`
+///
+/// RFC 3279 §2.3.1 requires the `AlgorithmIdentifier` parameters for
+/// `rsaEncryption` to be present and NULL, and the strict SPKI decoder behind
+/// the verifier enforces it. **A real listed qualified CA does not comply**: the
+/// French notaries' delegated authority (`OU=REAL,OU=AC déléguée,OU=Notaires`)
+/// omits the field, and every seal issued under it would otherwise report as
+/// unverifiable — not as invalid, which is the safe direction, but as an answer
+/// this node cannot give about a lawful seal.
+///
+/// So an absent NULL is supplied before decoding. **This changes no key
+/// material.** The modulus and exponent live in the SPKI's BIT STRING and are
+/// untouched; the parameters field is metadata about the algorithm identifier,
+/// and the algorithm is already known from its OID. Nothing weaker is accepted —
+/// a key that fails for any other reason still fails.
+///
+/// Narrow on purpose: only `rsaEncryption`, only when the field is absent, and
+/// never when it is present and wrong. `every_listed_qualified_ca_yields_a_usable_verifier`
+/// holds the line at **every** published CA, so a future non-conformance is
+/// caught rather than quietly joining the set of authorities whose seals this
+/// node cannot check.
+fn verifying_key(certificate: &Certificate) -> Result<x509_verify::VerifyingKey, SealError> {
+    let spki = &certificate.tbs_certificate.subject_public_key_info;
+    if spki.algorithm.oid != RSA_ENCRYPTION || spki.algorithm.parameters.is_some() {
+        return x509_verify::VerifyingKey::try_from(certificate)
+            .map_err(|e| malformed(format!("no verifier for this key: {e}")));
+    }
+
+    let mut normalised = spki.clone();
+    normalised.algorithm.parameters = Some(
+        der::Any::encode_from(&der::asn1::Null)
+            .map_err(|e| malformed(format!("cannot encode the NULL parameters: {e}")))?,
+    );
+    let der = normalised
+        .to_der()
+        .map_err(|e| malformed(format!("cannot re-encode the public key: {e}")))?;
+    let reparsed = x509_cert::spki::SubjectPublicKeyInfoRef::from_der(&der)
+        .map_err(|e| malformed(format!("cannot re-read the public key: {e}")))?;
+    x509_verify::VerifyingKey::try_from(reparsed)
+        .map_err(|e| malformed(format!("no verifier for this RSA key: {e}")))
+}
+
+/// Whether this build can check signatures made by `certificate_der`'s key.
+///
+/// The operator-facing form of the question `verifying_key` answers: will seals
+/// issued under this certificate authority be checkable here, or will they come
+/// back unverifiable? A `false` is not a judgement on the CA — it says this build
+/// has no verifier for its algorithm, which is a gap on our side.
+///
+/// # Errors
+///
+/// None — an unreadable certificate is one whose signatures cannot be checked,
+/// which is the same answer.
+#[must_use]
+pub fn can_verify_signatures_of(certificate_der: &[u8]) -> bool {
+    Certificate::from_der(certificate_der).is_ok_and(|c| verifying_key(&c).is_ok())
+}
+
+/// # Every algorithm the published population actually uses
+///
+/// This was P-256 only, which is what the local development backend emits — and
+/// **none** of what a real provider does. Measured across the qualified CAs in
+/// the trusted lists (`tests/ca_key_survey.rs`), 96.8% are RSA and the
+/// elliptic-curve remainder is P-384 and P-521 with not one P-256.
+///
+/// That mattered more than a missing feature. A caller that could not check the
+/// signature could not read the digest either — the digest lives in an attribute
+/// inside it — so this function returning an error was the whole seal-to-passport
+/// binding degrading to "unknown" on the first real provider seal, silently, at
+/// exactly the point it started to matter.
+///
+/// It now uses the same verifier as [`check_path_to`], so the algorithms it
+/// accepts are one list in `Cargo.toml` rather than two that can drift.
+pub fn verify_against_embedded_certificate(seal_der: &[u8]) -> Result<bool, SealError> {
     let signed = parse(seal_der)?;
 
     // Absent signed attributes means the digest is not inside the seal, so
@@ -388,22 +463,31 @@ pub fn verify_against_embedded_certificate(seal_der: &[u8]) -> Result<bool, Seal
         ));
     };
 
-    let spki = &signed.certificate.tbs_certificate.subject_public_key_info;
-    let key_bits = spki
-        .subject_public_key
-        .as_bytes()
-        .ok_or_else(|| malformed("the certificate's public key is not whole bytes"))?;
-    let vk = VerifyingKey::from_sec1_bytes(key_bits)
-        .map_err(|e| malformed(format!("the certificate holds no P-256 key: {e}")))?;
+    let key = verifying_key(&signed.certificate)?;
 
-    // Re-encode as SET OF, matching what was signed (RFC 5652 §5.4).
+    // Re-encode as SET OF, matching what was signed (RFC 5652 §5.4) rather than
+    // the `[0] IMPLICIT` form the attributes take inside `SignerInfo`. Verifying
+    // the wrong one fails against every correct seal in existence.
     let to_verify = signed_attrs
         .to_der()
         .map_err(|e| malformed(format!("cannot re-encode the signed attributes: {e}")))?;
-    let sig = p256::ecdsa::DerSignature::from_bytes(signed.signer.signature.as_bytes())
-        .map_err(|e| malformed(format!("not a DER ECDSA signature: {e}")))?;
 
-    Ok(vk.verify(&to_verify, &sig).is_ok())
+    let signature = x509_verify::SignatureRef::new(
+        &signed.signer.signature_algorithm,
+        signed.signer.signature.as_bytes(),
+    );
+
+    let message = x509_verify::MessageOwned::from(to_verify);
+    match key.verify(x509_verify::VerifyInfo::new(message, signature)) {
+        Ok(()) => Ok(true),
+        Err(x509_verify::Error::Verification) => Ok(false),
+        // An algorithm this build cannot check is **not** a failed signature.
+        // Returning `false` would report a possibly-sound seal as broken, and the
+        // binding built on this would call it retargeted.
+        Err(e) => Err(malformed(format!(
+            "the signature could not be checked: {e}"
+        ))),
+    }
 }
 
 // ─── Who issued it, and where its key lives ──────────────────────────────────
@@ -620,7 +704,7 @@ pub fn check_path_to(
             )));
         }
     };
-    let anchor_key = match x509_verify::VerifyingKey::try_from(&anchor) {
+    let anchor_key = match verifying_key(&anchor) {
         Ok(k) => k,
         Err(e) => {
             return Ok(IssuerCheck::Unverifiable(format!(
@@ -656,7 +740,7 @@ pub fn check_path_to(
 
         // The intermediate must have signed the certificate below it, or the
         // chain is decoration.
-        let key = match x509_verify::VerifyingKey::try_from(next) {
+        let key = match verifying_key(next) {
             Ok(k) => k,
             Err(e) => {
                 return Ok(IssuerCheck::Unverifiable(format!(
