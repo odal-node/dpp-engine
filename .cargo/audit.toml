@@ -30,8 +30,12 @@
 #             option; see crates/dpp-seal/tests/ca_key_survey.rs.
 #             THIS ENTRY IS VOID THE MOMENT ANY RSA PRIVATE-KEY OPERATION
 #             APPEARS — signing, decrypting, or key generation. The
-#             mitigation is the absence of a private key, not a workaround.
-# anchor:     crates/dpp-seal/src/cades.rs::verified_under
+#             mitigation is the absence of a private key, not a workaround,
+#             and `scripts/no-rsa-private-key.sh` (in `just check`) holds it:
+#             it fails if any workspace crate takes `rsa` as a direct
+#             dependency, or if RSA private-key material appears in our own
+#             source. The claim is therefore checked rather than asserted.
+# anchor:     scripts/no-rsa-private-key.sh::RsaPrivateKey
 # owner:      LKSNDRTMLKV
 # recorded:   2026-09-15
 # expires:    2027-03-15
