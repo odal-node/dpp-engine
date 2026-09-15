@@ -21,33 +21,61 @@ pub const EU_LOTL_URL: &str = "https://ec.europa.eu/tools/lotl/eu-lotl.xml";
 
 /// Body cap for a trusted list fetch.
 ///
-/// Measured against the whole set, which is the part that went wrong the first
-/// time. The earlier figure — one mebibyte — was taken from "roughly 140 KiB to
-/// over 600 KiB", a range that excluded the two largest lists in the set:
+/// Sized against every list the LOTL points at, measured 2026-09-15 — which is
+/// the part that went wrong the first time. The earlier figure, one mebibyte,
+/// came from a survey running "roughly 140 KiB to over 600 KiB": a sample that
+/// excluded the largest lists in the set, including the two the vendored
+/// `xml-sec` fork exists for. So this function refused the only documents that
+/// fork was vendored to handle, and nothing noticed, because no test reached
+/// here.
 ///
 /// ```text
-/// Italy    2 855 744 bytes   (2.72 MiB)
-/// France   2 545 157 bytes   (2.43 MiB)
-/// LOTL       484 344 bytes
-/// Finland    138 050 bytes
+/// Germany   5 355 449 bytes   (5.11 MiB)   <- the cap has to clear this
+/// Spain     3 027 766
+/// Italy     2 855 744
+/// Czechia   2 630 805
+/// France    2 545 157
+/// LOTL        484 344
+/// Finland     138 050
 /// ```
 ///
-/// So the cap refused Italy and France outright, while the vendored `xml-sec`
-/// fork existed for the sole purpose of letting those two verify. Two features
-/// sized independently, disagreeing, and neither exercised by a test — the
-/// chain tests read fixtures and never reach this function.
-/// `the_fetch_cap_admits_the_largest_list_in_the_set` now ties this constant to
-/// the documents in the repository so it cannot drift back below one.
+/// Eight mebibytes is about 1.6× today's largest. The cap exists to bound what a
+/// hostile response can make this process allocate, not to be tight: one that
+/// has to be revisited every time a Member State adds providers is one that gets
+/// revisited during an outage.
 ///
-/// Four mebibytes is about 1.5× today's largest. Trusted lists only grow, and
-/// this cap exists to bound what a hostile response can make the process
-/// allocate rather than to be tight — a cap that has to be revisited every time
-/// a Member State adds providers is a cap that will be revisited in an outage.
+/// `the_fetch_cap_admits_the_largest_published_list` asserts this against a
+/// recorded measurement of the published set rather than against anything in
+/// this repository — sizing it from the committed fixtures would be the original
+/// mistake with a different sample.
 ///
 /// [`dpp_common::outbound::DEFAULT_MAX_BODY`] is 256 KiB and would refuse every
 /// one of these documents, which is why the cap is stated here rather than
 /// defaulted.
-pub const MAX_TRUSTED_LIST_BYTES: usize = 4 * 1024 * 1024;
+pub const MAX_TRUSTED_LIST_BYTES: usize = 8 * 1024 * 1024;
+
+/// The largest list the LOTL points at, measured 2026-09-15 — Germany.
+///
+/// Recorded so the cap above is checkable against something, and recorded as a
+/// **measurement with a date** because nothing here can re-derive it: doing so
+/// would mean fetching thirty documents from thirty Member States. It needs
+/// re-measuring when a cap decision is next revisited, and saying so is the only
+/// mechanism there is.
+const LARGEST_PUBLISHED_LIST_BYTES: usize = 5_355_449;
+
+/// The cap must clear the largest published list.
+///
+/// A compile-time assertion rather than a test, because it is a relationship
+/// between two constants and a build that violates it should not produce a
+/// binary. This is the defect that shipped once already: the cap was sized from
+/// a sample — "roughly 140 KiB to over 600 KiB" — that excluded the largest
+/// lists, so the fetcher refused the very documents the vendored `xml-sec` fork
+/// was vendored to handle.
+const _: () = assert!(
+    MAX_TRUSTED_LIST_BYTES >= LARGEST_PUBLISHED_LIST_BYTES,
+    "the trusted-list fetch cap is below the largest published list, so that list is \
+     refused before verification is attempted"
+);
 
 fn fetch_failed(url: &str, e: &FetchError) -> SealError {
     SealError::Backend(format!("cannot fetch the trusted list at {url}: {e}"))

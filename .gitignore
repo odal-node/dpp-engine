@@ -115,3 +115,13 @@ wasm-pack.log
 
 # generated API reference (build artifact — never commit/publish pre-managed-infra)
 api/openapi.html
+
+# Trusted-list documents kept locally rather than committed.
+#
+# Verifying the two published lists that need the vendored `xml-sec` fork means
+# holding ~5 MB of XML, and the tests that read them skip cleanly when they are
+# absent — see crates/dpp-seal/tests/fixtures/local/README.md for how to fetch
+# them and what they prove. The guard that must not depend on them, the check
+# that the fork is the `xml-sec` which actually resolved, reads Cargo.lock and
+# runs everywhere.
+crates/dpp-seal/tests/fixtures/local/*.xml
