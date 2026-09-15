@@ -51,6 +51,24 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ### Added
 
+- **Three defects found in review, in the checks added above.** Each is the same
+  class the subsystem exists to prevent, which is why they are listed rather than
+  quietly fixed:
+
+  - **A failed database read published a clean bill of health.** `audit_seals_once`
+    reported an unreadable batch as an empty one, and an empty batch is how a walk
+    says it reached the end — so a blip during the first batch of a walk stored a
+    completed report saying nothing was checked and nothing was broken. It now has
+    three outcomes, not two, and the caller keeps its cursor and publishes nothing.
+  - **A stale CRL could outrank a later revocation.** The revocation reader
+    answered from the first list that verified; `SignedData.crls` is a SET, so
+    the order deciding it was an encoding accident. Every applicable list is now
+    read, a revocation anywhere ends the search, and the newest clean answer wins.
+  - **A missing CRL masked a proven expiry.** `TRY_LATER` was returned before the
+    validity window was considered, so a certificate proven expired at an attested
+    time reported as an unanswered question rather than as a failure. Everything
+    provable is now decided first, in order of severity.
+
 - **The seal audit, the dossier verifier and the repair route now act on the
   certificate's standing** (#329). The check existed and was served; nothing
   decided anything with it, so a seal made under a certificate that had been

@@ -269,6 +269,13 @@ pub struct SealAudit {
 /// the sweep deliberately leaves alone. It is counted separately rather than
 /// alarmed on.
 ///
+/// # Three outcomes, not two
+///
+/// `None` means the batch could not be read at all. It is separate from an empty
+/// batch — which is how a walk reports that it reached the end — because the two
+/// would otherwise be indistinguishable on the first batch of a walk, and the
+/// caller would publish a completed pass that had checked nothing.
+///
 /// A seal this node **cannot read** is not a finding either. Treating "cannot
 /// check" as "broken" would make every seal from a backend emitting a format
 /// this node does not parse look like corruption. EU law keeps the same three
@@ -290,12 +297,20 @@ pub async fn audit_seals_once(
     limit: i64,
     after: Option<dpp_domain::passport::PassportId>,
     sealed_before: Option<chrono::DateTime<chrono::Utc>>,
-) -> (SealAudit, Option<dpp_domain::passport::PassportId>) {
+) -> Option<(SealAudit, Option<dpp_domain::passport::PassportId>)> {
     let batch = match outbox.sealed_passports(limit, after, sealed_before).await {
         Ok(b) => b,
+        // `None`, not an empty pass. An empty *batch* is how a walk says it
+        // reached the end, so returning one here would tell the caller the
+        // estate had been covered — and on the first batch of a walk, where the
+        // cursor is `None` too, that published a completed report saying zero
+        // seals were checked and none were broken.
+        //
+        // A database blip must not produce a clean bill of health from a check
+        // that never ran. The caller keeps its cursor and tries again.
         Err(e) => {
             tracing::warn!(error = %e, "seal audit could not read stored seals");
-            return (SealAudit::default(), after);
+            return None;
         }
     };
 
@@ -349,7 +364,7 @@ pub async fn audit_seals_once(
     // next clean one, on an estate where both are true at once. The quantity an
     // operator can act on is "broken seals in the last complete pass", which
     // only the caller owning the walk can know — see `spawn_seal_audit`.
-    (audit, cursor)
+    Some((audit, cursor))
 }
 
 /// Refuse a seal that does not cover the digest it was bought for.
@@ -876,7 +891,9 @@ mod tests {
         ]));
 
         let (audit, cursor) =
-            audit_seals_once(&outbox, &dpp_seal::CadesInspector::new(), 100, None, None).await;
+            audit_seals_once(&outbox, &dpp_seal::CadesInspector::new(), 100, None, None)
+                .await
+                .expect("the batch is readable");
 
         assert_eq!(audit.checked, 4);
         assert_eq!(audit.sound, 1);

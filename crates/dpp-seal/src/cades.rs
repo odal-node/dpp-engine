@@ -1404,6 +1404,12 @@ fn revocation_from(signed: &Signed) -> RevocationStanding {
     let serial = &signed.certificate.tbs_certificate.serial_number;
 
     let mut last_problem: Option<String> = None;
+    // The newest clean answer, kept rather than returned. A seal may carry
+    // several CRLs from the same issuer — a long-term seal accumulates them —
+    // and returning on the first that verifies would report `notRevoked` from a
+    // stale list while a later one carries the revocation. A revocation found
+    // anywhere ends the search; nothing else can.
+    let mut clean: Option<DateTime<Utc>> = None;
     for crl in &signed.crls {
         if &crl.tbs_cert_list.issuer != issuer {
             // Not a problem, just not about this certificate: a seal may carry
@@ -1451,12 +1457,17 @@ fn revocation_from(signed: &Signed) -> RevocationStanding {
             last_problem = Some("the CRL's thisUpdate is unreadable".to_owned());
             continue;
         };
-        return RevocationStanding::NotRevoked { as_of };
+        if clean.is_none_or(|seen| as_of > seen) {
+            clean = Some(as_of);
+        }
     }
 
-    match last_problem {
-        Some(reason) => RevocationStanding::Unusable { reason },
-        None => RevocationStanding::NotAvailable,
+    match (clean, last_problem) {
+        // A list that answered outranks one that failed: something usable was
+        // found, and the failure of another copy does not unsay it.
+        (Some(as_of), _) => RevocationStanding::NotRevoked { as_of },
+        (None, Some(reason)) => RevocationStanding::Unusable { reason },
+        (None, None) => RevocationStanding::NotAvailable,
     }
 }
 
@@ -1822,6 +1833,29 @@ mod standing_tests {
         match standing.revocation {
             RevocationStanding::Revoked { at } => assert!(at < Utc::now()),
             other => panic!("expected a revocation, got {other:?}"),
+        }
+    }
+
+    /// **Every applicable CRL is read, not the first one that verifies.**
+    ///
+    /// A long-term seal accumulates revocation material, and `SignedData.crls`
+    /// is a SET — its order carries no meaning. Answering from whichever copy
+    /// came first would report `notRevoked` from a stale list while a later one
+    /// carries the revocation, and the order deciding it would be an encoding
+    /// accident.
+    #[test]
+    fn a_stale_clean_crl_does_not_outrank_a_later_revocation() {
+        let issued = issue(-30, 400);
+        let (seal, _dir) = seal_with(
+            &[issued.leaf_der.clone(), issued.ca.der().to_vec()],
+            // Clean first, revoking second: the SET may present them either way.
+            &[crl(&issued, None), crl(&issued, Some(-1))],
+        );
+
+        let standing = certificate_standing(&seal, Utc::now()).expect("readable");
+        match standing.revocation {
+            RevocationStanding::Revoked { .. } => {}
+            other => panic!("a revocation anywhere ends the search, got {other:?}"),
         }
     }
 

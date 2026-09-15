@@ -1111,7 +1111,8 @@ async fn a_seal_corrupted_at_rest_is_found_and_repaired() {
     // ── The audit finds it ──────────────────────────────────────────────────
     let (audit, _) =
         dpp_node::infra::seal_drain::audit_seals_once(&outbox_dyn, &inspector, 100, None, None)
-            .await;
+            .await
+            .expect("the batch is readable");
     assert_eq!(audit.broken, 1, "the audit must see what the counts cannot");
     assert_eq!(audit.broken_passports, vec![id], "and name it");
 
@@ -1167,7 +1168,8 @@ async fn a_seal_corrupted_at_rest_is_found_and_repaired() {
 
     let (clean, _) =
         dpp_node::infra::seal_drain::audit_seals_once(&outbox_dyn, &inspector, 100, None, None)
-            .await;
+            .await
+            .expect("the batch is readable");
     assert_eq!(clean.broken, 0, "and the audit agrees it is fixed");
 }
 
@@ -1614,7 +1616,8 @@ async fn a_seal_made_under_an_invalid_certificate_is_found_and_not_called_broken
     // ── The audit sees it, and files it apart from broken ───────────────────
     let (audit, _) =
         dpp_node::infra::seal_drain::audit_seals_once(&outbox_dyn, &inspector, 100, None, None)
-            .await;
+            .await
+            .expect("the batch is readable");
     assert_eq!(
         audit.certificate_failed, 1,
         "the certificate was not valid at the attested moment"

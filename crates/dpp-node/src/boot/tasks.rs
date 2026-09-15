@@ -694,14 +694,20 @@ pub fn spawn_seal_audit(
 
         loop {
             tokio::time::sleep(interval).await;
-            let (audit, next) = dpp_node::infra::seal_drain::audit_seals_once(
+            let Some((audit, next)) = dpp_node::infra::seal_drain::audit_seals_once(
                 &outbox,
                 &inspector,
                 batch_size,
                 cursor,
                 Some(started_at),
             )
-            .await;
+            .await
+            else {
+                // The batch could not be read. Keep the cursor and the totals,
+                // publish nothing: a walk that never saw the estate must not
+                // report on it.
+                continue;
+            };
 
             walk.checked += audit.checked;
             walk.sound += audit.sound;

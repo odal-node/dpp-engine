@@ -915,29 +915,47 @@ impl SealValidationStatus {
         };
         let proven = cert.judged_at.attested;
 
-        // Revocation before the window, because a revoked certificate is the
-        // stronger statement: expiry is scheduled and ordinary, revocation is
-        // someone saying this key should not have been used.
-        match &cert.revocation {
-            RevocationStanding::Revoked { at } if proven && *at <= cert.judged_at.at => {
-                return failed(Sub::Revoked);
-            }
-            RevocationStanding::Revoked { .. } => return unsure(Some(Sub::RevokedNoPoe)),
-            RevocationStanding::NotRevoked { .. } => {}
-            // Both mean the question could not be answered, which table 6 calls
-            // `TRY_LATER` — it may be answerable when the material is there.
-            RevocationStanding::NotAvailable | RevocationStanding::Unusable { .. } => {
-                return unsure(Some(Sub::TryLater));
+        // **Everything provable first, in order of severity; then the things
+        // that could not be established.** An unresolved question must never
+        // mask a settled failure — a certificate proven to have been expired
+        // when the seal was made is `TOTAL-FAILED` whether or not a CRL happened
+        // to travel with the seal, and reporting `TRY_LATER` there would hide a
+        // stable finding behind a missing file.
+        //
+        // Revocation outranks expiry among the failures: expiry is scheduled and
+        // ordinary, revocation is someone saying this key should not have been
+        // used.
+        if let RevocationStanding::Revoked { at } = &cert.revocation
+            && proven
+            && *at <= cert.judged_at.at
+        {
+            return failed(Sub::Revoked);
+        }
+        if proven {
+            match cert.validity.standing {
+                WindowStanding::Expired => return failed(Sub::Expired),
+                WindowStanding::NotYetValid => return failed(Sub::NotYetValid),
+                WindowStanding::Inside => {}
             }
         }
 
-        match (cert.validity.standing, proven) {
-            (WindowStanding::Inside, _) => unsure(None),
-            (WindowStanding::Expired, true) => failed(Sub::Expired),
-            (WindowStanding::NotYetValid, true) => failed(Sub::NotYetValid),
-            (WindowStanding::Expired | WindowStanding::NotYetValid, false) => {
-                unsure(Some(Sub::OutOfBoundsNoPoe))
+        // Nothing failed. What is left is what could not be settled, most
+        // informative first: a revocation this node cannot place in time says
+        // more than a certificate outside its window, which says more than a
+        // list that never arrived.
+        if matches!(cert.revocation, RevocationStanding::Revoked { .. }) {
+            return unsure(Some(Sub::RevokedNoPoe));
+        }
+        if cert.validity.standing != WindowStanding::Inside {
+            return unsure(Some(Sub::OutOfBoundsNoPoe));
+        }
+        match cert.revocation {
+            // The question could not be answered, which table 6 calls
+            // `TRY_LATER` — it may be answerable when the material is there.
+            RevocationStanding::NotAvailable | RevocationStanding::Unusable { .. } => {
+                unsure(Some(Sub::TryLater))
             }
+            _ => unsure(None),
         }
     }
 }
@@ -1277,6 +1295,58 @@ mod validation_vocabulary {
         assert_eq!(
             status.sub_indication,
             Some(ValidationSubIndication::TryLater)
+        );
+    }
+
+    /// **A settled failure is not hidden behind an unanswered question.**
+    ///
+    /// A certificate proven expired when the seal was made is `TOTAL-FAILED`
+    /// whether or not a revocation list travelled with the seal. Reporting
+    /// `TRY_LATER` because no CRL was found would let a missing file suppress a
+    /// stable finding — and `TRY_LATER` invites a reader to come back later,
+    /// which will never change this answer.
+    #[test]
+    fn a_missing_crl_does_not_mask_a_proven_window_failure() {
+        let cert = standing(
+            WindowStanding::Expired,
+            true,
+            RevocationStanding::NotAvailable,
+        );
+        let status = SealValidationStatus::of(&SealBinding::CoversThisSignature, Some(&cert));
+        assert_eq!(status.indication, ValidationIndication::TotalFailed);
+        assert_eq!(
+            status.sub_indication,
+            Some(ValidationSubIndication::Expired)
+        );
+    }
+
+    /// The same ordering among the things that could not be settled: a
+    /// revocation this node cannot place in time says more than a certificate
+    /// outside its window, which says more than a list that never arrived.
+    #[test]
+    fn the_unsettled_answers_are_ordered_by_what_they_say() {
+        let revoked_unproven = standing(
+            WindowStanding::Expired,
+            false,
+            RevocationStanding::Revoked {
+                at: "2027-01-05T00:00:00Z".parse().expect("a time"),
+            },
+        );
+        assert_eq!(
+            SealValidationStatus::of(&SealBinding::CoversThisSignature, Some(&revoked_unproven))
+                .sub_indication,
+            Some(ValidationSubIndication::RevokedNoPoe)
+        );
+
+        let out_of_window = standing(
+            WindowStanding::Expired,
+            false,
+            RevocationStanding::NotAvailable,
+        );
+        assert_eq!(
+            SealValidationStatus::of(&SealBinding::CoversThisSignature, Some(&out_of_window))
+                .sub_indication,
+            Some(ValidationSubIndication::OutOfBoundsNoPoe)
         );
     }
 
