@@ -144,6 +144,29 @@ impl SealInspector for CadesInspector {
             }
         }
     }
+    fn archival_freshness(
+        &self,
+        envelope: &SealedEnvelope,
+        now: chrono::DateTime<chrono::Utc>,
+    ) -> dpp_types::ArchivalFreshness {
+        let Some(der) = self.readable(envelope) else {
+            return dpp_types::ArchivalFreshness::NotArchived;
+        };
+        match cades::archival_freshness(&der, now) {
+            Ok(cades::ArchivalFreshness::NotArchived) => dpp_types::ArchivalFreshness::NotArchived,
+            Ok(cades::ArchivalFreshness::Current { expires }) => {
+                dpp_types::ArchivalFreshness::Current { expires }
+            }
+            Ok(cades::ArchivalFreshness::Lapsed { expires }) => {
+                dpp_types::ArchivalFreshness::Lapsed { expires }
+            }
+            Ok(cades::ArchivalFreshness::Unknown) => dpp_types::ArchivalFreshness::Unknown,
+            Err(e) => {
+                tracing::warn!(error = %e, "stored seal could not be read; archival state unknown");
+                dpp_types::ArchivalFreshness::Unknown
+            }
+        }
+    }
 }
 
 impl CadesInspector {

@@ -307,6 +307,65 @@ pub enum SealBinding {
     Unknown,
 }
 
+/// How much life is left in a seal's archival timestamp.
+///
+/// An archival timestamp is what keeps a `B-LTA` seal verifiable after its
+/// signing certificate expires — the whole point for a retention-locked
+/// passport, which outlives every certificate involved. **It expires too**: its
+/// own timestamping authority's certificate has a validity period, and ETSI's
+/// long-term profiles expect re-timestamping before that. Nothing here does
+/// that, and the level says `baseline-lta` either way, so a lapse is otherwise
+/// invisible.
+///
+/// **A signal, never a verdict.** A seal nearing its renewal date still
+/// verifies, and that window is the only chance to renew without an outage.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+// `rename_all` renames the *variants*; the fields inside them need
+// `rename_all_fields`. `SealBinding` above happens not to show the difference —
+// its one field is a single word — which is exactly how this would have shipped
+// with `lapsed_at` on the wire had the contract gate not compared the spec to
+// the type.
+#[serde(
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase",
+    tag = "state"
+)]
+pub enum ArchivalFreshness {
+    /// No archival timestamp at all — a seal below `B-LTA`.
+    ///
+    /// Nothing to renew, which is a different thing from a renewal that has
+    /// lapsed: a `B-LT` seal was never promised long-term protection, and saying
+    /// it lapsed would raise an alarm about a commitment nobody made.
+    NotArchived,
+    /// The archival timestamp's authority certificate is still valid.
+    Current {
+        /// When the authority's certificate expires — the date by which
+        /// re-timestamping must have happened.
+        ///
+        /// No threshold is applied: how much notice is enough is a policy
+        /// question for whoever reads this.
+        expires: DateTime<Utc>,
+    },
+    /// It has expired, so the archival protection has lapsed.
+    ///
+    /// The seal may still verify today. What is gone is the thing meant to keep
+    /// it verifying once its signing certificate goes.
+    Lapsed {
+        /// When the authority's certificate expired.
+        ///
+        /// The same date `current` carries, read from the other side of it —
+        /// one value, so the wire has one name for it rather than two that must
+        /// be kept in step.
+        expires: DateTime<Utc>,
+    },
+    /// An archival timestamp is present and could not be read.
+    ///
+    /// **Not `current`.** A token that cannot be checked is not a fresh one, and
+    /// reporting it as current is how a staleness signal goes quiet at the
+    /// moment it matters.
+    Unknown,
+}
+
 /// Reads a stored seal's certificate.
 ///
 /// # Why this is a port rather than a function
@@ -377,4 +436,15 @@ pub trait SealInspector: Send + Sync {
     /// Art. 42 makes a qualified time stamp a QTSP service, which is a Trusted
     /// List question about the `TSA/QTST` service type and is not asked here.
     fn attested_sealing_time(&self, envelope: &SealedEnvelope) -> Option<DateTime<Utc>>;
+
+    /// How much life is left in the envelope's archival timestamp, as of `now`.
+    ///
+    /// `now` is a parameter rather than read from the clock so the answer is a
+    /// function of its inputs — the same seal is current today and lapsed later,
+    /// and a caller reporting on a past moment should be able to say so.
+    fn archival_freshness(
+        &self,
+        envelope: &SealedEnvelope,
+        now: DateTime<Utc>,
+    ) -> ArchivalFreshness;
 }

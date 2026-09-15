@@ -154,6 +154,20 @@ pub struct SealResponse {
     /// material for a level is present, never that the material was validated.
     /// `null` when the bytes could not be read.
     pub evidenced_level: Option<dpp_domain::seal::SealConformanceLevel>,
+    /// Whether the seal's archival protection is still live.
+    ///
+    /// `evidencedLevel` reports `baseline-lta` from the *presence* of the
+    /// archival material, and is right to — the material is there. This reports
+    /// whether it still means anything: an archival timestamp's own authority
+    /// certificate expires, and ETSI's long-term profiles expect re-timestamping
+    /// before it does. Nothing here renews, so without this a seal whose
+    /// archival protection lapsed years ago reads exactly as it did the day it
+    /// was bought.
+    ///
+    /// **A signal, not a verdict.** `current` carries the renewal date and
+    /// applies no threshold: a seal nearing that date still verifies, and that
+    /// window is the only chance to renew without an outage.
+    pub archival: dpp_types::ArchivalFreshness,
     /// True when this is a `GhostSeal` placeholder with no legal validity.
     pub placeholder: bool,
     /// The passport's **current** compact JWS.
@@ -353,6 +367,13 @@ pub async fn seal_handler(
                 .seal_inspector
                 .as_ref()
                 .and_then(|i| i.attested_sealing_time(seal)),
+            archival: state
+                .service
+                .seal_inspector
+                .as_ref()
+                .map_or(dpp_types::ArchivalFreshness::Unknown, |i| {
+                    i.archival_freshness(seal, chrono::Utc::now())
+                }),
             conformance_level: seal.conformance_level,
             evidenced_level: state
                 .service

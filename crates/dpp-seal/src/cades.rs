@@ -606,11 +606,7 @@ pub fn attested_sealing_time(seal_der: &[u8]) -> Result<Option<DateTime<Utc>>, S
             return Ok(None);
         }
     }
-    let seconds = info.gen_time.to_unix_duration().as_secs();
-    Ok(DateTime::from_timestamp(
-        i64::try_from(seconds).unwrap_or(i64::MAX),
-        0,
-    ))
+    Ok(to_utc(info.gen_time.to_unix_duration().as_secs()))
 }
 
 /// Whether a parsed structure's signature holds under its own certificate.
@@ -653,6 +649,165 @@ fn digest_matches(signed: &Signed, content: &[u8]) -> bool {
         .and_then(|a| a.values.as_slice().first())
         .and_then(|v| v.decode_as::<der::asn1::OctetString>().ok())
         .is_some_and(|d| d.as_bytes() == Sha256::digest(content).as_slice())
+}
+
+// ─── Whether the archival protection is still live ───────────────────────────
+
+/// How much life is left in a seal's archival timestamp.
+///
+/// # Why a seal can stop being long-term without anything changing
+///
+/// An archival timestamp is what keeps a `B-LTA` seal verifiable after its
+/// signing certificate expires — which for a retention-locked passport is the
+/// whole point, because the document outlives every certificate involved.
+///
+/// **The archival timestamp expires too.** Its own timestamping authority's
+/// certificate has a validity period, and once that passes the token can no
+/// longer be validated on its own terms. ETSI's long-term profiles handle this
+/// by **re-timestamping** before it happens, a new archive timestamp over the
+/// old one. Nothing here does that, and nothing would notice: `evidenced_level`
+/// reports `BaselineLta` from the *presence* of the attribute, so a seal whose
+/// archival timestamp lapsed years ago reports exactly as it did on the day it
+/// was bought.
+///
+/// # A signal, never a verdict
+///
+/// Deliberately the same posture the trust anchor's freshness takes, and for the
+/// same reason: a seal whose archival timestamp is nearing expiry still verifies,
+/// and that window is the only chance to renew without an outage. Folding this
+/// into a failure would refuse documents that are fine and destroy the early
+/// warning it exists to give.
+///
+/// No threshold is applied here. [`Self::Current`] carries the date, and how
+/// much notice is enough is a policy question belonging to whoever reads it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ArchivalFreshness {
+    /// No archival timestamp at all — a seal below `B-LTA`.
+    ///
+    /// Nothing to renew, which is different from a renewal that has lapsed.
+    NotArchived,
+    /// The archival timestamp's authority certificate is still valid.
+    Current {
+        /// When that certificate expires — the date by which re-timestamping
+        /// has to have happened.
+        expires: DateTime<Utc>,
+    },
+    /// It has expired. The archival protection has lapsed.
+    ///
+    /// The seal may still verify today; what is gone is the thing that was
+    /// meant to keep it verifying once its signing certificate goes.
+    Lapsed {
+        /// When the authority's certificate expired. The same value
+        /// [`Self::Current`] carries, read from the other side of it.
+        expires: DateTime<Utc>,
+    },
+    /// An archival timestamp is present and could not be read.
+    ///
+    /// **Not [`Self::Current`].** A token that cannot be checked is not a fresh
+    /// one, and reporting it as current is how a staleness signal goes quiet at
+    /// the moment it matters.
+    Unknown,
+}
+
+/// Read how much life is left in a seal's archival timestamp.
+///
+/// # What is checked, and the one thing that is not
+///
+/// The token's own signature is verified, so a fabricated archival timestamp
+/// does not produce a reassuring date. What is **not** checked is that the token
+/// archives *this* seal: the `archive-time-stamp-v3` imprint is computed over the
+/// concatenation EN 319 122-1 clause 5.5.3 specifies together with an
+/// `ats-hash-index-v3`, neither of which this crate builds or reads — see
+/// `local::LocalIdentity::sign_detached_at`, which says the same thing from the
+/// writing side.
+///
+/// So this answers *"is there archival protection here, and has it lapsed?"* and
+/// not *"is this seal archived?"*. The distinction matters for a seal from
+/// elsewhere and not at all for one this node made.
+///
+/// The **latest** timestamp decides, by `genTime`. A renewal chain is a sequence
+/// of archive timestamps each covering the one before it, and it is the newest
+/// that carries the protection forward — reading an older one would report a
+/// renewed seal as lapsed.
+///
+/// # Errors
+///
+/// [`SealError::Backend`] when the seal itself cannot be read.
+pub fn archival_freshness(
+    seal_der: &[u8],
+    now: DateTime<Utc>,
+) -> Result<ArchivalFreshness, SealError> {
+    let signed = parse(seal_der)?;
+    let Some(attrs) = signed.signer.unsigned_attrs.as_ref() else {
+        return Ok(ArchivalFreshness::NotArchived);
+    };
+
+    let archival: Vec<_> = attrs
+        .iter()
+        .filter(|a| {
+            a.oid == ID_AA_ETS_ARCHIVE_TIMESTAMP_V3 || a.oid == ID_AA_ETS_ARCHIVE_TIMESTAMP_V2
+        })
+        .collect();
+    if archival.is_empty() {
+        return Ok(ArchivalFreshness::NotArchived);
+    }
+
+    // The newest readable token wins. An unreadable one among several is not
+    // fatal — but if *none* reads, the answer is unknown rather than absent.
+    let mut newest: Option<(DateTime<Utc>, DateTime<Utc>)> = None;
+    for attr in archival {
+        for value in attr.values.as_slice() {
+            let Some((made_at, expires)) = archival_token(value) else {
+                continue;
+            };
+            if newest.is_none_or(|(seen, _)| made_at > seen) {
+                newest = Some((made_at, expires));
+            }
+        }
+    }
+
+    let Some((_, expires)) = newest else {
+        return Ok(ArchivalFreshness::Unknown);
+    };
+    Ok(if expires > now {
+        ArchivalFreshness::Current { expires }
+    } else {
+        ArchivalFreshness::Lapsed { expires }
+    })
+}
+
+/// One archive timestamp's `(genTime, authority certificate expiry)`.
+///
+/// `None` when the token cannot be read or its signature does not hold — a
+/// token that failed its check must not contribute a date.
+fn archival_token(value: &der::Any) -> Option<(DateTime<Utc>, DateTime<Utc>)> {
+    let token_der = value.to_der().ok()?;
+    let token = parse(&token_der).ok()?;
+    if !signature_holds(&token).unwrap_or(false) {
+        return None;
+    }
+    let content = token.econtent.as_ref()?;
+    if !digest_matches(&token, content) {
+        return None;
+    }
+    let info = TstInfo::from_der(content).ok()?;
+
+    let made_at = to_utc(info.gen_time.to_unix_duration().as_secs())?;
+    let expires = to_utc(
+        token
+            .certificate
+            .tbs_certificate
+            .validity
+            .not_after
+            .to_unix_duration()
+            .as_secs(),
+    )?;
+    Some((made_at, expires))
+}
+
+/// Seconds since the epoch as a UTC instant.
+fn to_utc(seconds: u64) -> Option<DateTime<Utc>> {
+    DateTime::from_timestamp(i64::try_from(seconds).ok()?, 0)
 }
 
 // ─── Who issued it, and where its key lives ──────────────────────────────────
@@ -1148,6 +1303,102 @@ mod tests {
             attested_sealing_time(&swapped).expect("readable"),
             None,
             "a valid token over someone else's signature must not become this seal's time"
+        );
+    }
+
+    // ─── archival freshness ──────────────────────────────────────────────────
+
+    /// A `B-LTA` seal reports when its archival protection has to be renewed.
+    #[test]
+    fn an_archived_seal_reports_a_renewal_date() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let id = crate::local::LocalIdentity::load_or_create(dir.path()).expect("identity");
+        let der = id
+            .sign_detached_at(&[0x11; 32], SealConformanceLevel::BaselineLta)
+            .expect("sign");
+
+        let ArchivalFreshness::Current { expires: renew_by } =
+            archival_freshness(&der, chrono::Utc::now()).expect("readable")
+        else {
+            panic!("a fresh LTA seal is current");
+        };
+        assert!(
+            renew_by > chrono::Utc::now(),
+            "the renewal date must be in the future: {renew_by}"
+        );
+    }
+
+    /// The same seal, read from far enough in the future, reports the lapse.
+    ///
+    /// The whole point of the signal. Nothing about the seal changes — only the
+    /// clock — which is exactly how this failure arrives in practice: on a date
+    /// nobody has in a calendar, years after the passport was locked.
+    #[test]
+    fn the_same_seal_read_later_reports_that_it_lapsed() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let id = crate::local::LocalIdentity::load_or_create(dir.path()).expect("identity");
+        let der = id
+            .sign_detached_at(&[0x11; 32], SealConformanceLevel::BaselineLta)
+            .expect("sign");
+
+        let ArchivalFreshness::Current { expires: renew_by } =
+            archival_freshness(&der, chrono::Utc::now()).expect("readable")
+        else {
+            panic!("current now");
+        };
+        let after = renew_by + chrono::Duration::seconds(1);
+
+        assert_eq!(
+            archival_freshness(&der, after).expect("readable"),
+            ArchivalFreshness::Lapsed { expires: renew_by },
+            "past its authority's certificate, the archival protection is gone"
+        );
+    }
+
+    /// A seal with no archival timestamp has nothing to renew, and says so.
+    ///
+    /// `NotArchived` is not `Lapsed`: a `B-LT` seal was never promised long-term
+    /// protection, and reporting it as lapsed would raise an alarm about a
+    /// commitment nobody made.
+    #[test]
+    fn a_seal_below_lta_has_nothing_to_renew() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let id = crate::local::LocalIdentity::load_or_create(dir.path()).expect("identity");
+        let der = id
+            .sign_detached_at(&[0x11; 32], SealConformanceLevel::BaselineLt)
+            .expect("sign");
+
+        assert_eq!(
+            archival_freshness(&der, chrono::Utc::now()).expect("readable"),
+            ArchivalFreshness::NotArchived
+        );
+    }
+
+    /// The level says `BaselineLta` either way — which is why this exists.
+    ///
+    /// `evidenced_level` reports the *presence* of the archival material, and is
+    /// right to: the material is there. The two answers together are the finding
+    /// — a seal that still evidences LTA and whose archival protection has gone.
+    #[test]
+    fn a_lapsed_seal_still_evidences_lta() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let id = crate::local::LocalIdentity::load_or_create(dir.path()).expect("identity");
+        let der = id
+            .sign_detached_at(&[0x11; 32], SealConformanceLevel::BaselineLta)
+            .expect("sign");
+
+        // Past the local authority's certificate, which runs to 4096.
+        let far_future = "9999-01-01T00:00:00Z"
+            .parse::<chrono::DateTime<chrono::Utc>>()
+            .expect("a representable instant");
+        assert!(matches!(
+            archival_freshness(&der, far_future).expect("readable"),
+            ArchivalFreshness::Lapsed { .. }
+        ));
+        assert_eq!(
+            evidenced_level(&der).expect("readable"),
+            Some(SealConformanceLevel::BaselineLta),
+            "the level is unchanged, which is exactly how this goes unnoticed"
         );
     }
 

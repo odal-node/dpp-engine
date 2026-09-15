@@ -817,6 +817,38 @@ pub fn render_seal_status(seal: &serde_json::Value, id: &str) {
         _ => println!("  Binding       : not read — no digest recoverable from the envelope"),
     }
 
+    // Whether the long-term protection is still live. Silent for a seal that
+    // was never archived: `B-LT` was not promised it, and a line about renewal
+    // would imply an obligation nobody took on.
+    match seal
+        .get("archival")
+        .and_then(|a| a.get("state"))
+        .and_then(serde_json::Value::as_str)
+    {
+        Some("current") => {
+            let by = seal
+                .get("archival")
+                .and_then(|a| field(a, "expires"))
+                .unwrap_or_else(|| "-".to_owned());
+            println!("  Archival      : live until {by} — re-timestamp before then");
+        }
+        Some("lapsed") => {
+            let at = seal
+                .get("archival")
+                .and_then(|a| field(a, "expires"))
+                .unwrap_or_else(|| "-".to_owned());
+            println!(
+                "  Archival      : {}  expired {at}; the long-term protection is gone",
+                style("LAPSED").red().bold()
+            );
+            println!("                  the level still reads LTA, which is how this goes unseen");
+        }
+        Some("unknown") => {
+            println!("  Archival      : present but unreadable — treated as not fresh")
+        }
+        _ => {}
+    }
+
     let coverage = s("coverage");
     let note = match coverage.as_str() {
         "current" => "covers the passport's current signature".to_owned(),

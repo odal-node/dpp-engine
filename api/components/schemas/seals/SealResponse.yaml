@@ -12,6 +12,7 @@ required:
   - currentPayloadHash
   - coverage
   - binding
+  - archival
   - verification
 properties:
   declaredBy:
@@ -100,6 +101,8 @@ properties:
       A floor, not a conformance verdict: it reports that the distinguishing
       material for a level is present, never that the material was validated.
       `null` when the bytes could not be read.
+  archival:
+    $ref: ./ArchivalFreshness.yaml
   placeholder:
     type: boolean
     description: True when this is a placeholder with no legal validity.

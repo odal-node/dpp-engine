@@ -477,6 +477,7 @@ fn object_cases() -> Vec<ObjectCase> {
     case!("SealResponse", fixtures::seal_response());
     case!("SealOrigin", fixtures::seal_origin());
     case!("SealBinding", fixtures::seal_binding());
+    case!("ArchivalFreshness", fixtures::archival_freshness());
     case!("SealDeclarer", fixtures::seal_declarer());
     case!("SealSummaryResponse", fixtures::seal_summary_response());
     case!("InstalledPlugin", fixtures::installed_plugin());
@@ -3562,6 +3563,7 @@ mod fixtures {
             sealed_at: ts(),
             signing_cert_ref: Some("5".repeat(64)),
             attested_sealed_at: Some(ts()),
+            archival: archival_freshness(),
             conformance_level: Some(SealConformanceLevel::BaselineLta),
             // Populated and deliberately **different** from the level above: the
             // downgrade is the case these two fields exist to make visible, so
@@ -3583,6 +3585,14 @@ mod fixtures {
             // needs a value of the right shape for the key set.
             verification: "not validated by this node",
         }
+    }
+
+    /// The variant carrying a date, so the optional field is checked too.
+    ///
+    /// `lapsed` rather than `current`: both carry a date, and this is the one a
+    /// reader has to act on.
+    pub fn archival_freshness() -> dpp_types::ArchivalFreshness {
+        dpp_types::ArchivalFreshness::Lapsed { expires: ts() }
     }
 
     /// The variant carrying a payload, so the optional field is checked too.

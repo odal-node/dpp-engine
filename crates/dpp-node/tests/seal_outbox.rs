@@ -841,6 +841,21 @@ async fn a_locally_sealed_passport_reports_that_no_provider_issued_it() {
     );
     println!("attested  : {attested}");
 
+    // The archival protection a fresh LTA seal carries, and the date it has to
+    // be renewed by. The level alone would say `baseline-lta` for ever.
+    let dpp_types::ArchivalFreshness::Current { expires } =
+        inspector.archival_freshness(&seal, chrono::Utc::now())
+    else {
+        panic!("a freshly archived seal is current");
+    };
+    assert!(expires > chrono::Utc::now());
+    assert_eq!(
+        seal_section["archival"]["state"].as_str(),
+        Some("current"),
+        "and the dossier must stamp it: {seal_section}"
+    );
+    println!("archival  : current until {expires}");
+
     println!("dossier   : qualified_seal = Pass");
 
     // ── The verdict, read out of the stored seal ────────────────────────────

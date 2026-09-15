@@ -259,6 +259,15 @@ impl PassportService {
                     .seal_inspector
                     .as_ref()
                     .and_then(|i| i.attested_sealing_time(seal)),
+                // Stamped at generation, like every other finding here. A reader
+                // opening this file in 2035 needs to know the archival
+                // protection had not already lapsed when it was made — and
+                // cannot recompute it against the clock of the day it is read,
+                // because that answer would be about a different moment.
+                "archival": self.seal_inspector.as_ref().map_or(
+                    dpp_types::ArchivalFreshness::Unknown,
+                    |i| i.archival_freshness(seal, chrono::Utc::now()),
+                ),
             }))
         });
 

@@ -75,6 +75,31 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   exactly where an ANSI escape would be put to forge output under the CLI's own
   labels.
 
+- **A seal now reports whether its archival protection is still live** (#325).
+  An archival timestamp is what keeps a `B-LTA` seal verifiable after its signing
+  certificate expires — the whole point for a retention-locked passport, which
+  outlives every certificate involved. **It expires too**: its own timestamping
+  authority's certificate has a validity period, and ETSI's long-term profiles
+  expect re-timestamping before that. Nothing here renews, and
+  `evidencedLevel` reports `baseline-lta` from the *presence* of the material —
+  correctly, since the material is there — so a seal whose archival protection
+  lapsed years ago read exactly as it did the day it was bought.
+
+  `archival` on the seal route and in the dossier: `notArchived`, `current` with
+  the date to renew by, `lapsed` with the date it went, or `unknown`.
+  **A signal, not a verdict** — a seal nearing its renewal date still verifies,
+  and that window is the only chance to renew without an outage — and no
+  threshold is applied, because how much notice is enough is the reader's policy.
+  `notArchived` is kept distinct from `lapsed`: a `B-LT` seal was never promised
+  long-term protection, and calling it lapsed would raise an alarm about a
+  commitment nobody made.
+
+  One thing it does **not** establish: that the archival timestamp covers *this*
+  seal. The `archive-time-stamp-v3` imprint is over the concatenation clause
+  5.5.3 specifies plus an `ats-hash-index-v3`, neither of which this crate builds
+  or reads — the same departure the local backend documents from the writing
+  side.
+
 - **A seal's attested time is now read, having been pointed at and never
   reached.** `sealedAt` is the sealing node's own clock — an unattested claim by
   the party that bought the seal — and that field's documentation has always said
@@ -435,7 +460,8 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 - **Every node-supplied string the CLI prints is now sanitised** (#327). The
   ANSI/newline guard covered one field by design, with the passport-document
   strings deliberately left for their own change; this is that change. A string
-  carrying `ESC[2K` can erase the line it is printed on and rewrite it, and one
+  carrying `ESC[2K
+` can erase the line it is printed on and rewrite it, and one
   carrying a newline can forge whole additional lines under the CLI's own
   labels — and those strings arrive from imports, API callers and supply-chain
   peers, not from the node's own choosing.
