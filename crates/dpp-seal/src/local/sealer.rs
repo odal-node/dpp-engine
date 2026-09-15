@@ -209,6 +209,11 @@ impl SealBackend for LocalIdentity {
             format: SealFormat::Cades,
             seal_value: base64::engine::general_purpose::STANDARD.encode(&der),
             signing_cert_ref: Some(self.cert_thumbprint()),
+            // The requested level, per the field's contract. `capabilities()`
+            // advertises `BaselineB` alone and the adapter checks `can_produce`
+            // first, so the only request that reaches here asked for `BaselineB`
+            // — which is also what these bytes carry.
+            conformance_level: Some(req.conformance_level),
             sealed_at: Utc::now(),
             // Not a placeholder: these bytes verify. Legal standing is the trust
             // tier's business, not the envelope's.
@@ -548,6 +553,11 @@ mod tests {
 
         assert_eq!(env.format, SealFormat::Cades);
         assert!(!env.placeholder, "these bytes verify — they are not a stub");
+        assert_eq!(
+            env.conformance_level,
+            Some(SealConformanceLevel::BaselineB),
+            "the envelope must record the level that was requested — and for this \n             backend that is also the level the bytes carry"
+        );
         assert_eq!(
             env.signing_cert_ref.as_deref(),
             Some(id.cert_thumbprint().as_str()),

@@ -271,6 +271,9 @@ mod tests {
             manufacturer: ManufacturerInfo {
                 name: "Acme".into(),
                 address: "1 Main St".into(),
+                registered_trade_name: None,
+                electronic_address: None,
+                country: None,
                 did_web_url: None,
             },
             materials: None,
@@ -281,7 +284,7 @@ mod tests {
             schema_version: None,
             placed_on_market_date: None,
             commodity_code: None,
-            parent_passport_ref: None,
+            derived_from: Vec::new(),
             component_refs: Vec::new(),
         }
     }

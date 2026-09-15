@@ -7,7 +7,8 @@ use dpp_domain::compliance::ComplianceResult;
 use dpp_domain::identifier::commodity_code::CommodityCode;
 use dpp_domain::lint::LintResult;
 use dpp_domain::passport::{
-    FacilitySnapshot, ManufacturerInfo, MaterialEntry, Passport, PassportId, PassportRef,
+    ComponentRef, DerivationRef, FacilitySnapshot, LifeStatus, ManufacturerInfo, MaterialEntry,
+    Passport, PassportId,
 };
 use dpp_domain::product_group::{
     CarbonFootprint, ProductGroup, ProductGroupData, RepairabilityScore,
@@ -55,6 +56,8 @@ use uuid::Uuid;
 pub struct PassportResponse {
     pub id: PassportId,
     pub batch_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub serial_number: Option<String>,
     pub product_name: String,
     pub product_group: ProductGroup,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -88,10 +91,12 @@ pub struct PassportResponse {
     pub version: u32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub supersedes_id: Option<PassportId>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub parent_passport_ref: Option<PassportRef>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub component_refs: Vec<PassportRef>,
+    pub derived_from: Vec<DerivationRef>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub component_refs: Vec<ComponentRef>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub life_status: Option<LifeStatus>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub retention_until: Option<DateTime<Utc>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -100,6 +105,8 @@ pub struct PassportResponse {
     pub commodity_code: Option<CommodityCode>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub operator_identifier: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub responsible_operator: Option<dpp_domain::operator::ResponsibleOperatorSnapshot>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub facility: Option<FacilitySnapshot>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -125,6 +132,7 @@ impl From<&Passport> for PassportResponse {
         Self {
             id: p.id,
             batch_id: p.batch_id.clone(),
+            serial_number: p.serial_number.clone(),
             product_name: p.product_name.clone(),
             product_group: p.product_group.clone(),
             applicable_instruments: p.applicable_instruments.clone(),
@@ -149,12 +157,14 @@ impl From<&Passport> for PassportResponse {
             retention_locked: p.retention_locked,
             version: p.version,
             supersedes_id: p.supersedes_id,
-            parent_passport_ref: p.parent_passport_ref.clone(),
+            derived_from: p.derived_from.clone(),
             component_refs: p.component_refs.clone(),
+            life_status: p.life_status,
             retention_until: p.retention_until,
             product_id: p.product_id,
             commodity_code: p.commodity_code.clone(),
             operator_identifier: p.operator_identifier.clone(),
+            responsible_operator: p.responsible_operator.clone(),
             facility: p.facility.clone(),
             seal: p.seal.clone(),
         }
@@ -177,6 +187,7 @@ mod tests {
         Passport {
             id: PassportId::new(),
             batch_id: None,
+            serial_number: None,
             product_name: "Minimal".into(),
             product_group: ProductGroup::Textile,
             applicable_instruments: Vec::new(),
@@ -184,6 +195,9 @@ mod tests {
             manufacturer: ManufacturerInfo {
                 name: "Acme".into(),
                 address: "Berlin, DE".into(),
+                registered_trade_name: None,
+                electronic_address: None,
+                country: None,
                 did_web_url: None,
             },
             materials: Vec::new(),
@@ -205,12 +219,14 @@ mod tests {
             retention_locked: false,
             version: 1,
             supersedes_id: None,
-            parent_passport_ref: None,
+            derived_from: Vec::new(),
             component_refs: Vec::new(),
+            life_status: None,
             retention_until: None,
             product_id: None,
             commodity_code: None,
             operator_identifier: None,
+            responsible_operator: None,
             facility: None,
             seal: None,
         }
@@ -315,8 +331,11 @@ mod tests {
         "publicJwsSignature",
         "disclosureSignatures",
         "placedOnMarketDate",
+        "serialNumber",
         "supersedesId",
-        "parentPassportRef",
+        "derivedFrom",
+        "lifeStatus",
+        "responsibleOperator",
         "componentRefs",
         "retentionUntil",
         "productId",

@@ -289,6 +289,10 @@ const UNCHECKED: &[(&str, &str)] = &[
          the only thing that would actually close it",
     ),
     (
+        "ResponsibilityBasis",
+        "a `oneOf` of a string enum and an externally-tagged object          (`OtherUnionLaw`, which carries a citation), the same shape as          `CredentialRole` below and unexpressible by either checker for the same          reason. The wire form of each variant is pinned instead by          `every_responsibility_basis_serialises_as_documented`",
+    ),
+    (
         "CredentialRole",
         "a `oneOf` of a string enum and an externally-tagged object (`Custom`), \
          which neither checker can express: `enum_cases` requires every variant \
@@ -338,6 +342,13 @@ fn object_cases() -> Vec<ObjectCase> {
     case!("ManufacturerInfo", fixtures::manufacturer());
     case!("MaterialEntry", fixtures::material());
     case!("PassportRef", fixtures::passport_ref());
+    case!("Quantity", fixtures::quantity());
+    case!("ComponentRef", fixtures::component_ref());
+    case!("DerivationRef", fixtures::derivation_ref());
+    case!(
+        "ResponsibleOperatorSnapshot",
+        fixtures::responsible_operator_snapshot()
+    );
     case!("DerogationRef", fixtures::derogation_ref());
     case!("FacilitySnapshot", fixtures::facility_snapshot());
     case!("CarbonFootprint", fixtures::carbon_footprint());
@@ -549,6 +560,20 @@ fn enum_cases() -> Vec<EnumCase> {
             name: "OperatorRole",
             variants: wire(&fixtures::all_operator_roles()),
         },
+        // These three read `ALL` off the core enum rather than a hand-written
+        // list, so they cannot drift the way the tripwire below describes.
+        EnumCase {
+            name: "LifeStatus",
+            variants: wire(&fixtures::all_life_statuses()),
+        },
+        EnumCase {
+            name: "SecondLifeOperation",
+            variants: wire(&fixtures::all_second_life_operations()),
+        },
+        EnumCase {
+            name: "SealConformanceLevel",
+            variants: wire(&fixtures::all_seal_conformance_levels()),
+        },
         EnumCase {
             name: "TransferReason",
             variants: wire(&fixtures::all_transfer_reasons()),
@@ -710,7 +735,7 @@ fn deactivation_reason_kinds() -> Vec<String> {
 /// Bump only after re-checking the enums listed below against the released
 /// crate. Bumping it to make a red build green is the one thing that breaks
 /// this gate.
-const CORE_VERSION_VERIFIED: &str = "0.19.0";
+const CORE_VERSION_VERIFIED: &str = "0.20.0";
 
 /// Enums whose variants this test cannot enumerate, and so cannot gate.
 ///
@@ -1007,6 +1032,86 @@ fn deactivation_reason_documents_every_kind() {
         "DeactivationReason `kind` discriminators disagree.\n  spec: {}\n  code: {}",
         joined(&documented),
         joined(&emitted)
+    );
+}
+
+/// `ResponsibilityBasis` is `UNCHECKED` above because neither checker can
+/// express a `oneOf` mixing string variants with an externally-tagged object.
+/// This pins what the schema could not: the wire form of every variant, read off
+/// the core enum so a rename fails here rather than being transcribed wrongly.
+#[test]
+fn every_responsibility_basis_serialises_as_documented() {
+    let spec = spec();
+    let schema = &schemas(&spec)["ResponsibilityBasis"];
+    let arms = schema["oneOf"]
+        .as_array()
+        .expect("ResponsibilityBasis is not a oneOf");
+
+    // A string variant is documented by its `enum` entry; the object variant by
+    // the single property it is tagged with.
+    let documented: BTreeSet<String> = arms
+        .iter()
+        .filter_map(|arm| {
+            arm["enum"][0]
+                .as_str()
+                .map(str::to_owned)
+                .or_else(|| arm["properties"].as_object()?.keys().next().cloned())
+        })
+        .collect();
+
+    let emitted: BTreeSet<String> = dpp_domain::ResponsibilityBasis::all()
+        .iter()
+        .map(|b| {
+            let v = serde_json::to_value(b).expect("ResponsibilityBasis failed to serialise");
+            match v {
+                serde_json::Value::String(s) => s,
+                serde_json::Value::Object(o) => o
+                    .keys()
+                    .next()
+                    .cloned()
+                    .expect("an externally-tagged variant with no tag"),
+                other => panic!("unexpected ResponsibilityBasis wire form: {other}"),
+            }
+        })
+        .collect();
+
+    assert_eq!(
+        documented,
+        emitted,
+        "ResponsibilityBasis variants disagree.\n  spec: {}\n  code: {}",
+        joined(&documented),
+        joined(&emitted)
+    );
+
+    // The tag alone is not the contract. `otherUnionLaw` exists precisely to
+    // carry the citation — a basis that cannot say which law it is says nothing
+    // at all — so the arm that documents it must require that field and type it,
+    // and the value this build emits must actually carry it.
+    let arm = arms
+        .iter()
+        .find(|arm| arm["properties"]["otherUnionLaw"].is_object())
+        .expect("no oneOf arm documents the otherUnionLaw payload");
+    let payload = &arm["properties"]["otherUnionLaw"];
+
+    assert_eq!(
+        payload["required"].as_array().map(Vec::as_slice),
+        Some(&[serde_json::json!("citation")][..]),
+        "the otherUnionLaw payload must require exactly `citation`"
+    );
+    assert_eq!(
+        payload["properties"]["citation"]["type"].as_str(),
+        Some("string"),
+        "`citation` must be documented as a string"
+    );
+
+    let emitted_payload = serde_json::to_value(dpp_domain::ResponsibilityBasis::OtherUnionLaw {
+        citation: "Article 7 of Regulation (EU) 2017/745".to_owned(),
+    })
+    .expect("OtherUnionLaw serialises");
+    assert_eq!(
+        emitted_payload["otherUnionLaw"]["citation"].as_str(),
+        Some("Article 7 of Regulation (EU) 2017/745"),
+        "the emitted variant must carry its citation under the documented key"
     );
 }
 
@@ -2390,18 +2495,20 @@ mod fixtures {
         eol::{DeactivationReason, DerogationRef},
         identifier::commodity_code::CommodityCode,
         lint::{LintFinding, LintResult, LintSeverity},
+        operator::{
+            OperatorRole, ResponsibilityBasis, ResponsibleOperator, ResponsibleOperatorSnapshot,
+        },
         passport::{
-            FacilitySnapshot, ManufacturerInfo, MaterialEntry, Passport, PassportId, PassportRef,
+            ComponentRef, DerivationRef, FacilitySnapshot, LifeStatus, ManufacturerInfo,
+            MaterialEntry, Passport, PassportId, PassportRef, Quantity, SecondLifeOperation,
         },
         product_group::{
             CarbonFootprint, CarbonFootprintClass, LifecycleStage, ProductGroup, RepairCriterion,
             RepairabilityScore, SystemBoundary,
         },
-        seal::{SealFormat, SealedEnvelope},
+        seal::{SealConformanceLevel, SealFormat, SealedEnvelope},
         status::PassportStatus,
-        transfer::{
-            OperatorRole, ResponsibleOperator, TransferChain, TransferReason, TransferRecord,
-        },
+        transfer::{TransferChain, TransferReason, TransferRecord},
     };
     use dpp_integrator::handlers::product_groups::{
         InstrumentRefView, ObligationDateView, PassportObligationView, ProductGroupObligation,
@@ -2463,6 +2570,9 @@ mod fixtures {
         ManufacturerInfo {
             name: "Nordwerk GmbH".into(),
             address: "Hauptstrasse 1, 10115 Berlin, DE".into(),
+            registered_trade_name: Some("Nordwerk".into()),
+            electronic_address: Some("compliance@nordwerk.example".into()),
+            country: Some("DE".into()),
             did_web_url: Some("did:web:nordwerk.example".into()),
         }
     }
@@ -2480,6 +2590,39 @@ mod fixtures {
         PassportRef {
             uri: "https://id.example/dpp/019723f4-1a2b-7c3d-8e4f-5a6b7c8d9e0f".into(),
             public_jws_hash: "b1946ac92492d2347c6235b4d2611184".into(),
+        }
+    }
+
+    pub fn quantity() -> Quantity {
+        Quantity {
+            value: 2.0,
+            unit: Some("kg".into()),
+        }
+    }
+
+    pub fn component_ref() -> ComponentRef {
+        ComponentRef {
+            reference: passport_ref(),
+            quantity: Some(quantity()),
+            role: Some("cell".into()),
+        }
+    }
+
+    /// `Repurposing` because [`passport`] claims `repurposed`, and
+    /// `check_life_status_consistency` asks that at least one derivation edge
+    /// support the claimed status. A fixture contradicting itself would be a
+    /// poor example of the shape even though this gate never runs that rule.
+    pub fn derivation_ref() -> DerivationRef {
+        DerivationRef {
+            reference: passport_ref(),
+            operation: SecondLifeOperation::Repurposing,
+        }
+    }
+
+    pub fn responsible_operator_snapshot() -> ResponsibleOperatorSnapshot {
+        ResponsibleOperatorSnapshot {
+            operator: responsible_operator(),
+            basis: ResponsibilityBasis::MarketSurveillanceArt4,
         }
     }
 
@@ -2518,6 +2661,9 @@ mod fixtures {
             role: OperatorRole::Manufacturer,
             eu_operator_id: Some("DE123456789".into()),
             eu_operator_id_scheme: Some("eori".into()),
+            registered_trade_name: Some("Nordwerk".into()),
+            postal_address: Some("Hauptstrasse 1, 10115 Berlin, DE".into()),
+            electronic_address: Some("compliance@nordwerk.example".into()),
             country: "DE".into(),
         }
     }
@@ -2550,12 +2696,26 @@ mod fixtures {
         ]
     }
 
+    /// Read off the core enum, not transcribed — see the `EnumCase` comment.
+    pub fn all_life_statuses() -> Vec<LifeStatus> {
+        LifeStatus::ALL.to_vec()
+    }
+
+    pub fn all_second_life_operations() -> Vec<SecondLifeOperation> {
+        SecondLifeOperation::ALL.to_vec()
+    }
+
+    pub fn all_seal_conformance_levels() -> Vec<SealConformanceLevel> {
+        SealConformanceLevel::ALL.to_vec()
+    }
+
     pub fn all_operator_roles() -> Vec<OperatorRole> {
         vec![
             OperatorRole::Manufacturer,
             OperatorRole::Importer,
             OperatorRole::Distributor,
             OperatorRole::AuthorisedRepresentative,
+            OperatorRole::FulfilmentServiceProvider,
             OperatorRole::Remanufacturer,
             OperatorRole::Repurposer,
             OperatorRole::PreparerForReuse,
@@ -2571,6 +2731,8 @@ mod fixtures {
             TransferReason::Remanufacturing,
             TransferReason::Repurposing,
             TransferReason::PreparationForReuse,
+            TransferReason::PreparationForRepurposing,
+            TransferReason::WasteHandover,
             TransferReason::Import,
             TransferReason::InsolvencySuccession,
         ]
@@ -2667,6 +2829,7 @@ mod fixtures {
             format: SealFormat::Cades,
             seal_value: "MIIB...".into(),
             signing_cert_ref: Some("urn:cert:1".into()),
+            conformance_level: Some(SealConformanceLevel::BaselineLt),
             sealed_at: ts(),
             placeholder: false,
         }
@@ -2684,6 +2847,7 @@ mod fixtures {
         Passport {
             id: PassportId::new(),
             batch_id: Some("LOT-2026-001".into()),
+            serial_number: Some("NW-48V-000123".into()),
             product_name: "EcoCell Pro 48V".into(),
             product_group: ProductGroup::Textile,
             // Both must be *populated*, not defaulted: each is
@@ -2713,12 +2877,14 @@ mod fixtures {
             retention_locked: true,
             version: 2,
             supersedes_id: Some(PassportId::new()),
-            parent_passport_ref: Some(passport_ref()),
-            component_refs: vec![passport_ref()],
+            derived_from: vec![derivation_ref()],
+            component_refs: vec![component_ref()],
+            life_status: Some(LifeStatus::Repurposed),
             retention_until: Some(ts()),
             product_id: Some(uuid()),
             commodity_code: Some(CommodityCode::parse("85076000").expect("valid CN-8")),
             operator_identifier: Some("DE123456789".into()),
+            responsible_operator: Some(responsible_operator_snapshot()),
             facility: Some(facility_snapshot()),
             seal: Some(sealed_envelope()),
         }
@@ -3138,8 +3304,8 @@ mod fixtures {
             placed_on_market_date: Some(date()),
             schema_version: Some("1.0.0".into()),
             commodity_code: Some("85076000".into()),
-            parent_passport_ref: Some(passport_ref()),
-            component_refs: vec![passport_ref()],
+            derived_from: vec![derivation_ref()],
+            component_refs: vec![component_ref()],
         }
     }
 
@@ -3312,7 +3478,7 @@ mod fixtures {
             placed_on_market_date: None,
             schema_version: None,
             commodity_code: None,
-            parent_passport_ref: None,
+            derived_from: Vec::new(),
             component_refs: Vec::new(),
         }
     }

@@ -52,6 +52,7 @@ fn make_passport() -> Passport {
     Passport {
         id: PassportId::new(),
         batch_id: Some("LOT-PG-1".into()),
+        serial_number: None,
         product_name: "PG Parity Battery".into(),
         product_group: ProductGroup::Battery,
         applicable_instruments: Vec::new(),
@@ -59,6 +60,9 @@ fn make_passport() -> Passport {
         manufacturer: ManufacturerInfo {
             name: "TestCorp GmbH".into(),
             address: "Berlin, DE".into(),
+            registered_trade_name: None,
+            electronic_address: None,
+            country: None,
             did_web_url: None,
         },
         materials: vec![],
@@ -80,12 +84,14 @@ fn make_passport() -> Passport {
         retention_locked: false,
         version: 1,
         supersedes_id: None,
-        parent_passport_ref: None,
+        derived_from: Vec::new(),
         component_refs: Vec::new(),
+        life_status: None,
         retention_until: None,
         product_id: None,
         commodity_code: None,
         operator_identifier: None,
+        responsible_operator: None,
         facility: None,
         seal: None,
     }
@@ -432,19 +438,45 @@ async fn t6_patch_fields_merge() {
     let id = p.id;
     repo.create(p).await.expect("create");
 
+    // Seed a nullable, patchable field for the removal below to act on.
+    // `batchId` served that purpose until `dpp-core` 0.20.0 protected it —
+    // which physical units a passport covers is set at create, like
+    // `serialNumber` beside it — so nulling it here now fails on the protection
+    // and proves nothing about null handling.
+    //
+    // Serialised from the real type rather than hand-written, so the value
+    // cannot disagree with the shape the merged document is read back as.
+    let footprint = dpp_domain::product_group::CarbonFootprint::from_kg(12.5);
+    let seeded = repo
+        .patch_fields(id, serde_json::json!({ "co2ePerUnit": footprint }))
+        .await
+        .expect("seed");
+    assert!(
+        seeded.co2e_per_unit.is_some(),
+        "the field must actually be set, or removing it asserts nothing"
+    );
+
     let patched = repo
         .patch_fields(
             id,
-            serde_json::json!({"productName": "Patched", "batchId": null}),
+            serde_json::json!({"productName": "Patched", "co2ePerUnit": null}),
         )
         .await
         .expect("patch");
     assert_eq!(patched.product_name, "Patched");
-    assert_eq!(patched.batch_id, None, "null in delta removes the key");
+    assert!(
+        patched.co2e_per_unit.is_none(),
+        "null in delta removes the key"
+    );
 
     let reread = repo.find_by_id(id).await.unwrap().unwrap();
     assert_eq!(reread.product_name, "Patched");
     assert_eq!(reread.schema_version, "2.0.0", "untouched fields survive");
+    assert_eq!(
+        reread.batch_id.as_deref(),
+        Some("LOT-PG-1"),
+        "a field the delta never named is left alone — the merge is the delta, not a replace"
+    );
 }
 
 // patch_fields must reject state-machine / integrity fields so it can't bypass

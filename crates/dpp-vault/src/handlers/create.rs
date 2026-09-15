@@ -148,8 +148,21 @@ pub async fn create_handler(
         retention_locked: false,
         version: 1,
         supersedes_id: body.supersedes_id,
-        parent_passport_ref: body.parent_passport_ref,
+        derived_from: body.derived_from,
         component_refs: body.component_refs,
+        // A serial identifies one physical unit, which is only meaningful once
+        // `granularity` says the passport covers one — and it is `None` above
+        // because no adopted delegated act fixes a granularity yet. Wiring a
+        // serial through the create body before then would let a caller stamp
+        // one onto a passport whose own record does not claim to be per-unit.
+        serial_number: None,
+        // Set by the life-status transitions, not at creation: a passport being
+        // created is an original by construction, and `None` is "no transition
+        // has been recorded" rather than a claim that one has not happened.
+        life_status: None,
+        // Established through the transfer routes, which is where the chain and
+        // its Art. 77(7) basis are checked. Creation records no operator.
+        responsible_operator: None,
         retention_until: None,
         product_id: None,
         commodity_code,
@@ -400,6 +413,71 @@ mod schema_validation {
 }
 
 #[cfg(test)]
+mod manufacturer_fields {
+    //! What the create route does with the three manufacturer fields core 0.20.0
+    //! added. Each is optional on the wire, and "optional" is not "unchecked".
+
+    use super::*;
+
+    fn body(manufacturer: serde_json::Value) -> CreatePassportRequest {
+        serde_json::from_value(serde_json::json!({
+            "productName": "Widget",
+            "manufacturer": manufacturer,
+        }))
+        .expect("body must deserialize")
+    }
+
+    #[test]
+    fn an_unassigned_country_code_is_refused_not_merely_a_misshapen_one() {
+        // `XX` is two upper-case letters, so a shape check passes it. It is not
+        // an assigned ISO 3166-1 alpha-2 code, which is the actual requirement —
+        // and the reason the country has its own field rather than sitting in
+        // `address`, where nothing could check it at all.
+        assert!(
+            validate_create_request(&body(
+                serde_json::json!({ "name": "M", "address": "A", "country": "XX" })
+            ))
+            .is_some(),
+            "an unassigned country code must be refused"
+        );
+        assert!(
+            validate_create_request(&body(
+                serde_json::json!({ "name": "M", "address": "A", "country": "de" })
+            ))
+            .is_some(),
+            "a lower-case country code must be refused rather than normalised"
+        );
+        assert!(
+            validate_create_request(&body(
+                serde_json::json!({ "name": "M", "address": "A", "country": "DE" })
+            ))
+            .is_none(),
+            "an assigned, upper-case country code must be accepted"
+        );
+        assert!(
+            validate_create_request(&body(serde_json::json!({ "name": "M", "address": "A" })))
+                .is_none(),
+            "an unstated country is not an invalid one"
+        );
+    }
+
+    #[test]
+    fn the_new_free_text_fields_are_swept_for_control_characters() {
+        // Both land in the same public view as `name` and `address` beside them,
+        // so a right-to-left override in either spoofs a display exactly as it
+        // would there. A field is not exempt from the sweep because it is new.
+        for field in ["registeredTradeName", "electronicAddress"] {
+            let mut m = serde_json::json!({ "name": "M", "address": "A" });
+            m[field] = serde_json::json!(format!("invoice{}gpj.exe", '\u{202E}'));
+            assert!(
+                validate_create_request(&body(m)).is_some(),
+                "a bidirectional override in `{field}` must be refused"
+            );
+        }
+    }
+}
+
+#[cfg(test)]
 mod gtin_boundary {
     //! Where a malformed GTIN is actually refused.
     //!
@@ -494,6 +572,17 @@ pub fn validate_create_request(body: &CreatePassportRequest) -> Option<axum::res
         body.product_name.as_str(),
         body.manufacturer.name.as_str(),
         body.manufacturer.address.as_str(),
+        // The two free-text manufacturer fields land in the same public view as
+        // `name` and `address` beside them, so they are swept on the same terms.
+        // A new field is not exempt because it is new.
+        body.manufacturer
+            .registered_trade_name
+            .as_deref()
+            .unwrap_or(""),
+        body.manufacturer
+            .electronic_address
+            .as_deref()
+            .unwrap_or(""),
         body.batch_id.as_deref().unwrap_or(""),
     ];
     if text_fields.iter().any(|s| has_unsafe_text(s)) {
@@ -557,13 +646,28 @@ pub fn validate_create_request(body: &CreatePassportRequest) -> Option<axum::res
     // URI to the same SSRF guard as webhooks (https, no internal hosts) and
     // require the pin to be a lowercase hex SHA-256. Local cycles among
     // `componentRefs` are refused later by the service (it has the repo).
-    if let Some(ref parent) = body.parent_passport_ref
-        && let Err(e) = validate_passport_ref(parent, "parentPassportRef")
-    {
-        return api_error(StatusCode::UNPROCESSABLE_ENTITY, "VALIDATION_ERROR", &e);
+    // Membership against the assigned ISO 3166-1 alpha-2 set, not a
+    // two-uppercase-letters shape check: `XX` and `de` are both refused. The
+    // same rule the transfer route already holds its operator countries to, and
+    // the reason the country has its own field rather than sitting in `address`
+    // — a value in free text cannot be checked at all.
+    if body.manufacturer.validate_country().is_err() {
+        return api_error(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "VALIDATION_ERROR",
+            "manufacturer.country must be an assigned ISO 3166-1 alpha-2 code in upper case",
+        );
     }
-    for (i, r) in body.component_refs.iter().enumerate() {
-        if let Err(e) = validate_passport_ref(r, &format!("componentRefs[{i}]")) {
+
+    for (i, d) in body.derived_from.iter().enumerate() {
+        if let Err(e) = validate_passport_ref(&d.reference, &format!("derivedFrom[{i}]")) {
+            return api_error(StatusCode::UNPROCESSABLE_ENTITY, "VALIDATION_ERROR", &e);
+        }
+    }
+    for (i, c) in body.component_refs.iter().enumerate() {
+        // The service's own rule, reused rather than restated — it also covers
+        // the quantity, which create would otherwise accept unchecked.
+        if let Err(e) = crate::domain::service::validate_component_ref(c, i) {
             return api_error(StatusCode::UNPROCESSABLE_ENTITY, "VALIDATION_ERROR", &e);
         }
     }

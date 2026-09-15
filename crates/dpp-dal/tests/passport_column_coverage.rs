@@ -73,6 +73,7 @@ fn fully_populated(supersedes: Option<PassportId>) -> Passport {
     Passport {
         id: PassportId::new(),
         batch_id: Some("LOT-COVERAGE-1".into()),
+        serial_number: None,
         product_name: "Column Coverage Battery".into(),
         product_group: ProductGroup::Battery,
         applicable_instruments: Vec::new(),
@@ -80,6 +81,9 @@ fn fully_populated(supersedes: Option<PassportId>) -> Passport {
         manufacturer: ManufacturerInfo {
             name: "TestCorp GmbH".into(),
             address: "Berlin, DE".into(),
+            registered_trade_name: None,
+            electronic_address: None,
+            country: None,
             did_web_url: None,
         },
         materials: vec![],
@@ -106,12 +110,14 @@ fn fully_populated(supersedes: Option<PassportId>) -> Passport {
         retention_locked: false,
         version: if supersedes.is_some() { 2 } else { 1 },
         supersedes_id: supersedes,
-        parent_passport_ref: None,
+        derived_from: Vec::new(),
         component_refs: Vec::new(),
+        life_status: None,
         retention_until: Some(now + chrono::Duration::days(3650)),
         product_id: Some(uuid::Uuid::now_v7()),
         commodity_code: None,
         operator_identifier: None,
+        responsible_operator: None,
         facility: None,
         seal: None,
     }

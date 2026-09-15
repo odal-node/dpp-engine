@@ -6,5 +6,7 @@ enum:
   - remanufacturing
   - repurposing
   - preparationForReuse
+  - preparationForRepurposing
+  - wasteHandover
   - import
   - insolvencySuccession

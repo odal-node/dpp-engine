@@ -224,16 +224,24 @@ reviews:
       - name: "Publication boundary"
         mode: error
         instructions: >-
+          The test is whether a thing is *public*, never whether it lives in
+          this repository. `dpp-core` is public, published on crates.io and a
+          declared dependency of this workspace: naming it — in code, comments,
+          docs, CHANGELOG entries, a commit message, a pull request title or a
+          pull request body — is correct and expected and must NOT be flagged.
+          The reverse direction is the one that binds, and it binds the other
+          repository rather than this one, so it cannot be violated from here:
+          do not raise it.
           FAIL if the diff or the pull request description introduces any of the
           following into this public repository: an ADR reference by number,
-          title or section; the name of, or a filesystem path into, any
-          repository other than this one; pricing, quotes, contract terms,
-          per-unit rates, vendor lead times or negotiation status; the name of a
-          real company or individual in a non-public arrangement, including
-          inside a test fixture. PASS otherwise. When it fails, say which line
-          and give the fix: write the substance, drop the pointer, and cite the
-          vendor's published documentation or the primary legal text instead of
-          the internal record that interpreted it.
+          title or section; the name of, or a filesystem path into, a repository
+          that is NOT public; pricing, quotes, contract terms, per-unit rates,
+          vendor lead times or negotiation status; the name of a real company or
+          individual in a non-public arrangement, including inside a test
+          fixture. PASS otherwise. When it fails, say which line and give the
+          fix: write the substance, drop the pointer, and cite the vendor's
+          published documentation or the primary legal text instead of the
+          internal record that interpreted it.
 
       - name: "New dependency is justified"
         mode: warning

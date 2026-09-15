@@ -98,6 +98,16 @@ components:
       $ref: components/schemas/passport/ProductGroupData.yaml
     PassportRef:
       $ref: components/schemas/passport/PassportRef.yaml
+    Quantity:
+      $ref: components/schemas/passport/Quantity.yaml
+    ComponentRef:
+      $ref: components/schemas/passport/ComponentRef.yaml
+    SecondLifeOperation:
+      $ref: components/schemas/passport/SecondLifeOperation.yaml
+    DerivationRef:
+      $ref: components/schemas/passport/DerivationRef.yaml
+    LifeStatus:
+      $ref: components/schemas/passport/LifeStatus.yaml
     CarbonFootprint:
       $ref: components/schemas/passport/CarbonFootprint.yaml
     RepairabilityScore:
@@ -124,6 +134,8 @@ components:
       $ref: components/schemas/passport/SealedEnvelope.yaml
     SealFormat:
       $ref: components/schemas/passport/SealFormat.yaml
+    SealConformanceLevel:
+      $ref: components/schemas/passport/SealConformanceLevel.yaml
     CreatePassportRequest:
       $ref: components/schemas/passport-requests/CreatePassportRequest.yaml
     SuspendRequest:
@@ -154,6 +166,10 @@ components:
       $ref: components/schemas/transfer/ResponsibleOperator.yaml
     OperatorRole:
       $ref: components/schemas/transfer/OperatorRole.yaml
+    ResponsibilityBasis:
+      $ref: components/schemas/transfer/ResponsibilityBasis.yaml
+    ResponsibleOperatorSnapshot:
+      $ref: components/schemas/transfer/ResponsibleOperatorSnapshot.yaml
     SealResponse:
       $ref: components/schemas/seals/SealResponse.yaml
     SealSummaryResponse:

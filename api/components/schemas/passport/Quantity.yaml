@@ -1,0 +1,24 @@
+type: object
+required:
+  - value
+description: >-
+  How much of a constituent an assembly contains.
+properties:
+  value:
+    type: number
+    minimum: 0
+    description: >-
+      The amount, in `unit`. Refused on create and update when it is negative or
+      not finite — a non-finite number cannot be serialised into the signed
+      publish payload, so an unchecked one fails much later with an error that
+      names serialisation rather than the field that caused it.
+    example: 2.0
+  unit:
+    type:
+      - string
+      - 'null'
+    description: >-
+      The unit `value` is expressed in. A free string because the vocabulary is
+      the product group's to define, not the passport envelope's. Absent where
+      the declaring operator stated a bare count.
+    example: kg

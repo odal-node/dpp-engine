@@ -420,4 +420,72 @@ mod tests {
             rejected.join("\n")
         );
     }
+
+    /// Every importer must route its country column to `manufacturer.country`.
+    ///
+    /// Nine validators build `ManufacturerInfo` and only four carry a valid-row
+    /// test of their own, so dropping the mapping from one of the other five
+    /// would have been caught by nothing. Driven from the templates for the same
+    /// reason the test above is: it reaches every importer that ships one,
+    /// including the ones with no test module.
+    ///
+    /// The field exists because the country had nowhere else to go and was being
+    /// written into `address`, where nothing downstream could tell a country
+    /// from a postal address.
+    #[test]
+    fn every_template_row_routes_its_country_column_to_the_country_field() {
+        let mut checked = 0usize;
+        let mut wrong = Vec::new();
+
+        for group in crate::handlers::templates::template_keys() {
+            let group = &group;
+            let template = crate::handlers::templates::template_for(group)
+                .expect("a served template key renders");
+            let rows = crate::domain::csv_parser::parse_csv(template.as_bytes())
+                .unwrap_or_else(|e| panic!("{group} template is not parseable CSV: {e:?}"));
+
+            for (offset, row) in rows.iter().enumerate() {
+                // Only rows that actually state a country. A template carrying a
+                // full postal address instead is a different mapping and is not
+                // this test's subject.
+                let Some(cell) = ["manufacturerCountry", "manufacturer_country"]
+                    .iter()
+                    .find_map(|k| row.get(*k))
+                else {
+                    continue;
+                };
+
+                let req = super::validate_row(group, row, offset + 1).unwrap_or_else(|_| {
+                    panic!(
+                        "{group} row {} must validate — the test above asserts it",
+                        offset + 1
+                    )
+                });
+                checked += 1;
+
+                if req.manufacturer.country.as_deref() != Some(cell.as_str()) {
+                    wrong.push(format!(
+                        "  {group} row {}: country is {:?}, the column says {cell:?}",
+                        offset + 1,
+                        req.manufacturer.country
+                    ));
+                }
+            }
+        }
+
+        // Without this the test passes vacuously if the column is ever renamed
+        // out from under the lookup above — every row would be skipped and
+        // nothing would be compared.
+        assert!(
+            checked >= SUPPORTED_PRODUCT_GROUPS.len(),
+            "only {checked} rows stated a country, fewer than one per product group — the column \
+             lookup above has probably stopped matching"
+        );
+        assert!(
+            wrong.is_empty(),
+            "an importer does not route its country column to `manufacturer.country`, so the \
+             value lands only in `address` where nothing can check it:\n{}",
+            wrong.join("\n")
+        );
+    }
 }

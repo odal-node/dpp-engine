@@ -1,0 +1,16 @@
+type: object
+required:
+  - reference
+  - operation
+description: >-
+  One predecessor a second-life unit derives from, and the operation that
+  produced this unit from it.
+properties:
+  reference:
+    allOf:
+      - $ref: ./PassportRef.yaml
+    description: >-
+      Where to fetch the predecessor's passport, and the hash pinning its signed
+      public view.
+  operation:
+    $ref: ./SecondLifeOperation.yaml

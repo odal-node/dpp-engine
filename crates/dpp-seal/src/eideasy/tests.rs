@@ -177,6 +177,11 @@ async fn a_real_seal_round_trips_into_a_non_placeholder_envelope() {
         !env.placeholder,
         "a real provider seal must never be marked placeholder"
     );
+    assert_eq!(
+        env.conformance_level,
+        Some(SealConformanceLevel::BaselineT),
+        "the envelope must record the level the request asked for, which for this \n         adapter is the one its configured signature profile admits"
+    );
     assert!(env.signing_cert_ref.is_none());
 }
 
@@ -320,6 +325,8 @@ async fn verify_refuses_rather_than_guessing() {
         format: SealFormat::Cades,
         seal_value: MOCK_P7S.into(),
         signing_cert_ref: None,
+        // Not recorded: this fixture asserts nothing about the level.
+        conformance_level: None,
         sealed_at: chrono::Utc::now(),
         placeholder: false,
     };

@@ -204,8 +204,9 @@ mod tests {
     use chrono::Utc;
     use dpp_crypto::jws::canonicalize;
     use dpp_domain::{
+        operator::{OperatorRole, ResponsibleOperator},
         passport::PassportId,
-        transfer::{OperatorRole, ResponsibleOperator, TransferReason, TransferRecord},
+        transfer::{TransferReason, TransferRecord},
     };
     use ed25519_dalek::{Signer, SigningKey};
     use uuid::Uuid;
@@ -217,6 +218,9 @@ mod tests {
             role: OperatorRole::Distributor,
             eu_operator_id: None,
             eu_operator_id_scheme: None,
+            registered_trade_name: None,
+            postal_address: None,
+            electronic_address: None,
             country: "DE".into(),
         }
     }

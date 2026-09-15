@@ -25,6 +25,28 @@ properties:
       - string
       - 'null'
     description: Scheme euOperatorId is expressed in — "vat", "lei", "eori", "duns".
+  registeredTradeName:
+    type:
+      - string
+      - 'null'
+    description: >-
+      Registered trade name or trade mark, where it differs from `name`.
+    example: Nordwerk
+  postalAddress:
+    type:
+      - string
+      - 'null'
+    description: >-
+      Postal address at which the operator can be contacted. Distinct from
+      `country`, which is the establishment country the registry matches on.
+    example: Hauptstrasse 1, 10115 Berlin, DE
+  electronicAddress:
+    type:
+      - string
+      - 'null'
+    description: >-
+      Electronic means of contact — an email address or a contact URL.
+    example: compliance@nordwerk.example
   country:
     type: string
     pattern: '^[A-Z]{2}$'

@@ -10,7 +10,7 @@ use std::collections::HashSet;
 use dpp_domain::{
     error::DppError,
     graph::{ComponentEdges, DEFAULT_DEPTH_CAP, EdgeRejection, check_edge},
-    passport::{Passport, PassportId, PassportRef},
+    passport::{ComponentRef, Passport, PassportId},
     ports::compliance::ComplianceRegistry,
     product_group::{CarbonFootprint, ProductGroupData, RepairabilityScore},
     status::PassportStatus,
@@ -221,7 +221,7 @@ impl PassportService {
             let children: Vec<PassportId> = p
                 .component_refs
                 .iter()
-                .filter_map(|r| local_component_id(&r.uri))
+                .filter_map(|r| local_component_id(&r.reference.uri))
                 .collect();
             for &c in &children {
                 stack.push(c);
@@ -237,11 +237,11 @@ impl PassportService {
     async fn guard_component_graph(
         &self,
         parent: PassportId,
-        component_refs: &[PassportRef],
+        component_refs: &[ComponentRef],
     ) -> Result<(), DppError> {
         let local_children: Vec<PassportId> = component_refs
             .iter()
-            .filter_map(|r| local_component_id(&r.uri))
+            .filter_map(|r| local_component_id(&r.reference.uri))
             .collect();
         if local_children.is_empty() {
             return Ok(());
@@ -422,7 +422,7 @@ pub(super) fn apply_patch(
         applied.push("productGroupData");
     }
     if let Some(v) = obj.get("componentRefs") {
-        let refs: Vec<PassportRef> = serde_json::from_value(v.clone())
+        let refs: Vec<ComponentRef> = serde_json::from_value(v.clone())
             .map_err(|e| DppError::Validation(format!("invalid componentRefs: {e}").into()))?;
         // Same shape check the create path applies: every ref is fetched
         // cross-operator at verify time, so an `http` or internal URI is a
@@ -440,7 +440,20 @@ pub(super) fn apply_patch(
 
 /// `https` + the SSRF shape guard on the URI, and a lowercase-hex SHA-256 pin —
 /// the create path's `validate_passport_ref`, applied on update too.
-fn validate_component_ref(r: &PassportRef, index: usize) -> Result<(), String> {
+pub(crate) fn validate_component_ref(c: &ComponentRef, index: usize) -> Result<(), String> {
+    // A quantity is a number that ends up in the signed publish payload, and
+    // `serde_json` refuses to serialise a non-finite one — so an unchecked NaN
+    // or infinity arrives here quietly and fails much later, at publish, with an
+    // error that names serialisation rather than the field that caused it. A
+    // negative amount of a constituent is not a thing an assembly can contain.
+    if let Some(q) = &c.quantity
+        && (!q.value.is_finite() || q.value < 0.0)
+    {
+        return Err(format!(
+            "componentRefs[{index}].quantity.value must be a finite, non-negative number"
+        ));
+    }
+    let r = &c.reference;
     dpp_common::url_guard::validate_public_https_url(&r.uri)
         .map_err(|e| format!("componentRefs[{index}].uri: {e}"))?;
     let pin = &r.public_jws_hash;
@@ -458,12 +471,12 @@ fn validate_component_ref(r: &PassportRef, index: usize) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{apply_compliance, apply_patch};
+    use super::{apply_compliance, apply_patch, validate_component_ref};
     use chrono::Utc;
     use dpp_domain::{
         compliance::{ComplianceError, ComplianceErrorKind, ComplianceResult},
         error::DppError,
-        passport::{ManufacturerInfo, Passport, PassportId},
+        passport::{ComponentRef, ManufacturerInfo, Passport, PassportId},
         ports::compliance::ComplianceRegistry,
         product_group::{ProductGroup, ProductGroupData},
         status::PassportStatus,
@@ -473,6 +486,7 @@ mod tests {
         Passport {
             id: PassportId::new(),
             batch_id: None,
+            serial_number: None,
             product_name: "Test".into(),
             product_group: ProductGroup::Battery,
             applicable_instruments: Vec::new(),
@@ -480,6 +494,9 @@ mod tests {
             manufacturer: ManufacturerInfo {
                 name: "ACME".into(),
                 address: "1 Street".into(),
+                registered_trade_name: None,
+                electronic_address: None,
+                country: None,
                 did_web_url: None,
             },
             materials: vec![],
@@ -501,12 +518,14 @@ mod tests {
             retention_locked: false,
             version: 1,
             supersedes_id: None,
-            parent_passport_ref: None,
+            derived_from: Vec::new(),
             component_refs: Vec::new(),
+            life_status: None,
             retention_until: None,
             product_id: None,
             commodity_code: None,
             operator_identifier: None,
+            responsible_operator: None,
             facility: None,
             seal: None,
         }
@@ -540,12 +559,18 @@ mod tests {
     // ── the allow-list ───────────────────────────────────────────────────────
 
     /// The finding this change exists for. `facility`, `operatorIdentifier`,
-    /// `commodityCode` and `parentPassportRef` are modelled `Passport` fields
-    /// that the repository's protected list did not cover, so a `write`-scope
-    /// caller could set them through `PUT` — bypassing the **admin**-only routes
-    /// and the GLN / LEI / tariff validators that own them — and they rode into
-    /// the signed publish payload from there. `facility` in particular is a
-    /// `Public`-tier field, so it reached the anonymous public view.
+    /// `commodityCode` and the lineage edge — `derivedFrom` now, and
+    /// `parentPassportRef` when this was written — are modelled `Passport`
+    /// fields that the repository's protected list did not cover, so a
+    /// `write`-scope caller could set them through `PUT`, bypassing the
+    /// **admin**-only routes and the GLN / LEI / tariff validators that own
+    /// them, and they rode into the signed publish payload from there.
+    /// `facility` in particular is a `Public`-tier field, so it reached the
+    /// anonymous public view.
+    ///
+    /// The lineage key is named here as a *modelled* field, which is what makes
+    /// it worth asserting: an unknown key is refused by the allow-list for a
+    /// weaker reason and would leave the real case untested.
     #[test]
     fn registry_identity_fields_never_reach_the_delta() {
         let mut p = stub();
@@ -554,7 +579,10 @@ mod tests {
             "facility": { "scheme": "gln", "value": "NOT-A-GLN", "name": "Anywhere" },
             "operatorIdentifier": "not-an-eori",
             "commodityCode": "not-a-tariff-code",
-            "parentPassportRef": { "uri": "http://10.0.0.1/x", "publicJwsHash": "z" },
+            "derivedFrom": [{
+                "reference": { "uri": "http://10.0.0.1/x", "publicJwsHash": "z" },
+                "operation": "repurposing"
+            }],
         });
         let applied = apply_patch(&mut p, &patch).expect("the recognised field applies");
         let delta = super::delta_for(&p, &applied);
@@ -564,7 +592,7 @@ mod tests {
             "facility",
             "operatorIdentifier",
             "commodityCode",
-            "parentPassportRef",
+            "derivedFrom",
         ] {
             assert!(
                 !delta.contains_key(smuggled),
@@ -659,6 +687,63 @@ mod tests {
             assert!(
                 apply_patch(&mut p, &serde_json::json!({ "componentRefs": bad })).is_err(),
                 "{bad} must be refused"
+            );
+        }
+    }
+
+    /// A quantity is a number that ends up in the signed publish payload, and
+    /// `serde_json` refuses to serialise a non-finite one — so an unchecked NaN
+    /// or infinity arrives quietly and fails much later at publish, with an
+    /// error naming serialisation rather than the field that caused it. A
+    /// negative amount of a constituent is not a thing an assembly can contain.
+    #[test]
+    fn a_component_quantity_must_be_finite_and_non_negative() {
+        let good = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+        let qualified = |value: f64| {
+            serde_json::json!([{
+                "reference": { "uri": "https://id.example/dpp/a", "publicJwsHash": good },
+                "quantity": { "value": value, "unit": "kg" }
+            }])
+        };
+
+        let mut p = stub();
+        assert!(
+            apply_patch(
+                &mut p,
+                &serde_json::json!({ "componentRefs": qualified(2.0) })
+            )
+            .is_ok(),
+            "a positive quantity on the qualified shape is accepted"
+        );
+
+        let mut p = stub();
+        assert!(
+            apply_patch(
+                &mut p,
+                &serde_json::json!({ "componentRefs": qualified(-1.0) })
+            )
+            .is_err(),
+            "a negative quantity must be refused"
+        );
+
+        // NaN and infinity cannot be written as JSON, so they never arrive
+        // through `apply_patch` and the rule is checked where it lives instead.
+        let reference = dpp_domain::passport::PassportRef {
+            uri: "https://id.example/dpp/a".to_owned(),
+            public_jws_hash: good.to_owned(),
+        };
+        for value in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            let c = ComponentRef {
+                reference: reference.clone(),
+                quantity: Some(dpp_domain::passport::Quantity {
+                    value,
+                    unit: Some("kg".to_owned()),
+                }),
+                role: None,
+            };
+            assert!(
+                validate_component_ref(&c, 0).is_err(),
+                "{value} must be refused"
             );
         }
     }

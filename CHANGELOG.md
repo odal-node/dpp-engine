@@ -10,6 +10,113 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ## [Unreleased]
 
+### Breaking
+
+- **`parentPassportRef` is gone; second-life lineage is `derivedFrom`.**
+  *(Breaking: `CreatePassportRequest.parentPassportRef` and
+  `PassportResponse.parentPassportRef` are removed. The replacement is
+  `derivedFrom`, an array of `{ reference, operation }` where `operation` is a
+  required `SecondLifeOperation`. A caller sending `parentPassportRef` no longer
+  has it read — the field is not renamed, it is replaced by a differently shaped
+  one. Migration: send `derivedFrom: [{ reference: <the old value>, operation:
+  <which of the four Art. 77(7) operations occurred> }]`.)*
+
+  Two things were wrong with one nullable reference. Regulation (EU) 2023/1542
+  Art. 77(7) is plural on both sides — "linked to the battery passport **or
+  passports** of the original battery **or batteries**" — so a unit built from
+  several predecessors could not be recorded at all. And the article attaches
+  different legal consequences to each of the four operations it defines, so an
+  edge that does not say which one occurred records less than the article asks
+  for.
+
+  **There is deliberately no default for `operation`.** Picking one to migrate
+  the old field automatically would invent a legal claim about a unit nobody
+  made, which is why the field is required rather than optional with a fallback.
+
+- **A `componentRefs` entry is now a `ComponentRef`, not a bare `PassportRef`.**
+  *(Breaking for writers: the reference moves under a `reference` key, alongside
+  optional `quantity` and `role`. **Not** breaking for readers — both shapes are
+  accepted on the way in, and the two are disjoint, so accepting both requires no
+  guessing.)*
+
+  A bill of materials could say what a product is made from and not how much of
+  it, which is the question a BOM exists to answer.
+
+  The read tolerance is not politeness. `componentRefs` is part of the **signed
+  public view** that other operators' nodes fetch to verify a bill of materials.
+  Those passports belong to someone else and are signed: they cannot be
+  rewritten, by anyone, ever. Nodes here are independent per-operator
+  deployments, so version skew is the steady state rather than a migration
+  window.
+
+### Added
+
+- **The passport response now serves `serialNumber`, `lifeStatus` and
+  `responsibleOperator`.** All three are modelled on the core aggregate and were
+  being dropped at the API boundary, so a client reading a passport could not see
+  which physical unit it covered, where that unit sat in its product life, or who
+  was answerable for it under Annex III(k).
+
+- **The manufacturer can state a trade name, an electronic address and a
+  country.** `ManufacturerInfo` gains `registeredTradeName`, `electronicAddress`
+  and `country`, each optional.
+
+  **The country had nowhere to go, so it was going into `address`.** Eight bulk
+  importers read a column literally named `manufacturerCountry` and wrote it
+  straight into the postal-address field; the battery importer additionally
+  accepted a full `manufacturerAddress` under the same alias list, so nothing
+  downstream could tell which of the two a given passport held. The country now
+  reaches the field that can be checked against ISO 3166-1, and the battery
+  importer reads its two header groups separately — `manufacturerCountry` states
+  a country and `manufacturerAddress` states an address, which is knowing rather
+  than guessing.
+
+  Those templates still collect no postal address, so `address` continues to
+  carry the country for them. That gap is the template's, not the mapping's.
+
+- **A seal envelope records the conformance level it was requested at.**
+  `conformanceLevel` on `SealedEnvelope`, absent for an envelope written before
+  the field existed. A record of what was asked for, never proof of what
+  arrived — what the bytes carry is read out by a validator, and the two
+  agreeing is the cross-check the drain already alarms on.
+
+- **The new manufacturer fields are validated rather than merely accepted.**
+  `manufacturer.country` is checked for **membership** of the assigned
+  ISO 3166-1 alpha-2 set, not for two upper-case letters — `XX` and `de` are
+  both refused with `422`, the same rule the transfer route already holds its
+  operator countries to. `registeredTradeName` and `electronicAddress` join the
+  control- and bidirectional-character sweep that `name` and `address` beside
+  them already get; all four land in the same public view, so a right-to-left
+  override in either of the new ones spoofs a display exactly as it would in the
+  old ones. Optional on the wire is not the same as unchecked.
+
+- **A component quantity is refused if it is negative or not finite.** A
+  non-finite number cannot be serialised into the signed publish payload, so an
+  unchecked one failed much later at publish with an error naming serialisation
+  rather than the field that caused it.
+
+- **Three enum values the server could already emit are now documented:**
+  `OperatorRole.fulfilmentServiceProvider`, and
+  `TransferReason.preparationForRepurposing` and `.wasteHandover`. A client
+  modelling either as a closed enum would have failed on them.
+
+  Found by the repin tripwire in `openapi_contract.rs`, which exists for exactly
+  this: `dpp-domain`'s enums are `#[non_exhaustive]`, so the variant lists here
+  are hand-written and keep compiling — and keep passing — after core adds a
+  variant. The three new enums in this repin read `ALL` off the core enum
+  instead, so they cannot drift that way.
+
+### Fixed
+
+- **A node publishing the current `componentRefs` shape was reported as having
+  tampered with its passport.** `verify_tree` parsed each child entry as a bare
+  `PassportRef`. An entry it could not parse is reported as `MalformedRef`, which
+  the tree report grades as an integrity violation — the same class as a hash
+  mismatch or a cycle. So a node on the current shape would have been accused of
+  tampering by every peer still reading the old one, on evidence that is nothing
+  but a version difference, and for as long as that passport existed.
+
+
 ## [0.13.0] - 2026-09-13
 
 ### Breaking

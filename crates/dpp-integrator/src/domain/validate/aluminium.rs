@@ -76,8 +76,18 @@ pub fn validate_aluminium_row(
         manufacturer: ManufacturerInfo {
             name: manufacturer_name
                 .expect("field verified present by errors.is_empty() guard above"),
+            // This template collects a country and no postal address, so
+            // `address` carries the country — as it did before `country`
+            // existed. Kept populated because `address` is required and the
+            // create route refuses an empty one; the gap is the template's, not
+            // this mapping's. The country now also reaches the field that can
+            // actually be checked against ISO 3166-1.
             address: manufacturer_country
+                .clone()
                 .expect("field verified present by errors.is_empty() guard above"),
+            registered_trade_name: None,
+            electronic_address: None,
+            country: manufacturer_country,
             did_web_url: None,
         },
         materials: None,
@@ -107,7 +117,7 @@ pub fn validate_aluminium_row(
         // referenced passport's public signature, and a hash cannot be authored
         // by hand — an invented one produces a link that fails verification.
         // Absent because the format cannot carry them, not by oversight.
-        parent_passport_ref: None,
+        derived_from: Vec::new(),
         component_refs: Vec::new(),
     })
 }
@@ -171,7 +181,7 @@ mod tests {
     #[test]
     fn passport_references_are_absent_because_csv_cannot_express_them() {
         let req = validate_aluminium_row(&aluminium_row(), 1).expect("valid row");
-        assert!(req.parent_passport_ref.is_none());
+        assert!(req.derived_from.is_empty());
         assert!(req.component_refs.is_empty());
     }
 
@@ -216,6 +226,11 @@ mod tests {
         let row = aluminium_row();
         let req = validate_aluminium_row(&row, 1).expect("valid aluminium row");
         assert_eq!(req.product_group, Some(ProductGroup::Aluminium));
+        // The country column reaches the field that can be checked against
+        // ISO 3166-1, and still backs `address`, which this template has nothing
+        // better to put in.
+        assert_eq!(req.manufacturer.country.as_deref(), Some("NO"));
+        assert_eq!(req.manufacturer.address, "NO");
         match req.product_group_data.unwrap() {
             ProductGroupData::Aluminium(d) => {
                 assert_eq!(d.recycled_content_pct, 75.0);

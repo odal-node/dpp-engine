@@ -22,6 +22,23 @@ properties:
     type:
       - string
       - 'null'
+  serialNumber:
+    type:
+      - string
+      - 'null'
+    description: >-
+      The serial of the physical unit this passport covers, as the manufacturer
+      stamps or records it. Meaningful where `granularity` is `item` — "one
+      passport per physical unit".
+
+      **Not the serial in the resolver URL.** A GS1 Digital Link carrier is
+      `/01/{gtin}/21/{serial}` and AI 21 is a serial number, but the value there
+      is derived from this passport's own UUID to fit GS1's length cap. That
+      value identifies the *record*; this identifies the *product*, and nothing
+      reconciles the two.
+
+      Absent means not stated.
+    example: NW-48V-000123
   productName:
     type: string
     example: EcoCell Pro 48V
@@ -180,21 +197,33 @@ properties:
     allOf:
       - $ref: ./DppId.yaml
     description: The passport this record supersedes. Absent for first versions.
-  parentPassportRef:
-    allOf:
-      - $ref: ./PassportRef.yaml
+  derivedFrom:
+    type: array
     description: >-
-      Cross-operator reference to the predecessor this passport derives from
-      (second-life successor linkage).
+      Cross-operator references to the predecessors this passport derives from
+      (second-life successor linkage), each naming the operation that produced
+      this unit from it.
+
+      A list rather than the single `parentPassportRef` it replaces:
+      Regulation (EU) 2023/1542 Art. 77(7) is plural on both sides — "linked to
+      the battery passport or passports of the original battery or batteries" —
+      so one second-life unit may derive from several predecessors.
+    items:
+      $ref: ./DerivationRef.yaml
   componentRefs:
     type: array
     description: >-
       Cross-operator references to the constituent passports this product is
-      assembled from — its bill of materials. The inverse edge of
-      `parentPassportRef`: these point down to many constituents, that points up
-      to one predecessor.
+      assembled from — its bill of materials, each qualified by how much and in
+      what role. The inverse edge of `derivedFrom`: these point down to the
+      constituents, those point up to the predecessors.
+
+      Distinct from `materials`, which lists substances by weight. These point
+      at other products that have passports of their own.
     items:
-      $ref: ./PassportRef.yaml
+      $ref: ./ComponentRef.yaml
+  lifeStatus:
+    $ref: ./LifeStatus.yaml
   retentionUntil:
     type: string
     format: date-time
@@ -229,6 +258,15 @@ properties:
       immutable and covered by the signature over it. For current
       responsibility, read the transfer chain.
     example: DE123456789
+  responsibleOperator:
+    allOf:
+      - $ref: ../transfer/ResponsibleOperatorSnapshot.yaml
+    description: >-
+      Who is answerable for this product and under which law
+      (Regulation (EU) 2024/1781 Annex III(k)). Frozen at publish for the same
+      reason as `operatorIdentifier`: published content is covered by the
+      signature over it, so a later transfer mints a new version rather than
+      rewriting this one.
   facility:
     allOf:
       - $ref: ./FacilitySnapshot.yaml

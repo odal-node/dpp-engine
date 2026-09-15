@@ -7,12 +7,13 @@ use async_trait::async_trait;
 use chrono::Utc;
 use dpp_domain::{
     error::DppError,
+    operator::ResponsibleOperator,
     passport::PassportId,
     ports::registry_sync::{
         RegistrationGranularity, RegistrationRequest, RegistryIdentifiers, RegistryRecord,
         RegistryStatus, RegistrySyncPort,
     },
-    transfer::{ResponsibleOperator, TransferRecord},
+    transfer::TransferRecord,
 };
 use dpp_registry::{
     EuRegistryEnvelope, EuRegistryResponse, FacilityIdentifier, Granularity, OperatorIdentifier,

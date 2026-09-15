@@ -14,14 +14,13 @@ use helpers::{TestClient, make_jwt, start_postgres, start_vault};
 
 use chrono::Utc;
 use dpp_dal::pg::{PgDal, PgPassportRepo, PgTransferRepo};
+use dpp_domain::operator::{OperatorRole, ResponsibleOperator};
 use dpp_domain::passport::{ManufacturerInfo, Passport, PassportId};
 use dpp_domain::ports::passport_repo::PassportRepository;
 use dpp_domain::product_group::ProductGroup;
 use dpp_domain::seal::{SealFormat, SealedEnvelope};
 use dpp_domain::status::PassportStatus;
-use dpp_domain::transfer::{
-    OperatorRole, ResponsibleOperator, TransferChain, TransferReason, TransferRecord,
-};
+use dpp_domain::transfer::{TransferChain, TransferReason, TransferRecord};
 use dpp_types::TransferStore;
 use uuid::Uuid;
 
@@ -39,6 +38,7 @@ async fn seed(dal: &PgDal, seal: Option<SealedEnvelope>, jws: Option<&str>) -> P
     let passport = Passport {
         id: PassportId::new(),
         batch_id: None,
+        serial_number: None,
         product_name: "Seal Route Battery".into(),
         product_group: ProductGroup::Battery,
         applicable_instruments: Vec::new(),
@@ -46,6 +46,9 @@ async fn seed(dal: &PgDal, seal: Option<SealedEnvelope>, jws: Option<&str>) -> P
         manufacturer: ManufacturerInfo {
             name: "TestCorp GmbH".into(),
             address: "Berlin, DE".into(),
+            registered_trade_name: None,
+            electronic_address: None,
+            country: None,
             did_web_url: None,
         },
         materials: vec![],
@@ -67,12 +70,14 @@ async fn seed(dal: &PgDal, seal: Option<SealedEnvelope>, jws: Option<&str>) -> P
         retention_locked: true,
         version: 1,
         supersedes_id: None,
-        parent_passport_ref: None,
+        derived_from: Vec::new(),
         component_refs: Vec::new(),
+        life_status: None,
         retention_until: None,
         product_id: None,
         commodity_code: None,
         operator_identifier: None,
+        responsible_operator: None,
         facility: None,
         seal,
     };
@@ -89,6 +94,8 @@ fn envelope() -> SealedEnvelope {
         format: SealFormat::Cades,
         seal_value: "BASE64-DETACHED-CADES".into(),
         signing_cert_ref: None,
+        // Not recorded: this fixture asserts nothing about the level.
+        conformance_level: None,
         sealed_at: Utc::now(),
         placeholder: false,
     }
@@ -323,6 +330,9 @@ async fn a_completed_handover_says_responsibility_may_have_moved() {
         role: OperatorRole::Manufacturer,
         eu_operator_id: None,
         eu_operator_id_scheme: None,
+        registered_trade_name: None,
+        postal_address: None,
+        electronic_address: None,
         country: "DE".to_owned(),
     };
     let from = operator("did:web:acme.example", "Acme GmbH");

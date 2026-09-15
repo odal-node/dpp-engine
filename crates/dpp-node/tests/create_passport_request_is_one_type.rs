@@ -30,6 +30,9 @@ fn the_importer_builds_the_very_type_the_vault_accepts() {
             manufacturer: dpp_domain::passport::ManufacturerInfo {
                 name: "Acme".to_owned(),
                 address: "Berlin, DE".to_owned(),
+                registered_trade_name: None,
+                electronic_address: None,
+                country: None,
                 did_web_url: None,
             },
             materials: None,
@@ -40,7 +43,7 @@ fn the_importer_builds_the_very_type_the_vault_accepts() {
             placed_on_market_date: None,
             schema_version: None,
             commodity_code: None,
-            parent_passport_ref: None,
+            derived_from: Vec::new(),
             component_refs: Vec::new(),
         };
 

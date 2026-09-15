@@ -5,12 +5,10 @@ use chrono::Utc;
 use dpp_common::{event, event_codes};
 use dpp_domain::{
     error::DppError,
+    operator::ResponsibleOperator,
     passport::PassportId,
     status::PassportStatus,
-    transfer::{
-        ResponsibleOperator, TransferChain, TransferError, TransferReason, TransferRecord,
-        TransferStatus,
-    },
+    transfer::{TransferChain, TransferError, TransferReason, TransferRecord, TransferStatus},
 };
 use dpp_types::{audit::PassportAuditEntry, auth::AuthContext};
 use uuid::Uuid;

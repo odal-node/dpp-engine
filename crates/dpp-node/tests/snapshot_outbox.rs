@@ -287,6 +287,7 @@ fn passport(status: PassportStatus) -> Passport {
     Passport {
         id,
         batch_id: None,
+        serial_number: None,
         product_name: product_name.into(),
         product_group: ProductGroup::Textile,
         applicable_instruments: Vec::new(),
@@ -294,6 +295,9 @@ fn passport(status: PassportStatus) -> Passport {
         manufacturer: ManufacturerInfo {
             name: "Drain Test GmbH".into(),
             address: "Berlin, DE".into(),
+            registered_trade_name: None,
+            electronic_address: None,
+            country: None,
             did_web_url: None,
         },
         materials: vec![],
@@ -315,12 +319,14 @@ fn passport(status: PassportStatus) -> Passport {
         retention_locked: true,
         version: 1,
         supersedes_id: None,
-        parent_passport_ref: None,
+        derived_from: Vec::new(),
         component_refs: Vec::new(),
+        life_status: None,
         retention_until: None,
         product_id: None,
         commodity_code: None,
         operator_identifier: None,
+        responsible_operator: None,
         facility: None,
         seal: None,
     }

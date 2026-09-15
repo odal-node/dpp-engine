@@ -1,0 +1,39 @@
+type: object
+required:
+  - reference
+description: >-
+  One entry in a bill of materials: a cross-operator reference to a constituent
+  passport, qualified by how much of it the assembly contains and in what role.
+
+  Readers must also accept the earlier shape this replaced — a bare
+  `PassportRef` (`uri` and `publicJwsHash` at the top level, with no `reference`
+  key). The two are disjoint, so accepting both requires no guessing. The
+  tolerance is not optional: `componentRefs` is part of the **signed public
+  view** that other operators' nodes fetch, those passports are signed and
+  cannot be rewritten by anyone, and a reader that refuses the older shape
+  reports a correct, unforgeable document as a malformed reference — which
+  verification grades as an integrity violation. Nodes are independent
+  per-operator deployments, so version skew is the steady state rather than a
+  migration window. Writers emit only this shape.
+properties:
+  reference:
+    allOf:
+      - $ref: ./PassportRef.yaml
+    description: >-
+      Where to fetch the constituent's passport, and the hash pinning its signed
+      public view.
+  quantity:
+    allOf:
+      - $ref: ./Quantity.yaml
+    description: >-
+      How much of this constituent the assembly contains. Absent where the
+      declaring operator did not state one.
+  role:
+    type:
+      - string
+      - 'null'
+    description: >-
+      What part this constituent plays, in whatever terms the product group uses
+      — "cell", "outer shell", "warp yarn". A free string because the vocabulary
+      is the product group's to define.
+    example: cell

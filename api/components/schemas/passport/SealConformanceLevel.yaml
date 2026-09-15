@@ -1,0 +1,32 @@
+type: string
+description: >-
+  How much validation material a seal carries with it — the AdES baseline
+  levels, named as the CSC API names them. They are cumulative: each adds to the
+  one before.
+
+  The level decides whether a verifier years from now can still establish that
+  the seal was valid when it was made. A `baseline-b` seal stops verifying when
+  its signing certificate expires, ESPR retention outlives certificate lifetimes
+  comfortably, the seal is bought once, and the document it covers is
+  retention-locked — so the choice cannot be corrected afterwards by re-sealing.
+enum:
+  - baseline-b
+  - baseline-t
+  - baseline-lt
+  - baseline-lta
+x-enum-descriptions:
+  baseline-b: >-
+    `AdES-B-B` — the signature alone. No timestamp, no validation material.
+    Verifiable only while the signing certificate is valid and its status is
+    still resolvable. Adequate for a short-lived attestation, not for a passport.
+  baseline-t: >-
+    `AdES-B-T` — adds a trusted timestamp, so the signing time is established
+    independently of the signer's clock.
+  baseline-lt: >-
+    `AdES-B-LT` — adds the certificates and revocation data a verifier needs, so
+    the seal remains verifiable after the signing certificate expires. The first
+    level that survives certificate expiry, and therefore the first that suits a
+    retention-locked document.
+  baseline-lta: >-
+    `AdES-B-LTA` — adds archival timestamps, extending validity past the
+    cryptographic lifetime of the algorithms themselves.
