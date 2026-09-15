@@ -475,7 +475,7 @@ const SEAL_AUDIT_INTERVAL: std::time::Duration = std::time::Duration::from_secs(
 /// behalf, on the strength of a check that has not yet met a real provider's
 /// seal.
 ///
-/// So a finding is logged at `error` and counted on `seal_broken_total`. Repair
+/// So a finding is logged at `error` and gauged on `seal_broken`. Repair
 /// is its own change.
 pub fn spawn_seal_audit(outbox: Arc<dyn SealOutbox>, log: Arc<dpp_types::SealAuditLog>) {
     tokio::spawn(async move {
@@ -524,8 +524,13 @@ pub fn spawn_seal_audit(outbox: Arc<dyn SealOutbox>, log: Arc<dpp_types::SealAud
             // corrupt tomorrow, and a pass that ran once would only ever catch
             // what was already broken.
             if next.is_none() {
-                metrics::gauge!("seal_broken_total").set(walk.broken as f64);
-                metrics::gauge!("seal_unreadable_total").set(walk.unreadable as f64);
+                // No `_total` suffix: these are gauges, and every other gauge
+                // here is unsuffixed (`seal_outbox_pending`,
+                // `registry_outbox_rejected`) while `_total` marks the counters
+                // (`seal_total`, `seal_downgraded_total`). A gauge named like a
+                // counter gets `rate()` applied to it, which means nothing.
+                metrics::gauge!("seal_broken").set(walk.broken as f64);
+                metrics::gauge!("seal_unreadable").set(walk.unreadable as f64);
                 log.record(dpp_types::SealAuditReport {
                     completed_at: chrono::Utc::now(),
                     checked: walk.checked,

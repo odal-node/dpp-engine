@@ -139,6 +139,13 @@ pub struct SealAuditReport {
 /// completed" and "no broken seals" are different**, and serving the second when
 /// the first is true is how a monitoring surface reassures an operator about
 /// something it has not looked at.
+///
+/// The sharp edge of that, stated so it is not discovered: a walk only publishes
+/// when it reaches the end, so a deployment whose estate takes longer to walk
+/// than it goes between restarts would **never** produce a report. The route
+/// would say `null` for ever, which is at least honest — but the fix is the
+/// audit's batch and interval, not this type, and noticing it means watching for
+/// a `null` that never fills rather than for an alarm.
 #[derive(Debug, Default)]
 pub struct SealAuditLog(std::sync::RwLock<Option<SealAuditReport>>);
 

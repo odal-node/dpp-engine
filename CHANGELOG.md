@@ -81,7 +81,7 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   widening of that query could reach it. A background audit walks sealed
   passports in bounded batches from a cursor, opens each CAdES through the same
   reader the drain uses to accept one, and logs and counts what does not verify
-  (`seal_broken_total`). Restarting at the end rather than stopping, because a
+  (`seal_broken`). Restarting at the end rather than stopping, because a
   seal sound today can be corrupt tomorrow.
 
   **It reports and does not repair.** The existing sweep carries a guarantee
