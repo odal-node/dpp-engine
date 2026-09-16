@@ -265,6 +265,62 @@ pub struct SealAudit {
     pub renewal_passports: Vec<dpp_domain::passport::PassportId>,
 }
 
+impl SealAudit {
+    /// Fold one batch's findings into a running walk.
+    ///
+    /// 🚨 **A method rather than a dozen `+=` at the call site, because the call
+    /// site got it wrong.** A walk is many batches; the totals, the gauges and
+    /// the published report are all read from the accumulator. When the archival
+    /// fields were added to this struct the loop in the node's audit task was
+    /// not extended to carry them, so they were counted per batch and then
+    /// dropped — every completed report said zero lapsed, zero due, zero
+    /// unverifiable and named nobody, on an estate where all of those could be
+    /// true. The feature was inert and nothing failed.
+    ///
+    /// Adding a field to this struct is now the same edit as carrying it: the
+    /// destructure below has no `..`, so a new field stops this compiling, and
+    /// `every_field_of_a_batch_reaches_the_walk` stops compiling with it.
+    pub fn absorb(&mut self, batch: Self) {
+        let Self {
+            checked,
+            sound,
+            certificate_failed,
+            superseded,
+            broken,
+            unreadable,
+            broken_passports,
+            archival_lapsed,
+            archival_due,
+            archival_unverifiable,
+            renewal_passports,
+        } = batch;
+
+        self.checked += checked;
+        self.sound += sound;
+        self.certificate_failed += certificate_failed;
+        self.superseded += superseded;
+        self.broken += broken;
+        self.unreadable += unreadable;
+        self.archival_lapsed += archival_lapsed;
+        self.archival_due += archival_due;
+        self.archival_unverifiable += archival_unverifiable;
+
+        // The counts above keep going after the lists stop filling, which is
+        // what makes "this many, and here are the first hundred" true across a
+        // whole walk rather than per batch.
+        for id in broken_passports {
+            if self.broken_passports.len() < MAX_NAMED_BROKEN {
+                self.broken_passports.push(id);
+            }
+        }
+        for id in renewal_passports {
+            if self.renewal_passports.len() < MAX_NAMED_BROKEN {
+                self.renewal_passports.push(id);
+            }
+        }
+    }
+}
+
 /// Open a bounded batch of stored seals and report what they are worth.
 ///
 /// # The gap this closes
@@ -1336,6 +1392,98 @@ mod renewal_tests {
                  {freshness:?}"
             );
         }
+    }
+
+    /// Every field a batch can carry reaches the walk.
+    ///
+    /// 🚨 This is the test for a bug that shipped as *silence*. A walk is many
+    /// batches, and the report, the gauges and the saved progress all read the
+    /// accumulator. The node's audit loop folded the batch in field by field,
+    /// and when `SealAudit` grew the archival counts the loop was not extended —
+    /// so every one of them was computed per batch and dropped. A completed pass
+    /// reported zero lapsed, zero due, zero unverifiable and named nobody, which
+    /// is exactly what a healthy estate reports. Nothing failed, no test went
+    /// red, and the feature was inert.
+    ///
+    /// Two halves make that unrepeatable. `absorb` destructures without `..`, so
+    /// a new field stops it compiling; and this test builds its batch as an
+    /// exhaustive literal, so a new field stops *this* compiling too — and the
+    /// next person has to decide, at the keyboard, what the running total of it
+    /// should be.
+    #[test]
+    fn every_field_of_a_batch_reaches_the_walk() {
+        let broken = dpp_domain::passport::PassportId::new();
+        let renewal = dpp_domain::passport::PassportId::new();
+
+        // Every count distinct, so a field folded into the wrong one is visible
+        // rather than hidden behind two equal numbers.
+        let batch = SealAudit {
+            checked: 11,
+            sound: 7,
+            certificate_failed: 3,
+            superseded: 5,
+            broken: 2,
+            unreadable: 1,
+            broken_passports: vec![broken],
+            archival_lapsed: 13,
+            archival_due: 17,
+            archival_unverifiable: 19,
+            renewal_passports: vec![renewal],
+        };
+
+        let mut walk = SealAudit::default();
+        walk.absorb(batch.clone());
+        walk.absorb(batch);
+
+        assert_eq!(walk.checked, 22);
+        assert_eq!(walk.sound, 14);
+        assert_eq!(walk.certificate_failed, 6);
+        assert_eq!(walk.superseded, 10);
+        assert_eq!(walk.broken, 4);
+        assert_eq!(walk.unreadable, 2);
+        assert_eq!(walk.archival_lapsed, 26);
+        assert_eq!(walk.archival_due, 34);
+        assert_eq!(
+            walk.archival_unverifiable, 38,
+            "the archival counts are the ones the loop dropped — all three of them"
+        );
+        assert_eq!(walk.broken_passports, vec![broken, broken]);
+        assert_eq!(
+            walk.renewal_passports,
+            vec![renewal, renewal],
+            "and the renewal list was dropped with them, so a report named nobody \
+             to renew however many were due"
+        );
+    }
+
+    /// The named lists stop at the cap; the counts behind them do not.
+    ///
+    /// That pairing is what makes "this many, and here are the first hundred"
+    /// true of a whole walk rather than of one batch — and it has to hold in the
+    /// accumulator, since no single batch is big enough to reach the cap.
+    #[test]
+    fn the_lists_stop_at_the_cap_while_the_counts_keep_going() {
+        let batch = || SealAudit {
+            broken: 1,
+            broken_passports: vec![dpp_domain::passport::PassportId::new()],
+            archival_due: 1,
+            renewal_passports: vec![dpp_domain::passport::PassportId::new()],
+            ..SealAudit::default()
+        };
+
+        let mut walk = SealAudit::default();
+        for _ in 0..(MAX_NAMED_BROKEN + 25) {
+            walk.absorb(batch());
+        }
+
+        assert_eq!(walk.broken_passports.len(), MAX_NAMED_BROKEN);
+        assert_eq!(walk.renewal_passports.len(), MAX_NAMED_BROKEN);
+        assert_eq!(
+            walk.broken as usize,
+            MAX_NAMED_BROKEN + 25,
+            "the count is the size of the problem; the list is a sample of it"
+        );
+        assert_eq!(walk.archival_due as usize, MAX_NAMED_BROKEN + 25);
     }
 
     /// Anything short of a failure lets the archival question through unchanged.

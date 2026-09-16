@@ -719,22 +719,20 @@ pub fn spawn_seal_audit(
                 continue;
             };
 
-            walk.checked += audit.checked;
-            walk.sound += audit.sound;
-            walk.superseded += audit.superseded;
-            walk.broken += audit.broken;
-            walk.certificate_failed += audit.certificate_failed;
-            walk.unreadable += audit.unreadable;
-            for id in audit.broken_passports {
-                if walk.broken_passports.len() < dpp_node::infra::seal_drain::MAX_NAMED_BROKEN {
-                    walk.broken_passports.push(id);
-                }
-            }
+            let broken_this_batch = audit.broken;
+            let checked_this_batch = audit.checked;
+            // 🚨 One call, not a field-by-field fold written here. This loop
+            // used to list the fields, and when the archival counts were added
+            // to `SealAudit` it was not updated — so they were found per batch
+            // and then thrown away, and every completed report said zero.
+            // `absorb` destructures exhaustively, so a new field cannot be
+            // forgotten here again: it stops compiling instead.
+            walk.absorb(audit);
 
-            if audit.broken > 0 {
+            if broken_this_batch > 0 {
                 tracing::error!(
-                    broken = audit.broken,
-                    checked = audit.checked,
+                    broken = broken_this_batch,
+                    checked = checked_this_batch,
                     "stored seals do not verify — those passports are published and, in \
                      substance, unsealed, and `unsealedPublished` cannot see them"
                 );
