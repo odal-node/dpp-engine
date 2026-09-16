@@ -446,6 +446,7 @@ fn object_cases() -> Vec<ObjectCase> {
     );
     case!("UnsoldGoodsEntry", fixtures::unsold_goods_entry());
     case!("PassportAuditEntry", fixtures::audit_entry());
+    case!("PassportVersion", fixtures::passport_version());
     case!("Facility", fixtures::facility());
     case!("CreateFacilityRequest", fixtures::create_facility_request());
     case!("OperatorIdentifier", fixtures::operator_identifier());
@@ -689,6 +690,11 @@ fn query_cases() -> Vec<QueryCase> {
     }
 
     case!("get", "/vault/api/v1/dpps", fixtures::list_query());
+    case!(
+        "get",
+        "/vault/api/v1/dpp/{dppId}/versions",
+        fixtures::versions_query()
+    );
     case!(
         "get",
         "/vault/api/v1/unsold-goods",
@@ -2201,6 +2207,7 @@ mod handler_sources {
         include_str!("../../dpp-vault/src/handlers/unsold_goods.rs"),
         include_str!("../../dpp-vault/src/handlers/update.rs"),
         include_str!("../../dpp-vault/src/handlers/validate.rs"),
+        include_str!("../../dpp-vault/src/handlers/versions.rs"),
         include_str!("../../dpp-vault/src/handlers/verify_tree.rs"),
         include_str!("../../dpp-vault/src/handlers/webhooks.rs"),
         include_str!("../../dpp-vault/src/handlers/whoami.rs"),
@@ -3870,6 +3877,26 @@ mod fixtures {
     // new field appears in the wire keys either way — but that is a property of
     // the structs as they happen to be written, not a guarantee, and these
     // literals are exhaustive so a new field fails to compile here first.
+
+    /// The `asOf` query on the archived-versions route.
+    ///
+    /// Populated rather than `None`, so the contract sees the field: an
+    /// all-`None` query struct serialises to a shape that documents nothing.
+    pub fn versions_query() -> dpp_vault::handlers::versions::AsOf {
+        dpp_vault::handlers::versions::AsOf {
+            as_of: Some("2026-01-01T00:00:00Z".to_owned()),
+        }
+    }
+
+    /// One archived passport version.
+    pub fn passport_version() -> dpp_types::audit::PassportVersion {
+        dpp_types::audit::PassportVersion {
+            id: uuid::Uuid::now_v7(),
+            passport_id: PassportId::new().to_string(),
+            doc: serde_json::json!({ "id": PassportId::new().to_string() }),
+            superseded_at: ts(),
+        }
+    }
 
     pub fn list_query() -> dpp_vault::handlers::list::ListQuery {
         use dpp_domain::PassportStatus;

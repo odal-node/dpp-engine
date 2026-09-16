@@ -549,6 +549,78 @@
         }
       }
     },
+    "/vault/api/v1/dpp/{dppId}/versions": {
+      "get": {
+        "operationId": "getDppVersions",
+        "summary": "List a DPP's archived versions, or reconstitute one",
+        "description": "Returns every archived version of a passport, oldest first — or, with\n`asOf`, the single version that was current at that instant.\n\n✅ EN 18221:2026 clause 4.2: *\"the archived version corresponding to a given\npoint in time shall be retrievable by authenticated and authorized actors\"*.\n\n🚨 **Not `POST /dpp/{dppId}/archive`.** That moves a passport to the terminal\n`archived` lifecycle status after its retention period has elapsed. This is\nthe standard's sense of the word — historical versions of a passport that is\nstill live — and the two are unrelated.\n\nArchiving begins at the **first change** to a passport, as the clause\nrequires, so a passport that has never changed has no archived versions and\nreturns an empty list. That is not a gap: the live record is the state at\nevery moment before the first change.\n\nEach version is the complete record, so a reader reconstitutes rather than\nreplays. Versions are append-only and are kept for the passport's lifetime.\n",
+        "tags": [
+          "DPP Management"
+        ],
+        "security": [
+          {
+            "BearerApiKey": []
+          },
+          {
+            "BasicAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "dppId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/DppId"
+            }
+          },
+          {
+            "name": "asOf",
+            "in": "query",
+            "required": false,
+            "description": "An RFC 3339 instant. Returns the single version that was current then,\nrather than the whole list.\n\n`404` when no archived version covers that moment — either the passport\nhad not changed by then, or the moment is after its most recent change.\nIn both cases the **live** record is the state at that time, which\n`GET /dpp/{dppId}` already serves; this route does not return it, so that\n\"which version is this\" stays answerable.\n",
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The archived versions, oldest first. With `asOf`, the one that was current then, as a one-element array.\n\nAlways an array, with or without `asOf`: one response shape is simpler to consume than two, and a client that parses an array does not have to remember which query it sent to know what it is holding.\n\nAn **empty** array is reachable only without `asOf`, and it says the passport has never changed — archiving begins at the first change, so there is nothing historical to return and the live record is the state at every moment so far. With `asOf`, a moment no archived version covers is a `404` rather than an empty array, because the answer there is the live record and this route deliberately does not serve it.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/PassportVersion"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "422": {
+            "description": "`asOf` was given and is not an RFC 3339 timestamp.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/vault/api/v1/dpp/{dppId}/lint": {
       "post": {
         "operationId": "relintDpp",
@@ -8921,6 +8993,37 @@
         ],
         "description": "Whether an act's obligations bind **a given product group** — a different\nquestion from whether the act exists, which is `InstrumentStatus`.\n\n`in_force` — the act creates binding obligations for this product group that\ncan be determined now. A future applicability date is *not* this status.\n\n`provisional` — the act exists or is anticipated, but nothing is bindingly\ndeterminable for this product group yet. Any obligation reported alongside\nthis status is a reading, not a determination.\n\n`watch` — tracked, but this act imposes nothing on this product group. A\nwatching brief rather than a duty, and never determinable.\n\n**Read this before acting on `passport.required`.** The obligation is a fold\nacross every act reaching the product group, so `required: true` says an act\nimposes a passport — not that the act binds this group today. Where every\nreaching act is `provisional` or `watch`, the requirement is a reading of\ninstruments that have not yet bound anything.\n",
         "example": "provisional"
+      },
+      "PassportVersion": {
+        "type": "object",
+        "description": "One archived version of a passport: the record as it stood, and the moment it stopped standing.\n\n✅ EN 18221:2026 clause 4.2 (archiving), one of the six standards cited by Commission Implementing Decision (EU) 2026/1736.\n\n🚨 **Not the `archived` lifecycle status**, which is a terminal state reached after the ESPR retention period and says the record has stopped changing. This is the standard's sense of the word — historical versions of a passport that is still live — and the two are unrelated.",
+        "required": [
+          "id",
+          "passportId",
+          "doc",
+          "supersededAt"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Row identifier, UUID v7, so versions sort by when they were taken."
+          },
+          "passportId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "The passport this is a version of."
+          },
+          "doc": {
+            "type": "object",
+            "description": "The complete record as it stood at the time, not a diff.\n\nWhole rather than differential so that retrieval is a read rather than a replay: a chain of diffs makes every historical version depend on every one before it, and one corrupt link loses everything after it. The clause asks that the version be retrievable, and a stored version is retrievable where a derived one is computed and hoped for."
+          },
+          "supersededAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When this version stopped being current — the instant the change that replaced it was applied.\n\nOne timestamp rather than a validity range: the previous version's `supersededAt` is this one's start, and two fields that must agree are two fields that can disagree."
+          }
+        }
       },
       "PublishBlocker": {
         "type": "object",

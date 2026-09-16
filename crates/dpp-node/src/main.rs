@@ -259,6 +259,7 @@ async fn main() -> anyhow::Result<()> {
     )
     .with_registry_reader(db.operator_repo.clone())
     .with_registry_outbox(db.registry_outbox.clone())
+    .with_versions(db.version_store.clone())
     .with_transfer_store(db.transfer_store.clone())
     .with_transfer_outbox(db.transfer_outbox.clone())
     .with_evidence_store(db.evidence_store.clone())

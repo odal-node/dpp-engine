@@ -339,6 +339,8 @@ paths:
     $ref: paths/vault/vault_api_v1_dpp_{dppId}.yaml
   /vault/api/v1/dpp/{dppId}/history:
     $ref: paths/vault/vault_api_v1_dpp_{dppId}_history.yaml
+  /vault/api/v1/dpp/{dppId}/versions:
+    $ref: paths/vault/vault_api_v1_dpp_{dppId}_versions.yaml
   /vault/api/v1/dpp/{dppId}/lint:
     $ref: paths/vault/vault_api_v1_dpp_{dppId}_lint.yaml
   /vault/api/v1/dpp/{dppId}/verify-tree:

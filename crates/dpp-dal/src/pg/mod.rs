@@ -9,6 +9,7 @@
 //! Behavioural coverage lives in `tests/pg_integration.rs`, which runs against
 //! a real `postgres:17` container in CI.
 
+pub mod archiving_repo;
 pub mod pool;
 pub mod repo_api_key;
 pub mod repo_audit;
@@ -16,6 +17,7 @@ pub mod repo_evidence;
 pub mod repo_idempotency;
 pub mod repo_operator_config;
 pub mod repo_passport;
+pub mod repo_passport_version;
 pub mod repo_registry_identity;
 pub mod repo_registry_sync;
 pub mod repo_registry_transfer;
@@ -29,12 +31,14 @@ pub mod repo_webhook;
 
 pub use pool::PgDal;
 
+pub use archiving_repo::ArchivingPassportRepo;
 pub use repo_api_key::PgApiKeyRepo;
 pub use repo_audit::PgAuditRepo;
 pub use repo_evidence::PgEvidenceDossierRepo;
 pub use repo_idempotency::PgIdempotencyRepo;
 pub use repo_operator_config::PgOperatorConfigRepo;
 pub use repo_passport::PgPassportRepo;
+pub use repo_passport_version::PgPassportVersionRepo;
 pub use repo_registry_identity::PgRegistryIdentityRepo;
 pub use repo_registry_sync::PgRegistrySyncRepo;
 pub use repo_registry_transfer::PgRegistryTransferRepo;

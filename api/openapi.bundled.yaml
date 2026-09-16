@@ -403,6 +403,81 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '404':
           $ref: '#/components/responses/NotFound'
+  /vault/api/v1/dpp/{dppId}/versions:
+    get:
+      operationId: getDppVersions
+      summary: List a DPP's archived versions, or reconstitute one
+      description: |
+        Returns every archived version of a passport, oldest first — or, with
+        `asOf`, the single version that was current at that instant.
+
+        ✅ EN 18221:2026 clause 4.2: *"the archived version corresponding to a given
+        point in time shall be retrievable by authenticated and authorized actors"*.
+
+        🚨 **Not `POST /dpp/{dppId}/archive`.** That moves a passport to the terminal
+        `archived` lifecycle status after its retention period has elapsed. This is
+        the standard's sense of the word — historical versions of a passport that is
+        still live — and the two are unrelated.
+
+        Archiving begins at the **first change** to a passport, as the clause
+        requires, so a passport that has never changed has no archived versions and
+        returns an empty list. That is not a gap: the live record is the state at
+        every moment before the first change.
+
+        Each version is the complete record, so a reader reconstitutes rather than
+        replays. Versions are append-only and are kept for the passport's lifetime.
+      tags:
+        - DPP Management
+      security:
+        - BearerApiKey: []
+        - BasicAuth: []
+      parameters:
+        - name: dppId
+          in: path
+          required: true
+          schema:
+            $ref: '#/components/schemas/DppId'
+        - name: asOf
+          in: query
+          required: false
+          description: |
+            An RFC 3339 instant. Returns the single version that was current then,
+            rather than the whole list.
+
+            `404` when no archived version covers that moment — either the passport
+            had not changed by then, or the moment is after its most recent change.
+            In both cases the **live** record is the state at that time, which
+            `GET /dpp/{dppId}` already serves; this route does not return it, so that
+            "which version is this" stays answerable.
+          schema:
+            type: string
+            format: date-time
+      responses:
+        '200':
+          description: |-
+            The archived versions, oldest first. With `asOf`, the one that was current then, as a one-element array.
+
+            Always an array, with or without `asOf`: one response shape is simpler to consume than two, and a client that parses an array does not have to remember which query it sent to know what it is holding.
+
+            An **empty** array is reachable only without `asOf`, and it says the passport has never changed — archiving begins at the first change, so there is nothing historical to return and the live record is the state at every moment so far. With `asOf`, a moment no archived version covers is a `404` rather than an empty array, because the answer there is the live record and this route deliberately does not serve it.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/PassportVersion'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          description: '`asOf` was given and is not an RFC 3339 timestamp.'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
   /vault/api/v1/dpp/{dppId}/lint:
     post:
       operationId: relintDpp
@@ -7455,6 +7530,41 @@ components:
         reaching act is `provisional` or `watch`, the requirement is a reading of
         instruments that have not yet bound anything.
       example: provisional
+    PassportVersion:
+      type: object
+      description: |-
+        One archived version of a passport: the record as it stood, and the moment it stopped standing.
+
+        ✅ EN 18221:2026 clause 4.2 (archiving), one of the six standards cited by Commission Implementing Decision (EU) 2026/1736.
+
+        🚨 **Not the `archived` lifecycle status**, which is a terminal state reached after the ESPR retention period and says the record has stopped changing. This is the standard's sense of the word — historical versions of a passport that is still live — and the two are unrelated.
+      required:
+        - id
+        - passportId
+        - doc
+        - supersededAt
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Row identifier, UUID v7, so versions sort by when they were taken.
+        passportId:
+          type: string
+          format: uuid
+          description: The passport this is a version of.
+        doc:
+          type: object
+          description: |-
+            The complete record as it stood at the time, not a diff.
+
+            Whole rather than differential so that retrieval is a read rather than a replay: a chain of diffs makes every historical version depend on every one before it, and one corrupt link loses everything after it. The clause asks that the version be retrievable, and a stored version is retrievable where a derived one is computed and hoped for.
+        supersededAt:
+          type: string
+          format: date-time
+          description: |-
+            When this version stopped being current — the instant the change that replaced it was applied.
+
+            One timestamp rather than a validity range: the previous version's `supersededAt` is this one's start, and two fields that must agree are two fields that can disagree.
     PublishBlocker:
       type: object
       description: |

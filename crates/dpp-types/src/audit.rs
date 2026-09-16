@@ -369,3 +369,84 @@ mod tests {
         }
     }
 }
+
+/// One archived version of a passport: the record as it stood, and when it
+/// stopped standing.
+///
+/// ✅ COMPLIANCE-PIN: EN 18221:2026 clause 4.2.
+///
+/// 🚨 Nothing to do with `PassportStatus::Archived`, which is a terminal
+/// lifecycle state. This is the standard's sense of the word: historical
+/// versions of a passport that is still live. See
+/// `ops/pg/0040_passport_version.sql` for why both wear the name.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PassportVersion {
+    /// Row id, UUID v7.
+    pub id: Uuid,
+    /// The passport this is a version of.
+    pub passport_id: String,
+    /// The complete record as it stood, whole rather than a diff.
+    pub doc: serde_json::Value,
+    /// When this version stopped being current.
+    pub superseded_at: DateTime<Utc>,
+}
+
+/// Where a node keeps the historical versions of its passports.
+///
+/// ✅ COMPLIANCE-PIN: EN 18221:2026 clause 4.2.
+///
+/// # What this is not
+///
+/// Not the audit trail, which records *that* a change happened and — on the
+/// update path — carries no metadata at all, so it cannot reconstitute
+/// anything. Not the continuity snapshot tier, which holds one rendered
+/// **public** view per passport, refreshed rather than versioned; being
+/// redacted it cannot satisfy the clause's access-restriction limb even in
+/// principle.
+///
+/// # Archiving begins at the first change, not at create
+///
+/// The clause is explicit about it, and the distinction is load-bearing: the
+/// initial passport becomes historical the moment something replaces it, and
+/// not before. A node that archived on create would hold a "version" that was
+/// never superseded and would report it as the state at every time before the
+/// first change — which is true, and which the live record already says.
+#[async_trait]
+pub trait PassportVersionStore: Send + Sync {
+    /// Record `doc` as the version that stopped being current at
+    /// `superseded_at`.
+    ///
+    /// # Errors
+    ///
+    /// Propagates the store's own failure.
+    async fn archive(
+        &self,
+        passport_id: &str,
+        doc: &serde_json::Value,
+        superseded_at: DateTime<Utc>,
+    ) -> Result<(), DppError>;
+
+    /// Every archived version of `passport_id`, oldest first.
+    ///
+    /// # Errors
+    ///
+    /// Propagates the store's own failure.
+    async fn versions(&self, passport_id: &str) -> Result<Vec<PassportVersion>, DppError>;
+
+    /// The version that was current at `at`, if one is archived.
+    ///
+    /// `None` means no archived version covers that moment — either the
+    /// passport had not changed by then, or `at` is after the most recent
+    /// change. In both cases the **live** record is the answer, and only the
+    /// caller holding it can say so.
+    ///
+    /// # Errors
+    ///
+    /// Propagates the store's own failure.
+    async fn version_at(
+        &self,
+        passport_id: &str,
+        at: DateTime<Utc>,
+    ) -> Result<Option<PassportVersion>, DppError>;
+}

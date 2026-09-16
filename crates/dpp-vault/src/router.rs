@@ -64,6 +64,7 @@ use crate::{
         update::update_handler,
         validate::validate_handler,
         verify_tree::verify_tree_handler,
+        versions::versions_handler,
         webhooks::{
             webhooks_create_handler, webhooks_delete_handler, webhooks_list_handler,
             webhooks_test_handler,
@@ -123,6 +124,7 @@ pub fn build(state: AppState) -> Router {
             post(transfer_cancel_handler),
         )
         .route("/dpp/{dppId}/history", get(history_handler))
+        .route("/dpp/{dppId}/versions", get(versions_handler))
         .route("/dpp/{dppId}/verify-tree", get(verify_tree_handler))
         // The qualified seal has its own route because it is stripped from
         // every audience view — it covers the full-payload signature, so it

@@ -92,4 +92,55 @@ impl PassportService {
         self.find_by_id(id).await?;
         self.audit.list_by_passport(&id.to_string()).await
     }
+
+    /// Every archived version of a passport, oldest first.
+    ///
+    /// ✅ COMPLIANCE-PIN: EN 18221:2026 clause 4.2.
+    ///
+    /// Verifies the passport exists first, for the same reason [`Self::history`]
+    /// does: otherwise an unknown id returns `200 []`, which reads as "this
+    /// passport has never changed" rather than "there is no such passport".
+    ///
+    /// # Errors
+    ///
+    /// `NotFound` for an unknown id; otherwise the store's own failure.
+    pub async fn versions(
+        &self,
+        id: PassportId,
+    ) -> Result<Vec<dpp_types::audit::PassportVersion>, DppError> {
+        self.find_by_id(id).await?;
+        self.versions
+            .as_ref()
+            .ok_or_else(|| DppError::Internal("version archive not configured".into()))?
+            .versions(&id.to_string())
+            .await
+    }
+
+    /// The version that was current at `at`.
+    ///
+    /// ✅ COMPLIANCE-PIN: EN 18221:2026 clause 4.2 — *"the archived version
+    /// corresponding to a given point in time shall be retrievable"*.
+    ///
+    /// `None` means no archived version covers that moment, which is not a
+    /// failure: the passport had not changed by then, or `at` is after its most
+    /// recent change. In both cases the live record is the state at that time,
+    /// and saying so is the caller's job rather than this one's — returning the
+    /// live record from a route named for archived versions would make "which
+    /// version is this" unanswerable.
+    ///
+    /// # Errors
+    ///
+    /// `NotFound` for an unknown id; otherwise the store's own failure.
+    pub async fn version_at(
+        &self,
+        id: PassportId,
+        at: chrono::DateTime<chrono::Utc>,
+    ) -> Result<Option<dpp_types::audit::PassportVersion>, DppError> {
+        self.find_by_id(id).await?;
+        self.versions
+            .as_ref()
+            .ok_or_else(|| DppError::Internal("version archive not configured".into()))?
+            .version_at(&id.to_string(), at)
+            .await
+    }
 }
