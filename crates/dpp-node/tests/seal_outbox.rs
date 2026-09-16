@@ -1322,7 +1322,11 @@ async fn an_audit_walk_and_its_last_report_outlive_the_process() {
             broken: 1,
             certificate_failed: 0,
             unreadable: 0,
+            archival_lapsed: 2,
+            archival_due: 4,
+            archival_unverifiable: 0,
             broken_passports: vec![id],
+            renewal_passports: vec![id],
         })
         .await
         .expect("save progress");
@@ -1351,8 +1355,13 @@ async fn an_audit_walk_and_its_last_report_outlive_the_process() {
         broken: 1,
         certificate_failed: 0,
         unreadable: 0,
+        archival_lapsed: 2,
+        archival_due: 4,
+        archival_unverifiable: 0,
         truncated: false,
+        renewal_truncated: true,
         broken_passports: vec![id],
+        renewal_passports: vec![id],
     };
     store.complete(&completed).await.expect("complete");
 
@@ -1365,6 +1374,12 @@ async fn an_audit_walk_and_its_last_report_outlive_the_process() {
     let report = report.expect("the completed pass is served after a restart");
     assert_eq!(report.checked, 1200);
     assert_eq!(report.broken_passports, vec![id], "and still names them");
+    assert!(
+        report.renewal_truncated && !report.truncated,
+        "both truncation flags survive the store, and survive independently — one \
+         capped list can be cut short while the other is complete, and a reader \
+         acting on the renewal list needs to know which"
+    );
 }
 
 /// **A pass describes the seals that existed when it started.**

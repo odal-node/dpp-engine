@@ -109,6 +109,45 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ### Added
 
+- **The seal audit now notices archival protection running out.**
+  `SealAuditReport` gains `archivalLapsed`, `archivalDue`,
+  `archivalUnverifiable` and `renewalPassports`, with matching gauges.
+
+  `B-LTA` is now the default level, so every seal this node produces carries an
+  archive timestamp — and every one of them expires. The read route has reported
+  that per passport since the freshness signal landed; what nothing could answer
+  was the estate-wide question, *how many of my seals are about to stop being
+  verifiable*, without opening them one at a time. The audit already walks every
+  stored seal, so it asks while it is there rather than walking twice.
+
+  **Three states, three different actions**, which is why they are three counts:
+
+  - `archivalDue` — expires within 90 days. A **reporting** threshold, not a
+    purchase trigger: nothing here buys a renewal. The window between "due" and
+    "gone" is the only one in which renewing is routine rather than an incident.
+  - `archivalLapsed` — already gone. The seal still verifies; what it no longer
+    carries is the thing `B-LTA` exists to provide.
+  - `archivalUnverifiable` — an archive timestamp that cannot be used, because it
+    does not parse **or because it is not a timestamp of this seal**. 🚨 Not a
+    renewal candidate: renewing carries existing protection forward and there is
+    none here, so it belongs beside `broken` in an operator's attention. That
+    distinction only became expressible once the binding check existed.
+
+  A seal below `B-LTA` stays silent rather than counted — it was never promised
+  long-term protection, and reporting it would raise an alarm about a commitment
+  nobody made. A seal whose **certificate** failed is silent here too: it has one
+  problem, and renewing its archive timestamp is not the fix, so it is counted in
+  `certificateFailed` and asked nothing further.
+
+  `renewalPassports` is capped like `brokenPassports`, and gains its own
+  `renewalTruncated` rather than sharing `truncated`. Two capped lists fill
+  independently, and one flag covering both would report a complete list as cut
+  short — or, worse, a cut-short one as complete.
+
+  *(Nothing re-stamps anything. This is the noticing half; the drain that acts on
+  it needs to know what a provider offers — a distinct re-timestamp operation or
+  only a full re-seal — and that is not knowable from here yet.)*
+
 - **A node can now keep the trusted lists it has verified.** New
   `odal.trusted_list_cache` (migration `0039`), `dpp_types::trust::TrustedListStore`
   and `PgTrustedListRepo`, plus `VerifiedTrustedList::content` and

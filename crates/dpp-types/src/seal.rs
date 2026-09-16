@@ -136,6 +136,40 @@ pub struct SealAuditReport {
     /// does not parse, which is a limit of the reader rather than a defect in
     /// the seal.
     pub unreadable: u64,
+    /// `B-LTA` seals whose archival protection has already gone.
+    ///
+    /// The archive timestamp's own authority certificate has expired, so the
+    /// seal no longer carries the thing `B-LTA` exists to provide: verifiability
+    /// after the signing certificate lapses. The seal itself still verifies —
+    /// this is not a defect in it, it is protection that ran out while nobody
+    /// was renewing it.
+    ///
+    /// Counted apart from [`Self::archival_due`] because the remedy differs in
+    /// urgency and not in kind: these are already past the window in which
+    /// renewing was cheap.
+    #[serde(default)]
+    pub archival_lapsed: u64,
+    /// `B-LTA` seals whose archival protection expires soon.
+    ///
+    /// "Soon" is a reporting threshold, not a purchase trigger — nothing here
+    /// buys anything. It exists because the window between *"a renewal is due"*
+    /// and *"the protection is gone"* is the only one in which renewing is
+    /// routine rather than an incident.
+    #[serde(default)]
+    pub archival_due: u64,
+    /// `B-LTA` seals carrying an archive timestamp this node cannot use.
+    ///
+    /// Two causes, one action. Either the token does not parse, or — since the
+    /// binding check exists — it parses and is **not a timestamp of this seal**,
+    /// which is what a token lifted from elsewhere looks like.
+    ///
+    /// **Not a renewal candidate.** Renewing assumes there is protection to
+    /// carry forward; here there is none, and the seal is claiming a level it
+    /// does not have. That is a corruption finding, and it belongs beside
+    /// [`Self::broken`] in an operator's attention rather than in a queue of
+    /// things to re-stamp.
+    #[serde(default)]
+    pub archival_unverifiable: u64,
     /// The passports carrying a broken seal, so an operator can act rather than
     /// grep a log.
     ///
@@ -143,11 +177,31 @@ pub struct SealAuditReport {
     /// has one problem, not thousands, and the count above already states its
     /// size; a list long enough to prove that is a list nobody reads.
     pub broken_passports: Vec<PassportId>,
+    /// The passports whose archival protection has lapsed or is due.
+    ///
+    /// Capped the same way and for the same reason as [`Self::broken_passports`].
+    /// Lapsed and due share one list because they share one action — renew — and
+    /// the counts above already say how many are in each state.
+    #[serde(default)]
+    pub renewal_passports: Vec<PassportId>,
     /// True when [`Self::broken_passports`] was cut short.
     ///
     /// Stated rather than left to be inferred from the length matching the cap,
     /// which is the kind of inference that is right until the cap changes.
+    ///
+    /// 🚨 This flag is about **that list only**. Two capped lists need two
+    /// flags: one of them can fill while the other does not, and a single flag
+    /// would either report a complete renewal list as cut short or — worse —
+    /// report a cut-short one as complete.
     pub truncated: bool,
+    /// True when [`Self::renewal_passports`] was cut short.
+    ///
+    /// The counterpart to [`Self::truncated`], for the other capped list, and
+    /// stated for the same reason: a reader could compare the length against
+    /// [`Self::archival_due`] plus [`Self::archival_lapsed`], and that
+    /// arithmetic is right until the day the cap or the membership rule changes.
+    #[serde(default)]
+    pub renewal_truncated: bool,
 }
 
 /// The last completed audit pass, shared between the task that runs it and the
@@ -250,8 +304,20 @@ pub struct SealAuditProgress {
     pub certificate_failed: u64,
     /// Unreadable so far.
     pub unreadable: u64,
+    /// Archival protection already gone, so far.
+    #[serde(default)]
+    pub archival_lapsed: u64,
+    /// Archival protection expiring soon, so far.
+    #[serde(default)]
+    pub archival_due: u64,
+    /// Archive timestamps this node cannot use, so far.
+    #[serde(default)]
+    pub archival_unverifiable: u64,
     /// The broken passports named so far, capped by the caller.
     pub broken_passports: Vec<PassportId>,
+    /// The passports needing renewal named so far, capped by the caller.
+    #[serde(default)]
+    pub renewal_passports: Vec<PassportId>,
 }
 
 /// Where a node keeps what its seal audit has found and how far it has got.

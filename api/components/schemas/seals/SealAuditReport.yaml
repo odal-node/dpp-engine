@@ -21,8 +21,13 @@ required:
   - broken
   - certificateFailed
   - unreadable
+  - archivalLapsed
+  - archivalDue
+  - archivalUnverifiable
   - brokenPassports
+  - renewalPassports
   - truncated
+  - renewalTruncated
 properties:
   completedAt:
     type: string
@@ -96,6 +101,36 @@ properties:
 
       `indeterminate` with a custom diagnostic: a limit of the reader, not a
       defect in the seal.
+  archivalLapsed:
+    type: integer
+    description: >-
+      `B-LTA` seals whose archival protection has already gone — the archive
+      timestamp's own authority certificate has expired.
+
+
+      **Not a defect in the seal**, which still verifies. It is the protection
+      `B-LTA` exists to provide, having run out while nothing renewed it. A seal
+      here is past the window in which renewing was routine.
+  archivalDue:
+    type: integer
+    description: >-
+      `B-LTA` seals whose archival protection expires soon.
+
+
+      A reporting threshold rather than a purchase trigger: nothing on this node
+      buys a renewal. The window between "due" and "gone" is the only one in
+      which renewing is routine rather than an incident, which is why it is
+      reported separately from `archivalLapsed`.
+  archivalUnverifiable:
+    type: integer
+    description: >-
+      `B-LTA` seals carrying an archive timestamp this node cannot use — either
+      it does not parse, or it is not a timestamp of *this* seal.
+
+
+      **Not a renewal candidate.** Renewing carries existing protection forward,
+      and here there is none: the seal claims a level it does not have. Read this
+      beside `broken` rather than beside `archivalDue`.
   brokenPassports:
     type: array
     items:
@@ -106,9 +141,31 @@ properties:
       search a log. Capped — see `truncated`. A node with thousands of broken
       seals has one problem, not thousands; `broken` states its size, and a list
       long enough to prove that is a list nobody reads.
+  renewalPassports:
+    type: array
+    items:
+      type: string
+      format: uuid
+    description: >-
+      The passports whose archival protection has lapsed or is due, capped the
+      same way `brokenPassports` is.
+
+
+      Lapsed and due share one list because they share one action — renew — and
+      `archivalLapsed` and `archivalDue` already say how many are in each state.
   truncated:
     type: boolean
     description: >-
       True when `brokenPassports` was cut short. Stated rather than left to be
       inferred from the length matching the cap, which is an inference that is
       right until the cap changes.
+  renewalTruncated:
+    type: boolean
+    description: >-
+      True when `renewalPassports` was cut short.
+
+
+      🚨 A separate flag from `truncated`, not a shared one. Two capped lists
+      fill independently: a pass can name every renewal candidate while cutting
+      the broken list short, or the reverse. One flag covering both would report
+      a complete list as truncated, or — worse — a truncated one as complete.

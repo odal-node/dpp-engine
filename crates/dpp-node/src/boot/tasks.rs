@@ -663,6 +663,10 @@ pub fn spawn_seal_audit(
                             certificate_failed: progress.certificate_failed,
                             unreadable: progress.unreadable,
                             broken_passports: progress.broken_passports,
+                            archival_lapsed: progress.archival_lapsed,
+                            archival_due: progress.archival_due,
+                            archival_unverifiable: progress.archival_unverifiable,
+                            renewal_passports: progress.renewal_passports,
                         };
                     }
                 }
@@ -715,22 +719,20 @@ pub fn spawn_seal_audit(
                 continue;
             };
 
-            walk.checked += audit.checked;
-            walk.sound += audit.sound;
-            walk.superseded += audit.superseded;
-            walk.broken += audit.broken;
-            walk.certificate_failed += audit.certificate_failed;
-            walk.unreadable += audit.unreadable;
-            for id in audit.broken_passports {
-                if walk.broken_passports.len() < dpp_node::infra::seal_drain::MAX_NAMED_BROKEN {
-                    walk.broken_passports.push(id);
-                }
-            }
+            let broken_this_batch = audit.broken;
+            let checked_this_batch = audit.checked;
+            // 🚨 One call, not a field-by-field fold written here. This loop
+            // used to list the fields, and when the archival counts were added
+            // to `SealAudit` it was not updated — so they were found per batch
+            // and then thrown away, and every completed report said zero.
+            // `absorb` destructures exhaustively, so a new field cannot be
+            // forgotten here again: it stops compiling instead.
+            walk.absorb(audit);
 
-            if audit.broken > 0 {
+            if broken_this_batch > 0 {
                 tracing::error!(
-                    broken = audit.broken,
-                    checked = audit.checked,
+                    broken = broken_this_batch,
+                    checked = checked_this_batch,
                     "stored seals do not verify — those passports are published and, in \
                      substance, unsealed, and `unsealedPublished` cannot see them"
                 );
@@ -752,6 +754,14 @@ pub fn spawn_seal_audit(
                 // different responses, and an operator alerting on one should
                 // not be woken by the other.
                 metrics::gauge!("seal_certificate_failed").set(walk.certificate_failed as f64);
+                // Separate gauges for the same reason the counts are separate:
+                // a lapsed archive timestamp wants renewing, and one that
+                // cannot be tied to its seal wants investigating. An operator
+                // alerting on the first should not be woken by the second.
+                metrics::gauge!("seal_archival_lapsed").set(walk.archival_lapsed as f64);
+                metrics::gauge!("seal_archival_due").set(walk.archival_due as f64);
+                metrics::gauge!("seal_archival_unverifiable")
+                    .set(walk.archival_unverifiable as f64);
                 let report = dpp_types::SealAuditReport {
                     completed_at: chrono::Utc::now(),
                     checked: walk.checked,
@@ -762,6 +772,17 @@ pub fn spawn_seal_audit(
                     unreadable: walk.unreadable,
                     truncated: (walk.broken_passports.len() as u64) < walk.broken,
                     broken_passports: walk.broken_passports.clone(),
+                    archival_lapsed: walk.archival_lapsed,
+                    archival_due: walk.archival_due,
+                    archival_unverifiable: walk.archival_unverifiable,
+                    // Against due + lapsed, which is exactly what the list is
+                    // filled from. `archival_unverifiable` is deliberately not
+                    // in the sum: it is not a renewal candidate and is never
+                    // named here, so including it would report every pass that
+                    // found one as truncated.
+                    renewal_truncated: (walk.renewal_passports.len() as u64)
+                        < walk.archival_due + walk.archival_lapsed,
+                    renewal_passports: walk.renewal_passports.clone(),
                 };
                 log.record(report.clone());
                 if let Some(store) = store.as_ref()
@@ -795,7 +816,11 @@ pub fn spawn_seal_audit(
                         broken: walk.broken,
                         certificate_failed: walk.certificate_failed,
                         unreadable: walk.unreadable,
+                        archival_lapsed: walk.archival_lapsed,
+                        archival_due: walk.archival_due,
+                        archival_unverifiable: walk.archival_unverifiable,
                         broken_passports: walk.broken_passports.clone(),
+                        renewal_passports: walk.renewal_passports.clone(),
                     })
                     .await
             {

@@ -3744,8 +3744,16 @@ mod fixtures {
             broken: 2,
             certificate_failed: 1,
             unreadable: 1,
+            archival_lapsed: 3,
+            archival_due: 9,
+            archival_unverifiable: 1,
             broken_passports: vec![PassportId::new()],
+            renewal_passports: vec![PassportId::new()],
             truncated: true,
+            // The two flags differ on purpose: they are independent signals about
+            // independent lists, and a fixture setting both the same way would
+            // pass identically if one were quietly wired to the other.
+            renewal_truncated: false,
         }
     }
 

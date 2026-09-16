@@ -197,6 +197,23 @@ pub async fn drain_once(
 /// too — a walk over a damaged estate must not accumulate an id per row.
 pub const MAX_NAMED_BROKEN: usize = 100;
 
+/// How far ahead a lapsing archive timestamp is worth reporting.
+///
+/// A `B-LTA` seal's archival protection ends when its timestamping authority's
+/// certificate does, and ETSI's long-term profiles handle that by re-stamping
+/// before it happens. Nothing here re-stamps — this is the **noticing** half,
+/// and the window it reports in is the only one where renewing is routine rather
+/// than an incident.
+///
+/// Ninety days is chosen to be comfortably longer than any plausible
+/// procurement: a renewal needs a timestamp from a provider, and an operator who
+/// learns about it the week it expires has a problem rather than a task. It is
+/// deliberately **not** configurable yet. A threshold becomes a policy the moment
+/// something acts on it, and the drain that will act on it does not exist — so
+/// picking the knob now would be guessing at the shape of a decision nobody has
+/// taken.
+pub const RENEWAL_LEAD: chrono::Duration = chrono::Duration::days(90);
+
 /// What one audit pass found.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct SealAudit {
@@ -236,6 +253,72 @@ pub struct SealAudit {
     /// `broken` keeps counting after this stops filling, so the two together say
     /// "this many, and here are the first hundred".
     pub broken_passports: Vec<dpp_domain::passport::PassportId>,
+    /// `B-LTA` seals whose archival protection has already gone.
+    pub archival_lapsed: u64,
+    /// `B-LTA` seals whose archival protection expires within [`RENEWAL_LEAD`].
+    pub archival_due: u64,
+    /// `B-LTA` seals carrying an archive timestamp this node cannot use — it
+    /// does not parse, or it is not a timestamp of this seal.
+    pub archival_unverifiable: u64,
+    /// The passports behind `archival_lapsed` and `archival_due`, capped the
+    /// same way `broken_passports` is.
+    pub renewal_passports: Vec<dpp_domain::passport::PassportId>,
+}
+
+impl SealAudit {
+    /// Fold one batch's findings into a running walk.
+    ///
+    /// 🚨 **A method rather than a dozen `+=` at the call site, because the call
+    /// site got it wrong.** A walk is many batches; the totals, the gauges and
+    /// the published report are all read from the accumulator. When the archival
+    /// fields were added to this struct the loop in the node's audit task was
+    /// not extended to carry them, so they were counted per batch and then
+    /// dropped — every completed report said zero lapsed, zero due, zero
+    /// unverifiable and named nobody, on an estate where all of those could be
+    /// true. The feature was inert and nothing failed.
+    ///
+    /// Adding a field to this struct is now the same edit as carrying it: the
+    /// destructure below has no `..`, so a new field stops this compiling, and
+    /// `every_field_of_a_batch_reaches_the_walk` stops compiling with it.
+    pub fn absorb(&mut self, batch: Self) {
+        let Self {
+            checked,
+            sound,
+            certificate_failed,
+            superseded,
+            broken,
+            unreadable,
+            broken_passports,
+            archival_lapsed,
+            archival_due,
+            archival_unverifiable,
+            renewal_passports,
+        } = batch;
+
+        self.checked += checked;
+        self.sound += sound;
+        self.certificate_failed += certificate_failed;
+        self.superseded += superseded;
+        self.broken += broken;
+        self.unreadable += unreadable;
+        self.archival_lapsed += archival_lapsed;
+        self.archival_due += archival_due;
+        self.archival_unverifiable += archival_unverifiable;
+
+        // The counts above keep going after the lists stop filling, which is
+        // what makes "this many, and here are the first hundred" true across a
+        // whole walk rather than per batch.
+        for id in broken_passports {
+            if self.broken_passports.len() < MAX_NAMED_BROKEN {
+                self.broken_passports.push(id);
+            }
+        }
+        for id in renewal_passports {
+            if self.renewal_passports.len() < MAX_NAMED_BROKEN {
+                self.renewal_passports.push(id);
+            }
+        }
+    }
 }
 
 /// Open a bounded batch of stored seals and report what they are worth.
@@ -294,6 +377,125 @@ pub struct SealAudit {
 /// and costs no coverage: the drain checks a seal's binding before accepting it,
 /// so one written during the walk was verified as it landed and is covered by
 /// the next pass anyway.
+/// What a seal's archival freshness means for the audit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RenewalFinding {
+    /// Nothing to say: below `B-LTA`, or protection with time left on it.
+    Nothing,
+    /// Protection expires within [`RENEWAL_LEAD`].
+    Due,
+    /// Protection has already gone.
+    Lapsed,
+    /// An archive timestamp that cannot be used — unparseable, or not a
+    /// timestamp of this seal.
+    Unverifiable,
+}
+
+/// Classify one seal's archival freshness.
+///
+/// Extracted from the walk so the boundary is testable without a database. The
+/// boundary is the part worth pinning: a lead time is a number, and a comparison
+/// written the wrong way round reports every healthy seal as due, or none of
+/// them ever.
+#[must_use]
+pub fn renewal_finding(
+    freshness: &dpp_types::ArchivalFreshness,
+    now: chrono::DateTime<chrono::Utc>,
+) -> RenewalFinding {
+    match freshness {
+        // A seal below `B-LTA` was never promised long-term protection, so this
+        // is silence rather than a finding — the same distinction the read route
+        // draws between `notArchived` and `lapsed`.
+        dpp_types::ArchivalFreshness::NotArchived => RenewalFinding::Nothing,
+        dpp_types::ArchivalFreshness::Current { expires } if *expires - now > RENEWAL_LEAD => {
+            RenewalFinding::Nothing
+        }
+        dpp_types::ArchivalFreshness::Current { .. } => RenewalFinding::Due,
+        dpp_types::ArchivalFreshness::Lapsed { .. } => RenewalFinding::Lapsed,
+        dpp_types::ArchivalFreshness::Unknown => RenewalFinding::Unverifiable,
+    }
+}
+
+/// What a seal whose signature holds amounts to, once its certificate and its
+/// archival protection have both been looked at.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SealFinding {
+    /// The certificate behind the signature did not hold. **Nothing further is
+    /// asked of this seal**, including its archival state — which is not asked
+    /// even as a question, see [`seal_finding`].
+    CertificateFailed,
+    /// The certificate held. This is what the archival protection says.
+    Sound {
+        /// What to do about the protection, if anything.
+        finding: RenewalFinding,
+        /// When the protection runs out, for the operator-facing log line.
+        /// `None` where there is no protection, or none that can be read.
+        expires: Option<chrono::DateTime<chrono::Utc>>,
+    },
+}
+
+/// When a seal's archival protection runs out, where that is knowable.
+///
+/// For the log line only — the classification is [`renewal_finding`]'s.
+#[must_use]
+fn expiry_of(freshness: &dpp_types::ArchivalFreshness) -> Option<chrono::DateTime<chrono::Utc>> {
+    match freshness {
+        dpp_types::ArchivalFreshness::Current { expires }
+        | dpp_types::ArchivalFreshness::Lapsed { expires } => Some(*expires),
+        _ => None,
+    }
+}
+
+/// Decide what one seal with an intact signature amounts to.
+///
+/// Extracted from the walk for one property, which is the ordering: a failed
+/// certificate ends the enquiry, and the archival question is never asked. Left
+/// in the loop, that ordering was a comment claiming a guard the code did not
+/// have — the archival block ran regardless, so a seal made under a revoked
+/// certificate was counted in `archival_due` and named in `renewal_passports`.
+/// An operator would have been handed a renewal queue with a passport in it that
+/// renewing cannot fix, and the count it came from would have been wrong too.
+///
+/// # 🚨 `archival_freshness` is a closure, and that is the point
+///
+/// Taking the freshness *by value* would have meant computing it before this
+/// function could refuse to use it — so the counts would have been right and the
+/// work would still have been done. And the work is not a lookup: reading a
+/// seal's archival state re-parses the whole CMS and **verifies the signature on
+/// every archive timestamp it carries**. Paying for that on a seal already known
+/// to be worthless is a cost repeated on every pass, for as long as the seal is
+/// stored.
+///
+/// Passing it lazily also makes the ordering a fact a unit test can hold: a
+/// closure that records whether it ran needs no database, no seal and no
+/// inspector double.
+#[must_use]
+pub fn seal_finding(
+    status: &dpp_types::SealValidationStatus,
+    archival_freshness: impl FnOnce() -> dpp_types::ArchivalFreshness,
+    now: chrono::DateTime<chrono::Utc>,
+) -> SealFinding {
+    if status.indication == dpp_types::ValidationIndication::TotalFailed {
+        return SealFinding::CertificateFailed;
+    }
+    let freshness = archival_freshness();
+    SealFinding::Sound {
+        finding: renewal_finding(&freshness, now),
+        expires: expiry_of(&freshness),
+    }
+}
+
+/// Record a passport as needing renewal, up to the naming cap.
+///
+/// Lapsed and due share the list because they share the action. The counts stay
+/// exact after it stops filling, which is the arrangement `broken_passports`
+/// already uses — "this many, and here are the first hundred".
+fn name_for_renewal(audit: &mut SealAudit, passport_id: dpp_domain::passport::PassportId) {
+    if audit.renewal_passports.len() < MAX_NAMED_BROKEN {
+        audit.renewal_passports.push(passport_id);
+    }
+}
+
 pub async fn audit_seals_once(
     outbox: &Arc<dyn SealOutbox>,
     inspector: &dyn dpp_types::SealInspector,
@@ -330,19 +532,76 @@ pub async fn audit_seals_once(
                 // question, and one nothing asked until now. A seal made under a
                 // certificate its CA had already revoked covers its passport
                 // perfectly and is worth nothing.
-                let certificate = inspector.certificate_standing(&row.seal, chrono::Utc::now());
+                let now = chrono::Utc::now();
+                let certificate = inspector.certificate_standing(&row.seal, now);
                 let status = dpp_types::SealValidationStatus::of(&binding, certificate.as_ref());
-                if status.indication == dpp_types::ValidationIndication::TotalFailed {
-                    audit.certificate_failed += 1;
-                    tracing::error!(
-                        passport_id = %row.passport_id,
-                        sub_indication = ?status.sub_indication,
-                        "a stored seal's certificate was not valid when the seal was made — \
-                         the seal covers its passport and carries no weight. Re-sealing does \
-                         not help: the replacement would come from the same certificate"
-                    );
-                } else {
-                    audit.sound += 1;
+
+                // 🚨 The archival read is passed as a closure, not a value, so
+                // it is never performed for a seal whose certificate failed. It
+                // re-parses the CMS and verifies every archive timestamp it
+                // carries — not a cost to pay on a seal already known to be
+                // worthless, on every pass, forever.
+                //
+                // A seal below `B-LTA` was never promised long-term protection,
+                // so `NotArchived` is silence rather than a finding — the same
+                // distinction `ArchivalFreshness` draws for the read route.
+                let (finding, expires) = match seal_finding(
+                    &status,
+                    || inspector.archival_freshness(&row.seal, now),
+                    now,
+                ) {
+                    SealFinding::CertificateFailed => {
+                        audit.certificate_failed += 1;
+                        tracing::error!(
+                            passport_id = %row.passport_id,
+                            sub_indication = ?status.sub_indication,
+                            "a stored seal's certificate was not valid when the seal was made — \
+                             the seal covers its passport and carries no weight. Re-sealing does \
+                             not help: the replacement would come from the same certificate"
+                        );
+                        // Nothing further is asked of it — see `seal_finding`.
+                        // Renewal advice about a seal whose certificate was
+                        // already revoked is advice about the wrong problem.
+                        continue;
+                    }
+                    SealFinding::Sound { finding, expires } => {
+                        audit.sound += 1;
+                        (finding, expires)
+                    }
+                };
+
+                match finding {
+                    RenewalFinding::Nothing => {}
+                    RenewalFinding::Due => {
+                        audit.archival_due += 1;
+                        name_for_renewal(&mut audit, row.passport_id);
+                        tracing::warn!(
+                            passport_id = %row.passport_id,
+                            expires = ?expires,
+                            "a stored seal's archival protection expires soon — renewing it \
+                             before it lapses is routine; afterwards the seal stops being \
+                             verifiable past its signing certificate"
+                        );
+                    }
+                    RenewalFinding::Lapsed => {
+                        audit.archival_lapsed += 1;
+                        name_for_renewal(&mut audit, row.passport_id);
+                        tracing::error!(
+                            passport_id = %row.passport_id,
+                            expires = ?expires,
+                            "a stored seal's archival protection has lapsed — the seal still \
+                             verifies, and no longer carries what B-LTA exists to provide"
+                        );
+                    }
+                    RenewalFinding::Unverifiable => {
+                        audit.archival_unverifiable += 1;
+                        tracing::error!(
+                            passport_id = %row.passport_id,
+                            "a stored seal carries an archive timestamp this node cannot use — \
+                             it does not parse, or it is not a timestamp of this seal. Not a \
+                             renewal candidate: there is no protection here to carry forward"
+                        );
+                    }
                 }
             }
             dpp_types::SealBinding::CoversAnotherDigest { .. } => audit.superseded += 1,
@@ -1071,6 +1330,299 @@ mod tests {
         assert!(
             outbox.failed.lock().unwrap()[0].contains("seal recorded failed"),
             "the reason must name the recording failure, not the QTSP"
+        );
+    }
+}
+
+#[cfg(test)]
+mod renewal_tests {
+    use super::*;
+    use dpp_types::ArchivalFreshness;
+
+    fn at(days: i64) -> chrono::DateTime<chrono::Utc> {
+        chrono::Utc::now() + chrono::Duration::days(days)
+    }
+
+    /// The lead time is a boundary, and a boundary is where it gets written
+    /// backwards.
+    ///
+    /// A comparison the wrong way round has two failure modes and both are
+    /// quiet: every healthy seal reported as due, which an operator learns to
+    /// ignore, or none ever reported, which they discover when protection has
+    /// already gone. Neither shows up without pinning the two sides of the line.
+    #[test]
+    fn protection_is_due_inside_the_lead_time_and_not_outside_it() {
+        let now = chrono::Utc::now();
+        let lead = RENEWAL_LEAD.num_days();
+
+        let comfortable = ArchivalFreshness::Current {
+            expires: at(lead + 30),
+        };
+        assert_eq!(
+            renewal_finding(&comfortable, now),
+            RenewalFinding::Nothing,
+            "protection with time left on it is not a finding"
+        );
+
+        let inside = ArchivalFreshness::Current {
+            expires: at(lead - 1),
+        };
+        assert_eq!(
+            renewal_finding(&inside, now),
+            RenewalFinding::Due,
+            "protection expiring inside the lead time is what the window is for"
+        );
+
+        // 🚨 Exactly on the line, and built from `now` rather than from `at()`,
+        // which reads the clock again and would land a few microseconds past it
+        // — testing the inside case a second time instead of the boundary.
+        //
+        // The comparison is `expires - now > RENEWAL_LEAD`, so equality falls
+        // through to `Due`. That is the side to be on: a seal whose protection
+        // expires in exactly the lead time is the first one the window was drawn
+        // to catch, and `>=` here would let it pass unreported for a day.
+        let exactly_on_the_lead = ArchivalFreshness::Current {
+            expires: now + RENEWAL_LEAD,
+        };
+        assert_eq!(
+            renewal_finding(&exactly_on_the_lead, now),
+            RenewalFinding::Due,
+            "the lead time is inclusive — protection expiring exactly then is due"
+        );
+
+        let gone = ArchivalFreshness::Lapsed { expires: at(-1) };
+        assert_eq!(renewal_finding(&gone, now), RenewalFinding::Lapsed);
+    }
+
+    /// A seal whose certificate failed is never a renewal candidate.
+    ///
+    /// 🚨 The two questions arrive together and only one of them is worth
+    /// asking. A seal made under a certificate that was already revoked, and
+    /// whose archive timestamp is also lapsing, has exactly one problem —
+    /// renewing the timestamp would leave it as worthless as it is now, and
+    /// would spend a real timestamp doing it.
+    ///
+    /// This is pinned as a *pure* decision because it was written the other way
+    /// once: the loop recorded `certificate_failed` and then fell through to the
+    /// archival block, so such a seal was counted in `archival_due` and named in
+    /// `renewal_passports` as well. The lapsed freshness below is what makes the
+    /// test bite — with the fall-through restored, it reports `Sound(Lapsed)`.
+    #[test]
+    fn a_failed_certificate_ends_the_enquiry_before_the_archive_is_asked_about() {
+        let now = chrono::Utc::now();
+        let failed = dpp_types::SealValidationStatus {
+            indication: dpp_types::ValidationIndication::TotalFailed,
+            sub_indication: Some(dpp_types::ValidationSubIndication::Revoked),
+        };
+
+        for freshness in [
+            ArchivalFreshness::Lapsed { expires: at(-1) },
+            ArchivalFreshness::Current {
+                expires: at(RENEWAL_LEAD.num_days() - 1),
+            },
+            ArchivalFreshness::Unknown,
+            ArchivalFreshness::NotArchived,
+        ] {
+            // 🚨 The closure records whether it ran, which is how the *call
+            // order* is pinned rather than only the answer. With the freshness
+            // passed by value the counts were right and the work was still done
+            // — and that work verifies the signature on every archive timestamp
+            // the seal carries.
+            let asked = std::cell::Cell::new(false);
+
+            assert_eq!(
+                seal_finding(
+                    &failed,
+                    || {
+                        asked.set(true);
+                        freshness.clone()
+                    },
+                    now
+                ),
+                SealFinding::CertificateFailed,
+                "a failed certificate is the whole finding, whatever the archive says: \
+                 {freshness:?}"
+            );
+            assert!(
+                !asked.get(),
+                "and the archive is not even asked — the enquiry ended at the certificate"
+            );
+        }
+    }
+
+    /// Every field a batch can carry reaches the walk.
+    ///
+    /// 🚨 This is the test for a bug that shipped as *silence*. A walk is many
+    /// batches, and the report, the gauges and the saved progress all read the
+    /// accumulator. The node's audit loop folded the batch in field by field,
+    /// and when `SealAudit` grew the archival counts the loop was not extended —
+    /// so every one of them was computed per batch and dropped. A completed pass
+    /// reported zero lapsed, zero due, zero unverifiable and named nobody, which
+    /// is exactly what a healthy estate reports. Nothing failed, no test went
+    /// red, and the feature was inert.
+    ///
+    /// Two halves make that unrepeatable. `absorb` destructures without `..`, so
+    /// a new field stops it compiling; and this test builds its batch as an
+    /// exhaustive literal, so a new field stops *this* compiling too — and the
+    /// next person has to decide, at the keyboard, what the running total of it
+    /// should be.
+    #[test]
+    fn every_field_of_a_batch_reaches_the_walk() {
+        let broken = dpp_domain::passport::PassportId::new();
+        let renewal = dpp_domain::passport::PassportId::new();
+
+        // Every count distinct, so a field folded into the wrong one is visible
+        // rather than hidden behind two equal numbers.
+        let batch = SealAudit {
+            checked: 11,
+            sound: 7,
+            certificate_failed: 3,
+            superseded: 5,
+            broken: 2,
+            unreadable: 1,
+            broken_passports: vec![broken],
+            archival_lapsed: 13,
+            archival_due: 17,
+            archival_unverifiable: 19,
+            renewal_passports: vec![renewal],
+        };
+
+        let mut walk = SealAudit::default();
+        walk.absorb(batch.clone());
+        walk.absorb(batch);
+
+        assert_eq!(walk.checked, 22);
+        assert_eq!(walk.sound, 14);
+        assert_eq!(walk.certificate_failed, 6);
+        assert_eq!(walk.superseded, 10);
+        assert_eq!(walk.broken, 4);
+        assert_eq!(walk.unreadable, 2);
+        assert_eq!(walk.archival_lapsed, 26);
+        assert_eq!(walk.archival_due, 34);
+        assert_eq!(
+            walk.archival_unverifiable, 38,
+            "the archival counts are the ones the loop dropped — all three of them"
+        );
+        assert_eq!(walk.broken_passports, vec![broken, broken]);
+        assert_eq!(
+            walk.renewal_passports,
+            vec![renewal, renewal],
+            "and the renewal list was dropped with them, so a report named nobody \
+             to renew however many were due"
+        );
+    }
+
+    /// The named lists stop at the cap; the counts behind them do not.
+    ///
+    /// That pairing is what makes "this many, and here are the first hundred"
+    /// true of a whole walk rather than of one batch — and it has to hold in the
+    /// accumulator, since no single batch is big enough to reach the cap.
+    #[test]
+    fn the_lists_stop_at_the_cap_while_the_counts_keep_going() {
+        let batch = || SealAudit {
+            broken: 1,
+            broken_passports: vec![dpp_domain::passport::PassportId::new()],
+            archival_due: 1,
+            renewal_passports: vec![dpp_domain::passport::PassportId::new()],
+            ..SealAudit::default()
+        };
+
+        let mut walk = SealAudit::default();
+        for _ in 0..(MAX_NAMED_BROKEN + 25) {
+            walk.absorb(batch());
+        }
+
+        assert_eq!(walk.broken_passports.len(), MAX_NAMED_BROKEN);
+        assert_eq!(walk.renewal_passports.len(), MAX_NAMED_BROKEN);
+        assert_eq!(
+            walk.broken as usize,
+            MAX_NAMED_BROKEN + 25,
+            "the count is the size of the problem; the list is a sample of it"
+        );
+        assert_eq!(walk.archival_due as usize, MAX_NAMED_BROKEN + 25);
+    }
+
+    /// Anything short of a failure lets the archival question through unchanged.
+    ///
+    /// The other half of the ordering: `seal_finding` must not quietly become a
+    /// second classifier. Whatever `renewal_finding` says about the freshness is
+    /// what comes out.
+    ///
+    /// `Indeterminate` rather than a pass, because a pass is not reachable here:
+    /// `TOTAL-PASSED` needs the whole of EN 319 102-1 clause 5.1.3, so a seal
+    /// that survives every check this node makes still reports indeterminate —
+    /// and that is what the audit counts as sound.
+    #[test]
+    fn anything_short_of_a_failure_reports_exactly_what_the_archive_says() {
+        let now = chrono::Utc::now();
+        let sound = dpp_types::SealValidationStatus {
+            indication: dpp_types::ValidationIndication::Indeterminate,
+            sub_indication: None,
+        };
+
+        for freshness in [
+            ArchivalFreshness::Lapsed { expires: at(-1) },
+            ArchivalFreshness::Current {
+                expires: at(RENEWAL_LEAD.num_days() - 1),
+            },
+            ArchivalFreshness::Current {
+                expires: at(RENEWAL_LEAD.num_days() + 30),
+            },
+            ArchivalFreshness::Unknown,
+            ArchivalFreshness::NotArchived,
+        ] {
+            let asked = std::cell::Cell::new(false);
+
+            assert_eq!(
+                seal_finding(
+                    &sound,
+                    || {
+                        asked.set(true);
+                        freshness.clone()
+                    },
+                    now
+                ),
+                SealFinding::Sound {
+                    finding: renewal_finding(&freshness, now),
+                    expires: expiry_of(&freshness),
+                },
+                "the archival classification is the classifier's: {freshness:?}"
+            );
+            assert!(
+                asked.get(),
+                "and here the archive *is* asked — laziness must not become silence"
+            );
+        }
+    }
+
+    /// A seal below `B-LTA` is silent, not a finding.
+    ///
+    /// It was never promised long-term protection, and reporting it as needing
+    /// renewal would raise an alarm about a commitment nobody made — the same
+    /// distinction `ArchivalFreshness` draws between `NotArchived` and `Lapsed`,
+    /// carried through to the estate-wide count.
+    #[test]
+    fn a_seal_below_lta_is_not_a_renewal_candidate() {
+        assert_eq!(
+            renewal_finding(&ArchivalFreshness::NotArchived, chrono::Utc::now()),
+            RenewalFinding::Nothing
+        );
+    }
+
+    /// An unusable archive timestamp is not something to renew.
+    ///
+    /// 🚨 The distinction this makes is the one the binding check created.
+    /// `Unknown` now covers a token that parses and is **not a timestamp of this
+    /// seal** — and renewing assumes there is protection to carry forward. Here
+    /// there is none: the seal claims a level it does not have, which is a
+    /// corruption finding and belongs beside `broken` rather than in a queue of
+    /// things to re-stamp.
+    #[test]
+    fn an_unusable_archive_timestamp_is_not_renewed_but_reported() {
+        assert_eq!(
+            renewal_finding(&ArchivalFreshness::Unknown, chrono::Utc::now()),
+            RenewalFinding::Unverifiable,
+            "an archive timestamp that is not this seal's must not be queued for renewal"
         );
     }
 }
