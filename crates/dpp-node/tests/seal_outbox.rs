@@ -1322,7 +1322,11 @@ async fn an_audit_walk_and_its_last_report_outlive_the_process() {
             broken: 1,
             certificate_failed: 0,
             unreadable: 0,
+            archival_lapsed: 2,
+            archival_due: 4,
+            archival_unverifiable: 0,
             broken_passports: vec![id],
+            renewal_passports: vec![id],
         })
         .await
         .expect("save progress");
@@ -1351,8 +1355,12 @@ async fn an_audit_walk_and_its_last_report_outlive_the_process() {
         broken: 1,
         certificate_failed: 0,
         unreadable: 0,
+        archival_lapsed: 2,
+        archival_due: 4,
+        archival_unverifiable: 0,
         truncated: false,
         broken_passports: vec![id],
+        renewal_passports: vec![id],
     };
     store.complete(&completed).await.expect("complete");
 

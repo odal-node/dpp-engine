@@ -663,6 +663,10 @@ pub fn spawn_seal_audit(
                             certificate_failed: progress.certificate_failed,
                             unreadable: progress.unreadable,
                             broken_passports: progress.broken_passports,
+                            archival_lapsed: progress.archival_lapsed,
+                            archival_due: progress.archival_due,
+                            archival_unverifiable: progress.archival_unverifiable,
+                            renewal_passports: progress.renewal_passports,
                         };
                     }
                 }
@@ -752,6 +756,14 @@ pub fn spawn_seal_audit(
                 // different responses, and an operator alerting on one should
                 // not be woken by the other.
                 metrics::gauge!("seal_certificate_failed").set(walk.certificate_failed as f64);
+                // Separate gauges for the same reason the counts are separate:
+                // a lapsed archive timestamp wants renewing, and one that
+                // cannot be tied to its seal wants investigating. An operator
+                // alerting on the first should not be woken by the second.
+                metrics::gauge!("seal_archival_lapsed").set(walk.archival_lapsed as f64);
+                metrics::gauge!("seal_archival_due").set(walk.archival_due as f64);
+                metrics::gauge!("seal_archival_unverifiable")
+                    .set(walk.archival_unverifiable as f64);
                 let report = dpp_types::SealAuditReport {
                     completed_at: chrono::Utc::now(),
                     checked: walk.checked,
@@ -762,6 +774,10 @@ pub fn spawn_seal_audit(
                     unreadable: walk.unreadable,
                     truncated: (walk.broken_passports.len() as u64) < walk.broken,
                     broken_passports: walk.broken_passports.clone(),
+                    archival_lapsed: walk.archival_lapsed,
+                    archival_due: walk.archival_due,
+                    archival_unverifiable: walk.archival_unverifiable,
+                    renewal_passports: walk.renewal_passports.clone(),
                 };
                 log.record(report.clone());
                 if let Some(store) = store.as_ref()
@@ -795,7 +811,11 @@ pub fn spawn_seal_audit(
                         broken: walk.broken,
                         certificate_failed: walk.certificate_failed,
                         unreadable: walk.unreadable,
+                        archival_lapsed: walk.archival_lapsed,
+                        archival_due: walk.archival_due,
+                        archival_unverifiable: walk.archival_unverifiable,
                         broken_passports: walk.broken_passports.clone(),
+                        renewal_passports: walk.renewal_passports.clone(),
                     })
                     .await
             {

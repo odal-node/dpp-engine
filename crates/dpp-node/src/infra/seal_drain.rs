@@ -197,6 +197,23 @@ pub async fn drain_once(
 /// too — a walk over a damaged estate must not accumulate an id per row.
 pub const MAX_NAMED_BROKEN: usize = 100;
 
+/// How far ahead a lapsing archive timestamp is worth reporting.
+///
+/// A `B-LTA` seal's archival protection ends when its timestamping authority's
+/// certificate does, and ETSI's long-term profiles handle that by re-stamping
+/// before it happens. Nothing here re-stamps — this is the **noticing** half,
+/// and the window it reports in is the only one where renewing is routine rather
+/// than an incident.
+///
+/// Ninety days is chosen to be comfortably longer than any plausible
+/// procurement: a renewal needs a timestamp from a provider, and an operator who
+/// learns about it the week it expires has a problem rather than a task. It is
+/// deliberately **not** configurable yet. A threshold becomes a policy the moment
+/// something acts on it, and the drain that will act on it does not exist — so
+/// picking the knob now would be guessing at the shape of a decision nobody has
+/// taken.
+pub const RENEWAL_LEAD: chrono::Duration = chrono::Duration::days(90);
+
 /// What one audit pass found.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct SealAudit {
@@ -236,6 +253,16 @@ pub struct SealAudit {
     /// `broken` keeps counting after this stops filling, so the two together say
     /// "this many, and here are the first hundred".
     pub broken_passports: Vec<dpp_domain::passport::PassportId>,
+    /// `B-LTA` seals whose archival protection has already gone.
+    pub archival_lapsed: u64,
+    /// `B-LTA` seals whose archival protection expires within [`RENEWAL_LEAD`].
+    pub archival_due: u64,
+    /// `B-LTA` seals carrying an archive timestamp this node cannot use — it
+    /// does not parse, or it is not a timestamp of this seal.
+    pub archival_unverifiable: u64,
+    /// The passports behind `archival_lapsed` and `archival_due`, capped the
+    /// same way `broken_passports` is.
+    pub renewal_passports: Vec<dpp_domain::passport::PassportId>,
 }
 
 /// Open a bounded batch of stored seals and report what they are worth.
@@ -294,6 +321,56 @@ pub struct SealAudit {
 /// and costs no coverage: the drain checks a seal's binding before accepting it,
 /// so one written during the walk was verified as it landed and is covered by
 /// the next pass anyway.
+/// What a seal's archival freshness means for the audit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RenewalFinding {
+    /// Nothing to say: below `B-LTA`, or protection with time left on it.
+    Nothing,
+    /// Protection expires within [`RENEWAL_LEAD`].
+    Due,
+    /// Protection has already gone.
+    Lapsed,
+    /// An archive timestamp that cannot be used — unparseable, or not a
+    /// timestamp of this seal.
+    Unverifiable,
+}
+
+/// Classify one seal's archival freshness.
+///
+/// Extracted from the walk so the boundary is testable without a database. The
+/// boundary is the part worth pinning: a lead time is a number, and a comparison
+/// written the wrong way round reports every healthy seal as due, or none of
+/// them ever.
+#[must_use]
+pub fn renewal_finding(
+    freshness: &dpp_types::ArchivalFreshness,
+    now: chrono::DateTime<chrono::Utc>,
+) -> RenewalFinding {
+    match freshness {
+        // A seal below `B-LTA` was never promised long-term protection, so this
+        // is silence rather than a finding — the same distinction the read route
+        // draws between `notArchived` and `lapsed`.
+        dpp_types::ArchivalFreshness::NotArchived => RenewalFinding::Nothing,
+        dpp_types::ArchivalFreshness::Current { expires } if *expires - now > RENEWAL_LEAD => {
+            RenewalFinding::Nothing
+        }
+        dpp_types::ArchivalFreshness::Current { .. } => RenewalFinding::Due,
+        dpp_types::ArchivalFreshness::Lapsed { .. } => RenewalFinding::Lapsed,
+        dpp_types::ArchivalFreshness::Unknown => RenewalFinding::Unverifiable,
+    }
+}
+
+/// Record a passport as needing renewal, up to the naming cap.
+///
+/// Lapsed and due share the list because they share the action. The counts stay
+/// exact after it stops filling, which is the arrangement `broken_passports`
+/// already uses — "this many, and here are the first hundred".
+fn name_for_renewal(audit: &mut SealAudit, passport_id: dpp_domain::passport::PassportId) {
+    if audit.renewal_passports.len() < MAX_NAMED_BROKEN {
+        audit.renewal_passports.push(passport_id);
+    }
+}
+
 pub async fn audit_seals_once(
     outbox: &Arc<dyn SealOutbox>,
     inspector: &dyn dpp_types::SealInspector,
@@ -343,6 +420,57 @@ pub async fn audit_seals_once(
                     );
                 } else {
                     audit.sound += 1;
+                }
+
+                // Archival protection is a separate question from whether the
+                // seal is sound, and it is asked only of sound seals: telling an
+                // operator to renew the archive timestamp on a seal whose
+                // certificate was already revoked would be advice about the
+                // wrong problem.
+                //
+                // A seal below `B-LTA` was never promised long-term protection,
+                // so `NotArchived` is silence rather than a finding — the same
+                // distinction `ArchivalFreshness` draws for the read route.
+                let now = chrono::Utc::now();
+                let freshness = inspector.archival_freshness(&row.seal, now);
+                // For the log line only — the classification is the classifier's.
+                let expires = match &freshness {
+                    dpp_types::ArchivalFreshness::Current { expires }
+                    | dpp_types::ArchivalFreshness::Lapsed { expires } => Some(*expires),
+                    _ => None,
+                };
+                match renewal_finding(&freshness, now) {
+                    RenewalFinding::Nothing => {}
+                    RenewalFinding::Due => {
+                        audit.archival_due += 1;
+                        name_for_renewal(&mut audit, row.passport_id);
+                        tracing::warn!(
+                            passport_id = %row.passport_id,
+                            expires = ?expires,
+                            "a stored seal's archival protection expires soon — renewing it \
+                             before it lapses is routine; afterwards the seal stops being \
+                             verifiable past its signing certificate"
+                        );
+                    }
+                    RenewalFinding::Lapsed => {
+                        audit.archival_lapsed += 1;
+                        name_for_renewal(&mut audit, row.passport_id);
+                        tracing::error!(
+                            passport_id = %row.passport_id,
+                            expires = ?expires,
+                            "a stored seal's archival protection has lapsed — the seal still \
+                             verifies, and no longer carries what B-LTA exists to provide"
+                        );
+                    }
+                    RenewalFinding::Unverifiable => {
+                        audit.archival_unverifiable += 1;
+                        tracing::error!(
+                            passport_id = %row.passport_id,
+                            "a stored seal carries an archive timestamp this node cannot use — \
+                             it does not parse, or it is not a timestamp of this seal. Not a \
+                             renewal candidate: there is no protection here to carry forward"
+                        );
+                    }
                 }
             }
             dpp_types::SealBinding::CoversAnotherDigest { .. } => audit.superseded += 1,
@@ -1071,6 +1199,81 @@ mod tests {
         assert!(
             outbox.failed.lock().unwrap()[0].contains("seal recorded failed"),
             "the reason must name the recording failure, not the QTSP"
+        );
+    }
+}
+
+#[cfg(test)]
+mod renewal_tests {
+    use super::*;
+    use dpp_types::ArchivalFreshness;
+
+    fn at(days: i64) -> chrono::DateTime<chrono::Utc> {
+        chrono::Utc::now() + chrono::Duration::days(days)
+    }
+
+    /// The lead time is a boundary, and a boundary is where it gets written
+    /// backwards.
+    ///
+    /// A comparison the wrong way round has two failure modes and both are
+    /// quiet: every healthy seal reported as due, which an operator learns to
+    /// ignore, or none ever reported, which they discover when protection has
+    /// already gone. Neither shows up without pinning the two sides of the line.
+    #[test]
+    fn protection_is_due_inside_the_lead_time_and_not_outside_it() {
+        let now = chrono::Utc::now();
+        let lead = RENEWAL_LEAD.num_days();
+
+        let comfortable = ArchivalFreshness::Current {
+            expires: at(lead + 30),
+        };
+        assert_eq!(
+            renewal_finding(&comfortable, now),
+            RenewalFinding::Nothing,
+            "protection with time left on it is not a finding"
+        );
+
+        let inside = ArchivalFreshness::Current {
+            expires: at(lead - 1),
+        };
+        assert_eq!(
+            renewal_finding(&inside, now),
+            RenewalFinding::Due,
+            "protection expiring inside the lead time is what the window is for"
+        );
+
+        let gone = ArchivalFreshness::Lapsed { expires: at(-1) };
+        assert_eq!(renewal_finding(&gone, now), RenewalFinding::Lapsed);
+    }
+
+    /// A seal below `B-LTA` is silent, not a finding.
+    ///
+    /// It was never promised long-term protection, and reporting it as needing
+    /// renewal would raise an alarm about a commitment nobody made — the same
+    /// distinction `ArchivalFreshness` draws between `NotArchived` and `Lapsed`,
+    /// carried through to the estate-wide count.
+    #[test]
+    fn a_seal_below_lta_is_not_a_renewal_candidate() {
+        assert_eq!(
+            renewal_finding(&ArchivalFreshness::NotArchived, chrono::Utc::now()),
+            RenewalFinding::Nothing
+        );
+    }
+
+    /// An unusable archive timestamp is not something to renew.
+    ///
+    /// 🚨 The distinction this makes is the one the binding check created.
+    /// `Unknown` now covers a token that parses and is **not a timestamp of this
+    /// seal** — and renewing assumes there is protection to carry forward. Here
+    /// there is none: the seal claims a level it does not have, which is a
+    /// corruption finding and belongs beside `broken` rather than in a queue of
+    /// things to re-stamp.
+    #[test]
+    fn an_unusable_archive_timestamp_is_not_renewed_but_reported() {
+        assert_eq!(
+            renewal_finding(&ArchivalFreshness::Unknown, chrono::Utc::now()),
+            RenewalFinding::Unverifiable,
+            "an archive timestamp that is not this seal's must not be queued for renewal"
         );
     }
 }
