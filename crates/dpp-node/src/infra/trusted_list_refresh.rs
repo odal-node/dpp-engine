@@ -102,6 +102,54 @@ fn entry_for(pointer: &TrustedListPointer, fetched: Result<String, String>) -> C
     entry.unwrap_or_else(|reason| CachedTrustedList::Unavailable { reason })
 }
 
+/// Give every named territory a row before any of them is read.
+///
+/// 🚨 **This is what makes the verdict's completeness claim true.** A territory
+/// present-and-unavailable is one the reader knows was missed; a territory
+/// *absent* means the list of trusted lists never named it. So a cache holding
+/// five rows out of twenty-seven answers `unchecked: 0` and reads as "as
+/// complete as the list of trusted lists allows" — the exact overclaim the two
+/// counts exist to prevent.
+///
+/// That state is reachable without anything going wrong: a node booting while
+/// the first pass is still running, or after one that was interrupted, holds
+/// exactly that partial cache.
+///
+/// Only territories the cache does not already hold are written, so a node
+/// refreshing a complete cache seeds nothing and never drops a good list to
+/// `unavailable` on its way to re-reading it. Returns how many were claimed.
+async fn claim_unheld(store: &Arc<dyn TrustedListStore>, national: &[&TrustedListPointer]) -> u32 {
+    let held = match store.load().await {
+        Ok(h) => h,
+        // Seed everything rather than nothing: a pass that cannot see what is
+        // already held must not assume it is complete.
+        Err(e) => {
+            tracing::warn!(error = %e, "could not read the trusted-list cache before a pass");
+            std::collections::BTreeMap::new()
+        }
+    };
+
+    let mut seeded = 0;
+    for pointer in national {
+        let Some(territory) = pointer.territory.as_deref() else {
+            continue;
+        };
+        if held.contains_key(territory) {
+            continue;
+        }
+        let entry = CachedTrustedList::Unavailable {
+            reason: "named by the EU list of trusted lists and not read in this pass yet"
+                .to_owned(),
+        };
+        if let Err(e) = store.put(territory, &entry).await {
+            tracing::warn!(%territory, error = %e, "could not claim a territory before reading it");
+        } else {
+            seeded += 1;
+        }
+    }
+    seeded
+}
+
 /// Classify one territory's fetch and write it to the cache.
 ///
 /// 🚨 The **write happens either way**, and that is the point of lifting this out
@@ -190,6 +238,33 @@ pub async fn refresh_once(store: &Arc<dyn TrustedListStore>) -> Option<RefreshSt
         national = national.len(),
         "the EU list of trusted lists verified against the pinned Official Journal anchor"
     );
+
+    // 🚨 Claim every named territory **before** reading any of them.
+    //
+    // The verdict's completeness comes from the cache's own contents: a
+    // territory present-and-unavailable is one the reader knows was missed, and
+    // a territory *absent* means the list of trusted lists never named it. So a
+    // cache holding five rows out of twenty-seven answers `unchecked: 0` and
+    // reads as "as complete as the list of trusted lists allows" — which is the
+    // exact overclaim the two counts exist to prevent.
+    //
+    // That is reachable without anything going wrong: a node booting while the
+    // first pass is still running, or after one that was interrupted, has
+    // exactly that partial cache. Seeding closes it — from the moment the list
+    // of trusted lists is verified, every territory it names has a row, and the
+    // loop below replaces each one with what it found.
+    //
+    // Cheap, because it only writes territories the cache does not already hold:
+    // a node refreshing a complete cache seeds nothing and never drops a good
+    // list to `unavailable` on its way to re-reading it.
+    let seeded = claim_unheld(store, &national).await;
+    if seeded > 0 {
+        tracing::info!(
+            seeded,
+            "claimed territories the cache did not hold, so a verdict given before this \
+             pass finishes reports them as unchecked rather than omitting them"
+        );
+    }
 
     let mut stats = RefreshStats::default();
     for pointer in national {
@@ -405,6 +480,64 @@ mod tests {
         );
         assert_eq!(stats.unavailable, 1);
         assert_eq!(stats.verified, 0);
+    }
+
+    /// 🚨 Every territory the list of trusted lists names gets a row before any
+    /// of them is read.
+    ///
+    /// The completeness bug this closes is reachable with nothing broken: a node
+    /// booting mid-pass, or after an interrupted one, holds a partial cache —
+    /// and a partial cache answers `unchecked: 0`, which `IssuerStanding`'s own
+    /// documentation defines as "as complete as the list of trusted lists
+    /// allows". Twenty-two territories never looked at would read as twenty-two
+    /// territories that hold nothing.
+    #[tokio::test]
+    async fn every_named_territory_is_claimed_before_any_of_them_is_read() {
+        let store: Arc<dyn TrustedListStore> = Arc::new(Recording::default());
+        let fi = finnish_pointer();
+        let mut de = fi.clone();
+        de.territory = Some("DE".to_owned());
+
+        let seeded = claim_unheld(&store, &[&fi, &de]).await;
+        assert_eq!(seeded, 2);
+
+        let held = store.load().await.expect("load");
+        for territory in ["FI", "DE"] {
+            match held.get(territory) {
+                Some(CachedTrustedList::Unavailable { reason }) => assert!(
+                    reason.contains("not read in this pass yet"),
+                    "and it says why it is not an answer: {reason}"
+                ),
+                other => panic!(
+                    "{territory} must hold a row before it is read, not be absent: {other:?}"
+                ),
+            }
+        }
+    }
+
+    /// A territory already held is left exactly as it was.
+    ///
+    /// Seeding unconditionally would drop a verified list to `unavailable` on
+    /// every pass, for as long as it took to re-read it — turning a refresh into
+    /// a window where the node knows less than it did.
+    #[tokio::test]
+    async fn a_territory_already_held_is_not_dropped_to_unavailable_to_re_read_it() {
+        let store: Arc<dyn TrustedListStore> = Arc::new(Recording::default());
+        let fi = finnish_pointer();
+
+        let mut stats = RefreshStats::default();
+        record(&store, "FI", &fi, Ok(FI_LIST.to_owned()), &mut stats).await;
+
+        let seeded = claim_unheld(&store, &[&fi]).await;
+        assert_eq!(seeded, 0, "nothing to claim — it is already held");
+
+        assert!(
+            matches!(
+                store.load().await.expect("load").get("FI"),
+                Some(CachedTrustedList::Verified { .. })
+            ),
+            "and the verified list it held survives the claim pass"
+        );
     }
 
     /// And a readable one reaches it verified, counted on the other side.

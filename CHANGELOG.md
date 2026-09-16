@@ -184,6 +184,11 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   from a list this node can no longer confirm is current, and a provider whose
   status was withdrawn yesterday would still read as qualified. The cost is that
   a transient blip narrows the verdict until the next pass; the verdict says so.
+  Every named territory is also given a row **before** any of them is read, so a
+  node booting mid-pass — or after an interrupted one — reports the ones not yet
+  reached as unchecked rather than omitting them. A partial cache would otherwise
+  answer `unchecked: 0`, which reads as "as complete as the list of trusted lists
+  allows".
   The refinement that would soften it is honouring each list's own `NextUpdate`,
   which the parser does not read yet.
 
