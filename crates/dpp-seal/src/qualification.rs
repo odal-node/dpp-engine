@@ -130,9 +130,38 @@ pub enum IssuerStanding {
     /// Note **consulted**: this is a statement about the lists that were passed
     /// in, not about the Union. A caller holding one Member State's list and
     /// getting this answer has learnt that the issuer is not in *that* list.
+    ///
+    /// # Read the two counts before reading the verdict
+    ///
+    /// This is the only variant that claims an **absence**, so it is the only
+    /// one whose meaning changes with what was available to look at, and the
+    /// counts are carried here rather than only on [`SealQualification`] so that
+    /// a caller matching on the variant alone cannot miss them.
+    ///
+    /// - `consulted == 0` — nothing was looked at. The answer is about nothing,
+    ///   and it is what a node with no trusted lists loaded reports for every
+    ///   provider seal, qualified or not.
+    /// - `unchecked > 0` — some territory the list of trusted lists names could
+    ///   not be verified, so a provider listed *there* is indistinguishable from
+    ///   one listed nowhere. Not a Union-wide claim.
+    /// - `consulted > 0 && unchecked == 0` — as complete as the list of trusted
+    ///   lists allows. Still not "not qualified in law": a provider can be
+    ///   qualified and the list wrong, which is the Member State's problem and
+    ///   not something this can see.
+    ///
+    /// [`SealQualification::unchecked`] carries which territories and why.
+    ///
+    /// [`Self::ChainIncomplete`] deliberately carries no counts. It already
+    /// refuses to make the absence claim — the walk ran out of links, so a
+    /// listed CA may sit above the gap whatever was consulted.
     NotListed {
         /// The issuer name the certificate carries.
         issuer: String,
+        /// How many territories' verified lists were searched.
+        consulted: usize,
+        /// How many territories the list of trusted lists names could not be
+        /// verified, and so were not searched.
+        unchecked: usize,
     },
     /// The seal did not carry enough certificates to reach a root, and no list
     /// names any issuer it does refer to.
@@ -254,6 +283,27 @@ pub struct SealQualification {
     /// Art. 32(1)(f) via Annex III(j) — what the certificate declares about the
     /// device holding its key.
     pub creation_device: CreationDevice,
+    /// The territories the list of trusted lists names that could **not** be
+    /// consulted for this verdict, and why.
+    ///
+    /// Empty means either that every named territory was searched, or that
+    /// nothing was — [`IssuerStanding::NotListed`]'s `consulted` count is what
+    /// separates those, and it is carried on the variant for that reason.
+    ///
+    /// # Why the verdict carries this at all
+    ///
+    /// Because an absence claim is only as wide as what was looked at, and
+    /// nothing else can say how wide that was. A verdict of "no list names this
+    /// issuer" reads as a statement about the Union; it is one only when this is
+    /// empty and something was consulted.
+    ///
+    /// This is not hypothetical. Germany's trusted list does not verify against
+    /// the mandated profile today, and Germany has one of the larger provider
+    /// populations — so a node consulting the Union would be missing it, and a
+    /// qualified German provider would be reported exactly like an unlisted one.
+    /// That is the failure this field exists to make visible rather than
+    /// prevent: it cannot be prevented from here.
+    pub unchecked: Vec<UncheckedTerritory>,
 }
 
 impl SealQualification {
@@ -276,9 +326,37 @@ impl std::fmt::Display for SealQualification {
                 f,
                 "signed locally by {subject} — self-issued, on no Trusted List, of no legal effect"
             ),
-            IssuerStanding::NotListed { issuer } => write!(
+            // The counts are in the sentence because this is the one verdict
+            // whose meaning depends on them, and an operator reading a log line
+            // has no other way to tell "not in the Union" from "not in the
+            // nothing we looked at".
+            IssuerStanding::NotListed {
+                issuer,
+                consulted: 0,
+                ..
+            } => write!(
                 f,
-                "issued by {issuer}, which no consulted Trusted List names as a qualified CA"
+                "issued by {issuer} — no Trusted List was consulted, so nothing is known about \
+                 whether that issuer is a qualified CA"
+            ),
+            IssuerStanding::NotListed {
+                issuer,
+                consulted,
+                unchecked: 0,
+            } => write!(
+                f,
+                "issued by {issuer}, which none of the {consulted} Trusted Lists consulted names \
+                 as a qualified CA"
+            ),
+            IssuerStanding::NotListed {
+                issuer,
+                consulted,
+                unchecked,
+            } => write!(
+                f,
+                "issued by {issuer}, which none of the {consulted} Trusted Lists consulted names \
+                 as a qualified CA — but {unchecked} territory(ies) could not be consulted, so a \
+                 provider listed in one of those would look exactly like this"
             ),
             IssuerStanding::ChainIncomplete {
                 issuer,
@@ -378,13 +456,34 @@ impl std::fmt::Display for SealQualification {
 pub fn qualify(
     seal_der: &[u8],
     lists: &[VerifiedTrustedList],
+    unchecked: &[UncheckedTerritory],
     sealed_at: DateTime<Utc>,
 ) -> Result<SealQualification, SealError> {
     let certificate = signer_certificate(seal_der)?;
     Ok(SealQualification {
-        issuer: standing(seal_der, &certificate, lists, sealed_at),
+        issuer: standing(seal_der, &certificate, lists, unchecked.len(), sealed_at),
         creation_device: certificate.creation_device,
+        unchecked: unchecked.to_vec(),
     })
+}
+
+/// A territory the list of trusted lists names and this node could not consult.
+///
+/// Carried rather than dropped because the two states a caller must tell apart —
+/// *this issuer is on no list* and *the list it would be on could not be read* —
+/// are otherwise identical at the point of the verdict.
+///
+/// The reason is free text on purpose. What stops a list being consulted is not
+/// an enumerable set: a signature that does not verify, a document over a parser
+/// ceiling, a fetch that failed, a scheme operator mid-rotation whose entry has
+/// not caught up. An operator reading this needs the sentence, and a caller
+/// deciding what to do needs only that the territory is absent.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UncheckedTerritory {
+    /// The `SchemeTerritory` the list of trusted lists names.
+    pub territory: String,
+    /// Why this node could not consult it, in terms an operator can act on.
+    pub reason: String,
 }
 
 /// The issuer's standing, given a certificate already read.
@@ -392,6 +491,7 @@ fn standing(
     seal_der: &[u8],
     certificate: &SignerCertificate,
     lists: &[VerifiedTrustedList],
+    unchecked: usize,
     sealed_at: DateTime<Utc>,
 ) -> IssuerStanding {
     if certificate.self_issued {
@@ -425,9 +525,11 @@ fn standing(
             // A complete chain, or a seal that stopped parsing between here and
             // the read above — which cannot happen, and if it did, the weaker
             // statement is the safe one.
-            Ok(crate::cades::ChainTerminus::SelfIssuedRoot { .. }) => {
-                IssuerStanding::NotListed { issuer }
-            }
+            Ok(crate::cades::ChainTerminus::SelfIssuedRoot { .. }) => IssuerStanding::NotListed {
+                issuer,
+                consulted: lists.len(),
+                unchecked,
+            },
             Err(_) => IssuerStanding::ChainIncomplete {
                 issuer: issuer.clone(),
                 missing_issuer: issuer,

@@ -153,7 +153,7 @@ fn granted_finnish_ca() -> (String, x509_cert::name::Name) {
 #[test]
 fn a_locally_signed_seal_is_self_issued_and_claims_nothing() {
     let (seal, _dir) = local_seal();
-    let verdict = qualify(&seal, &[finnish_list()], Utc::now()).expect("readable seal");
+    let verdict = qualify(&seal, &[finnish_list()], &[], Utc::now()).expect("readable seal");
 
     let IssuerStanding::SelfIssued { subject } = &verdict.issuer else {
         panic!("the local backend is self-signed: {:?}", verdict.issuer);
@@ -180,8 +180,8 @@ fn a_locally_signed_seal_is_self_issued_and_claims_nothing() {
 #[test]
 fn a_locally_signed_seal_needs_no_trusted_list_to_be_recognised() {
     let (seal, _dir) = local_seal();
-    let with_list = qualify(&seal, &[finnish_list()], Utc::now()).expect("readable");
-    let without = qualify(&seal, &[], Utc::now()).expect("readable");
+    let with_list = qualify(&seal, &[finnish_list()], &[], Utc::now()).expect("readable");
+    let without = qualify(&seal, &[], &[], Utc::now()).expect("readable");
     assert_eq!(with_list, without);
 }
 
@@ -200,7 +200,7 @@ fn a_seal_whose_chain_runs_out_reports_that_rather_than_an_unlisted_issuer() {
         .expect("a name");
     let (seal, _dir) = seal_issued_by(issuer);
 
-    let verdict = qualify(&seal, &[finnish_list()], Utc::now()).expect("readable seal");
+    let verdict = qualify(&seal, &[finnish_list()], &[], Utc::now()).expect("readable seal");
 
     let IssuerStanding::ChainIncomplete {
         issuer,
@@ -241,7 +241,7 @@ fn a_certificate_relabelled_with_a_listed_cas_name_is_caught() {
     let (provider_name, ca_subject) = granted_finnish_ca();
     let (seal, _dir) = seal_issued_by(ca_subject);
 
-    let verdict = qualify(&seal, &[finnish_list()], Utc::now()).expect("readable seal");
+    let verdict = qualify(&seal, &[finnish_list()], &[], Utc::now()).expect("readable seal");
 
     let IssuerStanding::SignatureNotFromListedCa {
         provider,
@@ -279,7 +279,7 @@ fn a_forged_certificate_is_reported_as_forged_rather_than_as_a_date_problem() {
     let long_ago = "1999-01-01T00:00:00Z"
         .parse::<DateTime<Utc>>()
         .expect("a time");
-    let verdict = qualify(&seal, &[finnish_list()], long_ago).expect("readable seal");
+    let verdict = qualify(&seal, &[finnish_list()], &[], long_ago).expect("readable seal");
 
     assert!(
         matches!(
@@ -387,7 +387,8 @@ fn a_certificate_a_listed_ca_really_issued_is_qualified() {
     let chain = test_chain(false);
     let (seal, _dir) = seal_carrying(std::slice::from_ref(&chain.leaf));
 
-    let verdict = qualify(&seal, &[list_naming(&chain.root)], Utc::now()).expect("readable seal");
+    let verdict =
+        qualify(&seal, &[list_naming(&chain.root)], &[], Utc::now()).expect("readable seal");
 
     let IssuerStanding::QualifiedAtSealing { provider, .. } = &verdict.issuer else {
         panic!("a genuinely issued certificate: {:?}", verdict.issuer);
@@ -408,7 +409,8 @@ fn an_intermediate_carried_by_the_seal_reaches_a_listed_root() {
     let intermediate = chain.intermediate.clone().expect("an intermediate");
     let (seal, _dir) = seal_carrying(&[chain.leaf.clone(), intermediate]);
 
-    let verdict = qualify(&seal, &[list_naming(&chain.root)], Utc::now()).expect("readable seal");
+    let verdict =
+        qualify(&seal, &[list_naming(&chain.root)], &[], Utc::now()).expect("readable seal");
 
     assert!(
         matches!(verdict.issuer, IssuerStanding::QualifiedAtSealing { .. }),
@@ -431,7 +433,8 @@ fn a_leaf_stripped_of_its_intermediate_reports_an_incomplete_chain() {
     let chain = test_chain(true);
     let (seal, _dir) = seal_carrying(std::slice::from_ref(&chain.leaf));
 
-    let verdict = qualify(&seal, &[list_naming(&chain.root)], Utc::now()).expect("readable seal");
+    let verdict =
+        qualify(&seal, &[list_naming(&chain.root)], &[], Utc::now()).expect("readable seal");
 
     let IssuerStanding::ChainIncomplete { missing_issuer, .. } = &verdict.issuer else {
         panic!(
@@ -450,7 +453,7 @@ fn a_leaf_stripped_of_its_intermediate_reports_an_incomplete_chain() {
     let (whole, _dir) = seal_carrying(&[chain.leaf.clone(), intermediate]);
     assert!(
         matches!(
-            qualify(&whole, &[list_naming(&chain.root)], Utc::now())
+            qualify(&whole, &[list_naming(&chain.root)], &[], Utc::now())
                 .expect("readable seal")
                 .issuer,
             IssuerStanding::QualifiedAtSealing { .. }
@@ -477,7 +480,7 @@ fn a_complete_chain_to_an_unlisted_root_is_still_unlisted() {
     // the name and report `SignatureNotFromListedCa` — a listed CA carrying that
     // name which did not sign this. That is the correct answer to a different
     // question, and it is not the one under test here.
-    let verdict = qualify(&seal, &[finnish_list()], Utc::now()).expect("readable seal");
+    let verdict = qualify(&seal, &[finnish_list()], &[], Utc::now()).expect("readable seal");
 
     assert!(
         matches!(verdict.issuer, IssuerStanding::NotListed { .. }),
@@ -505,7 +508,8 @@ fn a_seal_older_than_the_lists_history_is_not_qualified() {
     let long_ago = "1999-01-01T00:00:00Z"
         .parse::<DateTime<Utc>>()
         .expect("a time");
-    let verdict = qualify(&seal, &[list_naming(&chain.root)], long_ago).expect("readable seal");
+    let verdict =
+        qualify(&seal, &[list_naming(&chain.root)], &[], long_ago).expect("readable seal");
 
     let IssuerStanding::NotQualifiedAtSealing { status, .. } = &verdict.issuer else {
         panic!("nothing was granted in 1999: {:?}", verdict.issuer);
@@ -525,5 +529,88 @@ fn a_seal_older_than_the_lists_history_is_not_qualified() {
 /// nobody looked at.
 #[test]
 fn bytes_that_are_not_a_seal_yield_no_verdict() {
-    assert!(qualify(b"not a CMS structure", &[], Utc::now()).is_err());
+    assert!(qualify(b"not a CMS structure", &[], &[], Utc::now()).is_err());
+}
+
+/// An absence verdict says how wide the absence is.
+///
+/// `NotListed` is the only verdict claiming that something is **not** there, so
+/// it is the only one whose truth depends on what was available to look at. The
+/// three states below are three different sentences, and before this they were
+/// one.
+///
+/// The middle case is the one that matters in practice. Germany's trusted list
+/// does not verify against the mandated profile today and Germany has one of the
+/// larger provider populations — so a node consulting the Union is missing it,
+/// and a qualified German provider is indistinguishable from an unlisted one
+/// unless the verdict says a territory was skipped. This cannot be prevented
+/// from here; it can only be made visible.
+#[test]
+fn a_not_listed_verdict_says_how_much_was_consulted() {
+    // A complete chain ending at a self-signed root that no list names — the
+    // shape that reaches `NotListed` rather than `ChainIncomplete`.
+    let chain = test_chain(true);
+    let intermediate = chain.intermediate.clone().expect("an intermediate");
+    let (seal, _dir) = seal_carrying(&[chain.leaf.clone(), intermediate, chain.root.clone()]);
+
+    let nothing = qualify(&seal, &[], &[], Utc::now()).expect("readable seal");
+    assert!(
+        matches!(
+            nothing.issuer,
+            IssuerStanding::NotListed {
+                consulted: 0,
+                unchecked: 0,
+                ..
+            }
+        ),
+        "a node with no lists loaded must not imply it looked: {:?}",
+        nothing.issuer
+    );
+    assert!(
+        nothing
+            .to_string()
+            .contains("no Trusted List was consulted"),
+        "and must say so in the sentence an operator reads: {nothing}"
+    );
+
+    let skipped = [UncheckedTerritory {
+        territory: "DE".to_owned(),
+        reason: "the list does not verify against the mandated signature profile".to_owned(),
+    }];
+    let partial = qualify(&seal, &[finnish_list()], &skipped, Utc::now()).expect("readable seal");
+    assert!(
+        matches!(
+            partial.issuer,
+            IssuerStanding::NotListed {
+                consulted: 1,
+                unchecked: 1,
+                ..
+            }
+        ),
+        "a skipped territory must reach the verdict: {:?}",
+        partial.issuer
+    );
+    assert_eq!(partial.unchecked, skipped, "and carry which, and why");
+    assert!(
+        partial.to_string().contains("could not be consulted"),
+        "the sentence has to admit the gap, or the count is decoration: {partial}"
+    );
+
+    let whole = qualify(&seal, &[finnish_list()], &[], Utc::now()).expect("readable seal");
+    assert!(
+        matches!(
+            whole.issuer,
+            IssuerStanding::NotListed {
+                consulted: 1,
+                unchecked: 0,
+                ..
+            }
+        ),
+        "{:?}",
+        whole.issuer
+    );
+    assert!(
+        !whole.to_string().contains("could not be consulted"),
+        "and must not hedge when there is nothing to hedge about: {whole}"
+    );
 }

@@ -858,7 +858,7 @@ async fn a_locally_sealed_passport_reports_that_no_provider_issued_it() {
     println!("dossier   : qualified_seal = Pass");
 
     // ── The verdict, read out of the stored seal ────────────────────────────
-    let verdict = qualify(&der, &[], seal.sealed_at).expect("a readable CAdES seal");
+    let verdict = qualify(&der, &[], &[], seal.sealed_at).expect("a readable CAdES seal");
 
     println!("\n═══ QUALIFICATION OF THE STORED SEAL ═══");
     println!("passportId : {id}");
