@@ -578,7 +578,7 @@
             "name": "asOf",
             "in": "query",
             "required": false,
-            "description": "An RFC 3339 instant. Returns the single version that was current then,\nrather than the whole list.\n\n`404` when no archived version covers that moment — either the passport\nhad not changed by then, or the moment is after its most recent change.\nIn both cases the **live** record is the state at that time, which\n`GET /dpp/{dppId}` already serves; this route does not return it, so that\n\"which version is this\" stays answerable.\n",
+            "description": "An RFC 3339 instant. Returns the single version that was current then,\nrather than the whole list.\n\n`404` when no archived version covers that moment, in two distinct cases\nthat the response body tells apart:\n\n- the passport had not changed by then, or the moment is after its most\n  recent change. The **live** record is the state at that time, which\n  `GET /dpp/{dppId}` already serves; this route does not return it, so\n  that \"which version is this\" stays answerable.\n- the moment is **before the passport was created**, where nothing was\n  its state — not an archived version, and not the live record either.\n\n🚨 The second case is a `404` rather than the initial version. Asking for\na version at a time before the record existed is a question with no true\nanswer, and answering with the initial one would assert that the passport\nexisted then.\n",
             "schema": {
               "type": "string",
               "format": "date-time"

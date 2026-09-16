@@ -2371,7 +2371,7 @@ async fn an_archived_version_is_retrievable_and_a_bad_as_of_is_told_from_an_unco
 
     // A good timestamp that nothing covers — the passport's most recent change
     // is behind us, so the live record is the state then. `404`, not `422`.
-    let (status, _) = versions(format!(
+    let (status, after_the_last_change) = versions(format!(
         "?asOf={}",
         (chrono::Utc::now() + chrono::Duration::days(365))
             .to_rfc3339_opts(chrono::SecondsFormat::Micros, true)
@@ -2380,6 +2380,32 @@ async fn an_archived_version_is_retrievable_and_a_bad_as_of_is_told_from_an_unco
     assert_eq!(
         status, 404,
         "a timestamp no archived version covers must be 404, not 422"
+    );
+    assert!(
+        after_the_last_change.contains("The live record is the state at that time"),
+        "and it says so: {after_the_last_change}"
+    );
+
+    // 🚨 Before the passport existed. Also a `404`, and deliberately **not the
+    // same one**: the store answers "the earliest version that stopped being
+    // current after this", which for any instant before the first change is the
+    // initial version — so this returned `200` and the initial record until the
+    // service learned to check `created_at`. Answering at all asserts the
+    // passport existed in 1990; answering with the sentence above would assert
+    // the live record was its state then.
+    let (status, before_it_existed) = versions("?asOf=1990-01-01T00:00:00Z".to_owned()).await;
+    assert_eq!(
+        status, 404,
+        "a moment before the passport was created has no version, and no live \
+         record either: {before_it_existed}"
+    );
+    assert!(
+        before_it_existed.contains("before this passport was created"),
+        "and it says which of the two nothings it is: {before_it_existed}"
+    );
+    assert!(
+        !before_it_existed.contains("The live record is the state at that time"),
+        "never this sentence — there was no record at all then: {before_it_existed}"
     );
 
     // Not a timestamp at all. `422`, not `404` — the difference between a

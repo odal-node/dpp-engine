@@ -18,7 +18,7 @@ use axum::{
 };
 use serde::Deserialize;
 
-use crate::{middleware::auth::AuthContext, state::AppState};
+use crate::{domain::service::VersionAt, middleware::auth::AuthContext, state::AppState};
 
 use super::error::{internal_error, not_found_error, parse_passport_id, validation_error};
 
@@ -38,12 +38,20 @@ pub struct AsOf {
 ///
 /// # What `asOf` answers when nothing is archived for it
 ///
-/// `404`, and the distinction is worth stating because it is not an error in the
-/// data: a passport that has never changed has no archived versions at all, and
-/// one asked about a moment after its most recent change has none covering that
-/// moment either. In **both** cases the answer is the live record, which the
-/// caller already has a route for — so this returns `404` with a message saying
-/// which of the two it is rather than inventing a version.
+/// `404` in all cases, but **not with the same sentence**, because they are not
+/// the same fact:
+///
+/// - the passport had not changed by then, or the moment is after its most
+///   recent change — the live record is the state at that time, and the caller
+///   already has a route for it;
+/// - the moment is **before the passport was created**, where nothing was its
+///   state, not even the live record.
+///
+/// 🚨 The third one is why this is not an `Option`. The store answers "the
+/// earliest version that stopped being current after `at`", which for any
+/// instant before the first change is the initial version — including instants
+/// before the passport existed. Left alone, asking what a passport said in 1990
+/// returned `200` and the initial record, asserting it existed in 1990.
 ///
 /// # Access
 ///
@@ -91,11 +99,20 @@ pub async fn versions_handler(
                 // parses the body the same way either way and the description
                 // has one schema rather than a `oneOf` the caller has to
                 // discriminate by recalling what it sent.
-                Ok(Some(version)) => (StatusCode::OK, Json(vec![version])).into_response(),
-                Ok(None) => not_found_error(
+                Ok(VersionAt::Found(version)) => {
+                    (StatusCode::OK, Json(vec![version])).into_response()
+                }
+                Ok(VersionAt::Live) => not_found_error(
                     "No archived version covers that moment — the passport had not changed by \
                      then, or the moment is after its most recent change. The live record is \
                      the state at that time.",
+                ),
+                // A different 404, and the wording is the whole point: the
+                // sentence above would tell a caller that the live record is the
+                // state at a moment when there was no record at all.
+                Ok(VersionAt::BeforeItExisted) => not_found_error(
+                    "That moment is before this passport was created, so nothing was its state \
+                     then — not the archive, and not the live record either.",
                 ),
                 Err(dpp_domain::DppError::NotFound(_)) => not_found_error("DPP not found."),
                 Err(e) => internal_error(e),

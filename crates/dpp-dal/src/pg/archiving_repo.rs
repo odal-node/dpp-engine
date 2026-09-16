@@ -55,11 +55,35 @@
 //! # 🚨 Archive first, then mutate
 //!
 //! The port exposes no transaction, so the two writes cannot be made atomic
-//! here. They are ordered so that the failure is the harmless one: archive, then
-//! mutate. A crash in between leaves a version identical to the still-current
-//! record — a duplicate, which later reads simply see twice over the same
-//! interval and answer identically. The other order loses a version outright,
-//! and a lost version is not detectable after the fact.
+//! here. They are ordered so that the failure is the harmless one, and the
+//! choice is worth stating in full because the cost is real and is paid often.
+//!
+//! **What this order costs.** Every mutation that archives and then fails leaves
+//! a version behind for a change that did not happen. That is not only a crash:
+//! a refused patch, a validation failure, a row that vanished between the read
+//! and the write all take this path, and they are ordinary. Two concurrent
+//! mutations of the same passport likewise both archive the same pre-change
+//! state before either write lands.
+//!
+//! **Why it is still the right order.** Every one of those leaves a row
+//! *identical to the record that is still current*, stamped with a moment at
+//! which that record genuinely was current. So a reader asking for any instant
+//! the row covers gets the same document the live record holds: the archive is
+//! larger than it needs to be and never wrong. The reverse order — mutate, then
+//! archive — trades that for losing a version outright whenever the archive
+//! write fails, and a lost version is not detectable afterwards by anything.
+//!
+//! An archive that is occasionally redundant satisfies *"all changes shall be
+//! archived"*. One that is occasionally short does not, and cannot be audited
+//! into telling you which.
+//!
+//! **What would actually fix it**, and why it is not here: one transaction
+//! spanning both writes. `PassportRepository` exposes none, so it would mean
+//! either changing that port — a decision for the crate that owns it, not
+//! something to smuggle in beside a feature — or moving the archive into
+//! `PgPassportRepo`, which gives up the property this whole type exists for,
+//! that a write path cannot avoid archiving. Neither is a change to make while
+//! the residual harm is a duplicate row that answers identically.
 
 use async_trait::async_trait;
 use chrono::Utc;
@@ -378,6 +402,60 @@ mod tests {
             versions.archived.lock().expect("lock").len(),
             2,
             "a bulk update is a change per item, and each one is archived"
+        );
+    }
+
+    /// A refused mutation leaves a version, and that version is harmless.
+    ///
+    /// 🚨 This pins a **known cost**, not a wish. Archiving happens before the
+    /// mutation, so a mutation that is then refused leaves a row for a change
+    /// that never occurred. The reason that is tolerable is the whole of the
+    /// trade, and it is what this asserts: the row is identical to the record
+    /// that is still current, so every read over the interval it covers returns
+    /// the document the live passport holds. The archive is bigger than it needs
+    /// to be and never wrong.
+    ///
+    /// A test asserting *no* version remains would be asserting the opposite
+    /// design — mutate first, archive after — which loses a version outright
+    /// whenever the archive write fails, undetectably. See the module header.
+    #[tokio::test]
+    async fn a_refused_mutation_leaves_a_version_identical_to_the_live_record() {
+        let versions = std::sync::Arc::new(Recording::default());
+        let repo = ArchivingPassportRepo::new(
+            crate::in_memory_repo::InMemoryPassportRepo::default(),
+            versions.clone(),
+        );
+
+        let created = repo.create(a_passport()).await.expect("create");
+        let id = created.id;
+
+        // `status` is a protected patch field, refused by the same guard the
+        // database applies — a real refusal, not a contrived one.
+        let refused = repo
+            .patch_fields(id, serde_json::json!({ "status": "published" }))
+            .await;
+        assert!(refused.is_err(), "the patch must actually be refused");
+
+        // Cloned rather than held: the guard must not span the read below.
+        let archived = versions.archived.lock().expect("lock").clone();
+        assert_eq!(
+            archived.len(),
+            1,
+            "the version was written before the mutation was refused — that is the \
+             order, and this is what it costs"
+        );
+
+        let live = repo
+            .find_by_id(id)
+            .await
+            .expect("read")
+            .expect("still there");
+        assert_eq!(
+            archived[0].1,
+            serde_json::to_value(&live).expect("serialize"),
+            "and this is why the cost is acceptable: the stray version is byte-identical \
+             to the record that is still current, so reading over the interval it claims \
+             returns exactly what the live passport says"
         );
     }
 }

@@ -30,6 +30,9 @@ mod lifecycle;
 mod lint;
 mod publish;
 mod query;
+/// Public: the versions route has to tell apart the two ways of having no
+/// archived version, because only one of them is answered by the live record.
+pub use query::VersionAt;
 /// Public: the seal route and the evidence dossier both need `seal_digest` to
 /// state which digest a seal covers.
 pub mod seal;

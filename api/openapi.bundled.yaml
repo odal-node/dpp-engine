@@ -444,11 +444,20 @@ paths:
             An RFC 3339 instant. Returns the single version that was current then,
             rather than the whole list.
 
-            `404` when no archived version covers that moment — either the passport
-            had not changed by then, or the moment is after its most recent change.
-            In both cases the **live** record is the state at that time, which
-            `GET /dpp/{dppId}` already serves; this route does not return it, so that
-            "which version is this" stays answerable.
+            `404` when no archived version covers that moment, in two distinct cases
+            that the response body tells apart:
+
+            - the passport had not changed by then, or the moment is after its most
+              recent change. The **live** record is the state at that time, which
+              `GET /dpp/{dppId}` already serves; this route does not return it, so
+              that "which version is this" stays answerable.
+            - the moment is **before the passport was created**, where nothing was
+              its state — not an archived version, and not the live record either.
+
+            🚨 The second case is a `404` rather than the initial version. Asking for
+            a version at a time before the record existed is a question with no true
+            answer, and answering with the initial one would assert that the passport
+            existed then.
           schema:
             type: string
             format: date-time
