@@ -104,9 +104,13 @@ pub async fn init_db(cfg: &NodeConfig) -> anyhow::Result<DbComponents> {
     Ok(DbComponents {
         // Wrapped, not bare, and the wrapping is the point: EN 18221 clause 4.2
         // says **all** changes are archived, and a rule of that shape cannot be
-        // left to each write path to remember. Every mutation reaches the
-        // database through here, so archiving is something a write path cannot
-        // avoid rather than something it opts into.
+        // left to each write path to remember. Every change to passport content
+        // reaches the database through here, so archiving is something a write
+        // path cannot avoid rather than something it opts into.
+        //
+        // "Content", because one write does not: `mark_sealed` sets `doc->seal`
+        // by key and is correctly outside the archive. The set of direct writers
+        // is gated — see `dpp-dal/tests/passport_writers_are_known.rs`.
         passport_repo: Arc::new(dpp_dal::pg::ArchivingPassportRepo::new(
             PgPassportRepo::new(dal.clone()),
             version_store.clone(),

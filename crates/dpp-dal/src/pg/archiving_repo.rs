@@ -11,10 +11,24 @@
 //! does — the passport simply changes with no version kept, and the omission is
 //! invisible until somebody asks for a version that was never taken.
 //!
-//! Every mutation in this workspace goes through [`PassportRepository`]. Wrapping
-//! it means the archive is not something a write path remembers to do; it is
-//! something a write path *cannot avoid*. A new service method gets it by
+//! Every change to a passport's **content** goes through [`PassportRepository`].
+//! Wrapping it means the archive is not something a write path remembers to do;
+//! it is something a write path *cannot avoid*. A new service method gets it by
 //! existing.
+//!
+//! 🚨 **"Content" is doing work in that sentence, and the unqualified version of
+//! it was wrong.** One write reaches `odal.passport` without touching the port:
+//! `PgSealOutboxRepo::mark_sealed` sets `doc->seal` with `jsonb_set`, in the
+//! transaction that closes the outbox row. That is deliberate — a full
+//! `Passport` round-trip there would clobber any concurrent change to a mutable
+//! field — and it is correctly outside the archive, because a seal is an
+//! attestation *over an already-published signature* rather than a change to the
+//! passport: every attribute a reader relies on is identical either side of it.
+//!
+//! What makes that a boundary rather than a hole is that it is enumerated and
+//! gated. `passport_writers_are_known.rs` walks the DAL's source and fails on
+//! any writer not on its list, so the next direct write has to be argued for
+//! rather than merged.
 //!
 //! The cost is that a repository now writes somewhere the caller did not name,
 //! which is a real surprise — so the type is named for what it does, and the
