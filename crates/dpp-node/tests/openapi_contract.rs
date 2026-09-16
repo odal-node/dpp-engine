@@ -3484,6 +3484,11 @@ mod fixtures {
             commodity_code: Some("85076000".into()),
             derived_from: vec![derivation_ref()],
             component_refs: vec![component_ref()],
+            // Populated, and with a value that is **not** the default: a create
+            // body that omitted it would check the key set and never compare the
+            // value against `LifeStatus.yaml`. `Repurposed` also matches the
+            // derivation edge beside it, so the fixture is internally coherent.
+            life_status: Some(dpp_domain::passport::LifeStatus::Repurposed),
         }
     }
 
@@ -3646,6 +3651,9 @@ mod fixtures {
         CreatePassportRequest {
             product_name: "EcoCell Pro 48V".into(),
             product_group: None,
+            // Absent on purpose: this fixture exists to pin the *minimum* a create
+            // body needs, and omitting the status is lawful for every product group.
+            life_status: None,
             supersedes_id: None,
             manufacturer: manufacturer(),
             materials: None,

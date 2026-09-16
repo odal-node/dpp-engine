@@ -96,6 +96,40 @@ properties:
       successor linkage), each naming the operation that produced this unit from
       it. A list rather than the single `parentPassportRef` it replaces, because
       Regulation (EU) 2023/1542 Art. 77(7) permits several predecessors.
+  lifeStatus:
+    allOf:
+      - $ref: ../passport/LifeStatus.yaml
+    description: >-
+      Where this unit sits in its **product** life — Annex XIII point 4(c) of
+      Regulation (EU) 2023/1542.
+
+
+      Orthogonal to `status`, which is the *publication* lifecycle: a
+      `repurposed` unit's passport is `active` like any other. Omit it for any
+      product group but battery — only Reg. (EU) 2023/1542 defines this
+      vocabulary, and a textile passport asserting `original` would be borrowing
+      a battery term for a question its own instrument does not ask. Sending it
+      for another product group is refused.
+
+
+      **This is the only way to set it.** `lifeStatus` is protected from
+      patching, because it is part of a body that gets signed and rewriting it
+      after publication would change what a proof covers.
+
+
+      🚨 **`waste` is refused here.** The other four describe how a unit came to
+      be, and Art. 77(7) makes each operation produce a *new* passport — so a
+      repurposed unit is created as `repurposed`. `waste` is the one value that
+      happens to a record which continues, and under that article's second
+      subparagraph it moves responsibility as well, so it belongs to a versioning
+      event on the passport becoming waste rather than to the creation of a new
+      one.
+
+
+      Omitting it is lawful everywhere. For a battery it reads as *not stated*
+      rather than *not applicable*, and publish does not refuse it — the lint
+      result says so instead, because a default would put a claim about a unit
+      onto a record that is about to be signed.
   componentRefs:
     type: array
     items:
