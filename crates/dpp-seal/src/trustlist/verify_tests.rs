@@ -3,6 +3,7 @@
 use super::verify::{
     AnchorFreshness, LotlRejected, TrustedListRejected, anchor_freshness, verify_lotl,
 };
+use chrono::TimeZone as _;
 
 /// The EU list of trusted lists, as published.
 ///
@@ -551,19 +552,46 @@ fn a_verified_list_survives_the_store_round_trip() {
             .map(|s| s.certificates.len())
             .sum()
     };
-    // `status_at` is the whole reason a history is stored rather than a current
-    // status: Art. 32(1)(b) asks whether the provider was qualified **when the
-    // seal was made**. A round trip that flattened the history to "granted now"
-    // would answer today correctly and every past question wrongly.
-    let granted_now = |list: &super::verify::VerifiedTrustedList| -> usize {
+    // `was_granted_at` is the whole reason a history is stored rather than a
+    // current status: Art. 32(1)(b) asks whether the provider was qualified
+    // **when the seal was made**, not now.
+    //
+    // So asking only about now would be the one question a flattened history
+    // still answers correctly — it is asked at two moments instead, and the two
+    // are asserted to *differ* before they are compared. Without that, a fixture
+    // whose every service happened to be granted throughout would make this pass
+    // against a round trip that dropped the history entirely.
+    let granted_at = |list: &super::verify::VerifiedTrustedList, when| -> usize {
         list.providers_offering(ca)
             .flat_map(|(_, services)| services)
-            .filter(|s| s.history.was_granted_at(chrono::Utc::now()))
+            .filter(|s| s.history.was_granted_at(when))
             .count()
     };
+    let now = chrono::Utc::now();
+    let before_the_scheme = chrono::Utc
+        .with_ymd_and_hms(2010, 1, 1, 0, 0, 0)
+        .single()
+        .expect("a real instant");
 
     assert!(certificates(&verified) > 0, "the fixture lists CAs");
     assert_eq!(certificates(&from_store), certificates(&verified));
-    assert!(granted_now(&verified) > 0, "and some of them are granted");
-    assert_eq!(granted_now(&from_store), granted_now(&verified));
+
+    assert!(
+        granted_at(&verified, now) > 0,
+        "some of the fixture's CAs are granted today"
+    );
+    assert_ne!(
+        granted_at(&verified, now),
+        granted_at(&verified, before_the_scheme),
+        "the fixture's history has to actually vary over time, or asking two moments \
+         proves nothing about whether the history survived"
+    );
+
+    assert_eq!(granted_at(&from_store, now), granted_at(&verified, now));
+    assert_eq!(
+        granted_at(&from_store, before_the_scheme),
+        granted_at(&verified, before_the_scheme),
+        "a round trip that kept only the current status answers today correctly and \
+         every past question wrongly — which is the question Art. 32(1)(b) asks"
+    );
 }
