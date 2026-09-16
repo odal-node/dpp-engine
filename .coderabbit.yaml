@@ -32,23 +32,46 @@ reviews:
   profile: assertive
 
   auto_review:
-    enabled: false
-    # A positive label match opts a single pull request in even while `enabled`
-    # is false. This is also what makes `pre_merge_checks` below actually run:
-    # when no review happens at all, those checks are skipped with it and the
-    # CodeRabbit status passes vacuously, which is worse than not having them.
-    # Label a PR `review-ready` to opt it in; `@coderabbitai review` still works
-    # for anything unlabelled.
+    # On, and narrowed to `labels` below — which is the supported way to say
+    # "review only the pull requests that ask for it".
+    #
+    # This was `false`, on the belief that a label opts a single pull request in
+    # regardless. That belief is why `labels` was set beside it, and it does not
+    # hold reliably. Measured across the six pull requests opened 2026-09-15,
+    # every one labelled `review-ready` within ten seconds of being opened:
+    #
+    #   #318  reviewed, unprompted        #316  skipped, needed @coderabbitai review
+    #   #321  skipped, needed the comment #317  never reviewed
+    #                                     #319  never reviewed
+    #
+    # One in five. An off switch is at least predictable; a mechanism that fires
+    # sometimes means you cannot tell from a pull request whether anything read
+    # it, and two of those merged unreviewed because nobody noticed the absence.
+    #
+    # `enabled: true` with a `labels` filter is the documented path to the same
+    # intent, and it is what makes `pre_merge_checks` below actually run — when
+    # no review happens those checks are skipped with it and the CodeRabbit
+    # status passes vacuously, which is worse than not having them. The
+    # `Publication boundary` check is `mode: error` and has never reliably run.
+    enabled: true
+    # The narrowing. Without this, `enabled: true` reviews every pull request,
+    # including the dependency bumps that make up most of them.
+    # `@coderabbitai review` still works for anything unlabelled.
     labels:
       - "review-ready"
     # One review per opt-in rather than one per push. At the open-source plan's
     # rate limit, re-reviewing on every push would spend the hour's budget on a
     # typo fix; ask again explicitly when a re-read is worth it.
+    #
+    # 🚨 The cost of this is real and was paid on 2026-09-16: five pull requests
+    # were folded, rebased and conflict-resolved after their reviews, and merged
+    # without any of that being re-read. **A push that changes what a review
+    # looked at needs an explicit `@coderabbitai review`.** Nothing enforces it.
     auto_incremental_review: false
 
-  # With auto-review off, the default status message would post "Review skipped"
-  # on every pull request. At this repo's merge rate that is precisely the noise
-  # the on-demand setting exists to avoid.
+  # Auto-review is on but narrowed, so an unlabelled pull request would otherwise
+  # collect a "Review skipped" status. At this repo's merge rate — mostly
+  # dependency bumps — that is noise on the majority of pull requests.
   review_status: false
 
   path_filters:
