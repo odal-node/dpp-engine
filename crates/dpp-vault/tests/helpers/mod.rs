@@ -536,12 +536,46 @@ pub struct TestClient {
     inner: reqwest::Client,
 }
 
+/// How long one test request may take before it is a failure rather than a hang.
+///
+/// **`reqwest` sets no request timeout by default**, so a request the server
+/// never answers parks until the harness kills the whole test. That is not
+/// hypothetical: `publish_serve_cycle::published_passport_is_served_as_the_payload_its_proof_signed`
+/// failed CI twice this way — 120 seconds, no assertion, no panic, and nothing
+/// saying which call was waiting or what for. A test that cannot say why it
+/// failed costs a full CI cycle and teaches nothing.
+///
+/// Thirty seconds sits deliberately between the two numbers that matter: far
+/// above anything a local container should need, so this never fires on a slow
+/// machine, and far below the harness ceiling, so a stall is reported **as a
+/// timed-out request against a named URL** rather than as a dead test.
+///
+/// This does not fix a stall. It makes the next one diagnosable, which is the
+/// prerequisite for fixing it.
+const REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// Says so when a request failed because nothing answered.
+///
+/// `reqwest`'s `Display` for a timeout does not make it obvious, and a timeout
+/// means something very different from a refused connection: the server is
+/// there and did not reply.
+fn timeout_hint(e: &reqwest::Error) -> &'static str {
+    if e.is_timeout() {
+        " (timed out — the server accepted the request and never answered)"
+    } else {
+        ""
+    }
+}
+
 impl TestClient {
     pub fn new(base_url: impl Into<String>, token: impl Into<String>) -> Self {
         Self {
             base_url: base_url.into(),
             token: token.into(),
-            inner: reqwest::Client::new(),
+            inner: reqwest::Client::builder()
+                .timeout(REQUEST_TIMEOUT)
+                .build()
+                .expect("a reqwest client"),
         }
     }
 
@@ -552,7 +586,13 @@ impl TestClient {
             .json(&body)
             .send()
             .await
-            .expect("HTTP POST failed")
+            .unwrap_or_else(|e| {
+                panic!(
+                    "POST {}{path} failed{}: {e}",
+                    self.base_url,
+                    timeout_hint(&e)
+                )
+            })
     }
 
     pub async fn get(&self, path: &str) -> reqwest::Response {
@@ -561,7 +601,13 @@ impl TestClient {
             .bearer_auth(&self.token)
             .send()
             .await
-            .expect("HTTP GET failed")
+            .unwrap_or_else(|e| {
+                panic!(
+                    "GET {}{path} failed{}: {e}",
+                    self.base_url,
+                    timeout_hint(&e)
+                )
+            })
     }
 
     pub async fn put_json(&self, path: &str, body: serde_json::Value) -> reqwest::Response {
@@ -571,7 +617,13 @@ impl TestClient {
             .json(&body)
             .send()
             .await
-            .expect("HTTP PUT failed")
+            .unwrap_or_else(|e| {
+                panic!(
+                    "PUT {}{path} failed{}: {e}",
+                    self.base_url,
+                    timeout_hint(&e)
+                )
+            })
     }
 
     pub async fn patch_json(&self, path: &str, body: serde_json::Value) -> reqwest::Response {
@@ -581,7 +633,13 @@ impl TestClient {
             .json(&body)
             .send()
             .await
-            .expect("HTTP PATCH failed")
+            .unwrap_or_else(|e| {
+                panic!(
+                    "PATCH {}{path} failed{}: {e}",
+                    self.base_url,
+                    timeout_hint(&e)
+                )
+            })
     }
 
     pub async fn post_no_auth(&self, path: &str, body: serde_json::Value) -> reqwest::Response {
@@ -590,7 +648,13 @@ impl TestClient {
             .json(&body)
             .send()
             .await
-            .expect("HTTP POST failed")
+            .unwrap_or_else(|e| {
+                panic!(
+                    "POST {}{path} failed{}: {e}",
+                    self.base_url,
+                    timeout_hint(&e)
+                )
+            })
     }
 
     pub async fn post_with_token(
@@ -605,7 +669,13 @@ impl TestClient {
             .json(&body)
             .send()
             .await
-            .expect("HTTP POST failed")
+            .unwrap_or_else(|e| {
+                panic!(
+                    "POST {}{path} failed{}: {e}",
+                    self.base_url,
+                    timeout_hint(&e)
+                )
+            })
     }
 
     pub async fn delete(&self, path: &str) -> reqwest::Response {
@@ -614,6 +684,12 @@ impl TestClient {
             .bearer_auth(&self.token)
             .send()
             .await
-            .expect("HTTP DELETE failed")
+            .unwrap_or_else(|e| {
+                panic!(
+                    "DELETE {}{path} failed{}: {e}",
+                    self.base_url,
+                    timeout_hint(&e)
+                )
+            })
     }
 }
