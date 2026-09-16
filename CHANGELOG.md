@@ -12,7 +12,7 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ### Breaking
 
-- **`publishReadiness.passportScope.status` reports five answers where it
+- **`publishReadiness.passportScope.status` reports six answers where it
   reported three.** *(Breaking: `voluntary` is gone. A record the article does
   not reach now answers `notCovered`, `belowThreshold` or `notYetBinding`
   depending on **why**, and an industrial battery with no declared capacity

@@ -143,11 +143,24 @@ pub fn scope_of(passport: &Passport) -> Option<PassportScope> {
 /// an undetermined answer must not switch it off: the obligation turns on a
 /// capacity the record did not state, and exempting on a missing field is the
 /// one error that silently stops asking for content the law requires.
+/// An outcome this build does not recognise runs the gate, for the same reason
+/// an unrecognised category does. `PassportScope` is `#[non_exhaustive]`, so a
+/// later `dpp-rules` can add one; `is_required()` and `is_undetermined()` would
+/// both answer `false` for it, and the gate would switch itself off on a variant
+/// nobody here can name — while [`wire_status`] reported the same record as
+/// `required`. Listing the *exemptions* rather than the inclusions keeps the two
+/// answering the same question.
 #[must_use]
 pub fn gate_applies(scope: Option<PassportScope>) -> bool {
     match scope {
         None => false,
-        Some(s) => s.is_required() || s.is_undetermined(),
+        Some(
+            PassportScope::NotCovered
+            | PassportScope::BelowThreshold
+            | PassportScope::NotYetBinding,
+        ) => false,
+        // `Required`, `CapacityUnknown`, and anything added later.
+        Some(_) => true,
     }
 }
 
@@ -231,7 +244,10 @@ pub fn scope_note(scope: Option<PassportScope>, data: Option<&ProductGroupData>)
         PassportScope::NotCovered => Some(format!(
             "Art. 77(1) requires a battery passport for LMT, electric-vehicle and industrial \
              batteries above 2 kWh. A {kind} battery is outside it, so this passport is \
-             voluntary — publishing one is allowed and discharges no duty under that article."
+             voluntary — publishing one is allowed and discharges no duty under that article. \
+             This node still applies the category content gate, which is the node's rule \
+             rather than the article's, so publishing may still be refused for missing \
+             content."
         )),
         PassportScope::BelowThreshold => Some(
             "Art. 77(1) reaches industrial batteries with a capacity greater than 2 kWh. This \
