@@ -901,6 +901,57 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ### Fixed
 
+- **An archive timestamp from another seal was accepted as archiving this one.**
+  `cades::archival_freshness` verified the token's own signature and its
+  authority's window, and never checked that the token was a timestamp of *this*
+  signature. An unsigned attribute is covered by nothing in the enclosing
+  signature, so a genuine token — real authority, real signature, internally
+  consistent — could be pasted in, and the passport reported archival protection
+  until somebody else's authority certificate expired.
+
+  ✅ COMPLIANCE-PIN: ETSI EN 319 122-1 V1.3.1, clauses 5.5.2 and 5.5.3. The new
+  `ats` module builds and checks the imprint the clause specifies: a
+  concatenation of the content type, the signed-data hash, six fields of the
+  `SignerInfo` and an `ats-hash-index-v3` naming exactly which certificates,
+  revocation entries and unsigned attribute values were covered.
+
+  **The local backend moved with it**, and had to. It emitted an imprint over the
+  signer's encoded form and no index at all — documented as a deliberate
+  departure, on the reasonable argument that conformance is wasted on a validator
+  that rejects a self-signed certificate on its first check. What changed is that
+  **the reader in this workspace is now that validator**: left alone, the backend
+  would have produced seals its own node correctly reported as unarchived.
+
+  🚨 **The index is checked by containment, not equality**, and the difference is
+  the design of the attribute rather than a detail. It lists what was present
+  *when the timestamp was requested*, and the clause exists precisely so later
+  additions do not invalidate it — the archive timestamp is itself such an
+  addition, so an equality check fails on the very signature it was built for.
+  Recomputing and comparing wholesale looks stricter and is wrong; it is what the
+  round-trip test reported first.
+
+  The rule is `claimed ⊆ present`: an index may name less than is there, and may
+  never name **more** — that is how one would go on claiming to protect
+  validation material somebody removed after stamping. Both directions are
+  pinned, and the removal case is tested in isolation, because the borrowed-token
+  case above would be refused on the signer's fields even if index validation
+  never ran.
+
+  The hash algorithm is tied down at both ends: an index naming anything but
+  SHA-256 is refused rather than compared against hashes computed under a
+  different one, and the timestamp's own `messageImprint` algorithm must equal
+  the index's before the digest bytes are compared at all.
+
+  A token that cannot be tied to this signature now contributes no date, so a
+  seal carrying only such tokens reports `unknown` rather than `current` —
+  present, and unreadable *as this seal's*.
+
+  What this does **not** do is prove conformance. The round trip proves this
+  workspace's writer and reader agree; if both misread the clause they would
+  agree and both be wrong. What is checked against the standard is the code, by
+  reading it — not by interoperating with an independent implementation, which
+  nothing here can currently do.
+
 - **The published evidence-dossier JSON Schema rejected every dossier carrying a
   seal.** `docs/architecture/evidence-dossier-v1.schema.json` is published as the
   machine-readable description of the format and sets

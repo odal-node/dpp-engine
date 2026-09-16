@@ -49,6 +49,14 @@ fn malformed(what: impl std::fmt::Display) -> SealError {
 
 /// The signer, its certificate, and everything else the seal carries.
 struct Signed {
+    /// The `SignedData` exactly as it was parsed.
+    ///
+    /// Kept whole, and only for the archive timestamp: its `ats-hash-index-v3`
+    /// hashes every `CertificateChoices` and `RevocationInfoChoice` as encoded,
+    /// which the filtered views below cannot reproduce — `chain` drops every
+    /// choice that is not an X.509 certificate and `crls` drops every choice
+    /// that is not a CRL, and either omission changes the index.
+    data: SignedData,
     signer: SignerInfo,
     certificate: Certificate,
     /// Every X.509 certificate embedded in the seal, the signer's included.
@@ -159,6 +167,7 @@ fn parse(seal_der: &[u8]) -> Result<Signed, SealError> {
         .clone();
 
     Ok(Signed {
+        data: sd.clone(),
         signer: signer.clone(),
         certificate,
         chain,
@@ -764,19 +773,22 @@ pub enum ArchivalFreshness {
 
 /// Read how much life is left in a seal's archival timestamp.
 ///
-/// # What is checked, and the one thing that is not
+/// # What is checked
 ///
-/// The token's own signature is verified, so a fabricated archival timestamp
-/// does not produce a reassuring date. What is **not** checked is that the token
-/// archives *this* seal: the `archive-time-stamp-v3` imprint is computed over the
-/// concatenation EN 319 122-1 clause 5.5.3 specifies together with an
-/// `ats-hash-index-v3`, neither of which this crate builds or reads — see
-/// `local::LocalIdentity::sign_detached_at`, which says the same thing from the
-/// writing side.
+/// The token's own signature, that it was stamped inside its authority's
+/// certificate window, and — see [`archives`] — that it is a timestamp of **this
+/// signature**, by recomputing the EN 319 122-1 clause 5.5.3 concatenation
+/// against the `ats-hash-index-v3` the token carries.
 ///
-/// So this answers *"is there archival protection here, and has it lapsed?"* and
-/// not *"is this seal archived?"*. The distinction matters for a seal from
-/// elsewhere and not at all for one this node made.
+/// That last one is the difference between *"is there archival protection here?"*
+/// and *"is this seal archived?"*, and it used not to be checked: an unsigned
+/// attribute is covered by nothing in the enclosing signature, so a genuine
+/// token from another seal could be pasted in and this passport would report
+/// protection until somebody else's authority certificate expired.
+///
+/// A token that cannot be tied to this signature contributes no date, so a seal
+/// carrying only such tokens reports [`ArchivalFreshness::Unknown`] rather than
+/// `Current` — present, and unreadable *as this seal's*.
 ///
 /// The **latest** timestamp decides, by `genTime`. A renewal chain is a sequence
 /// of archive timestamps each covering the one before it, and it is the newest
@@ -810,7 +822,11 @@ pub fn archival_freshness(
     let mut newest: Option<(DateTime<Utc>, DateTime<Utc>)> = None;
     for attr in archival {
         for value in attr.values.as_slice() {
-            let Some((made_at, expires)) = archival_token(value) else {
+            let Some((made_at, expires)) = archival_token(
+                value,
+                crate::ats::Enclosing::of(&signed.data),
+                &signed.signer,
+            ) else {
                 continue;
             };
             if newest.is_none_or(|(seen, _)| made_at > seen) {
@@ -833,10 +849,17 @@ pub fn archival_freshness(
 ///
 /// `None` when the token cannot be read or its signature does not hold — a
 /// token that failed its check must not contribute a date.
-fn archival_token(value: &der::Any) -> Option<(DateTime<Utc>, DateTime<Utc>)> {
+fn archival_token(
+    value: &der::Any,
+    enclosing: crate::ats::Enclosing<'_>,
+    archived: &cms::signed_data::SignerInfo,
+) -> Option<(DateTime<Utc>, DateTime<Utc>)> {
     let token_der = value.to_der().ok()?;
     let token = parse(&token_der).ok()?;
     if !signature_holds(&token).unwrap_or(false) {
+        return None;
+    }
+    if !archives(&token, enclosing, archived) {
         return None;
     }
     let content = token.econtent.as_ref()?;
@@ -864,6 +887,88 @@ fn archival_token(value: &der::Any) -> Option<(DateTime<Utc>, DateTime<Utc>)> {
             .as_secs(),
     )?;
     Some((made_at, expires))
+}
+
+/// Whether this token is an archive timestamp **of this signature**.
+///
+/// ✅ COMPLIANCE-PIN: ETSI EN 319 122-1 V1.3.1, clauses 5.5.2 and 5.5.3.
+///
+/// A token's own signature holding proves it is a genuine timestamp. It proves
+/// nothing about *what* it timestamps — and an unsigned attribute is exactly
+/// where a token lifted from another seal can be pasted, since nothing in the
+/// enclosing signature covers it. Without this, a well-formed foreign token
+/// reports this passport as archived until that other seal's authority
+/// certificate expires.
+///
+/// Three things have to hold, and each closes a different substitution:
+///
+/// 1. **the token carries an `ats-hash-index-v3`** — without it there is nothing
+///    to recompute the imprint from, so the binding cannot be checked at all and
+///    the honest answer is no;
+/// 2. **everything the index claims is actually here** — `claimed ⊆ present`.
+///    An index naming a value the signature does not carry is invalid by the
+///    clause's own words, which is what stops one claiming to protect material
+///    that was removed after stamping. The reverse is deliberately allowed: an
+///    unindexed value is simply unprotected, and the clause exists so that later
+///    additions — this archive timestamp among them — do not invalidate it;
+/// 3. **the imprint is the one the concatenation produces** — which is what ties
+///    the index, the signature's own fields and the signed data together.
+///
+/// Returns `false` rather than an error throughout: a token that cannot be tied
+/// to this seal is not a malformed seal, it is a token that does not belong, and
+/// the caller's job is to ignore it rather than to fail.
+fn archives(
+    token: &Signed,
+    enclosing: crate::ats::Enclosing<'_>,
+    archived: &cms::signed_data::SignerInfo,
+) -> bool {
+    let Some(attrs) = token.signer.unsigned_attrs.as_ref() else {
+        return false;
+    };
+    let Some(attr) = attrs
+        .iter()
+        .find(|a| a.oid == crate::ats::ID_AA_ATS_HASH_INDEX_V3)
+    else {
+        return false;
+    };
+    let Some(value) = attr.values.as_slice().first() else {
+        return false;
+    };
+    let Ok(der) = value.to_der() else {
+        return false;
+    };
+    let Ok(index) = crate::ats::AtsHashIndexV3::from_der(der.as_slice()) else {
+        return false;
+    };
+
+    if !crate::ats::index_is_satisfied(enclosing, archived, &index) {
+        return false;
+    }
+
+    // Step 2 of the concatenation. Detached, so this comes from the
+    // `message-digest` signed attribute — which is only the same value when the
+    // archive timestamp hashed with the algorithm the signature did.
+    let Some(signed_data_hash) = crate::ats::signed_data_hash(archived, &index.hash_ind_algorithm)
+    else {
+        return false;
+    };
+    let Ok(expected) = crate::ats::imprint(enclosing, archived, &signed_data_hash, &index) else {
+        return false;
+    };
+
+    token
+        .econtent
+        .as_ref()
+        .and_then(|c| TstInfo::from_der(c).ok())
+        .is_some_and(|info| {
+            // The clause ties the two together: the index's algorithm is the one
+            // the timestamp's imprint was computed under. Comparing the digest
+            // bytes without checking that would accept a token whose own
+            // metadata says it hashed with something else — the bytes would
+            // match and the token would be describing a different computation.
+            info.message_imprint.hash_algorithm.oid == index.hash_ind_algorithm.oid
+                && info.message_imprint.hashed_message.as_bytes() == expected
+        })
 }
 
 /// Seconds since the epoch as a UTC instant.
@@ -2607,5 +2712,175 @@ mod tests {
         let (b, _db) = make();
         assert!(a.is_some() && b.is_some());
         assert_ne!(a, b, "two certificates must not report the same thumbprint");
+    }
+
+    /// Removing material the index names makes the archive timestamp invalid.
+    ///
+    /// This isolates the index check, which the borrowed-token case above does
+    /// **not**: that token's imprint differs on the signer's own fields, so it
+    /// would be refused even if index validation always returned true. Here
+    /// everything else is untouched and only an indexed certificate is dropped,
+    /// so the containment rule is the only thing that can catch it.
+    ///
+    /// It is also the direction the clause cares about. An index may name less
+    /// than is present — later additions are unprotected, not fatal — but it may
+    /// never name **more**, because that is how an index would go on claiming to
+    /// protect validation material somebody removed after stamping.
+    #[test]
+    fn an_archive_timestamp_whose_indexed_material_is_gone_is_refused() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let id = crate::local::LocalIdentity::load_or_create(dir.path()).expect("identity");
+        let der = id
+            .sign_detached_at(&[0x33; 32], SealConformanceLevel::BaselineLta)
+            .expect("sign");
+
+        // The control: untouched, this seal is archived.
+        assert!(
+            matches!(
+                archival_freshness(&der, chrono::Utc::now()).expect("readable"),
+                ArchivalFreshness::Current { .. }
+            ),
+            "the seal is archived before anything is removed"
+        );
+
+        // Drop one certificate from `SignedData.certificates`. An LTA seal
+        // carries the signing certificate and the authority's, and the index
+        // names both — so removing either leaves an entry with nothing behind
+        // it. The signer's own certificate has to stay, or the seal stops
+        // parsing for an unrelated reason and the test proves nothing.
+        let info = ContentInfo::from_der(&der).expect("CMS");
+        let mut sd: SignedData = info.content.decode_as().expect("SignedData");
+        let signer_cert = signer_certificate_of(
+            &sd.signer_infos.0.as_slice()[0],
+            &sd.certificates
+                .as_ref()
+                .expect("certificates")
+                .0
+                .as_slice()
+                .iter()
+                .filter_map(|c| match c {
+                    CertificateChoices::Certificate(c) => Some(c.clone()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>(),
+        )
+        .expect("the seal names its signer")
+        .clone();
+
+        let mut kept = der::asn1::SetOfVec::new();
+        kept.insert(CertificateChoices::Certificate(signer_cert))
+            .expect("keep the signer certificate");
+        let before = sd.certificates.as_ref().expect("certificates").0.len();
+        sd.certificates = Some(cms::signed_data::CertificateSet::from(kept));
+        assert!(
+            before > 1,
+            "the seal has to carry more than the signer certificate for this to remove one"
+        );
+
+        let stripped = ContentInfo {
+            content_type: const_oid::db::rfc5911::ID_SIGNED_DATA,
+            content: der::Any::encode_from(&sd).expect("encode"),
+        }
+        .to_der()
+        .expect("re-encode");
+
+        assert_eq!(
+            archival_freshness(&stripped, chrono::Utc::now()).expect("readable"),
+            ArchivalFreshness::Unknown,
+            "an index naming a certificate the seal no longer carries must not still report \
+             archival protection"
+        );
+    }
+
+    /// An archive timestamp taken from another seal does not archive this one.
+    ///
+    /// The defect this whole computation exists to close. The borrowed token is
+    /// **entirely genuine** — real authority, real signature, internally
+    /// consistent, and its own certificate perfectly valid — so every check that
+    /// existed before this one passes on it. What it is not is a timestamp of
+    /// *this* signature, and nothing said so.
+    ///
+    /// Unsigned attributes are where this is free to do: they sit inside
+    /// `SignerInfo` and the signature covers none of them, so pasting one in
+    /// disturbs nothing. The seal still verifies, still binds to the passport,
+    /// and reports archival protection until somebody else's authority
+    /// certificate expires.
+    ///
+    /// Both seals are made by the **same** node here, which makes the case
+    /// harder rather than easier: same signing key, same authority, same
+    /// certificates in `SignedData`. Everything is shared except the signature
+    /// being archived — so only the concatenation can tell them apart.
+    #[test]
+    fn an_archive_timestamp_from_another_seal_does_not_archive_this_one() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let id = crate::local::LocalIdentity::load_or_create(dir.path()).expect("identity");
+        let mine = id
+            .sign_detached_at(&[0x11; 32], SealConformanceLevel::BaselineLta)
+            .expect("sign");
+        let theirs = id
+            .sign_detached_at(&[0x22; 32], SealConformanceLevel::BaselineLta)
+            .expect("sign");
+
+        // The positive control. Without it a mistake that made *every* seal
+        // report unarchived would pass the assertion below and prove nothing.
+        assert!(
+            matches!(
+                archival_freshness(&theirs, chrono::Utc::now()).expect("readable"),
+                ArchivalFreshness::Current { .. }
+            ),
+            "the donor seal is genuinely archived, or the swap proves nothing"
+        );
+
+        let borrowed = {
+            let info = ContentInfo::from_der(&theirs).expect("CMS");
+            let sd: SignedData = info.content.decode_as().expect("SignedData");
+            sd.signer_infos.0.as_slice()[0]
+                .unsigned_attrs
+                .as_ref()
+                .expect("an LTA seal has unsigned attributes")
+                .iter()
+                .find(|a| a.oid == ID_AA_ETS_ARCHIVE_TIMESTAMP_V3)
+                .expect("an archive timestamp")
+                .clone()
+        };
+
+        // Replace this seal's archive timestamp with the other seal's, leaving
+        // its signature timestamp in place — the shape a tampered envelope
+        // actually takes, rather than a seal stripped of everything else.
+        let info = ContentInfo::from_der(&mine).expect("CMS");
+        let mut sd: SignedData = info.content.decode_as().expect("SignedData");
+        let mut signers = sd.signer_infos.0.as_slice().to_vec();
+        let kept: Vec<_> = signers[0]
+            .unsigned_attrs
+            .as_ref()
+            .expect("unsigned attributes")
+            .iter()
+            .filter(|a| a.oid != ID_AA_ETS_ARCHIVE_TIMESTAMP_V3)
+            .cloned()
+            .collect();
+        let mut attrs = der::asn1::SetOfVec::new();
+        for a in kept {
+            attrs.insert(a).expect("attribute");
+        }
+        attrs.insert(borrowed).expect("the borrowed timestamp");
+        signers[0].unsigned_attrs = Some(attrs);
+        let mut set = der::asn1::SetOfVec::new();
+        set.insert(signers.remove(0)).expect("signer");
+        sd.signer_infos = cms::signed_data::SignerInfos::from(set);
+
+        let swapped = ContentInfo {
+            content_type: const_oid::db::rfc5911::ID_SIGNED_DATA,
+            content: der::Any::encode_from(&sd).expect("encode"),
+        }
+        .to_der()
+        .expect("re-encode");
+
+        assert_eq!(
+            archival_freshness(&swapped, chrono::Utc::now()).expect("readable"),
+            ArchivalFreshness::Unknown,
+            "a genuine archive timestamp over someone else's signature must not report this \
+             seal as archived — it is present and unreadable *as this seal's*, which is what \
+             Unknown means and is deliberately not Current"
+        );
     }
 }
