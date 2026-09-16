@@ -498,3 +498,72 @@ mod anchor_freshness_signal {
         );
     }
 }
+
+/// A verified list survives being stored and restored.
+///
+/// The cache's premise is that verification can be done once and written down,
+/// so what is written down has to answer the same questions as what was
+/// verified. This takes the real Finnish list through the store's round trip —
+/// parsed form to JSON and back — and asks it the question a qualification
+/// verdict asks.
+///
+/// Whole-value equality is not the assertion. `UnverifiedTrustedList` derives
+/// `PartialEq`, so comparing the two would pass for a round trip that preserved
+/// every field and dropped the lookup that uses them. The certificates and the
+/// service histories are what a verdict reads, so those are what is checked.
+#[test]
+fn a_verified_list_survives_the_store_round_trip() {
+    let finnish = include_str!("../../tests/fixtures/fi-trusted-list.xml");
+    let lotl = verify_lotl(EU_LOTL).expect("the LOTL verifies");
+    let pointer = lotl
+        .pointers()
+        .iter()
+        .find(|p| {
+            p.territory.as_deref() == Some("FI")
+                && p.mime_type.as_deref() != Some("application/pdf")
+        })
+        .expect("the LOTL points at Finland");
+    let verified =
+        super::verify::verify_trusted_list(finnish, pointer).expect("Finland's list verifies");
+
+    let json = serde_json::to_value(verified.content()).expect("the parsed form serialises");
+    let restored: super::model::UnverifiedTrustedList =
+        serde_json::from_value(json).expect("and reads back");
+    let from_store =
+        super::verify::VerifiedTrustedList::from_store(restored, verified.signed_by().to_owned());
+
+    assert_eq!(from_store.territory(), verified.territory());
+    assert_eq!(from_store.signed_by(), verified.signed_by());
+    assert_eq!(
+        from_store.providers().len(),
+        verified.providers().len(),
+        "a provider lost in storage is a provider a verdict cannot find"
+    );
+
+    // The lookup a verdict actually performs, on both. Certificates are what
+    // the issuer match is made against and histories are what "qualified at
+    // sealing" is read from, so a round trip that kept the names and dropped
+    // either would pass every assertion above and be useless.
+    let ca = dpp_domain::trusted_list::TrustServiceType::QUALIFIED_CERTIFICATE_CA;
+    let certificates = |list: &super::verify::VerifiedTrustedList| -> usize {
+        list.providers_offering(ca)
+            .flat_map(|(_, services)| services)
+            .map(|s| s.certificates.len())
+            .sum()
+    };
+    // `status_at` is the whole reason a history is stored rather than a current
+    // status: Art. 32(1)(b) asks whether the provider was qualified **when the
+    // seal was made**. A round trip that flattened the history to "granted now"
+    // would answer today correctly and every past question wrongly.
+    let granted_now = |list: &super::verify::VerifiedTrustedList| -> usize {
+        list.providers_offering(ca)
+            .flat_map(|(_, services)| services)
+            .filter(|s| s.history.was_granted_at(chrono::Utc::now()))
+            .count()
+    };
+
+    assert!(certificates(&verified) > 0, "the fixture lists CAs");
+    assert_eq!(certificates(&from_store), certificates(&verified));
+    assert!(granted_now(&verified) > 0, "and some of them are granted");
+    assert_eq!(granted_now(&from_store), granted_now(&verified));
+}

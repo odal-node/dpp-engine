@@ -109,6 +109,50 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ### Added
 
+- **A node can now keep the trusted lists it has verified.** New
+  `odal.trusted_list_cache` (migration `0039`), `dpp_types::trust::TrustedListStore`
+  and `PgTrustedListRepo`, plus `VerifiedTrustedList::content` and
+  `::from_store` for the round trip.
+
+  One row per territory the EU list of trusted lists names, in exactly one of two
+  states — **verified**, carrying the parsed list, the digest of the certificate
+  that signed it and when the check ran; or **unavailable**, carrying why. A
+  database `CHECK` enforces exactly one, because keeping those apart is the
+  entire value of the table: a verdict of "no list names this issuer" is a
+  statement about the Union only while nothing is unavailable, and Germany is
+  unavailable today.
+
+  A territory **absent** from the cache was never named by the list of trusted
+  lists. A territory recorded unavailable was named and could not be read. Those
+  are different facts and a verdict needs both.
+
+  **The parsed form, never the documents.** The Union is roughly 40 MB of XML and
+  Germany alone is 5.11 MiB; parsed down to providers, services, histories and
+  certificates it is a fraction of that. `MAX_TRUSTED_LIST_BYTES` bounds a
+  hostile *fetch* and is not a retention budget.
+
+  🚨 **`from_store` is the one constructor that trusts a record instead of
+  bytes.** Every other path into `VerifiedTrustedList` runs
+  `verify_trusted_list`, so holding one is evidence the check ran on those bytes;
+  this one is evidence it ran somewhere earlier and was written down. That is a
+  real weakening, taken deliberately: the alternative is canonicalising and
+  checking an XAdES signature over a multi-megabyte document every time a seal is
+  inspected, and a cache that re-does the work it caches is not one.
+
+  `put` is per-territory rather than a bulk replace, and that is load-bearing: a
+  refresh failing for one Member State must leave every other row alone, **and**
+  must leave that row's previous good copy in place rather than emptying it.
+
+  *(Nothing fills the cache yet — the refresh policy is a separate decision, and
+  what a node reports while the cache is cold is another. This is the storage and
+  the round trip, which are what those need to exist first.)*
+
+  Deliberately **not** a record of validations. Under Reg. (EU) No 910/2014
+  Art. 33, reached for seals by Art. 40, a qualified validation service is a QTSP
+  service whose result carries the provider's own seal. Nothing stored here is
+  signed and nothing here is qualified — a row is this node's note that it read a
+  published list.
+
 - **A qualification verdict now says how wide its absence claim is.**
   `IssuerStanding::NotListed` gains `consulted` and `unchecked` counts, and
   `SealQualification` gains `unchecked: Vec<UncheckedTerritory>` naming which

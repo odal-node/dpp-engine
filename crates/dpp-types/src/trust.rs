@@ -14,6 +14,10 @@
 //! registering it here, or `enforce_profile` will silently pass regardless of
 //! that port's real tier.
 
+use std::collections::BTreeMap;
+
+use async_trait::async_trait;
+use dpp_domain::DppError;
 use serde::Serialize;
 
 /// Trust tier a resolved adapter operates at. Gauge encoding: Ghost=0, Sandbox=1,
@@ -384,4 +388,86 @@ mod tests {
         assert!(TrustMode::Ghost < TrustMode::Sandbox);
         assert!(TrustMode::Sandbox < TrustMode::Live);
     }
+}
+
+/// One territory's row in the trusted-list cache.
+///
+/// A row is in exactly one of two states, and keeping them apart is the whole
+/// value of the cache. A qualification verdict that says "no list names this
+/// issuer" is a statement about the Union only when nothing is
+/// [`Unavailable`](Self::Unavailable); while any territory is, a provider listed
+/// *there* is indistinguishable from one listed nowhere.
+///
+/// The parsed list travels as `serde_json::Value` rather than a typed list
+/// because the type belongs to `dpp-seal` and this crate sits below it. The
+/// store does not interpret it — it writes what it is handed and returns it
+/// unchanged — so a type here would buy nothing and invert the dependency.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CachedTrustedList {
+    /// The list verified, and this is what it said.
+    Verified {
+        /// The parsed list, as `dpp_seal::trustlist::UnverifiedTrustedList`.
+        content: serde_json::Value,
+        /// Base64 SHA-256 of the certificate whose signature was checked.
+        signed_by: String,
+        /// When that check ran. Evidence is only ever as fresh as this.
+        verified_at: chrono::DateTime<chrono::Utc>,
+    },
+    /// The list of trusted lists names this territory and it could not be read.
+    ///
+    /// **Not the same as absent.** A territory absent from the cache was never
+    /// named; one recorded here was named and could not be verified, which is
+    /// the fact a verdict has to carry.
+    Unavailable {
+        /// Why, in terms an operator can act on.
+        reason: String,
+    },
+}
+
+/// Where a node keeps the trusted lists it has verified.
+///
+/// # Why this is persisted rather than held in memory
+///
+/// Fetching and verifying the Union costs roughly 40 MB of XML and an XAdES
+/// signature check per document. In memory, every restart pays that again, and
+/// for the length of a whole refresh the node reports "nothing consulted" —
+/// which is indistinguishable from a node whose refresh is broken. The same
+/// argument `SealAuditStore` makes for the audit's cursor and report applies
+/// here without modification.
+///
+/// # What it deliberately is not
+///
+/// A record of validations. Under Reg. (EU) No 910/2014 Art. 33, reached for
+/// seals by Art. 40, a *qualified* validation service is a QTSP service whose
+/// result carries the provider's own seal. Nothing stored here is signed and
+/// nothing here is qualified — a row is this node's note that it read a
+/// published list, and must never be presented as an attestation.
+#[async_trait]
+pub trait TrustedListStore: Send + Sync {
+    /// Every territory the cache holds, verified or not.
+    ///
+    /// Returned together because a caller needs both halves to know how wide its
+    /// answer is: the verified lists to search, and the unavailable ones to
+    /// admit. Splitting them into two calls would make it possible to read one
+    /// and forget the other, which is the exact failure the cache exists to
+    /// prevent.
+    ///
+    /// # Errors
+    ///
+    /// Propagates the store's own failure.
+    async fn load(&self) -> Result<BTreeMap<String, CachedTrustedList>, DppError>;
+
+    /// Write one territory's state, replacing whatever was there.
+    ///
+    /// Per-territory rather than a bulk replace, and that is load-bearing: a
+    /// refresh that fails for one Member State must leave every other row alone,
+    /// and must leave *that* row's previous good copy in place rather than
+    /// emptying it. A caller deciding to record it as unavailable is making a
+    /// different choice from failing to refresh it, and only the caller can tell
+    /// those apart.
+    ///
+    /// # Errors
+    ///
+    /// Propagates the store's own failure.
+    async fn put(&self, territory: &str, entry: &CachedTrustedList) -> Result<(), DppError>;
 }

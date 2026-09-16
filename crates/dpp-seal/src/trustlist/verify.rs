@@ -427,6 +427,48 @@ pub struct VerifiedTrustedList {
 }
 
 impl VerifiedTrustedList {
+    /// The parsed content, for a store to write down.
+    ///
+    /// The counterpart to [`Self::from_store`]. Deliberately the **parsed** form
+    /// rather than the document: the Union's lists are roughly 40 MB of XML and
+    /// Germany alone is 5.11 MiB, which reduces to providers, services,
+    /// histories and certificates. `MAX_TRUSTED_LIST_BYTES` is 8 MiB per
+    /// document and exists to bound a hostile *fetch*, not to size retention.
+    #[must_use]
+    pub fn content(&self) -> &super::model::UnverifiedTrustedList {
+        &self.content
+    }
+
+    /// Rebuild one from a store that recorded the verification.
+    ///
+    /// # This is the one constructor that trusts a record instead of bytes
+    ///
+    /// Every other path into this type runs [`verify_trusted_list`], so holding
+    /// a value is evidence the check ran *here, on these bytes*. This one is
+    /// evidence that the check ran **somewhere, earlier**, and was written down.
+    /// That is a real weakening and it is deliberate, so it is worth saying
+    /// exactly what it rests on.
+    ///
+    /// The store writes a row only after `verify_trusted_list` returned, and a
+    /// territory it could not verify is recorded as unverifiable rather than
+    /// written with content — so a row carrying content is a verification that
+    /// happened. What the row cannot tell you is whether it would still verify
+    /// *now*: a list is re-fetched and re-verified on its own `NextUpdate`, and
+    /// the freshness policy is the store's business, not this type's.
+    ///
+    /// The alternative was re-verifying on every read, which means canonicalising
+    /// and checking an XAdES signature over a multi-megabyte document each time a
+    /// seal is inspected. Caching the verified *result* is the entire point of
+    /// the store; a cache that re-does the work it caches is not one.
+    ///
+    /// `signed_by` is carried through rather than recomputed for the same
+    /// reason — it is part of the record, not something to re-derive from
+    /// content the signature no longer accompanies.
+    #[must_use]
+    pub fn from_store(content: super::model::UnverifiedTrustedList, signed_by: String) -> Self {
+        Self { content, signed_by }
+    }
+
     /// Assert verification, for tests only.
     ///
     /// The type has no public constructor so that nothing outside this module
