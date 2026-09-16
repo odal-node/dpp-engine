@@ -109,6 +109,38 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ### Added
 
+- **A qualification verdict now says how wide its absence claim is.**
+  `IssuerStanding::NotListed` gains `consulted` and `unchecked` counts, and
+  `SealQualification` gains `unchecked: Vec<UncheckedTerritory>` naming which
+  territories could not be consulted and why. `qualify` takes the skipped
+  territories alongside the lists.
+
+  `NotListed` is the only verdict that claims something is **not** there, so it
+  is the only one whose truth depends on what was available to look at. Its own
+  doc already admitted this — *"a statement about the lists that were passed in,
+  not about the Union"* — which is honest while a caller picks the lists by hand
+  and stops being honest the moment anything caches them. A cache silently
+  holding 26 of 27 lists turns "not listed" into a verdict against a perfectly
+  qualified provider, indistinguishable from a genuine miss.
+
+  **This is not hypothetical, and it is not fixable from here.** Germany's
+  trusted list does not verify against the mandated signature profile today, and
+  Germany has one of the larger provider populations — so any node consulting the
+  Union is missing it. What this change buys is that the verdict *says so*
+  instead of reporting a German provider exactly like an unlisted one.
+
+  The counts are on the variant rather than only on the result so that a caller
+  matching the variant alone cannot miss them: `consulted == 0` means nothing was
+  looked at, which is what this node reports today for every provider seal.
+  `ChainIncomplete` deliberately carries no counts — it already refuses to make
+  the absence claim, because the walk ran out of links and a listed CA may sit
+  above the gap whatever was consulted.
+
+  *(No behaviour change: nothing supplies trusted lists at runtime yet, so every
+  verdict reports `consulted: 0`. The type is changed now, while nothing consumes
+  it, precisely so that wiring a cache later is additive rather than a breaking
+  change to a verdict an authority reads.)*
+
 - **Trusted-list signatures are checked against the transform profile the law
   mandates.** New `LotlRejected::NonConformantProfile` and the same on
   `TrustedListRejected`: the `ds:Reference` with `URI=""` must carry exactly one
