@@ -157,11 +157,19 @@ any mention of what prompted it downstream.
 
 ## Asking for a Code Review
 
-CodeRabbit reviews this repository **on request, never automatically**. A pull
-request is reviewed when it carries the `review-ready` label, or when someone
-comments `@coderabbitai review` on it. Nothing else triggers one, and an
-unlabelled pull request gets no comment at all. What it reviews against is in
-`.coderabbit.yaml` and in the documents that file points at — this one included.
+CodeRabbit reviews **only the pull requests that ask for it**. A pull request is
+reviewed when it carries the `review-ready` label, or when someone comments
+`@coderabbitai review` on it. Nothing else triggers one, and an unlabelled pull
+request gets no comment at all. What it reviews against is in `.coderabbit.yaml`
+and in the documents that file points at — this one included.
+
+🚨 **A review reads the pull request as it stood when the review ran, and
+nothing re-reads it.** `auto_incremental_review` is off, so a push after a
+review — a rebase, a conflict resolution, a branch folded in, a fix for a
+finding — is merged unread unless someone asks again. **If a push changes what
+the review looked at, comment `@coderabbitai review`.** Nothing enforces this,
+and five pull requests were merged on 2026-09-16 carrying rebases and conflict
+resolutions that no review had seen.
 
 **Apply the label when the branch is genuinely finished, and not before.**
 Finished means all of:
