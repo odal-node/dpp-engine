@@ -828,6 +828,37 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   broken walk. Decoys are generated until one sorts **before** the real
   intermediate, making the adversarial order certain.
 
+- **`no-rsa-private-key` could pass while finding exactly what it looks for, and
+  never looked in `cli/tests`.** The gate enforces the claim that suppresses
+  `RUSTSEC-2023-0071` — that this workspace holds no RSA private key and performs
+  no RSA private-key operation.
+
+  `grep` exits **2** on a path error and **1** on no match, and `if grep …; then`
+  reads both as "nothing found" while `2>/dev/null` hid the reason. Bash expands
+  `crates/*/tests` only to directories that exist, so a layout where none did
+  would have handed grep a literal glob and the whole source check would have
+  gone green **while printing its matches to stdout**. Observed against a fixture
+  tree with no `tests/` directory: it found a planted `RsaPrivateKey`, printed
+  it, and exited 0.
+
+  The status is now read explicitly — 0 found, 1 clean, anything else the scan
+  did not run, which exits 2 rather than passing. `cli/tests` joined the scanned
+  roots, which is a real gap rather than a hypothetical one: the directory
+  exists.
+
+  **The gate now proves it can fail, on every invocation.** `--self-test` plants
+  an `RsaPrivateKey` in each root that must be scanned and a direct `rsa`
+  dependency in a manifest, and fails if either is not caught. It runs before the
+  real scan, because a gate that has not demonstrated it can fail has not
+  demonstrated anything.
+
+  🚨 The self-test's list of roots is **written out rather than taken from the
+  scan's own list**, and that is the difference between a self-test and a
+  tautology. Derived, dropping a root would stop the scan looking there and stop
+  the self-test planting there, and the gate would pass — blind to precisely the
+  regression it exists to catch. The first version of this fix had that defect
+  and it was found by dropping `cli/tests` and watching the gate still pass.
+
 - **The trusted-list fetch cap refused the two documents the vendored `xml-sec`
   fork exists for.** *(No node has run this path yet — the reader is not wired
   into anything — so nothing was broken in the field. What was broken is that the
