@@ -5444,7 +5444,7 @@ components:
           description: |-
             What Regulation (EU) No 910/2014 Art. 32(1) says about this seal, read against the EU Trusted Lists this node holds. Art. 40 applies Art. 32 to seals *mutatis mutandis*.
 
-            🚨 **Read `qualification.issuer.consulted` and `.unchecked` before acting on a `notListed` standing.** That verdict is the only one claiming an absence, and an absence is only as wide as what was looked at. `consulted: 0` means no list was loaded — the answer is about nothing, and it is what a node with the trusted-list refresh switched off reports for every provider seal, qualified or not.
+            🚨 **Read `qualification.issuer.consulted` and `.unchecked` before acting on a `notListed` standing.** That verdict is the only one claiming an absence, and an absence is only as wide as what was looked at. `consulted: 0` means no list was loaded — the answer is about nothing, and it is what a node that loaded no trusted-list cache at boot reports for every provider seal, qualified or not.
 
             Even at its widest this is **not** "not qualified in law": a provider can be qualified and its Member State's list wrong, which is that state's problem and not something this node can see.
 
@@ -7957,6 +7957,30 @@ components:
           description: 'Whether issuer and subject are the same name — the structural test for "nobody issued this to us", and a property of the certificate that no environment variable can change. True means the seal attests that a key this node holds signed a digest and **nothing else**: it carries no legal weight, and no Trusted List would give it any.'
         creationDevice:
           $ref: '#/components/schemas/CreationDevice'
+    TrustServiceStatus:
+      oneOf:
+        - type: 'null'
+        - type: string
+          enum:
+            - granted
+            - withdrawn
+        - type: object
+          required:
+            - other
+          properties:
+            other:
+              type: string
+              description: The trusted-list status URI, verbatim.
+      description: |-
+        The status a trusted list records for a service — ETSI TS 119 612 Annex D.5.
+
+        🚨 **Three shapes, not two.** `granted` and `withdrawn` are the pair that answers whether a service holds qualified status. Every other status a list can carry — `undersupervision`, `recognisedatnationallevel`, and whatever a Member State publishes next — arrives as an **object**, `{"other": "<the status URI>"}`.
+
+        They are kept apart deliberately. Folding them into the same string vocabulary as `granted` would invite the reading that `undersupervision` is a lesser kind of qualified, or `recognisedatnationallevel` a weaker `granted`. Neither is true: they answer a different question, asked of a different kind of service.
+
+        A client that assumes a string here breaks on the first list entry it meets that is neither granted nor withdrawn. `granted` is the only value that means qualified.
+
+        `null` where it appears on a verdict means the list's history does not reach back to the moment asked about — the list is *silent* about it rather than negative, which is a different finding from a recorded non-granted status.
     IssuerStanding:
       type: object
       description: |-
@@ -8024,13 +8048,16 @@ components:
             - 'null'
           description: The list carrying that name.
         status:
-          type:
-            - string
-            - 'null'
+          allOf:
+            - $ref: '#/components/schemas/TrustServiceStatus'
           description: |-
             `notQualifiedAtSealing` only — the status in force at the sealing time.
 
             Null means the list's history does not reach back that far, which is a **different finding** from a recorded non-granted status: the list is silent about that moment rather than negative about it.
+
+            🚨 **Three shapes, not two.** `granted` and `withdrawn` are the two the supervisory body's vocabulary distinguishes for a qualified service; every other status a trusted list can carry — `undersupervision`, `recognisedatnationallevel` and the rest — arrives as an **object**, `{"other": "<the status URI>"}`. Core keeps them readable without making them comparable to `granted`, because they answer a different question asked of a different kind of service, and folding them in would invite the reading that one of them is a lesser kind of qualified.
+
+            A client that assumes a string here will break on the first list entry it meets that is neither granted nor withdrawn.
         reason:
           type: string
           description: |-

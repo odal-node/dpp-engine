@@ -280,8 +280,8 @@ pub struct SealResponse {
     /// is only as wide as what was looked at:
     ///
     /// - `consulted: 0` — no list was loaded. The answer is about nothing, and
-    ///   it is what a node with `TRUSTED_LIST_REFRESH` unset reports for every
-    ///   provider seal, qualified or not.
+    ///   it is what a node that loaded no trusted-list cache at boot reports for
+    ///   every provider seal, qualified or not.
     /// - `unchecked > 0` — some territory the EU list of trusted lists names
     ///   could not be read, so a provider listed *there* is indistinguishable
     ///   from one listed nowhere. `unchecked` names them and says why.

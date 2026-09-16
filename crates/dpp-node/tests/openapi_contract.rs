@@ -289,6 +289,18 @@ const UNCHECKED: &[(&str, &str)] = &[
          the only thing that would actually close it",
     ),
     (
+        "TrustServiceStatus",
+        "a `oneOf` mixing `null`, a string enum and an externally-tagged object \
+         — core's `Other(String)` catch-all serialises as `{\"other\": \"<uri>\"}` \
+         so that `undersupervision` cannot be read as a lesser kind of \
+         `granted`. Neither checker can express that union, the same limit \
+         `ResponsibilityBasis` runs into. The three wire shapes are pinned \
+         instead by `a_status_outside_the_granted_withdrawn_pair_is_an_object_\
+         on_the_wire` in `dpp-types`, and the object form is carried through a \
+         real verdict by the `notQualifiedAtSealing` case in \
+         `every_issuer_standing_serialises_as_documented`",
+    ),
+    (
         "IssuerStanding",
         "an internally-tagged enum whose seven variants carry seven different \
          payload fields, so no single fixture can emit the union of documented \
@@ -4470,7 +4482,17 @@ fn every_issuer_standing_serialises_as_documented() {
                 issuer: "CN=A".to_owned(),
                 provider: Some("P".to_owned()),
                 territory: Some("FI".to_owned()),
-                status: Some(dpp_domain::trusted_list::TrustServiceStatus::Withdrawn),
+                // 🚨 `Other`, not `Withdrawn`. `TrustServiceStatus` is
+                // `#[non_exhaustive]` with an `Other(String)` catch-all for
+                // every status a trusted list carries that is not `granted` or
+                // `withdrawn` — `undersupervision`, `recognisedatnationallevel`
+                // and the rest. It serialises as an **object**,
+                // `{"other": "<uri>"}`, not a string, so a schema saying
+                // `string | null` here is violated by the first such entry a
+                // real list produces. This fixture is that case.
+                status: Some(dpp_domain::trusted_list::TrustServiceStatus::Other(
+                    "http://uri.etsi.org/TrstSvc/TrustedList/Svcstatus/undersupervision".to_owned(),
+                )),
             },
             "notQualifiedAtSealing",
             &["issuer", "provider", "territory", "status"],
@@ -4486,6 +4508,30 @@ fn every_issuer_standing_serialises_as_documented() {
             &["issuer", "provider", "territory", "remoteQscdManagement"],
         ),
     ];
+
+    // 🚨 An exhaustive `match` with no `_` arm, purely so the compiler counts
+    // the variants for us. `cases` above is hand-written, and a hand-written
+    // variant list is exactly what this file already records as drifting — three
+    // enum cases read `ALL` off the core enum for that reason. `IssuerStanding`
+    // carries data, so no such constant is possible; this is the substitute.
+    // An eighth variant stops this compiling until somebody adds it to `cases`
+    // **and** to the schema.
+    for (value, _, _) in &cases {
+        match value {
+            I::SelfIssued { .. }
+            | I::NotListed { .. }
+            | I::ChainIncomplete { .. }
+            | I::SignatureNotFromListedCa { .. }
+            | I::PathUnverifiable { .. }
+            | I::NotQualifiedAtSealing { .. }
+            | I::QualifiedAtSealing { .. } => {}
+        }
+    }
+    assert_eq!(
+        cases.len(),
+        7,
+        "every variant the match above names must have a case here"
+    );
 
     let mut emitted: BTreeSet<String> = BTreeSet::new();
     for (value, standing, payload) in &cases {

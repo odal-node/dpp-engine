@@ -308,7 +308,7 @@ impl std::fmt::Display for SealQualification {
                 missing_issuer,
             } => write!(
                 f,
-                "issued by {issuer}; the seal does not carry a certificate for {missing_issuer},                  so no path to a listed CA could be followed — ask the provider to include the                  intermediates (ETSI EN 319 122-1 clause 5.2.1)"
+                "issued by {issuer}; the seal does not carry a certificate for {missing_issuer}, so no path to a listed CA could be followed — ask the provider to include the intermediates (ETSI EN 319 122-1 clause 5.2.1)"
             ),
             IssuerStanding::SignatureNotFromListedCa {
                 issuer, territory, ..
@@ -373,7 +373,7 @@ impl std::fmt::Display for SealQualification {
                 // would let this read as the whole of Art. 32(1)(b).
                 write!(
                     f,
-                    " — issuer signature verified; the certificate's own validity                      window and revocation are reported separately"
+                    " — issuer signature verified; the certificate's own validity window and revocation are reported separately"
                 )
             }
         }
@@ -520,5 +520,67 @@ mod wire_shape {
                 );
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod status_shape {
+    use super::*;
+    use dpp_domain::trusted_list::TrustServiceStatus;
+
+    /// 🚨 A trusted-list status is not always a string.
+    ///
+    /// `TrustServiceStatus` is `#[non_exhaustive]` with an `Other(String)`
+    /// catch-all, and it serialises as an **object** — `{"other": "<uri>"}`.
+    /// Every status a list carries that is not `granted` or `withdrawn` lands
+    /// there: `undersupervision`, `recognisedatnationallevel`, and whatever a
+    /// Member State publishes next.
+    ///
+    /// Core keeps them out of the main enum deliberately, so that
+    /// `undersupervision` cannot be read as a lesser kind of qualified. The cost
+    /// is that `qualification.issuer.status` has three wire shapes rather than
+    /// two, and a schema — or a client — that assumes a string breaks on the
+    /// first such entry a real list produces.
+    #[test]
+    fn a_status_outside_the_granted_withdrawn_pair_is_an_object_on_the_wire() {
+        assert_eq!(
+            serde_json::to_string(&TrustServiceStatus::Granted).expect("serialise"),
+            r#""granted""#
+        );
+        assert_eq!(
+            serde_json::to_string(&TrustServiceStatus::Withdrawn).expect("serialise"),
+            r#""withdrawn""#
+        );
+
+        let other = TrustServiceStatus::Other(
+            "http://uri.etsi.org/TrstSvc/TrustedList/Svcstatus/undersupervision".to_owned(),
+        );
+        let json = serde_json::to_value(&other).expect("serialise");
+        assert!(
+            json.is_object(),
+            "an unrecognised status is an object, not a string: {json}"
+        );
+        assert_eq!(
+            json["other"].as_str(),
+            Some("http://uri.etsi.org/TrstSvc/TrustedList/Svcstatus/undersupervision"),
+            "carrying the status URI verbatim"
+        );
+    }
+
+    /// And it reaches the wire through a real verdict, not only on its own.
+    #[test]
+    fn the_object_form_survives_inside_an_issuer_standing() {
+        let verdict = IssuerStanding::NotQualifiedAtSealing {
+            issuer: "CN=A".into(),
+            provider: Some("P".into()),
+            territory: Some("FI".into()),
+            status: Some(TrustServiceStatus::Other("http://example/x".to_owned())),
+        };
+
+        let json = serde_json::to_value(&verdict).expect("serialise");
+        assert!(
+            json["status"].is_object(),
+            "the schema for this field has to admit an object: {json}"
+        );
     }
 }

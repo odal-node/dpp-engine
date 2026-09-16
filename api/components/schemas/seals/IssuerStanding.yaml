@@ -108,9 +108,8 @@ properties:
       - "null"
     description: The list carrying that name.
   status:
-    type:
-      - string
-      - "null"
+    allOf:
+      - $ref: ./TrustServiceStatus.yaml
     description: >-
       `notQualifiedAtSealing` only — the status in force at the sealing time.
 
@@ -118,6 +117,20 @@ properties:
       Null means the list's history does not reach back that far, which is a
       **different finding** from a recorded non-granted status: the list is
       silent about that moment rather than negative about it.
+
+
+      🚨 **Three shapes, not two.** `granted` and `withdrawn` are the two the
+      supervisory body's vocabulary distinguishes for a qualified service; every
+      other status a trusted list can carry — `undersupervision`,
+      `recognisedatnationallevel` and the rest — arrives as an **object**,
+      `{"other": "<the status URI>"}`. Core keeps them readable without making
+      them comparable to `granted`, because they answer a different question
+      asked of a different kind of service, and folding them in would invite the
+      reading that one of them is a lesser kind of qualified.
+
+
+      A client that assumes a string here will break on the first list entry it
+      meets that is neither granted nor withdrawn.
   reason:
     type: string
     description: >-

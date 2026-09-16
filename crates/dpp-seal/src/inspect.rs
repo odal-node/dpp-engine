@@ -251,9 +251,11 @@ impl SealInspector for CadesInspector {
         {
             Ok(verdict) => Some(verdict),
             // Not read, rather than a verdict drawn from bytes nobody could
-            // parse. `der_of` has already refused the unreadable cases it can
-            // see, so this is a seal that decoded and is not a CMS this build
-            // understands.
+            // parse. `readable` has already refused what it can see — a
+            // placeholder, a format this adapter does not parse, a `sealValue`
+            // that is not base64 — so reaching here means the bytes decoded and
+            // `signer_certificate`, inside `qualify`, could not read a CMS out
+            // of them.
             Err(e) => {
                 tracing::warn!(error = %e, "stored seal could not be read; qualification unknown");
                 None
