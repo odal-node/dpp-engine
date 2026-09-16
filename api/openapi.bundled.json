@@ -8943,7 +8943,7 @@
       },
       "PassportScopeReport": {
         "type": "object",
-        "description": "Whether Reg. (EU) 2023/1542 Art. 77(1) requires a battery passport for this\nrecord at all.\n\n> \"From 18 February 2027 each LMT battery, each industrial battery with a\n> capacity greater than 2 kWh and each electric vehicle battery placed on the\n> market or put into service shall have an electronic record ('battery\n> passport').\"\n\nThe Regulation defines five battery categories; this article reaches three.\nPortable and SLI batteries bear no passport obligation, so a passport for one\nis the operator's own artefact rather than a discharged duty.\n\nReported **beside** the gates, never instead of them. This node applies the\ncategory content gate whatever this says, and for a voluntary passport that\nmakes it stricter than the article requires — which the `note` admits rather\nthan hides.\n\nTwo details the article turns on: the threshold is **energy** (kWh), not the\nampere-hour \"rated capacity\" defined for the purposes of an annex; and unlike\nArts. 7 and 8 it carries no `rechargeable` qualifier.\n",
+        "description": "Whether Reg. (EU) 2023/1542 Art. 77(1) requires a battery passport for this\nrecord at all.\n\n> \"From 18 February 2027 each LMT battery, each industrial battery with a\n> capacity greater than 2 kWh and each electric vehicle battery placed on the\n> market or put into service shall have an electronic record ('battery\n> passport').\"\n\nThe Regulation defines five battery categories; this article reaches three.\nPortable and SLI batteries bear no passport obligation, so a passport for one\nis the operator's own artefact rather than a discharged duty.\n\nReported **beside** the gates, never instead of them. This node applies the\ncategory content gate whatever this says, and for a passport outside the\narticle that makes it stricter than the law requires — which the `note` admits\nrather than hides.\n\nTwo details the article turns on: the threshold is **energy** (kWh), not the\nampere-hour \"rated capacity\" defined for the purposes of an annex; and unlike\nArts. 7 and 8 it carries no `rechargeable` qualifier.\n",
         "required": [
           "status"
         ],
@@ -8952,15 +8952,18 @@
             "type": "string",
             "enum": [
               "required",
-              "voluntary",
+              "notCovered",
+              "belowThreshold",
+              "capacityUnknown",
+              "notYetBinding",
               "notApplicable"
             ],
-            "description": "`required` — Art. 77(1) reaches this record.\n`voluntary` — it does not; a passport is still permitted.\n`notApplicable` — not a battery, so this article has nothing to say. Other\ninstruments may still require a passport.\n",
+            "description": "Deliberately not a boolean, and deliberately not collapsed into one\n\"voluntary\". \"This category never owes one\", \"this unit is under the\nthreshold\", \"we cannot tell yet\" and \"not yet\" are four different sentences\nto put in front of an operator, and only some of them describe something\nthey can change.\n\n`required` — Art. 77(1) reaches this record.\n\n`notCovered` — the article does not name this category. Portable and SLI\nbatteries owe no passport, ever.\n\n`belowThreshold` — an industrial battery at or below 2 kWh. The category\n*is* in scope; this unit is under the threshold, which is a different thing\nto be told than that industrial batteries are outside the article.\n\n`capacityUnknown` — an industrial battery that declares no\n`ratedCapacityKwh`, so the threshold cannot be applied. **Not an\nexemption**: the obligation turns on a number this record does not carry,\nand the node treats it as in scope. Declaring a capacity of 2 kWh or less\nis what moves it to `belowThreshold`.\n\n`notYetBinding` — in scope by type and capacity, but placed on the market\nbefore 18 February 2027. A record stating no `placedOnMarketDate` at all is\ntreated as inside the period instead, because an unstated date is not\nevidence of an earlier one.\n\n`notApplicable` — not a battery, so this article has nothing to say. Other\ninstruments may still require a passport.\n",
             "example": "required"
           },
           "note": {
             "type": "string",
-            "description": "Present when the answer needs justifying — an industrial battery that\ndeclares no `ratedCapacityKwh` (treated as in scope, because an undeclared\ncapacity is not evidence of a small one), or a voluntary passport this node\nnonetheless gates.\n"
+            "description": "Present when the answer needs justifying — an industrial battery that\ndeclares no `ratedCapacityKwh`, a record the article does not reach, or a\npassport this node nonetheless gates.\n"
           }
         }
       },

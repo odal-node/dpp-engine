@@ -58,10 +58,20 @@ pub struct PublishReadiness {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PassportScopeReport {
-    /// `required`, `voluntary`, or `notApplicable` for a non-battery.
+    /// One of [`ALL_WIRE_STATUSES`](crate::domain::passport_scope::ALL_WIRE_STATUSES):
+    /// `required`, `notCovered`, `belowThreshold`, `capacityUnknown`,
+    /// `notYetBinding`, or `notApplicable` for a record that is not a battery.
+    ///
+    /// Named by reference rather than restated, because this is the third place
+    /// the list could go stale: it crosses the wire as a plain string, so the
+    /// contract suite's enum gate cannot reach it — that one enumerates Rust
+    /// enums — and `ALL_WIRE_STATUSES` is what
+    /// `every_passport_scope_status_is_in_the_schema` actually checks against the
+    /// published schema.
     pub status: &'static str,
     /// Present when the answer needs justifying: an industrial battery with no
-    /// declared capacity, or a voluntary passport this node still gates.
+    /// declared capacity, or a passport outside the article that this node still
+    /// gates.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub note: Option<String>,
 }
@@ -89,17 +99,13 @@ fn readiness_of(passport: &dpp_domain::passport::Passport) -> PublishReadiness {
         }));
     }
 
-    let obligation = passport_scope::scope_of(passport.product_group_data.as_ref());
+    let scope = passport_scope::scope_of(passport);
     PublishReadiness {
         ready: blockers.is_empty(),
         blockers,
         passport_scope: PassportScopeReport {
-            status: match obligation {
-                passport_scope::PassportScope::Required => "required",
-                passport_scope::PassportScope::Voluntary => "voluntary",
-                passport_scope::PassportScope::NotApplicable => "notApplicable",
-            },
-            note: passport_scope::scope_note(obligation, passport.product_group_data.as_ref()),
+            status: passport_scope::wire_status(scope),
+            note: passport_scope::scope_note(scope, passport.product_group_data.as_ref()),
         },
     }
 }

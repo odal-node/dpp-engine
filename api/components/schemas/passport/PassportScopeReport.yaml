@@ -13,9 +13,9 @@ description: |
   is the operator's own artefact rather than a discharged duty.
 
   Reported **beside** the gates, never instead of them. This node applies the
-  category content gate whatever this says, and for a voluntary passport that
-  makes it stricter than the article requires — which the `note` admits rather
-  than hides.
+  category content gate whatever this says, and for a passport outside the
+  article that makes it stricter than the law requires — which the `note` admits
+  rather than hides.
 
   Two details the article turns on: the threshold is **energy** (kWh), not the
   ampere-hour "rated capacity" defined for the purposes of an annex; and unlike
@@ -27,11 +27,38 @@ properties:
     type: string
     enum:
       - required
-      - voluntary
+      - notCovered
+      - belowThreshold
+      - capacityUnknown
+      - notYetBinding
       - notApplicable
     description: |
+      Deliberately not a boolean, and deliberately not collapsed into one
+      "voluntary". "This category never owes one", "this unit is under the
+      threshold", "we cannot tell yet" and "not yet" are four different sentences
+      to put in front of an operator, and only some of them describe something
+      they can change.
+
       `required` — Art. 77(1) reaches this record.
-      `voluntary` — it does not; a passport is still permitted.
+
+      `notCovered` — the article does not name this category. Portable and SLI
+      batteries owe no passport, ever.
+
+      `belowThreshold` — an industrial battery at or below 2 kWh. The category
+      *is* in scope; this unit is under the threshold, which is a different thing
+      to be told than that industrial batteries are outside the article.
+
+      `capacityUnknown` — an industrial battery that declares no
+      `ratedCapacityKwh`, so the threshold cannot be applied. **Not an
+      exemption**: the obligation turns on a number this record does not carry,
+      and the node treats it as in scope. Declaring a capacity of 2 kWh or less
+      is what moves it to `belowThreshold`.
+
+      `notYetBinding` — in scope by type and capacity, but placed on the market
+      before 18 February 2027. A record stating no `placedOnMarketDate` at all is
+      treated as inside the period instead, because an unstated date is not
+      evidence of an earlier one.
+
       `notApplicable` — not a battery, so this article has nothing to say. Other
       instruments may still require a passport.
     example: required
@@ -39,6 +66,5 @@ properties:
     type: string
     description: |
       Present when the answer needs justifying — an industrial battery that
-      declares no `ratedCapacityKwh` (treated as in scope, because an undeclared
-      capacity is not evidence of a small one), or a voluntary passport this node
-      nonetheless gates.
+      declares no `ratedCapacityKwh`, a record the article does not reach, or a
+      passport this node nonetheless gates.

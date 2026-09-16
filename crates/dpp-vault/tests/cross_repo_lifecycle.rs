@@ -773,9 +773,14 @@ async fn a_battery_outside_article_77_is_voluntary_and_still_gated() {
     };
 
     // Below the threshold: outside the article, still gated.
+    //
+    // `belowThreshold` and not a shared "outside the article" answer — the
+    // category *is* in scope and a larger battery of the same kind would owe a
+    // passport, which is a different thing to tell an operator than that
+    // industrial batteries are outside Art. 77(1).
     let small = lint(create("09506000134352", "industrial", Some(1.5))).await;
     let readiness = &small["publishReadiness"];
-    assert_eq!(readiness["passportScope"]["status"], "voluntary");
+    assert_eq!(readiness["passportScope"]["status"], "belowThreshold");
     assert!(
         !readiness["blockers"]
             .as_array()
@@ -805,7 +810,10 @@ async fn a_battery_outside_article_77_is_voluntary_and_still_gated() {
     // worth reporting at all.
     let portable = lint(create("09506000134376", "portable", None)).await;
     let readiness = &portable["publishReadiness"];
-    assert_eq!(readiness["passportScope"]["status"], "voluntary");
+    assert_eq!(
+        readiness["passportScope"]["status"], "notCovered",
+        "the article never reaches this category, which is not the same answer as a          unit that happens to fall under a threshold"
+    );
     assert!(
         readiness["blockers"]
             .as_array()

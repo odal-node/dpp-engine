@@ -389,7 +389,7 @@ fn object_cases() -> Vec<ObjectCase> {
     case!(
         "PassportScopeReport",
         dpp_vault::handlers::lint::PassportScopeReport {
-            status: "voluntary",
+            status: "notCovered",
             note: Some(
                 "Art. 77(1) requires a battery passport for LMT, electric-vehicle and \
                  industrial batteries above 2 kWh."
@@ -1206,6 +1206,40 @@ fn every_responsibility_basis_serialises_as_documented() {
         emitted_payload["otherUnionLaw"]["citation"].as_str(),
         Some("Article 7 of Regulation (EU) 2017/745"),
         "the emitted variant must carry its citation under the documented key"
+    );
+}
+
+/// Every `passportScope.status` the server can emit is in the published enum.
+///
+/// `status` crosses the API as a plain string, so `object_schemas_match_the_types_behind_them`
+/// compares the field's *type* and `enum_schemas_list_every_variant_the_server_can_emit`
+/// cannot reach it at all — that one enumerates Rust enums, and this is a `&str`.
+///
+/// A stale value survived exactly that gap: the fixture below went on emitting
+/// `"voluntary"` after the vocabulary widened, and every check passed.
+#[test]
+fn every_passport_scope_status_is_in_the_schema() {
+    let spec = spec();
+    let documented: BTreeSet<String> =
+        schemas(&spec)["PassportScopeReport"]["properties"]["status"]["enum"]
+            .as_array()
+            .expect("status is an enum")
+            .iter()
+            .filter_map(|v| v.as_str().map(str::to_owned))
+            .collect();
+    let emitted: BTreeSet<String> = dpp_vault::domain::passport_scope::ALL_WIRE_STATUSES
+        .iter()
+        .map(|s| (*s).to_owned())
+        .collect();
+
+    assert_eq!(
+        documented,
+        emitted,
+        "passportScope.status disagrees.
+  spec: {}
+  code: {}",
+        joined(&documented),
+        joined(&emitted)
     );
 }
 
