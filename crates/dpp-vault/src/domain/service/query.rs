@@ -92,4 +92,91 @@ impl PassportService {
         self.find_by_id(id).await?;
         self.audit.list_by_passport(&id.to_string()).await
     }
+
+    /// Every archived version of a passport, oldest first.
+    ///
+    /// ✅ COMPLIANCE-PIN: EN 18221:2026 clause 4.2.
+    ///
+    /// Verifies the passport exists first, for the same reason [`Self::history`]
+    /// does: otherwise an unknown id returns `200 []`, which reads as "this
+    /// passport has never changed" rather than "there is no such passport".
+    ///
+    /// # Errors
+    ///
+    /// `NotFound` for an unknown id; otherwise the store's own failure.
+    pub async fn versions(
+        &self,
+        id: PassportId,
+    ) -> Result<Vec<dpp_types::audit::PassportVersion>, DppError> {
+        self.find_by_id(id).await?;
+        self.versions
+            .as_ref()
+            .ok_or_else(|| DppError::Internal("version archive not configured".into()))?
+            .versions(&id.to_string())
+            .await
+    }
+
+    /// The version that was current at `at`.
+    ///
+    /// ✅ COMPLIANCE-PIN: EN 18221:2026 clause 4.2 — *"the archived version
+    /// corresponding to a given point in time shall be retrievable"*.
+    ///
+    /// # Errors
+    ///
+    /// `NotFound` for an unknown id; otherwise the store's own failure.
+    pub async fn version_at(
+        &self,
+        id: PassportId,
+        at: chrono::DateTime<chrono::Utc>,
+    ) -> Result<VersionAt, DppError> {
+        let passport = self.find_by_id(id).await?;
+
+        // 🚨 Before the passport existed, the store answers the wrong question.
+        //
+        // `version_at` asks for the earliest version that stopped being current
+        // *after* `at`, and for any instant before the first change that is the
+        // initial version — including instants before the passport was created.
+        // So "what did this say in 1990" returned the initial record, which
+        // asserts the passport existed in 1990.
+        //
+        // Checked here rather than in the store because this is where the live
+        // record is in hand; the store holds versions and has no way to know
+        // when the thing they are versions of came into being.
+        if at < passport.created_at {
+            return Ok(VersionAt::BeforeItExisted);
+        }
+
+        let found = self
+            .versions
+            .as_ref()
+            .ok_or_else(|| DppError::Internal("version archive not configured".into()))?
+            .version_at(&id.to_string(), at)
+            .await?;
+
+        Ok(found.map_or(VersionAt::Live, VersionAt::Found))
+    }
+}
+
+/// What [`PassportService::version_at`] found.
+///
+/// Three answers rather than two, because the two ways of having no archived
+/// version are different facts and only one of them is answered by the live
+/// record. Collapsed into an `Option`, a caller asking about a moment before the
+/// passport existed would be told the live record is the state at that time —
+/// which is a statement that the passport existed then.
+#[derive(Debug, Clone)]
+pub enum VersionAt {
+    /// The version that was current at that instant.
+    Found(dpp_types::audit::PassportVersion),
+    /// No archived version covers the instant, and the **live** record is the
+    /// state then: the passport had not changed by then, or the instant is after
+    /// its most recent change.
+    ///
+    /// The live record is deliberately not returned from here. A route named for
+    /// archived versions that sometimes answers with the current one makes
+    /// "which version am I holding" unanswerable, and `GET /dpp/{dppId}` already
+    /// serves it.
+    Live,
+    /// The instant is before the passport was created.
+    BeforeItExisted,
 }

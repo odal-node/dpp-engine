@@ -1,0 +1,50 @@
+type: object
+description: >-
+  One archived version of a passport: the record as it stood, and the moment it
+  stopped standing.
+
+
+  ✅ EN 18221:2026 clause 4.2 (archiving), one of the six standards cited by
+  Commission Implementing Decision (EU) 2026/1736.
+
+
+  🚨 **Not the `archived` lifecycle status**, which is a terminal state reached
+  after the ESPR retention period and says the record has stopped changing. This
+  is the standard's sense of the word — historical versions of a passport that is
+  still live — and the two are unrelated.
+required:
+  - id
+  - passportId
+  - doc
+  - supersededAt
+properties:
+  id:
+    type: string
+    format: uuid
+    description: Row identifier, UUID v7, so versions sort by when they were taken.
+  passportId:
+    type: string
+    format: uuid
+    description: The passport this is a version of.
+  doc:
+    type: object
+    description: >-
+      The complete record as it stood at the time, not a diff.
+
+
+      Whole rather than differential so that retrieval is a read rather than a
+      replay: a chain of diffs makes every historical version depend on every
+      one before it, and one corrupt link loses everything after it. The clause
+      asks that the version be retrievable, and a stored version is retrievable
+      where a derived one is computed and hoped for.
+  supersededAt:
+    type: string
+    format: date-time
+    description: >-
+      When this version stopped being current — the instant the change that
+      replaced it was applied.
+
+
+      One timestamp rather than a validity range: the previous version's
+      `supersededAt` is this one's start, and two fields that must agree are two
+      fields that can disagree.

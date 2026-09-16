@@ -30,6 +30,9 @@ mod lifecycle;
 mod lint;
 mod publish;
 mod query;
+/// Public: the versions route has to tell apart the two ways of having no
+/// archived version, because only one of them is answered by the live record.
+pub use query::VersionAt;
 /// Public: the seal route and the evidence dossier both need `seal_digest` to
 /// state which digest a seal covers.
 pub mod seal;
@@ -87,6 +90,16 @@ pub struct PassportService {
     /// `None` (test doubles / in-memory repo), publish falls back to the legacy
     /// inline path.
     pub registry_outbox: Option<Arc<dyn RegistrySyncOutbox>>,
+    /// Archived versions of passports — EN 18221:2026 clause 4.2.
+    ///
+    /// 🚨 Nothing to do with `archive` above, which is object storage, or with
+    /// the terminal `archived` lifecycle status. Three uses of one word in one
+    /// struct; this is the standard's, and the only one about history.
+    ///
+    /// `None` disables the versions route. It does **not** disable archiving —
+    /// that happens in the repository decorator, which a node wires or does
+    /// not wire independently of this.
+    pub versions: Option<Arc<dyn dpp_types::audit::PassportVersionStore>>,
     /// Persistence for transfer-of-responsibility chains. `None` disables
     /// the transfer endpoints (test doubles without a transfer store).
     pub transfer_store: Option<Arc<dyn TransferStore>>,
@@ -175,6 +188,7 @@ impl PassportService {
             registry_sync,
             archive,
             registry_outbox: None,
+            versions: None,
             transfer_store: None,
             transfer_outbox: None,
             evidence_store: None,
@@ -187,6 +201,18 @@ impl PassportService {
             snapshot_public_base_url: None,
             resolver_base_url: "https://id.odal-node.io".to_owned(),
         }
+    }
+
+    /// Provide the archived-version store, enabling the versions route.
+    ///
+    /// Read-side only. Whether versions are *written* is decided by whether the
+    /// composition root wrapped the repository in the archiving decorator, and
+    /// a node that wires one without the other gets a route with nothing behind
+    /// it or an archive nothing reads.
+    #[must_use]
+    pub fn with_versions(mut self, store: Arc<dyn dpp_types::audit::PassportVersionStore>) -> Self {
+        self.versions = Some(store);
+        self
     }
 
     /// Provide the transfer-chain store, enabling the transfer-of-responsibility

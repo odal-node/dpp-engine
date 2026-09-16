@@ -437,6 +437,7 @@ unprotected one. Read the table in the code.
 | GET | `/vault/api/v1/dpp/{dppId}/registry` | Bearer | EU-registry sync status for one passport |
 | GET | `/vault/api/v1/registry` | Bearer | EU-registry sync rollup |
 | GET | `/vault/api/v1/dpp/{dppId}/history` | Bearer | Audit trail |
+| GET | `/vault/api/v1/dpp/{dppId}/versions` | Bearer | Archived historical versions of the passport, oldest first; `?asOf=<RFC 3339>` returns the one current at that instant (as a one-element array), `404` when none covers it. **Not the `archived` lifecycle status** — this is EN 18221 clause 4.2's sense of the word, the history of a passport that is still live |
 | GET | `/vault/api/v1/dpp/{dppId}/seal` | Bearer | eIDAS qualified seal + the JWS/digest it covers (`404` when unsealed) |
 | POST | `/vault/api/v1/dpp/{dppId}/seal/repair` | Bearer **(admin)** | Queue a replacement for a stored seal that does not verify. **Buys a second seal** for a digest already paid for, so it refuses unless the seal is demonstrably broken — checked at request time, never read from the audit's list |
 | GET | `/vault/api/v1/seal` | Bearer | Operator-wide sealing state — published passports carrying no seal, outbox totals, the configured backend's trust tier, and what the last **completed** pass over every stored seal found (`audit`, `null` when none has) |

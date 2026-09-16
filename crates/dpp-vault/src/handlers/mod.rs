@@ -35,5 +35,6 @@ pub mod unsold_goods;
 pub mod update;
 pub mod validate;
 pub mod verify_tree;
+pub mod versions;
 pub mod webhooks;
 pub mod whoami;

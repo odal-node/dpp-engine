@@ -18,8 +18,9 @@ use metrics_exporter_prometheus::{PrometheusBuilder, PrometheusHandle};
 use base64::Engine as _;
 use dpp_crypto::keystore::KeyStore;
 use dpp_dal::pg::{
-    PgApiKeyRepo, PgAuditRepo, PgDal, PgEvidenceDossierRepo, PgOperatorConfigRepo, PgPassportRepo,
-    PgRegistryIdentityRepo, PgScanTelemetryRepo, PgTransferRepo, PgWebhookRepo,
+    ArchivingPassportRepo, PgApiKeyRepo, PgAuditRepo, PgDal, PgEvidenceDossierRepo,
+    PgOperatorConfigRepo, PgPassportRepo, PgPassportVersionRepo, PgRegistryIdentityRepo,
+    PgScanTelemetryRepo, PgTransferRepo, PgWebhookRepo,
 };
 use dpp_dal::test_harness::{TestPg, start_pg};
 use dpp_domain::passport::PassportRef;
@@ -119,7 +120,16 @@ async fn start_node_with_ruleset(
     let port = listener.local_addr().unwrap().port();
     let base_url = format!("http://127.0.0.1:{port}");
 
-    let passport_repo = Arc::new(PgPassportRepo::new(dal.clone()));
+    // Wrapped exactly as `boot::db` wraps it. A bare `PgPassportRepo` here would
+    // leave the EN 18221 clause 4.2 archive unwired, so the versions route would
+    // answer from an empty table and the smoke suite would agree with a node
+    // that archives nothing.
+    let version_store: Arc<dyn dpp_types::audit::PassportVersionStore> =
+        Arc::new(PgPassportVersionRepo::new(dal.clone()));
+    let passport_repo = Arc::new(ArchivingPassportRepo::new(
+        PgPassportRepo::new(dal.clone()),
+        version_store.clone(),
+    ));
     let audit_repo = Arc::new(PgAuditRepo::new(dal.clone()));
     let operator_repo = Arc::new(PgOperatorConfigRepo::new(dal.clone()));
     // Seed a complete operator so the publish-completeness gate passes. The node
@@ -178,7 +188,8 @@ async fn start_node_with_ruleset(
         )
         .with_transfer_store(Arc::new(PgTransferRepo::new(dal.clone())))
         .with_evidence_store(Arc::new(PgEvidenceDossierRepo::new(dal.clone())))
-        .with_registry_reader(operator_repo.clone()),
+        .with_registry_reader(operator_repo.clone())
+        .with_versions(version_store),
     );
     let operator_service = Arc::new(OperatorService::new(operator_repo));
     let api_key_service = Arc::new(ApiKeyService::new(api_key_repo));
@@ -2238,4 +2249,170 @@ async fn publish_layered_battery(base: &str, token: &str, client: &reqwest::Clie
     let body = resp.text().await.unwrap_or_default();
     assert_eq!(status, 200, "publish failed: {body}");
     id
+}
+
+/// A change to a passport is retrievable afterwards, and the route tells its two
+/// empty-handed answers apart.
+///
+/// ✅ COMPLIANCE-PIN: EN 18221:2026 clause 4.2 — *"the archived version
+/// corresponding to a given point in time shall be retrievable by authenticated
+/// and authorized actors"*.
+///
+/// 🚨 Nothing but an assembled node proves this. The decorator is wired in the
+/// composition root, so a suite that builds its own `PassportService` over a
+/// bare repository would pass while the shipped node archived nothing.
+///
+/// The `404`/`422` pair is the one CLAUDE.md asks to be constructed rather than
+/// described: `422` means the `asOf` value is not a timestamp, and `404` means
+/// it is a perfectly good timestamp that no archived version covers. Both are
+/// reachable, so the contract gate is satisfied either way and only this can
+/// tell whether the sentences beside them are true.
+#[tokio::test]
+async fn an_archived_version_is_retrievable_and_a_bad_as_of_is_told_from_an_uncovered_one() {
+    let (base, _container) = start_db_and_node().await;
+    let token = make_jwt("00000000-0000-0000-0000-000000000077");
+    let client = reqwest::Client::new();
+
+    let created: serde_json::Value = client
+        .post(format!("{base}/vault/api/v1/dpp"))
+        .bearer_auth(&token)
+        .json(&serde_json::json!({
+            "productName": "Archivable Battery",
+            "manufacturer": {"name": "SmokeTestCorp", "address": "Berlin, DE"},
+            "materials": [],
+        }))
+        .send()
+        .await
+        .expect("create request failed")
+        .json()
+        .await
+        .unwrap();
+    let id = created["id"].as_str().expect("id").to_owned();
+
+    let versions = |query: String| {
+        let (client, base, id, token) = (client.clone(), base.clone(), id.clone(), token.clone());
+        async move {
+            let resp = client
+                .get(format!("{base}/vault/api/v1/dpp/{id}/versions{query}"))
+                .bearer_auth(&token)
+                .send()
+                .await
+                .expect("versions request failed");
+            let status = resp.status().as_u16();
+            (status, resp.text().await.unwrap_or_default())
+        }
+    };
+
+    // Created and not yet changed: archiving has not begun, and the clause says
+    // it begins at the first change. An empty list, not a 404 — the passport is
+    // there, its history is not yet.
+    let (status, body) = versions(String::new()).await;
+    assert_eq!(status, 200, "listing versions failed: {body}");
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&body).expect("json"),
+        serde_json::json!([]),
+        "a passport that has never changed has no archived versions"
+    );
+
+    let before_the_change = chrono::Utc::now();
+
+    let resp = client
+        .put(format!("{base}/vault/api/v1/dpp/{id}"))
+        .bearer_auth(&token)
+        .json(&serde_json::json!({ "productName": "Archivable Battery Mk II" }))
+        .send()
+        .await
+        .expect("update request failed");
+    let status = resp.status();
+    let body = resp.text().await.unwrap_or_default();
+    assert_eq!(status, 200, "update failed: {body}");
+
+    // The change archived what it replaced, and the route hands it back.
+    let (status, body) = versions(String::new()).await;
+    assert_eq!(status, 200, "listing versions failed: {body}");
+    let listed: serde_json::Value = serde_json::from_str(&body).expect("json");
+    assert_eq!(
+        listed.as_array().map(Vec::len),
+        Some(1),
+        "one change, one archived version: {listed}"
+    );
+    assert_eq!(
+        listed[0]["doc"]["productName"].as_str(),
+        Some("Archivable Battery"),
+        "the archived version is the passport as it was, not as it became"
+    );
+    assert_eq!(
+        listed[0]["passportId"].as_str(),
+        Some(id.as_str()),
+        "and it is a version of the passport asked about"
+    );
+
+    // `asOf` before the change: the version that was current then.
+    // `Z` rather than `+00:00`: a literal `+` in a query string is a space, so
+    // the offset form has to be percent-encoded and this form does not.
+    let (status, body) = versions(format!(
+        "?asOf={}",
+        before_the_change.to_rfc3339_opts(chrono::SecondsFormat::Micros, true)
+    ))
+    .await;
+    assert_eq!(status, 200, "as-of read failed: {body}");
+    let at: serde_json::Value = serde_json::from_str(&body).expect("json");
+    assert_eq!(
+        at.as_array().map(Vec::len),
+        Some(1),
+        "`asOf` answers with one version, and answers in the same shape as the \
+         list so a client parses the body one way: {at}"
+    );
+    assert_eq!(
+        at[0]["doc"]["productName"].as_str(),
+        Some("Archivable Battery"),
+        "as of a moment before the change, the answer is what the change replaced"
+    );
+
+    // A good timestamp that nothing covers — the passport's most recent change
+    // is behind us, so the live record is the state then. `404`, not `422`.
+    let (status, after_the_last_change) = versions(format!(
+        "?asOf={}",
+        (chrono::Utc::now() + chrono::Duration::days(365))
+            .to_rfc3339_opts(chrono::SecondsFormat::Micros, true)
+    ))
+    .await;
+    assert_eq!(
+        status, 404,
+        "a timestamp no archived version covers must be 404, not 422"
+    );
+    assert!(
+        after_the_last_change.contains("The live record is the state at that time"),
+        "and it says so: {after_the_last_change}"
+    );
+
+    // 🚨 Before the passport existed. Also a `404`, and deliberately **not the
+    // same one**: the store answers "the earliest version that stopped being
+    // current after this", which for any instant before the first change is the
+    // initial version — so this returned `200` and the initial record until the
+    // service learned to check `created_at`. Answering at all asserts the
+    // passport existed in 1990; answering with the sentence above would assert
+    // the live record was its state then.
+    let (status, before_it_existed) = versions("?asOf=1990-01-01T00:00:00Z".to_owned()).await;
+    assert_eq!(
+        status, 404,
+        "a moment before the passport was created has no version, and no live \
+         record either: {before_it_existed}"
+    );
+    assert!(
+        before_it_existed.contains("before this passport was created"),
+        "and it says which of the two nothings it is: {before_it_existed}"
+    );
+    assert!(
+        !before_it_existed.contains("The live record is the state at that time"),
+        "never this sentence — there was no record at all then: {before_it_existed}"
+    );
+
+    // Not a timestamp at all. `422`, not `404` — the difference between a
+    // request this route cannot read and one it read and could not answer.
+    let (status, _) = versions("?asOf=yesterday".to_owned()).await;
+    assert_eq!(
+        status, 422,
+        "an unparseable asOf must be 422, not 404 — the request is the problem"
+    );
 }

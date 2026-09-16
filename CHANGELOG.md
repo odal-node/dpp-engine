@@ -109,6 +109,59 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ### Added
 
+- **Every change to a passport is now archived, and the version that was current
+  at any past moment can be read back.** New `odal.passport_version` (migration
+  `0040`), `dpp_types::audit::PassportVersionStore` + `PassportVersion`,
+  `PgPassportVersionRepo`, the `ArchivingPassportRepo` decorator, and
+  `GET /api/v1/dpp/{dppId}/versions` (with `?asOf=<RFC 3339>`).
+
+  ✅ EN 18221:2026 clause 4.2, one of the six standards cited by Commission
+  Implementing Decision (EU) 2026/1736, and so one of the six that carry the
+  ESPR Art. 10(4) presumption of conformity.
+
+  🚨 **This is not what `status = "archived"` means, and the two were never
+  related.** That status is a terminal lifecycle state reached after the ESPR
+  retention period, at which point a record stops changing. The clause's
+  *archiving* is the retention of historical versions of a passport that is
+  still live. Anyone mapping this system onto the standard by name would have
+  ticked a box that was not ticked: before this, **no historical version of any
+  passport was retained anywhere**. The audit trail records *that* a change
+  happened and by whom, and on the update path carries no metadata at all, so it
+  could never reconstitute a passport; continuity snapshots hold one redacted
+  public view per passport, refreshed rather than versioned. The word collision
+  is real and is being resolved where the status lives, in `dpp-core`.
+
+  **Archiving is a property of the repository, not of each write path.** The
+  clause says *all* changes, and a rule of that shape cannot be left to callers
+  to remember — the next write path added is the one that forgets, and nothing
+  fails when it does. Every mutation in this workspace reaches the database
+  through `PassportRepository`, so the decorator wraps that one handle and
+  archiving becomes something a write path cannot avoid. `update_batch` is
+  covered by *not* being overridden: its trait default loops over `self.update`.
+
+  **What is archived is the state the change replaced**, stamped with the moment
+  it stopped being current — so the first change to a passport records the
+  initial version, which is the one the clause names. `create` archives nothing;
+  the clause begins at the first change, and the live record already answers for
+  every moment before it. Each row is the complete document rather than a diff,
+  so a retrieval is a read and not a replay down a chain where one corrupt link
+  loses everything after it. Rows are append-only, enforced by a trigger as well
+  as by the app role's grants.
+
+  `?asOf` returns the version current at that instant, and `404` when none
+  covers it — either the passport had not changed by then or the moment is after
+  its most recent change. In both cases the live record is the state at that
+  time, which `GET /dpp/{dppId}` already serves, so this route does not return
+  it and "which version is this" stays answerable.
+
+  ⚠️ **Operator-scoped only.** The clause requires archived attributes to carry
+  the same access restrictions as the corresponding attributes in the *current*
+  passport, which for an operator reading its own passport are none. Serving
+  versions to a credential-scoped reader means running the **live** passport's
+  disclosure policy over the archived document; no such route exists yet, and
+  adding one without that step would disclose fields the current passport
+  withholds.
+
 - **The seal audit now notices archival protection running out.**
   `SealAuditReport` gains `archivalLapsed`, `archivalDue`,
   `archivalUnverifiable` and `renewalPassports`, with matching gauges.
