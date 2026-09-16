@@ -2444,14 +2444,54 @@ async fn an_amended_passports_printed_carrier_lands_on_the_successor() {
     let token = make_jwt("00000000-0000-0000-0000-000000000079");
     let client = reqwest::Client::new();
 
-    let original_id = publish_layered_battery(&base, &token, &client).await;
-
-    // Before the amendment the public door serves the passport itself.
-    let resp = client
-        .get(format!("{base}/vault/public/dpp/{original_id}"))
+    // 🚨 **No GTIN**, which is the whole point. `build_carrier_url` mints a GS1
+    // Digital Link carrier when the product group data carries one, and falls
+    // back to `/dpp/{id}` only when it does not — so a passport *with* a GTIN
+    // exercises a door that already worked. This one is printed with the
+    // fallback carrier, and the test follows that URL rather than constructing
+    // its own.
+    let created: serde_json::Value = client
+        .post(format!("{base}/vault/api/v1/dpp"))
+        .bearer_auth(&token)
+        .json(&serde_json::json!({
+            "productName": "Carrier Battery",
+            "manufacturer": {"name": "SmokeTestCorp", "address": "Berlin, DE"},
+            "materials": [],
+        }))
         .send()
         .await
-        .expect("public read failed");
+        .expect("create request failed")
+        .json()
+        .await
+        .unwrap();
+    let original_id = created["id"].as_str().expect("id").to_owned();
+
+    let resp = client
+        .post(format!("{base}/vault/api/v1/dpp/{original_id}/publish"))
+        .bearer_auth(&token)
+        .json(&serde_json::json!({}))
+        .send()
+        .await
+        .expect("publish failed");
+    let status = resp.status();
+    let published: serde_json::Value = resp.json().await.expect("json");
+    assert_eq!(status, 200, "publish failed: {published}");
+
+    let carrier = published["qrCodeUrl"]
+        .as_str()
+        .expect("a published passport carries a carrier URL")
+        .to_owned();
+    assert!(
+        carrier.ends_with(&format!("/dpp/{original_id}")),
+        "this passport must fall back to the by-id carrier, or the test is exercising \
+         the Digital Link door that already worked: {carrier}"
+    );
+
+    // The path a scan of that printed carrier resolves to on this node.
+    let scan = format!("{base}/vault/public/dpp/{original_id}");
+
+    // Before the amendment the public door serves the passport itself.
+    let resp = client.get(&scan).send().await.expect("public read failed");
     assert_eq!(resp.status(), 200);
     let served: serde_json::Value = resp.json().await.expect("json");
     assert_eq!(served["id"].as_str(), Some(original_id.as_str()));
@@ -2474,12 +2514,8 @@ async fn an_amended_passports_printed_carrier_lands_on_the_successor() {
     assert_ne!(successor_id, original_id);
 
     // ── The scan ────────────────────────────────────────────────────────────
-    // Same URL as before, printed on a product that has not changed.
-    let resp = client
-        .get(format!("{base}/vault/public/dpp/{original_id}"))
-        .send()
-        .await
-        .expect("public read failed");
+    // The same carrier URL as before, printed on a product that has not changed.
+    let resp = client.get(&scan).send().await.expect("public read failed");
     let status = resp.status();
     let served: serde_json::Value = resp.json().await.expect("json");
     assert_eq!(status, 200, "the carrier must not stop working: {served}");
