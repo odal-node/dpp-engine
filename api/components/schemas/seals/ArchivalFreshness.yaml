@@ -1,0 +1,58 @@
+type: object
+description: >-
+  Whether a seal's archival protection is still live.
+
+
+  `evidencedLevel` reports `baseline-lta` from the **presence** of the archival
+  material, and is right to — the material is there. This reports whether it
+  still means anything.
+
+
+  An archival timestamp is what keeps a `B-LTA` seal verifiable after its
+  signing certificate expires, which is the whole point for a retention-locked
+  passport that outlives every certificate involved. **It expires too**: its own
+  timestamping authority's certificate has a validity period, and ETSI's
+  long-term profiles expect re-timestamping before that. Without this field a
+  seal whose archival protection lapsed years ago reads exactly as it did the day
+  it was bought.
+
+
+  **A signal, not a verdict.** A seal nearing its renewal date still verifies,
+  and that window is the only chance to renew without an outage. No threshold is
+  applied — how much notice is enough is a policy question for the reader.
+required:
+  - state
+properties:
+  state:
+    type: string
+    enum:
+      - notArchived
+      - current
+      - lapsed
+      - unknown
+    description: >-
+      `notArchived`: no archival timestamp — a seal below `B-LTA`. Nothing to
+      renew, which is a different thing from a renewal that has lapsed: such a
+      seal was never promised long-term protection.
+
+
+      `current`: the archival timestamp's authority certificate is still valid.
+
+
+      `lapsed`: it has expired. The seal may still verify today; what is gone is
+      the thing meant to keep it verifying once its signing certificate goes.
+
+
+      `unknown`: an archival timestamp is present and could not be read. **Not
+      `current`** — a token that cannot be checked is not a fresh one, and
+      reporting it as current is how a staleness signal goes quiet at the moment
+      it matters.
+  expires:
+    type: string
+    format: date-time
+    description: >-
+      When the archival timestamp's authority certificate expires — the date by
+      which re-timestamping must have happened, read from before or after it
+      depending on `state`. One value, so one name: `current` and `lapsed` are
+      the same date seen from either side. Absent for `notArchived` and
+      `unknown`.

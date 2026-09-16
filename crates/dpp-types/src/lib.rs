@@ -72,7 +72,12 @@ pub use scan::{
     DailyScanCount, OperatorScanStats, PassportScanStats, QrRenderIncrement, ScanIncrement,
     ScanPruneCounts, ScanTelemetryRepository,
 };
-pub use seal::{SealOutbox, SealOutboxCounts, SealRow, digest_for_jws};
+pub use seal::{
+    ArchivalFreshness, CertificateStanding, CreationDevice, JudgedTime, RevocationStanding,
+    SealAuditLog, SealAuditProgress, SealAuditReport, SealAuditStore, SealBinding, SealInspector,
+    SealOrigin, SealOutbox, SealOutboxCounts, SealRow, SealValidationStatus, SealedPassport,
+    ValidationIndication, ValidationSubIndication, ValidityWindow, WindowStanding, digest_for_jws,
+};
 pub use snapshot::{
     SnapshotOutbox, SnapshotOutboxCounts, SnapshotReconcileRow, SnapshotReconcileStatus,
     SnapshotStore,

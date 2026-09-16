@@ -427,6 +427,31 @@ pub struct VerifiedTrustedList {
 }
 
 impl VerifiedTrustedList {
+    /// Assert verification, for tests only.
+    ///
+    /// The type has no public constructor so that nothing outside this module
+    /// can claim a list was verified when it was not, and that stays true: this
+    /// is `pub(crate)` and `#[cfg(test)]`, so it does not exist in a built
+    /// library.
+    ///
+    /// It earns its place by making the *positive* path testable. Everything
+    /// downstream of a verified list — matching a seal's issuer, walking a
+    /// certificate path to it, reading a status at sealing time — could
+    /// otherwise only ever be exercised on its failure branches, because no
+    /// published list carries a CA whose private key a test can hold. With this,
+    /// a test can generate its own certificate authority and check that a
+    /// genuinely issued certificate is genuinely recognised.
+    #[cfg(test)]
+    pub(crate) fn asserted_for_tests(
+        content: super::model::UnverifiedTrustedList,
+        signed_by: impl Into<String>,
+    ) -> Self {
+        Self {
+            content,
+            signed_by: signed_by.into(),
+        }
+    }
+
     /// The `SchemeTerritory`, where the list gives one.
     #[must_use]
     pub fn territory(&self) -> Option<&str> {

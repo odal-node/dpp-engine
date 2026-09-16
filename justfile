@@ -251,6 +251,12 @@ fmt-check:
 debug-check:
     bash scripts/debug-check.sh
 
+# Hold the claim that suppresses RUSTSEC-2023-0071: `rsa` stays transitive and
+# verification-only. The advisory is a timing sidechannel in RSA *private key*
+# operations, and the suppression rests entirely on this workspace having none.
+no-rsa-private-key:
+    bash scripts/no-rsa-private-key.sh
+
 # Forbid raw "dpp.passport."/"dpp.import." subject literals outside dpp-common::event
 # (event_type/NATS-subject strings must come from the `subjects` constants, or a
 # renamed subject silently stops matching subscribers).
@@ -322,7 +328,7 @@ doc:
     cargo doc --workspace --no-deps
 
 # Fast gate (no Docker) — mirrors CI jobs: fmt, clippy, debug-prints, test-unit, audit
-check: fmt-check lint debug-check subjects-check mod-rs-check harness-check contract-fixture-check contract-fixture-check-self-test spec-version-check outbound-check grants-check migrations-check check-plugins test check-integration audit
+check: fmt-check lint debug-check no-rsa-private-key subjects-check mod-rs-check harness-check contract-fixture-check contract-fixture-check-self-test spec-version-check outbound-check grants-check migrations-check check-plugins test check-integration audit
 
 # Full local CI mirror — adds integration-feature clippy + the Docker tiers (needs Docker running)
 ci: check lint-integration test-integration test-pg

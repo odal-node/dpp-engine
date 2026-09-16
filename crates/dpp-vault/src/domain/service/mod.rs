@@ -127,6 +127,17 @@ pub struct PassportService {
     /// node with no QTSP configured) means published passports carry no seal —
     /// visibly absent rather than faked, which is what the trust report reports.
     pub seal_outbox: Option<Arc<dyn SealOutbox>>,
+    /// Reads a stored seal's certificate, for the seal read route.
+    ///
+    /// Independent of [`Self::seal_outbox`] on purpose: a node that no longer
+    /// seals — the provider was dropped, or this is a standalone vault serving
+    /// archived passports — still serves seals it holds, and *those* are the ones
+    /// whose origin a reader most needs. Tying the two would make the answer
+    /// disappear exactly when the seal is oldest and least self-explanatory.
+    ///
+    /// `None` means the route reports the origin as unread rather than as any
+    /// particular finding.
+    pub seal_inspector: Option<Arc<dyn dpp_types::SealInspector>>,
     /// Public base URL under which this deployment serves its continuity
     /// snapshots, if it serves them at all.
     ///
@@ -172,6 +183,7 @@ impl PassportService {
             webhooks: None,
             snapshot_outbox: None,
             seal_outbox: None,
+            seal_inspector: None,
             snapshot_public_base_url: None,
             resolver_base_url: "https://id.odal-node.io".to_owned(),
         }
@@ -251,6 +263,15 @@ impl PassportService {
     #[must_use]
     pub fn with_seal_outbox(mut self, outbox: Arc<dyn SealOutbox>) -> Self {
         self.seal_outbox = Some(outbox);
+        self
+    }
+
+    /// Provide the seal inspector, so the seal read route can report whether a
+    /// provider issued the certificate behind a stored seal or the node signed
+    /// it itself.
+    #[must_use]
+    pub fn with_seal_inspector(mut self, inspector: Arc<dyn dpp_types::SealInspector>) -> Self {
+        self.seal_inspector = Some(inspector);
         self
     }
 

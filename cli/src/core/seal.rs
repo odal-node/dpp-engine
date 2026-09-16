@@ -1,8 +1,15 @@
 //! Qualified-seal inspection via the node API. Pure HTTP — no direct DB access.
 //!
-//! Read-only by design. Sealing is driven by the publish outbox and its drain,
-//! so there is no "seal this now" here: a command that bought a seal out of band
-//! would spend money on a third-party call outside the record the drain keeps.
+//! Sealing is driven by the publish outbox and its drain, so there is no "seal
+//! this now" here: a command that bought a seal out of band would spend money on
+//! a third-party call outside the record the drain keeps.
+//!
+//! [`action_seal_repair`] is not that, and the difference is the whole reason it
+//! is allowed to exist: it **queues** a replacement through the same outbox, so
+//! the drain still owns the purchase, the retry and the record. What is unusual
+//! about it is that the row was paid for once already — which is why the node
+//! refuses unless the seal it holds is demonstrably broken, and why that check
+//! stays on the node rather than being anticipated here.
 
 use anyhow::{Context, Result, bail};
 use reqwest::StatusCode;
@@ -89,6 +96,33 @@ pub async fn action_seal_status(id: &str, client: &OdalClient, cfg: &Config) -> 
             describe_error(status, &body)
         ),
     }
+}
+
+/// `POST /api/v1/dpp/{id}/seal/repair` — queue a replacement for a broken seal.
+///
+/// Every non-success is an error, including the `422` that means "there is
+/// nothing here to repair". That reads oddly beside [`action_seal_status`],
+/// which turns a `404` into a first-class `Absent` — but the two situations are
+/// opposite. There, the operator asked a question and "no seal" is an answer.
+/// Here they asked for an action, and the node declining to spend is not a
+/// quieter kind of success.
+///
+/// The node's `detail` says which refusal it was, and those are worth reading:
+/// a sound seal, one intact over a superseded signature, one this node cannot
+/// read, no seal at all, or no sealing backend to drain a repair.
+///
+/// Requires an admin credential.
+pub async fn action_seal_repair(id: &str, client: &OdalClient, cfg: &Config) -> Result<Value> {
+    let (status, body) = client
+        .post_json(
+            &format!("{}/api/v1/dpp/{id}/seal/repair", cfg.vault_url),
+            &serde_json::json!({}),
+        )
+        .await?;
+    if !status.is_success() {
+        bail!("Repair refused: {}", describe_error(status, &body));
+    }
+    serde_json::from_str(&body).context("repair response was not JSON")
 }
 
 /// `GET /api/v1/seal` — operator-wide sealing state.

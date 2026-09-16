@@ -181,6 +181,9 @@ async fn main() -> anyhow::Result<()> {
         // No composition root here resolves trust ports or a ruleset, so this
         // binary reports neither rather than inventing a posture for them.
         trust: None,
+        // The standalone vault has no composition root, so it spawns no audit
+        // and reports none — rather than reporting a clean one it never ran.
+        seal_audit: None,
         ruleset_admin: None,
         // The standalone vault has a database, so it *could* carry keys — but
         // nothing here spawns the purge task the fused node runs, and a store

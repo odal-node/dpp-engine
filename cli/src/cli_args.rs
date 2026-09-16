@@ -865,4 +865,15 @@ pub enum SealCommands {
         #[arg(long)]
         json: bool,
     },
+    /// Queue a replacement seal for a passport whose stored seal does not
+    /// verify. Costs a seal: the node re-arms a row it already paid for, which
+    /// is justified only because what it holds is worthless. Refused unless the
+    /// seal is demonstrably broken, checked at the moment you ask
+    Repair {
+        /// Passport ID
+        id: String,
+        /// Output the raw route response instead of a summary
+        #[arg(long)]
+        json: bool,
+    },
 }

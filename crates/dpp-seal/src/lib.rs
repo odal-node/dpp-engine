@@ -45,10 +45,13 @@ pub mod config;
 pub mod eideasy;
 pub mod error;
 pub mod ghost;
+pub mod inspect;
 pub mod local;
+pub mod qualification;
 pub mod trustlist;
 
 pub use adapter::QtspSealAdapter;
 pub use backend::SealBackend;
 pub use config::{SEAL_PROVIDER, SealProvider};
 pub use error::SealError;
+pub use inspect::CadesInspector;

@@ -75,7 +75,10 @@ impl PassportService {
         // rather than serialising to bytes and re-parsing through
         // `verify_dossier_json`, which exists for the *uploaded-document* path
         // where the input genuinely starts as untyped bytes.
-        Ok(crate::domain::verify::verify_dossier(&record.dossier))
+        Ok(crate::domain::verify::verify_dossier(
+            &record.dossier,
+            self.seal_inspector.as_deref(),
+        ))
     }
 
     /// Assemble the evidence dossier for a passport. Requires the passport to
@@ -202,12 +205,96 @@ impl PassportService {
         // than any redaction of it. `None` when the seal is still queued.
         let qualified_seal = passport.seal.as_ref().and_then(|seal| {
             let jws = passport.jws_signature.as_ref()?;
+            let payload_hash = crate::domain::service::seal::seal_digest(&passport)?;
+            // Read once: `binding` and `validation` below must agree, and two
+            // separate calls could in principle answer differently — which would
+            // put a dossier on the record contradicting itself.
+            let binding = self
+                .seal_inspector
+                .as_ref()
+                .map_or(dpp_types::SealBinding::Unknown, |i| {
+                    i.binding(seal, &payload_hash)
+                });
+            // Stamped at generation like every other finding here: judged
+            // against an attested sealing time where the seal carries one, and
+            // against this clock otherwise — which is why the moment used
+            // travels inside the answer.
+            let certificate = self
+                .seal_inspector
+                .as_ref()
+                .and_then(|i| i.certificate_standing(seal, chrono::Utc::now()));
             Some(serde_json::json!({
                 "seal": seal,
                 // Served so a verifier holding only this file has both the CAdES
                 // and what it should be checked against, with no reconstruction.
                 "signedOverJws": jws,
-                "payloadHash": crate::domain::service::seal::seal_digest(&passport)?,
+                "payloadHash": payload_hash,
+                // Whether the seal actually covers the signature served beside
+                // it — and this is not decoration.
+                //
+                // The JWS above is the passport's *current* one. A passport
+                // re-published after sealing carries a seal over the previous
+                // signature until the drain catches up, and if the drain is
+                // exhausted that window has no end. A dossier pairing the two
+                // silently would hand an authority a seal that does not verify
+                // against the document beside it — which reads as tampering,
+                // rather than as the stale seal it is.
+                //
+                // Reported rather than allowed to block generation: a dossier
+                // must be producible in whatever state the passport is actually
+                // in, and saying so plainly beats refusing to say anything.
+                "binding": binding,
+                // The same reading in ETSI EN 319 102-1's words — the vocabulary
+                // an auditor's own validation tooling reports in, and the one
+                // CIR (EU) 2025/1945 points at for qualified seals. Derived, not
+                // a second check.
+                //
+                // It never says `totalPassed`: that requires the signer's
+                // certificate to have been validated, which this node does not
+                // do. A dossier reader seeing `coversThisSignature` and no such
+                // caveat could reasonably conclude otherwise.
+                "validation": dpp_types::SealValidationStatus::of(&binding, certificate.as_ref()),
+                // Whether the certificate was valid when the seal was made —
+                // Art. 32(1)(b)'s second limb, and the question an authority
+                // holding this file would otherwise have to answer by finding a
+                // CRL from years ago. A `B-LT` seal carries one; this reads it.
+                "certificate": certificate,
+                // Who issued the certificate behind the seal.
+                //
+                // The dossier already named *which* certificate, as a thumbprint
+                // — enough to ask an auditor's question about, and not enough to
+                // answer the first one anybody actually has. A self-signed
+                // development seal and a QTSP's are the same field otherwise, and
+                // telling them apart meant parsing the CAdES by hand.
+                //
+                // The one fact that decides whether anything else in this section
+                // carries weight, so it travels with it rather than being
+                // recoverable from it.
+                "origin": self.seal_inspector.as_ref().and_then(|i| i.origin(seal)),
+                // What the bytes carry, beside what was asked for — a seal
+                // weaker than ordered is otherwise visible only in a drain log
+                // that no dossier reader has.
+                "evidencedLevel": self
+                    .seal_inspector
+                    .as_ref()
+                    .and_then(|i| i.evidenced_level(seal)),
+                // A third party's statement of when this was sealed, as opposed
+                // to `seal.sealedAt`, which is the sealing node's own clock. An
+                // authority reading a dossier has no other way to reach it — the
+                // token is inside the CAdES.
+                "attestedSealedAt": self
+                    .seal_inspector
+                    .as_ref()
+                    .and_then(|i| i.attested_sealing_time(seal)),
+                // Stamped at generation, like every other finding here. A reader
+                // opening this file in 2035 needs to know the archival
+                // protection had not already lapsed when it was made — and
+                // cannot recompute it against the clock of the day it is read,
+                // because that answer would be about a different moment.
+                "archival": self.seal_inspector.as_ref().map_or(
+                    dpp_types::ArchivalFreshness::Unknown,
+                    |i| i.archival_freshness(seal, chrono::Utc::now()),
+                ),
             }))
         });
 

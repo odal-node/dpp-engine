@@ -430,7 +430,8 @@ unprotected one. Read the table in the code.
 | GET | `/vault/api/v1/registry` | Bearer | EU-registry sync rollup |
 | GET | `/vault/api/v1/dpp/{dppId}/history` | Bearer | Audit trail |
 | GET | `/vault/api/v1/dpp/{dppId}/seal` | Bearer | eIDAS qualified seal + the JWS/digest it covers (`404` when unsealed) |
-| GET | `/vault/api/v1/seal` | Bearer | Operator-wide sealing state — published passports carrying no seal, plus outbox totals |
+| POST | `/vault/api/v1/dpp/{dppId}/seal/repair` | Bearer **(admin)** | Queue a replacement for a stored seal that does not verify. **Buys a second seal** for a digest already paid for, so it refuses unless the seal is demonstrably broken — checked at request time, never read from the audit's list |
+| GET | `/vault/api/v1/seal` | Bearer | Operator-wide sealing state — published passports carrying no seal, outbox totals, the configured backend's trust tier, and what the last **completed** pass over every stored seal found (`audit`, `null` when none has) |
 | GET | `/vault/api/v1/dpp/{dppId}/stats` | Bearer | Per-passport scan telemetry (aggregate; scans + qrRenders, never summed) |
 | GET | `/vault/api/v1/stats` | Bearer | Operator-wide scan telemetry rollup |
 | POST | `/vault/internal/scan-batch` | mTLS (`CN=odal-resolver`) | Resolver scan-telemetry flush sink (off public + `/api/v1`) |

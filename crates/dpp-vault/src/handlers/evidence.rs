@@ -111,11 +111,15 @@ pub async fn verify_evidence_handler(
 
 /// `POST /api/v1/evidence/verify` — verify an uploaded dossier document.
 pub async fn verify_document_handler(
-    State(_state): State<AppState>,
+    State(state): State<AppState>,
     Extension(_auth): Extension<AuthContext>,
     body: Bytes,
 ) -> impl IntoResponse {
-    match verify_dossier_json(&body) {
+    // The uploaded file is self-contained — it carries the seal and the
+    // signature that seal should cover — so this check needs nothing from the
+    // node but the ability to read CAdES. A deployment without a seal reader
+    // reports the check absent rather than failing it.
+    match verify_dossier_json(&body, state.service.seal_inspector.as_deref()) {
         Ok(report) => (StatusCode::OK, Json(report)).into_response(),
         Err(e) => api_error(
             StatusCode::UNPROCESSABLE_ENTITY,

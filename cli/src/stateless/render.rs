@@ -249,13 +249,15 @@ pub fn render_passport_list(page: &PassportPage) {
     );
     println!("{}", "─".repeat(86));
     for r in &page.rows {
+        // A forged row is the worst case in a table: the columns line up, so a
+        // fabricated line is indistinguishable from a real passport.
         println!(
             "{:<10} {:<32} {:<9} {:<18} {}",
-            r.status,
-            truncate(&r.product_name, 32),
-            r.product_group,
-            r.batch.as_deref().unwrap_or("—"),
-            r.updated
+            plain(&r.status),
+            plain(&truncate(&r.product_name, 32)),
+            plain(&r.product_group),
+            plain(r.batch.as_deref().unwrap_or("—")),
+            plain(&r.updated)
         );
     }
     print!("\n{} shown", page.rows.len());
@@ -269,7 +271,14 @@ pub fn render_passport_list(page: &PassportPage) {
 /// browser's "View details"). Shows the full ID and QR link.
 pub fn render_passport_details(doc: &serde_json::Value) {
     let s = |k: &str| doc.get(k).and_then(|v| v.as_str());
-    let line = |label: &str, val: &str| println!("  {:<14}{}", format!("{label}:"), val);
+    // Sanitised here rather than at each call site: every value below is a
+    // product document's own text — a manufacturer name, a batch reference, a
+    // facility label — which arrives from an import, an API caller or a
+    // supply-chain peer. Guarding the one place they are all printed means a
+    // field added later cannot miss it.
+    let line = |label: &str, val: &str| {
+        println!("  {:<14}{}", format!("{label}:"), plain(val));
+    };
 
     line("Product", s("productName").unwrap_or("—"));
     line("Status", s("status").unwrap_or("—"));
@@ -420,13 +429,34 @@ pub fn render_history(entries: &[PassportAuditEntry], id: &str) {
     }
     println!("{:<26}  {:<12}  ACTOR", "TIMESTAMP", "ACTION");
     for e in entries {
-        println!("{:<26}  {:<12}  {}", e.timestamp, e.action, e.actor);
+        // `actor` is whatever authenticated — a user id this node was handed,
+        // not one it chose.
+        println!(
+            "{:<26}  {:<12}  {}",
+            e.timestamp,
+            plain(&e.action),
+            plain(&e.actor)
+        );
     }
 }
 
 /// Read an integer field from a stats response, defaulting to 0.
 fn stat_i64(v: &serde_json::Value, key: &str) -> i64 {
     v.get(key).and_then(serde_json::Value::as_i64).unwrap_or(0)
+}
+
+/// Read a string field from a node response, sanitised.
+///
+/// The safe path made the **short** path, which is the only version of this
+/// rule that survives the next person adding a field. Reading with
+/// `get(..).as_str()` and printing the result is one line shorter than reading
+/// it and remembering [`plain`]; making the sanitised form the convenient one
+/// removes the choice rather than documenting it.
+fn field(value: &serde_json::Value, key: &str) -> Option<String> {
+    value
+        .get(key)
+        .and_then(serde_json::Value::as_str)
+        .map(plain)
 }
 
 /// Strip control characters from a node-supplied string before it is printed.
@@ -442,9 +472,11 @@ fn stat_i64(v: &serde_json::Value, key: &str) -> i64 {
 /// timestamp byte-identical and a tampered one visibly wrong, which is the
 /// right outcome for a field whose only job is to be read at a glance.
 ///
-/// Scope: this guards the field this module added. The passport-document
-/// strings rendered further up have the same shape and predate it — widening
-/// the fix is its own change, not one to smuggle in here.
+/// Scope: **every** node-supplied string this module prints, now. It began as a
+/// guard on one field, with the passport-document strings left for their own
+/// change — this is that change. Where a renderer reads or prints through a
+/// shared helper, the helper sanitises, so a field added later inherits it
+/// instead of needing to remember.
 fn plain(s: &str) -> String {
     s.chars().filter(|c| !c.is_control()).collect()
 }
@@ -644,12 +676,7 @@ pub fn render_schema_check(result: &SchemaCheckResult) {
 /// passport was re-published after sealing and the seal still covers the
 /// signature it was bought for.
 pub fn render_seal_status(seal: &serde_json::Value, id: &str) {
-    let s = |key: &str| {
-        seal.get(key)
-            .and_then(serde_json::Value::as_str)
-            .unwrap_or("-")
-            .to_owned()
-    };
+    let s = |key: &str| field(seal, key).unwrap_or_else(|| "-".to_owned());
     let placeholder = seal
         .get("placeholder")
         .and_then(serde_json::Value::as_bool)
@@ -665,17 +692,248 @@ pub fn render_seal_status(seal: &serde_json::Value, id: &str) {
     }
 
     println!("  Format        : {}", s("format"));
-    println!("  Sealed at     : {}", s("sealedAt"));
+
+    // Both levels, and loudly when they differ. A seal below the level it was
+    // bought at is correct in every record this node keeps and stops verifying
+    // when its certificate expires — on a passport that cannot be re-sealed.
+    let asked = s("conformanceLevel");
+    let evidenced = s("evidencedLevel");
+    if evidenced == "-" {
+        println!("  Level         : {asked} requested; the bytes could not be read");
+    } else if asked == "-" || asked == evidenced {
+        println!("  Level         : {evidenced}");
+    } else {
+        println!(
+            "  Level         : {}  requested {asked}, the bytes carry {evidenced}",
+            style("DOWNGRADED").red().bold()
+        );
+        println!("                  this seal carries less validation material than was paid for");
+    }
+
+    println!(
+        "  Sealed at     : {}  (this node's clock, unattested)",
+        s("sealedAt")
+    );
+    // A third party's statement of when, as opposed to ours. Absent below B-T,
+    // and absent for a token that failed its checks — which is not the same as
+    // a seal made at an unknown time, but is the same answer: we cannot say.
+    match field(seal, "attestedSealedAt") {
+        Some(at) => {
+            println!("  Attested at   : {at}  by the timestamp inside the seal");
+        }
+        None => println!("  Attested at   : none — no timestamp token this node could check"),
+    }
 
     // The certificate the seal names as its signer — which certificate to ask
     // about, not whether it was qualified. Absent for seals made before the
     // extraction landed, or when the CAdES could not be parsed.
-    match seal
-        .get("signingCertRef")
-        .and_then(serde_json::Value::as_str)
-    {
+    match field(seal, "signingCertRef") {
         Some(cert) => println!("  Signing cert  : {cert}"),
         None => println!("  Signing cert  : not recorded (predates extraction, or unparseable)"),
+    }
+
+    // Who issued the certificate — the question an operator asks first, and the
+    // one that used to be answerable only by reading the node's configuration.
+    match seal.get("origin") {
+        Some(origin) if !origin.is_null() => {
+            let self_issued = origin
+                .get("selfIssued")
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(false);
+            // Sanitised, and this is the sharpest case in the file: the issuer
+            // is a distinguished name read out of a certificate **inside a
+            // seal**. A provider's certificate, or a seal handed to this node,
+            // is not something this node chose the bytes of — so a name
+            // carrying ANSI escapes or newlines could repaint the lines around
+            // it and forge output under the CLI's own labels.
+            let issuer = field(origin, "issuer").unwrap_or_else(|| "-".to_owned());
+            if self_issued {
+                println!(
+                    "  Issued by     : {}  {issuer}",
+                    style("SELF-SIGNED").yellow().bold()
+                );
+                println!(
+                    "                  nobody issued this certificate — it attests that a key \
+                     this node holds"
+                );
+                println!("                  signed a digest, and carries no legal weight");
+            } else {
+                println!("  Issued by     : {issuer}");
+            }
+            let device = match origin
+                .get("creationDevice")
+                .and_then(serde_json::Value::as_str)
+            {
+                Some("declaresQualifiedDevice") => {
+                    "declares a qualified creation device (Annex III(j))"
+                }
+                Some("noQualifiedDevice") => {
+                    "a qualified certificate, but its key is not in a qualified device"
+                }
+                Some("notAQualifiedCertificate") => {
+                    "not presenting as a qualified certificate at all"
+                }
+                _ => "-",
+            };
+            println!("  Key device    : {device}");
+        }
+        _ => println!(
+            "  Issued by     : not read (placeholder, unparsed format, or unreadable bytes)"
+        ),
+    }
+
+    // Whether the seal's own bytes cover this passport. Distinct from Coverage
+    // below, which answers from this node's records.
+    let binding = seal.get("binding");
+    let result = binding
+        .and_then(|b| b.get("result"))
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("unknown");
+    match result {
+        "coversThisSignature" => {
+            println!(
+                "  Binding       : {}  the seal's own signed attributes cover this passport's",
+                style("PROVEN").green().bold()
+            );
+            println!("                  current signature, and the signature over them verifies");
+        }
+        "coversAnotherDigest" => {
+            let covered = binding
+                .and_then(|b| field(b, "covered"))
+                .unwrap_or_else(|| "-".to_owned());
+            println!(
+                "  Binding       : {}  the seal covers {covered},",
+                style("OTHER DIGEST").yellow().bold()
+            );
+            println!("                  not this passport's current signature");
+        }
+        "notIntact" => {
+            println!(
+                "  Binding       : {}  the signature over the seal's attributes does not",
+                style("BROKEN").red().bold()
+            );
+            println!("                  verify, so nothing it says about what it covers holds");
+        }
+        _ => println!("  Binding       : not read — no digest recoverable from the envelope"),
+    }
+
+    // Whether the certificate itself stood up when the seal was made — the
+    // second limb of Art. 32(1)(b), and the question a reader asks immediately
+    // after "does the seal cover this passport".
+    if let Some(cert) = seal.get("certificate").filter(|c| !c.is_null()) {
+        let attested = cert
+            .get("judgedAt")
+            .and_then(|j| j.get("attested"))
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false);
+        // The qualifier is the whole point: the same observation is a finding
+        // against a proven sealing time and an open question against a guess.
+        let basis = if attested {
+            "at the attested sealing time"
+        } else {
+            "as of now — nothing attests when this seal was made"
+        };
+        match cert
+            .get("validity")
+            .and_then(|v| v.get("standing"))
+            .and_then(serde_json::Value::as_str)
+        {
+            Some("inside") => println!("  Certificate   : within its validity window {basis}"),
+            Some("expired") => println!(
+                "  Certificate   : {}  outside its validity window {basis}",
+                style("EXPIRED").red().bold()
+            ),
+            Some("notYetValid") => println!(
+                "  Certificate   : {}  not yet valid {basis}",
+                style("NOT YET VALID").red().bold()
+            ),
+            _ => {}
+        }
+        match cert
+            .get("revocation")
+            .and_then(|r| r.get("status"))
+            .and_then(serde_json::Value::as_str)
+        {
+            Some("revoked") => println!(
+                "  Revocation    : {}  the issuer's own list names this certificate",
+                style("REVOKED").red().bold()
+            ),
+            Some("notRevoked") => {
+                let as_of = cert
+                    .get("revocation")
+                    .and_then(|r| field(r, "asOf"))
+                    .unwrap_or_else(|| "-".to_owned());
+                println!("  Revocation    : not listed, as of {as_of}");
+            }
+            // Said plainly rather than left blank: "no CRL travelled with this
+            // seal" and "the certificate is fine" are different facts.
+            Some("notAvailable") => {
+                println!("  Revocation    : not asked — the seal carries no revocation material")
+            }
+            Some("unusable") => {
+                let reason = cert
+                    .get("revocation")
+                    .and_then(|r| field(r, "reason"))
+                    .unwrap_or_default();
+                println!("  Revocation    : {}  {reason}", style("UNUSABLE").yellow());
+            }
+            _ => {}
+        }
+    }
+
+    // The same reading in the standard's words, because that is the vocabulary
+    // an auditor's own tooling reports in — and because `PROVEN` above is the
+    // line most likely to be read as "validated", which it is not.
+    if let Some(validation) = seal.get("validation") {
+        let indication = field(validation, "indication").unwrap_or_default();
+        let sub = field(validation, "subIndication");
+        match (indication.as_str(), sub.as_deref()) {
+            ("totalFailed", Some(sub)) => {
+                println!("  EN 319 102-1  : TOTAL-FAILED / {}", sub.to_uppercase());
+            }
+            ("totalFailed", None) => println!("  EN 319 102-1  : TOTAL-FAILED"),
+            ("indeterminate", Some(sub)) => {
+                println!("  EN 319 102-1  : INDETERMINATE / {}", sub.to_uppercase());
+            }
+            ("indeterminate", None) => {
+                println!("  EN 319 102-1  : INDETERMINATE — nothing has failed, and the chain");
+                println!("                  is not validated to a trust anchor, so nothing has");
+                println!("                  passed either");
+            }
+            _ => {}
+        }
+    }
+
+    // Whether the long-term protection is still live. Silent for a seal that
+    // was never archived: `B-LT` was not promised it, and a line about renewal
+    // would imply an obligation nobody took on.
+    match seal
+        .get("archival")
+        .and_then(|a| a.get("state"))
+        .and_then(serde_json::Value::as_str)
+    {
+        Some("current") => {
+            let by = seal
+                .get("archival")
+                .and_then(|a| field(a, "expires"))
+                .unwrap_or_else(|| "-".to_owned());
+            println!("  Archival      : live until {by} — re-timestamp before then");
+        }
+        Some("lapsed") => {
+            let at = seal
+                .get("archival")
+                .and_then(|a| field(a, "expires"))
+                .unwrap_or_else(|| "-".to_owned());
+            println!(
+                "  Archival      : {}  expired {at}; the long-term protection is gone",
+                style("LAPSED").red().bold()
+            );
+            println!("                  the level still reads LTA, which is how this goes unseen");
+        }
+        Some("unknown") => {
+            println!("  Archival      : present but unreadable — treated as not fresh")
+        }
+        _ => {}
     }
 
     let coverage = s("coverage");
@@ -713,6 +971,35 @@ pub fn render_seal_absent(id: &str) {
     println!("  Sealing runs off a drain after publish — it is not part of the publish call.");
 }
 
+/// Render what a repair queued.
+///
+/// Says that a seal is being bought, because it is: this is the one command
+/// here that spends. The node's own note travels with the response and is
+/// printed rather than paraphrased — it is written where the rule lives.
+pub fn render_seal_repair(repair: &serde_json::Value, id: &str) {
+    let action = field(repair, "action").unwrap_or_else(|| "queued".to_owned());
+    println!("Repair queued for {}", plain(id));
+    match action.as_str() {
+        // The distinction the response draws, and the one an operator paying
+        // for seals cares about.
+        "rearmed" => println!(
+            "  {}  the broken seal's row was re-armed — a replacement will be bought",
+            style("REARMED").yellow().bold()
+        ),
+        _ => println!(
+            "  {}  this signature had never been sealed, so nothing is bought twice",
+            style("QUEUED").green().bold()
+        ),
+    }
+    if let Some(hash) = field(repair, "payloadHash") {
+        println!("  Covers: {hash}");
+    }
+    if let Some(note) = field(repair, "note") {
+        println!("  {note}");
+    }
+    println!("  The node's drain buys it; watch `odal seal status {id}`.");
+}
+
 /// Render the operator-wide sealing summary.
 ///
 /// Leads with the passport count, not the row counts. An operator asking about
@@ -735,6 +1022,99 @@ pub fn render_seal_summary(summary: &serde_json::Value) {
         println!("  No seal provider is selected, so nothing is queued and nothing is sealed.");
         println!("  Set SEAL_PROVIDER to enable it.");
         return;
+    }
+
+    match summary.get("trustMode").and_then(serde_json::Value::as_str) {
+        Some("live") => println!("Sealing tier: {}", style("live").green()),
+        Some("sandbox") => println!(
+            "Sealing tier: {}  a real provider, on its test certificate",
+            style("sandbox").yellow()
+        ),
+        Some("ghost") => println!(
+            "Sealing tier: {}  these seals carry no legal weight whatsoever",
+            style("ghost").red().bold()
+        ),
+        // Not the same as `ghost`: a port nobody resolved versus one that landed
+        // on a placeholder. Only the second blocks a production boot.
+        _ => println!("Sealing tier: not reported by this node"),
+    }
+
+    // What the last completed pass over every stored seal found. Absent is not
+    // zero: a pass walks the estate over several minutes and starts over, so a
+    // node that has just restarted has genuinely not looked yet.
+    match summary.get("audit").filter(|a| !a.is_null()) {
+        None => {
+            println!("Stored seals: not audited yet — no pass over them has completed");
+            println!("              this is not the same as 'none broken': a pass walks the");
+            println!("              whole estate, and until one finishes nothing has looked");
+        }
+        Some(audit) => {
+            let a = |k: &str| {
+                audit
+                    .get(k)
+                    .and_then(serde_json::Value::as_i64)
+                    .unwrap_or(0)
+            };
+            let at = field(audit, "completedAt").unwrap_or_else(|| "-".to_owned());
+            // Reported on its own line rather than folded into the broken count:
+            // the two need different responses, and repair refuses this one.
+            if a("certificateFailed") > 0 {
+                println!(
+                    "Stored seals: {}  {} were made under a certificate that was not valid",
+                    style("CERTIFICATE").red().bold(),
+                    a("certificateFailed")
+                );
+                println!(
+                    "              at the time — re-sealing does not help, since the replacement"
+                );
+                println!("              would come from the same certificate");
+            }
+            if a("broken") == 0 {
+                // "all signatures verify", not "all verify": the certificate
+                // line above may have just reported that some of them were made
+                // under a certificate that was not valid. Those seals verify and
+                // are worth nothing, and one line must not unsay the other.
+                println!(
+                    "Stored seals: {} checked, all signatures verify (as of {at})",
+                    a("checked")
+                );
+            } else {
+                println!(
+                    "Stored seals: {}  {} of {} do not verify (as of {at})",
+                    style("BROKEN").red().bold(),
+                    a("broken"),
+                    a("checked")
+                );
+                println!(
+                    "              those passports are published and, in substance, unsealed —"
+                );
+                println!(
+                    "              and invisible to the count below, which asks only whether a"
+                );
+                println!("              seal is present");
+                for id in audit
+                    .get("brokenPassports")
+                    .and_then(serde_json::Value::as_array)
+                    .map(Vec::as_slice)
+                    .unwrap_or_default()
+                {
+                    if let Some(id) = id.as_str() {
+                        println!("                {}", plain(id));
+                    }
+                }
+                if audit
+                    .get("truncated")
+                    .and_then(serde_json::Value::as_bool)
+                    .unwrap_or(false)
+                {
+                    println!("                … list truncated; see `broken` for the total");
+                }
+                // The finding is only useful beside what to do about it, and the
+                // route re-checks before acting — so a name from a report that
+                // has since been repaired costs nothing but a refusal.
+                println!("              repair one with: odal seal repair <id>");
+            }
+        }
     }
 
     let unsealed = n("unsealedPublished");
@@ -786,6 +1166,55 @@ mod node_supplied_text {
         let out = plain("2026-09-10\u{1b}[2J\u{1b}[H");
         assert!(!out.contains('\u{1b}'), "escape survived: {out:?}");
         assert_eq!(out, "2026-09-10[2J[H");
+    }
+
+    /// A distinguished name is the sharpest case, and it is now rendered.
+    ///
+    /// `render_seal_status` prints the issuer read out of a certificate **inside
+    /// a seal**. That is the least node-chosen string this module displays — a
+    /// provider's certificate, or a seal handed to this node from elsewhere — so
+    /// it is exactly the field an attacker would put escapes in.
+    #[test]
+    fn a_distinguished_name_carrying_escapes_is_defanged() {
+        let out = plain("CN=Acme\u{1b}[2K\rO=Qualified CA");
+        assert!(!out.contains('\u{1b}'), "escape survived: {out:?}");
+        assert!(!out.contains('\r'), "carriage return survived: {out:?}");
+        assert!(
+            out.contains("CN=Acme"),
+            "the readable part must survive: {out:?}"
+        );
+    }
+
+    /// The table renderers are the worst case, so the sweep reached them.
+    ///
+    /// A forged row in `odal list` lines up with the real ones: the columns are
+    /// padded, so a fabricated passport is indistinguishable from a genuine one
+    /// at a glance. That is a different failure from a mangled field, and it is
+    /// why this went past the field that started it.
+    #[test]
+    fn a_product_name_cannot_forge_a_table_row() {
+        let forged = plain("Widget\nfake-row    Totally Real Product");
+        assert!(
+            !forged.contains('\n'),
+            "a newline would open a second line under the table's own columns: {forged:?}"
+        );
+        assert!(
+            forged.contains("Widget"),
+            "the readable part survives: {forged:?}"
+        );
+    }
+
+    /// The reading helper sanitises, so a field added later inherits it.
+    ///
+    /// This is the part meant to outlast the sweep. Auditing every call site
+    /// once fixes today; making the short way the safe way is what stops the
+    /// next field being added unguarded.
+    #[test]
+    fn reading_a_field_sanitises_it() {
+        let v = serde_json::json!({ "issuer": "CN=Acme\u{1b}[2Kfake" });
+        let read = super::field(&v, "issuer").expect("present");
+        assert!(!read.contains('\u{1b}'), "escape survived: {read:?}");
+        assert_eq!(super::field(&v, "absent"), None);
     }
 
     /// A newline in the field would let a node forge extra CLI output lines

@@ -573,6 +573,82 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '404':
           $ref: '#/components/responses/NotFound'
+  /vault/api/v1/dpp/{dppId}/seal/repair:
+    post:
+      operationId: repairDppSeal
+      summary: Re-seal a passport whose stored seal does not verify
+      description: |
+        Queues a replacement seal for a passport whose stored seal is broken, and
+        refuses unless it demonstrably is.
+
+        **This buys a second seal for a digest already paid for.** The node's own
+        repair sweep deliberately cannot do that — it only queues passports
+        carrying *no seal at all*, which is what lets it run unattended without
+        spending money twice. A broken seal is the case where spending it again is
+        right: the row was paid for and carries nothing, so the passport is
+        published and, in substance, unsealed. That is a decision for whoever pays,
+        taken per passport, which is why it is a route rather than a background
+        loop.
+
+        **The seal is opened and checked at the moment of the request**, never read
+        from the audit's list. A stale finding would buy a seal for a passport that
+        has since been repaired or re-published.
+
+        Not idempotency-keyed, and does not need to be: a seal row is keyed by
+        `(passportId, payloadHash)`, so a retried request re-arms a row that is
+        already queued, which is a no-op. A second repair after the replacement
+        lands is refused, because the new seal verifies.
+
+        The replacement covers the passport's **current** signature. Where the
+        passport was re-published since the broken seal was made, that signature has
+        never been sealed, so nothing is re-bought and `action` is `queued` rather
+        than `rearmed`.
+      tags:
+        - DPP Management
+      security:
+        - BearerApiKey: []
+        - BasicAuth: []
+      parameters:
+        - name: dppId
+          in: path
+          required: true
+          schema:
+            $ref: '#/components/schemas/DppId'
+      responses:
+        '200':
+          description: A replacement seal has been queued.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SealRepairResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          description: |
+            No passport with that id. Distinct from `422`, which means the passport
+            exists and is not in a state this repairs.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '422':
+          description: |
+            The passport exists and there is nothing here to repair. The detail says
+            which: the seal verifies; it is intact but covers a superseded signature,
+            whose replacement is already queued by the re-publish that caused it;
+            there is no seal at all, which the node's own sweep covers at no extra
+            cost; the seal could not be read, so it cannot be shown to be broken;
+            this node has no sealing backend, so a queued repair would never drain;
+            or the passport carries a seal and no signature, which should not occur
+            and for which a replacement would cover nothing.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
   /vault/api/v1/seal:
     get:
       operationId: getSealSummary
@@ -5178,6 +5254,9 @@ components:
         - currentJws
         - currentPayloadHash
         - coverage
+        - binding
+        - validation
+        - archival
         - verification
       properties:
         declaredBy:
@@ -5198,6 +5277,38 @@ components:
             - string
             - 'null'
           description: Hex SHA-256 of the certificate the seal names as its signer, **as reported by the seal** — read out of the CAdES, never verified. It answers *which* certificate to ask about, not whether that certificate was qualified or on the EU Trusted List. Null when the seal predates extraction or could not be parsed.
+        attestedSealedAt:
+          type:
+            - string
+            - 'null'
+          format: date-time
+          description: |-
+            **When a timestamp authority attests the seal was made.**
+
+            `sealedAt` is the sealing node's own clock and an unattested claim by the party that bought the seal. This is a third party's statement, read out of the time-stamp token inside `sealValue` — the only place in a seal an attested time can be.
+
+            Checked rather than merely read: the token's own signature is verified and its imprint is matched against this seal's signature. The attribute carrying the token is *unsigned*, so a genuine token lifted from another seal would otherwise be accepted and report someone else's time as this one's.
+
+            `null` for a `B-B` seal, which carries no token, and for a token that failed either check.
+
+            **Attested is not trusted.** A qualified electronic time stamp is a QTSP's service (Art. 42) and the presumption of accuracy attaches to that (Art. 41(2)); establishing it is a Trusted List question about the `TSA/QTST` service type, which this node cannot yet ask. A self-signed authority's token verifies perfectly and means nothing.
+        conformanceLevel:
+          oneOf:
+            - $ref: '#/components/schemas/SealConformanceLevel'
+            - type: 'null'
+          description: The baseline level this node **asked** for, recorded on the envelope. A record of intent; `null` for a seal stored before the field existed.
+        evidencedLevel:
+          oneOf:
+            - $ref: '#/components/schemas/SealConformanceLevel'
+            - type: 'null'
+          description: |-
+            The baseline level the seal's **bytes** carry.
+
+            The pair is the point. A provider enabled for a weaker profile than was paid for returns a seal that is correct in every record this node keeps and stops verifying when its signing certificate expires — years later, on a passport that is retention-locked and cannot be re-sealed. Serving both makes that answerable from the seal rather than from a log nobody kept.
+
+            A floor, not a conformance verdict: it reports that the distinguishing material for a level is present, never that the material was validated. `null` when the bytes could not be read.
+        archival:
+          $ref: '#/components/schemas/ArchivalFreshness'
         placeholder:
           type: boolean
           description: True when this is a placeholder with no legal validity.
@@ -5214,6 +5325,24 @@ components:
           description: 'Hex SHA-256 this node **asked** the backend to seal. A record, not proof: it says what was requested, while the validator''s extracted message digest says what the CAdES actually covers. The two agreeing is the cross-check. Null for a seal restored from a backup or produced elsewhere.'
         coverage:
           $ref: '#/components/schemas/SealCoverage'
+        binding:
+          $ref: '#/components/schemas/SealBinding'
+        validation:
+          $ref: '#/components/schemas/SealValidationStatus'
+        certificate:
+          oneOf:
+            - $ref: '#/components/schemas/CertificateStanding'
+            - type: 'null'
+        origin:
+          oneOf:
+            - $ref: '#/components/schemas/SealOrigin'
+            - type: 'null'
+          description: |-
+            What **this seal's own certificate** says about who issued it: did a provider issue it, or did the node sign it itself?
+
+            Null means **not read** — a placeholder seal, a format this node does not parse, unreadable bytes, or a deployment with no inspector wired. Never read null as "not self-issued": that is a finding, and it only comes from a certificate that was actually examined.
+
+            For what the *currently configured* backend produces, which is a different question, see `trustMode` on `GET /api/v1/seal`.
         verification:
           type: string
           description: 'Stated, not implied: this node did not cryptographically validate the CAdES. A detached CAdES must be checked by an independent AdES validator against the EU Trusted List.'
@@ -5239,6 +5368,31 @@ components:
           description: Rows that gave up after exhausting their retries.
         sealingConfigured:
           type: boolean
+        audit:
+          oneOf:
+            - $ref: '#/components/schemas/SealAuditReport'
+            - type: 'null'
+          description: |-
+            What the last completed pass over every stored seal found.
+
+            **`null` means no pass has completed**, not that nothing is wrong. The pass walks the estate in bounded batches and starts over, so this is empty until the first one finishes, and absent entirely on a deployment that runs no audit. Reporting a zero here for a check that has not run would be the one answer worse than reporting nothing.
+
+            A node that keeps its audit state restores the last completed report at boot, so a restart no longer empties this. Where it is still `null` after a deployment, the honest reading is that no pass has ever finished against this database — on a large estate, check the audit's cadence before concluding anything about the seals.
+        trustMode:
+          type:
+            - string
+            - 'null'
+          enum:
+            - ghost
+            - sandbox
+            - live
+            - null
+          description: |-
+            The tier the **currently configured** sealing backend resolved to. The counts say how much sealing is outstanding; this says whether the sealing that does happen is worth anything — a node can sit at `unsealedPublished: 0` while every one of those seals was signed by a key it generated itself, and no count would show it.
+
+            A different question from the per-passport `origin`, and neither substitutes for the other: this describes the backend running now, that describes the certificate inside one stored seal. A node moved from a local backend to a QTSP last week reports `live` here and `selfIssued: true` on everything sealed before the move, and both are correct.
+
+            Null on a deployment that resolved no seal port at all. That is **not** `ghost`: a port nobody wired and a port that landed on a placeholder are different states, and only the second blocks a production boot.
     SealDeclarer:
       type: object
       description: |
@@ -5288,6 +5442,29 @@ components:
         - current
         - superseded
         - unknown
+    SealRepairResponse:
+      type: object
+      description: The outcome of repairing one passport's seal.
+      required:
+        - action
+        - payloadHash
+        - note
+      properties:
+        action:
+          type: string
+          enum:
+            - rearmed
+            - queued
+          description: |-
+            `rearmed`: a `sealed` row was re-armed — the one path that buys a second seal for a digest already paid for, justified because the first does not verify.
+
+            `queued`: a row was queued the ordinary way. The passport was re-published since the broken seal was made, so the signature now needing a seal has never been sealed and nothing is being re-bought.
+        payloadHash:
+          type: string
+          description: Hex SHA-256 the replacement seal will cover — the passport's **current** signature, not whatever the broken seal covered.
+        note:
+          type: string
+          description: 'Stated rather than implied, like every other note on this surface: what was queued, what it will cost, and why spending it is right here.'
     EvidenceDossier:
       type: object
       description: |
@@ -5435,10 +5612,11 @@ components:
 
         ⚠️ **This shape is described here but not enforced anywhere.** The field is
         held as untyped JSON on the dossier record, so no Rust type declares these
-        three members and the OpenAPI contract test has nothing to compare them
-        against. Treat the property list as documentation of intent, not as a
-        guarantee. Giving the dossier a real type for this member would close that,
-        and is the only thing that would.
+        members and the OpenAPI contract test has nothing to compare them against.
+        Treat the property list as documentation of intent, not as a guarantee. Giving
+        the dossier a real type for this member would close that, and is the only thing
+        that would — and it is worth doing: this list had fallen five fields behind
+        what the dossier actually carries before anyone read the two side by side.
       properties:
         seal:
           type: object
@@ -5450,6 +5628,32 @@ components:
           type: string
           pattern: ^[0-9a-f]{64}$
           description: SHA-256 of the sealed payload, lowercase hex.
+        binding:
+          $ref: '#/components/schemas/SealBinding'
+        validation:
+          $ref: '#/components/schemas/SealValidationStatus'
+        certificate:
+          oneOf:
+            - $ref: '#/components/schemas/CertificateStanding'
+            - type: 'null'
+        origin:
+          oneOf:
+            - $ref: '#/components/schemas/SealOrigin'
+            - type: 'null'
+          description: What the seal's own certificate says about who issued it — the one fact that decides whether anything else in this member carries weight.
+        evidencedLevel:
+          type:
+            - string
+            - 'null'
+          description: The baseline level the seal's **bytes** carry, which is not necessarily the level this node asked for. A seal weaker than ordered is otherwise visible only in a drain log no dossier reader has.
+        attestedSealedAt:
+          type:
+            - string
+            - 'null'
+          format: date-time
+          description: A timestamp authority's statement of when the seal was made, read out of the token inside the CAdES and checked. `seal.sealedAt` beside it is the sealing node's own clock, which is an unattested claim by the party that bought the seal.
+        archival:
+          $ref: '#/components/schemas/ArchivalFreshness'
     EvidenceDossierRecord:
       type: object
       description: A stored dossier snapshot — the dossier plus its persistence envelope.
@@ -7347,6 +7551,310 @@ components:
             $ref: '#/components/schemas/PublishBlocker'
         passportScope:
           $ref: '#/components/schemas/PassportScopeReport'
+    ArchivalFreshness:
+      type: object
+      description: |-
+        Whether a seal's archival protection is still live.
+
+        `evidencedLevel` reports `baseline-lta` from the **presence** of the archival material, and is right to — the material is there. This reports whether it still means anything.
+
+        An archival timestamp is what keeps a `B-LTA` seal verifiable after its signing certificate expires, which is the whole point for a retention-locked passport that outlives every certificate involved. **It expires too**: its own timestamping authority's certificate has a validity period, and ETSI's long-term profiles expect re-timestamping before that. Without this field a seal whose archival protection lapsed years ago reads exactly as it did the day it was bought.
+
+        **A signal, not a verdict.** A seal nearing its renewal date still verifies, and that window is the only chance to renew without an outage. No threshold is applied — how much notice is enough is a policy question for the reader.
+      required:
+        - state
+      properties:
+        state:
+          type: string
+          enum:
+            - notArchived
+            - current
+            - lapsed
+            - unknown
+          description: |-
+            `notArchived`: no archival timestamp — a seal below `B-LTA`. Nothing to renew, which is a different thing from a renewal that has lapsed: such a seal was never promised long-term protection.
+
+            `current`: the archival timestamp's authority certificate is still valid.
+
+            `lapsed`: it has expired. The seal may still verify today; what is gone is the thing meant to keep it verifying once its signing certificate goes.
+
+            `unknown`: an archival timestamp is present and could not be read. **Not `current`** — a token that cannot be checked is not a fresh one, and reporting it as current is how a staleness signal goes quiet at the moment it matters.
+        expires:
+          type: string
+          format: date-time
+          description: 'When the archival timestamp''s authority certificate expires — the date by which re-timestamping must have happened, read from before or after it depending on `state`. One value, so one name: `current` and `lapsed` are the same date seen from either side. Absent for `notArchived` and `unknown`.'
+    SealBinding:
+      type: object
+      description: |-
+        Whether the seal's **own bytes** say it covers this passport's current signature.
+
+        A detached CAdES states what it covers in exactly one place — the `messageDigest` signed attribute, RFC 5652 §11.2 — and that attribute sits *inside* the signature. This reports what it says, after checking the signature over it. That ordering is the whole point: the attribute is plain DER and trivial to rewrite, but rewriting it breaks the signature, so a seal cannot be retargeted at another passport by editing what it claims to cover.
+
+        Read it beside `coverage`, which answers the same question from this node's own outbox records. Those records survive a seal that will not parse and need no cryptography; this needs both and is evidence. **Where the two disagree, the disagreement is the finding** — the records and the bytes are describing different things, which neither source could have revealed alone.
+      required:
+        - result
+      properties:
+        result:
+          type: string
+          enum:
+            - coversThisSignature
+            - coversAnotherDigest
+            - notIntact
+            - unknown
+          description: |-
+            `coversThisSignature`: the seal names this exact signature and its attributes verify under the certificate it carries. The strongest statement this node can make without an external validator — whatever is true of the seal's *trust*, it is demonstrably a seal over this passport and not over anything else.
+
+            `coversAnotherDigest`: the seal is intact and names a different digest. Ordinary after a re-publish, since the passport re-signed. It is also what a seal stored against the wrong passport looks like, and the two are indistinguishable from the bytes alone; what separates them is whether an outbox row says this digest was ever requested for this passport.
+
+            `notIntact`: the signature over the seal's attributes does not verify, so nothing the seal says about what it covers can be relied on.
+
+            `unknown`: the bytes could not be read, or carry no digest at all — a placeholder, an unparsed format, or a signature with no signed attributes. **Never** to be read as a mismatch.
+        covered:
+          type: string
+          description: |-
+            Hex SHA-256 the seal actually covers. Present only with `coversAnotherDigest`, so a caller holding it can find which version of the passport it belongs to.
+
+            Deliberately absent from `notIntact`: the attribute naming it sits inside a signature that failed, so reporting it would hand the caller a number that nothing vouches for.
+    SealValidationStatus:
+      type: object
+      description: |-
+        `binding` restated in the vocabulary of ETSI EN 319 102-1 clause 5.1.3 — the procedures standard CIR (EU) 2025/1945 points at for validating a qualified electronic seal.
+
+        A translation, not a second opinion: it is derived from `binding` and adds no checking of its own. It is here because these findings travel to readers whose validation tooling speaks this vocabulary, and because the translation makes explicit something our own field names let a reader assume.
+
+        **`totalPassed` is not among the values, and cannot be.** That indication requires, among other conditions, that the constraints applicable to the signer's certificate have been positively validated — a certificate path built and validated to a trust anchor, under a policy.
+
+        This node checks the certificate's validity window and whatever revocation material the seal carries (see `certificate`), and it checks one issuer signature against a Trusted List entry. It builds no path and applies no policy constraints. So a seal that demonstrably covers this signature reports `indeterminate`: nothing has failed, and not everything has been checked. Reading `coversThisSignature` as a validation pass is the misreading this object exists to prevent.
+      required:
+        - indication
+      properties:
+        indication:
+          type: string
+          enum:
+            - totalFailed
+            - indeterminate
+          description: |-
+            `totalFailed`: the signature is demonstrably not valid. The standard makes this **stable** — the same inputs always yield the same answer, and additional validation data cannot lift it to a pass; only additional proofs of existence can change a result at all. That stability is what makes a broken seal safe to spend a replacement on.
+
+            `indeterminate`: the available information is insufficient to decide. Not a weaker `totalFailed` — under CIR (EU) 2025/1945 it is its own technical outcome, "neither an EU qualified electronic signature, nor an EU qualified electronic seal", to be reported as such rather than collapsed into either neighbour.
+        subIndication:
+          type:
+            - string
+            - 'null'
+          enum:
+            - sigCryptoFailure
+            - hashFailure
+            - null
+          description: |-
+            The table 6 value qualifying the indication, where one applies.
+
+            `sigCryptoFailure`: the signature value could not be verified with the public key in the signing certificate — a seal this node reports as `notIntact`.
+
+            `hashFailure`: a hash of signed data does not match. Reported for a seal that is intact over a *different* digest, because validating **this passport's current signature** against it fails on the hash. The seal remains a sound attestation of the signature it does cover, which is why the node counts it apart and refuses to repair it.
+
+            `null` is the standard's own custom-diagnostic case: no table 6 value fits, so `binding` carries the diagnostic instead of stretching one that nearly does. The two `null` cases are different diagnostics — "the certificate was never checked" and "these bytes could not be read" — and `binding` keeps them apart.
+    ValidityWindow:
+      type: object
+      description: |-
+        A certificate's validity window, and where the sealing moment falls in it.
+
+        The window travels with the verdict so a reader can check the arithmetic rather than take it on trust — and because the two dates are what an auditor compares against a Trusted List entry when asking the other half of Art. 32(1)(b).
+      required:
+        - notBefore
+        - notAfter
+        - standing
+      properties:
+        notBefore:
+          type: string
+          format: date-time
+          description: The certificate's `notBefore`.
+        notAfter:
+          type: string
+          format: date-time
+          description: The certificate's `notAfter`.
+        standing:
+          type: string
+          enum:
+            - inside
+            - expired
+            - notYetValid
+          description: Where the judged moment falls in the window. `expired` and `notYetValid` are findings only when that moment is attested — see `judgedAt`.
+    JudgedTime:
+      type: object
+      description: |-
+        The moment a certificate's standing was judged against, and whether anything proves it.
+
+        Regulation (EU) No 910/2014 Art. 32(1)(b), reached for seals by Art. 40, asks whether the certificate was valid **at the time of signing**. The whole verdict therefore turns on which moment is used and what that moment is worth.
+      required:
+        - at
+        - attested
+      properties:
+        at:
+          type: string
+          format: date-time
+          description: The moment used.
+        attested:
+          type: boolean
+          description: |-
+            True when the moment came from a timestamp token inside the seal, whose signature and imprint were both checked. False means it is the node's own clock — the validation time, not the signing time.
+
+            This separates a failure from an open question. ETSI EN 319 102-1 treats a time nothing proves as no time at all, which is why a verdict resting on an unattested moment is reported with a `NO_POE` sub-indication rather than as `totalFailed`. Without it, every seal whose certificate has since expired — eventually all of them — would read as invalid.
+    RevocationStanding:
+      type: object
+      description: |-
+        What the seal's own revocation material says about its signing certificate.
+
+        **Read from the seal, never fetched.** A CRL distribution point is a URL inside a certificate an operator was handed, and following one would have this node issue requests to an address chosen by whoever produced the seal. ETSI EN 319 122-1 puts revocation values in `SignedData.crls` from `B-LT` upward for exactly this reason: a seal meant to be checkable years later carries what is needed to check it, offline.
+      required:
+        - status
+      properties:
+        status:
+          type: string
+          enum:
+            - notRevoked
+            - revoked
+            - notAvailable
+            - unusable
+          description: |-
+            `notRevoked` — a CRL from this certificate's issuer, whose own signature verifies under a certificate the seal carries, does not list it.
+
+            `revoked` — that CRL lists it, and `at` says when. Whether this condemns the seal depends on `judgedAt`: a certificate revoked *after* a seal was made does not unmake it.
+
+            `notAvailable` — the seal carries no revocation material for this certificate. Ordinary below `B-LT` and **not a defect**.
+
+            `unusable` — material was present and could not be relied on: an unparseable list, or one whose signature does not verify. Distinct from `notAvailable` because something claiming to be authoritative failed, which is worth looking at. A CRL wearing the issuer's name but signed by another key lands here and never on `notRevoked` — an unsigned list could otherwise *clear* a revoked certificate.
+        asOf:
+          type: string
+          format: date-time
+          description: With `notRevoked`, the CRL's `thisUpdate` — the moment its statement is about. A list issued before the seal was made cannot rule out a later revocation, and this is here so a reader can see which question was actually answered.
+        at:
+          type: string
+          format: date-time
+          description: With `revoked`, when the issuer says it was revoked.
+        reason:
+          type: string
+          description: With `unusable`, what failed.
+    CertificateStanding:
+      type: object
+      description: |-
+        **Was the seal's signing certificate valid when the seal was made?**
+
+        The second limb of Regulation (EU) No 910/2014 Art. 32(1)(b), reached for seals by Art. 40. The first limb — whether a qualified trust service provider issued it — is a Trusted List question and is not answered here.
+
+        Two findings and the moment they were judged against, because the moment is what decides them: a certificate outside its window is a failure when a timestamp proves the seal was made outside it, and merely unproven otherwise. Certificates expire, sealed passports outlive them by years, and an expired certificate today says nothing about a seal made while it was good.
+      required:
+        - validity
+        - judgedAt
+        - revocation
+      properties:
+        validity:
+          $ref: '#/components/schemas/ValidityWindow'
+        judgedAt:
+          $ref: '#/components/schemas/JudgedTime'
+        revocation:
+          $ref: '#/components/schemas/RevocationStanding'
+    SealOrigin:
+      type: object
+      description: |-
+        What a stored seal's own certificate says about who issued it — read out of the seal's bytes, never from this node's configuration. The two are different facts: configuration records what the operator intended, and a seal restored from a backup or made before a backend change was not produced by whatever is configured now.
+
+        **Not a qualification verdict.** Establishing that a seal is qualified needs the issuer matched against an EU Trusted List *and* the issuer's signature over this certificate verified; neither is done to produce this. What it does answer completely, and without a network, is whether anybody issued the certificate at all.
+      required:
+        - subject
+        - issuer
+        - selfIssued
+        - creationDevice
+      properties:
+        subject:
+          type: string
+          description: The certificate's subject distinguished name, RFC 4514.
+        issuer:
+          type: string
+          description: The certificate's issuer distinguished name, RFC 4514.
+        selfIssued:
+          type: boolean
+          description: 'Whether issuer and subject are the same name — the structural test for "nobody issued this to us", and a property of the certificate that no environment variable can change. True means the seal attests that a key this node holds signed a digest and **nothing else**: it carries no legal weight, and no Trusted List would give it any.'
+        creationDevice:
+          type: string
+          enum:
+            - declaresQualifiedDevice
+            - noQualifiedDevice
+            - notAQualifiedCertificate
+          description: |-
+            What the certificate declares about the device holding its private key — a declaration, never a verification.
+
+            `declaresQualifiedDevice`: the certificate carries the Annex III(j) indication that Regulation (EU) No 910/2014 Art. 32(1)(f), reached for seals through Art. 40, requires.
+
+            `noQualifiedDevice`: it carries qualified-certificate statements but not that one. Lawful, and enough for Art. 40a — validation of an *advanced* seal based on a qualified certificate, which omits the device leg — but not for the Art. 32/40 pair.
+
+            `notAQualifiedCertificate`: it carries no qualified-certificate statements at all, so it is not presenting itself as a qualified certificate in the first place. A self-signed development certificate lands here.
+    SealAuditReport:
+      type: object
+      description: |-
+        What the last completed pass over **every stored seal** found.
+
+        The counts beside this describe outbox rows and passports carrying *no* seal. This describes seals that exist and do not stand up — a condition neither can see, because both ask the database whether the seal member is absent, and a worthless seal is present.
+
+        Whether a stored seal stands up is cryptographic rather than relational: open the CAdES, verify the signature, read the digest it covers. So it is found by a background pass that walks the estate in bounded batches and starts over, not by a query.
+      required:
+        - completedAt
+        - checked
+        - sound
+        - superseded
+        - broken
+        - certificateFailed
+        - unreadable
+        - brokenPassports
+        - truncated
+      properties:
+        completedAt:
+          type: string
+          format: date-time
+          description: When the pass finished. The age of this is the age of every number below it — a pass takes as long as the estate divided by the audit's throughput, so on a large deployment these are hours old by construction. Fine for a condition that does not appear suddenly, and stated rather than implied.
+        checked:
+          type: integer
+          description: Seals opened.
+        sound:
+          type: integer
+          description: |-
+            Seals covering their passport's current signature.
+
+            In EN 319 102-1's terms this is `indeterminate`, **not** `totalPassed`: nothing about these seals has failed, and their certificates have not been validated by this node. See `validation` on `GET /api/v1/dpp/{dppId}/seal`.
+        superseded:
+          type: integer
+          description: |-
+            Seals over a different digest. Ordinarily a passport re-published after sealing, which is **not** a defect — the seal remains a valid attestation of the signature it covers, and `GET /api/v1/dpp/{dppId}/seal` reports it per passport as `coverage`.
+
+            `totalFailed` / `hashFailure` when the question asked is about the passport's *current* signature, which is the question this walk asks.
+        broken:
+          type: integer
+          description: |-
+            Seals whose own signature does not verify. **The finding.** Those passports are published and, in substance, unsealed — and invisible to `unsealedPublished`, which asks only whether a seal is present.
+
+            `totalFailed` / `sigCryptoFailure`, and EN 319 102-1 makes that verdict stable: no additional validation data can lift it. That is what makes a replacement seal worth buying for these and for nothing else here — `POST /api/v1/dpp/{dppId}/seal/repair`.
+        certificateFailed:
+          type: integer
+          description: |-
+            Seals whose signature is sound and whose **certificate** was not, at the moment they were made — revoked before sealing, or outside its validity window, with an attested time to prove the order. `totalFailed` with a certificate sub-indication.
+
+            Counted apart from `broken` because the two need opposite responses. A broken seal is worth replacing; a seal made under a revoked certificate would only be replaced by another from the same certificate, so `POST /api/v1/dpp/{dppId}/seal/repair` refuses it and says why.
+
+            Where nothing attests when the seal was made, the same observation is *indeterminate* rather than a failure and the seal stays in `sound`: a certificate that has expired since is the ordinary state of an old seal.
+        unreadable:
+          type: integer
+          description: |-
+            Seals this node could not read — a placeholder, or a format it does not parse. **Not a finding.** Treating "cannot check" as "broken" would make every seal from a backend emitting an unparsed format look like corruption.
+
+            `indeterminate` with a custom diagnostic: a limit of the reader, not a defect in the seal.
+        brokenPassports:
+          type: array
+          items:
+            type: string
+            format: uuid
+          description: The passports carrying a broken seal, so an operator can act rather than search a log. Capped — see `truncated`. A node with thousands of broken seals has one problem, not thousands; `broken` states its size, and a list long enough to prove that is a list nobody reads.
+        truncated:
+          type: boolean
+          description: True when `brokenPassports` was cut short. Stated rather than left to be inferred from the length matching the cap, which is an inference that is right until the cap changes.
     AmendRequest:
       type: object
       description: |

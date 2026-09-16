@@ -174,6 +174,8 @@ async fn main() -> anyhow::Result<()> {
     let credentials_live = credential_trust != TrustMode::Ghost;
 
     // ── eIDAS qualified seal ─────────────────────────────────────────────────
+    // Shared between the audit task that fills it and the route that reports it.
+    let seal_audit = Arc::new(dpp_types::SealAuditLog::default());
     let seal_wiring = dpp_node::infra::seal::from_env()?;
     let sealing_live = seal_wiring.drains;
 
@@ -278,6 +280,14 @@ async fn main() -> anyhow::Result<()> {
     if sealing_live {
         passport_service = passport_service.with_seal_outbox(db.seal_outbox.clone());
     }
+    // The inspector is wired unconditionally, and deliberately not under
+    // `sealing_live` above. Reading a stored seal's certificate is not sealing:
+    // a node whose provider was dropped, or one serving passports sealed before
+    // a backend change, still holds seals whose origin a reader needs — and
+    // those are precisely the ones least self-explanatory. Gating this would
+    // withdraw the answer exactly where it is worth most.
+    passport_service =
+        passport_service.with_seal_inspector(Arc::new(dpp_seal::CadesInspector::new()));
     let service = Arc::new(passport_service);
     let operator_service = Arc::new(OperatorService::new(db.operator_repo.clone()));
     let api_key_service = Arc::new(ApiKeyService::new(db.api_key_repo.clone()));
@@ -349,6 +359,7 @@ async fn main() -> anyhow::Result<()> {
         // Reported on the authenticated `/vault/api/v1/node/state`, not on the
         // public `/health` — see `dpp_node::router::node_health`.
         trust: Some(trust.clone()),
+        seal_audit: Some(seal_audit.clone()),
         // The port, not a version snapshot — `/node/state` reads the version in
         // force at the moment it is asked, and `POST /ruleset/reload` reaches
         // the same channel this booted from.
@@ -402,6 +413,14 @@ async fn main() -> anyhow::Result<()> {
         // forever with nothing to notice.
         boot::tasks::spawn_seal_sweep(db.seal_outbox.clone());
     }
+    // Read-only, and deliberately outside the `sealing_live` guard above: a node
+    // that has stopped sealing still holds the seals it bought, and those are
+    // exactly the ones nobody is watching any more.
+    boot::tasks::spawn_seal_audit(
+        db.seal_outbox.clone(),
+        seal_audit.clone(),
+        Some(db.seal_audit.clone()),
+    )?;
     // Continuity tier: only spawn when object storage is configured — without a
     // store there is nothing to reconcile against (and the vault never enqueues).
     if let Some(store) = snapshot_store {

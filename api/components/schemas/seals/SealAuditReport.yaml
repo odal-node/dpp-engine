@@ -1,0 +1,114 @@
+type: object
+description: >-
+  What the last completed pass over **every stored seal** found.
+
+
+  The counts beside this describe outbox rows and passports carrying *no* seal.
+  This describes seals that exist and do not stand up — a condition neither can
+  see, because both ask the database whether the seal member is absent, and a
+  worthless seal is present.
+
+
+  Whether a stored seal stands up is cryptographic rather than relational: open
+  the CAdES, verify the signature, read the digest it covers. So it is found by a
+  background pass that walks the estate in bounded batches and starts over, not
+  by a query.
+required:
+  - completedAt
+  - checked
+  - sound
+  - superseded
+  - broken
+  - certificateFailed
+  - unreadable
+  - brokenPassports
+  - truncated
+properties:
+  completedAt:
+    type: string
+    format: date-time
+    description: >-
+      When the pass finished. The age of this is the age of every number below
+      it — a pass takes as long as the estate divided by the audit's throughput,
+      so on a large deployment these are hours old by construction. Fine for a
+      condition that does not appear suddenly, and stated rather than implied.
+  checked:
+    type: integer
+    description: Seals opened.
+  sound:
+    type: integer
+    description: >-
+      Seals covering their passport's current signature.
+
+
+      In EN 319 102-1's terms this is `indeterminate`, **not** `totalPassed`:
+      nothing about these seals has failed, and their certificates have not been
+      validated by this node. See `validation` on
+      `GET /api/v1/dpp/{dppId}/seal`.
+  superseded:
+    type: integer
+    description: >-
+      Seals over a different digest. Ordinarily a passport re-published after
+      sealing, which is **not** a defect — the seal remains a valid attestation
+      of the signature it covers, and `GET /api/v1/dpp/{dppId}/seal` reports it
+      per passport as `coverage`.
+
+
+      `totalFailed` / `hashFailure` when the question asked is about the
+      passport's *current* signature, which is the question this walk asks.
+  broken:
+    type: integer
+    description: >-
+      Seals whose own signature does not verify. **The finding.** Those passports
+      are published and, in substance, unsealed — and invisible to
+      `unsealedPublished`, which asks only whether a seal is present.
+
+
+      `totalFailed` / `sigCryptoFailure`, and EN 319 102-1 makes that verdict
+      stable: no additional validation data can lift it. That is what makes a
+      replacement seal worth buying for these and for nothing else here —
+      `POST /api/v1/dpp/{dppId}/seal/repair`.
+  certificateFailed:
+    type: integer
+    description: >-
+      Seals whose signature is sound and whose **certificate** was not, at the
+      moment they were made — revoked before sealing, or outside its validity
+      window, with an attested time to prove the order. `totalFailed` with a
+      certificate sub-indication.
+
+
+      Counted apart from `broken` because the two need opposite responses. A
+      broken seal is worth replacing; a seal made under a revoked certificate
+      would only be replaced by another from the same certificate, so
+      `POST /api/v1/dpp/{dppId}/seal/repair` refuses it and says why.
+
+
+      Where nothing attests when the seal was made, the same observation is
+      *indeterminate* rather than a failure and the seal stays in `sound`: a
+      certificate that has expired since is the ordinary state of an old seal.
+  unreadable:
+    type: integer
+    description: >-
+      Seals this node could not read — a placeholder, or a format it does not
+      parse. **Not a finding.** Treating "cannot check" as "broken" would make
+      every seal from a backend emitting an unparsed format look like corruption.
+
+
+      `indeterminate` with a custom diagnostic: a limit of the reader, not a
+      defect in the seal.
+  brokenPassports:
+    type: array
+    items:
+      type: string
+      format: uuid
+    description: >-
+      The passports carrying a broken seal, so an operator can act rather than
+      search a log. Capped — see `truncated`. A node with thousands of broken
+      seals has one problem, not thousands; `broken` states its size, and a list
+      long enough to prove that is a list nobody reads.
+  truncated:
+    type: boolean
+    description: >-
+      True when `brokenPassports` was cut short. Stated rather than left to be
+      inferred from the length matching the cap, which is an inference that is
+      right until the cap changes.

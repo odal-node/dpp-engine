@@ -178,6 +178,8 @@ components:
       $ref: components/schemas/seals/SealDeclarer.yaml
     SealCoverage:
       $ref: components/schemas/seals/SealCoverage.yaml
+    SealRepairResponse:
+      $ref: components/schemas/seals/SealRepairResponse.yaml
     EvidenceDossier:
       $ref: components/schemas/evidence/EvidenceDossier.yaml
     DossierManifest:
@@ -343,6 +345,8 @@ paths:
     $ref: paths/vault/vault_api_v1_dpp_{dppId}_verify-tree.yaml
   /vault/api/v1/dpp/{dppId}/seal:
     $ref: paths/vault/vault_api_v1_dpp_{dppId}_seal.yaml
+  /vault/api/v1/dpp/{dppId}/seal/repair:
+    $ref: paths/vault/vault_api_v1_dpp_{dppId}_seal_repair.yaml
   /vault/api/v1/seal:
     $ref: paths/vault/vault_api_v1_seal.yaml
   /vault/api/v1/dpp/{dppId}/publish:

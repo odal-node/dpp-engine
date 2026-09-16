@@ -1,0 +1,26 @@
+type: object
+description: >-
+  **Was the seal's signing certificate valid when the seal was made?**
+
+
+  The second limb of Regulation (EU) No 910/2014 Art. 32(1)(b), reached for seals
+  by Art. 40. The first limb — whether a qualified trust service provider issued
+  it — is a Trusted List question and is not answered here.
+
+
+  Two findings and the moment they were judged against, because the moment is
+  what decides them: a certificate outside its window is a failure when a
+  timestamp proves the seal was made outside it, and merely unproven otherwise.
+  Certificates expire, sealed passports outlive them by years, and an expired
+  certificate today says nothing about a seal made while it was good.
+required:
+  - validity
+  - judgedAt
+  - revocation
+properties:
+  validity:
+    $ref: ./ValidityWindow.yaml
+  judgedAt:
+    $ref: ./JudgedTime.yaml
+  revocation:
+    $ref: ./RevocationStanding.yaml

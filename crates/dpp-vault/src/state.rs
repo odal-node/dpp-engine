@@ -125,6 +125,14 @@ pub struct AppState {
     /// `None` for the standalone vault binary, which has no composition root to
     /// resolve trust ports.
     pub trust: Option<Arc<dpp_types::trust::NodeTrustReport>>,
+    /// The last completed pass over every stored seal.
+    ///
+    /// `None` on a deployment that runs no audit — the standalone vault, which
+    /// has no composition root to spawn one. Distinct from "a pass ran and found
+    /// nothing", which is the report itself being present with `broken: 0`, and
+    /// the difference is the whole point: a surface that reports zero for a check
+    /// nobody ran is worse than one that reports nothing.
+    pub seal_audit: Option<Arc<dpp_types::SealAuditLog>>,
     /// The node's signed Compliance Current channel: the version in force
     /// (reported alongside `trust`) and the reload the admin route triggers.
     ///

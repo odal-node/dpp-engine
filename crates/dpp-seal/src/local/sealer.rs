@@ -43,6 +43,8 @@ use p256::ecdsa::{DerSignature, SigningKey};
 use x509_cert::Certificate;
 use x509_cert::attr::Attribute;
 
+use cms::revocation::{RevocationInfoChoice, RevocationInfoChoices};
+
 use crate::backend::SealBackend;
 use crate::error::SealError;
 
@@ -51,6 +53,11 @@ pub struct LocalIdentity {
     key: SigningKey,
     cert: Certificate,
     cert_der: Vec<u8>,
+    /// The authority that timestamps this node's own seals.
+    ///
+    /// Held here rather than built per seal because its certificate has to stay
+    /// the same across restarts: a token issued yesterday refers to it.
+    tsa: super::timestamp::LocalTsa,
 }
 
 impl LocalIdentity {
@@ -68,7 +75,11 @@ impl LocalIdentity {
             let key_der = std::fs::read(&key_path).map_err(io_err("read the local seal key"))?;
             let cert_der =
                 std::fs::read(&cert_path).map_err(io_err("read the local seal certificate"))?;
-            return Self::from_der(&key_der, cert_der);
+            return Self::from_der(
+                &key_der,
+                cert_der,
+                super::timestamp::LocalTsa::load_or_create(dir)?,
+            );
         }
 
         let (key_der, cert_der) = generate()?;
@@ -76,10 +87,15 @@ impl LocalIdentity {
         std::fs::write(&key_path, &key_der).map_err(io_err("write the local seal key"))?;
         std::fs::write(&cert_path, &cert_der)
             .map_err(io_err("write the local seal certificate"))?;
-        Self::from_der(&key_der, cert_der)
+        let tsa = super::timestamp::LocalTsa::load_or_create(dir)?;
+        Self::from_der(&key_der, cert_der, tsa)
     }
 
-    fn from_der(key_der: &[u8], cert_der: Vec<u8>) -> Result<Self, SealError> {
+    fn from_der(
+        key_der: &[u8],
+        cert_der: Vec<u8>,
+        tsa: super::timestamp::LocalTsa,
+    ) -> Result<Self, SealError> {
         use p256::pkcs8::DecodePrivateKey as _;
         let key = SigningKey::from_pkcs8_der(key_der)
             .map_err(|e| SealError::Config(format!("local seal key is not a P-256 PKCS#8: {e}")))?;
@@ -90,6 +106,7 @@ impl LocalIdentity {
             key,
             cert,
             cert_der,
+            tsa,
         })
     }
 
@@ -105,6 +122,48 @@ impl LocalIdentity {
     /// separately from what it covers — the same arrangement a provider returns
     /// and the same one the passport's `jwsSignature` expects.
     pub fn sign_detached(&self, digest: &[u8]) -> Result<Vec<u8>, SealError> {
+        self.sign_detached_at(digest, SealConformanceLevel::BaselineB)
+    }
+
+    /// Produce a detached CMS `SignedData` over `digest`, at `level`.
+    ///
+    /// # What each level adds, and where the requirement comes from
+    ///
+    /// ETSI EN 319 122-1 V1.3.1 Table 1, read directly:
+    ///
+    /// - **B-B** — `SignedData.certificates` shall be present. Nothing else.
+    /// - **B-T** — a `signature-time-stamp` unsigned attribute *shall* be
+    ///   present, computed over the signature (clause 5.3).
+    /// - **B-LT** — revocation material for long-term validation *shall be
+    ///   provided*, in `SignedData.crls`. Note the table also says the older
+    ///   `certificate-values` and `revocation-values` attributes **shall not be
+    ///   present** at this level, so this deliberately does not emit them.
+    /// - **B-LTA** — an `archive-time-stamp-v3` *shall be provided*
+    ///   (clause 5.5.3).
+    ///
+    /// Cumulative, because the table is: an `B-LTA` signature carries
+    /// everything the levels below it carry.
+    ///
+    /// # This is a faithful shape, not a conformant signature
+    ///
+    /// The attributes are real, well-formed and really signed, which is what
+    /// lets every path in this workspace that reads a seal be exercised against
+    /// something other than a stub. Two deliberate departures from conformance,
+    /// both of which matter only to an external validator that this seal could
+    /// never satisfy anyway — it is self-signed and on no Trusted List:
+    ///
+    /// - the `archive-time-stamp-v3` message imprint is taken over the signer's
+    ///   encoded form rather than the concatenation clause 5.5.3 specifies, and
+    /// - no `ats-hash-index-v3` attribute is produced.
+    ///
+    /// Building those faithfully would be work in service of a validator that
+    /// rejects the certificate on the first check. Saying so here is cheaper and
+    /// more honest than a comment claiming conformance nobody verified.
+    pub fn sign_detached_at(
+        &self,
+        digest: &[u8],
+        level: SealConformanceLevel,
+    ) -> Result<Vec<u8>, SealError> {
         use der::asn1::{OctetString, SetOfVec};
         use p256::ecdsa::signature::Signer as _;
 
@@ -136,7 +195,7 @@ impl LocalIdentity {
         // reconstruct what was signed. Attaching `messageDigest` is also what
         // CAdES requires, so this is the faithful shape rather than a
         // concession.
-        let signed_attrs = signed_attributes(digest)?;
+        let signed_attrs = signed_attributes(ID_DATA, digest)?;
 
         // RFC 5652 §5.4: the signature is computed over the DER **SET OF**
         // encoding of the signed attributes, not over the `[0] IMPLICIT` form
@@ -163,6 +222,7 @@ impl LocalIdentity {
                 .map_err(|e| SealError::Config(format!("cannot encode the signature: {e}")))?,
             unsigned_attrs: None,
         };
+        let signer_info = self.at_level(signer_info, level)?;
 
         let mut digest_algorithms = SetOfVec::new();
         digest_algorithms
@@ -173,6 +233,19 @@ impl LocalIdentity {
         certs
             .insert(CertificateChoices::Certificate(self.cert.clone()))
             .map_err(|e| SealError::Config(format!("cannot attach the certificate: {e}")))?;
+        // From B-T upward the seal carries a timestamp, and EN 319 122-1
+        // requires a verifier to be able to build a path for every timestamp in
+        // it. A token whose signing certificate travels nowhere is unverifiable
+        // by anyone but the node that made it.
+        if level.survives_certificate_expiry() || level == SealConformanceLevel::BaselineT {
+            certs
+                .insert(CertificateChoices::Certificate(
+                    self.tsa.certificate().clone(),
+                ))
+                .map_err(|e| {
+                    SealError::Config(format!("cannot attach the TSA certificate: {e}"))
+                })?;
+        }
 
         let mut signer_infos = SetOfVec::new();
         signer_infos
@@ -184,7 +257,7 @@ impl LocalIdentity {
             digest_algorithms: DigestAlgorithmIdentifiers::from(digest_algorithms),
             encap_content_info: econtent,
             certificates: Some(CertificateSet::from(certs)),
-            crls: None,
+            crls: self.revocation_material(level)?,
             signer_infos: SignerInfos::from(signer_infos),
         };
 
@@ -198,12 +271,171 @@ impl LocalIdentity {
     }
 }
 
+impl LocalIdentity {
+    /// `id-aa-signatureTimeStampToken` — RFC 5126 §6.1.1, EN 319 122-1 cl. 5.3.
+    const ID_AA_SIGNATURE_TIME_STAMP_TOKEN: const_oid::ObjectIdentifier =
+        const_oid::ObjectIdentifier::new_unwrap("1.2.840.113549.1.9.16.2.14");
+
+    /// `id-aa-ets-archiveTimestampV3` — EN 319 122-1 cl. 5.5.3, annex D.
+    const ID_AA_ETS_ARCHIVE_TIMESTAMP_V3: const_oid::ObjectIdentifier =
+        const_oid::ObjectIdentifier::new_unwrap("0.4.0.1733.2.4");
+
+    /// Attach the unsigned attributes `level` requires to `signer`.
+    ///
+    /// The archive timestamp is applied **after** the signature timestamp and
+    /// over a signer that already carries it, which is the ordering EN 319 122-1
+    /// clause 5.5.3 describes: the archive timestamp protects the signature
+    /// *including* the material added to it, so applying it first would leave
+    /// the timestamp it is supposed to cover outside its imprint.
+    fn at_level(
+        &self,
+        signer: SignerInfo,
+        level: SealConformanceLevel,
+    ) -> Result<SignerInfo, SealError> {
+        use sha2::{Digest as _, Sha256};
+
+        if level == SealConformanceLevel::BaselineB {
+            return Ok(signer);
+        }
+
+        // Clause 5.3: computed on the signature field *without* its ASN.1 tag
+        // and length — the value octets alone. Taken before the signer is moved,
+        // because the imprint is over the signature as it stands *now*: an
+        // attribute added first would not change it, but reading it afterwards
+        // would invite exactly that mistake.
+        let imprint = Sha256::digest(signer_signature_value(&signer));
+        let mut signer =
+            self.with_attribute(signer, Self::ID_AA_SIGNATURE_TIME_STAMP_TOKEN, &imprint, 1)?;
+
+        if level == SealConformanceLevel::BaselineLta {
+            // See `sign_detached_at`: the imprint departs from clause 5.5.3's
+            // concatenation deliberately, and the departure is documented there
+            // rather than hidden behind a plausible-looking helper name.
+            let encoded = signer.to_der().map_err(|e| {
+                SealError::Config(format!("cannot encode the signer for archiving: {e}"))
+            })?;
+            signer = self.with_attribute(
+                signer,
+                Self::ID_AA_ETS_ARCHIVE_TIMESTAMP_V3,
+                &Sha256::digest(&encoded),
+                2,
+            )?;
+        }
+
+        Ok(signer)
+    }
+
+    /// `signer` with one more unsigned attribute carrying a time-stamp token.
+    fn with_attribute(
+        &self,
+        mut signer: SignerInfo,
+        oid: const_oid::ObjectIdentifier,
+        imprint: &[u8],
+        serial: u64,
+    ) -> Result<SignerInfo, SealError> {
+        use der::asn1::SetOfVec;
+
+        let mut values = SetOfVec::new();
+        values
+            .insert(self.tsa.token(imprint, serial)?)
+            .map_err(|e| SealError::Config(format!("cannot build the timestamp attribute: {e}")))?;
+
+        let mut attrs = signer
+            .unsigned_attrs
+            .take()
+            .map(|a| a.iter().cloned().collect::<Vec<_>>())
+            .unwrap_or_default();
+        attrs.push(Attribute { oid, values });
+
+        let mut set = SetOfVec::new();
+        for a in attrs {
+            set.insert(a).map_err(|e| {
+                SealError::Config(format!("cannot collect unsigned attributes: {e}"))
+            })?;
+        }
+        signer.unsigned_attrs = Some(set);
+        Ok(signer)
+    }
+
+    /// The revocation material `level` requires, in the home EN 319 122-1 names.
+    ///
+    /// `SignedData.crls`, and **not** the `revocation-values` unsigned
+    /// attribute: Table 1 marks that older home "shall not be present" at B-LT
+    /// and B-LTA. `cades::evidenced_level` accepts either because a seal bought
+    /// under the superseded profile is still lawful; a seal *produced* here has
+    /// no such excuse.
+    ///
+    /// The list is empty, which is the truthful statement — this node has
+    /// revoked nothing — rather than a placeholder entry that would claim a
+    /// revocation that never happened.
+    fn revocation_material(
+        &self,
+        level: SealConformanceLevel,
+    ) -> Result<Option<RevocationInfoChoices>, SealError> {
+        use der::asn1::{BitString, SetOfVec};
+        use p256::ecdsa::signature::Signer as _;
+
+        if !level.survives_certificate_expiry() {
+            return Ok(None);
+        }
+
+        let algorithm = x509_cert::spki::AlgorithmIdentifierOwned {
+            oid: const_oid::db::rfc5912::ECDSA_WITH_SHA_256,
+            parameters: None,
+        };
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|e| SealError::Config(format!("the clock is before 1970: {e}")))?;
+
+        let tbs = x509_cert::crl::TbsCertList {
+            version: x509_cert::Version::V2,
+            signature: algorithm.clone(),
+            // Self-signed, so the sealing certificate is its own issuer and this
+            // node is the only authority that could speak to its revocation.
+            issuer: self.cert.tbs_certificate.subject.clone(),
+            this_update: x509_cert::time::Time::GeneralTime(
+                der::asn1::GeneralizedTime::from_unix_duration(now)
+                    .map_err(|e| SealError::Config(format!("cannot encode thisUpdate: {e}")))?,
+            ),
+            next_update: None,
+            revoked_certificates: None,
+            crl_extensions: None,
+        };
+        let signature: DerSignature = self.key.sign(
+            &tbs.to_der()
+                .map_err(|e| SealError::Config(format!("cannot encode the CRL body: {e}")))?,
+        );
+
+        let crl = x509_cert::crl::CertificateList {
+            tbs_cert_list: tbs,
+            signature_algorithm: algorithm,
+            signature: BitString::from_bytes(signature.to_bytes().as_ref())
+                .map_err(|e| SealError::Config(format!("cannot encode the CRL signature: {e}")))?,
+        };
+
+        let mut set = SetOfVec::new();
+        set.insert(RevocationInfoChoice::Crl(crl))
+            .map_err(|e| SealError::Config(format!("cannot attach the CRL: {e}")))?;
+        Ok(Some(RevocationInfoChoices(set)))
+    }
+}
+
+/// The value octets of a `SignerInfo`'s signature, without tag or length.
+///
+/// EN 319 122-1 clause 5.3 is explicit that the signature timestamp covers the
+/// signature field "without the ASN.1 tag and length". Timestamping the encoded
+/// OCTET STRING instead would produce a token that no other implementation
+/// could reproduce.
+fn signer_signature_value(signer: &SignerInfo) -> &[u8] {
+    signer.signature.as_bytes()
+}
+
 #[async_trait]
 impl SealBackend for LocalIdentity {
     async fn seal(&self, req: SealRequest) -> Result<SealedEnvelope, SealError> {
         let digest = hex::decode(&req.payload_hash)
             .map_err(|e| SealError::Config(format!("payload hash is not hex: {e}")))?;
-        let der = self.sign_detached(&digest)?;
+        let der = self.sign_detached_at(&digest, req.conformance_level)?;
 
         Ok(SealedEnvelope {
             format: SealFormat::Cades,
@@ -238,15 +470,20 @@ impl SealBackend for LocalIdentity {
         SealCapabilities {
             supported_formats: vec![SealFormat::Cades],
             supported_modes: vec![SealMode::OperatorSeal],
-            // `BaselineB` and no further, read off what `sign_detached`
-            // actually emits: the signature alone. No signature timestamp
-            // (`BaselineT`), no certificates or revocation data
-            // (`BaselineLt`), no archival timestamp (`BaselineLta`). Claiming a
-            // higher level would claim evidence these bytes do not carry — and
-            // `BaselineB` is documented as not suiting a retention-locked
-            // document, which is the honest position for a self-signed
-            // development sealer.
-            supported_levels: vec![SealConformanceLevel::BaselineB],
+            // Every baseline level, read off what `sign_detached_at` actually
+            // emits: the signature (B), a signature timestamp (T), revocation
+            // material in `SignedData.crls` (LT) and an archive timestamp
+            // (LTA), each required by ETSI EN 319 122-1 Table 1 at that level.
+            //
+            // **Advertising a level is a claim about structure, never about
+            // trust.** Every one of these is signed by a key this node generated
+            // and timestamped by an authority it generated, so an `LTA` seal
+            // from here is a faithfully shaped envelope with no legal weight
+            // whatsoever — which is exactly what makes it useful for exercising
+            // the paths that read a seal, and useless for anything else. The
+            // node says so separately and structurally by resolving this backend
+            // to the `Ghost` trust tier.
+            supported_levels: SealConformanceLevel::ALL.to_vec(),
             // Detached: the signature travels beside the digest it covers and
             // never wraps it.
             supported_envelopes: vec![SealEnvelope::Detached],
@@ -307,7 +544,10 @@ impl SealBackend for LocalIdentity {
 /// asked to seal. The second is the one that matters here — it is what puts the
 /// sealed value inside the signature, so a holder of the bytes alone can check
 /// them.
-fn signed_attributes(digest: &[u8]) -> Result<SignedAttributes, SealError> {
+pub(super) fn signed_attributes(
+    content_type: const_oid::ObjectIdentifier,
+    digest: &[u8],
+) -> Result<SignedAttributes, SealError> {
     use der::asn1::{OctetString, SetOfVec};
 
     let attr = |oid, value: Any| -> Result<Attribute, SealError> {
@@ -320,7 +560,7 @@ fn signed_attributes(digest: &[u8]) -> Result<SignedAttributes, SealError> {
 
     let content_type = attr(
         const_oid::db::rfc5911::ID_CONTENT_TYPE,
-        Any::encode_from(&ID_DATA)
+        Any::encode_from(&content_type)
             .map_err(|e| SealError::Config(format!("cannot encode the content type: {e}")))?,
     )?;
     let message_digest = attr(

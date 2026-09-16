@@ -92,6 +92,20 @@ tower          = { version = "0.5", features = ["util"] }
 serial_test    = "4"
 wat            = "1"
 futures        = "0.3"
+# To corrupt a real seal's signature in the seal-audit test. Garbage bytes are
+# classified `unknown` — correctly, since nothing could be checked — so a seal
+# that *parses* and fails verification is the only way to exercise the `broken`
+# arm, and building one means touching CMS. Already in the graph via `dpp-seal`.
+# Raw SQL in the seal-repair test, to corrupt a stored seal where it lies.
+# Going through the repo would write a well-formed envelope, which is the one
+# thing that cannot produce the state under test.
+sqlx           = { version = "0.9", default-features = false, features = ["runtime-tokio", "postgres"] }
+cms            = { version = "0.2", default-features = false }
+der            = "0.7"
+# To move a stored seal certificate's validity window into the past, which is the
+# cheapest way to produce a seal that verifies and whose certificate did not.
+# Already in the graph via `dpp-seal`.
+x509-cert      = "0.2"
 criterion      = { workspace = true }
 uuid           = { workspace = true }
 testcontainers = { workspace = true }

@@ -39,7 +39,7 @@ use crate::commands::{
     registry::{run_facility_audit, run_operator_id_audit, run_registry},
     ruleset::run_ruleset_reload,
     schema::run_schema,
-    seal::run_seal_status,
+    seal::{run_seal_repair, run_seal_status},
     stats::{run_operator_stats, run_passport_stats},
     status::run_status,
     transfer::{run_transfer_initiate, run_transfer_resolve},
@@ -439,6 +439,9 @@ pub async fn dispatch(cmd: Commands) -> anyhow::Result<()> {
         Commands::Seal {
             command: SealCommands::Status { id, json },
         } => run_seal_status(id.as_deref(), json).await,
+        Commands::Seal {
+            command: SealCommands::Repair { id, json },
+        } => run_seal_repair(&id, json).await,
         Commands::Stats { days, json } => run_operator_stats(days, json).await,
     }
 }

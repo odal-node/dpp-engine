@@ -124,4 +124,8 @@ api/openapi.html
 # them and what they prove. The guard that must not depend on them, the check
 # that the fork is the `xml-sec` which actually resolved, reads Cargo.lock and
 # runs everywhere.
+#
+# The rule has to be on whatever branch the files are sitting on, not only on
+# the one that introduced it: without it a plain `git add crates/dpp-seal/`
+# recommits 60k lines of XML, which is how it came to be written twice.
 crates/dpp-seal/tests/fixtures/local/*.xml

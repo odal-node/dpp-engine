@@ -216,12 +216,44 @@ impl IdentityPort for MockIdentity {
 // Vault Axum app factory
 // ---------------------------------------------------------------------------
 
+/// How a harness wires the two seal ports.
+///
+/// Both are optional in production — a node with no provider selected links
+/// neither — and the handlers behave differently for each combination, so the
+/// tests that care must be able to say which node they are talking to.
+pub struct SealWiring {
+    /// The adapter that reads seals. `None` is a node that stores seals and
+    /// cannot open them, which is the shipped default: the crate that parses
+    /// CAdES is resolved by the composition root, never linked by the vault.
+    pub inspector: Option<Arc<dyn dpp_types::SealInspector>>,
+    /// Whether the outbox is wired at all. `false` is a node with no sealing
+    /// backend, where anything queued would sit forever.
+    pub outbox: bool,
+}
+
+impl Default for SealWiring {
+    fn default() -> Self {
+        // Mirrors every other harness default: an outbox, as any node with a
+        // provider has, and no inspector, as any node without the seal crate.
+        Self {
+            inspector: None,
+            outbox: true,
+        }
+    }
+}
+
 pub async fn start_vault(dal: PgDal) -> String {
-    start_vault_with_identity(dal, Arc::new(MockIdentity), None).await
+    start_vault_with_identity(dal, Arc::new(MockIdentity), None, SealWiring::default()).await
 }
 
 pub async fn start_vault_failing_signer(dal: PgDal) -> String {
-    start_vault_with_identity(dal, Arc::new(FailingIdentity), None).await
+    start_vault_with_identity(dal, Arc::new(FailingIdentity), None, SealWiring::default()).await
+}
+
+/// A vault whose seal ports are wired to order — for the routes whose answers
+/// turn on whether this node can read a seal, or buy one.
+pub async fn start_vault_with_seal(dal: PgDal, seal: SealWiring) -> String {
+    start_vault_with_identity(dal, Arc::new(MockIdentity), None, seal).await
 }
 
 /// A vault with the credential path **configured** — the audience-scoped route
@@ -231,7 +263,13 @@ pub async fn start_vault_with_credentials(
     directory: Arc<dyn dpp_vault::middleware::credential::CredentialDirectory>,
     trust: Arc<dyn dpp_vc::TrustedIssuerRegistry>,
 ) -> String {
-    start_vault_with_identity(dal, Arc::new(MockIdentity), Some((directory, trust))).await
+    start_vault_with_identity(
+        dal,
+        Arc::new(MockIdentity),
+        Some((directory, trust)),
+        SealWiring::default(),
+    )
+    .await
 }
 
 type CredentialWiring = (
@@ -243,6 +281,7 @@ async fn start_vault_with_identity(
     dal: PgDal,
     identity: Arc<dyn IdentityPort>,
     credentials: Option<CredentialWiring>,
+    seal: SealWiring,
 ) -> String {
     struct PgPing(PgDal);
     #[async_trait]
@@ -266,39 +305,47 @@ async fn start_vault_with_identity(
 
     // Mirror production: the registry reader stamps the default facility + primary
     // operator identifier onto new passports, read live from the operator config.
-    let service = Arc::new(
-        PassportService::new(
-            passport_repo,
-            identity,
-            compliance,
-            audit_repo,
-            event_bus,
-            registry_sync,
-            Arc::new(GhostArchive),
-            OperatorIdentity {
-                legal_name: "Test Operator GmbH".to_owned(),
-                country: "DE".to_owned(),
-            },
-        )
-        .with_registry_reader(operator_repo.clone())
-        // Mirror production here too: the node wires both registry outboxes, so
-        // a harness without them exercises a publish path that does not exist in
-        // any real deployment — and reports the registry surface as
-        // unconfigured.
-        .with_registry_outbox(Arc::new(PgRegistrySyncRepo::new(dal.clone())))
-        .with_transfer_outbox(Arc::new(PgRegistryTransferRepo::new(dal.clone())))
-        // Same reasoning as the two above: any node with a seal provider
-        // selected wires this, so a harness without it reports the sealing
-        // surface as unconfigured and cannot exercise it at all.
-        .with_seal_outbox(Arc::new(PgSealOutboxRepo::new(dal.clone())))
-        // Same reasoning again, and it had already cost something: without a
-        // transfer store the seal route's `responsibilityMayHaveTransferred`
-        // took its `None => false` branch, so a test asserting the flag was
-        // `false` passed because nothing *could* be recorded rather than
-        // because nothing was.
-        .with_transfer_store(Arc::new(PgTransferRepo::new(dal.clone())))
-        .with_evidence_store(Arc::new(PgEvidenceDossierRepo::new(dal.clone()))),
-    );
+    let mut service = PassportService::new(
+        passport_repo,
+        identity,
+        compliance,
+        audit_repo,
+        event_bus,
+        registry_sync,
+        Arc::new(GhostArchive),
+        OperatorIdentity {
+            legal_name: "Test Operator GmbH".to_owned(),
+            country: "DE".to_owned(),
+        },
+    )
+    .with_registry_reader(operator_repo.clone())
+    // Mirror production here too: the node wires both registry outboxes, so
+    // a harness without them exercises a publish path that does not exist in
+    // any real deployment — and reports the registry surface as
+    // unconfigured.
+    .with_registry_outbox(Arc::new(PgRegistrySyncRepo::new(dal.clone())))
+    .with_transfer_outbox(Arc::new(PgRegistryTransferRepo::new(dal.clone())))
+    // Same reasoning again, and it had already cost something: without a
+    // transfer store the seal route's `responsibilityMayHaveTransferred`
+    // took its `None => false` branch, so a test asserting the flag was
+    // `false` passed because nothing *could* be recorded rather than
+    // because nothing was.
+    .with_transfer_store(Arc::new(PgTransferRepo::new(dal.clone())))
+    .with_evidence_store(Arc::new(PgEvidenceDossierRepo::new(dal.clone())));
+
+    // Wired after the chain rather than inside it, because unlike every port
+    // above these two are what a test is *about* when it is about sealing: any
+    // node with a seal provider selected wires the outbox, so a harness without
+    // it reports the sealing surface as unconfigured and cannot exercise it at
+    // all — which is exactly the node some of these tests need to talk to.
+    if seal.outbox {
+        service = service.with_seal_outbox(Arc::new(PgSealOutboxRepo::new(dal.clone())));
+    }
+    if let Some(inspector) = seal.inspector {
+        service = service.with_seal_inspector(inspector);
+    }
+    let service = Arc::new(service);
+
     let operator_service = Arc::new(OperatorService::new(operator_repo));
     let api_key_service = Arc::new(ApiKeyService::new(api_key_repo));
     let registry_identity_service = Arc::new(RegistryIdentityService::new(Arc::new(
@@ -333,6 +380,9 @@ async fn start_vault_with_identity(
         // These tests exercise the vault in isolation, with no composition
         // root resolving trust ports or a ruleset.
         trust: None,
+        // No audit task in a test harness, and so no report — which is the
+        // honest answer rather than a clean one nothing produced.
+        seal_audit: None,
         ruleset_admin: None,
         // Off by default: these suites exercise handlers, not retry semantics.
         // `dpp-common`'s `idempotency_flow` suite drives the middleware itself.

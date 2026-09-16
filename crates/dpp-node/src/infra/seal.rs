@@ -10,7 +10,7 @@
 //! | Variable                  | Values                   | Meaning                          |
 //! |---------------------------|--------------------------|----------------------------------|
 //! | `SEAL_PROVIDER`           | unset / `qtsp` / `local` | Which backend to build           |
-//! | `SEAL_CONFORMANCE_LEVEL`  | `B` / `T` / `LT` / `LTA` | Baseline level to request (`LT`) |
+//! | `SEAL_CONFORMANCE_LEVEL`  | `B` / `T` / `LT` / `LTA` | Baseline level to request (default: the backend's own, `LTA` for all of them today) |
 //!
 //! Each backend then reads its own variables — see `dpp_seal::eideasy::config`
 //! and `dpp_seal::local::config`. A partial or unrecognised configuration is an
@@ -187,14 +187,38 @@ fn ensure_drainable(w: &SealWiring) -> Result<()> {
     )
 }
 
-/// Read `SEAL_CONFORMANCE_LEVEL`, defaulting to `B-LT`.
+/// The provider profile to impose, given what the operator pinned and asked for.
 ///
-/// An unrecognised value fails the boot rather than falling back to the default,
-/// which would let a deployment that asked for `B-LTA` and misspelled it seal at
-/// a lower level than it believes it is sealing at.
-fn conformance_level_from_env() -> Result<SealConformanceLevel> {
+/// `None` leaves the adapter's own default alone: either the operator pinned a
+/// profile, in which case it is theirs to be wrong about, or the level is one
+/// this adapter cannot name and the capability probe should report that as the
+/// mismatch it is rather than having it papered over here.
+///
+/// Split out from `wiring_from_env` so the rule is testable without a process
+/// environment — the same reason the vault's coverage rule is a pure function.
+fn derived_profile(pinned: Option<&str>, level: SealConformanceLevel) -> Option<String> {
+    if pinned.is_some() {
+        return None;
+    }
+    dpp_seal::eideasy::profile_for_level(level).map(ToOwned::to_owned)
+}
+
+/// Read `SEAL_CONFORMANCE_LEVEL`, falling back to the backend's own default.
+///
+/// **The default belongs to the backend, not to the node.** A default that
+/// cannot depend on which backend is wired is a default that will eventually
+/// contradict one: it fails the boot, from a value nobody chose, and the
+/// operator is pointed at lowering the level to suit a backend rather than at
+/// the backend. Every backend wired today reaches `B-LTA`; one that does not —
+/// a plan that only covers `B-T`, a future adapter — names its own here instead
+/// of forcing the whole node down to meet it.
+///
+/// An unrecognised value fails the boot rather than falling back, which would
+/// let a deployment that asked for `B-LTA` and misspelled it seal at a lower
+/// level than it believes it is sealing at.
+fn conformance_level_from_env(default: SealConformanceLevel) -> Result<SealConformanceLevel> {
     let Ok(raw) = std::env::var("SEAL_CONFORMANCE_LEVEL") else {
-        return Ok(SealConformanceLevel::BaselineLt);
+        return Ok(default);
     };
     match raw.trim().to_ascii_uppercase().as_str() {
         "B" | "B-B" | "BASELINE_B" => Ok(SealConformanceLevel::BaselineB),
@@ -220,11 +244,36 @@ pub fn from_env() -> Result<SealWiring> {
 }
 
 fn wiring_from_env() -> Result<SealWiring> {
-    let conformance_level = conformance_level_from_env()?;
+    // Read *after* the provider, so each backend can name the level it should
+    // reach by default. Reading it first is what made a node-wide default able
+    // to contradict the backend it was wired against.
     match dpp_seal::SealProvider::from_env().context("seal provider")? {
         dpp_seal::SealProvider::Qtsp => {
-            let cfg =
+            // A provider is bought from, so ask for everything: `B-LTA` is the
+            // only level that keeps a seal verifiable past its own signing
+            // certificate, which a retention-locked passport outlives.
+            let conformance_level = conformance_level_from_env(SealConformanceLevel::BaselineLta)?;
+            let mut cfg =
                 dpp_seal::eideasy::EideasyConfig::from_env().context("QTSP seal configuration")?;
+            // Derive the provider's profile from the level actually requested,
+            // unless the operator pinned one.
+            //
+            // The two defaults used to contradict: the level defaults to `LT`
+            // and the profile to `CAdES_BASELINE_T`, so a node configured for
+            // this provider and nothing else refused to boot — correctly, since
+            // every published passport would have enqueued a row that could
+            // never drain. But the failure named `SEAL_CONFORMANCE_LEVEL` as the
+            // thing to change, which points an operator at *lowering the level*
+            // to match the profile: giving up long-term validation material to
+            // fix a default they never chose. One level, one source.
+            if let Some(profile) = derived_profile(
+                std::env::var(dpp_seal::eideasy::config::ENV_SIGNATURE_PROFILE)
+                    .ok()
+                    .as_deref(),
+                conformance_level,
+            ) {
+                cfg.signature_profile = profile;
+            }
             // Sandbox is a real seal from a real API, but over the provider's
             // test certificate — a distinct claim from both Ghost and Live.
             let trust = match cfg.environment {
@@ -254,6 +303,12 @@ fn wiring_from_env() -> Result<SealWiring> {
             })
         }
         dpp_seal::SealProvider::Local => {
+            // The same level as a provider, deliberately. This backend emits the
+            // whole `B-LTA` structure — signature timestamp, revocation material,
+            // archive timestamp — so a sandbox exercises the shape a real seal
+            // has rather than a stripped-down one that hides every path above
+            // `B-B`. It remains legally nothing; see the `Ghost` tier below.
+            let conformance_level = conformance_level_from_env(SealConformanceLevel::BaselineLta)?;
             let cfg =
                 dpp_seal::local::LocalConfig::from_env().context("local seal configuration")?;
             let backend = dpp_seal::local::LocalIdentity::load_or_create(&cfg.key_path)
@@ -282,6 +337,11 @@ fn wiring_from_env() -> Result<SealWiring> {
             })
         }
         dpp_seal::SealProvider::None => {
+            // Nothing drains here, so the level is only ever used by the
+            // capability probe. `GhostSeal` advertises every level, so this
+            // agrees with the others rather than being a special case to
+            // remember.
+            let conformance_level = conformance_level_from_env(SealConformanceLevel::BaselineLta)?;
             tracing::info!("eIDAS seal: ghost (no provider) — set SEAL_PROVIDER to enable sealing");
             let port: Arc<dyn SealPort> =
                 Arc::new(dpp_seal::QtspSealAdapter::new(dpp_seal::ghost::GhostSeal));
@@ -381,6 +441,42 @@ mod seal_mode_and_drainability {
     #[test]
     fn a_backend_advertising_no_mode_is_refused_rather_than_defaulted() {
         assert!(mode_for(&caps(vec![], vec![SealConformanceLevel::BaselineB])).is_err());
+    }
+
+    /// An unpinned profile follows the level that was actually requested.
+    ///
+    /// The defect this closes: the level defaults to `LT` and this provider's
+    /// profile defaulted to `CAdES_BASELINE_T`, so a node configured for the
+    /// provider and nothing else refused to boot. Correctly — every published
+    /// passport would have enqueued a row that could never drain — but the
+    /// message named `SEAL_CONFORMANCE_LEVEL` as the thing to change, pointing
+    /// the operator at *lowering* the level to meet a default they never chose,
+    /// and giving up long-term validation material to do it.
+    #[test]
+    fn an_unpinned_profile_follows_the_requested_level() {
+        assert_eq!(
+            derived_profile(None, SealConformanceLevel::BaselineLt).as_deref(),
+            Some("CAdES_BASELINE_LT"),
+            "the level default must not land on a profile that contradicts it"
+        );
+        assert_eq!(
+            derived_profile(None, SealConformanceLevel::BaselineLta).as_deref(),
+            Some("CAdES_BASELINE_LTA")
+        );
+    }
+
+    /// A pinned profile is left alone, wrong or right.
+    ///
+    /// An operator who names a profile has said something specific, and the
+    /// capability probe already refuses the boot if it contradicts the level.
+    /// Silently correcting it would hide a real disagreement about what this
+    /// node is buying.
+    #[test]
+    fn a_pinned_profile_is_never_overridden() {
+        assert_eq!(
+            derived_profile(Some("CAdES_BASELINE_B"), SealConformanceLevel::BaselineLta),
+            None
+        );
     }
 
     /// The local backend's real shape: operator seal, `BaselineB` only. With the

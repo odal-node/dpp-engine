@@ -4,8 +4,8 @@
 //! reach: the drain tests stop at the database, and the full-loop simulation
 //! calls `PassportService` directly. What is asserted here is mostly about
 //! *honesty of shape* — that an unsealed passport is a 404 rather than an empty
-//! seal object, and that the response carries the preimage a verifier needs plus
-//! a plain statement that this node validated nothing.
+//! seal object, that the response carries the preimage a verifier needs, and
+//! that it says both what it checked and what it did not.
 
 #![cfg(feature = "integration-tests")]
 
@@ -125,10 +125,19 @@ async fn a_sealed_passport_returns_the_seal_and_its_preimage() {
     );
 
     // And the response must not read as a verdict.
+    //
+    // The claim to pin is no longer "no check was performed" — several are, and
+    // the fields beside this one report them. It is that a **full** verdict is
+    // somebody else's, and that the response says which checks it is standing
+    // behind rather than leaving a reader to assume.
     let verification = body["verification"].as_str().expect("verification present");
     assert!(
-        verification.contains("not validated by this node"),
-        "the response must state plainly that no CAdES check was performed: {verification}"
+        verification.contains("independent AdES validator"),
+        "the response must send a reader to a real validator for the verdict: {verification}"
+    );
+    assert!(
+        verification.contains("no certificate path is built"),
+        "and must name what it did not check, not only what it did: {verification}"
     );
 }
 
@@ -237,6 +246,43 @@ async fn a_sealed_passport_is_not_reported_as_unsealed() {
     assert_eq!(resp.status(), 200);
     let body: serde_json::Value = resp.json().await.unwrap();
     assert_eq!(body["unsealedPublished"], 0);
+}
+
+/// **A node whose audit has not completed a pass reports nothing, not zero.**
+///
+/// The audit walks every stored seal in bounded batches and publishes only when
+/// it wraps, so `audit` is absent for a while after every restart. A zero there
+/// would read as "checked, nothing wrong" — the one answer worse than silence,
+/// because it is the answer an operator would act on. The counts beside it stay
+/// populated, which is the point: they describe rows and absent seals, and a
+/// worthless seal is present, so nothing in them can cover for a missing report.
+///
+/// This harness wires no audit task at all, which is the same state a freshly
+/// booted node is in.
+#[tokio::test(flavor = "multi_thread")]
+async fn an_audit_that_has_not_completed_a_pass_reports_nothing_rather_than_zero() {
+    let pg = start_postgres().await;
+    let base = start_vault(pg.dal.clone()).await;
+    seed(&pg.dal, Some(envelope()), Some(JWS)).await;
+    let client = TestClient::new(&base, make_jwt(&op()));
+
+    let resp = client.get("/api/v1/seal").await;
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = resp.json().await.unwrap();
+
+    assert!(
+        body["audit"].is_null(),
+        "no completed pass must serve null, never a report with zeroes: {body}"
+    );
+    assert!(
+        body.get("audit").is_some(),
+        "and the field must be present and null rather than omitted, so a reader \
+         cannot mistake an old client for a clean estate"
+    );
+    assert_eq!(
+        body["unsealedPublished"], 0,
+        "the counts are unaffected — they answer a different question"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]

@@ -38,7 +38,7 @@ pub use repo_registry_identity::PgRegistryIdentityRepo;
 pub use repo_registry_sync::PgRegistrySyncRepo;
 pub use repo_registry_transfer::PgRegistryTransferRepo;
 pub use repo_scan::PgScanTelemetryRepo;
-pub use repo_seal::PgSealOutboxRepo;
+pub use repo_seal::{PgSealAuditRepo, PgSealOutboxRepo};
 pub use repo_snapshot::PgSnapshotOutboxRepo;
 pub use repo_transfer::PgTransferRepo;
 pub use repo_unsold_goods::PgUnsoldGoodsRepo;

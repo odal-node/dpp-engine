@@ -28,7 +28,10 @@ pub enum DossierParseError {
 /// (the verify endpoints) should use [`verify_dossier_json`] instead — it
 /// additionally runs the `input_fidelity` check, which needs the original
 /// raw bytes.
-pub fn verify_dossier(dossier: &DossierV1) -> VerificationReport {
+pub fn verify_dossier(
+    dossier: &DossierV1,
+    seals: Option<&dyn dpp_types::SealInspector>,
+) -> VerificationReport {
     let mut checks = Vec::new();
 
     let issuer_key = dossier
@@ -173,6 +176,22 @@ pub fn verify_dossier(dossier: &DossierV1) -> VerificationReport {
         },
     });
 
+    // 8. The seal covers the signature served beside it.
+    //
+    // A dossier is self-contained by design: it carries the CAdES *and* the
+    // compact JWS it should be checked against, so this needs no database, no
+    // node and no network — which is the point, since whoever opens the file is
+    // typically neither of the first two.
+    //
+    // Note what is **not** trusted: the dossier's own `payloadHash`, nor the
+    // `binding` the generator wrote into it. Both are recomputed here from
+    // `signedOverJws`. The generator's claim is evidence of what it believed;
+    // this check exists to say whether it was right.
+    checks.push(CheckResult {
+        name: "qualified_seal".into(),
+        status: qualified_seal_status(dossier, seals),
+    });
+
     VerificationReport {
         trust_anchor_note: format!(
             "trust anchored to the dossier's embedded DID-document snapshot dated {}",
@@ -188,6 +207,83 @@ pub fn verify_dossier(dossier: &DossierV1) -> VerificationReport {
 /// bounds at snapshot time is reported as **incomplete** (Absent), not failed —
 /// so a dossier is never invalidated merely because a component was offline when
 /// it was assembled.
+/// Whether the dossier's seal covers the signature the dossier serves with it.
+///
+/// `Absent` rather than `Fail` wherever the question could not be put: a
+/// passport with no seal, a caller that supplied no inspector, or bytes this
+/// build cannot read. None of those is a finding about the seal, and a dossier
+/// marked failed because nobody looked would be worse than one marked unchecked.
+fn qualified_seal_status(
+    dossier: &DossierV1,
+    seals: Option<&dyn dpp_types::SealInspector>,
+) -> CheckStatus {
+    let Some(section) = &dossier.qualified_seal else {
+        return CheckStatus::Absent("this passport carries no qualified seal".into());
+    };
+    let Some(seals) = seals else {
+        return CheckStatus::Absent(
+            "no seal reader was supplied, so the seal was not opened".into(),
+        );
+    };
+
+    let envelope: dpp_domain::seal::SealedEnvelope =
+        match serde_json::from_value(section.get("seal").cloned().unwrap_or_default()) {
+            Ok(e) => e,
+            Err(e) => return CheckStatus::Fail(format!("the seal member is malformed: {e}")),
+        };
+    let Some(jws) = section.get("signedOverJws").and_then(|v| v.as_str()) else {
+        return CheckStatus::Fail(
+            "the seal is served without the signature it should cover".into(),
+        );
+    };
+
+    // Recomputed, never read off the dossier: a `payloadHash` taken on trust
+    // would let an edited one make a mismatched seal look sound.
+    let expected = dpp_types::digest_for_jws(jws);
+
+    match seals.binding(&envelope, &expected) {
+        dpp_types::SealBinding::CoversThisSignature => {
+            // The signature holds. Whether the certificate behind it did is a
+            // separate question, and passing without asking it would put a
+            // `Pass` on a dossier whose seal was made under a certificate its CA
+            // had already revoked — the one reader of this file who cannot
+            // check that for themselves is the one it is written for.
+            //
+            // Recomputed from the envelope rather than read from the dossier's
+            // own `certificate` member: a stored finding is the generator's
+            // word, and this check exists to be independent of it.
+            let certificate = seals.certificate_standing(&envelope, chrono::Utc::now());
+            let status = dpp_types::SealValidationStatus::of(
+                &dpp_types::SealBinding::CoversThisSignature,
+                certificate.as_ref(),
+            );
+            match status.indication {
+                dpp_types::ValidationIndication::TotalFailed => CheckStatus::Fail(format!(
+                    "the seal covers this signature, and its certificate was not valid when the                      seal was made ({:?}) — ETSI EN 319 102-1 reports this as TOTAL-FAILED, and                      re-sealing would not help: the replacement would come from the same                      certificate",
+                    status.sub_indication
+                )),
+                // Everything this node checks, checked. Not a statement that the
+                // seal is qualified: no chain was validated to a trust anchor,
+                // which is what `TOTAL-PASSED` would need.
+                dpp_types::ValidationIndication::Indeterminate => CheckStatus::Pass,
+            }
+        }
+        dpp_types::SealBinding::CoversAnotherDigest { covered } => CheckStatus::Fail(format!(
+            "the seal covers {covered}, not the signature served with it ({expected}) — the \
+             passport was most likely re-published after sealing"
+        )),
+        dpp_types::SealBinding::NotIntact => CheckStatus::Fail(
+            "the signature over the seal's own attributes does not verify, so nothing it says \
+             about what it covers can be relied on"
+                .into(),
+        ),
+        dpp_types::SealBinding::Unknown => CheckStatus::Absent(
+            "the seal could not be read — a placeholder, or a format this build does not parse"
+                .into(),
+        ),
+    }
+}
+
 fn component_graph_status(report: &serde_json::Value) -> CheckStatus {
     const TAMPER: [&str; 3] = ["hashMismatch", "cycle", "malformedRef"];
 
@@ -243,14 +339,17 @@ fn component_graph_status(report: &serde_json::Value) -> CheckStatus {
 ///
 /// # Errors
 /// [`DossierParseError`] — see above.
-pub fn verify_dossier_json(bytes: &[u8]) -> Result<VerificationReport, DossierParseError> {
+pub fn verify_dossier_json(
+    bytes: &[u8],
+    seals: Option<&dyn dpp_types::SealInspector>,
+) -> Result<VerificationReport, DossierParseError> {
     let raw: serde_json::Value = serde_json::from_slice(bytes)?;
     // Parsed a second time directly from `bytes` rather than `raw.clone()` —
     // cheaper than deep-cloning an already-parsed `Value` tree, and this
     // function runs on every dossier verify (both stored and uploaded).
     let dossier: DossierV1 = serde_json::from_slice(bytes)?;
 
-    let mut report = verify_dossier(&dossier);
+    let mut report = verify_dossier(&dossier, seals);
     report.checks.push(input_fidelity_check(&raw, &dossier));
     Ok(report)
 }
@@ -424,7 +523,7 @@ mod tests {
     fn clean_dossier_verifies_fully() {
         let signing_key = SigningKey::from_bytes(&[9u8; 32]);
         let dossier = valid_dossier(&signing_key);
-        let report = verify_dossier(&dossier);
+        let report = verify_dossier(&dossier, None);
         assert!(report.all_verified(), "{report:?}");
         assert_eq!(report.exit_code(), 0);
     }
@@ -448,7 +547,7 @@ mod tests {
             &signing_key,
             serde_json::json!({ "verified": true, "nodes": [] }),
         );
-        let report = verify_dossier(&dossier);
+        let report = verify_dossier(&dossier, None);
         assert_eq!(*by_name(&report, "component_graph"), CheckStatus::Pass);
         assert_eq!(*by_name(&report, "content_integrity"), CheckStatus::Pass);
         assert!(report.all_verified());
@@ -464,7 +563,7 @@ mod tests {
                 "nodes": [{ "path": ["u://leaf"], "verified": false, "reason": "hashMismatch" }]
             }),
         );
-        let report = verify_dossier(&dossier);
+        let report = verify_dossier(&dossier, None);
         assert!(matches!(
             by_name(&report, "component_graph"),
             CheckStatus::Fail(_)
@@ -483,7 +582,7 @@ mod tests {
                 "nodes": [{ "path": ["u://remote"], "verified": false, "reason": "unreachable" }]
             }),
         );
-        let report = verify_dossier(&dossier);
+        let report = verify_dossier(&dossier, None);
         // Unreachable-at-snapshot is incomplete, not tampered.
         assert!(matches!(
             by_name(&report, "component_graph"),
@@ -502,7 +601,7 @@ mod tests {
         );
         // Alter the attested report without re-signing the manifest.
         dossier.component_graph = Some(serde_json::json!({ "verified": false, "nodes": [] }));
-        let report = verify_dossier(&dossier);
+        let report = verify_dossier(&dossier, None);
         assert!(matches!(
             by_name(&report, "content_integrity"),
             CheckStatus::Fail(_)
@@ -526,7 +625,7 @@ mod tests {
         let manifest_value = serde_json::to_value(&dossier.manifest).unwrap();
         dossier.manifest_jws = sign(&signing_key, &manifest_value);
         assert_eq!(
-            *by_name(&verify_dossier(&dossier), "content_integrity"),
+            *by_name(&verify_dossier(&dossier, None), "content_integrity"),
             CheckStatus::Pass
         );
 
@@ -537,7 +636,7 @@ mod tests {
             "payloadHash": "ab".repeat(32),
         }));
         assert!(matches!(
-            by_name(&verify_dossier(&dossier), "content_integrity"),
+            by_name(&verify_dossier(&dossier, None), "content_integrity"),
             CheckStatus::Fail(_)
         ));
     }
@@ -547,7 +646,7 @@ mod tests {
         let signing_key = SigningKey::from_bytes(&[9u8; 32]);
         let mut dossier = valid_dossier(&signing_key);
         dossier.full_view.payload["status"] = serde_json::json!("draft"); // tamper, jws not re-signed
-        let report = verify_dossier(&dossier);
+        let report = verify_dossier(&dossier, None);
 
         assert!(matches!(
             by_name(&report, "full_view_signature"),
@@ -570,7 +669,7 @@ mod tests {
         let signing_key = SigningKey::from_bytes(&[9u8; 32]);
         let mut dossier = valid_dossier(&signing_key);
         dossier.public_view.jws = format!("{}x", dossier.public_view.jws);
-        let report = verify_dossier(&dossier);
+        let report = verify_dossier(&dossier, None);
 
         assert!(matches!(
             by_name(&report, "public_view_signature"),
@@ -592,7 +691,7 @@ mod tests {
         let manifest_value = serde_json::to_value(&dossier.manifest).unwrap();
         dossier.manifest_jws = sign(&signing_key, &manifest_value);
 
-        let report = verify_dossier(&dossier);
+        let report = verify_dossier(&dossier, None);
         assert!(matches!(
             by_name(&report, "audit_chain"),
             CheckStatus::Fail(_)
@@ -605,7 +704,7 @@ mod tests {
     fn absent_checkpoint_and_receipts_are_informational_not_failures() {
         let signing_key = SigningKey::from_bytes(&[9u8; 32]);
         let dossier = valid_dossier(&signing_key);
-        let report = verify_dossier(&dossier);
+        let report = verify_dossier(&dossier, None);
         assert!(matches!(
             by_name(&report, "checkpoint"),
             CheckStatus::Absent(_)
@@ -679,7 +778,7 @@ mod tests {
         dossier.manifest_jws = sign(&signing_key, &manifest_value);
 
         // Sanity: clean chain verifies before we tamper it.
-        let clean_report = verify_dossier(&dossier);
+        let clean_report = verify_dossier(&dossier, None);
         assert!(clean_report.all_verified(), "{clean_report:?}");
 
         // Tamper the outgoing operator's signature, then re-sign the manifest so
@@ -701,7 +800,7 @@ mod tests {
         let manifest_value = serde_json::to_value(&dossier.manifest).unwrap();
         dossier.manifest_jws = sign(&signing_key, &manifest_value);
 
-        let report = verify_dossier(&dossier);
+        let report = verify_dossier(&dossier, None);
         assert!(matches!(
             by_name(&report, "transfer_chain"),
             CheckStatus::Fail(_)
@@ -721,7 +820,7 @@ mod tests {
     #[test]
     fn clean_json_round_trips_through_verify_dossier_json() {
         let bytes = valid_dossier_bytes();
-        let report = verify_dossier_json(&bytes).expect("parses");
+        let report = verify_dossier_json(&bytes, None).expect("parses");
         assert!(report.all_verified(), "{report:?}");
         assert_eq!(*by_name(&report, "input_fidelity"), CheckStatus::Pass);
     }
@@ -733,7 +832,7 @@ mod tests {
         value["notARealField"] = serde_json::json!("sneaky");
         let bytes = serde_json::to_vec(&value).unwrap();
 
-        let err = verify_dossier_json(&bytes)
+        let err = verify_dossier_json(&bytes, None)
             .expect_err("unknown field must be a hard parse error, not a report");
         assert!(matches!(err, DossierParseError::Json(_)));
     }
@@ -790,7 +889,7 @@ mod tests {
             serde_json::json!("approved");
         let bytes = serde_json::to_vec(&value).unwrap();
 
-        let report = verify_dossier_json(&bytes)
+        let report = verify_dossier_json(&bytes, None)
             .expect("TransferRecord tolerates unknown fields, so this must parse");
         assert!(matches!(
             by_name(&report, "input_fidelity"),
@@ -801,7 +900,7 @@ mod tests {
 
     #[test]
     fn malformed_json_is_a_parse_error() {
-        let err = verify_dossier_json(b"not json").unwrap_err();
+        let err = verify_dossier_json(b"not json", None).unwrap_err();
         assert!(matches!(err, DossierParseError::Json(_)));
     }
 
@@ -814,7 +913,7 @@ mod tests {
         fn verify_dossier_json_never_panics(
             bytes in proptest::collection::vec(any::<u8>(), 0..1024)
         ) {
-            let _ = verify_dossier_json(&bytes);
+            let _ = verify_dossier_json(&bytes, None);
         }
     }
 }

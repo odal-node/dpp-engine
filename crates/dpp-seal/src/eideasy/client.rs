@@ -240,6 +240,30 @@ impl SealBackend for EideasyClient {
     }
 }
 
+/// The eID Easy `signature_profile` string naming a baseline level.
+///
+/// The inverse of [`level_for_profile`], and the reason a caller need not know
+/// the provider's spelling to ask for a level. `signature_profile_round_trips`
+/// pins the two against each other: they are a pair, and a pair that drifts
+/// would have the node request one level and the provider produce another,
+/// which is precisely the downgrade `cades::evidenced_level` exists to notice
+/// after the fact.
+/// `None` for a level this adapter cannot name. [`SealConformanceLevel`] is
+/// `#[non_exhaustive]`, so core may add one; guessing a profile string for it
+/// would ask the provider for something and record something else. A caller
+/// getting `None` should leave the profile alone and let the capability probe
+/// report the mismatch it actually is.
+#[must_use]
+pub fn profile_for_level(level: SealConformanceLevel) -> Option<&'static str> {
+    match level {
+        SealConformanceLevel::BaselineB => Some("CAdES_BASELINE_B"),
+        SealConformanceLevel::BaselineT => Some("CAdES_BASELINE_T"),
+        SealConformanceLevel::BaselineLt => Some("CAdES_BASELINE_LT"),
+        SealConformanceLevel::BaselineLta => Some("CAdES_BASELINE_LTA"),
+        _ => None,
+    }
+}
+
 /// The baseline level an eID Easy `signature_profile` string names.
 ///
 /// `None` for anything unrecognised, which empties `supported_levels` and — since
@@ -305,6 +329,31 @@ fn clock_hint(ours: u64, theirs: Option<u64>) -> super::error::AuthHint {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The two profile mappings are inverses, and must stay so.
+    ///
+    /// They are a pair used in opposite directions: one decides what this
+    /// adapter *advertises* it can produce, the other what the node *asks* the
+    /// provider for. Drift between them would have the node request `LT`,
+    /// receive `T`, and record the request — the exact downgrade
+    /// `cades::evidenced_level` exists to catch after the fact, arriving on a
+    /// retention-locked passport that cannot be re-sealed.
+    #[test]
+    fn the_profile_mappings_are_inverses() {
+        for level in [
+            SealConformanceLevel::BaselineB,
+            SealConformanceLevel::BaselineT,
+            SealConformanceLevel::BaselineLt,
+            SealConformanceLevel::BaselineLta,
+        ] {
+            let profile = profile_for_level(level).expect("this adapter names every current level");
+            assert_eq!(
+                level_for_profile(profile),
+                Some(level),
+                "{profile} must round-trip to the level it was derived from"
+            );
+        }
+    }
 
     #[test]
     fn hmac_message_matches_documented_example() {

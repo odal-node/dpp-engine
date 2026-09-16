@@ -112,6 +112,540 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   rather than trusted, so if it ever changes the result is a red test rather than
   a comparison against a pivot URL.
 
+- **Three defects found in review, in the checks added above.** Each is the same
+  class the subsystem exists to prevent, which is why they are listed rather than
+  quietly fixed:
+
+  - **A failed database read published a clean bill of health.** `audit_seals_once`
+    reported an unreadable batch as an empty one, and an empty batch is how a walk
+    says it reached the end — so a blip during the first batch of a walk stored a
+    completed report saying nothing was checked and nothing was broken. It now has
+    three outcomes, not two, and the caller keeps its cursor and publishes nothing.
+  - **A stale CRL could outrank a later revocation.** The revocation reader
+    answered from the first list that verified; `SignedData.crls` is a SET, so
+    the order deciding it was an encoding accident. Every applicable list is now
+    read, a revocation anywhere ends the search, and the newest clean answer wins.
+  - **A missing CRL masked a proven expiry.** `TRY_LATER` was returned before the
+    validity window was considered, so a certificate proven expired at an attested
+    time reported as an unanswered question rather than as a failure. Everything
+    provable is now decided first, in order of severity.
+
+- **The seal audit, the dossier verifier and the repair route now act on the
+  certificate's standing** (#329). The check existed and was served; nothing
+  decided anything with it, so a seal made under a certificate that had been
+  revoked — or had expired, with an attested time to prove it — was counted
+  `sound`, passed the dossier's `qualifiedSeal` check, and was refused by the
+  repair route with "this seal verifies".
+
+  `certificateFailed` is its own count on the audit report, its own gauge
+  (`seal_certificate_failed`) and its own line in `odal seal status`, **apart
+  from `broken`**, because the two need opposite responses: a broken seal is
+  worth replacing, and a seal made under a revoked certificate would only be
+  replaced by another from the same certificate. The repair route says exactly
+  that instead of sending the operator away satisfied.
+
+  Where nothing attests *when* the seal was made, the same observation stays
+  `indeterminate` and the seal stays in `sound` — a certificate that has expired
+  since is the ordinary state of an old seal, not a defect in it.
+
+- **A timestamp is refused when its authority's certificate could not have made
+  it** (#331). The token's signature verifies for ever and `genTime` is whatever
+  the signer wrote, so the authority's validity window is the only thing inside a
+  token that limits when it could have been produced — and nothing read it.
+
+  That mattered more after #322 than before: `judgedAt.attested` is what decides
+  whether a certificate finding is a failure or an open question, so a token
+  minted under any key at all could move an expired certificate back inside its
+  window. The imprint check binds a token to this signature; it does not stop
+  someone who can edit a stored seal from minting their own.
+
+  Both timestamp readers now apply it — the signature timestamp and the archival
+  one. **The other half is still open**: whether the authority is one anybody
+  trusts is a Trusted List question about the `TSA/QTST` service type (Art. 42),
+  which needs #324.
+
+- **A seal whose certificate chain runs out is reported as such, not as an
+  unlisted provider** (#323). The third gap that issue named.
+
+  Matching already considered every issuer name the seal's embedded certificates
+  refer to, so a seal carrying its intermediates reaches a listed root several
+  links up. A seal that does *not* carry them used to report `notListed` — a
+  statement about the Union's Trusted Lists — when the supportable statement was
+  about the seal: the link that would have led to a listed CA was never shipped.
+
+  `IssuerStanding::ChainIncomplete` now says which, and names the certificate
+  that was missing so it can be acted on. The remedy is the provider's generator
+  setting, not their qualification: ETSI EN 319 122-1 clause 5.2.1 asks for those
+  intermediates where a signature is to be validated through a Trusted List.
+
+  The strong finding is kept where it is earned — a chain that ends at a
+  self-issued root no list names is still `notListed`, and
+  `a_complete_chain_to_an_unlisted_root_is_still_unlisted` pins that the two did
+  not collapse into one.
+
+- **The seal certificate's validity window and revocation are now checked**
+  (#323) — `certificate` on `GET /api/v1/dpp/{dppId}/seal` and in the evidence
+  dossier's `qualifiedSeal`.
+
+  The second limb of Reg. (EU) No 910/2014 Art. 32(1)(b), reached for seals by
+  Art. 40: a qualified certificate must have been **valid at the time of
+  signing**. Nothing read `notBefore`/`notAfter`, and no revocation list was ever
+  consulted, so a seal made with a long-expired or revoked certificate reached
+  the same verdict as one made yesterday.
+
+  **The verdict turns on which moment is used.** The moment is the *attested*
+  sealing time — the timestamp token inside the seal, whose signature and imprint
+  are both checked — and this node's clock only as a marked fallback. An
+  out-of-window certificate is `totalFailed` / `expired` against a proven moment
+  and `indeterminate` / `outOfBoundsNoPoe` against an unproven one, because
+  certificates expire, sealed passports outlive them by years, and an expired
+  certificate today says nothing about a seal made while it was good. The same
+  asymmetry applies to revocation: a certificate revoked *after* a seal was made
+  does not unmake the seal.
+
+  **Revocation is read from the seal, never fetched.** A CRL distribution point
+  is a URL inside a certificate an operator was handed, and following one would
+  have a background task issue requests to an address the input chooses. ETSI
+  EN 319 122-1 puts revocation values in `SignedData.crls` from `B-LT` upward
+  precisely so a long-term seal can be checked offline — so a `B-LT` or `B-LTA`
+  seal is answerable and a `B-B` one honestly reports `indeterminate` /
+  `tryLater`.
+
+  **A CRL is checked before it is believed, in both directions.** It must come
+  from the certificate's own issuer *and* verify under a certificate the seal
+  carries. The obvious attack is forging a revocation; the less obvious one is
+  the reverse — an unsigned empty list would otherwise *clear* a revoked
+  certificate — and
+  `a_crl_naming_the_issuer_but_signed_by_another_key_is_unusable` pins it. That
+  is the same asymmetry #323 was opened about, one level down.
+
+  Still not `SealChecks::QualifiedValidation`: Art. 32(1)(f) is a declaration
+  this node cannot confirm, and (c), (d) and (h) are unasked. What changed is
+  that two of the gaps named in that issue are now closed rather than listed.
+
+- **A seal's reading is now also reported in ETSI EN 319 102-1's vocabulary** —
+  `validation` on `GET /api/v1/dpp/{dppId}/seal` and in the evidence dossier's
+  `qualifiedSeal`, with the audit's counts documented in the same terms.
+
+  That standard is what CIR (EU) 2025/1945 points at for validating a qualified
+  seal, so it is the vocabulary an auditor's own tooling reports in. The field is
+  derived from `binding` and checks nothing extra.
+
+  **It never says `totalPassed`, and the type cannot express it.** Clause 5.1.3
+  puts "the constraints applicable to the signer's certificate have been
+  positively validated" among that indication's conditions — a certificate path
+  built and validated to a trust anchor, under a policy. This node builds none.
+  (The certificate's *validity window* and its revocation material are checked;
+  that arrived with #323, later in this entry.) So a seal that demonstrably
+  covers this passport's signature reports `indeterminate`: nothing has failed,
+  and not everything has been checked. Reading `coversThisSignature` as a
+  validation pass is exactly the misreading this makes impossible.
+
+  The rest of the mapping: a broken seal is `totalFailed` / `sigCryptoFailure`,
+  and the standard makes that verdict **stable** — additional validation data
+  cannot lift it — which is the principled reason a replacement seal is worth
+  buying for those and for nothing else. A seal over a superseded signature is
+  `totalFailed` / `hashFailure` *against this passport's current signature*,
+  while remaining a sound attestation of the signature it does cover. An
+  unreadable seal is `indeterminate` with no sub-indication: none of table 6
+  fits, which is the standard's own custom-diagnostic case, and `binding` is the
+  diagnostic.
+
+  `QualifiedSealMember` in the dossier schema was five fields behind what the
+  dossier actually carries; it now documents all of them.
+
+- **The seal audit now survives a restart, bounds what a pass is about, and has
+  a configurable cadence** (#328).
+
+  Three changes to the same walk, each fixing something the first version of it
+  could not.
+
+  **Its position and its last result are stored** (`ops/pg/0038`). Keeping only
+  the result would not have been enough: the failure worth fixing is a node whose
+  estate takes longer to walk than the node goes between restarts, and such a
+  node never produces a result to keep — it would start from the beginning every
+  time, for ever, while doing every bit of the work. With the cursor stored, the
+  walk accumulates instead. `audit: null` now means *no pass has ever completed
+  against this database*, rather than none since this process started.
+
+  **A pass is a statement about the seals that existed when it began.** Seals are
+  written while a walk runs, and which of them a pass happened to see depended on
+  where its cursor had reached — so "checked 1,204" described a population nobody
+  could name. Skipping the newer ones costs no coverage: the drain checks a
+  seal's binding before accepting it, so one written mid-walk was verified as it
+  landed. A seal that cannot be dated is kept, because not knowing when something
+  was sealed is not a reason to stop looking at it.
+
+  **`SEAL_AUDIT_BATCH` and `SEAL_AUDIT_INTERVAL_SECS`** set the rate, and the
+  boot log now says what the configured rate buys for this node's estate —
+  warning when a full walk would take longer than 24 hours. That ceiling is not
+  ours: CIR (EU) 2025/1945, which pins how a qualified seal is validated under
+  Art. 32(3) and Art. 40 of Reg. (EU) No 910/2014, allows revocation information
+  for a signing certificate to be at most 24 hours old, so a slower walk could
+  not support that check once this node performs it (it does not yet — #323). An
+  unparseable value fails the boot rather than falling back to the default:
+  believing seals are checked hourly while they are checked daily is the failure
+  this whole surface exists to prevent.
+
+- **`odal seal repair <id>`** — the CLI half of the repair route below. Reports
+  whether the broken seal's row was re-armed or the signature was simply queued
+  for the first time, and prints the node's own note about what it costs. A
+  refusal is an error rather than a printed verdict: the operator asked for an
+  action and the node declining to spend is not a quieter kind of success. The
+  audit block in `odal seal status` now points at it beside each named passport.
+
+- **`POST /api/v1/dpp/{dppId}/seal/repair`** (admin) — re-seal a passport whose
+  stored seal does not verify (#328).
+
+  **This buys a second seal for a digest already paid for**, which is why it is a
+  route and not a sweep. The repair sweep cannot do it and says so in its own
+  code: it only queues passports carrying *no seal at all*, which is what lets it
+  run unattended without spending money twice. A broken seal is the case where
+  spending it again is right — the row was paid for and carries nothing, so the
+  passport is published and, in substance, unsealed. That decision belongs to
+  whoever pays, taken per passport.
+
+  **It refuses unless the seal is demonstrably broken**, and the seal is opened
+  and checked *at the moment of the request* rather than read from the audit's
+  list, which could be hours old. A sound seal, a superseded one, one this node
+  cannot read, a passport with no seal, and a node with no sealing backend
+  configured are each refused with a `422` saying which — that last one because
+  queueing where nothing drains would answer "repaired" to an operator for whom
+  nothing will happen.
+
+  The replacement covers the passport's **current** signature. Where the passport
+  was re-published since, that signature has never been sealed, so nothing is
+  re-bought and the action is `queued` rather than `rearmed`.
+
+  Not idempotency-keyed and does not need to be: a seal row is keyed by
+  `(passport_id, payload_hash)`, so a retried request re-arms a row that is
+  already pending, which is a no-op — and a second repair after the replacement
+  lands is refused because the new seal verifies.
+
+  `SealOutbox::rearm_sealed` is the only path that moves a `sealed` row, and
+  `rearm_sealed_leaves_rows_the_drain_owns_alone` pins that it moves nothing
+  else: a `pending` row re-armed underneath the drain would have its backoff
+  reset on every call.
+
+- **`GET /api/v1/seal` now reports what the seal audit found, and names the
+  passports** (#328). The counts beside it describe outbox rows and passports
+  carrying *no* seal; `audit` describes seals that exist and do not stand up — a
+  condition neither can see, since both ask whether the seal member is absent and
+  a worthless seal is present.
+
+  **`null` means no pass has completed, not that nothing is wrong.** The pass
+  walks the estate in bounded batches and starts over, so the report is empty
+  until the first one finishes and absent entirely where no audit runs (it now
+  survives a restart — see below). Reporting a zero for a check that has not run
+  would be the one answer worse than reporting nothing. `completedAt` travels
+  with it, because on a large deployment these numbers are hours old by
+  construction.
+
+  The list of broken passports is capped and says so through `truncated`: a node
+  with thousands of broken seals has one problem, not thousands, and the count
+  states its size. The audit also got its own cadence — a minute rather than the
+  sweep's hour — because it is a scan that wants to finish rather than a backstop
+  for a rare divergence, and nothing it reports is usable until the walk has been
+  all the way round.
+
+- **A stored seal that is broken is now found, rather than looking healthy**
+  (part of #328). The repair sweep and the operator rollup both ask the database
+  whether a passport's `seal` member is **absent** — so a seal that is present
+  and worthless answers "no" and is invisible: not swept, not counted, healthy in
+  every number the node reports, while the passport is in substance unsealed.
+
+  Whether a stored seal stands up is cryptographic rather than relational, so no
+  widening of that query could reach it. A background audit walks sealed
+  passports in bounded batches from a cursor, opens each CAdES through the same
+  reader the drain uses to accept one, and logs and counts what does not verify
+  (`seal_broken`). Restarting at the end rather than stopping, because a
+  seal sound today can be corrupt tomorrow.
+
+  **It reports and does not repair.** The existing sweep carries a guarantee
+  worth keeping — it cannot double-bill, because it only queues passports
+  carrying no seal at all — and re-queueing a broken seal breaks exactly that:
+  the row was paid for, and buying a second seal is justified only because the
+  first is worthless. That is a decision to take knowingly, not one for a
+  background loop on an operator's behalf. Repair is its own change.
+
+  Two things are deliberately not findings. A seal over a **different** digest is
+  ordinarily a passport re-published after sealing, which the read route already
+  reports as `superseded`. A seal this node **cannot read** is counted apart:
+  treating "cannot check" as "broken" would make every seal from a backend
+  emitting an unparsed format look like corruption.
+
+- **The seal route now reports both the level asked for and the level the bytes
+  carry.** `conformanceLevel` is what this node requested, recorded on the
+  envelope; `evidencedLevel` is what `cades::evidenced_level` finds in the CAdES.
+  Neither was served at all.
+
+  The pair is the point. A provider enabled for a weaker profile than was paid
+  for returns a seal that is correct in every record this node keeps and stops
+  verifying when its signing certificate expires — years later, on a passport
+  that is retention-locked and cannot be re-sealed. The drain already logs that
+  mismatch as it happens; serving both makes it answerable afterwards, from the
+  seal rather than from a log nobody kept. The CLI calls it `DOWNGRADED`.
+
+- **`odal seal status` and `odal seal status --all` render the new fields.** The
+  CLI is the surface a sandbox demo is driven from, and it showed none of them:
+  who issued the seal, whether it binds to the passport, or what tier the
+  configured backend resolved to. `SELF-SIGNED`, `PROVEN`, `BROKEN` and `ghost`
+  are called out rather than left to be inferred from a field name.
+
+  The issuer is passed through the existing `plain()` sanitiser, and it is the
+  sharpest case in that module: a distinguished name read out of a certificate
+  **inside a seal** is the least node-chosen string the CLI displays, so it is
+  exactly where an ANSI escape would be put to forge output under the CLI's own
+  labels.
+
+- **A seal now reports whether its archival protection is still live** (#325).
+  An archival timestamp is what keeps a `B-LTA` seal verifiable after its signing
+  certificate expires — the whole point for a retention-locked passport, which
+  outlives every certificate involved. **It expires too**: its own timestamping
+  authority's certificate has a validity period, and ETSI's long-term profiles
+  expect re-timestamping before that. Nothing here renews, and
+  `evidencedLevel` reports `baseline-lta` from the *presence* of the material —
+  correctly, since the material is there — so a seal whose archival protection
+  lapsed years ago read exactly as it did the day it was bought.
+
+  `archival` on the seal route and in the dossier: `notArchived`, `current` with
+  the date to renew by, `lapsed` with the date it went, or `unknown`.
+  **A signal, not a verdict** — a seal nearing its renewal date still verifies,
+  and that window is the only chance to renew without an outage — and no
+  threshold is applied, because how much notice is enough is the reader's policy.
+  `notArchived` is kept distinct from `lapsed`: a `B-LT` seal was never promised
+  long-term protection, and calling it lapsed would raise an alarm about a
+  commitment nobody made.
+
+  One thing it does **not** establish: that the archival timestamp covers *this*
+  seal. The `archive-time-stamp-v3` imprint is over the concatenation clause
+  5.5.3 specifies plus an `ats-hash-index-v3`, neither of which this crate builds
+  or reads — the same departure the local backend documents from the writing
+  side.
+
+- **A seal's attested time is now read, having been pointed at and never
+  reached.** `sealedAt` is the sealing node's own clock — an unattested claim by
+  the party that bought the seal — and that field's documentation has always said
+  the only place an attested time can be is the time-stamp token inside
+  `sealValue`. Nothing read it. `attestedSealedAt` now does, on the seal route
+  and in the dossier.
+
+  **Checked, not merely read.** The `signature-time-stamp` attribute is
+  *unsigned*: the seal's own signature does not cover it, so swapping the whole
+  token costs nothing. So the token's own signature is verified, and its imprint
+  is matched against this seal's signature per EN 319 122-1 clause 5.3 — without
+  that second leg a genuine token lifted from another seal, sound in every way
+  and saying a different time, would be accepted.
+  `a_timestamp_token_from_another_seal_is_refused` does exactly that swap;
+  with the imprint check removed it reports the other seal's time.
+
+  **Attested is not trusted.** A qualified time stamp is a QTSP's service
+  (Art. 42) with the presumption of accuracy attached (Art. 41(2)); establishing
+  that is a Trusted List question about the `TSA/QTST` service type, which this
+  node cannot yet ask. A self-signed authority's token verifies perfectly and
+  means nothing — which is what the local backend produces.
+
+  The `TSTInfo` ASN.1 now has **one** definition, in `cades`, used by the local
+  authority for writing and the reader for reading; and the signature check that
+  both the seal and its token need is one function rather than two copies.
+
+- **The dossier now says who issued its seal, and what level the bytes carry.**
+  It named *which* certificate — a thumbprint, enough to ask an auditor's
+  question about and not enough to answer the first one anybody has. A
+  self-signed development seal and a QTSP's were otherwise the same field, and
+  telling them apart meant parsing the CAdES by hand. `qualifiedSeal.origin` is
+  the fact that decides whether anything else in that section carries weight, so
+  it travels with it. `qualifiedSeal.evidencedLevel` joins it, because a seal
+  weaker than ordered was visible only in a drain log no dossier reader has.
+
+- **Verifying a dossier now checks its seal, rather than only hashing it.** The
+  verifier ran eight checks and none looked at the seal — it was covered by
+  `content_integrity`, which catches substitution and says nothing about whether
+  the seal means anything. `qualified_seal` is now a check of its own.
+
+  It needs no database, no node and no network: a dossier carries the CAdES
+  **and** the compact JWS that seal should cover, which is the point of the
+  format, since whoever opens the file is usually neither the issuer nor the
+  node. Nothing stored in the dossier is trusted to answer it — neither its
+  `payloadHash` nor the `binding` the generator wrote — both are recomputed from
+  `signedOverJws`. The generator's claim is evidence of what it believed; this
+  check says whether it was right.
+
+  `Absent` rather than `Fail` wherever the question could not be put: no seal, no
+  seal reader supplied, or bytes this build cannot parse. A dossier marked failed
+  because nobody looked would be worse than one marked unchecked.
+
+- **The evidence dossier now states whether its seal covers the signature it is
+  served beside.** The dossier carries the seal, the passport's compact JWS and
+  its digest, so a verifier holding only that file has everything needed. The JWS
+  is the passport's **current** one — and a passport re-published after sealing
+  carries a seal over the *previous* signature until the drain catches up, a
+  window with no end if the drain has exhausted. Pairing the two silently handed
+  an authority a seal that does not verify against the document beside it, which
+  reads as tampering rather than as the stale seal it is. `qualifiedSeal.binding`
+  now says which. Reported rather than blocking generation: a dossier must be
+  producible in whatever state the passport is actually in.
+
+- **A seal can now be proven bound to its passport, from the seal's own bytes.**
+  `GET /api/v1/dpp/{dppId}/seal` gains **`binding`**: whether the stored seal
+  actually covers this passport's current signature, read out of its
+  `messageDigest` signed attribute (RFC 5652 §11.2) after checking the signature
+  over it.
+
+  Until now the only seal-to-passport link was an outbox row recording what this
+  node *asked* a backend to seal. That record is useful — it survives a seal that
+  will not parse, and spots a re-published passport with a string comparison —
+  but it is bookkeeping, not evidence. A seal restored from a backup has no such
+  row; a seal stored against the wrong passport has a row that agrees with itself
+  and nothing else. The route's own note said as much: *"only the validator
+  establishes which digest the CAdES actually covers."* The node can now do it.
+
+  **The signature is checked before the digest is read**, and that ordering is
+  the point. The attribute is plain DER and trivial to rewrite, but it sits
+  inside the signature, so rewriting it breaks the seal rather than retargeting
+  it. `a_seal_cannot_be_retargeted_by_editing_the_digest_it_names` forges exactly
+  that edit; with the check removed it reports `coversThisSignature`, which is
+  what makes the test worth keeping. `notIntact` therefore reports **no** digest:
+  a value inside a failed signature is not evidence of anything.
+
+  `coverage` stays beside it, answering the same question from this node's
+  records. They are not folded together on purpose — one needs no cryptography
+  and survives an unreadable seal, the other is evidence — and **where they
+  disagree, the disagreement is the finding**.
+
+- **The local development backend now emits the whole `B-LTA` structure, and
+  the conformance default is per-backend.** It advertised `BaselineB` only, so
+  every path above that level — the drain's downgrade check, the boot
+  conformance probe, anything reading a long-term seal — could be exercised only
+  against a provider nobody can currently buy from.
+
+  The node now generates a local timestamping authority beside its sealing key
+  and emits what ETSI EN 319 122-1 V1.3.1 Table 1 requires at each level: a
+  `signature-time-stamp` from `B-T`, revocation material in `SignedData.crls`
+  from `B-LT` — **not** the `revocation-values` attribute, which that table marks
+  "shall not be present" at these levels — and an `archive-time-stamp-v3` at
+  `B-LTA`. The TSA certificate travels with the seal so its tokens can be
+  checked.
+
+  **The shape of a long-term seal, not the substance of one.** Every signature,
+  timestamp and revocation list is made by a key this node generated for itself.
+  The TSA certificate's organisation field reads `NOT A QUALIFIED TIMESTAMP` and
+  its policy identifier is deliberately unregistered, so a validator that looks
+  sees at once what it has; the backend still resolves to the `Ghost` trust tier,
+  and `qualify` still reports `SelfIssued`. Two departures from conformance are
+  documented rather than glossed: the archive timestamp's imprint is taken over
+  the signer's encoded form rather than clause 5.5.3's concatenation, and no
+  `ats-hash-index-v3` is produced.
+
+  **`SEAL_CONFORMANCE_LEVEL` now defaults to the backend's own level rather than
+  the node's**, `LTA` for all three today. A default that cannot depend on the
+  backend is one that will eventually contradict it — which is exactly what had
+  happened — and the remedy then reads as "lower your level to suit the backend"
+  rather than "name a backend that can do the job".
+
+- **A seal's certificate path is now verified, so the top verdict means the
+  issuer is established rather than claimed.** `dpp_seal::qualification` matched
+  an issuer by *name* and stopped there, so a self-signed certificate relabelled
+  with a listed CA's name reached the top verdict — and still verified as a seal,
+  because a CMS signature covers the signed attributes rather than the
+  certificate travelling beside them.
+
+  `cades::check_path_to` now walks from the seal's signer up through the
+  certificates the seal carries to a trust anchor the list publishes, verifying
+  every link. Intermediates come **only from the seal**: a path completed by a
+  document fetched over the network is not a path.
+
+  Two new findings, kept apart deliberately. `SignatureNotFromListedCa` is the
+  forgery — a listed CA carries that name and did not sign this. `PathUnverifiable`
+  is *not an accusation*: the check could not be run at all. Collapsing them
+  would either brand a lawful seal a forgery or let an unrunnable check read as a
+  clean miss. The path is also checked **before** the trusted-list status, so a
+  forgery is reported as a forgery rather than as a date problem.
+
+  Sized by measurement rather than assumption, and the assumption was wrong
+  twice over. Across the 373 qualified-CA certificates in the lists this
+  workspace can verify, **96.8% are RSA**, and the elliptic-curve remainder is
+  P-384 and P-521 with **not one P-256** — so the `p256` already here covered
+  none of them. `x509-verify` is pinned to exactly those algorithms; `k256`,
+  Ed25519, DSA and the broken-hash features are off. The measurement is kept as
+  `crates/dpp-seal/tests/ca_key_survey.rs` so it re-checks itself when a Member
+  State republishes.
+
+  Two further findings drove the design. Member States do not publish the same
+  thing — Italy's list is 194 self-signed **roots** out of 203, while Finland's
+  and France's carry issuing CAs directly — so candidate selection considers
+  every issuer name the seal's chain refers to, not just the signer's own.
+  Without that the walk never starts and an Italian provider reports as unlisted.
+  And `SignedData.certificates` is a SET with no meaningful order, so the signer
+  is now located by its `SignerInfo` identifier rather than taken from position
+  zero; a real provider's seal travelling with its chain could previously report
+  an intermediate as the signing certificate.
+
+  Still not `SealChecks::QualifiedValidation`, and the module says why: the
+  certificate's own validity window is never read, and revocation is never
+  consulted.
+
+  **RUSTSEC-2023-0071** (`rsa`, no fix available) is registered in
+  `.cargo/audit.toml` as `reachable-but-mitigated`. The Marvin Attack recovers a
+  key by timing private-key operations; this workspace holds no RSA key and
+  performs no RSA private-key operation, so there is nothing to recover. The
+  entry voids itself the moment one appears.
+
+- **The seal routes now say whether a seal is worth anything, and they answer
+  two different questions.**
+
+  `GET /api/v1/dpp/{dppId}/seal` gains **`origin`** — what *this stored seal's*
+  certificate says: its subject, its issuer, whether the two are the same name
+  (`selfIssued`), and the Annex III(j) `creationDevice` indication. Read from
+  the stored bytes, so it is right about a seal restored from a backup or made
+  before the backend was changed. `null` means **not read** — a placeholder, an
+  unparsed format, unreadable bytes — and never "not self-issued", which is a
+  finding and only comes from a certificate that was examined.
+
+  `GET /api/v1/seal` gains **`trustMode`** — the tier the *currently configured*
+  backend resolved to (`ghost`, `sandbox`, `live`). The counts beside it say how
+  much sealing is outstanding; this says whether the sealing that does happen is
+  worth anything. A node can sit at `unsealedPublished: 0` while every one of
+  those seals was signed by a key it generated itself, and no count would show
+  it. `null` means no seal port was resolved at all, which is **not** `ghost`.
+
+  Neither substitutes for the other. A node moved from the local backend to a
+  QTSP last week reports `live` on the summary and `selfIssued: true` on
+  everything sealed before the move, and both are correct.
+
+  Reading a certificate is answered through a new `dpp_types::SealInspector`
+  port rather than by linking the seal adapter into the services that serve
+  seals — that crate also carries an HTTP client and an XML signature verifier,
+  which is a disproportionate dependency for reading a distinguished name. The
+  inspector is wired unconditionally, deliberately not behind the same guard as
+  the sealing outbox: a node that no longer seals still holds seals whose origin
+  a reader needs, and those are the least self-explanatory ones.
+
+- **A seal now says, out of its own bytes, whether a provider issued it.**
+  `dpp_seal::qualification::qualify` reports the two legs Art. 32(1) needs —
+  reached for seals through Art. 40 — against verified national trusted lists:
+  who issued the certificate and whether that issuer was a granted qualified CA
+  **at the time of sealing**, plus the Annex III(j) indication of where the key
+  lives, read off the certificate's QCStatements.
+
+  The distinction it exists for is local versus provider. A node running the
+  local development backend produces seals that verify perfectly and mean
+  nothing legally, and the only way to tell before was to read the node's
+  configuration — which records what the operator intended, not what came back.
+  Self-issuance is a property of the certificate, so it is decided before any
+  trusted list is consulted and a node with no network still knows.
+
+  **It is not a qualified-seal verdict, and nothing here returns a
+  `SealChecks`.** The issuer is matched by *name*, so the verdict says which
+  listed CA a seal claims, not that the CA signed it; no certificate path is
+  built. `naming_a_listed_ca_reaches_the_top_verdict_without_any_path_check`
+  pins that by relabelling a self-signed development certificate with a real
+  Finnish qualified CA's name and watching it reach the top verdict — while the
+  seal still verifies, because a CMS signature covers the signed attributes and
+  not the certificate travelling beside them. Closing the gap means verifying
+  the issuer's signature over the certificate, which needs a verifier for the
+  algorithms real QTSP certificate authorities use.
+
 - **A life status that contradicts its own lineage is now reported.** The
   plausibility lint gains `lineage.life_status_unsupported`, from
   `dpp_rules::lineage::check_life_status_consistency`: a unit claiming
@@ -325,6 +859,72 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   Cargo reconciles the lock against the manifest before building, so a
   hand-edited source line is rewritten back. That is the check being sound rather
   than a gap — the lock always describes the build that ran.
+
+- **Every node-supplied string the CLI prints is now sanitised** (#327). The
+  ANSI/newline guard covered one field by design, with the passport-document
+  strings deliberately left for their own change; this is that change. A string
+  carrying `ESC[2K
+` can erase the line it is printed on and rewrite it, and one
+  carrying a newline can forge whole additional lines under the CLI's own
+  labels — and those strings arrive from imports, API callers and supply-chain
+  peers, not from the node's own choosing.
+
+  The worst case is a table: `odal list` pads its columns, so a forged row is
+  indistinguishable from a real passport at a glance. Guarding happens at the
+  shared read and print helpers rather than at each call site, so a field added
+  later inherits it — `field()` reads and sanitises in one step, which makes the
+  safe path the short path.
+
+- **Signature checking covered none of the certificates a real provider uses.**
+  `verify_against_embedded_certificate` understood P-256 only — what the local
+  development backend emits, and **not one** of the 373 qualified-CA certificates
+  measured in the published trusted lists. That was worse than a missing feature:
+  the digest a seal covers lives in an attribute *inside* its signature, so a
+  signature this node could not check took the whole seal-to-passport binding
+  with it, degrading to "unknown" exactly when a real provider seal first
+  arrived. It now uses the same verifier as the path check, so the accepted
+  algorithms are one list rather than two that can drift.
+
+  Doing that surfaced a real listed CA this build still could not verify: the
+  French notaries' delegated authority omits the `NULL` `AlgorithmIdentifier`
+  parameters that RFC 3279 §2.3.1 requires for `rsaEncryption`, and the strict
+  SPKI decoder refuses it. An absent NULL is now supplied before decoding, which
+  **changes no key material** — the modulus and exponent live in the BIT STRING
+  and are untouched. `every_listed_qualified_ca_yields_a_usable_verifier` holds
+  the line at every published CA (373/373), so a future non-conformance is caught
+  rather than quietly joining the set whose seals cannot be checked.
+
+- **A seal that does not cover the digest it was bought for is no longer
+  stored.** Nothing compared the returned envelope against the request. A
+  provider answering with a seal over another document — a mix-up, a crossed
+  request, a bug — was written onto the passport unexamined, leaving it *looking*
+  sealed while carrying an attestation about something else. The read route would
+  then call it `coversAnotherDigest`, which is indistinguishable from a passport
+  re-published after sealing: a provider error arriving disguised as routine
+  staleness.
+
+  Refused, unlike a downgrade — a weak seal still covers the right passport and
+  re-buying gets the same weak thing, whereas this is not a seal for this
+  passport at all. The row backs off and the passport stays in
+  `unsealedPublished`, which is true. A seal this node **cannot read** is still
+  stored: "cannot check" must not become "reject", or a backend emitting a format
+  this node does not parse could never seal anything.
+
+- **The QTSP seal profile now follows the level actually requested.**
+  `SEAL_CONFORMANCE_LEVEL` defaults to `LT` while this provider's
+  `signature_profile` defaulted to `CAdES_BASELINE_T`, so a node configured for
+  the provider and nothing else **refused to boot**. That refusal was correct —
+  every published passport would have enqueued a seal row that could never drain
+  — but it named `SEAL_CONFORMANCE_LEVEL` as the thing to change, pointing an
+  operator at *lowering* the level to meet a default they never chose, giving up
+  long-term validation material to do it.
+
+  The composition root now derives the profile from the requested level unless
+  the operator pinned one, which is left alone: someone who names a profile has
+  said something specific, and the capability probe already refuses a boot where
+  it contradicts the level. `profile_for_level` and `level_for_profile` are
+  pinned as inverses — drift between them would have the node request `LT`,
+  receive `T`, and record the request.
 
 - **The two repository backends disagreed about which fields a patch may
   carry.** *(No change to how a node behaves: the PostgreSQL backend was and

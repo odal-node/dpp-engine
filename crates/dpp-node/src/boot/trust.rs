@@ -76,3 +76,34 @@ pub fn build_and_enforce(
     }
     Ok(trust)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The seal summary route looks the sealing tier up by name, and the name
+    /// lives here.
+    ///
+    /// Two crates and no compiler link between them: `dpp-vault` cannot see this
+    /// module, so it carries a string constant and finds nothing if the port is
+    /// ever renamed. Nothing would fail — `trustMode` would simply serve `null`,
+    /// which the route documents as "no seal port was resolved", so a rename
+    /// would turn a real answer into a plausible-looking absence.
+    #[test]
+    fn the_seal_port_is_named_what_the_seal_route_looks_up() {
+        let report = build_and_enforce(
+            TrustMode::Live,
+            TrustMode::Live,
+            TrustMode::Live,
+            TrustMode::Live,
+            TrustMode::Live,
+        )
+        .expect("an all-live posture boots under any profile");
+
+        assert_eq!(
+            report.mode_of(dpp_vault::handlers::seal::SEAL_TRUST_PORT),
+            Some(TrustMode::Live),
+            "the seal route's port name must match the one registered here"
+        );
+    }
+}

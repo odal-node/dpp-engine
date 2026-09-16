@@ -19,6 +19,7 @@ dpp-domain   = { workspace = true }
 # is what stands between a document that has not yet been trusted and the
 # network. That is precisely what the resolving SSRF guard is for.
 dpp-common   = { path = "../dpp-common" }
+dpp-types    = { workspace = true }
 
 serde        = { workspace = true }
 serde_json   = { workspace = true }
@@ -67,8 +68,32 @@ der          = "0.7"
 const-oid    = "0.9"
 p256         = { version = "0.13", features = ["ecdsa", "pkcs8"] }
 rcgen        = "0.14"
+# Verifies one X.509 signature against an issuer's public key — and explicitly
+# does NOT build certificate paths, which is what is wanted here: the trust
+# anchor is already established (Official Journal -> LOTL -> national list), so
+# what remains is a single signature check against a CA certificate the list
+# itself carries.
+#
+# Features are pinned to the algorithms measured in the published lists
+# (`trustlist::ca_key_survey`): RSA is 96.8% of 373 qualified-CA certificates,
+# the elliptic-curve remainder is P-384 and P-521, and **none is P-256** — so
+# the `p256` already here covers none of them. `p256` stays anyway because the
+# local development backend emits it.
+#
+# Deliberately NOT enabled: `k256` (secp256k1 — a Bitcoin curve no EU CA uses),
+# `ed25519`, `dsa`, and the broken-hash features `md2`/`md5`/`sha1`. An
+# algorithm this cannot verify reports an unverified path rather than a pass,
+# which is the safe direction, and `ca_key_survey` fails if a Member State ever
+# lists a key algorithm outside RSA and EC.
+x509-verify  = { version = "0.4.8", default-features = false, features = [
+    "x509", "rsa", "p256", "p384", "p521", "sha2",
+] }
 
 [dev-dependencies]
 tempfile     = "3"
+# `rcgen` takes its dates as `time::OffsetDateTime` and does not re-export the
+# type, so the certificate-standing tests — which turn on a certificate's
+# `notBefore`/`notAfter` — need it directly. Already in the graph via `rcgen`.
+time         = { version = "0.3", default-features = false }
 tokio = { workspace = true }
 axum  = { workspace = true }

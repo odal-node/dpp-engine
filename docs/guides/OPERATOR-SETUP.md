@@ -333,7 +333,19 @@ but the qualified seal, the third-party archive, and the registry notifications
 are simulated. Wiring those up is a separate exercise; until then, treat the
 output as operationally real and legally not.
 
-`odal seal status` reports the sealing side specifically.
+`odal seal status` reports the sealing side specifically. It also reports what
+the node's background pass over the seals it *already holds* has found — a seal
+can stop verifying long after it was bought, through a bad restore or a
+truncated column, and every "is it sealed" count still says yes because a
+worthless seal is present. Two readings to keep apart there:
+
+- **`not audited yet`** means no pass has completed, not that nothing is wrong.
+  A pass walks the whole estate; `SEAL_AUDIT_BATCH` and `SEAL_AUDIT_INTERVAL_SECS`
+  set how long that takes, and the boot log says so for your estate.
+- **a named passport** can be re-sealed with `odal seal repair <id>`, which buys
+  a replacement. That costs a seal, so the node refuses unless the one it holds
+  is demonstrably broken — checked at the moment you ask, not read from the
+  report.
 
 ---
 
