@@ -1,6 +1,8 @@
 //! Verifying the real list of trusted lists against the real anchor.
 
-use super::verify::{LotlRejected, TrustedListRejected, verify_lotl};
+use super::verify::{
+    AnchorFreshness, LotlRejected, TrustedListRejected, anchor_freshness, verify_lotl,
+};
 
 /// The EU list of trusted lists, as published.
 ///
@@ -395,6 +397,104 @@ fn no_rejection_message_carries_a_stray_line_break() {
         assert!(
             !message.contains("  "),
             "and without a run of swallowed indentation, got: {message:?}"
+        );
+    }
+}
+
+/// Whether the pinned anchor is still the notice the Commission names.
+///
+/// The anchor is pinned from an Official Journal notice and the Commission
+/// republishes that notice. A pin nobody refreshes eventually meets a LOTL
+/// signed by a certificate it does not name, and fails closed on a date nobody
+/// has in a calendar. This is the only warning before that.
+mod anchor_freshness_signal {
+    use super::*;
+
+    /// The assumption the whole check rests on, asserted against the real
+    /// document rather than trusted.
+    ///
+    /// The LOTL lists its notice **first** in `SchemeInformationURI`, ahead of
+    /// the pivot chain and twenty-three per-language legal notices. If that
+    /// ordering ever changed, this check would compare against a pivot URL and
+    /// report `Superseded` forever — noisy rather than silent, which is the
+    /// right way round, but still wrong.
+    #[test]
+    fn the_notice_is_the_first_entry_the_document_lists() {
+        let freshness = anchor_freshness(EU_LOTL, "https://eur-lex.europa.eu/eli/C/2026/1944/oj");
+        assert_eq!(
+            freshness,
+            AnchorFreshness::Current,
+            "the first SchemeInformationURI entry is no longer the OJ notice"
+        );
+    }
+
+    /// The published document and this build's pin agree today.
+    ///
+    /// When this fails, the Commission has republished and the anchor needs
+    /// refreshing from the notice named in the failure — which is the whole
+    /// point of the signal, arriving as a red test rather than an outage.
+    #[test]
+    fn the_pinned_anchor_is_still_the_notice_in_force() {
+        let verified = verify_lotl(EU_LOTL).expect("the LOTL verifies");
+        assert_eq!(
+            verified.anchor_freshness(),
+            &AnchorFreshness::Current,
+            "the pinned notice is no longer the one the LOTL names"
+        );
+    }
+
+    /// A superseded pin is named, and names what to go and read.
+    #[test]
+    fn a_superseded_pin_says_which_notice_replaced_it() {
+        let freshness = anchor_freshness(EU_LOTL, "https://eur-lex.europa.eu/eli/C/2019/276/oj");
+        let AnchorFreshness::Superseded { lotl_names } = &freshness else {
+            panic!("a pin the document does not name must be reported: {freshness:?}");
+        };
+        assert_eq!(lotl_names, "https://eur-lex.europa.eu/eli/C/2026/1944/oj");
+        assert!(
+            freshness.to_string().contains("refresh the anchor"),
+            "an operator has to be told what to do: {freshness}"
+        );
+    }
+
+    /// Freshness is a signal, never a verdict.
+    ///
+    /// The document that would report `Superseded` against an older pin is the
+    /// same document that verifies cleanly — which is the situation this exists
+    /// for. Refusing it would turn an early warning into the outage it is meant
+    /// to prevent.
+    #[test]
+    fn a_superseded_pin_does_not_refuse_a_document_that_verifies() {
+        assert!(
+            verify_lotl(EU_LOTL).is_ok(),
+            "the real LOTL verifies against the real anchor"
+        );
+        assert!(
+            matches!(
+                anchor_freshness(EU_LOTL, "https://eur-lex.europa.eu/eli/C/2019/276/oj"),
+                AnchorFreshness::Superseded { .. }
+            ),
+            "and would report a stale pin, without that changing the verdict"
+        );
+    }
+
+    /// A document naming no notice is `Unknown`, not `Current`.
+    ///
+    /// Treating "could not tell" as "up to date" is how a staleness signal goes
+    /// quiet exactly when it matters — the same fail-closed direction the
+    /// capacity and date questions take elsewhere in this workspace.
+    #[test]
+    fn a_document_that_names_no_notice_is_not_reported_as_current() {
+        assert_eq!(
+            anchor_freshness(
+                "<TrustServiceStatusList/>",
+                "https://example.invalid/notice"
+            ),
+            AnchorFreshness::Unknown
+        );
+        assert_eq!(
+            anchor_freshness("not xml at all", "https://example.invalid/notice"),
+            AnchorFreshness::Unknown
         );
     }
 }

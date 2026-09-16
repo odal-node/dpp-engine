@@ -95,6 +95,6 @@ pub use fetch::{
 pub use model::{ListedProvider, ListedService, TrustedListPointer, UnverifiedTrustedList};
 pub use parse::{parse_lotl, parse_trusted_list};
 pub use verify::{
-    LotlRejected, TrustedListRejected, VerifiedLotl, VerifiedTrustedList, verify_lotl,
-    verify_lotl_with, verify_trusted_list,
+    AnchorFreshness, LotlRejected, TrustedListRejected, VerifiedLotl, VerifiedTrustedList,
+    verify_lotl, verify_lotl_with, verify_trusted_list,
 };

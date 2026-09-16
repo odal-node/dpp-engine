@@ -82,6 +82,36 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   problem at the publisher, a bad signature is an altered document, and the two
   send an operator to different people.
 
+- **A verified list of trusted lists now says whether the pin it verified
+  against is still the notice in force.** New `AnchorFreshness` on
+  `VerifiedLotl`: `Current`, `Superseded { lotl_names }`, or `Unknown`.
+
+  The trust anchor is pinned from an Official Journal notice rather than chained
+  to a certificate authority, and the Commission republishes that notice. A pin
+  nobody refreshes eventually meets a LOTL signed by a certificate it does not
+  name and fails closed as `NotAnchored` — on a date nobody has in a calendar,
+  looking like an outage rather than a lapsed pin. This is the only warning
+  before that.
+
+  **A signal, never a verdict.** A superseded pin keeps verifying until the
+  certificates actually rotate, and that window is the only chance to refresh
+  without an outage — so folding this into `LotlRejected` would refuse documents
+  that verify perfectly and turn the early warning into the thing it exists to
+  prevent. `a_superseded_pin_does_not_refuse_a_document_that_verifies` pins that.
+
+  **`Unknown` is not `Current`.** A document naming no notice cannot be checked,
+  and reporting it as up to date is how a staleness signal goes quiet at the
+  moment it matters.
+
+  Reported and logged: the caller that most needs to act on it is an operator
+  reading logs, not the code holding the `VerifiedLotl`.
+
+  The check rests on the document listing its notice **first** in
+  `SchemeInformationURI`, ahead of the pivot chain and twenty-three per-language
+  legal notices. That ordering is asserted against the real published document
+  rather than trusted, so if it ever changes the result is a red test rather than
+  a comparison against a pivot URL.
+
 - **A life status that contradicts its own lineage is now reported.** The
   plausibility lint gains `lineage.life_status_unsupported`, from
   `dpp_rules::lineage::check_life_status_consistency`: a unit claiming

@@ -97,6 +97,88 @@ impl std::fmt::Display for LotlRejected {
 
 impl std::error::Error for LotlRejected {}
 
+/// Whether the pinned anchor is still the notice the LOTL itself names.
+///
+/// **Not part of the verdict.** A superseded pin keeps verifying until the
+/// Commission actually rotates the signing certificates, which is exactly why
+/// this is worth reporting: the window between "a newer notice exists" and "the
+/// old certificates stop being used" is the only chance to refresh without an
+/// outage. Folding it into [`LotlRejected`] would refuse documents that verify
+/// perfectly today.
+///
+/// The failure it exists to pre-empt is unpleasant: a pin nobody refreshes
+/// eventually meets a LOTL signed by a certificate the notice no longer names,
+/// which fails closed as [`LotlRejected::NotAnchored`] — on a date nobody has in
+/// a calendar, looking like an outage rather than a lapsed pin.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AnchorFreshness {
+    /// The LOTL names the notice this build is pinned to.
+    Current,
+    /// The LOTL names a different notice, so the Commission has republished.
+    ///
+    /// Carries what the document named so an operator can go and read it,
+    /// rather than being told only that their pin is wrong.
+    Superseded {
+        /// The notice the LOTL names as currently in force.
+        lotl_names: String,
+    },
+    /// The document names no notice at all, so the question cannot be answered.
+    ///
+    /// Distinct from [`Current`](Self::Current) deliberately. Treating "could
+    /// not tell" as "up to date" is how a staleness signal goes quiet at the
+    /// moment it is most needed — the same fail-closed direction the rest of
+    /// this module takes.
+    Unknown,
+}
+
+impl std::fmt::Display for AnchorFreshness {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Current => f.write_str("the pinned notice is the one in force"),
+            Self::Superseded { lotl_names } => write!(
+                f,
+                "the list of lists names {lotl_names} as the notice in force, which is not the \
+                 one this build pins — refresh the anchor from it before the signing \
+                 certificates rotate"
+            ),
+            Self::Unknown => {
+                f.write_str("the list of lists names no notice, so the pin cannot be checked")
+            }
+        }
+    }
+}
+
+/// The notice a LOTL names as currently in force, compared against `pinned`.
+///
+/// The document lists its notice **first** in `SchemeInformationURI`, ahead of
+/// the pivot chain and the per-language legal notices. That ordering is what
+/// makes this cheap; it is also the only thing this reads, so a document that
+/// reorders those entries would report `Superseded` rather than silently
+/// comparing the wrong one.
+pub(super) fn anchor_freshness(xml: &str, pinned: &str) -> AnchorFreshness {
+    let Ok(doc) = Document::parse(xml) else {
+        return AnchorFreshness::Unknown;
+    };
+    let named = doc
+        .descendants()
+        .find(|n| n.is_element() && n.tag_name().name() == "SchemeInformationURI")
+        .and_then(|n| {
+            n.children()
+                .find(|c| c.is_element() && c.tag_name().name() == "URI")
+        })
+        .and_then(|n| n.text())
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
+
+    match named {
+        None => AnchorFreshness::Unknown,
+        Some(uri) if uri == pinned => AnchorFreshness::Current,
+        Some(uri) => AnchorFreshness::Superseded {
+            lotl_names: uri.to_owned(),
+        },
+    }
+}
+
 /// A list of trusted lists whose signature has been verified against the anchor.
 ///
 /// The type exists so a verified document cannot be passed where an unverified
@@ -110,6 +192,7 @@ impl std::error::Error for LotlRejected {}
 pub struct VerifiedLotl {
     pointers: Vec<TrustedListPointer>,
     signed_by: String,
+    anchor_freshness: AnchorFreshness,
 }
 
 impl VerifiedLotl {
@@ -117,6 +200,16 @@ impl VerifiedLotl {
     #[must_use]
     pub fn pointers(&self) -> &[TrustedListPointer] {
         &self.pointers
+    }
+
+    /// Whether the pin this verified against is still the notice in force.
+    ///
+    /// Read it. A `Verified` document says the signature and the anchor agree
+    /// *today*; this says whether that will still be true after the next
+    /// rotation, and it is the only warning there is.
+    #[must_use]
+    pub fn anchor_freshness(&self) -> &AnchorFreshness {
+        &self.anchor_freshness
     }
 
     /// Base64 SHA-256 of the anchored certificate that signed it.
@@ -213,10 +306,23 @@ pub fn verify_lotl_with(xml: &str, anchor: &LotlAnchor) -> Result<VerifiedLotl, 
 
     let pointers = parse_lotl(xml).map_err(|e| LotlRejected::Malformed(e.to_string()))?;
 
+    // Computed after the verdict, never as part of it — see `AnchorFreshness`.
+    // Logged as well as returned because the caller that most needs to act on it
+    // is an operator reading logs, not the code holding the `VerifiedLotl`.
+    let freshness = anchor_freshness(xml, anchor.notice_uri());
+    match &freshness {
+        AnchorFreshness::Current => {}
+        other => tracing::warn!(
+            pinned_notice = anchor.notice_celex(),
+            "trusted-list anchor: {other}"
+        ),
+    }
+
     Ok(VerifiedLotl {
         pointers,
         signed_by: base64::engine::general_purpose::STANDARD
             .encode(<sha2::Sha256 as sha2::Digest>::digest(&der)),
+        anchor_freshness: freshness,
     })
 }
 
