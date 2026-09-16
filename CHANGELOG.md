@@ -264,6 +264,68 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ### Fixed
 
+- **The trusted-list fetch cap refused the two documents the vendored `xml-sec`
+  fork exists for.** *(No node has run this path yet — the reader is not wired
+  into anything — so nothing was broken in the field. What was broken is that the
+  two features contradicted each other and no test could notice.)*
+
+  The fork raises a compile-time node-set ceiling so Italy and France verify;
+  they carry 65 540 and 65 541 entries against a limit of 65 536. The fetch cap
+  was sized at one mebibyte from a survey of "roughly 140 KiB to over 600 KiB" —
+  a range that excluded those same two lists, which are 2.72 MiB and 2.43 MiB.
+
+  So `fetch_trusted_list` refused both before verification was ever attempted,
+  and the fork's entire purpose was unreachable through this crate's own path.
+  Neither feature was exercised: the chain tests read fixtures via `include_str!`
+  and never call the fetcher, and the cap was asserted nowhere.
+
+  The cap is now 8 MiB, sized against **every** list the LOTL points at rather
+  than against a sample — Germany, the largest, is 5.11 MiB. Asserted against a
+  dated measurement of the published set rather than against the repository's own
+  fixtures, because sizing it from those would be the original mistake with a
+  different sample.
+
+### Added
+
+- **The `xml-sec` fork's justification is demonstrated rather than asserted.**
+  `the_two_largest_lists_verify_which_is_what_the_fork_is_for` verifies Italy's
+  and France's published lists through the verified LOTL. Confirmed by removing
+  the `[patch.crates-io]` stanza and watching it fail with `node-set entries
+  exceeds policy maximum 65536: got 65540` — the figure the fork was vendored
+  for.
+
+  **Those two documents are ~5 MB and are deliberately not committed.** They live
+  under `tests/fixtures/local/`, which is git-ignored, and the test skips loudly
+  when they are absent so a checkout without them reads as "not demonstrated
+  here" rather than as a pass. `tests/fixtures/local/README.md` says how to fetch
+  them and what they prove.
+
+  The regression guard does not depend on them, which is what makes that
+  acceptable: `the_patched_xml_sec_is_the_one_that_resolved` reads `Cargo.lock`
+  and runs everywhere. The documents are a one-time demonstration; the lockfile
+  check is what catches the failure that actually bites.
+
+  **"Only Italy and France" was already out of date and is not repeated here.**
+  Measured across every list the LOTL points at on 2026-09-15, four are over the
+  ceiling — France 65 541, Czechia 65 543, Italy 65 540, Spain 65 543 — and byte
+  size does not predict the count. Germany is over a *different* ceiling the fork
+  never touched and does not verify at all.
+
+- **A check that the fork is the `xml-sec` which actually resolved.** The way
+  this breaks is quiet: `[patch.crates-io]` applies only while the fork's version
+  satisfies the requirement, and bumping past it — what someone will do the day
+  upstream publishes — makes Cargo emit an **unused patch warning, not an error**
+  and fall through to the registry crate.
+
+  Without the check the only symptom is two Member States failing verification.
+  With it, the diagnostic says which situation you are in: upstream shipped the
+  fix and the stanza should go, or the ceiling is back.
+
+  Note for whoever tests it: editing `Cargo.lock` does not reproduce the failure.
+  Cargo reconciles the lock against the manifest before building, so a
+  hand-edited source line is rewritten back. That is the check being sound rather
+  than a gap — the lock always describes the build that ran.
+
 - **The two repository backends disagreed about which fields a patch may
   carry.** *(No change to how a node behaves: the PostgreSQL backend was and
   remains the one that ships. What changes is that the test double now agrees
