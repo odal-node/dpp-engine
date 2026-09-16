@@ -36,6 +36,7 @@ pub mod registry_transfer;
 pub mod scan;
 pub mod seal;
 pub mod snapshot;
+pub mod successor;
 pub mod transfer;
 pub mod trust;
 pub mod unsold_goods;
@@ -82,6 +83,7 @@ pub use snapshot::{
     SnapshotOutbox, SnapshotOutboxCounts, SnapshotReconcileRow, SnapshotReconcileStatus,
     SnapshotStore,
 };
+pub use successor::SuccessorLookup;
 pub use transfer::TransferStore;
 pub use trust::{NodeProfile, NodeTrustReport, TrustMode, TrustPort};
 pub use unsold_goods::{

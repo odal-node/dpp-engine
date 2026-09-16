@@ -107,6 +107,47 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   deployments, so version skew is the steady state rather than a migration
   window.
 
+### Fixed
+
+- **A printed carrier now keeps working after the passport behind it is
+  amended.** `GET /public/dpp/{dppId}` on a `superseded` passport serves the
+  record that replaced it, rather than the superseded one's frozen view.
+
+  ✅ ESPR Art. 9(1): the data carrier links to *the* digital product passport for
+  the product. A carrier is printed on a physical thing and cannot be recalled,
+  so the record it lands on has to stay the current one across an amendment.
+
+  🚨 **This door answered differently from the one beside it.** A passport
+  carrying a GTIN gets a GS1 Digital Link carrier, and every `/01/{gtin}` route
+  resolves on the GTIN alone — so an amended product's printed label already
+  landed on the successor. A passport with **no** GTIN falls back to `/dpp/{id}`,
+  and that one served the predecessor: a document describing the superseded
+  product, saying `"status": "active"`, pointing nowhere.
+
+  The `active` was not a bug in the status field. The body served on this route
+  is the decoded payload of `publicJwsSignature`, verbatim, so every field in it
+  was frozen at publish — `status` included, whatever happened to the passport
+  afterwards.
+
+  **Which is why the fix is the successor's body and not a status field beside
+  it.** An unsigned `currentStatus` could not be trusted — an unauthenticated
+  claim on a page whose whole value is that it verifies, behind a resolver cache
+  — and could not be reached, since the resolver re-attaches exactly one named
+  field from the served body. The successor needs none of that: it is published,
+  separately signed, current, and its own `supersedesId` names the passport that
+  was scanned. The reader gets the pointer inside a document they can verify.
+
+  A successor that is **not yet published** is not an answer — it has no public
+  view, so sending a scan there would move the `404` one step along. Until it
+  publishes, the predecessor's own view is the best there is, which is what this
+  route served before.
+
+  *(⚠️ Not reached: a passport retired with **no** successor — `archived` at the
+  end of retention, `deactivated` at end of life — still serves a frozen view
+  whose `status` reads as it did at publish. There is nowhere to send a reader
+  and no authenticated way to say "this is over" inside a payload signed before
+  it was. That residue is #236.)*
+
 ### Added
 
 - **Every change to a passport is now archived, and the version that was current
