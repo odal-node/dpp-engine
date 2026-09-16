@@ -51,6 +51,37 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ### Added
 
+- **Trusted-list signatures are checked against the transform profile the law
+  mandates.** New `LotlRejected::NonConformantProfile` and the same on
+  `TrustedListRejected`: the `ds:Reference` with `URI=""` must carry exactly one
+  `ds:Transforms`, holding exactly two `ds:Transform` — enveloped-signature then
+  exclusive canonicalization, in that order.
+
+  ✅ COMPLIANCE-PIN: CID (EU) 2015/1505 Annex I, Chapter II, the "Signature
+  element (clause B.1)" section inserted by CID (EU) 2025/2164, Annex, point (3).
+  Applicable since 29 April 2026.
+
+  **Transforms decide what was actually signed**, so a permissive chain is the
+  classic signature-wrapping surface: a signature can validate perfectly and
+  cover something other than the document being read. The narrowness of the
+  profile is the point of it, and it is checked *before* the signature — a valid
+  signature must not be able to excuse a chain the law does not permit.
+
+  **The gap was confirmed, not assumed.** `xml-sec`'s
+  `TransformPolicy::allowed_algorithms` is documented as "`None` accepts every
+  implemented algorithm" and defaults to `None`; the implemented set includes
+  XPath and XPath Filter 2.0. An injected XPath transform is not merely accepted
+  in principle — in the negative test it is **evaluated**, running 5800 context
+  evaluations before an unrelated resource ceiling stops it.
+
+  Only the `URI=""` reference is constrained. Both published documents carry a
+  second reference to the XAdES `SignedProperties`, which the clause does not
+  govern and which constraining would refuse every real trusted list.
+
+  Separate from `SignatureInvalid` deliberately: a non-conformant profile is a
+  problem at the publisher, a bad signature is an altered document, and the two
+  send an operator to different people.
+
 - **A life status that contradicts its own lineage is now reported.** The
   plausibility lint gains `lineage.life_status_unsupported`, from
   `dpp_rules::lineage::check_life_status_consistency`: a unit claiming
@@ -75,6 +106,76 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   The create/update path and `POST /dpp/{dppId}/lint` now compute the result
   through one function. They did not before, so a check added to one and not the
   other would have made the route disagree with the record it re-checks.
+- **The EU Trusted Lists can now be read and verified.** New
+  `dpp_seal::trustlist`: `verify_lotl` for the List of Trusted Lists,
+  `verify_trusted_list` for a Member State's, plus the parsers, the fetcher and
+  the typed rejections. Nothing calls it yet — this is the reader, not a
+  policy.
+
+  **The trust anchor is an Official Journal notice, not a certificate
+  authority.** The LOTL's signing certificates chain to no commercial root; they
+  are published in the OJ C series, which the LOTL itself names through
+  `SchemeInformationURI`. So there is nothing to walk up to, and the anchor is
+  six SHA-256 digests taken from notice `52026XC01944`, compiled in with the
+  location, CELEX and pin date beside them.
+
+  **Compiled in, never configuration.** An operator who can repoint the anchor
+  can make any list verify.
+
+  **Six digests are the entire pinned surface.** No Member State's certificates
+  live in the repository — they arrive inside a document that has already been
+  verified, so a country joining or rotating its certificate needs no code change
+  and no release. That is the whole payoff of a list of lists.
+
+  `authorises` is a **precondition, not a verdict**: anyone can copy the genuine
+  certificate into a forgery and pass it. Only the signature separates them.
+  Conversely a valid signature alone proves nothing about authority — Finland's
+  list is genuine and correctly signed by Finland, which does not sign the LOTL,
+  and it verifies cleanly with the anchor check disabled. That pair is why both
+  halves exist.
+
+  **The two halves are bound to one certificate, and that had to be forced.**
+  The anchor is checked against a certificate this code reads; the signature is
+  checked by `xml-sec` against a certificate **it** selects, by leaf analysis of
+  the embedded chain rather than by position. `VerifyResult` exposes no
+  certificate, so a disagreement could not be detected afterwards. Two
+  constraints make one impossible: the read is scoped to `ds:KeyInfo`, the only
+  place `xml-sec` resolves keys from, and `ds:KeyInfo` must carry exactly one
+  certificate — new `AmbiguousSigningCertificate` on both enums.
+
+  This matters more than a tie-break rule. `ds:KeyInfo` sits inside
+  `ds:Signature`, which the mandated enveloped-signature transform removes from
+  the digest input, so **a certificate can be added to a genuine, correctly
+  signed list without disturbing its signature**. Reading "the first one" would
+  then take the real anchored certificate, pass the anchor, and verify — while
+  `xml-sec` verified with whichever the chain named. Refusing is free today:
+  every published list checked carries exactly one, pinned by
+  `each_signature_names_exactly_one_certificate`.
+
+  🚨 **This creates a recurring operational obligation.** The pin must be
+  refreshed when the Commission republishes the notice, and the current signer
+  expires **2027-11-17** — a calendar date, not a discovery. A stale pin fails
+  closed and looks like an outage, so the reader also has the early signal: the
+  LOTL's first `SchemeInformationURI` entry is the current notice.
+
+  `TrustedListRejected` is a separate enum from `LotlRejected` deliberately: a
+  rejected LOTL usually means our pin is stale, a rejected national list never
+  does, and the two send an operator in different directions.
+
+- **`xml-sec` is pinned to an organisation fork, temporarily.** Italy (2.86 MB)
+  and France (2.55 MB) exceed a compile-time node-set ceiling in the published
+  crate and cannot be verified at any configuration — the constant is
+  `pub(crate)` and the policy knob that appears to raise it is validated against
+  the same number. They miss it by four and five nodes, and trusted lists only
+  grow.
+
+  The fork changes that one constant and nothing else. It is a pinned git rev
+  rather than a vendored copy because the crate is ~66k LOC: vendoring would make
+  every upstream sync a 66k-line diff and bury the one line that is ours.
+  `deny.toml` carries the matching source allowance and the same exit condition.
+
+  Filed upstream as `structured-world/xml-sec#158`. **When that resolves, the
+  `[patch.crates-io]` stanza and the `deny.toml` entry go together.**
 
 - **The passport response now serves `serialNumber`, `lifeStatus` and
   `responsibleOperator`.** All three are modelled on the core aggregate and were

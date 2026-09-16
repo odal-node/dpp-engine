@@ -209,10 +209,20 @@ impl SealBackend for LocalIdentity {
             format: SealFormat::Cades,
             seal_value: base64::engine::general_purpose::STANDARD.encode(&der),
             signing_cert_ref: Some(self.cert_thumbprint()),
-            // The requested level, per the field's contract. `capabilities()`
-            // advertises `BaselineB` alone and the adapter checks `can_produce`
-            // first, so the only request that reaches here asked for `BaselineB`
-            // — which is also what these bytes carry.
+            // The **requested** level, which is what this field records. Core's
+            // own kit fails an envelope whose stored level disagrees with the
+            // request (`seal.misrecorded_level`), and the field's doc is explicit
+            // that it is a record of what was asked for rather than proof of what
+            // arrived.
+            //
+            // That is not the same as trusting it. `capabilities()` advertises
+            // `BaselineB` alone and the adapter checks `can_produce` first, so the
+            // only request that reaches here asked for `BaselineB` — which is also
+            // what these bytes carry. If that guard ever stopped working, echoing
+            // the request would record a level the bytes do not have; what catches
+            // that is `cades::evidenced_level`, read independently by the drain,
+            // which alarms on the disagreement rather than letting either side
+            // vouch for itself.
             conformance_level: Some(req.conformance_level),
             sealed_at: Utc::now(),
             // Not a placeholder: these bytes verify. Legal standing is the trust

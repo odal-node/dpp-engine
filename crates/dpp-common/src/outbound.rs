@@ -148,35 +148,13 @@ pub fn guarded_client() -> Client {
 /// exceeded `max_bytes` or did not parse. Every variant is fail-closed: a caller
 /// must never treat any of them as a pass.
 pub async fn fetch_json(client: &Client, url: &str, max_bytes: usize) -> Result<Value, FetchError> {
-    // Guard before the request, not after — and before any DNS the client would
-    // do, so a refusal costs nothing.
-    //
     // The guard hands back the addresses it approved, and the request is pinned
-    // to them (see `pinned_client`). Discarding them and passing only the URL —
-    // which is what `assert_public_target` does — leaves the client to resolve
-    // the name a second time, and a zero-TTL record alternating a public and an
-    // internal answer passes the first resolution and connects on the second.
-    let target = url_guard::resolve_public_target(url)
-        .await
-        .map_err(FetchError::Refused)?;
-
-    let pinned;
-    let client = if target.is_literal() {
-        // No name, nothing to rebind — reuse the shared client and its pool.
-        client
-    } else {
-        pinned = pinned_client(&target)?;
-        &pinned
-    };
-
-    let resp = client
-        .get(url)
-        .send()
-        .await
-        .map_err(|e| FetchError::Unreachable(e.to_string()))?;
-    if !resp.status().is_success() {
-        return Err(FetchError::Unreachable(format!("HTTP {}", resp.status())));
-    }
+    // to them (see `guarded_get` and `pinned_client`). Discarding them and
+    // passing only the URL — which is what `assert_public_target` does — leaves
+    // the client to resolve the name a second time, and a zero-TTL record
+    // alternating a public and an internal answer passes the first resolution
+    // and connects on the second.
+    let resp = guarded_get(client, url).await?;
     read_capped_json(resp, max_bytes).await
 }
 
@@ -245,6 +223,15 @@ fn pinned_client(target: &url_guard::CheckedTarget) -> Result<Client, FetchError
 /// Refuses rather than truncates: a truncated document would fail to parse
 /// anyway, and an explicit refusal is the honest log line.
 async fn read_capped_json(resp: reqwest::Response, max_bytes: usize) -> Result<Value, FetchError> {
+    let buf = read_capped(resp, max_bytes).await?;
+    serde_json::from_slice(&buf).map_err(|e| FetchError::Body(e.to_string()))
+}
+
+/// Read at most `max_bytes` of the body, refusing rather than truncating.
+///
+/// Shared by [`fetch_json`] and [`fetch_text`] so the cap cannot be enforced two
+/// ways — the reason this is a function and not two loops.
+async fn read_capped(resp: reqwest::Response, max_bytes: usize) -> Result<Vec<u8>, FetchError> {
     let mut buf: Vec<u8> = Vec::new();
     let mut stream = resp.bytes_stream();
     while let Some(chunk) = stream.next().await {
@@ -256,7 +243,70 @@ async fn read_capped_json(resp: reqwest::Response, max_bytes: usize) -> Result<V
         }
         buf.extend_from_slice(&chunk);
     }
-    serde_json::from_slice(&buf).map_err(|e| FetchError::Body(e.to_string()))
+    Ok(buf)
+}
+
+/// Fetch `url` as UTF-8 text with every guard in this module's docs applied.
+///
+/// [`fetch_json`]'s twin for documents that are not JSON. It exists because the
+/// EU Trusted Lists are XML, and the alternative — building a client in the
+/// calling crate — is exactly what `scripts/outbound-check.sh` forbids, since
+/// such a client has none of the guards above.
+///
+/// # `max_bytes` is the caller's, and [`DEFAULT_MAX_BODY`] will not do here
+///
+/// The default cap is 256 KiB, which suits the small documents the other
+/// callers fetch. It is **too small for a trusted list**: the EU list of trusted
+/// lists is around 480 KiB and national lists have been measured from roughly
+/// 140 KiB to over 600 KiB. A caller must pass a cap it has chosen for the
+/// documents it actually expects, and should keep that cap as tight as those
+/// documents allow — it is the only bound on how much memory a hostile response
+/// can make this process allocate.
+///
+/// # Errors
+/// [`FetchError`] — refused by the guard, unreachable/non-2xx, over the cap, or
+/// not valid UTF-8. Every variant is fail-closed: a caller must never treat any
+/// of them as a pass.
+pub async fn fetch_text(
+    client: &Client,
+    url: &str,
+    max_bytes: usize,
+) -> Result<String, FetchError> {
+    let resp = guarded_get(client, url).await?;
+    let buf = read_capped(resp, max_bytes).await?;
+    String::from_utf8(buf).map_err(|e| FetchError::Body(format!("body is not UTF-8: {e}")))
+}
+
+/// Guard `url`, pin the client to the approved addresses, and `GET` it.
+///
+/// The shared half of [`fetch_json`] and [`fetch_text`]. Extracted so the
+/// guard-then-pin sequence has one implementation: the whole point of pinning is
+/// that the address checked is the address connected to, and a second copy of
+/// that sequence is a second chance to get it subtly wrong.
+async fn guarded_get(client: &Client, url: &str) -> Result<reqwest::Response, FetchError> {
+    // Guard before the request, not after — and before any DNS the client would
+    // do, so a refusal costs nothing.
+    let target = url_guard::resolve_public_target(url)
+        .await
+        .map_err(FetchError::Refused)?;
+
+    let pinned;
+    let client = if target.is_literal() {
+        client
+    } else {
+        pinned = pinned_client(&target)?;
+        &pinned
+    };
+
+    let resp = client
+        .get(url)
+        .send()
+        .await
+        .map_err(|e| FetchError::Unreachable(e.to_string()))?;
+    if !resp.status().is_success() {
+        return Err(FetchError::Unreachable(format!("HTTP {}", resp.status())));
+    }
+    Ok(resp)
 }
 
 #[cfg(test)]

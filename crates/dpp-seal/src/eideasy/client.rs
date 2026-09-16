@@ -204,6 +204,12 @@ impl SealBackend for EideasyClient {
             // so reaching here means the request named the profile's own level.
             // The independent reading lives in `cades::evidenced_level`, and the
             // two disagreeing is the downgrade the drain alarms on.
+            //
+            // A profile this build cannot classify empties `supported_levels`
+            // entirely, so every request against it is refused before any
+            // billable call — there is no path here that would have to guess a
+            // level, which is exactly the misdescription that refusal exists to
+            // prevent.
             conformance_level: Some(req.conformance_level),
             sealed_at: Utc::now(),
             placeholder: false,
