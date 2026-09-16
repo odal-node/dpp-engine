@@ -596,6 +596,27 @@ fn a_not_listed_verdict_says_how_much_was_consulted() {
         "the sentence has to admit the gap, or the count is decoration: {partial}"
     );
 
+    // Nothing verified, and every named territory failed — a node whose refresher
+    // is running and getting nowhere, which is not the same fact as a node that
+    // never looked.
+    let none_readable = qualify(&seal, &[], &skipped, Utc::now()).expect("readable seal");
+    assert!(
+        matches!(
+            none_readable.issuer,
+            IssuerStanding::NotListed {
+                consulted: 0,
+                unchecked: 1,
+                ..
+            }
+        ),
+        "{:?}",
+        none_readable.issuer
+    );
+    assert!(
+        none_readable.to_string().contains("none could be read"),
+        "a node that looked and got nowhere must not read as one that never looked: {none_readable}"
+    );
+
     let whole = qualify(&seal, &[finnish_list()], &[], Utc::now()).expect("readable seal");
     assert!(
         matches!(

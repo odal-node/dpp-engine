@@ -333,10 +333,25 @@ impl std::fmt::Display for SealQualification {
             IssuerStanding::NotListed {
                 issuer,
                 consulted: 0,
-                ..
+                unchecked: 0,
             } => write!(
                 f,
                 "issued by {issuer} — no Trusted List was consulted, so nothing is known about \
+                 whether that issuer is a qualified CA"
+            ),
+            // Nothing verified, but territories were named and every one failed.
+            // A different operational fact from the arm above and worth its own
+            // sentence: that one is a node that never looked, this one is a node
+            // that looked and got nowhere — a refresher running and failing,
+            // rather than absent.
+            IssuerStanding::NotListed {
+                issuer,
+                consulted: 0,
+                unchecked,
+            } => write!(
+                f,
+                "issued by {issuer} — no Trusted List could be consulted: {unchecked} \
+                 territory(ies) were named and none could be read, so nothing is known about \
                  whether that issuer is a qualified CA"
             ),
             IssuerStanding::NotListed {
