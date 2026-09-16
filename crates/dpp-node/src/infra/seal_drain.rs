@@ -421,32 +421,68 @@ pub fn renewal_finding(
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SealFinding {
     /// The certificate behind the signature did not hold. **Nothing further is
-    /// asked of this seal**, including its archival state.
+    /// asked of this seal**, including its archival state — which is not asked
+    /// even as a question, see [`seal_finding`].
     CertificateFailed,
     /// The certificate held. This is what the archival protection says.
-    Sound(RenewalFinding),
+    Sound {
+        /// What to do about the protection, if anything.
+        finding: RenewalFinding,
+        /// When the protection runs out, for the operator-facing log line.
+        /// `None` where there is no protection, or none that can be read.
+        expires: Option<chrono::DateTime<chrono::Utc>>,
+    },
+}
+
+/// When a seal's archival protection runs out, where that is knowable.
+///
+/// For the log line only — the classification is [`renewal_finding`]'s.
+#[must_use]
+fn expiry_of(freshness: &dpp_types::ArchivalFreshness) -> Option<chrono::DateTime<chrono::Utc>> {
+    match freshness {
+        dpp_types::ArchivalFreshness::Current { expires }
+        | dpp_types::ArchivalFreshness::Lapsed { expires } => Some(*expires),
+        _ => None,
+    }
 }
 
 /// Decide what one seal with an intact signature amounts to.
 ///
-/// Extracted from the walk for one property, which is the ordering:
-/// a failed certificate ends the enquiry, and the archival question is never
-/// asked. Left in the loop, that ordering was a comment claiming a guard the
-/// code did not have — the archival block ran regardless, so a seal made under
-/// a revoked certificate was counted in `archival_due` and named in
-/// `renewal_passports`. An operator would have been handed a renewal queue with
-/// a passport in it that renewing cannot fix, and the count it came from would
-/// have been wrong too.
+/// Extracted from the walk for one property, which is the ordering: a failed
+/// certificate ends the enquiry, and the archival question is never asked. Left
+/// in the loop, that ordering was a comment claiming a guard the code did not
+/// have — the archival block ran regardless, so a seal made under a revoked
+/// certificate was counted in `archival_due` and named in `renewal_passports`.
+/// An operator would have been handed a renewal queue with a passport in it that
+/// renewing cannot fix, and the count it came from would have been wrong too.
+///
+/// # 🚨 `archival_freshness` is a closure, and that is the point
+///
+/// Taking the freshness *by value* would have meant computing it before this
+/// function could refuse to use it — so the counts would have been right and the
+/// work would still have been done. And the work is not a lookup: reading a
+/// seal's archival state re-parses the whole CMS and **verifies the signature on
+/// every archive timestamp it carries**. Paying for that on a seal already known
+/// to be worthless is a cost repeated on every pass, for as long as the seal is
+/// stored.
+///
+/// Passing it lazily also makes the ordering a fact a unit test can hold: a
+/// closure that records whether it ran needs no database, no seal and no
+/// inspector double.
 #[must_use]
 pub fn seal_finding(
     status: &dpp_types::SealValidationStatus,
-    freshness: &dpp_types::ArchivalFreshness,
+    archival_freshness: impl FnOnce() -> dpp_types::ArchivalFreshness,
     now: chrono::DateTime<chrono::Utc>,
 ) -> SealFinding {
     if status.indication == dpp_types::ValidationIndication::TotalFailed {
         return SealFinding::CertificateFailed;
     }
-    SealFinding::Sound(renewal_finding(freshness, now))
+    let freshness = archival_freshness();
+    SealFinding::Sound {
+        finding: renewal_finding(&freshness, now),
+        expires: expiry_of(&freshness),
+    }
 }
 
 /// Record a passport as needing renewal, up to the naming cap.
@@ -500,18 +536,20 @@ pub async fn audit_seals_once(
                 let certificate = inspector.certificate_standing(&row.seal, now);
                 let status = dpp_types::SealValidationStatus::of(&binding, certificate.as_ref());
 
+                // 🚨 The archival read is passed as a closure, not a value, so
+                // it is never performed for a seal whose certificate failed. It
+                // re-parses the CMS and verifies every archive timestamp it
+                // carries — not a cost to pay on a seal already known to be
+                // worthless, on every pass, forever.
+                //
                 // A seal below `B-LTA` was never promised long-term protection,
                 // so `NotArchived` is silence rather than a finding — the same
                 // distinction `ArchivalFreshness` draws for the read route.
-                let freshness = inspector.archival_freshness(&row.seal, now);
-                // For the log line only — the classification is the classifier's.
-                let expires = match &freshness {
-                    dpp_types::ArchivalFreshness::Current { expires }
-                    | dpp_types::ArchivalFreshness::Lapsed { expires } => Some(*expires),
-                    _ => None,
-                };
-
-                let finding = match seal_finding(&status, &freshness, now) {
+                let (finding, expires) = match seal_finding(
+                    &status,
+                    || inspector.archival_freshness(&row.seal, now),
+                    now,
+                ) {
                     SealFinding::CertificateFailed => {
                         audit.certificate_failed += 1;
                         tracing::error!(
@@ -526,9 +564,9 @@ pub async fn audit_seals_once(
                         // already revoked is advice about the wrong problem.
                         continue;
                     }
-                    SealFinding::Sound(finding) => {
+                    SealFinding::Sound { finding, expires } => {
                         audit.sound += 1;
-                        finding
+                        (finding, expires)
                     }
                 };
 
@@ -1385,11 +1423,29 @@ mod renewal_tests {
             ArchivalFreshness::Unknown,
             ArchivalFreshness::NotArchived,
         ] {
+            // 🚨 The closure records whether it ran, which is how the *call
+            // order* is pinned rather than only the answer. With the freshness
+            // passed by value the counts were right and the work was still done
+            // — and that work verifies the signature on every archive timestamp
+            // the seal carries.
+            let asked = std::cell::Cell::new(false);
+
             assert_eq!(
-                seal_finding(&failed, &freshness, now),
+                seal_finding(
+                    &failed,
+                    || {
+                        asked.set(true);
+                        freshness.clone()
+                    },
+                    now
+                ),
                 SealFinding::CertificateFailed,
                 "a failed certificate is the whole finding, whatever the archive says: \
                  {freshness:?}"
+            );
+            assert!(
+                !asked.get(),
+                "and the archive is not even asked — the enquiry ended at the certificate"
             );
         }
     }
@@ -1515,10 +1571,26 @@ mod renewal_tests {
             ArchivalFreshness::Unknown,
             ArchivalFreshness::NotArchived,
         ] {
+            let asked = std::cell::Cell::new(false);
+
             assert_eq!(
-                seal_finding(&sound, &freshness, now),
-                SealFinding::Sound(renewal_finding(&freshness, now)),
+                seal_finding(
+                    &sound,
+                    || {
+                        asked.set(true);
+                        freshness.clone()
+                    },
+                    now
+                ),
+                SealFinding::Sound {
+                    finding: renewal_finding(&freshness, now),
+                    expires: expiry_of(&freshness),
+                },
                 "the archival classification is the classifier's: {freshness:?}"
+            );
+            assert!(
+                asked.get(),
+                "and here the archive *is* asked — laziness must not become silence"
             );
         }
     }
