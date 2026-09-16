@@ -4177,3 +4177,127 @@ mod fixtures {
         }
     }
 }
+
+/// The published JSON Schema for the evidence dossier describes the dossier
+/// this node actually emits.
+///
+/// `docs/architecture/evidence-dossier-v1.schema.json` is published as the
+/// machine-readable description of the format, and it sets
+/// `"additionalProperties": false`. That makes an omission a **rejection**
+/// rather than a documentation gap: a member the schema does not list makes
+/// every dossier carrying it fail validation against the schema this repository
+/// publishes for it.
+///
+/// It had drifted by two. `DossierV1` emits `qualifiedSeal` — present on every
+/// dossier for a sealed passport, and the member carrying the Art. 35(2)
+/// presumption — and `componentGraph`, present whenever the passport has a bill
+/// of materials. Neither was listed. So the artifact an authority is handed
+/// failed validation against the schema they would validate it with, in the two
+/// cases that matter most.
+///
+/// # Why the field list is read from the source
+///
+/// Building a `DossierV1` to serialise would mean constructing a `TransferChain`
+/// and a `ResponsibleOperator` with every required field, none of which this
+/// test has an opinion about — and getting one of them wrong would make this
+/// fail for a reason that has nothing to do with the schema. The names are what
+/// is under test, and the names are declared in one place. This suite already
+/// reads source for this kind of question.
+///
+/// The parse is safe only while every field takes its name from the container's
+/// `rename_all`, so that is asserted rather than assumed: a `#[serde(rename)]`
+/// on one field would silently break the mapping and this refuses to run.
+///
+/// # Why this is a test rather than a generator
+///
+/// There are two machine-readable descriptions of this artifact: this schema and
+/// `api/components/schemas/evidence/EvidenceDossier.yaml`. The OpenAPI half is
+/// gated against the Rust types by this suite, which is why it stayed current
+/// while this half did not — nothing ran this one, and nothing referenced it
+/// except a "See also" line.
+///
+/// Generating one from the other was the alternative, and is rejected: the
+/// OpenAPI side marks `QualifiedSealMember` `UNCHECKED` because the dossier
+/// holds that member as an untyped `serde_json::Value`, so generating from it
+/// would propagate that hole into the file an outside verifier reads, and add a
+/// build step. Checking both descriptions against the **type** keeps each honest
+/// about the same thing.
+///
+/// Giving `qualified_seal` a real type would close this, the `UNCHECKED` marker,
+/// and the reason this can compare only names and not shapes.
+#[test]
+fn the_published_dossier_schema_lists_every_member_the_dossier_emits() {
+    const SCHEMA: &str = include_str!("../../../docs/architecture/evidence-dossier-v1.schema.json");
+    const EVIDENCE: &str = include_str!("../../dpp-types/src/evidence.rs");
+
+    let schema: Value = serde_json::from_str(SCHEMA).expect("the published schema is JSON");
+    assert_eq!(
+        schema["additionalProperties"],
+        json!(false),
+        "this test's premise is that an unlisted member is refused; if the schema stops closing \
+         itself, a missing member becomes a documentation gap and this needs rethinking"
+    );
+
+    let described: BTreeSet<String> = schema["properties"]
+        .as_object()
+        .expect("the schema lists properties")
+        .keys()
+        .cloned()
+        .collect();
+
+    let body = EVIDENCE
+        .split_once("pub struct DossierV1 {")
+        .expect("DossierV1 is declared in dpp-types::evidence")
+        .1
+        .split_once("\n}")
+        .expect("the struct is closed")
+        .0;
+
+    assert!(
+        !body.contains("rename ="),
+        "a field-level #[serde(rename)] in DossierV1 breaks the camelCase mapping this test \
+         relies on — compare against the serialised form instead"
+    );
+
+    let emitted: BTreeSet<String> = body
+        .lines()
+        .filter_map(|l| l.trim().strip_prefix("pub "))
+        .filter_map(|l| l.split_once(':'))
+        .map(|(name, _)| {
+            let mut out = String::new();
+            let mut upper = false;
+            for c in name.trim().chars() {
+                if c == '_' {
+                    upper = true;
+                } else if upper {
+                    out.push(c.to_ascii_uppercase());
+                    upper = false;
+                } else {
+                    out.push(c);
+                }
+            }
+            out
+        })
+        .collect();
+
+    assert!(
+        emitted.len() >= 10,
+        "only {} fields parsed out of DossierV1 — the parse is broken, not the schema",
+        emitted.len()
+    );
+
+    let undescribed: Vec<&String> = emitted.difference(&described).collect();
+    assert!(
+        undescribed.is_empty(),
+        "the dossier emits members the published schema does not list, and the schema sets \
+         additionalProperties:false — so every dossier carrying one of these FAILS validation \
+         against the schema this repository publishes for it: {undescribed:?}"
+    );
+
+    let unemitted: Vec<&String> = described.difference(&emitted).collect();
+    assert!(
+        unemitted.is_empty(),
+        "the published schema lists members the dossier never emits, so a reader would expect \
+         fields that cannot appear: {unemitted:?}"
+    );
+}

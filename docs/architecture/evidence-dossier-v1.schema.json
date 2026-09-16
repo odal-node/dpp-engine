@@ -37,6 +37,14 @@
       "description": "Always empty in v1 — dpp-calc invocation is not yet wired end to end.",
       "type": "array",
       "maxItems": 0
+    },
+    "componentGraph": {
+      "description": "The recursive component-tree (bill-of-materials) verification report. Present iff the passport declares componentRefs; absent for a unit with no modelled sub-assemblies. Attested via manifest.contentHashes like every other member.",
+      "type": ["object", "null"]
+    },
+    "qualifiedSeal": {
+      "description": "The eIDAS qualified seal over the full-payload signature, plus signedOverJws and payloadHash so a verifier holding only this document has the CAdES and the preimage to check it against. Present iff the passport carries a seal; absent — never a placeholder — while one is queued or when no QTSP is configured. Not reachable any other way from a dossier: the seal is stripped from every audience view, including publicView and fullView, because it covers the full-payload signature rather than any redaction. The dossier holds it as an untyped object, which is why api/components/schemas/evidence/QualifiedSealMember.yaml is marked UNCHECKED in the contract suite; giving it a Rust type would close both.",
+      "type": ["object", "null"]
     }
   },
   "$defs": {
