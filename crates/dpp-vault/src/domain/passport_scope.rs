@@ -86,6 +86,43 @@ pub fn scope_of(passport: &Passport) -> Option<PassportScope> {
     let Some(ProductGroupData::Battery(battery)) = passport.product_group_data.as_ref() else {
         return None;
     };
+    // Does this build recognise the category at all? Not a reading of the
+    // article — a statement about what this binary knows, which is why it is
+    // here and not in core.
+    //
+    // `BatteryType` is `#[non_exhaustive]`, so a newer `dpp-domain` can add a
+    // category in a minor bump and this workspace would take it without a code
+    // change. Core is handed `wire_str()` and matches on the name, and it folds
+    // every name it does not know in with portable and SLI:
+    //
+    //     // portable, sli / starting-lighting-ignition, and anything unrecognised.
+    //     false
+    //     …
+    //     if !in_scope { return PassportScope::NotCovered; }
+    //
+    // `NotCovered` therefore means two different things — "the article does not
+    // name this category" and "I do not recognise this name" — and only the
+    // typed enum can tell them apart. Left to core the second reads as the
+    // first: a category nobody has heard of, reported as exempt.
+    //
+    // Treated as in scope for the same reason an undeclared capacity is, and the
+    // same reason `wire_status` treats an unknown `PassportScope` that way:
+    // exempting on an unknown is the one error that silently stops asking for
+    // content the law requires.
+    if !matches!(
+        battery.battery_type,
+        BatteryType::Portable
+            | BatteryType::Industrial
+            | BatteryType::Ev
+            | BatteryType::Lmt
+            | BatteryType::Sli
+    ) {
+        tracing::warn!(
+            battery_type = ?battery.battery_type,
+            "battery category not recognised by this build; applying the Art. 77(1) gate"
+        );
+        return Some(PassportScope::Required);
+    }
     let placed = passport
         .placed_on_market_date
         .map_or(PASSPORT_REQUIRED_FROM, |d| {
@@ -450,5 +487,53 @@ mod tests {
             Some(in_period()),
         ));
         assert_eq!(scope, Some(PassportScope::NotCovered));
+    }
+
+    /// Every category this build knows reaches the article, rather than the
+    /// unrecognised-category guard.
+    ///
+    /// The guard in `scope_of` exists because core is handed a **string** and
+    /// answers `NotCovered` for any name it does not know — the same answer it
+    /// gives portable and SLI, which really are outside Art. 77(1). A category
+    /// added to `BatteryType` in a later `dpp-domain` would be exempted by a
+    /// build that had simply never heard of it.
+    ///
+    /// **The failing case cannot be written here.** `BatteryType` is
+    /// `#[non_exhaustive]`, so this crate cannot construct a variant that does
+    /// not exist yet — which is exactly why the guard is a runtime check and not
+    /// a test. What *is* checkable is the other direction, and it is the half
+    /// that would break first: if the guard's list ever falls behind the enum,
+    /// a real category starts being reported `required` for the wrong reason,
+    /// and the wrong reason is invisible because the answer often looks right.
+    ///
+    /// So this asserts each known category lands on its *article* outcome. A
+    /// category dropped from the guard's list reports `Required` instead —
+    /// confirmed by dropping `Portable` and watching this go red.
+    ///
+    /// It catches **three of the five**, and the two it cannot are the two where
+    /// it would not matter: `Ev` and `Lmt` are answered `Required` by the
+    /// article anyway, so the guard firing for them produces the right answer
+    /// for the wrong reason. The half that is checkable is exactly the half
+    /// where a stale list would change an answer.
+    #[test]
+    fn every_known_category_is_answered_by_the_article_not_the_guard() {
+        for (category, expected) in [
+            (BatteryType::Ev, PassportScope::Required),
+            (BatteryType::Lmt, PassportScope::Required),
+            (BatteryType::Portable, PassportScope::NotCovered),
+            (BatteryType::Sli, PassportScope::NotCovered),
+            (BatteryType::Industrial, PassportScope::BelowThreshold),
+        ] {
+            // Industrial is the one that needs a capacity to reach a settled
+            // answer; 1 kWh puts it under the threshold.
+            let data = battery_data(category.clone(), Some(1.0));
+            let scope = scope_of(&passport_of(Some(data), Some(in_period())));
+            assert_eq!(
+                scope,
+                Some(expected),
+                "{category:?} no longer reaches the article — check the recognised-category \
+                 list in scope_of against BatteryType"
+            );
+        }
     }
 }

@@ -51,6 +51,18 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   change — `check_mandatory_content` runs inside `Passport::transition_to` and
   this side calls it and cannot skip it.
 
+  **A battery category this build does not recognise stays in scope**, which
+  taking the rule from core would otherwise have reversed. Core is handed
+  `battery_type.wire_str()` and matches on the name, folding every name it does
+  not know in with portable and SLI — so `NotCovered` means both "the article
+  does not name this category" and "I do not recognise this name", and the
+  second would read as an exemption. `BatteryType` is `#[non_exhaustive]`, so a
+  later `dpp-domain` can add a category this workspace takes without a code
+  change. `scope_of` checks the typed enum before delegating, because only the
+  typed enum can tell the two apart, and reports an unrecognised one as in scope
+  with a log line — the same direction an undeclared capacity takes, and the
+  same one `wire_status` already took for an unrecognised `PassportScope`.
+
 - **A gate now connects `passportScope.status` to its published enum.** The field
   crosses the API as a plain string, so the object check compares its *type* and
   the enum check cannot reach it at all — that one enumerates Rust enums. A stale
