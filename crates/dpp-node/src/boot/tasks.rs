@@ -967,6 +967,75 @@ pub fn spawn_ruleset_poll(
     });
 }
 
+/// How long a node waits before its first trusted-list pass.
+///
+/// Not zero. A pass fetches the list of trusted lists and then every national
+/// list it names — roughly 40 MB of XML across the Union, with an XAdES
+/// signature check per document — and a node has better things to do with its
+/// first minute than that. Nothing depends on the cache being warm: an empty one
+/// reports `consulted: 0`, which is a defined and honest answer, and the seal
+/// route says so rather than claiming an issuer is unlisted.
+const TRUSTED_LIST_FIRST_PASS_DELAY: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// How often the Union is re-read.
+///
+/// Daily, and deliberately not driven by each list's own `NextUpdate`.
+///
+/// 🚨 **A pass is the unit, because completeness is.** `NotListed` is a claim
+/// about the set of territories consulted, so the set is what has to be
+/// coherent; per-list scheduling would make the cache a patchwork of ages with
+/// no moment at which it describes the Union. Daily is well inside the cadence
+/// Member States publish at, and a list that changes between passes is a
+/// provider whose status moved — which is exactly what `verifiedAt` on each
+/// entry is for.
+const TRUSTED_LIST_REFRESH_INTERVAL: std::time::Duration =
+    std::time::Duration::from_secs(24 * 3600);
+
+/// Spawn the periodic trusted-list refresh, if this node was asked for one.
+///
+/// ✅ COMPLIANCE-PIN: Reg. (EU) No 910/2014 Art. 22 — Member States publish
+/// trusted lists, and Art. 32(1)(a)–(b) (reached for seals by Art. 40) can only
+/// be answered from them.
+///
+/// # 🚨 Off unless asked
+///
+/// A pass reaches ~30 external hosts and pulls tens of megabytes, on a timer,
+/// for ever. That is not something to start doing to an operator who has not
+/// asked: a node with no qualified seals to judge gains nothing from it, and the
+/// verdict it feeds is honest about being empty. So the switch is explicit, and
+/// a node that has not set it reports `consulted: 0` rather than quietly
+/// dialling the Union.
+///
+/// It is also why this is not inferred from `SEAL_PROVIDER`. The lists answer
+/// questions about seals a node **holds**, including ones restored from a backup
+/// or made under a provider since dropped — so which backend is configured now
+/// is the wrong thing to read, the same argument the seal route's `origin` makes
+/// for reading the bytes rather than the configuration.
+pub fn spawn_trusted_list_refresh(store: Arc<dyn dpp_types::trust::TrustedListStore>) {
+    tokio::spawn(async move {
+        tokio::time::sleep(TRUSTED_LIST_FIRST_PASS_DELAY).await;
+        loop {
+            if let Some(stats) = dpp_node::infra::trusted_list_refresh::refresh_once(&store).await {
+                // Gauges, not counters: these describe the cache as it stands
+                // after a pass, and the second one is the width of every
+                // `notListed` verdict the node will give until the next pass.
+                metrics::gauge!("trusted_list_verified").set(f64::from(stats.verified));
+                metrics::gauge!("trusted_list_unavailable").set(f64::from(stats.unavailable));
+                if stats.unavailable > 0 {
+                    tracing::warn!(
+                        unavailable = stats.unavailable,
+                        verified = stats.verified,
+                        "some Member States' trusted lists could not be verified — until the \
+                         next pass, a seal whose issuer is listed only there reads the same as \
+                         one listed nowhere. The verdict reports the territories by name"
+                    );
+                }
+            }
+            tokio::time::sleep(TRUSTED_LIST_REFRESH_INTERVAL).await;
+        }
+    });
+}
+
 #[cfg(test)]
 mod seal_audit_cadence_tests {
     use super::*;

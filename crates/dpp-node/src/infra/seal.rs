@@ -11,6 +11,7 @@
 //! |---------------------------|--------------------------|----------------------------------|
 //! | `SEAL_PROVIDER`           | unset / `qtsp` / `local` | Which backend to build           |
 //! | `SEAL_CONFORMANCE_LEVEL`  | `B` / `T` / `LT` / `LTA` | Baseline level to request (default: the backend's own, `LTA` for all of them today) |
+//! | `TRUSTED_LIST_REFRESH`    | unset / `on`             | Whether to fetch and verify the EU Trusted Lists on a timer (default: off) |
 //!
 //! Each backend then reads its own variables — see `dpp_seal::eideasy::config`
 //! and `dpp_seal::local::config`. A partial or unrecognised configuration is an
@@ -363,6 +364,32 @@ fn wiring_from_env() -> Result<SealWiring> {
     }
 }
 
+/// Whether this node was asked to keep the EU Trusted Lists.
+///
+/// ✅ Reg. (EU) No 910/2014 Art. 22 — the lists are what Art. 32(1)(a)–(b),
+/// reached for seals by Art. 40, is answered from.
+///
+/// 🚨 **Off unless asked, and not inferred from anything.** A refresh reaches
+/// around thirty external hosts and pulls tens of megabytes every day, for ever.
+/// A node that has not asked for it gets an empty cache, which reports
+/// `consulted: 0` — a defined answer that says the verdict is about nothing,
+/// rather than a claim that an issuer is unlisted.
+///
+/// Deliberately **not** derived from `SEAL_PROVIDER`. The lists answer questions
+/// about seals a node *holds* — including ones restored from a backup, or made
+/// under a provider since dropped — so which backend is configured now is the
+/// wrong thing to read. The seal route's `origin` field makes the same argument
+/// for reading the stored bytes rather than the configuration.
+///
+/// Anything other than `on` is off, including a misspelling. A variable that
+/// silently enables outbound traffic on a typo is worse than one that does not.
+#[must_use]
+pub fn trusted_list_refresh_enabled() -> bool {
+    std::env::var("TRUSTED_LIST_REFRESH")
+        .map(|v| v.trim().eq_ignore_ascii_case("on"))
+        .unwrap_or(false)
+}
+
 #[cfg(test)]
 mod seal_mode_and_drainability {
     use super::*;
@@ -510,6 +537,37 @@ mod seal_mode_and_drainability {
         let err = ensure_drainable(&w).expect_err("must refuse").to_string();
         assert!(err.contains("SEAL_CONFORMANCE_LEVEL"), "{err}");
         assert!(err.contains("BaselineLt"), "{err}");
+    }
+
+    /// Only `on` turns the trusted-list refresh on.
+    ///
+    /// 🚨 A typo must not start ~30 outbound fetches a day. `nextest` gives each
+    /// test its own process, so setting a variable here cannot leak into another.
+    #[test]
+    fn only_an_explicit_on_starts_fetching_the_union() {
+        // SAFETY: nextest runs each test in its own process, so this variable is
+        // not shared with any other test.
+        unsafe { std::env::remove_var("TRUSTED_LIST_REFRESH") };
+        assert!(
+            !trusted_list_refresh_enabled(),
+            "unset is off — a node that has not asked does not dial the Union"
+        );
+
+        for off in ["", "off", "1", "true", "yes", "no", "onn", "o n"] {
+            unsafe { std::env::set_var("TRUSTED_LIST_REFRESH", off) };
+            assert!(
+                !trusted_list_refresh_enabled(),
+                "{off:?} is not `on`, and a near-miss must not enable outbound traffic"
+            );
+        }
+
+        for on in ["on", "ON", "On", " on ", "on\n"] {
+            unsafe { std::env::set_var("TRUSTED_LIST_REFRESH", on) };
+            assert!(
+                trusted_list_refresh_enabled(),
+                "{on:?} is `on` — case and surrounding whitespace are not the operator's mistake"
+            );
+        }
     }
 
     /// A node with sealing off enqueues nothing, so it has nothing to be wrong

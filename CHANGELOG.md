@@ -150,6 +150,43 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ### Added
 
+- **And now it fills them.** New `TRUSTED_LIST_REFRESH=on`, a daily pass that
+  verifies the EU list of trusted lists against the pinned Official Journal
+  anchor and then fetches and verifies every Member State's list it names,
+  writing each into the cache below.
+
+  ✅ Reg. (EU) No 910/2014 Art. 22, reached for seals by Art. 40 — whether the
+  certificate behind a seal was issued by a *qualified* trust service provider is
+  a question only a trusted list can answer, and until now nothing supplied them
+  at runtime. `qualify` has always taken the lists to consult as an argument.
+
+  🚨 **Off unless asked, and not inferred from `SEAL_PROVIDER`.** A pass reaches
+  around thirty external hosts and pulls tens of megabytes, every day, for ever
+  — not something to start doing to an operator who has not asked. A node with it
+  unset reports that no list was consulted, which is a stated answer rather than
+  a claim that an issuer is unlisted. It is not derived from the configured
+  backend because the lists answer questions about seals a node *holds*,
+  including ones restored from a backup or made under a provider since dropped;
+  the seal route's `origin` makes the same argument for reading the stored bytes
+  rather than the configuration.
+
+  **A pass is the unit, not a territory**, because completeness is what
+  `notListed` claims. So the list of trusted lists is established first and its
+  failure abandons the whole pass, leaving the cache exactly as it was — stale
+  and honest about its width beats fresh and silent about what is missing.
+
+  **A Member State that cannot be read is recorded, not skipped.** Skipping
+  leaves it *absent*, and absent means the list of trusted lists never named it —
+  so a country that went down would become invisible rather than unchecked.
+
+  ⚠️ **Any failure to re-verify records the territory unavailable**, including a
+  fetch that merely timed out. Keeping the previous copy would mean answering
+  from a list this node can no longer confirm is current, and a provider whose
+  status was withdrawn yesterday would still read as qualified. The cost is that
+  a transient blip narrows the verdict until the next pass; the verdict says so.
+  The refinement that would soften it is honouring each list's own `NextUpdate`,
+  which the parser does not read yet.
+
 - **Every change to a passport is now archived, and the version that was current
   at any past moment can be read back.** New `odal.passport_version` (migration
   `0040`), `dpp_types::audit::PassportVersionStore` + `PassportVersion`,

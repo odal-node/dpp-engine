@@ -32,6 +32,14 @@ pub struct DbComponents {
     /// Finds the passport that replaced a superseded one, so a printed carrier
     /// keeps landing on the current record.
     pub successors: Arc<dyn dpp_types::successor::SuccessorLookup>,
+    /// The trusted lists this node has verified, kept across restarts.
+    ///
+    /// Persisted rather than held in memory because a pass over the Union is
+    /// roughly 40 MB of XML and an XAdES check per document: in memory every
+    /// restart pays that again, and for the length of a whole refresh the node
+    /// reports "nothing consulted" — indistinguishable from a node whose refresh
+    /// is broken.
+    pub trusted_lists: Arc<dyn dpp_types::trust::TrustedListStore>,
     pub audit_repo: Arc<dyn AuditRepository>,
     pub operator_repo: Arc<dyn OperatorConfigRepository>,
     pub api_key_repo: Arc<dyn ApiKeyRepository>,
@@ -120,6 +128,7 @@ pub async fn init_db(cfg: &NodeConfig) -> anyhow::Result<DbComponents> {
         )),
         version_store,
         successors: Arc::new(dpp_dal::pg::PgSuccessorRepo::new(dal.clone())),
+        trusted_lists: Arc::new(dpp_dal::pg::PgTrustedListRepo::new(dal.clone())),
         // Wrapped, not bare: the decorator is what stamps `request_id` onto
         // every audit entry. See `dpp_vault::infra::request_stamped_audit`.
         audit_repo: Arc::new(RequestStampedAudit::new(Arc::new(PgAuditRepo::new(
