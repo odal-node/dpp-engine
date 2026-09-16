@@ -777,6 +777,13 @@ pub fn spawn_seal_audit(
                     archival_lapsed: walk.archival_lapsed,
                     archival_due: walk.archival_due,
                     archival_unverifiable: walk.archival_unverifiable,
+                    // Against due + lapsed, which is exactly what the list is
+                    // filled from. `archival_unverifiable` is deliberately not
+                    // in the sum: it is not a renewal candidate and is never
+                    // named here, so including it would report every pass that
+                    // found one as truncated.
+                    renewal_truncated: (walk.renewal_passports.len() as u64)
+                        < walk.archival_due + walk.archival_lapsed,
                     renewal_passports: walk.renewal_passports.clone(),
                 };
                 log.record(report.clone());

@@ -7836,6 +7836,7 @@ components:
         - brokenPassports
         - renewalPassports
         - truncated
+        - renewalTruncated
       properties:
         completedAt:
           type: string
@@ -7912,6 +7913,12 @@ components:
         truncated:
           type: boolean
           description: True when `brokenPassports` was cut short. Stated rather than left to be inferred from the length matching the cap, which is an inference that is right until the cap changes.
+        renewalTruncated:
+          type: boolean
+          description: |-
+            True when `renewalPassports` was cut short.
+
+            🚨 A separate flag from `truncated`, not a shared one. Two capped lists fill independently: a pass can name every renewal candidate while cutting the broken list short, or the reverse. One flag covering both would report a complete list as truncated, or — worse — a truncated one as complete.
     AmendRequest:
       type: object
       description: |

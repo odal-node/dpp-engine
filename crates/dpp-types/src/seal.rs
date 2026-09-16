@@ -188,7 +188,20 @@ pub struct SealAuditReport {
     ///
     /// Stated rather than left to be inferred from the length matching the cap,
     /// which is the kind of inference that is right until the cap changes.
+    ///
+    /// 🚨 This flag is about **that list only**. Two capped lists need two
+    /// flags: one of them can fill while the other does not, and a single flag
+    /// would either report a complete renewal list as cut short or — worse —
+    /// report a cut-short one as complete.
     pub truncated: bool,
+    /// True when [`Self::renewal_passports`] was cut short.
+    ///
+    /// The counterpart to [`Self::truncated`], for the other capped list, and
+    /// stated for the same reason: a reader could compare the length against
+    /// [`Self::archival_due`] plus [`Self::archival_lapsed`], and that
+    /// arithmetic is right until the day the cap or the membership rule changes.
+    #[serde(default)]
+    pub renewal_truncated: bool,
 }
 
 /// The last completed audit pass, shared between the task that runs it and the

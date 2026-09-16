@@ -135,7 +135,14 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
   A seal below `B-LTA` stays silent rather than counted — it was never promised
   long-term protection, and reporting it would raise an alarm about a commitment
-  nobody made.
+  nobody made. A seal whose **certificate** failed is silent here too: it has one
+  problem, and renewing its archive timestamp is not the fix, so it is counted in
+  `certificateFailed` and asked nothing further.
+
+  `renewalPassports` is capped like `brokenPassports`, and gains its own
+  `renewalTruncated` rather than sharing `truncated`. Two capped lists fill
+  independently, and one flag covering both would report a complete list as cut
+  short — or, worse, a cut-short one as complete.
 
   *(Nothing re-stamps anything. This is the noticing half; the drain that acts on
   it needs to know what a provider offers — a distinct re-timestamp operation or
