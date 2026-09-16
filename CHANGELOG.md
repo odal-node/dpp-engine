@@ -798,6 +798,36 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ### Fixed
 
+- **A certificate authority mid-rotation was reported as not having signed the
+  seal.** `cades::check_path_to` climbs the seal's embedded chain, and at each
+  link it took the **first** certificate carrying the issuer's name and returned
+  that certificate's verdict. A CA rotating its key publishes the old and the new
+  together under one subject name so relying parties do not break at the cutover,
+  and a CAdES seal made in that window legitimately carries both.
+
+  Pick the wrong one and the walk returned `NotSignedByThisIssuer`, which
+  `qualification::standing` turns into `SignatureNotFromListedCa` — the variant
+  this crate reserves for *this CA did not sign it* and documents as the one that
+  is an accusation, as against `PathUnverifiable`'s *we could not check*. So the
+  failure was not a missed detection. It was a false statement about a provider
+  who did nothing wrong, intermittent, and only during a rotation.
+
+  Every certificate under a matching subject is now tried, and the link is
+  accepted if any of them verifies. `NotSignedByThisIssuer` is reserved for the
+  case where none does, and a candidate whose key cannot be read yields
+  `Unverifiable` rather than convicting the CA that holds the other one.
+  `qualification::find_issuer_candidates` already worked this way on the
+  **listed** side of the same question; this is the embedded side, and the two
+  now agree.
+
+  The test builds a real three-level chain — root, intermediate, leaf — with a
+  second intermediate under the same subject name that signed nothing.
+  🚨 A CMS `certificates` field is a DER `SET OF`, ordered by encoding rather
+  than insertion, so which one the walk meets first is decided by bytes nobody
+  chooses; left to chance the test would pass about half the time against a
+  broken walk. Decoys are generated until one sorts **before** the real
+  intermediate, making the adversarial order certain.
+
 - **The trusted-list fetch cap refused the two documents the vendored `xml-sec`
   fork exists for.** *(No node has run this path yet — the reader is not wired
   into anything — so nothing was broken in the field. What was broken is that the
