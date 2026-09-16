@@ -24,6 +24,8 @@ verify endpoints.
 | `eolEvent` | object? | Present iff the passport was declared end-of-life. |
 | `checkpoint` | object? | **Always `null` in v1** — the signed-checkpoint layer is not yet built. |
 | `calcReceipts` | array | **Always `[]` in v1** — `dpp-calc` invocation is not yet wired end to end (pending a licensed emission-factor data source). |
+| `componentGraph` | object? | The recursive component-tree (bill-of-materials) verification report. Present iff the passport declares `componentRefs`. |
+| `qualifiedSeal` | object? | The eIDAS qualified seal over the full-payload signature, plus `signedOverJws` and `payloadHash` so a verifier holding only this document has the CAdES **and** the preimage to check it against. Present iff the passport carries a seal; absent — never a placeholder — while one is queued or when no QTSP is configured. **Not reachable any other way from a dossier**: the seal is stripped from every audience view, including `publicView` and `fullView`, because it covers the full-payload signature rather than any redaction. It is also the dossier's one member carrying an Art. 35(2) presumption. |
 
 ### `DossierManifest`
 

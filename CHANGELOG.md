@@ -856,6 +856,35 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ### Fixed
 
+- **The published evidence-dossier JSON Schema rejected every dossier carrying a
+  seal.** `docs/architecture/evidence-dossier-v1.schema.json` is published as the
+  machine-readable description of the format and sets
+  `"additionalProperties": false`, which makes an omission a **rejection** rather
+  than a documentation gap. It listed ten members; `DossierV1` emits twelve.
+
+  Missing were `qualifiedSeal` — present on every dossier for a sealed passport,
+  and the one member carrying an Art. 35(2) presumption — and `componentGraph`,
+  present whenever the passport has a bill of materials. So the artifact an
+  authority is handed failed validation against the schema this repository
+  publishes for validating it, in the two cases that matter most.
+
+  **Nothing ran it**, which is why it drifted while the OpenAPI description of
+  the same artifact stayed current: that half is compared against the Rust types
+  by the contract suite, and this half was referenced only from a "See also"
+  line. `the_published_dossier_schema_lists_every_member_the_dossier_emits` now
+  compares it against `DossierV1` in both directions — a member emitted but not
+  described, and a member described but never emitted.
+
+  Generating one description from the other was the alternative and was rejected:
+  the OpenAPI side marks `QualifiedSealMember` `UNCHECKED` because the dossier
+  holds that member as an untyped `serde_json::Value`, so generating from it
+  would propagate that hole into the file an outside verifier reads. Giving
+  `qualified_seal` a real type would close this, that marker, and the reason the
+  new gate can compare only names and not shapes.
+
+  `EVIDENCE-DOSSIER.md`'s Members table had the same two gaps — it did not
+  mention a seal at all — and now lists both.
+
 - **A stalled integration test now says which request stalled.** `TestClient`
   used `reqwest::Client::new()`, and **`reqwest` sets no request timeout by
   default** — so a request the server never answered parked until nextest killed
