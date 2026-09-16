@@ -192,6 +192,16 @@ pub(crate) fn index_is_satisfied(
     signer: &SignerInfo,
     index: &AtsHashIndexV3,
 ) -> bool {
+    // The index names the algorithm its entries were computed under, and this
+    // builds them under SHA-256. Comparing entries across two algorithms would
+    // be comparing nothing, so an index claiming any other algorithm is refused
+    // rather than silently checked against the wrong hashes.
+    //
+    // Refusing is the honest answer while SHA-256 is all this builds. Widening
+    // means dispatching `hash_index` on the identifier, not relaxing this.
+    if index.hash_ind_algorithm.oid != sha256_alg().oid {
+        return false;
+    }
     let Ok(present) = hash_index(enclosing, signer) else {
         return false;
     };

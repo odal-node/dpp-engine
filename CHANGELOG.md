@@ -930,6 +930,18 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   Recomputing and comparing wholesale looks stricter and is wrong; it is what the
   round-trip test reported first.
 
+  The rule is `claimed ⊆ present`: an index may name less than is there, and may
+  never name **more** — that is how one would go on claiming to protect
+  validation material somebody removed after stamping. Both directions are
+  pinned, and the removal case is tested in isolation, because the borrowed-token
+  case above would be refused on the signer's fields even if index validation
+  never ran.
+
+  The hash algorithm is tied down at both ends: an index naming anything but
+  SHA-256 is refused rather than compared against hashes computed under a
+  different one, and the timestamp's own `messageImprint` algorithm must equal
+  the index's before the digest bytes are compared at all.
+
   A token that cannot be tied to this signature now contributes no date, so a
   seal carrying only such tokens reports `unknown` rather than `current` —
   present, and unreadable *as this seal's*.
