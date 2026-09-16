@@ -148,17 +148,26 @@ impl LocalIdentity {
     ///
     /// The attributes are real, well-formed and really signed, which is what
     /// lets every path in this workspace that reads a seal be exercised against
-    /// something other than a stub. Two deliberate departures from conformance,
-    /// both of which matter only to an external validator that this seal could
-    /// never satisfy anyway — it is self-signed and on no Trusted List:
+    /// something other than a stub.
     ///
-    /// - the `archive-time-stamp-v3` message imprint is taken over the signer's
-    ///   encoded form rather than the concatenation clause 5.5.3 specifies, and
-    /// - no `ats-hash-index-v3` attribute is produced.
+    /// The `archive-time-stamp-v3` **is** built the way clause 5.5.3 specifies —
+    /// the full concatenation, with an `ats-hash-index-v3` inside the token — and
+    /// it did not used to be. Two departures were documented here instead: the
+    /// imprint taken over the signer's encoded form, and no index at all. They
+    /// were reasonable while nothing read them, on the argument that conformance
+    /// is wasted on a validator that rejects this self-signed certificate on its
+    /// first check.
     ///
-    /// Building those faithfully would be work in service of a validator that
-    /// rejects the certificate on the first check. Saying so here is cheaper and
-    /// more honest than a comment claiming conformance nobody verified.
+    /// What changed the argument is that **the reader in this workspace is that
+    /// validator**. `cades::archival_freshness` now checks the binding, and a
+    /// token that is not built to the clause cannot be told from one lifted out
+    /// of a different seal. Left as it was, this backend would have produced
+    /// seals its own node correctly reported as unarchived — so the departure
+    /// stopped being a shortcut and became the thing under test.
+    ///
+    /// What remains not conformant is the certificate, which is the part that
+    /// cannot be fixed from here: self-signed, on no Trusted List, of no legal
+    /// weight whatsoever.
     pub fn sign_detached_at(
         &self,
         digest: &[u8],
@@ -222,8 +231,6 @@ impl LocalIdentity {
                 .map_err(|e| SealError::Config(format!("cannot encode the signature: {e}")))?,
             unsigned_attrs: None,
         };
-        let signer_info = self.at_level(signer_info, level)?;
-
         let mut digest_algorithms = SetOfVec::new();
         digest_algorithms
             .insert(digest_algorithm)
@@ -247,6 +254,24 @@ impl LocalIdentity {
                 })?;
         }
 
+        // The certificates and revocation material are settled before the
+        // unsigned attributes are attached, because an `archive-time-stamp-v3`
+        // indexes them: its `ats-hash-index-v3` carries a hash of every
+        // `CertificateChoices` and `RevocationInfoChoice` present when the
+        // timestamp is requested. Attaching the timestamp first would index a
+        // `SignedData` that does not exist yet.
+        let certificates = CertificateSet::from(certs);
+        let crls = self.revocation_material(level)?;
+        let signer_info = self.at_level(
+            signer_info,
+            level,
+            crate::ats::Enclosing {
+                econtent_type: &econtent.econtent_type,
+                certificates: Some(&certificates),
+                crls: crls.as_ref(),
+            },
+        )?;
+
         let mut signer_infos = SetOfVec::new();
         signer_infos
             .insert(signer_info)
@@ -256,8 +281,8 @@ impl LocalIdentity {
             version: cms::content_info::CmsVersion::V1,
             digest_algorithms: DigestAlgorithmIdentifiers::from(digest_algorithms),
             encap_content_info: econtent,
-            certificates: Some(CertificateSet::from(certs)),
-            crls: self.revocation_material(level)?,
+            certificates: Some(certificates),
+            crls,
             signer_infos: SignerInfos::from(signer_infos),
         };
 
@@ -291,6 +316,7 @@ impl LocalIdentity {
         &self,
         signer: SignerInfo,
         level: SealConformanceLevel,
+        enclosing: crate::ats::Enclosing<'_>,
     ) -> Result<SignerInfo, SealError> {
         use sha2::{Digest as _, Sha256};
 
@@ -308,18 +334,30 @@ impl LocalIdentity {
             self.with_attribute(signer, Self::ID_AA_SIGNATURE_TIME_STAMP_TOKEN, &imprint, 1)?;
 
         if level == SealConformanceLevel::BaselineLta {
-            // See `sign_detached_at`: the imprint departs from clause 5.5.3's
-            // concatenation deliberately, and the departure is documented there
-            // rather than hidden behind a plausible-looking helper name.
-            let encoded = signer.to_der().map_err(|e| {
-                SealError::Config(format!("cannot encode the signer for archiving: {e}"))
-            })?;
-            signer = self.with_attribute(
-                signer,
-                Self::ID_AA_ETS_ARCHIVE_TIMESTAMP_V3,
-                &Sha256::digest(&encoded),
-                2,
-            )?;
+            // The index is built here, over a signer that already carries the
+            // signature timestamp and before the archive timestamp is attached.
+            // That ordering is the clause's: the index covers every unsigned
+            // attribute value *present when the archive timestamp is requested*,
+            // and an archive timestamp cannot index itself.
+            let index = crate::ats::hash_index(enclosing, &signer)?;
+
+            // Step 2 of the concatenation. Detached, so the hash of the signed
+            // data is not in the envelope — but the `message-digest` signed
+            // attribute is that hash, and the archive timestamp uses the same
+            // algorithm the signature did, which is the condition that makes
+            // reading it sound.
+            let signed_data_hash = crate::ats::signed_data_hash(&signer, &crate::ats::sha256_alg())
+                .ok_or_else(|| {
+                    SealError::Config(
+                        "cannot read the signed-data hash for the archive timestamp: the \
+                         message-digest attribute is absent or was computed under a different \
+                         algorithm"
+                            .to_owned(),
+                    )
+                })?;
+
+            let imprint = crate::ats::imprint(enclosing, &signer, &signed_data_hash, &index)?;
+            signer = self.with_archive_timestamp(signer, &imprint, 2, &index)?;
         }
 
         Ok(signer)
@@ -328,7 +366,7 @@ impl LocalIdentity {
     /// `signer` with one more unsigned attribute carrying a time-stamp token.
     fn with_attribute(
         &self,
-        mut signer: SignerInfo,
+        signer: SignerInfo,
         oid: const_oid::ObjectIdentifier,
         imprint: &[u8],
         serial: u64,
@@ -337,8 +375,43 @@ impl LocalIdentity {
 
         let mut values = SetOfVec::new();
         values
-            .insert(self.tsa.token(imprint, serial)?)
+            .insert(self.tsa.token(imprint, serial, None)?)
             .map_err(|e| SealError::Config(format!("cannot build the timestamp attribute: {e}")))?;
+
+        Self::attach(signer, oid, values)
+    }
+
+    /// `signer` with an `archive-time-stamp-v3` carrying its `ats-hash-index-v3`.
+    ///
+    /// The index goes **inside the token**, as an unsigned attribute of the
+    /// token's own CMS signature — which is where the clause puts it, and it is
+    /// the placement that makes it useful: a verifier needs the index to
+    /// recompute the imprint, and an index outside the token could be swapped
+    /// without disturbing anything the timestamp authority signed.
+    fn with_archive_timestamp(
+        &self,
+        signer: SignerInfo,
+        imprint: &[u8],
+        serial: u64,
+        index: &crate::ats::AtsHashIndexV3,
+    ) -> Result<SignerInfo, SealError> {
+        use der::asn1::SetOfVec;
+
+        let mut values = SetOfVec::new();
+        values
+            .insert(self.tsa.token(imprint, serial, Some(index))?)
+            .map_err(|e| SealError::Config(format!("cannot build the archive timestamp: {e}")))?;
+
+        Self::attach(signer, Self::ID_AA_ETS_ARCHIVE_TIMESTAMP_V3, values)
+    }
+
+    /// `signer` with one more unsigned attribute.
+    fn attach(
+        mut signer: SignerInfo,
+        oid: const_oid::ObjectIdentifier,
+        values: der::asn1::SetOfVec<Any>,
+    ) -> Result<SignerInfo, SealError> {
+        use der::asn1::SetOfVec;
 
         let mut attrs = signer
             .unsigned_attrs

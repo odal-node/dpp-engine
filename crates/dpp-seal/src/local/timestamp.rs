@@ -107,7 +107,19 @@ impl LocalTsa {
     ///
     /// The token is an **attached** `SignedData`: its `eContent` carries the
     /// `TSTInfo`, which is what makes a token self-contained and checkable.
-    pub(super) fn token(&self, imprint: &[u8], serial: u64) -> Result<Any, SealError> {
+    ///
+    /// `index` is the `ats-hash-index-v3` an `archive-time-stamp-v3` must carry,
+    /// and `None` for a signature timestamp, which has none. It rides as an
+    /// **unsigned** attribute of the token, which is where the clause puts it —
+    /// inside the token so that a verifier recomputing the imprint has it, and
+    /// unsigned because the authority stamps an imprint it is handed rather than
+    /// a structure it inspects.
+    pub(super) fn token(
+        &self,
+        imprint: &[u8],
+        serial: u64,
+        index: Option<&crate::ats::AtsHashIndexV3>,
+    ) -> Result<Any, SealError> {
         use der::asn1::{OctetString, SetOfVec};
         use p256::ecdsa::signature::Signer as _;
 
@@ -165,7 +177,26 @@ impl LocalTsa {
             signature: OctetString::new(signature.to_bytes().as_ref()).map_err(|e| {
                 SealError::Config(format!("cannot encode the token's signature: {e}"))
             })?,
-            unsigned_attrs: None,
+            unsigned_attrs: match index {
+                None => None,
+                Some(index) => {
+                    let mut values = SetOfVec::new();
+                    values
+                        .insert(Any::encode_from(index).map_err(|e| {
+                            SealError::Config(format!("cannot encode the hash index: {e}"))
+                        })?)
+                        .map_err(|e| {
+                            SealError::Config(format!("cannot carry the hash index: {e}"))
+                        })?;
+                    let mut set = SetOfVec::new();
+                    set.insert(x509_cert::attr::Attribute {
+                        oid: crate::ats::ID_AA_ATS_HASH_INDEX_V3,
+                        values,
+                    })
+                    .map_err(|e| SealError::Config(format!("cannot attach the hash index: {e}")))?;
+                    Some(set)
+                }
+            },
         };
 
         let mut digest_algorithms = SetOfVec::new();

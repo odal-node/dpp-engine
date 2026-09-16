@@ -39,6 +39,7 @@
 //! be added or dropped without touching the others.
 
 pub mod adapter;
+pub(crate) mod ats;
 pub mod backend;
 pub mod cades;
 pub mod config;
