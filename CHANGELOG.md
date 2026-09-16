@@ -109,37 +109,50 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ### Added
 
-- **A qualification verdict now says how wide its absence claim is.**
-  `IssuerStanding::NotListed` gains `consulted` and `unchecked` counts, and
-  `SealQualification` gains `unchecked: Vec<UncheckedTerritory>` naming which
-  territories could not be consulted and why. `qualify` takes the skipped
-  territories alongside the lists.
+- **A node can now keep the trusted lists it has verified.** New
+  `odal.trusted_list_cache` (migration `0039`), `dpp_types::trust::TrustedListStore`
+  and `PgTrustedListRepo`, plus `VerifiedTrustedList::content` and
+  `::from_store` for the round trip.
 
-  `NotListed` is the only verdict that claims something is **not** there, so it
-  is the only one whose truth depends on what was available to look at. Its own
-  doc already admitted this — *"a statement about the lists that were passed in,
-  not about the Union"* — which is honest while a caller picks the lists by hand
-  and stops being honest the moment anything caches them. A cache silently
-  holding 26 of 27 lists turns "not listed" into a verdict against a perfectly
-  qualified provider, indistinguishable from a genuine miss.
+  One row per territory the EU list of trusted lists names, in exactly one of two
+  states — **verified**, carrying the parsed list, the digest of the certificate
+  that signed it and when the check ran; or **unavailable**, carrying why. A
+  database `CHECK` enforces exactly one, because keeping those apart is the
+  entire value of the table: a verdict of "no list names this issuer" is a
+  statement about the Union only while nothing is unavailable — and at the time
+  of this release Germany was, which is why the distinction is in the schema
+  rather than in a comment.
 
-  **This is not hypothetical, and it is not fixable from here.** Germany's
-  trusted list does not verify against the mandated signature profile today, and
-  Germany has one of the larger provider populations — so any node consulting the
-  Union is missing it. What this change buys is that the verdict *says so*
-  instead of reporting a German provider exactly like an unlisted one.
+  A territory **absent** from the cache was never named by the list of trusted
+  lists. A territory recorded unavailable was named and could not be read. Those
+  are different facts and a verdict needs both.
 
-  The counts are on the variant rather than only on the result so that a caller
-  matching the variant alone cannot miss them: `consulted == 0` means nothing was
-  looked at, which is what this node reports today for every provider seal.
-  `ChainIncomplete` deliberately carries no counts — it already refuses to make
-  the absence claim, because the walk ran out of links and a listed CA may sit
-  above the gap whatever was consulted.
+  **The parsed form, never the documents.** The Union is roughly 40 MB of XML and
+  Germany alone is 5.11 MiB; parsed down to providers, services, histories and
+  certificates it is a fraction of that. `MAX_TRUSTED_LIST_BYTES` bounds a
+  hostile *fetch* and is not a retention budget.
 
-  *(No behaviour change: nothing supplies trusted lists at runtime yet, so every
-  verdict reports `consulted: 0`. The type is changed now, while nothing consumes
-  it, precisely so that wiring a cache later is additive rather than a breaking
-  change to a verdict an authority reads.)*
+  🚨 **`from_store` is the one constructor that trusts a record instead of
+  bytes.** Every other path into `VerifiedTrustedList` runs
+  `verify_trusted_list`, so holding one is evidence the check ran on those bytes;
+  this one is evidence it ran somewhere earlier and was written down. That is a
+  real weakening, taken deliberately: the alternative is canonicalising and
+  checking an XAdES signature over a multi-megabyte document every time a seal is
+  inspected, and a cache that re-does the work it caches is not one.
+
+  `put` is per-territory rather than a bulk replace, and that is load-bearing: a
+  refresh failing for one Member State must leave every other row alone, **and**
+  must leave that row's previous good copy in place rather than emptying it.
+
+  *(Nothing fills the cache yet — the refresh policy is a separate decision, and
+  what a node reports while the cache is cold is another. This is the storage and
+  the round trip, which are what those need to exist first.)*
+
+  Deliberately **not** a record of validations. Under Reg. (EU) No 910/2014
+  Art. 33, reached for seals by Art. 40, a qualified validation service is a QTSP
+  service whose result carries the provider's own seal. Nothing stored here is
+  signed and nothing here is qualified — a row is this node's note that it read a
+  published list.
 
 - **Trusted-list signatures are checked against the transform profile the law
   mandates.** New `LotlRejected::NonConformantProfile` and the same on

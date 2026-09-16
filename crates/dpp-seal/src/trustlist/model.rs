@@ -3,7 +3,8 @@
 use dpp_domain::trusted_list::{TrustServiceHistory, TrustServiceType};
 
 /// One trust service as a list describes it.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ListedService {
     /// The service type URI — what kind of trust service this is.
     pub service_type: TrustServiceType,
@@ -29,7 +30,8 @@ pub struct ListedService {
 }
 
 /// One trust service provider, and the services it is listed for.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ListedProvider {
     /// The provider's name as published.
     pub name: Option<String>,
@@ -87,7 +89,8 @@ impl ListedProvider {
 /// which asserts that the legs of Art. 32(1) were checked. Establishing
 /// qualified status needs the signature verified against the scheme operator's
 /// certificate, and that is a separate piece of work that does not exist yet.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct UnverifiedTrustedList {
     /// The `SchemeTerritory` — the two-letter country code, where given.
     pub territory: Option<String>,
