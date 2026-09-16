@@ -1,0 +1,137 @@
+type: object
+description: >-
+  What the EU Trusted Lists say about the certificate's issuer — Regulation (EU)
+  No 910/2014 Art. 32(1)(a)–(b), reached for seals by Art. 40.
+
+
+  **"At sealing" throughout, never "now."** A provider granted qualified status
+  in 2029 was not qualified in 2027, and a present-tense check would certify a
+  seal that never was; a provider withdrawn last week did not retroactively
+  unmake the seals it issued. Art. 32(1)(b) asks about the time of signing, and
+  trusted lists carry the history to answer it.
+
+
+  Discriminated by `standing`. The shape of the rest depends on which one it is.
+required:
+  - standing
+properties:
+  standing:
+    type: string
+    enum:
+      - selfIssued
+      - notListed
+      - chainIncomplete
+      - signatureNotFromListedCa
+      - pathUnverifiable
+      - notQualifiedAtSealing
+      - qualifiedAtSealing
+    description: >-
+      `selfIssued`: the certificate is its own issuer — nobody issued it to this
+      node. What the local development backend produces. A seal here carries
+      **no legal weight whatsoever**; it attests that a key this node holds
+      signed a digest.
+
+
+      `notListed`: some provider issued it, and no list consulted names that
+      issuer as a qualified CA. 🚨 The only verdict claiming an **absence** —
+      read `consulted` and `unchecked` before acting on it.
+
+
+      `chainIncomplete`: the seal did not carry enough certificates to reach a
+      root, and no list names any issuer it does refer to. **Weaker than
+      `notListed` deliberately**: the walk ran out of links, so a listed CA may
+      sit above the gap and reporting an unlisted provider would be an accusation
+      drawn from a certificate nobody shipped.
+
+
+      `signatureNotFromListedCa`: a listed CA carries this name and **did not
+      sign this certificate**. The forgery finding. Every listed certificate
+      under that name was tried — a CA mid-rotation publishes several — and none
+      verifies the signature over this certificate's `tbsCertificate`.
+
+
+      `pathUnverifiable`: a listed CA carries this name and the signature could
+      not be checked — usually a key algorithm this build does not verify.
+      **Not an accusation, and never to be read as one.**
+
+
+      `notQualifiedAtSealing`: a listed CA issued it, and its status at the
+      sealing moment was not granted.
+
+
+      `qualifiedAtSealing`: a granted qualified CA issued this certificate and
+      was granted when the seal was made, and its signature over the certificate
+      verifies under a key the list publishes.
+  issuer:
+    type: string
+    description: The issuer distinguished name the certificate carries.
+  subject:
+    type: string
+    description: >-
+      `selfIssued` only — the subject name, which is also the issuer name.
+  consulted:
+    type: integer
+    description: >-
+      `notListed` only. How many territories' verified lists were searched.
+
+
+      🚨 `0` means **nothing was looked at**: the answer is about nothing, and it
+      is what a node with no trusted lists loaded reports for every provider
+      seal, qualified or not.
+  unchecked:
+    type: integer
+    description: >-
+      `notListed` only. How many territories the EU list of trusted lists names
+      could not be verified, and so were not searched. Above zero, a provider
+      listed *there* is indistinguishable from one listed nowhere — see the
+      `unchecked` array on `SealQualification`, which names them.
+  missingIssuer:
+    type: string
+    description: >-
+      `chainIncomplete` only. The name the walk needed next and the seal did not
+      carry. Equal to `issuer` when the seal carries only its signing
+      certificate.
+
+
+      ETSI EN 319 122-1 clause 5.2.1 asks generators to include those
+      intermediates where the signature is to be validated through a Trusted
+      List, which is the remedy an operator seeing this should ask their provider
+      for.
+  provider:
+    type:
+      - string
+      - "null"
+    description: The listed provider, where one was matched.
+  territory:
+    type:
+      - string
+      - "null"
+    description: The list carrying that name.
+  status:
+    type:
+      - string
+      - "null"
+    description: >-
+      `notQualifiedAtSealing` only — the status in force at the sealing time.
+
+
+      Null means the list's history does not reach back that far, which is a
+      **different finding** from a recorded non-granted status: the list is
+      silent about that moment rather than negative about it.
+  reason:
+    type: string
+    description: >-
+      `pathUnverifiable` only — why the issuer's signature over this certificate
+      could not be checked. Usually a key algorithm this build does not verify;
+      a CA certificate that will not parse is the other.
+
+
+      🚨 Read it as a limit of the reader, never as a finding about the seal.
+      Reporting this as `signatureNotFromListedCa` would call a possibly-genuine
+      seal a forgery on the strength of a check that never ran.
+  remoteQscdManagement:
+    type: boolean
+    description: >-
+      `qualifiedAtSealing` only. Whether the listed service declares the
+      additional-information qualifier for a QSCD managed on the signer's behalf
+      — Art. 39a's second grant.

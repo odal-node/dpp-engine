@@ -19,17 +19,56 @@ use crate::cades;
 
 /// Reads CAdES seals.
 ///
-/// Stateless: it holds no credential and reaches no network, because reading a
-/// certificate out of bytes needs neither. Construct it with
+/// Holds no credential and reaches no network — reading a certificate out of
+/// bytes needs neither, and neither does asking a trusted list a question once
+/// somebody else has fetched and verified it. Construct it with
 /// [`CadesInspector::new`] wherever a [`SealInspector`] is wanted.
-#[derive(Debug, Clone, Copy, Default)]
-pub struct CadesInspector;
+///
+/// # The lists are given to it, never fetched by it
+///
+/// [`with_trusted_lists`](Self::with_trusted_lists) hands over an already
+/// verified set. That keeps this adapter synchronous and offline, which matters
+/// because [`SealInspector`] is called from read handlers: an inspector that
+/// could fetch would put a multi-megabyte download on the path of a request
+/// somebody is waiting on. Filling the set is a background job's work.
+///
+/// **Without them it still answers**, and the answer is honest rather than
+/// absent: `IssuerStanding::NotListed` with `consulted: 0`, which says the
+/// verdict is about nothing. That is what a node with the refresh switched off
+/// reports for every provider seal.
+#[derive(Debug, Clone, Default)]
+pub struct CadesInspector {
+    /// The national lists to consult, each already verified through a verified
+    /// list of trusted lists.
+    lists: std::sync::Arc<Vec<crate::trustlist::VerifiedTrustedList>>,
+    /// The territories the list of trusted lists names and this node could not
+    /// read — carried so the verdict can say how wide it is.
+    unchecked: std::sync::Arc<Vec<dpp_types::qualification::UncheckedTerritory>>,
+}
 
 impl CadesInspector {
-    /// A new inspector.
+    /// A new inspector, holding no trusted lists.
     #[must_use]
     pub fn new() -> Self {
-        Self
+        Self::default()
+    }
+
+    /// Consult these lists, and admit these territories as unread.
+    ///
+    /// 🚨 Both halves or neither. `unchecked` is what stops
+    /// `IssuerStanding::NotListed` overclaiming: a node holding 26 of 27 lists
+    /// that reported only the 26 would answer "this issuer is on no list" for a
+    /// perfectly qualified provider in the twenty-seventh, and nothing in the
+    /// verdict would distinguish that from a genuine miss.
+    #[must_use]
+    pub fn with_trusted_lists(
+        mut self,
+        lists: Vec<crate::trustlist::VerifiedTrustedList>,
+        unchecked: Vec<dpp_types::qualification::UncheckedTerritory>,
+    ) -> Self {
+        self.lists = std::sync::Arc::new(lists);
+        self.unchecked = std::sync::Arc::new(unchecked);
+        self
     }
 }
 
@@ -182,6 +221,41 @@ impl SealInspector for CadesInspector {
             // from bytes nobody could read.
             Err(e) => {
                 tracing::warn!(error = %e, "stored seal could not be read; certificate standing unknown");
+                None
+            }
+        }
+    }
+
+    /// # What the lists are questioned about
+    ///
+    /// `envelope.sealed_at`, not the present moment. A provider granted
+    /// qualified status in 2029 was not qualified in 2027, and a present-tense
+    /// check would certify a seal that never was; a provider withdrawn last week
+    /// did not retroactively unmake the seals it issued. Art. 32(1)(b) asks
+    /// about the time of sealing, and trusted lists carry the history to answer
+    /// it.
+    ///
+    /// ⚠️ `sealed_at` is **this node's clock when the backend answered** — an
+    /// unattested claim by the party that bought the seal. An attested time
+    /// lives in the seal's own timestamp token and is read by
+    /// [`cades::attested_sealing_time`]; feeding it here would make the verdict
+    /// stronger, and is the other half of the timestamp-authority work that is
+    /// tracked separately. Using the recorded time meanwhile is what the seal
+    /// route already does for the certificate's validity window.
+    fn qualification(
+        &self,
+        envelope: &SealedEnvelope,
+    ) -> Option<dpp_types::qualification::SealQualification> {
+        let der = self.readable(envelope)?;
+        match crate::qualification::qualify(&der, &self.lists, &self.unchecked, envelope.sealed_at)
+        {
+            Ok(verdict) => Some(verdict),
+            // Not read, rather than a verdict drawn from bytes nobody could
+            // parse. `der_of` has already refused the unreadable cases it can
+            // see, so this is a seal that decoded and is not a CMS this build
+            // understands.
+            Err(e) => {
+                tracing::warn!(error = %e, "stored seal could not be read; qualification unknown");
                 None
             }
         }

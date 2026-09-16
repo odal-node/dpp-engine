@@ -30,6 +30,7 @@ pub mod auth;
 pub mod evidence;
 pub mod operator;
 pub mod passport_request;
+pub mod qualification;
 pub mod registry_identity;
 pub mod registry_sync;
 pub mod registry_transfer;
@@ -58,6 +59,7 @@ pub use operator::{
     OperatorConfig, OperatorConfigRepository, STANDALONE_OPERATOR_ID, UpdateOperatorConfig,
 };
 pub use passport_request::CreatePassportRequest;
+pub use qualification::{IssuerStanding, SealQualification, UncheckedTerritory};
 pub use registry_identity::{
     CreateFacilityRequest, CreateOperatorIdentifierRequest, Facility, OperatorIdentifier,
     RegistryIdentityRepository,

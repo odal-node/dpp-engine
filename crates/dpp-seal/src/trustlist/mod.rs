@@ -88,6 +88,9 @@ mod verify;
 #[cfg(test)]
 mod verify_tests;
 
+mod cache;
+pub use cache::from_cache;
+
 pub use anchor::{EU_LOTL_ANCHOR, LotlAnchor};
 pub use fetch::{
     EU_LOTL_URL, MAX_TRUSTED_LIST_BYTES, fetch_lotl_pointers, fetch_trusted_list,

@@ -6566,6 +6566,17 @@
             ],
             "description": "What **this seal's own certificate** says about who issued it: did a provider issue it, or did the node sign it itself?\n\nNull means **not read** — a placeholder seal, a format this node does not parse, unreadable bytes, or a deployment with no inspector wired. Never read null as \"not self-issued\": that is a finding, and it only comes from a certificate that was actually examined.\n\nFor what the *currently configured* backend produces, which is a different question, see `trustMode` on `GET /api/v1/seal`."
           },
+          "qualification": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/SealQualification"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "What Regulation (EU) No 910/2014 Art. 32(1) says about this seal, read against the EU Trusted Lists this node holds. Art. 40 applies Art. 32 to seals *mutatis mutandis*.\n\n🚨 **Read `qualification.issuer.consulted` and `.unchecked` before acting on a `notListed` standing.** That verdict is the only one claiming an absence, and an absence is only as wide as what was looked at. `consulted: 0` means no list was loaded — the answer is about nothing, and it is what a node with the trusted-list refresh switched off reports for every provider seal, qualified or not.\n\nEven at its widest this is **not** \"not qualified in law\": a provider can be qualified and its Member State's list wrong, which is that state's problem and not something this node can see.\n\nNull means **not read** — a placeholder seal, a format this node does not parse, unreadable bytes, or a deployment with no inspector wired. Never read null as \"not qualified\": that is a finding, and it only comes from a certificate that was actually examined."
+          },
           "verification": {
             "type": "string",
             "description": "Stated, not implied: this node did not cryptographically validate the CAdES. A detached CAdES must be checked by an independent AdES validator against the EU Trusted List."
@@ -9273,6 +9284,15 @@
           }
         }
       },
+      "CreationDevice": {
+        "type": "string",
+        "enum": [
+          "declaresQualifiedDevice",
+          "noQualifiedDevice",
+          "notAQualifiedCertificate"
+        ],
+        "description": "What the certificate declares about the device holding its private key — a declaration, never a verification.\n\n`declaresQualifiedDevice`: the certificate carries the Annex III(j) indication that Regulation (EU) No 910/2014 Art. 32(1)(f), reached for seals through Art. 40, requires.\n\n`noQualifiedDevice`: it carries qualified-certificate statements but not that one. Lawful, and enough for Art. 40a — validation of an *advanced* seal based on a qualified certificate, which omits the device leg — but not for the Art. 32/40 pair.\n\n`notAQualifiedCertificate`: it carries no qualified-certificate statements at all, so it is not presenting itself as a qualified certificate in the first place. A self-signed development certificate lands here."
+      },
       "SealOrigin": {
         "type": "object",
         "description": "What a stored seal's own certificate says about who issued it — read out of the seal's bytes, never from this node's configuration. The two are different facts: configuration records what the operator intended, and a seal restored from a backup or made before a backend change was not produced by whatever is configured now.\n\n**Not a qualification verdict.** Establishing that a seal is qualified needs the issuer matched against an EU Trusted List *and* the issuer's signature over this certificate verified; neither is done to produce this. What it does answer completely, and without a network, is whether anybody issued the certificate at all.",
@@ -9296,13 +9316,120 @@
             "description": "Whether issuer and subject are the same name — the structural test for \"nobody issued this to us\", and a property of the certificate that no environment variable can change. True means the seal attests that a key this node holds signed a digest and **nothing else**: it carries no legal weight, and no Trusted List would give it any."
           },
           "creationDevice": {
+            "$ref": "#/components/schemas/CreationDevice"
+          }
+        }
+      },
+      "IssuerStanding": {
+        "type": "object",
+        "description": "What the EU Trusted Lists say about the certificate's issuer — Regulation (EU) No 910/2014 Art. 32(1)(a)–(b), reached for seals by Art. 40.\n\n**\"At sealing\" throughout, never \"now.\"** A provider granted qualified status in 2029 was not qualified in 2027, and a present-tense check would certify a seal that never was; a provider withdrawn last week did not retroactively unmake the seals it issued. Art. 32(1)(b) asks about the time of signing, and trusted lists carry the history to answer it.\n\nDiscriminated by `standing`. The shape of the rest depends on which one it is.",
+        "required": [
+          "standing"
+        ],
+        "properties": {
+          "standing": {
             "type": "string",
             "enum": [
-              "declaresQualifiedDevice",
-              "noQualifiedDevice",
-              "notAQualifiedCertificate"
+              "selfIssued",
+              "notListed",
+              "chainIncomplete",
+              "signatureNotFromListedCa",
+              "pathUnverifiable",
+              "notQualifiedAtSealing",
+              "qualifiedAtSealing"
             ],
-            "description": "What the certificate declares about the device holding its private key — a declaration, never a verification.\n\n`declaresQualifiedDevice`: the certificate carries the Annex III(j) indication that Regulation (EU) No 910/2014 Art. 32(1)(f), reached for seals through Art. 40, requires.\n\n`noQualifiedDevice`: it carries qualified-certificate statements but not that one. Lawful, and enough for Art. 40a — validation of an *advanced* seal based on a qualified certificate, which omits the device leg — but not for the Art. 32/40 pair.\n\n`notAQualifiedCertificate`: it carries no qualified-certificate statements at all, so it is not presenting itself as a qualified certificate in the first place. A self-signed development certificate lands here."
+            "description": "`selfIssued`: the certificate is its own issuer — nobody issued it to this node. What the local development backend produces. A seal here carries **no legal weight whatsoever**; it attests that a key this node holds signed a digest.\n\n`notListed`: some provider issued it, and no list consulted names that issuer as a qualified CA. 🚨 The only verdict claiming an **absence** — read `consulted` and `unchecked` before acting on it.\n\n`chainIncomplete`: the seal did not carry enough certificates to reach a root, and no list names any issuer it does refer to. **Weaker than `notListed` deliberately**: the walk ran out of links, so a listed CA may sit above the gap and reporting an unlisted provider would be an accusation drawn from a certificate nobody shipped.\n\n`signatureNotFromListedCa`: a listed CA carries this name and **did not sign this certificate**. The forgery finding. Every listed certificate under that name was tried — a CA mid-rotation publishes several — and none verifies the signature over this certificate's `tbsCertificate`.\n\n`pathUnverifiable`: a listed CA carries this name and the signature could not be checked — usually a key algorithm this build does not verify. **Not an accusation, and never to be read as one.**\n\n`notQualifiedAtSealing`: a listed CA issued it, and its status at the sealing moment was not granted.\n\n`qualifiedAtSealing`: a granted qualified CA issued this certificate and was granted when the seal was made, and its signature over the certificate verifies under a key the list publishes."
+          },
+          "issuer": {
+            "type": "string",
+            "description": "The issuer distinguished name the certificate carries."
+          },
+          "subject": {
+            "type": "string",
+            "description": "`selfIssued` only — the subject name, which is also the issuer name."
+          },
+          "consulted": {
+            "type": "integer",
+            "description": "`notListed` only. How many territories' verified lists were searched.\n\n🚨 `0` means **nothing was looked at**: the answer is about nothing, and it is what a node with no trusted lists loaded reports for every provider seal, qualified or not."
+          },
+          "unchecked": {
+            "type": "integer",
+            "description": "`notListed` only. How many territories the EU list of trusted lists names could not be verified, and so were not searched. Above zero, a provider listed *there* is indistinguishable from one listed nowhere — see the `unchecked` array on `SealQualification`, which names them."
+          },
+          "missingIssuer": {
+            "type": "string",
+            "description": "`chainIncomplete` only. The name the walk needed next and the seal did not carry. Equal to `issuer` when the seal carries only its signing certificate.\n\nETSI EN 319 122-1 clause 5.2.1 asks generators to include those intermediates where the signature is to be validated through a Trusted List, which is the remedy an operator seeing this should ask their provider for."
+          },
+          "provider": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The listed provider, where one was matched."
+          },
+          "territory": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The list carrying that name."
+          },
+          "status": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`notQualifiedAtSealing` only — the status in force at the sealing time.\n\nNull means the list's history does not reach back that far, which is a **different finding** from a recorded non-granted status: the list is silent about that moment rather than negative about it."
+          },
+          "reason": {
+            "type": "string",
+            "description": "`pathUnverifiable` only — why the issuer's signature over this certificate could not be checked. Usually a key algorithm this build does not verify; a CA certificate that will not parse is the other.\n\n🚨 Read it as a limit of the reader, never as a finding about the seal. Reporting this as `signatureNotFromListedCa` would call a possibly-genuine seal a forgery on the strength of a check that never ran."
+          },
+          "remoteQscdManagement": {
+            "type": "boolean",
+            "description": "`qualifiedAtSealing` only. Whether the listed service declares the additional-information qualifier for a QSCD managed on the signer's behalf — Art. 39a's second grant."
+          }
+        }
+      },
+      "UncheckedTerritory": {
+        "type": "object",
+        "description": "A territory the EU list of trusted lists names and this node could not consult.\n\nCarried rather than dropped because the two states a caller must tell apart — *this issuer is on no list* and *the list it would be on could not be read* — are otherwise identical at the point of the verdict.",
+        "required": [
+          "territory",
+          "reason"
+        ],
+        "properties": {
+          "territory": {
+            "type": "string",
+            "description": "The `SchemeTerritory` the list of trusted lists names — the two-letter country code."
+          },
+          "reason": {
+            "type": "string",
+            "description": "Why this node could not consult it, in terms an operator can act on.\n\nFree text on purpose. What stops a list being consulted is not an enumerable set: a signature that does not verify, a document over a parser ceiling, a fetch that failed, a scheme operator mid-rotation whose entry has not caught up. An operator needs the sentence; a caller deciding what to do needs only that the territory is absent."
+          }
+        }
+      },
+      "SealQualification": {
+        "type": "object",
+        "description": "What Regulation (EU) No 910/2014 Art. 32(1) says about a seal, read off the seal and the EU Trusted Lists this node holds. Art. 40 applies Art. 32 to seals *mutatis mutandis*.\n\nTwo legs, and they are independent — a seal can hold either without the other, which is why they are two fields rather than one ladder:\n\n* **Art. 32(1)(a)–(b)** — the certificate was a qualified certificate issued by\n  a qualified trust service provider. A Trusted List question (Art. 22),\n  answered by `issuer`.\n* **Art. 32(1)(f)** — the seal was created by a qualified electronic seal\n  creation device, which Annex III(j) requires the certificate to declare in\n  machine-processable form. Answered by `creationDevice`.\n\n\n🚨 **This is not a qualified validation result.** Under Art. 33, reached for seals by Art. 40, a *qualified* validation service is itself a provider service whose result carries that provider's seal. Nothing here is signed and nothing here is qualified — this is a reading of published lists, and conditions (c), (d) and (h) of Art. 32(1) are not checked at all.",
+        "required": [
+          "issuer",
+          "creationDevice",
+          "unchecked"
+        ],
+        "properties": {
+          "issuer": {
+            "$ref": "#/components/schemas/IssuerStanding"
+          },
+          "creationDevice": {
+            "$ref": "#/components/schemas/CreationDevice"
+          },
+          "unchecked": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/UncheckedTerritory"
+            },
+            "description": "The territories the EU list of trusted lists names and this node could not consult, with the reason for each.\n\n🚨 **Read this before acting on a `notListed` issuer.** The two states a caller must tell apart — *this issuer is on no list* and *the list it would be on could not be read* — are otherwise identical at the point of the verdict. Empty means every territory the list of lists names was read."
           }
         }
       },

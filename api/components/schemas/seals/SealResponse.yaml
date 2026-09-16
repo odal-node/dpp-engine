@@ -149,6 +149,33 @@ properties:
 
       For what the *currently configured* backend produces, which is a different
       question, see `trustMode` on `GET /api/v1/seal`.
+  qualification:
+    oneOf:
+      - $ref: ./SealQualification.yaml
+      - type: 'null'
+    description: >-
+      What Regulation (EU) No 910/2014 Art. 32(1) says about this seal, read
+      against the EU Trusted Lists this node holds. Art. 40 applies Art. 32 to
+      seals *mutatis mutandis*.
+
+
+      🚨 **Read `qualification.issuer.consulted` and `.unchecked` before acting
+      on a `notListed` standing.** That verdict is the only one claiming an
+      absence, and an absence is only as wide as what was looked at. `consulted:
+      0` means no list was loaded — the answer is about nothing, and it is what a
+      node with the trusted-list refresh switched off reports for every provider
+      seal, qualified or not.
+
+
+      Even at its widest this is **not** "not qualified in law": a provider can
+      be qualified and its Member State's list wrong, which is that state's
+      problem and not something this node can see.
+
+
+      Null means **not read** — a placeholder seal, a format this node does not
+      parse, unreadable bytes, or a deployment with no inspector wired. Never
+      read null as "not qualified": that is a finding, and it only comes from a
+      certificate that was actually examined.
   verification:
     type: string
     description: >-

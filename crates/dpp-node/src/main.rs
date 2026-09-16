@@ -288,8 +288,35 @@ async fn main() -> anyhow::Result<()> {
     // a backend change, still holds seals whose origin a reader needs — and
     // those are precisely the ones least self-explanatory. Gating this would
     // withdraw the answer exactly where it is worth most.
-    passport_service =
-        passport_service.with_seal_inspector(Arc::new(dpp_seal::CadesInspector::new()));
+    // The trusted lists are read **once, at boot**, and handed to the inspector.
+    //
+    // 🚨 Read here rather than per request, and that is a deliberate limit: the
+    // inspector is called from read handlers, and one that could reach the
+    // database — let alone the network — would put that work on the path of a
+    // request somebody is waiting on. The cost is that a refresh landing after
+    // boot does not reach a running node's verdicts until it restarts, which is
+    // honest rather than hidden: every verdict says how many territories it
+    // consulted, so a node serving `consulted: 0` is visibly one that had an
+    // empty cache when it started.
+    let (lists, unchecked) = match db.trusted_lists.load().await {
+        Ok(cached) => dpp_seal::trustlist::from_cache(&cached),
+        Err(e) => {
+            // Not fatal. A node that cannot read its cache answers
+            // `consulted: 0` — the verdict is about nothing and says so — which
+            // is the same answer a node that has never refreshed gives.
+            tracing::warn!(error = %e, "could not read the trusted-list cache; seal \
+                 qualification verdicts will report that no list was consulted");
+            (Vec::new(), Vec::new())
+        }
+    };
+    tracing::info!(
+        consulted = lists.len(),
+        unchecked = unchecked.len(),
+        "trusted lists loaded for seal qualification"
+    );
+    passport_service = passport_service.with_seal_inspector(Arc::new(
+        dpp_seal::CadesInspector::new().with_trusted_lists(lists, unchecked),
+    ));
     let service = Arc::new(passport_service);
     let operator_service = Arc::new(OperatorService::new(db.operator_repo.clone()));
     let api_key_service = Arc::new(ApiKeyService::new(db.api_key_repo.clone()));
