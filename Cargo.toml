@@ -197,8 +197,40 @@ wasmtime-wasi  = "48"
 json-ld        = "0.21"
 
 # Vendored one-constant fix: the published crate hard-caps XML node-sets at
-# 65536 and the Italian and French trusted lists carry 65540 and 65541, so
-# neither verifies. Reported upstream as structured-world/xml-sec#158 — remove
-# this stanza and the fork when that ships.
+# 65536, and published trusted lists have grown past it. Measured on 2026-09-15
+# against every list the LOTL points at: FR 65541, CZ 65543, IT 65540, ES 65543.
+# Four, not two — the count grows, so this is a dated measurement rather than a
+# rule, and nothing here can re-derive it without fetching thirty documents from
+# thirty Member States.
+#
+# Reported upstream as structured-world/xml-sec#158. Removing this stanza and
+# the fork when that ships is the exit condition — but note it does **not** fix
+# everything: Germany fails a *different* ceiling the fork never touched (XML
+# nodes, 100000), so #158 would leave DE exactly as broken. Tracked separately.
+#
+# ── Accepting a pre-release dependency, deliberately ─────────────────────────
+#
+# Upstream describes `xml-sec` as an early-stage pre-release with an unstable
+# API and incomplete coverage, and says it should not be used in production.
+# That is their characterisation, and it is accurate about the risk this takes
+# on — because this crate is what decides whether a Member State's trusted list
+# signature is valid, which is as security-critical as anything in this
+# workspace.
+#
+# It is accepted anyway, for a reason worth stating rather than assuming: the
+# alternative is a C library (libxmlsec1 + libxml2) and the native build,
+# packaging and CVE surface that comes with it, against a single-static-binary
+# deployment. Failing closed limits what a gap can cost — a list whose signature
+# cannot be verified is *not trusted*, never trusted wrongly — and no trusted
+# list is consulted for a compliance verdict yet.
+#
+# Two things follow, and are not optional:
+#
+#   * **Bumping `rev` means building and testing `dpp-seal`.** The API is
+#     unstable by its author's own account, so a revision bump is a real change
+#     and not a version nudge.
+#   * **Reconsider on first production sealing.** If this is still pinned when a
+#     trusted-list verdict starts carrying legal weight, the acceptance above
+#     needs re-arguing rather than inheriting.
 [patch.crates-io]
 xml-sec = { git = "https://github.com/odal-node/xml-sec.git", rev = "7daf6028e08bc17f60ac36833d90c9307ca25449" }

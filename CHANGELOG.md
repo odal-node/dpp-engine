@@ -51,6 +51,67 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ### Added
 
+- **Trusted-list signatures are checked against the transform profile the law
+  mandates.** New `LotlRejected::NonConformantProfile` and the same on
+  `TrustedListRejected`: the `ds:Reference` with `URI=""` must carry exactly one
+  `ds:Transforms`, holding exactly two `ds:Transform` — enveloped-signature then
+  exclusive canonicalization, in that order.
+
+  ✅ COMPLIANCE-PIN: CID (EU) 2015/1505 Annex I, Chapter II, the "Signature
+  element (clause B.1)" section inserted by CID (EU) 2025/2164, Annex, point (3).
+  Applicable since 29 April 2026.
+
+  **Transforms decide what was actually signed**, so a permissive chain is the
+  classic signature-wrapping surface: a signature can validate perfectly and
+  cover something other than the document being read. The narrowness of the
+  profile is the point of it, and it is checked *before* the signature — a valid
+  signature must not be able to excuse a chain the law does not permit.
+
+  **The gap was confirmed, not assumed.** `xml-sec`'s
+  `TransformPolicy::allowed_algorithms` is documented as "`None` accepts every
+  implemented algorithm" and defaults to `None`; the implemented set includes
+  XPath and XPath Filter 2.0. An injected XPath transform is not merely accepted
+  in principle — in the negative test it is **evaluated**, running 5800 context
+  evaluations before an unrelated resource ceiling stops it.
+
+  Only the `URI=""` reference is constrained. Both published documents carry a
+  second reference to the XAdES `SignedProperties`, which the clause does not
+  govern and which constraining would refuse every real trusted list.
+
+  Separate from `SignatureInvalid` deliberately: a non-conformant profile is a
+  problem at the publisher, a bad signature is an altered document, and the two
+  send an operator to different people.
+
+- **A verified list of trusted lists now says whether the pin it verified
+  against is still the notice in force.** New `AnchorFreshness` on
+  `VerifiedLotl`: `Current`, `Superseded { lotl_names }`, or `Unknown`.
+
+  The trust anchor is pinned from an Official Journal notice rather than chained
+  to a certificate authority, and the Commission republishes that notice. A pin
+  nobody refreshes eventually meets a LOTL signed by a certificate it does not
+  name and fails closed as `NotAnchored` — on a date nobody has in a calendar,
+  looking like an outage rather than a lapsed pin. This is the only warning
+  before that.
+
+  **A signal, never a verdict.** A superseded pin keeps verifying until the
+  certificates actually rotate, and that window is the only chance to refresh
+  without an outage — so folding this into `LotlRejected` would refuse documents
+  that verify perfectly and turn the early warning into the thing it exists to
+  prevent. `a_superseded_pin_does_not_refuse_a_document_that_verifies` pins that.
+
+  **`Unknown` is not `Current`.** A document naming no notice cannot be checked,
+  and reporting it as up to date is how a staleness signal goes quiet at the
+  moment it matters.
+
+  Reported and logged: the caller that most needs to act on it is an operator
+  reading logs, not the code holding the `VerifiedLotl`.
+
+  The check rests on the document listing its notice **first** in
+  `SchemeInformationURI`, ahead of the pivot chain and twenty-three per-language
+  legal notices. That ordering is asserted against the real published document
+  rather than trusted, so if it ever changes the result is a red test rather than
+  a comparison against a pivot URL.
+
 - **Three defects found in review, in the checks added above.** Each is the same
   class the subsystem exists to prevent, which is why they are listed rather than
   quietly fixed:
@@ -637,6 +698,24 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   and it verifies cleanly with the anchor check disabled. That pair is why both
   halves exist.
 
+  **The two halves are bound to one certificate, and that had to be forced.**
+  The anchor is checked against a certificate this code reads; the signature is
+  checked by `xml-sec` against a certificate **it** selects, by leaf analysis of
+  the embedded chain rather than by position. `VerifyResult` exposes no
+  certificate, so a disagreement could not be detected afterwards. Two
+  constraints make one impossible: the read is scoped to `ds:KeyInfo`, the only
+  place `xml-sec` resolves keys from, and `ds:KeyInfo` must carry exactly one
+  certificate — new `AmbiguousSigningCertificate` on both enums.
+
+  This matters more than a tie-break rule. `ds:KeyInfo` sits inside
+  `ds:Signature`, which the mandated enveloped-signature transform removes from
+  the digest input, so **a certificate can be added to a genuine, correctly
+  signed list without disturbing its signature**. Reading "the first one" would
+  then take the real anchored certificate, pass the anchor, and verify — while
+  `xml-sec` verified with whichever the chain named. Refusing is free today:
+  every published list checked carries exactly one, pinned by
+  `each_signature_names_exactly_one_certificate`.
+
   🚨 **This creates a recurring operational obligation.** The pin must be
   refreshed when the Commission republishes the notice, and the current signer
   expires **2027-11-17** — a calendar date, not a discovery. A stale pin fails
@@ -718,6 +797,68 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   instead, so they cannot drift that way.
 
 ### Fixed
+
+- **The trusted-list fetch cap refused the two documents the vendored `xml-sec`
+  fork exists for.** *(No node has run this path yet — the reader is not wired
+  into anything — so nothing was broken in the field. What was broken is that the
+  two features contradicted each other and no test could notice.)*
+
+  The fork raises a compile-time node-set ceiling so Italy and France verify;
+  they carry 65 540 and 65 541 entries against a limit of 65 536. The fetch cap
+  was sized at one mebibyte from a survey of "roughly 140 KiB to over 600 KiB" —
+  a range that excluded those same two lists, which are 2.72 MiB and 2.43 MiB.
+
+  So `fetch_trusted_list` refused both before verification was ever attempted,
+  and the fork's entire purpose was unreachable through this crate's own path.
+  Neither feature was exercised: the chain tests read fixtures via `include_str!`
+  and never call the fetcher, and the cap was asserted nowhere.
+
+  The cap is now 8 MiB, sized against **every** list the LOTL points at rather
+  than against a sample — Germany, the largest, is 5.11 MiB. Asserted against a
+  dated measurement of the published set rather than against the repository's own
+  fixtures, because sizing it from those would be the original mistake with a
+  different sample.
+
+### Added
+
+- **The `xml-sec` fork's justification is demonstrated rather than asserted.**
+  `the_two_largest_lists_verify_which_is_what_the_fork_is_for` verifies Italy's
+  and France's published lists through the verified LOTL. Confirmed by removing
+  the `[patch.crates-io]` stanza and watching it fail with `node-set entries
+  exceeds policy maximum 65536: got 65540` — the figure the fork was vendored
+  for.
+
+  **Those two documents are ~5 MB and are deliberately not committed.** They live
+  under `tests/fixtures/local/`, which is git-ignored, and the test skips loudly
+  when they are absent so a checkout without them reads as "not demonstrated
+  here" rather than as a pass. `tests/fixtures/local/README.md` says how to fetch
+  them and what they prove.
+
+  The regression guard does not depend on them, which is what makes that
+  acceptable: `the_patched_xml_sec_is_the_one_that_resolved` reads `Cargo.lock`
+  and runs everywhere. The documents are a one-time demonstration; the lockfile
+  check is what catches the failure that actually bites.
+
+  **"Only Italy and France" was already out of date and is not repeated here.**
+  Measured across every list the LOTL points at on 2026-09-15, four are over the
+  ceiling — France 65 541, Czechia 65 543, Italy 65 540, Spain 65 543 — and byte
+  size does not predict the count. Germany is over a *different* ceiling the fork
+  never touched and does not verify at all.
+
+- **A check that the fork is the `xml-sec` which actually resolved.** The way
+  this breaks is quiet: `[patch.crates-io]` applies only while the fork's version
+  satisfies the requirement, and bumping past it — what someone will do the day
+  upstream publishes — makes Cargo emit an **unused patch warning, not an error**
+  and fall through to the registry crate.
+
+  Without the check the only symptom is two Member States failing verification.
+  With it, the diagnostic says which situation you are in: upstream shipped the
+  fix and the stanza should go, or the ceiling is back.
+
+  Note for whoever tests it: editing `Cargo.lock` does not reproduce the failure.
+  Cargo reconciles the lock against the manifest before building, so a
+  hand-edited source line is rewritten back. That is the check being sound rather
+  than a gap — the lock always describes the build that ran.
 
 - **Every node-supplied string the CLI prints is now sanitised** (#327). The
   ANSI/newline guard covered one field by design, with the passport-document

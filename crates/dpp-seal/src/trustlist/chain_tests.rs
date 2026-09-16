@@ -6,14 +6,22 @@ use dpp_domain::trusted_list::TrustServiceType;
 const EU_LOTL: &str = include_str!("../../tests/fixtures/eu-lotl.xml");
 const FI_LIST: &str = include_str!("../../tests/fixtures/fi-trusted-list.xml");
 
-/// The pointer the verified LOTL carries for Finland.
-fn finnish_pointer() -> super::model::TrustedListPointer {
+/// The pointer the verified LOTL carries for `territory`.
+fn pointer_for(territory: &str) -> super::model::TrustedListPointer {
     let lotl = verify_lotl(EU_LOTL).expect("the LOTL verifies");
     lotl.pointers()
         .iter()
-        .find(|p| p.territory.as_deref() == Some("FI"))
-        .expect("the LOTL points at Finland")
+        .find(|p| {
+            p.territory.as_deref() == Some(territory)
+                && p.mime_type.as_deref() != Some("application/pdf")
+        })
+        .unwrap_or_else(|| panic!("the LOTL points at {territory}"))
         .clone()
+}
+
+/// The pointer for Finland, which most of these tests use.
+fn finnish_pointer() -> super::model::TrustedListPointer {
+    pointer_for("FI")
 }
 
 /// The chain closes: a national list verifies against a verified LOTL.
@@ -235,17 +243,22 @@ fn every_national_pointer_carries_certificates_to_verify_against() {
 
 /// Each signature names exactly one certificate, so "the signer" is unambiguous.
 ///
-/// The assumption underneath both links of the chain, pinned because it is
-/// invisible in the code that relies on it. Two separate things read the
-/// document: this module takes the **first** `X509Certificate` under the
-/// signature and compares it against what the LOTL authorises, while `xml-sec`
-/// resolves a key of its own to check the signature with. They agree only while
-/// there is one certificate to choose.
+/// The assumption underneath both links of the chain. Two separate things read
+/// the document: `signing_certificate` takes the certificate out of `ds:KeyInfo`
+/// and compares it against what the LOTL authorises, while `xml-sec` resolves a
+/// key of its own to check the signature with — by leaf analysis, not by
+/// position. They agree only while there is one certificate to choose.
 ///
 /// XMLDSig permits a `KeyInfo` to carry a whole chain, and the order within it
-/// is not fixed. If a publisher ever ships one, the two could diverge — the
-/// certificate we vouched for would not be the certificate that verified — and
-/// the failure would be silent. This test goes red first instead.
+/// is not fixed. A publisher that ships one is now **refused** —
+/// `LotlRejected::AmbiguousSigningCertificate`, pinned in `verify_tests` — so
+/// the divergence can no longer happen silently at runtime.
+///
+/// This test therefore no longer guards against the divergence; it guards
+/// against the *cost* of that refusal. It says the refusal is still free: no
+/// document this repository verifies is being turned away for carrying a chain.
+/// When it goes red, the fix is to resolve the leaf the way `xml-sec` does, not
+/// to relax the check.
 #[test]
 fn each_signature_names_exactly_one_certificate() {
     for (what, xml) in [("the LOTL", EU_LOTL), ("Finland's list", FI_LIST)] {
@@ -265,4 +278,48 @@ fn each_signature_names_exactly_one_certificate() {
              no longer unambiguous — see this test's note"
         );
     }
+}
+
+/// The `xml-sec` in this build is the fork, not the registry crate.
+///
+/// Said explicitly because the way this breaks is quiet. `[patch.crates-io]`
+/// applies only while the fork's version satisfies the requirement in
+/// `dpp-seal/Cargo.toml`. Bump that requirement past the fork — which is exactly
+/// what someone will do the day upstream publishes — and Cargo emits an
+/// **unused patch warning, not an error**, and silently resolves to the registry
+/// crate.
+///
+/// Without this, the only symptom is Italy and France failing verification, and
+/// a reader has to infer the cause from two country names. With it, the
+/// diagnostic says which of the two situations they are in: upstream shipped the
+/// fix and the stanza should go, or the ceiling is back.
+///
+/// Read from `Cargo.lock` rather than probed at runtime because the resolved
+/// source is a build fact, and the lock is where the build records it.
+///
+/// **Editing the lock does not reproduce the failure**, which is the first thing
+/// anyone will try: `cargo` reconciles the lockfile against the manifest before
+/// building, so a hand-edited source line is rewritten back to the fork and this
+/// passes. That is a property of the check being sound rather than a gap — the
+/// lock always describes the build that actually ran. The real trigger is a
+/// requirement bump once upstream publishes a version the fork does not satisfy,
+/// which cannot be simulated today because `0.1.16` is still the latest
+/// published. The assertion itself was confirmed by inverting it.
+#[test]
+fn the_patched_xml_sec_is_the_one_that_resolved() {
+    let lock = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../Cargo.lock"));
+    let entry = lock
+        .split("[[package]]")
+        .find(|p| p.contains("name = \"xml-sec\""))
+        .expect("xml-sec is in the lockfile");
+
+    assert!(
+        entry.contains("source = \"git+https://github.com/odal-node/xml-sec.git"),
+        "`xml-sec` resolved to the registry crate, so the [patch.crates-io] stanza in the \
+         workspace manifest is not applying — most likely because the requirement in \
+         dpp-seal/Cargo.toml moved past the fork's version. If upstream \
+         structured-world/xml-sec#158 has shipped, delete the stanza and the fork together; \
+         if it has not, the node-set ceiling is back and Italy and France stop verifying.\n\n\
+         Lock entry:\n{entry}"
+    );
 }

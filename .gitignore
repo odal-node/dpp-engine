@@ -118,9 +118,14 @@ api/openapi.html
 
 # Trusted-list documents kept locally rather than committed.
 #
-# Verifying the published lists that need the vendored `xml-sec` fork means
-# holding ~5 MB of XML each, and the tests that read them skip cleanly when they
-# are absent. Without this rule a plain `git add crates/dpp-seal/` recommits
-# 60k lines of XML — which is not hypothetical, it is how this rule came to be
-# written twice.
+# Verifying the two published lists that need the vendored `xml-sec` fork means
+# holding ~5 MB of XML, and the tests that read them skip cleanly when they are
+# absent — see crates/dpp-seal/tests/fixtures/local/README.md for how to fetch
+# them and what they prove. The guard that must not depend on them, the check
+# that the fork is the `xml-sec` which actually resolved, reads Cargo.lock and
+# runs everywhere.
+#
+# The rule has to be on whatever branch the files are sitting on, not only on
+# the one that introduced it: without it a plain `git add crates/dpp-seal/`
+# recommits 60k lines of XML, which is how it came to be written twice.
 crates/dpp-seal/tests/fixtures/local/*.xml
