@@ -798,6 +798,24 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ### Fixed
 
+- **A stalled integration test now says which request stalled.** `TestClient`
+  used `reqwest::Client::new()`, and **`reqwest` sets no request timeout by
+  default** — so a request the server never answered parked until nextest killed
+  the test at 120 seconds, with no assertion, no panic and nothing naming the
+  call. `publish_serve_cycle::published_passport_is_served_as_the_payload_its_proof_signed`
+  failed CI twice that way, each time costing a full integration cycle and each
+  time telling nobody anything.
+
+  The client now carries a 30-second timeout — far above what a local container
+  needs, far below the harness ceiling — and every request that fails panics with
+  its method, its URL and the cause, saying explicitly when the server accepted
+  the request and never answered.
+
+  🚨 **This does not fix the stall.** It makes the next one diagnosable, which is
+  what the previous two were not. The root cause is still open, and the wider
+  surface is untouched: `dpp-node/tests/smoke.rs` builds bare
+  `reqwest::Client::new()` in ten places with the same property.
+
 - **A certificate authority mid-rotation was reported as not having signed the
   seal.** `cades::check_path_to` climbs the seal's embedded chain, and at each
   link it took the **first** certificate carrying the issuer's name and returned
