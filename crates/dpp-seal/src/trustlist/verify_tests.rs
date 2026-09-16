@@ -1,6 +1,6 @@
 //! Verifying the real list of trusted lists against the real anchor.
 
-use super::verify::{LotlRejected, verify_lotl};
+use super::verify::{LotlRejected, TrustedListRejected, verify_lotl};
 
 /// The EU list of trusted lists, as published.
 ///
@@ -238,6 +238,163 @@ mod signature_profile {
         assert!(
             matches!(err, LotlRejected::NonConformantProfile(ref why) if why.contains("covers the")),
             "a signature covering something other than the document must be refused, got: {err}"
+        );
+    }
+}
+
+/// The certificate the anchor is checked against is the one the signature is
+/// verified with.
+///
+/// Nothing downstream re-establishes this. `verify_lotl` decides trust from the
+/// certificate it reads out of the document, and `xml-sec` then verifies the
+/// signature using a certificate **it** selects, by a different rule —
+/// `select_x509_signing_certificate` resolves the leaf of the embedded chain and
+/// falls back to document order only when that finds nothing. `VerifyResult`
+/// exposes no certificate, so a mismatch cannot be detected afterwards: it has
+/// to be made impossible beforehand.
+///
+/// Two constraints do that, and these cases pin both — the read is scoped to
+/// `ds:KeyInfo`, and `ds:KeyInfo` must carry exactly one certificate.
+mod signing_certificate_binding {
+    use super::*;
+    use base64::Engine as _;
+
+    /// A second certificate in `ds:KeyInfo` is refused, not chosen between.
+    ///
+    /// This is the case the constraint exists for. With two certificates the
+    /// reader takes the first and `xml-sec` takes the leaf, and for a chain
+    /// published leaf-last those are different bytes — so the anchor decision
+    /// would be about a certificate the signature was never verified with.
+    ///
+    /// # The injected certificate does not disturb the signature
+    ///
+    /// Worth stating, because it is why this is a check rather than a comment:
+    /// the case below rewrites the **published** LOTL and the result is still
+    /// refused *for the certificate count*, not as `SignatureInvalid`. It cannot
+    /// be — `ds:KeyInfo` sits inside `ds:Signature`, which the mandated
+    /// enveloped-signature transform removes from the digest input, so what it
+    /// holds is outside everything the signature covers.
+    ///
+    /// So an attacker may add a certificate to a genuine, correctly signed
+    /// document for free. Reading "the first one" would then have taken the
+    /// real, anchored certificate, passed the anchor, and gone on to verify — a
+    /// document nobody could distinguish from the Commission's. What binds the
+    /// certificate is XAdES `SigningCertificate` in the signed properties, which
+    /// this module does not read.
+    #[test]
+    fn a_second_certificate_in_key_info_is_refused() {
+        const ONE: &str = "</ds:X509Certificate></ds:X509Data></ds:KeyInfo>";
+        assert_eq!(
+            EU_LOTL.matches(ONE).count(),
+            1,
+            "the fixture no longer carries the single-certificate ds:KeyInfo this case rewrites"
+        );
+        let two = EU_LOTL.replace(
+            ONE,
+            "</ds:X509Certificate><ds:X509Certificate>QUFB</ds:X509Certificate></ds:X509Data>\
+             </ds:KeyInfo>",
+        );
+
+        match verify_lotl(&two) {
+            Err(LotlRejected::AmbiguousSigningCertificate { found }) => assert_eq!(found, 2),
+            other => panic!("a second certificate must be refused, got {other:?}"),
+        }
+    }
+
+    /// A certificate outside `ds:KeyInfo` is never mistaken for the signing one.
+    ///
+    /// `ds:Object` legitimately carries certificates — XAdES `CertificateValues`
+    /// is where an LT or LTA signature keeps its chain — and `xml-sec` resolves
+    /// keys from `ds:KeyInfo` alone. A reader searching the whole `ds:Signature`
+    /// would pick one of those up whenever it came first, and the document's
+    /// author decides what comes first, so the ordering here is the adversarial
+    /// one rather than the schema's.
+    ///
+    /// The digest in `NotAnchored` is what makes this observable: it names the
+    /// certificate that was actually read.
+    #[test]
+    fn a_certificate_outside_key_info_is_not_read_as_the_signing_one() {
+        let xml = r#"<?xml version="1.0"?>
+<TrustServiceStatusList xmlns="http://uri.etsi.org/02231/v2#">
+  <ds:Signature xmlns:ds="http://www.w3.org/2000/09/xmldsig#">
+    <ds:Object><ds:X509Certificate>QkJC</ds:X509Certificate></ds:Object>
+    <ds:KeyInfo><ds:X509Data><ds:X509Certificate>QUFB</ds:X509Certificate></ds:X509Data></ds:KeyInfo>
+  </ds:Signature>
+</TrustServiceStatusList>"#;
+
+        let from_key_info = base64::engine::general_purpose::STANDARD
+            .encode(<sha2::Sha256 as sha2::Digest>::digest(b"AAA"));
+
+        match verify_lotl(xml) {
+            Err(LotlRejected::NotAnchored { offered, .. }) => assert_eq!(
+                offered, from_key_info,
+                "the certificate in ds:Object was read instead of ds:KeyInfo's"
+            ),
+            other => panic!("an unanchored certificate must be refused, got {other:?}"),
+        }
+    }
+
+    /// Both refusals say which document is at fault and why nothing was chosen.
+    #[test]
+    fn the_ambiguity_message_says_why_it_refused() {
+        for rendered in [
+            LotlRejected::AmbiguousSigningCertificate { found: 3 }.to_string(),
+            TrustedListRejected::AmbiguousSigningCertificate { found: 3 }.to_string(),
+        ] {
+            assert!(rendered.contains('3'), "names the count: {rendered}");
+            assert!(
+                rendered.contains("refusing"),
+                "says it refused rather than guessed: {rendered}"
+            );
+        }
+    }
+}
+
+/// Every rejection renders as one line of prose.
+///
+/// These strings are wrapped across source lines with a trailing `\`, which
+/// continues the literal and swallows the indentation. Writing `\n` there
+/// instead — one character different, and neither `rustfmt` nor `clippy` reads
+/// inside a string literal — breaks the message into a line and a run of
+/// leading spaces wherever an operator reads it. That shipped in
+/// `TrustedListRejected::NonConformantProfile` and nothing caught it, because
+/// no test rendered that variant.
+#[test]
+fn no_rejection_message_carries_a_stray_line_break() {
+    let rendered = [
+        LotlRejected::Malformed("why".to_owned()).to_string(),
+        LotlRejected::NotSigned.to_string(),
+        LotlRejected::NoCertificate.to_string(),
+        LotlRejected::AmbiguousSigningCertificate { found: 2 }.to_string(),
+        LotlRejected::NotAnchored {
+            offered: "AAAA".to_owned(),
+            pinned_notice: "52026XC01944",
+        }
+        .to_string(),
+        LotlRejected::SignatureInvalid("why".to_owned()).to_string(),
+        LotlRejected::NonConformantProfile("why".to_owned()).to_string(),
+        TrustedListRejected::Malformed("why".to_owned()).to_string(),
+        TrustedListRejected::NotSigned.to_string(),
+        TrustedListRejected::NoCertificate.to_string(),
+        TrustedListRejected::AmbiguousSigningCertificate { found: 2 }.to_string(),
+        TrustedListRejected::NoAuthorisedCertificates.to_string(),
+        TrustedListRejected::NotNamedByLotl {
+            offered: "AAAA".to_owned(),
+            authorised: 2,
+        }
+        .to_string(),
+        TrustedListRejected::SignatureInvalid("why".to_owned()).to_string(),
+        TrustedListRejected::NonConformantProfile("why".to_owned()).to_string(),
+    ];
+
+    for message in rendered {
+        assert!(
+            !message.contains('\n'),
+            "a rejection must render as one line, got: {message:?}"
+        );
+        assert!(
+            !message.contains("  "),
+            "and without a run of swallowed indentation, got: {message:?}"
         );
     }
 }

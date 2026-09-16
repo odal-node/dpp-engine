@@ -235,17 +235,22 @@ fn every_national_pointer_carries_certificates_to_verify_against() {
 
 /// Each signature names exactly one certificate, so "the signer" is unambiguous.
 ///
-/// The assumption underneath both links of the chain, pinned because it is
-/// invisible in the code that relies on it. Two separate things read the
-/// document: this module takes the **first** `X509Certificate` under the
-/// signature and compares it against what the LOTL authorises, while `xml-sec`
-/// resolves a key of its own to check the signature with. They agree only while
-/// there is one certificate to choose.
+/// The assumption underneath both links of the chain. Two separate things read
+/// the document: `signing_certificate` takes the certificate out of `ds:KeyInfo`
+/// and compares it against what the LOTL authorises, while `xml-sec` resolves a
+/// key of its own to check the signature with — by leaf analysis, not by
+/// position. They agree only while there is one certificate to choose.
 ///
 /// XMLDSig permits a `KeyInfo` to carry a whole chain, and the order within it
-/// is not fixed. If a publisher ever ships one, the two could diverge — the
-/// certificate we vouched for would not be the certificate that verified — and
-/// the failure would be silent. This test goes red first instead.
+/// is not fixed. A publisher that ships one is now **refused** —
+/// `LotlRejected::AmbiguousSigningCertificate`, pinned in `verify_tests` — so
+/// the divergence can no longer happen silently at runtime.
+///
+/// This test therefore no longer guards against the divergence; it guards
+/// against the *cost* of that refusal. It says the refusal is still free: no
+/// document this repository verifies is being turned away for carrying a chain.
+/// When it goes red, the fix is to resolve the leaf the way `xml-sec` does, not
+/// to relax the check.
 #[test]
 fn each_signature_names_exactly_one_certificate() {
     for (what, xml) in [("the LOTL", EU_LOTL), ("Finland's list", FI_LIST)] {

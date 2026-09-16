@@ -22,6 +22,16 @@ pub enum LotlRejected {
     NotSigned,
     /// The signature carries no X.509 certificate to check against.
     NoCertificate,
+    /// `ds:KeyInfo` carries more than one certificate, so which one the
+    /// signature will be verified with is not decidable here.
+    ///
+    /// Refused rather than guessed. Checking the anchor against one certificate
+    /// while `xml-sec` verifies with another would make the trust decision and
+    /// the cryptography about different keys — see [`signing_certificate`].
+    AmbiguousSigningCertificate {
+        /// How many certificates `ds:KeyInfo` carries.
+        found: usize,
+    },
     /// The certificate is not one the Official Journal authorises.
     ///
     /// **The interesting case.** Most often it means the pin is stale — the
@@ -58,6 +68,12 @@ impl std::fmt::Display for LotlRejected {
             Self::Malformed(why) => write!(f, "not a readable trusted list: {why}"),
             Self::NotSigned => f.write_str("the document carries no signature"),
             Self::NoCertificate => f.write_str("the signature carries no certificate"),
+            Self::AmbiguousSigningCertificate { found } => write!(
+                f,
+                "ds:KeyInfo carries {found} certificates, and which one signed the document is \
+                 not decidable without resolving the chain — refusing rather than checking the \
+                 anchor against a certificate that may not be the one it was verified with"
+            ),
             Self::NotAnchored {
                 offered,
                 pinned_notice,
@@ -220,6 +236,17 @@ pub enum TrustedListRejected {
     NotSigned,
     /// The signature carries no X.509 certificate.
     NoCertificate,
+    /// `ds:KeyInfo` carries more than one certificate.
+    ///
+    /// Same refusal and same reason as
+    /// [`LotlRejected::AmbiguousSigningCertificate`], and it matters more here:
+    /// the certificate is compared against the set the LOTL names, so picking
+    /// the wrong one of several could let a certificate the LOTL names vouch
+    /// for a signature made by a different key beside it.
+    AmbiguousSigningCertificate {
+        /// How many certificates `ds:KeyInfo` carries.
+        found: usize,
+    },
     /// The verified LOTL names no certificates at all for this territory.
     ///
     /// Distinct from being named and not matching: nothing can be verified here,
@@ -253,6 +280,12 @@ impl std::fmt::Display for TrustedListRejected {
             Self::Malformed(why) => write!(f, "not a readable trusted list: {why}"),
             Self::NotSigned => f.write_str("the document carries no signature"),
             Self::NoCertificate => f.write_str("the signature carries no certificate"),
+            Self::AmbiguousSigningCertificate { found } => write!(
+                f,
+                "ds:KeyInfo carries {found} certificates, so the one compared against the list \
+                 of trusted lists need not be the one the signature was verified with — \
+                 refusing rather than choosing between them"
+            ),
             Self::NoAuthorisedCertificates => {
                 f.write_str("the list of trusted lists names no certificate for this list")
             }
@@ -268,7 +301,8 @@ impl std::fmt::Display for TrustedListRejected {
             Self::SignatureInvalid(why) => write!(f, "the signature does not verify: {why}"),
             Self::NonConformantProfile(why) => write!(
                 f,
-                "the signature does not follow the profile CID (EU) 2015/1505 Annex I \n                 mandates: {why}"
+                "the signature does not follow the profile CID (EU) 2015/1505 Annex I \
+                 mandates: {why}"
             ),
         }
     }
@@ -348,6 +382,9 @@ pub fn verify_trusted_list(
     let certificate = signing_certificate(xml).map_err(|e| match e {
         LotlRejected::Malformed(why) => TrustedListRejected::Malformed(why),
         LotlRejected::NotSigned => TrustedListRejected::NotSigned,
+        LotlRejected::AmbiguousSigningCertificate { found } => {
+            TrustedListRejected::AmbiguousSigningCertificate { found }
+        }
         _ => TrustedListRejected::NoCertificate,
     })?;
 
@@ -395,11 +432,6 @@ pub fn verify_trusted_list(
     })
 }
 
-/// The base64 certificate from the document's signature.
-///
-/// Read with the same local-name matching the rest of this module uses: the
-/// signature is in the `ds:` namespace by convention rather than by requirement,
-/// and a publisher is free to bind a different prefix.
 /// The enveloped-signature transform, the first of the two the profile mandates.
 const ENVELOPED_SIGNATURE: &str = "http://www.w3.org/2000/09/xmldsig#enveloped-signature";
 /// Exclusive canonicalization, the second.
@@ -513,6 +545,47 @@ fn check_signature_profile(xml: &str) -> Result<(), String> {
     }
 }
 
+/// The base64 certificate from the document's signature.
+///
+/// Read with the same local-name matching the rest of this module uses: the
+/// signature is in the `ds:` namespace by convention rather than by requirement,
+/// and a publisher is free to bind a different prefix.
+///
+/// # Why this reads `ds:KeyInfo`, and why it insists on exactly one
+///
+/// Everything above depends on this returning **the certificate the signature
+/// will actually be verified with**. Nothing else in this module establishes
+/// that: the anchor decision is taken here, and the signature is computed by
+/// `xml-sec` afterwards, from a certificate it selects for itself. If the two
+/// pick differently, the trust decision is about one certificate and the
+/// cryptography about another, and a caller cannot tell — [`VerifyResult`]
+/// exposes no certificate, so there is nothing to compare afterwards.
+///
+/// They do select differently. `xml-sec` resolves the signing certificate from
+/// `ds:KeyInfo` by *chain analysis* — `select_x509_signing_certificate` takes
+/// the entry that is neither self-signed nor the issuer of any other entry, and
+/// only falls back to document order when that finds nothing. Document order is
+/// what a reader like this one sees. For a `ds:KeyInfo` carrying a chain rather
+/// than a single certificate — leaf last, which XMLDSig permits — the two
+/// disagree, and the disagreement is silent in the permissive direction.
+///
+/// Both constraints below make them provably agree:
+///
+/// - **scoped to `ds:KeyInfo`**, because that is the only place `xml-sec`
+///   resolves keys from. A `ds:Object` carrying XAdES `CertificateValues` holds
+///   certificates too, and a search over the whole `ds:Signature` could return
+///   one of those;
+/// - **exactly one**, because with one certificate every selection rule — chain
+///   analysis, a lookup identifier, document order — resolves to the same bytes.
+///
+/// This is *our* requirement, not a clause of the profile
+/// [`check_signature_profile`] pins; CID (EU) 2015/1505 says nothing about how
+/// many certificates `ds:KeyInfo` may carry. It is fail-closed, and it costs
+/// nothing today: the Commission's own list and every national list checked
+/// carry exactly one. A publisher that starts shipping a full chain is refused
+/// with [`LotlRejected::AmbiguousSigningCertificate`] rather than trusted on a
+/// certificate nobody verified with — and the fix then is to resolve the leaf
+/// the way `xml-sec` does, not to take the first.
 fn signing_certificate(xml: &str) -> Result<String, LotlRejected> {
     let doc = Document::parse(xml).map_err(|e| LotlRejected::Malformed(format!("not XML: {e}")))?;
 
@@ -521,11 +594,22 @@ fn signing_certificate(xml: &str) -> Result<String, LotlRejected> {
         .find(|n| n.is_element() && n.tag_name().name() == "Signature")
         .ok_or(LotlRejected::NotSigned)?;
 
-    signature
+    let key_info = signature
         .descendants()
-        .find(|n| n.is_element() && n.tag_name().name() == "X509Certificate")
-        .and_then(|n| n.text())
+        .find(|n| n.is_element() && n.tag_name().name() == "KeyInfo")
+        .ok_or(LotlRejected::NoCertificate)?;
+
+    let certificates: Vec<String> = key_info
+        .descendants()
+        .filter(|n| n.is_element() && n.tag_name().name() == "X509Certificate")
+        .filter_map(|n| n.text())
         .map(|t| t.split_whitespace().collect::<String>())
         .filter(|s| !s.is_empty())
-        .ok_or(LotlRejected::NoCertificate)
+        .collect();
+
+    match certificates.as_slice() {
+        [one] => Ok(one.clone()),
+        [] => Err(LotlRejected::NoCertificate),
+        many => Err(LotlRejected::AmbiguousSigningCertificate { found: many.len() }),
+    }
 }

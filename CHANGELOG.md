@@ -134,6 +134,24 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   and it verifies cleanly with the anchor check disabled. That pair is why both
   halves exist.
 
+  **The two halves are bound to one certificate, and that had to be forced.**
+  The anchor is checked against a certificate this code reads; the signature is
+  checked by `xml-sec` against a certificate **it** selects, by leaf analysis of
+  the embedded chain rather than by position. `VerifyResult` exposes no
+  certificate, so a disagreement could not be detected afterwards. Two
+  constraints make one impossible: the read is scoped to `ds:KeyInfo`, the only
+  place `xml-sec` resolves keys from, and `ds:KeyInfo` must carry exactly one
+  certificate — new `AmbiguousSigningCertificate` on both enums.
+
+  This matters more than a tie-break rule. `ds:KeyInfo` sits inside
+  `ds:Signature`, which the mandated enveloped-signature transform removes from
+  the digest input, so **a certificate can be added to a genuine, correctly
+  signed list without disturbing its signature**. Reading "the first one" would
+  then take the real anchored certificate, pass the anchor, and verify — while
+  `xml-sec` verified with whichever the chain named. Refusing is free today:
+  every published list checked carries exactly one, pinned by
+  `each_signature_names_exactly_one_certificate`.
+
   🚨 **This creates a recurring operational obligation.** The pin must be
   refreshed when the Commission republishes the notice, and the current signer
   expires **2027-11-17** — a calendar date, not a discovery. A stale pin fails

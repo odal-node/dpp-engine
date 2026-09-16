@@ -13,9 +13,11 @@ publish = false
 dpp-domain   = { workspace = true }
 
 # For `outbound` — the one guarded HTTP path. A trusted list fetch must use it
-# rather than its own client: the list of lists names 43 URLs, we do not verify
-# its signature, so those URLs are attacker-influenceable in principle. That is
-# precisely what the resolving SSRF guard is for.
+# rather than its own client: the list of lists names 43 URLs to fetch. Its
+# signature is verified now, but `fetch_lotl_pointers` reads the document it is
+# about to check, and a pointer is a URL this node then requests — so the guard
+# is what stands between a document that has not yet been trusted and the
+# network. That is precisely what the resolving SSRF guard is for.
 dpp-common   = { path = "../dpp-common" }
 
 serde        = { workspace = true }
