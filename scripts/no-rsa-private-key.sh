@@ -93,7 +93,24 @@ check_tree() {
     # ── 1. `rsa` must stay transitive ───────────────────────────────────────
     # Matches a dependency line, not a word in a comment or a feature named
     # "rsa" inside another crate's feature list.
-    GREP_ARGS=(--include=Cargo.toml -E '^[[:space:]]*rsa[[:space:]]*=')
+    # Four ways a manifest can declare a direct dependency, and all four count.
+    # The first version of this matched only `rsa = …`, which is one of them:
+    #
+    #   rsa = "0.9"                              inline
+    #   rsa.workspace = true                     inherited from the workspace
+    #   [dependencies.rsa]                       table form, incl. [target.….dependencies.rsa]
+    #   renamed = { package = "rsa", … }         renamed, where the key is not "rsa" at all
+    #
+    # A regex rather than `cargo metadata` deliberately: this gate runs inside
+    # `just check` on every commit, and shelling out to a full workspace resolve
+    # to answer a question about four literal spellings would cost seconds to
+    # gain nothing the self-test cannot prove. Each spelling is planted in the
+    # self-test below, so a form this misses is a failing gate rather than a
+    # silent one.
+    GREP_ARGS=(
+        --include=Cargo.toml -E
+        '^[[:space:]]*rsa[[:space:]]*[=.]|^[[:space:]]*\[[^]]*dependencies\.rsa\]|package[[:space:]]*=[[:space:]]*"rsa"'
+    )
     if ! scan "the direct-dependency check" "$root/crates" "$root/cli" "$root/Cargo.toml"; then
         echo "ERROR: a workspace crate depends on \`rsa\` directly." >&2
         echo "       RUSTSEC-2023-0071 is suppressed in .cargo/audit.toml on the ground that" >&2
@@ -164,12 +181,41 @@ self_test() {
         rm -f "$tmp/$relative/planted.rs"
     done
 
-    printf '[package]\nname = "planted"\n\n[dependencies]\nrsa = "0.9"\n' \
-        > "$tmp/crates/planted/Cargo.toml"
-    if check_tree "$tmp" > /dev/null 2>&1; then
-        echo "SELF-TEST FAILED: a planted direct \`rsa\` dependency was not caught." >&2
-        return 1
-    fi
+    # Every manifest location that must be scanned, crossed with every way a
+    # direct dependency can be written.
+    #
+    # 🚨 Written out for the same reason the roots above are, and it is the same
+    # trap: planting in one manifest and calling `check_tree` once proves only
+    # that *some* path is scanned. Drop `cli` from the scan's path list and a
+    # single-location self-test still passes, because `crates` caught it.
+    local manifest_locations=(
+        "Cargo.toml"
+        "crates/planted/Cargo.toml"
+        "cli/Cargo.toml"
+    )
+    local declarations=(
+        'rsa = "0.9"'
+        'rsa.workspace = true'
+        '[dependencies.rsa]'
+        'renamed = { package = "rsa", version = "0.9" }'
+    )
+    printf '[package]\nname = "planted-cli"\n' > "$tmp/cli/Cargo.toml"
+
+    local location declaration original
+    for location in "${manifest_locations[@]}"; do
+        original="$(cat "$tmp/$location")"
+        for declaration in "${declarations[@]}"; do
+            printf '%s\n\n[dependencies]\n%s\n' "$original" "$declaration" > "$tmp/$location"
+            if check_tree "$tmp" > /dev/null 2>&1; then
+                echo "SELF-TEST FAILED: \`$declaration\` in $location was not caught." >&2
+                echo "       Either that manifest is not scanned, or that spelling of a direct" >&2
+                echo "       dependency is not matched. Both mean the gate can pass while the" >&2
+                echo "       suppression it defends is void." >&2
+                return 1
+            fi
+        done
+        printf '%s\n' "$original" > "$tmp/$location"
+    done
 
     return 0
 }
