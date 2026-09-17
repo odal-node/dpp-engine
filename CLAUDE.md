@@ -207,6 +207,17 @@ change, a doc typo, a version bump, a dependency bump.
 
 **Core Purity Rule**: NEVER push tenant, audit, API-key, or auth concerns into `dpp-core`. The platform adapts to core, not the reverse.
 
+**Where shared logic lives — "domain-shaped" is not the test.** When two service crates both need the same logic, the question is *what makes it change*:
+
+- a change to **the law** changes it → it belongs in `dpp-core`, and every crate here that sees `dpp-domain` can reach it;
+- a change to **deployment, storage, or operation** changes it → it stays engine-side, in `dpp-types`, which already carries `dpp-domain`.
+
+Asking whether it is "about passports" gives the wrong answer in both directions. `snapshot_json_key` is about passports and changes when the object-storage layout changes — it is operational and stays here. The live-passport-obligation test is also about passports and changes when an implementing act comes into force — it is core's, and is `InstrumentCatalog::passport_obligation_live`.
+
+🚨 **Copying is what happens when the home is unclear, and nothing in CI can see a copied rule.** A duplicated *shape* fails the OpenAPI contract test; a duplicated *rule* is N individually correct files that compile, pass, and diverge the first time somebody adds a condition to one of them. That has bitten three times: `PROTECTED_PATCH_FIELDS` restated three entries short, making protected fields writable; a query parameter spelled three ways; and the passport-obligation conjunction written out in four places. Reach for the predicate core already exposes before writing the conjunction again.
+
+Two named functions here wrap `passport_obligation_live` for the local `instruments()` lookup — `dpp-plugin-host` cannot see `dpp-types`, so the wrapper is the seam, not a second copy. Wrapping the call is fine; restating the `&&` is not.
+
 **Operator Isolation**: NEVER shared clusters. Every deployment is single-operator (self-hosted or Odal-hosted). Zero cross-operator data access. The node is **strictly single-tenant** — there is no in-process operator scoping (no RLS). Tenant isolation is an **infrastructure** boundary (one node per operator), not an application concern. `operator_id` columns persist only as the node's constant identity for provenance.
 
 ## Port Layout

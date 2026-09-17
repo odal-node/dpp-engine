@@ -208,9 +208,7 @@ pub fn compliance_trust(host: &WasmPluginHost) -> TrustMode {
         .all()
         .iter()
         .map(|d| d.key.as_str())
-        .filter(|key| {
-            !instruments.determinable_for(key).is_empty() && instruments.passport_required_for(key)
-        })
+        .filter(|key| instruments.passport_obligation_live(key))
         .collect();
 
     // No in-force product group is an empty conjunction, which would make `all()` true
@@ -471,10 +469,7 @@ mod tests {
             .all()
             .iter()
             .map(|d| d.key.clone())
-            .filter(|key| {
-                !instruments.determinable_for(key).is_empty()
-                    && instruments.passport_required_for(key)
-            })
+            .filter(|key| instruments.passport_obligation_live(key))
             .collect()
     }
 
