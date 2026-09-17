@@ -230,6 +230,49 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   in would make the verdict stronger and is the other half of the
   timestamp-authority work.)*
 
+- **A battery passport can now be created with its life status.** `lifeStatus`
+  on `POST /dpp`, accepting `original`, `repurposed`, `re-used` and
+  `remanufactured`.
+
+  ✅ Annex XIII point 4(c) of Reg. (EU) 2023/1542, which enumerates the literal
+  values the status is "defined as".
+
+  🚨 **It could not be set by any means before this.** The field is in core's
+  `PROTECTED_PATCH_FIELDS`, so `PATCH` refused it; the create body had no field
+  for it; and the handler wrote a literal `None` under a comment saying the value
+  was "set by the life-status transitions" — of which there were none. So every
+  passport this node produced carried `None` permanently: the read route served a
+  field nothing could fill, the OpenAPI documented it, and core's lineage rule
+  that checks its consistency had nothing to check.
+
+  **A create-time field rather than a transition**, because Art. 77(7) makes each
+  operation produce a *new* passport — a repurposed unit is created as
+  `repurposed`, with a `derivedFrom` edge naming the operation that produced it.
+  There is nothing to transition: the predecessor keeps its own record and its
+  own status.
+
+  ⚠️ **`waste` is refused at create.** It is the one value that happens to a
+  record which continues, and under Art. 77(7)'s second subparagraph it moves
+  responsibility as well — so it belongs to a versioning event on the passport
+  becoming waste, with an audit trail, rather than to the creation of a fresh
+  record. That route does not exist yet; accepting the value here would have let
+  a caller record the end of a life this node never saw.
+
+  Refused for every product group but battery: only Reg. (EU) 2023/1542 defines
+  this vocabulary, and a textile passport asserting `original` would borrow a
+  battery term for a question its own instrument does not ask.
+
+  **Omitting it stays lawful, and publish does not refuse it.** For a battery it
+  reads as *not stated* rather than *not applicable*; the lint result says so
+  instead. A default would put a claim about a unit onto a record that is about
+  to be signed, and a published passport is corrected by a successor rather than
+  edited.
+
+  The importer sends `None`, for the same reason it sends no `derivedFrom`: a CSV
+  column cannot express a cross-operator predecessor, and core's lineage rule
+  asks that a status be supported by a derivation edge — so an imported
+  `repurposed` would be exactly the defect that rule catches.
+
 - **Every change to a passport is now archived, and the version that was current
   at any past moment can be read back.** New `odal.passport_version` (migration
   `0040`), `dpp_types::audit::PassportVersionStore` + `PassportVersion`,

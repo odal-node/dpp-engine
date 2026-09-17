@@ -2551,3 +2551,131 @@ async fn an_amended_passports_printed_carrier_lands_on_the_successor() {
         "served with its own proof, so none of the above has to be taken on trust"
     );
 }
+
+/// A life status declared at create survives to the record.
+///
+/// ✅ COMPLIANCE-PIN: Annex XIII point 4(c) of Reg. (EU) 2023/1542, and
+/// Art. 77(7) — each operation produces a **new** passport, so a repurposed unit
+/// is created as `repurposed` rather than transitioned into it.
+///
+/// 🚨 This is the property that did not exist. `lifeStatus` is in core's
+/// `PROTECTED_PATCH_FIELDS` so `PATCH` refused it; the create body had no field
+/// for it; and the handler wrote a literal `None` under a comment saying the
+/// value was "set by the life-status transitions", of which there were none. So
+/// the field could not be set by any means — the read route served something
+/// nothing could fill, and core's consistency rule had nothing to check.
+///
+/// Asserted through the assembled node rather than on the validator, because the
+/// defect was in the *wiring*: the validation would have passed either way.
+#[tokio::test]
+async fn a_life_status_declared_at_create_reaches_the_stored_passport() {
+    let (base, _container) = start_db_and_node().await;
+    let token = make_jwt("00000000-0000-0000-0000-000000000081");
+    let client = reqwest::Client::new();
+
+    let resp = client
+        .post(format!("{base}/vault/api/v1/dpp"))
+        .bearer_auth(&token)
+        .json(&serde_json::json!({
+            "productName": "Second-life Cell",
+            "productGroup": "battery",
+            "manufacturer": {"name": "SmokeTestCorp", "address": "Berlin, DE"},
+            "materials": [],
+            "lifeStatus": "repurposed",
+        }))
+        .send()
+        .await
+        .expect("create request failed");
+    let status = resp.status();
+    let created: serde_json::Value = resp.json().await.expect("json");
+    assert_eq!(status, 201, "create failed: {created}");
+    assert_eq!(
+        created["lifeStatus"].as_str(),
+        Some("repurposed"),
+        "the response must carry what was declared: {created}"
+    );
+
+    let id = created["id"].as_str().expect("id");
+    let read: serde_json::Value = client
+        .get(format!("{base}/vault/api/v1/dpp/{id}"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .expect("read failed")
+        .json()
+        .await
+        .expect("json");
+    assert_eq!(
+        read["lifeStatus"].as_str(),
+        Some("repurposed"),
+        "and it must survive the round trip through the database, which is what \
+         a hardcoded `None` in the handler broke: {read}"
+    );
+}
+
+/// A passport cannot be created already waste, and the refusal says why.
+///
+/// 🚨 `waste` is the one value that happens to a record which continues, and
+/// under Art. 77(7)'s second subparagraph it moves responsibility as well.
+/// Accepting it at create would record the end of a life this node never saw —
+/// no predecessor, no version bump, no transfer.
+#[tokio::test]
+async fn a_passport_cannot_be_created_already_waste() {
+    let (base, _container) = start_db_and_node().await;
+    let token = make_jwt("00000000-0000-0000-0000-000000000082");
+    let client = reqwest::Client::new();
+
+    let resp = client
+        .post(format!("{base}/vault/api/v1/dpp"))
+        .bearer_auth(&token)
+        .json(&serde_json::json!({
+            "productName": "Spent Cell",
+            "productGroup": "battery",
+            "manufacturer": {"name": "SmokeTestCorp", "address": "Berlin, DE"},
+            "materials": [],
+            "lifeStatus": "waste",
+        }))
+        .send()
+        .await
+        .expect("create request failed");
+    let status = resp.status();
+    let body = resp.text().await.unwrap_or_default();
+
+    assert_eq!(status, 422, "must be refused: {body}");
+    assert!(
+        body.contains("transition") && body.contains("Art. 77(7)"),
+        "and the refusal has to point at the versioning event that is the right \
+         way to record it: {body}"
+    );
+}
+
+/// The vocabulary belongs to one regulation, so it belongs to one product group.
+#[tokio::test]
+async fn a_non_battery_passport_may_not_claim_a_battery_life_status() {
+    let (base, _container) = start_db_and_node().await;
+    let token = make_jwt("00000000-0000-0000-0000-000000000083");
+    let client = reqwest::Client::new();
+
+    let resp = client
+        .post(format!("{base}/vault/api/v1/dpp"))
+        .bearer_auth(&token)
+        .json(&serde_json::json!({
+            "productName": "A Shirt",
+            "productGroup": "textile",
+            "manufacturer": {"name": "SmokeTestCorp", "address": "Berlin, DE"},
+            "materials": [],
+            "lifeStatus": "original",
+        }))
+        .send()
+        .await
+        .expect("create request failed");
+    let status = resp.status();
+    let body = resp.text().await.unwrap_or_default();
+
+    assert_eq!(status, 422, "must be refused: {body}");
+    assert!(
+        body.contains("2023/1542"),
+        "naming the regulation that defines the vocabulary, so an operator can \
+         see why their product group has none: {body}"
+    );
+}

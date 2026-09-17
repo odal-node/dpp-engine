@@ -6,7 +6,7 @@ use chrono::Utc;
 use dpp_common::url_guard::validate_public_https_url;
 use dpp_domain::{
     ProductGroupCatalog,
-    passport::{Passport, PassportId, PassportRef},
+    passport::{LifeStatus, Passport, PassportId, PassportRef},
     product_group::{CarbonFootprint, ProductGroup, ProductGroupData, RepairabilityScore},
     schemas::VersionedSchemaRegistry,
     status::PassportStatus,
@@ -156,10 +156,21 @@ pub async fn create_handler(
         // serial through the create body before then would let a caller stamp
         // one onto a passport whose own record does not claim to be per-unit.
         serial_number: None,
-        // Set by the life-status transitions, not at creation: a passport being
-        // created is an original by construction, and `None` is "no transition
-        // has been recorded" rather than a claim that one has not happened.
-        life_status: None,
+        // Declared by the caller, and only here: `lifeStatus` is in core's
+        // `PROTECTED_PATCH_FIELDS`, so a patch cannot reach it and this is the
+        // one request that can carry it.
+        //
+        // The comment this replaces said it was "set by the life-status
+        // transitions" — there were none, and there was no create field either,
+        // so every passport this node produced carried `None` permanently and
+        // the core rule that checks the field's consistency had nothing to check.
+        //
+        // `None` stays a legitimate answer: it is what every non-battery product
+        // group carries, and for a battery it reads as *not stated* rather than
+        // *not applicable*. Publish does not refuse it — the lint says so instead,
+        // because a default here would be a claim about a unit nobody made and a
+        // published passport is corrected by a successor rather than an edit.
+        life_status: body.life_status,
         // Established through the transfer routes, which is where the chain and
         // its Art. 77(7) basis are checked. Creation records no operator.
         responsible_operator: None,
@@ -701,5 +712,160 @@ pub fn validate_create_request(body: &CreatePassportRequest) -> Option<axum::res
             ),
         );
     }
+
+    if let Some(life_status) = body.life_status {
+        // ✅ Annex XIII point 4(c) of Reg. (EU) 2023/1542 enumerates the literal
+        // values this status is "defined as", and only that regulation defines
+        // them. A textile passport asserting `original` would be borrowing a
+        // battery term for a question its own instrument does not ask — so this
+        // is refused rather than silently stored, which would put a claim on the
+        // record that nothing supports.
+        if product_group != ProductGroup::Battery {
+            return api_error(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "VALIDATION_ERROR",
+                &format!(
+                    "lifeStatus is defined by Annex XIII point 4(c) of Reg. (EU) 2023/1542 and \
+                     applies to batteries; product_group `{}` has no such vocabulary. Omit it.",
+                    product_group.catalog_key()
+                ),
+            );
+        }
+
+        // 🚨 `waste` is a transition, not a creation state.
+        //
+        // The other four describe how a unit came to be, and under Art. 77(7)
+        // each operation produces a new passport — so a repurposed unit is
+        // created as `repurposed`. `waste` is the one that happens to a record
+        // which continues, and the article's second subparagraph makes it a
+        // responsibility handover as well. Accepting it here would let a caller
+        // record the end of a life this node never saw, with no predecessor, no
+        // version bump and no transfer.
+        if life_status == LifeStatus::Waste {
+            return api_error(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "VALIDATION_ERROR",
+                "lifeStatus `waste` cannot be set when a passport is created. It is a \
+                 transition of an existing record and, under Art. 77(7) second subparagraph, \
+                 a transfer of responsibility — so it belongs to a versioning event on the \
+                 passport that is becoming waste, not to the creation of a new one.",
+            );
+        }
+
+        // The consistency between a status and the operation that produced it is
+        // core's rule (`dpp_rules::lineage::check_life_status_consistency`) and is
+        // reported as a lint finding rather than refused here. Deliberate: lints
+        // in this workspace are advisory and never block a write, and a create
+        // that refused would also have to refuse every import row, where the
+        // derivation edges cannot be expressed at all.
+    }
+
     None
+}
+
+#[cfg(test)]
+mod life_status_at_create {
+    //! Where `lifeStatus` can be set, and where it cannot.
+    //!
+    //! ✅ COMPLIANCE-PIN: Annex XIII point 4(c) of Reg. (EU) 2023/1542, and
+    //! Art. 77(7) for why four of the five values are create-time.
+    //!
+    //! 🚨 Before this, the field could not be set **at all**. It was in core's
+    //! `PROTECTED_PATCH_FIELDS` so `PATCH` refused it, the create body had no
+    //! field for it, and the handler wrote a literal `None` under a comment
+    //! saying it was "set by the life-status transitions" — of which there were
+    //! none. So every passport this node produced carried `None` for ever, the
+    //! read route served a field nothing could fill, and core's consistency rule
+    //! had nothing to check.
+    use super::*;
+
+    fn body(product_group: &str, life_status: serde_json::Value) -> serde_json::Value {
+        let mut b = serde_json::json!({
+            "productName": "A unit",
+            "manufacturer": { "name": "M", "address": "A" },
+            "productGroup": product_group,
+        });
+        if !life_status.is_null() {
+            b["lifeStatus"] = life_status;
+        }
+        b
+    }
+
+    fn parse(v: serde_json::Value) -> CreatePassportRequest {
+        serde_json::from_value(v).expect("a well-formed create body")
+    }
+
+    /// A battery may be created as any of the four operation outcomes.
+    ///
+    /// Art. 77(7) makes each operation produce a *new* passport, so a repurposed
+    /// unit is created as `repurposed` rather than transitioned into it.
+    #[test]
+    fn a_battery_may_be_created_in_any_status_an_operation_produces() {
+        for status in ["original", "repurposed", "re-used", "remanufactured"] {
+            let req = parse(body("battery", serde_json::json!(status)));
+            assert!(
+                req.life_status.is_some(),
+                "`{status}` must parse into the request"
+            );
+            assert!(
+                validate_create_request(&req).is_none(),
+                "`{status}` is a lawful creation state and must be accepted"
+            );
+        }
+    }
+
+    /// 🚨 `waste` is refused, because it is a transition and a handover.
+    ///
+    /// It is the one value that happens to a record which continues, and under
+    /// Art. 77(7)'s second subparagraph it moves responsibility too. Accepting
+    /// it here would let a caller record the end of a life this node never saw —
+    /// with no predecessor, no version bump and no transfer.
+    #[test]
+    fn a_passport_cannot_be_created_already_waste() {
+        let req = parse(body("battery", serde_json::json!("waste")));
+        assert_eq!(
+            req.life_status,
+            Some(LifeStatus::Waste),
+            "it parses — the refusal is a decision, not a parse failure"
+        );
+        assert!(
+            validate_create_request(&req).is_some(),
+            "and creating a passport that is already waste must be refused"
+        );
+    }
+
+    /// The vocabulary belongs to one regulation, so it belongs to one product
+    /// group.
+    ///
+    /// Only Reg. (EU) 2023/1542 defines these values. A textile passport
+    /// asserting `original` would be borrowing a battery term for a question its
+    /// own instrument does not ask, so it is refused rather than stored — a
+    /// stored claim nothing supports is worse than a rejected request.
+    #[test]
+    fn a_non_battery_passport_may_not_claim_a_battery_vocabulary() {
+        let req = parse(body("textile", serde_json::json!("original")));
+        assert!(
+            validate_create_request(&req).is_some(),
+            "textile has no Annex XIII point 4(c) status and must not be given one"
+        );
+    }
+
+    /// Omitting it stays lawful, for every product group.
+    ///
+    /// `None` is what every non-battery group carries. For a battery it reads as
+    /// *not stated* rather than *not applicable*, and publish does not refuse it:
+    /// the lint says so instead, because defaulting would put a claim about a
+    /// unit on a record that is about to be signed, and a published passport is
+    /// corrected by a successor rather than edited.
+    #[test]
+    fn omitting_it_is_lawful_for_every_product_group() {
+        for group in ["battery", "textile"] {
+            let req = parse(body(group, serde_json::Value::Null));
+            assert_eq!(req.life_status, None);
+            assert!(
+                validate_create_request(&req).is_none(),
+                "`{group}` must be creatable without a life status"
+            );
+        }
+    }
 }

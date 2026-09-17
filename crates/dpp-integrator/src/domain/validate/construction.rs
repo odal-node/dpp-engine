@@ -117,6 +117,11 @@ pub fn validate_construction_row(
         // by hand — an invented one produces a link that fails verification.
         // Absent because the format cannot carry them, not by oversight.
         derived_from: Vec::new(),
+        // Empty for the same reason `derived_from` above is. A CSV column
+        // cannot express a cross-operator predecessor, and core's lineage rule
+        // asks that a status be supported by a derivation edge — so an
+        // imported `repurposed` would be exactly the defect that rule catches.
+        life_status: None,
         component_refs: Vec::new(),
     })
 }

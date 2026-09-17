@@ -228,3 +228,89 @@ mod tests {
         assert!(compute_lint(&p).is_none());
     }
 }
+
+#[cfg(test)]
+mod svhc_reaches_the_lint_result {
+    //! That the SVHC lints arrive here at all, and that their caveat is not lost.
+    //!
+    //! ✅ COMPLIANCE-PIN: REACH (Reg. (EC) No 1907/2006) Art. 33, and Art. 33(1)'s
+    //! 0.1% w/w threshold.
+    //!
+    //! 🚨 These fire from **core**, inside `LintResult::compute`, without this
+    //! repo asking. That is the whole reason to pin them: a check nobody here
+    //! called can stop arriving without anything here changing, and the way it
+    //! would show is a passport that looks cleaner than it is.
+    //!
+    //! The compiled-in candidate list is partial — 32 substances against ECHA's
+    //! full set — so `svhc.candidate_list_partial` fires on every passport
+    //! carrying a declaration. **That is the finding that must not be swallowed.**
+    //! Without it, `svhc.not_on_checked_list` reads as a clearance, and a
+    //! substance that is on the real list but outside the compiled 32 is
+    //! indistinguishable from one that is on no list at all.
+    use super::compute_lint;
+
+    /// A textile passport carrying `substances`, built from the wire shape.
+    ///
+    /// Deserialised rather than constructed field by field: `TextileData` has
+    /// some thirty of them, and the three this test is about are the only ones
+    /// it should have to name.
+    fn textile_with(substances: serde_json::Value) -> dpp_domain::Passport {
+        let mut p = crate::public_view::tests::stub_passport();
+        let data = serde_json::json!({
+            "productGroup": "textile",
+            "gtin": "09506000134352",
+            "fibreComposition": [{ "fibre": "cotton", "pct": 100.0 }],
+            "careInstructions": "wash cold",
+            "countryOfOrigin": "PT",
+            "chemicalComplianceStandard": "oeko-tex-100",
+            "svhcSubstances": substances,
+        });
+        p.product_group_data =
+            Some(serde_json::from_value(data).expect("a well-formed textile payload"));
+        p.product_group = dpp_domain::product_group::ProductGroup::Textile;
+        p
+    }
+
+    fn codes(p: &dpp_domain::Passport) -> Vec<String> {
+        compute_lint(p)
+            .map(|r| r.findings.into_iter().map(|f| f.code).collect())
+            .unwrap_or_default()
+    }
+
+    /// A declaration this node cannot fully check says so, in the result.
+    #[test]
+    fn a_declaration_carries_the_partial_list_caveat_into_the_lint_result() {
+        // Not among the compiled 32. Whether it is on ECHA.s real list is exactly
+        // what this node cannot answer, which is the point.
+        let p = textile_with(serde_json::json!([{
+            "casNumber": "1333-86-4",
+            "substanceName": "Carbon black",
+            "concentrationPct": 0.5,
+        }]));
+
+        let codes = codes(&p);
+        assert!(
+            codes.iter().any(|c| c == "svhc.candidate_list_partial"),
+            "the caveat must reach the result, or `not_on_checked_list` reads as a \
+             clearance: {codes:?}"
+        );
+        assert!(
+            codes.iter().any(|c| c == "svhc.not_on_checked_list"),
+            "and the per-substance question with it: {codes:?}"
+        );
+    }
+
+    /// A passport with no declaration gets no SVHC findings.
+    ///
+    /// The caveat is about a declaration that was checked, so a product group
+    /// carrying none must not be told its list was incomplete — that would put a
+    /// warning on every passport in the estate and teach operators to ignore it.
+    #[test]
+    fn a_passport_declaring_no_substances_is_told_nothing_about_the_list() {
+        let p = textile_with(serde_json::json!([]));
+        assert!(
+            !codes(&p).iter().any(|c| c.starts_with("svhc.")),
+            "no declaration, nothing to say about it"
+        );
+    }
+}
