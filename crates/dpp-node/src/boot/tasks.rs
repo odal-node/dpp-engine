@@ -1025,8 +1025,10 @@ pub fn spawn_trusted_list_refresh(
                 // `refresh_once` returns `None` when it abandoned the pass, so
                 // this is never reached with a set that cannot describe its own
                 // width. A set from half the Union reads exactly like a set from
-                // all of it, which is the rule `0038` already took for the seal
-                // audit; the difference is that here the cache is re-read rather
+                // all of it — the rule the seal audit already took in migration
+                // `ops/pg/0038_seal_audit_state.sql`, which keeps its report
+                // NULL until a walk reaches the end of the estate. The
+                // difference is that here the cache is re-read rather
                 // than assembled from `stats`, so what reaches the verdicts is
                 // the same thing a restart would have loaded.
                 //
@@ -1043,6 +1045,23 @@ pub fn spawn_trusted_list_refresh(
                             "trusted lists published to the running node's seal verdicts"
                         );
                         inspector.publish(lists, unchecked);
+                        // 🚨 Set **after** the publish, and only on this branch.
+                        //
+                        // These are gauges about the set the node is answering
+                        // from, not about the pass — the second one is
+                        // documented as the width of every `notListed` verdict
+                        // until the next pass, and that is only true of a set
+                        // the inspector actually holds. Moving them ahead of the
+                        // publish, or setting them on the branch below, would
+                        // describe a set no verdict is using: the same shape as
+                        // counting a cache write that did not land (#362).
+                        //
+                        // On the `Err` arm they are deliberately left at their
+                        // previous values, because the previous set is what is
+                        // still being served.
+                        metrics::gauge!("trusted_list_verified").set(f64::from(stats.verified));
+                        metrics::gauge!("trusted_list_unavailable")
+                            .set(f64::from(stats.unavailable));
                     }
                     // The cache was written and cannot be read back. The
                     // previous set stays in place rather than being replaced by
@@ -1054,11 +1073,6 @@ pub fn spawn_trusted_list_refresh(
                          seal verdicts keep the set they had"
                     ),
                 }
-                // Gauges, not counters: these describe the cache as it stands
-                // after a pass, and the second one is the width of every
-                // `notListed` verdict the node will give until the next pass.
-                metrics::gauge!("trusted_list_verified").set(f64::from(stats.verified));
-                metrics::gauge!("trusted_list_unavailable").set(f64::from(stats.unavailable));
                 if stats.unavailable > 0 {
                     tracing::warn!(
                         unavailable = stats.unavailable,

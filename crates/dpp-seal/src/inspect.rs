@@ -102,7 +102,9 @@ impl CadesInspector {
     /// Takes `&self` so the background refresh can call it through the same
     /// handle the read path holds. Publish only what a **completed** pass
     /// produced: a set from half the Union reads exactly like a set from all of
-    /// it, which is the rule `0038` already took for the seal audit.
+    /// it — the rule the seal audit already took in migration
+    /// `ops/pg/0038_seal_audit_state.sql`, which keeps its report NULL until a
+    /// walk reaches the end of the estate.
     ///
     /// 🚨 Both halves or neither — see [`TrustedListSet`].
     pub fn publish(
@@ -120,6 +122,21 @@ impl CadesInspector {
             .write()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         *held = next;
+    }
+
+    /// How many lists and unchecked territories the held set carries.
+    ///
+    /// Test-only, and it exists because the two halves are not equally
+    /// observable through a verdict: a self-issued seal short-circuits to
+    /// `IssuerStanding::SelfIssued` before any list is consulted, so the `lists`
+    /// half of a swap cannot be seen through `qualification` without a
+    /// provider-issued certificate this crate cannot produce. Asserting the
+    /// snapshot directly is honest about that, rather than dressing a
+    /// half-observation up as a whole one.
+    #[cfg(test)]
+    fn held_counts(&self) -> (usize, usize) {
+        let held = self.snapshot();
+        (held.lists.len(), held.unchecked.len())
     }
 
     /// The set a verdict should be computed against, as a stable snapshot.
@@ -604,12 +621,33 @@ mod tests {
             before.unchecked
         );
 
+        assert_eq!(
+            read_path.held_counts(),
+            (0, 0),
+            "nothing held before a pass publishes"
+        );
+
+        // 🚨 **Both halves, populated.** Publishing an empty `lists` beside a
+        // populated `unchecked` would pass even if `publish` swapped only the
+        // half the verdict happens to expose — which is exactly the failure
+        // `TrustedListSet` exists to make unrepresentable.
+        let parsed: crate::trustlist::UnverifiedTrustedList =
+            serde_json::from_value(serde_json::json!({ "territory": "FI", "providers": [] }))
+                .expect("a minimal parsed list");
+        let fi = crate::trustlist::VerifiedTrustedList::from_store(parsed, "a digest".to_owned());
+
         refresher.publish(
-            Vec::new(),
+            vec![fi],
             vec![dpp_types::qualification::UncheckedTerritory {
                 territory: "DE".to_owned(),
                 reason: "over the parser ceiling".to_owned(),
             }],
+        );
+
+        assert_eq!(
+            read_path.held_counts(),
+            (1, 1),
+            "both halves of the published set must reach the read path's handle"
         );
 
         let after = read_path
