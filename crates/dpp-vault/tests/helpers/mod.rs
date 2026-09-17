@@ -545,14 +545,34 @@ pub struct TestClient {
 /// saying which call was waiting or what for. A test that cannot say why it
 /// failed costs a full CI cycle and teaches nothing.
 ///
-/// Thirty seconds sits deliberately between the two numbers that matter: far
-/// above anything a local container should need, so this never fires on a slow
-/// machine, and far below the harness ceiling, so a stall is reported **as a
-/// timed-out request against a named URL** rather than as a dead test.
+/// It sits deliberately between the two numbers that matter: far above anything
+/// a local container should need, so this never fires on a slow machine, and far
+/// below the harness ceiling, so a stall is reported **as a timed-out request
+/// against a named URL** rather than as a dead test.
 ///
 /// This does not fix a stall. It makes the next one diagnosable, which is the
 /// prerequisite for fixing it.
-const REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+///
+/// # 🚨 Why forty-five and not thirty
+///
+/// It was thirty, and thirty is the one value that throws the evidence away.
+///
+/// `PgDal::connect` builds a pool with `max_connections(10)` and no explicit
+/// `acquire_timeout`, so sqlx applies its default — **also thirty seconds**. The
+/// two candidate explanations for a request the server accepts and never answers
+/// are "the pool had no connection to give" and "the handler is stuck on
+/// something else", and at thirty-all they expire together: whichever fires
+/// first is a race, and the failure looks identical either way.
+///
+/// Above sqlx's ceiling, they separate. If the cause is pool starvation the
+/// request now comes back as a **500 naming the acquire failure** while this
+/// client is still waiting; if it is anything else, this still fires with the
+/// named-URL timeout it fired with before. One observation will say which,
+/// instead of another re-run that proves nothing.
+///
+/// Still far below nextest's 120-second ceiling, so a stall is a failed request
+/// rather than a killed test.
+const REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(45);
 
 /// Says so when a request failed because nothing answered.
 ///
