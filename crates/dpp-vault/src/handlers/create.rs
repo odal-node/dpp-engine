@@ -687,6 +687,45 @@ pub fn validate_create_request(body: &CreatePassportRequest) -> Option<axum::res
     // typed product group data, else Other. Derived again here rather than passed in —
     // it is pure, and computing it locally keeps this function callable on a
     // bare request body with nothing else in hand.
+    // 🚨 **The two declarations must agree, and this is a disclosure rule, not
+    // tidiness.**
+    //
+    // A create body can carry an explicit `productGroup` *and* a
+    // `productGroupData` whose internal tag says something else. Nothing
+    // compared them, and the two are read by different things: the explicit
+    // value becomes the stored `product_group` and picks `schemaVersion`, while
+    // the payload is schema-validated against its own tag. Both halves pass.
+    //
+    // What that reaches is the public view. `publish` filters through
+    // `ProductGroupAccessPolicy::for_schema_version(passport.product_group, …)`
+    // — the **label** — and a policy that resolves is not the fail-closed case,
+    // so the backstop never fires. Every payload field the label's table does
+    // not name falls to `default_disclosure`, which is `Public`. Battery's table
+    // names neither `svhcSubstances` nor `disassemblyInstructions`; textile's
+    // marks both `restricted`. So textile data under a battery label publishes
+    // the REACH Art. 33 substance declarations — and signs them into
+    // `publicJwsSignature`, where a published passport cannot be edited, only
+    // superseded.
+    //
+    // Refused rather than reconciled: either choice silently discards a
+    // declaration the caller made, and this is a create, so there is no existing
+    // record whose meaning a rejection would change.
+    if let (Some(explicit), Some(data)) = (&body.product_group, &body.product_group_data)
+        && explicit != &data.product_group()
+    {
+        return api_error(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "VALIDATION_ERROR",
+            &format!(
+                "productGroup says `{}` and productGroupData says `{}`. They select different \
+                 disclosure tables, so a passport carrying both would be published under one \
+                 product group's rules while holding another's data. Send one, or make them agree.",
+                explicit.catalog_key(),
+                data.product_group().catalog_key()
+            ),
+        );
+    }
+
     let product_group = body
         .product_group
         .clone()
@@ -867,5 +906,100 @@ mod life_status_at_create {
                 "`{group}` must be creatable without a life status"
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod the_label_must_match_its_payload {
+    //! A passport's product group is the key that picks the disclosure table its
+    //! public view is filtered and signed under. These pin that it cannot
+    //! disagree with the payload it is filtering.
+    //!
+    //! 🚨 The failure this prevents is a **disclosure** one, not a tidiness one.
+    //! `publish` resolves `ProductGroupAccessPolicy::for_schema_version` from the
+    //! stored `product_group` — the label. A coherent-but-wrong label resolves
+    //! perfectly, so `audience_view`'s fail-closed backstop (which keys on the
+    //! policy failing to resolve) never fires, and every payload field the
+    //! label's table does not name falls to `default_disclosure`, which is
+    //! `Public`. Battery's table names neither `svhcSubstances` nor
+    //! `disassemblyInstructions`; textile's marks both `restricted`.
+    use super::*;
+
+    fn textile_payload() -> serde_json::Value {
+        serde_json::json!({
+            "productGroup": "textile",
+            "gtin": "09506000134352",
+            "fibreComposition": [{ "fibre": "cotton", "pct": 100.0 }],
+            "careInstructions": "wash cold",
+            "countryOfOrigin": "PT",
+            "chemicalComplianceStandard": "oeko-tex-100",
+        })
+    }
+
+    fn parse(v: serde_json::Value) -> CreatePassportRequest {
+        serde_json::from_value(v).expect("a well-formed create body")
+    }
+
+    /// 🚨 A label that contradicts its payload is refused at create.
+    #[test]
+    fn a_product_group_that_contradicts_its_payload_is_refused() {
+        let req = parse(serde_json::json!({
+            "productName": "A unit",
+            "manufacturer": { "name": "M", "address": "A" },
+            "productGroup": "battery",
+            "productGroupData": textile_payload(),
+        }));
+
+        assert!(
+            validate_create_request(&req).is_some(),
+            "battery label over textile data must be refused — it would publish textile's \
+             restricted fields through battery's disclosure table"
+        );
+    }
+
+    /// The two agreeing is the ordinary case and stays lawful.
+    #[test]
+    fn a_label_that_matches_its_payload_is_accepted() {
+        let req = parse(serde_json::json!({
+            "productName": "A unit",
+            "manufacturer": { "name": "M", "address": "A" },
+            "productGroup": "textile",
+            "productGroupData": textile_payload(),
+        }));
+
+        assert!(
+            validate_create_request(&req).is_none(),
+            "a body whose two declarations agree must be accepted"
+        );
+    }
+
+    /// Declaring only the payload stays lawful — the label is derived from it.
+    ///
+    /// The check is about a *contradiction*, not about requiring both. Omitting
+    /// the explicit group is the documented way to let `productGroupData` decide.
+    #[test]
+    fn omitting_the_explicit_group_is_not_a_contradiction() {
+        let req = parse(serde_json::json!({
+            "productName": "A unit",
+            "manufacturer": { "name": "M", "address": "A" },
+            "productGroupData": textile_payload(),
+        }));
+
+        assert!(
+            validate_create_request(&req).is_none(),
+            "with no explicit productGroup there is nothing to contradict"
+        );
+    }
+
+    /// And a label with no payload at all is still fine.
+    #[test]
+    fn a_label_with_no_payload_is_not_a_contradiction() {
+        let req = parse(serde_json::json!({
+            "productName": "A unit",
+            "manufacturer": { "name": "M", "address": "A" },
+            "productGroup": "battery",
+        }));
+
+        assert!(validate_create_request(&req).is_none());
     }
 }
