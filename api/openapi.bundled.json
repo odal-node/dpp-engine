@@ -3329,7 +3329,16 @@
         ],
         "responses": {
           "200": {
-            "description": "Published passport record. With `?schema_view`, the body is instead `{ passport, schemaView }`.\n\n🚨 **The body's `id` is not always the `dppId` that was asked for.** A passport in the `superseded` status serves the published record that replaced it. ESPR Art. 9(1) has the data carrier link to *the* passport for the product, and a carrier is printed on a physical thing and cannot be recalled — so this door has to keep landing on whichever record is current, which is what `/01/{gtin}` beside it has always done.\n\nWhat is served is the successor's own signed public view, and its `supersedesId` names the passport that was asked for: the pointer is part of a document the reader can verify rather than a claim beside one. The chain is followed rather than stepped once, so `A → B → C` serves `C` when `A` is scanned.\n\nA superseded passport whose successor is **not published yet** keeps serving its own frozen view, as does one retired or deactivated with no replacement at all. In that view `status` reads as it did at publish, because the body is the payload `publicJwsSignature` was computed over.",
+            "description": "Published passport record. With `?schema_view`, the body is instead `{ passport, schemaView }`.\n\n🚨 **The body's `id` is not always the `dppId` that was asked for.** A passport in the `superseded` status serves the published record that replaced it. ESPR Art. 9(1) has the data carrier link to *the* passport for the product, and a carrier is printed on a physical thing and cannot be recalled — so this door has to keep landing on whichever record is current, which is what `/01/{gtin}` beside it has always done.\n\nWhat is served is the successor's own signed public view, and its `supersedesId` names the passport that was asked for: the pointer is part of a document the reader can verify rather than a claim beside one. The chain is followed rather than stepped once, so `A → B → C` serves `C` when `A` is scanned.\n\nA superseded passport whose successor is **not published yet** keeps serving its own frozen view, as does one retired or deactivated with no replacement at all. In that view `status` reads as it did at publish, because the body is the payload `publicJwsSignature` was computed over.\n\nWhen — and only when — the body is a different record from the one asked for, the response carries `Content-Location` naming where that record lives (RFC 9110 §8.7). Its **presence** is the signal: a client can tell \"this is your record\" from \"this is the record that replaced it\" without comparing `id` against what it sent. It is a relative reference, so it resolves correctly wherever this API is mounted.",
+            "headers": {
+              "Content-Location": {
+                "description": "Present only on a superseded read, naming the record actually served, relative to the request URI (e.g. `./0b6b…`). Absent on an ordinary read.",
+                "required": false,
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {

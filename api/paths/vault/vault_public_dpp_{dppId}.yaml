@@ -53,6 +53,23 @@ get:
         serving its own frozen view, as does one retired or deactivated with no
         replacement at all. In that view `status` reads as it did at publish,
         because the body is the payload `publicJwsSignature` was computed over.
+
+
+        When — and only when — the body is a different record from the one
+        asked for, the response carries `Content-Location` naming where that
+        record lives (RFC 9110 §8.7). Its **presence** is the signal: a client
+        can tell "this is your record" from "this is the record that replaced
+        it" without comparing `id` against what it sent. It is a relative
+        reference, so it resolves correctly wherever this API is mounted.
+      headers:
+        Content-Location:
+          description: >-
+            Present only on a superseded read, naming the record actually
+            served, relative to the request URI (e.g. `./0b6b…`). Absent on an
+            ordinary read.
+          required: false
+          schema:
+            type: string
       content:
         application/json:
           schema:
