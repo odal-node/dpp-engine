@@ -16,4 +16,5 @@ pub mod seal_drain;
 pub mod snapshot_drain;
 pub mod snapshot_store;
 pub mod transfer_drain;
+pub mod trusted_list_refresh;
 pub mod webhook_drain;

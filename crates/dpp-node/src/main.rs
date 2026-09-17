@@ -423,6 +423,22 @@ async fn main() -> anyhow::Result<()> {
         seal_audit.clone(),
         Some(db.seal_audit.clone()),
     )?;
+    // Also outside `sealing_live`, and for a second reason on top of that one:
+    // the lists answer questions about *other people's* certificates, so a node
+    // that has never sealed anything still has verdicts to give about seals it
+    // was sent. Off unless asked — see `trusted_list_refresh_enabled`.
+    if dpp_node::infra::seal::trusted_list_refresh_enabled() {
+        tracing::info!(
+            "TRUSTED_LIST_REFRESH=on — this node will fetch and verify the EU Trusted Lists \
+             daily, beginning shortly after boot"
+        );
+        boot::tasks::spawn_trusted_list_refresh(db.trusted_lists.clone());
+    } else {
+        tracing::debug!(
+            "trusted list refresh is off — seal qualification verdicts will report that no \
+             list was consulted. Set TRUSTED_LIST_REFRESH=on to change that"
+        );
+    }
     // Continuity tier: only spawn when object storage is configured — without a
     // store there is nothing to reconcile against (and the vault never enqueues).
     if let Some(store) = snapshot_store {
