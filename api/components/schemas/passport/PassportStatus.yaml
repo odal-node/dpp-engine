@@ -3,7 +3,7 @@ enum:
   - draft
   - active
   - suspended
-  - archived
+  - retired
   - superseded
   - deactivated
 description: |
@@ -12,16 +12,21 @@ description: |
   - `draft`: under construction; not publicly resolvable
   - `active`: published and signed; publicly resolvable via QR
   - `suspended`: temporarily hidden (recall, dispute); JWS preserved
-  - `archived`: end-of-life; immutable; retained for regulatory record-keeping
+  - `retired`: post-retention; immutable; retained for regulatory record-keeping.
+    Not archiving — see `GET /dpp/{dppId}/versions` for EN 18221 clause 4.2
   - `superseded`: replaced by a newer passport version; terminal
   - `deactivated`: end-of-life declared (recycled, destroyed under a
     derogation, exported, or lost); terminal. The typed reason is carried by
     the EOL event, not this field
 
   Valid transitions:
-  draft → active, draft → archived,
-  active → suspended, active → archived, active → superseded,
+  draft → active, draft → retired,
+  active → suspended, active → retired, active → superseded,
   active → deactivated,
-  suspended → active, suspended → archived, suspended → deactivated.
+  suspended → active, suspended → retired, suspended → deactivated.
 
-  `archived`, `superseded` and `deactivated` are terminal.
+  `retired`, `superseded` and `deactivated` are terminal.
+
+  `archived` is refused on input. It was this status's wire value and now names
+  only what EN 18221 clause 4.2 means by it — the retention of historical
+  versions of a passport that is still live.

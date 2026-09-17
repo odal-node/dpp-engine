@@ -8,8 +8,8 @@ get:
     ✅ EN 18221:2026 clause 4.2: *"the archived version corresponding to a given
     point in time shall be retrievable by authenticated and authorized actors"*.
 
-    🚨 **Not `POST /dpp/{dppId}/archive`.** That moves a passport to the terminal
-    `archived` lifecycle status after its retention period has elapsed. This is
+    🚨 **Not `POST /dpp/{dppId}/retire`.** That moves a passport to the terminal
+    `retired` lifecycle status after its retention period has elapsed. This is
     the standard's sense of the word — historical versions of a passport that is
     still live — and the two are unrelated.
 

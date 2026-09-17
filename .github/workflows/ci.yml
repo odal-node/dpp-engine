@@ -193,7 +193,7 @@ jobs:
         run: mkdir -p dpp-engine/results
       # One MinIO for the whole job, rather than one per S3 test — the same
       # arrangement as the Postgres service above, for the same reason. The four
-      # `s3_archive` tests booted their own and spent about ten seconds each
+      # `s3_backup` tests booted their own and spent about ten seconds each
       # doing it, which put them on the wrong side of the slow-test budget
       # whenever the runner was busy. `ODAL_TEST_S3_ENDPOINT` points them here;
       # unset, they still start their own container, so a bare `cargo test`
@@ -204,7 +204,7 @@ jobs:
       # `volumes` and `options` but not a command. The alternative — an image
       # that runs the server by default — would have CI and a local run testing
       # two different MinIO builds, which is a worse trade than a longer step.
-      # The image and tag are the ones `s3_archive.rs` pins for its own container;
+      # The image and tag are the ones `s3_backup.rs` pins for its own container;
       # the two must move together.
       #
       # `quay.io`, not Docker Hub: `docker.io/minio/minio` was removed. The Hub API

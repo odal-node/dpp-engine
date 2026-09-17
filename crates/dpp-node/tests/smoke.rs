@@ -24,7 +24,7 @@ use dpp_dal::pg::{
 };
 use dpp_dal::test_harness::{TestPg, start_pg};
 use dpp_domain::passport::PassportRef;
-use dpp_domain::{DppError, GhostArchive, GhostRegistrySync, PassthroughRegistry};
+use dpp_domain::{DppError, GhostBackup, GhostRegistrySync, PassthroughRegistry};
 use dpp_identity_service::state::AppState as IdentityState;
 use dpp_integrator::{infra::vault_client::VaultHttpClient, state::AppState as IntegratorState};
 use dpp_node::infra::credential_issuance::KeyStoreCredentialIssuer;
@@ -180,7 +180,7 @@ async fn start_node_with_ruleset(
             audit_repo,
             event_bus,
             registry_sync,
-            Arc::new(GhostArchive),
+            Arc::new(GhostBackup),
             OperatorIdentity {
                 legal_name: "Test Operator GmbH".to_owned(),
                 country: "DE".to_owned(),

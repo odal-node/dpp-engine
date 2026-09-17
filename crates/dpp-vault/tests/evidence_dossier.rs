@@ -18,7 +18,7 @@ use uuid::Uuid;
 
 use dpp_dal::in_memory_repo::InMemoryPassportRepo;
 use dpp_domain::{
-    DppError, GhostArchive, GhostRegistrySync, PassthroughRegistry,
+    DppError, GhostBackup, GhostRegistrySync, PassthroughRegistry,
     eol::{DeactivationReason, EolEvent},
     operator::{OperatorRole, ResponsibleOperator},
     passport::{FacilitySnapshot, ManufacturerInfo, Passport, PassportId},
@@ -198,7 +198,7 @@ async fn build_service() -> (PassportService, Arc<InMemoryEvidenceRepo>, String)
         Arc::new(InMemoryAuditRepo::default()),
         Arc::new(dpp_common::event::NoOpEventBus),
         Arc::new(GhostRegistrySync),
-        Arc::new(GhostArchive),
+        Arc::new(GhostBackup),
         OperatorIdentity {
             legal_name: "Test Operator GmbH".to_owned(),
             country: "DE".to_owned(),

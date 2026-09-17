@@ -597,7 +597,7 @@ fn the_two_halves_account_for_every_status() {
     const RETIRED: &[PassportStatus] = &[PassportStatus::Suspended, PassportStatus::Draft];
     const SERVED: &[PassportStatus] = &[
         PassportStatus::Published,
-        PassportStatus::Archived,
+        PassportStatus::Retired,
         PassportStatus::Superseded,
         PassportStatus::Deactivated,
     ];
@@ -627,7 +627,7 @@ fn the_two_halves_account_for_every_status() {
 #[tokio::test]
 async fn drain_keeps_a_retired_passport_that_still_serves() {
     for status in [
-        PassportStatus::Archived,
+        PassportStatus::Retired,
         PassportStatus::Superseded,
         PassportStatus::Deactivated,
     ] {

@@ -18,7 +18,7 @@ post:
     its seal, and reports `superseded` as its status.
 
     Only an `active` DPP can be amended. A draft is edited in place with
-    `PUT /vault/api/v1/dpp/{dppId}`; a suspended, archived, superseded or
+    `PUT /vault/api/v1/dpp/{dppId}`; a suspended, retired, superseded or
     deactivated DPP cannot be superseded.
 
     The schema version is **inherited**, not advanced to the product group's

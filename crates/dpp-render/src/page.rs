@@ -115,7 +115,7 @@ pub fn render_page(
     .badge-active,.badge-published{{background:#d1fae5;color:#065f46}}
     .badge-draft{{background:#fef3c7;color:#92400e}}
     .badge-suspended{{background:#fee2e2;color:#991b1b}}
-    .badge-archived{{background:#e5e7eb;color:#374151}}
+    .badge-retired{{background:#e5e7eb;color:#374151}}
     table{{width:100%;border-collapse:collapse;margin-top:.5rem}}
     th,td{{text-align:left;padding:.5rem .4rem;border-bottom:1px solid #f3f4f6;vertical-align:top}}
     th{{width:44%;color:#6b7280;font-weight:500;font-size:.875rem}}
@@ -285,6 +285,32 @@ mod tests {
         assert!(
             html.contains("2026-07-26 12:30"),
             "the banner must name the date the copy stops standing: {html}"
+        );
+    }
+
+    /// The badge class is `badge-{status}` interpolated from the status string,
+    /// so a renamed status silently loses its styling: the rule is still in the
+    /// stylesheet under the old name, the class on the element is the new one,
+    /// and nothing fails — the badge just renders unstyled on the one page a
+    /// consumer actually sees. That is exactly what `archived` → `retired` did
+    /// until this test was written.
+    #[test]
+    fn the_retired_badge_has_a_style_rule_to_match_its_class() {
+        let mut passport = unredacted_passport();
+        passport["status"] = serde_json::json!("retired");
+        let html = render_page(
+            DPP_ID,
+            &passport,
+            "https://id.odal-node.io",
+            SnapshotNotice::Live,
+        );
+        assert!(
+            html.contains("badge-retired"),
+            "the element must carry the class"
+        );
+        assert!(
+            html.contains(".badge-retired{"),
+            "and the stylesheet must define it, or the badge renders unstyled"
         );
     }
 

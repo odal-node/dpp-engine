@@ -156,7 +156,7 @@ fn render_trust_posture(node: &NodeState) {
     if !ghosts.is_empty() {
         // Deliberately not "carries no legal weight". That is exactly right for
         // `seal`, whose whole purpose is an eIDAS qualified seal, and wrong for
-        // a port like `archive`, which underwrites a durability obligation
+        // a port like `backup`, which underwrites a durability obligation
         // rather than producing anything that bears legal weight itself. One
         // sentence has to hold for every port, so it says what is true of all
         // of them: the service is simulated, so its output is not usable.

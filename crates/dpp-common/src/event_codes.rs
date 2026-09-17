@@ -47,7 +47,7 @@ pub const PLUGIN_MEM_CAPPED: &str = "PLUGIN_MEM_CAPPED";
 
 // ── Data retention ───────────────────────────────────────────────────────────
 
-/// Archive request was blocked by the ESPR retention policy.
+/// Retire request was blocked by the ESPR retention policy.
 pub const RETENTION_BLOCKED: &str = "RETENTION_BLOCKED";
 
 /// An amendment published its successor but failed to supersede the predecessor,
@@ -60,7 +60,7 @@ pub const SUPERSEDE_INCOMPLETE: &str = "SUPERSEDE_INCOMPLETE";
 
 /// Registry sync failed after exhausting all retries, or the registry is
 /// permanently unreachable. Also used for status-enqueue failures on
-/// suspend/archive/EOL (`dpp-vault::domain::service`) — these are non-fatal,
+/// suspend/retire/EOL (`dpp-vault::domain::service`) — these are non-fatal,
 /// the local passport state is authoritative.
 pub const REGISTRY_SYNC_FAILED: &str = "REGISTRY_SYNC_FAILED";
 
@@ -73,7 +73,7 @@ pub const RULESET_LOAD_FAILED: &str = "RULESET_LOAD_FAILED";
 // ── Trust / ghost-honesty guard ──────────────────────────────────────────────
 
 /// A production node refused to boot because a required trust port (seal,
-/// registry sync, archive) resolved to a ghost. Fires in `dpp-node::main`,
+/// registry sync, back-up copy) resolved to a ghost. Fires in `dpp-node::main`,
 /// immediately before the process exits — logged for boot-loop diagnosis.
 pub const TRUST_GHOST_BOOT_REFUSED: &str = "TRUST_GHOST_BOOT_REFUSED";
 

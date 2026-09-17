@@ -10,7 +10,7 @@
 //!   (c) a transient registry failure backs off (attempts++ , future retry),
 //!       keeping the row `pending`;
 //!   (d) a terminal rejection marks the row `rejected` (alarm), never dropped;
-//!   (e) suspend/archive enqueue a durable status intent.
+//!   (e) suspend/retire enqueue a durable status intent.
 //!
 //! And that a status intent is kept strictly out of the registration queue
 //! state (`ops/pg/0024`), since conflating them silently dropped registrations:
@@ -527,7 +527,7 @@ async fn suspend_enqueues_status_intent_and_counts_reflect_state() {
 
 // ─── (h) a passport that was never published owes no registration ─────────────
 
-/// `Draft -> Archived` is a legal transition, so `archive` reaches
+/// `Draft -> Retired` is a legal transition, so `retire` reaches
 /// `enqueue_status` for passports that never published and therefore have no
 /// outbox row. Recording an intent must not invent one: a fabricated row has no
 /// payload, so the drain would mark it `rejected` and raise an Art. 13 alarm for

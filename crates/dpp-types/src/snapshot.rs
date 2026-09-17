@@ -28,8 +28,8 @@
 //! availability is purely operational — the DPP standard defines the public
 //! view, not how a given node keeps it reachable. So this port stays engine-side
 //! alongside `RegistrySyncOutbox` and `WebhookOutbox`, never promoted to a core
-//! port. (`ArchivePort` is a separate, core-side concern: immutable Art. 13
-//! retention, not a mutable availability mirror.)
+//! port. (`BackupCopyPort` is a separate, core-side concern: the Art. 10(4)
+//! back-up copy, not a mutable availability mirror.)
 //!
 //! Two ports live here: [`SnapshotStore`] is the object-storage sink, and
 //! [`SnapshotOutbox`] is the durable queue that decides *when* to drive it. See
@@ -113,7 +113,7 @@ pub struct SnapshotMeta {
 /// alone cannot make it: that proof is frozen and says nothing about when the
 /// copy was taken. `put` overwrites (the view is re-rendered on each reconcile
 /// and on each refresh); `remove` retires a snapshot when the passport leaves
-/// the public tier (suspend/archive), so the static tier never keeps serving
+/// the public tier (suspend/retire), so the static tier never keeps serving
 /// `active` for a suspended passport.
 #[async_trait]
 pub trait SnapshotStore: Send + Sync {
@@ -235,7 +235,7 @@ pub struct SnapshotOutboxCounts {
 ///
 /// Enqueue is **after-commit**, matching `WebhookOutbox` rather than
 /// `RegistrySyncOutbox`'s in-transaction coupling: the status-change paths
-/// (`suspend`/`archive`/`declare_eol`) have no transaction to join — they
+/// (`suspend`/`retire`/`declare_eol`) have no transaction to join — they
 /// already enqueue their EU-registry status intent best-effort — so making the
 /// snapshot strictly stronger on the identical code path would be incoherent.
 /// Once a row exists it is loss-proof: failures back off and stay `pending`, so

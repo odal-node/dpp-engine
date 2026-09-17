@@ -18,7 +18,7 @@ use dpp_dal::pg::{
     PgSealOutboxRepo, PgTransferRepo, PgWebhookRepo,
 };
 use dpp_domain::{
-    DppError, GhostArchive, GhostRegistrySync, PassthroughRegistry,
+    DppError, GhostBackup, GhostRegistrySync, PassthroughRegistry,
     credential::{PassportCredential, PassportCredentialSubject, SignedCredential},
     passport::PassportId,
     ports::identity::IdentityPort,
@@ -312,7 +312,7 @@ async fn start_vault_with_identity(
         audit_repo,
         event_bus,
         registry_sync,
-        Arc::new(GhostArchive),
+        Arc::new(GhostBackup),
         OperatorIdentity {
             legal_name: "Test Operator GmbH".to_owned(),
             country: "DE".to_owned(),

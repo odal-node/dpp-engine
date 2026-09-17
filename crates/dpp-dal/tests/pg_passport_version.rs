@@ -2,7 +2,7 @@
 //!
 //! ✅ COMPLIANCE-PIN: EN 18221:2026 clause 4.2 (archiving).
 //!
-//! 🚨 Not `PassportStatus::Archived`, the terminal lifecycle state. The two wear
+//! 🚨 Not `PassportStatus::Retired`, the terminal lifecycle state. The two wear
 //! the same word and mean unrelated things — see the migration's header.
 //!
 //! What is here rather than in a unit test, and why each one has to be:

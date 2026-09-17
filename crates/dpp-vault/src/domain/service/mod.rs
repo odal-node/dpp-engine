@@ -1,4 +1,4 @@
-//! Core domain service for the passport lifecycle (create → publish → suspend → archive).
+//! Core domain service for the passport lifecycle (create → publish → suspend → retire).
 //!
 //! Split by lifecycle stage — each sibling file is one or more `impl
 //! PassportService` blocks for the same type. Every method here owes the
@@ -12,7 +12,7 @@
 //! - `publish` — `publish` and its private helpers `validate_schema_for_publish`/`build_carrier_url`
 //! - `amend` — `amend`: issue a corrected successor and supersede its predecessor
 //! - `lint` — `relint` (advisory lint re-check; never blocks publish)
-//! - `lifecycle` — `suspend`, `archive`
+//! - `lifecycle` — `suspend`, `retire`
 //! - `eol` — `declare_eol`
 //! - `transfer` — `initiate_transfer`, `accept_transfer`
 //! - `evidence` — `generate_evidence`/`list_evidence`/`get_evidence`/`verify_evidence`
@@ -43,7 +43,7 @@ use std::sync::Arc;
 use dpp_common::event::{DppEvent, EventBus};
 use dpp_domain::passport::PassportId;
 use dpp_domain::{
-    ports::archive::ArchivePort, ports::compliance::ComplianceRegistry,
+    ports::backup::BackupCopyPort, ports::compliance::ComplianceRegistry,
     ports::identity::IdentityPort, ports::passport_repo::PassportRepository,
     ports::registry_sync::RegistrySyncPort,
 };
@@ -72,7 +72,7 @@ pub struct OperatorIdentity {
 
 /// Core domain service for the passport lifecycle.
 ///
-/// Orchestrates create / update / publish / suspend / archive and history
+/// Orchestrates create / update / publish / suspend / retire and history
 /// with audit logging, event emission, compliance enrichment, and EU registry sync.
 /// Single-tenant: the service has no tenant/operator scope — one service per node.
 pub struct PassportService {
@@ -82,7 +82,7 @@ pub struct PassportService {
     pub audit: Arc<dyn AuditRepository>,
     pub events: Arc<dyn EventBus>,
     pub registry_sync: Arc<dyn RegistrySyncPort>,
-    pub archive: Arc<dyn ArchivePort>,
+    pub backup: Arc<dyn BackupCopyPort>,
     /// Transactional outbox for EU registry registration. When present (the
     /// Postgres node), publish persists the passport and enqueues its
     /// registration atomically, and a background drain task calls
@@ -92,9 +92,18 @@ pub struct PassportService {
     pub registry_outbox: Option<Arc<dyn RegistrySyncOutbox>>,
     /// Archived versions of passports — EN 18221:2026 clause 4.2.
     ///
-    /// 🚨 Nothing to do with `archive` above, which is object storage, or with
-    /// the terminal `archived` lifecycle status. Three uses of one word in one
-    /// struct; this is the standard's, and the only one about history.
+    /// This is now the only thing in this struct called an archive, and it is
+    /// the standard's sense of the word: the history of a passport that is
+    /// still live. Two others wore it and no longer do — the terminal lifecycle
+    /// status is `Retired`, and `backup` above is the ESPR Art. 10(4) back-up
+    /// copy.
+    ///
+    /// 🚨 `backup` is not a weaker version of this field and does not stand in
+    /// for it. Clause 4.2 expects archived versions to be held by the back-up
+    /// provider as well as by this node, so the provider is not exempt — but
+    /// `BackupCopyPort` has no method that carries a series, so whatever a
+    /// provider does about clause 4.2 happens outside this struct. Inside it,
+    /// this field is the whole of our clause 4.2 read path.
     ///
     /// `None` disables the versions route. It does **not** disable archiving —
     /// that happens in the repository decorator, which a node wires or does
@@ -127,7 +136,7 @@ pub struct PassportService {
     /// / deployments without webhooks) simply skips enqueue.
     pub webhooks: Option<Arc<dyn WebhookOutbox>>,
     /// Durable reconcile queue for the static continuity tier. When present,
-    /// every change to a passport's public state (publish, suspend, archive,
+    /// every change to a passport's public state (publish, suspend, retire,
     /// end-of-life) enqueues a reconcile row after commit; the node's drain task
     /// re-derives and mirrors — or retires — the public view, so a published
     /// passport stays reachable under a stable path when the live node is down.
@@ -144,7 +153,7 @@ pub struct PassportService {
     ///
     /// Independent of [`Self::seal_outbox`] on purpose: a node that no longer
     /// seals — the provider was dropped, or this is a standalone vault serving
-    /// archived passports — still serves seals it holds, and *those* are the ones
+    /// retired passports — still serves seals it holds, and *those* are the ones
     /// whose origin a reader most needs. Tying the two would make the answer
     /// disappear exactly when the seal is oldest and least self-explanatory.
     ///
@@ -176,7 +185,7 @@ impl PassportService {
         audit: Arc<dyn AuditRepository>,
         events: Arc<dyn EventBus>,
         registry_sync: Arc<dyn RegistrySyncPort>,
-        archive: Arc<dyn ArchivePort>,
+        backup: Arc<dyn BackupCopyPort>,
         operator: OperatorIdentity,
     ) -> Self {
         Self {
@@ -186,7 +195,7 @@ impl PassportService {
             audit,
             events,
             registry_sync,
-            archive,
+            backup,
             registry_outbox: None,
             versions: None,
             transfer_store: None,
@@ -347,7 +356,7 @@ impl PassportService {
     }
 
     /// Queue a continuity-tier reconcile for a passport whose public state just
-    /// changed — publish, suspend, archive, or end-of-life alike.
+    /// changed — publish, suspend, retire, or end-of-life alike.
     ///
     /// Deliberately says only *which* passport changed, never *what to do*: the
     /// drain re-reads the passport and derives put-or-remove from its current

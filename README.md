@@ -53,7 +53,7 @@ The engine ships as a **single binary** (`dpp-node`) that fuses all services und
 |---|---|---|
 | `dpp-types` | lib | Platform-wide types — operator config, auth, audit, API keys |
 | `dpp-dal` | lib | PostgreSQL DAL — passport repo, migrations (single-tenant; no RLS) |
-| `dpp-vault` | bin+lib | DPP write engine — create, versioned lifecycle (publish / suspend / archive / end-of-life), transfer-of-responsibility handshake, hash-chained audit, evidence-dossier generation + verification |
+| `dpp-vault` | bin+lib | DPP write engine — create, versioned lifecycle (publish / suspend / retire / end-of-life), transfer-of-responsibility handshake, hash-chained audit, evidence-dossier generation + verification |
 | `dpp-identity` | bin+lib | `did:web` identity HTTP service — signing, key rotation |
 | `dpp-resolver` | bin+lib | Public QR / Digital Link resolver, JWS-verified fail-closed |
 | `dpp-render` | lib | Shared HTML rendering of the public passport view. Extracted from `dpp-resolver` so the live read and the continuity tier's pre-rendered snapshot go through **one** renderer — a second implementation is precisely how the static tier would drift from what the resolver serves |
@@ -108,7 +108,7 @@ cargo nextest run --workspace
 
 The node starts on port **8001**. The resolver runs separately on port **8003**.
 
-**Environment**: Copy the single root template — `cp .env.example .env`. It documents every backend var, grouped by deployable (node + resolver), including the trust-layer surface: `NODE_PROFILE` (a `production` node refuses to boot on placeholder trust adapters), `RULESET_BUNDLE_PATH` + `RULESET_PUBLISHER_PUBKEY` (signed compliance-ruleset channel), and the optional `EU_REGISTRY_*` / `ARCHIVE_S3_*` / `QTSP_*` adapter blocks.
+**Environment**: Copy the single root template — `cp .env.example .env`. It documents every backend var, grouped by deployable (node + resolver), including the trust-layer surface: `NODE_PROFILE` (a `production` node refuses to boot on placeholder trust adapters), `RULESET_BUNDLE_PATH` + `RULESET_PUBLISHER_PUBKEY` (signed compliance-ruleset channel), and the optional `EU_REGISTRY_*` / `BACKUP_S3_*` / `QTSP_*` adapter blocks.
 
 ### Operate it with the `odal` CLI
 

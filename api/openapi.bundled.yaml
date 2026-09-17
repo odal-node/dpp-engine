@@ -43,7 +43,7 @@ tags:
   - name: DPP Management
     description: Create, read, update, list, and audit Digital Product Passports.
   - name: DPP Lifecycle
-    description: Lifecycle transitions — publish, suspend, archive, end-of-life, and transfer of responsibility.
+    description: Lifecycle transitions — publish, suspend, retire, end-of-life, and transfer of responsibility.
   - name: Evidence Dossiers
     description: Signed, self-contained evidence dossiers — generate, fetch, and verify (stored or uploaded) offline, with zero trust in the issuing node.
   - name: Registry
@@ -331,7 +331,7 @@ paths:
         JSON merge-patch on a `draft` or `active` DPP.
         The request body is a free-form JSON object; only supplied
         fields are changed. Returns `409 Conflict` if the DPP is
-        `suspended` or `archived`.
+        `suspended` or `retired`.
       tags:
         - DPP Management
       security:
@@ -414,8 +414,8 @@ paths:
         ✅ EN 18221:2026 clause 4.2: *"the archived version corresponding to a given
         point in time shall be retrievable by authenticated and authorized actors"*.
 
-        🚨 **Not `POST /dpp/{dppId}/archive`.** That moves a passport to the terminal
-        `archived` lifecycle status after its retention period has elapsed. This is
+        🚨 **Not `POST /dpp/{dppId}/retire`.** That moves a passport to the terminal
+        `retired` lifecycle status after its retention period has elapsed. This is
         the standard's sense of the word — historical versions of a passport that is
         still live — and the two are unrelated.
 
@@ -841,7 +841,7 @@ paths:
         its seal, and reports `superseded` as its status.
 
         Only an `active` DPP can be amended. A draft is edited in place with
-        `PUT /vault/api/v1/dpp/{dppId}`; a suspended, archived, superseded or
+        `PUT /vault/api/v1/dpp/{dppId}`; a suspended, retired, superseded or
         deactivated DPP cannot be superseded.
 
         The schema version is **inherited**, not advanced to the product group's
@@ -1001,14 +1001,18 @@ paths:
           $ref: '#/components/responses/NotFound'
         '409':
           $ref: '#/components/responses/Conflict'
-  /vault/api/v1/dpp/{dppId}/archive:
+  /vault/api/v1/dpp/{dppId}/retire:
     post:
-      operationId: archiveDpp
-      summary: Archive a DPP
+      operationId: retireDpp
+      summary: Retire a DPP
       description: |
-        Transition a DPP to `archived`. This is irreversible.
-        Archived DPPs are immutable and retained for regulatory record-keeping.
+        Transition a DPP to `retired`. This is irreversible.
+        Retired DPPs are immutable and retained for regulatory record-keeping.
         No request body is required.
+
+        🚨 **Not archiving.** EN 18221 clause 4.2 archiving is the retention of
+        historical versions of a passport that is still live, and it is served by
+        `GET /dpp/{dppId}/versions`. This route ends a record's publication life.
       tags:
         - DPP Lifecycle
       security:
@@ -1022,7 +1026,7 @@ paths:
             $ref: '#/components/schemas/DppId'
       responses:
         '200':
-          description: DPP archived. Returns the full passport record.
+          description: DPP retired. Returns the full passport record.
           content:
             application/json:
               schema:
@@ -4245,7 +4249,7 @@ components:
         - draft
         - active
         - suspended
-        - archived
+        - retired
         - superseded
         - deactivated
       description: |
@@ -4254,19 +4258,24 @@ components:
         - `draft`: under construction; not publicly resolvable
         - `active`: published and signed; publicly resolvable via QR
         - `suspended`: temporarily hidden (recall, dispute); JWS preserved
-        - `archived`: end-of-life; immutable; retained for regulatory record-keeping
+        - `retired`: post-retention; immutable; retained for regulatory record-keeping.
+          Not archiving — see `GET /dpp/{dppId}/versions` for EN 18221 clause 4.2
         - `superseded`: replaced by a newer passport version; terminal
         - `deactivated`: end-of-life declared (recycled, destroyed under a
           derogation, exported, or lost); terminal. The typed reason is carried by
           the EOL event, not this field
 
         Valid transitions:
-        draft → active, draft → archived,
-        active → suspended, active → archived, active → superseded,
+        draft → active, draft → retired,
+        active → suspended, active → retired, active → superseded,
         active → deactivated,
-        suspended → active, suspended → archived, suspended → deactivated.
+        suspended → active, suspended → retired, suspended → deactivated.
 
-        `archived`, `superseded` and `deactivated` are terminal.
+        `retired`, `superseded` and `deactivated` are terminal.
+
+        `archived` is refused on input. It was this status's wire value and now names
+        only what EN 18221 clause 4.2 means by it — the retention of historical
+        versions of a passport that is still live.
     Granularity:
       type: string
       enum:
@@ -7546,7 +7555,7 @@ components:
 
         ✅ EN 18221:2026 clause 4.2 (archiving), one of the six standards cited by Commission Implementing Decision (EU) 2026/1736.
 
-        🚨 **Not the `archived` lifecycle status**, which is a terminal state reached after the ESPR retention period and says the record has stopped changing. This is the standard's sense of the word — historical versions of a passport that is still live — and the two are unrelated.
+        🚨 **Not the `retired` lifecycle status**, which is a terminal state reached after the ESPR retention period and says the record has stopped changing. This is the standard's sense of the word — historical versions of a passport that is still live — and the two are unrelated.
       required:
         - id
         - passportId
@@ -8256,7 +8265,7 @@ components:
     Conflict:
       description: |
         State conflict — e.g. attempting to publish an already-published DPP
-        or updating an archived DPP.
+        or updating a retired DPP.
       content:
         application/problem+json:
           schema:

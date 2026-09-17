@@ -25,7 +25,7 @@ pub struct PassportAuditEntry {
     pub passport_id: String,
     /// Who triggered this change, stamped from `AuthContext` at the call site.
     pub actor: String,
-    /// Machine-readable action code, e.g. `"create"`, `"publish"`, `"archive"`.
+    /// Machine-readable action code, e.g. `"create"`, `"publish"`, `"retired"`.
     pub action: String,
     /// Passport status before the transition, if applicable.
     pub previous_status: Option<String>,
@@ -323,7 +323,7 @@ mod tests {
 
     #[test]
     fn tampered_content_breaks_at_exact_index() {
-        let mut es = [entry("created"), entry("published"), entry("archived")];
+        let mut es = [entry("created"), entry("published"), entry("retired")];
         chain(&mut es);
         es[1].new_status = Some("suspended".into()); // flip content, keep stored hash
         let brk = verify_audit_chain(&es).expect_err("tamper must be detected");
@@ -375,7 +375,7 @@ mod tests {
 ///
 /// ✅ COMPLIANCE-PIN: EN 18221:2026 clause 4.2.
 ///
-/// 🚨 Nothing to do with `PassportStatus::Archived`, which is a terminal
+/// 🚨 Nothing to do with `PassportStatus::Retired`, which is a terminal
 /// lifecycle state. This is the standard's sense of the word: historical
 /// versions of a passport that is still live. See
 /// `ops/pg/0040_passport_version.sql` for why both wear the name.
@@ -404,6 +404,15 @@ pub struct PassportVersion {
 /// **public** view per passport, refreshed rather than versioned; being
 /// redacted it cannot satisfy the clause's access-restriction limb even in
 /// principle.
+///
+/// And not `dpp_domain::ports::backup::BackupCopyPort`, the ESPR Art. 10(4)
+/// back-up copy — the one on this list that is easiest to mis-read in the
+/// *other* direction. Clause 4.2 expects archived versions to be held by the
+/// back-up provider as well as by this node, so the provider is not exempt from
+/// the clause. It is that the port carries no series — one copy per passport,
+/// `retrieve` answering with one — so whatever a provider does about clause 4.2
+/// happens outside it. This trait is the node's own side, and wiring a back-up
+/// adapter leaves it unwired.
 ///
 /// # Archiving begins at the first change, not at create
 ///

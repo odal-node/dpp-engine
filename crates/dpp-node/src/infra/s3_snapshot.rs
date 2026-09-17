@@ -4,7 +4,7 @@
 //! `validUntil` proof, to a **public** bucket under `{dpp_id}/public.json`, so a
 //! CDN or bucket-website can serve it under a stable
 //! path when the live node is unreachable. This bucket is deliberately separate
-//! from the (private) ESPR Art. 13 archive bucket: snapshots are public by
+//! from the (private) ESPR Art. 10(4) back-up bucket: snapshots are public by
 //! design, archives are not — never colocate them.
 //!
 //! # Configuration

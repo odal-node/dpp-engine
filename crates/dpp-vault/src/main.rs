@@ -11,7 +11,7 @@ use dpp_dal::pg::{
     PgRegistryIdentityRepo, PgScanTelemetryRepo, PgWebhookRepo,
 };
 use dpp_domain::{
-    DppError, GhostArchive, GhostRegistrySync, PassthroughRegistry,
+    DppError, GhostBackup, GhostRegistrySync, PassthroughRegistry,
     ports::registry_sync::RegistrySyncPort,
 };
 use dpp_types::trust::{NodeProfile, NodeTrustReport, TrustMode, TrustPort};
@@ -93,7 +93,7 @@ async fn main() -> anyhow::Result<()> {
                 required: true,
             },
             TrustPort {
-                port: "archive",
+                port: "backup",
                 mode: TrustMode::Ghost,
                 required: false,
             },
@@ -124,7 +124,7 @@ async fn main() -> anyhow::Result<()> {
             audit_repo,
             event_bus,
             registry_sync,
-            Arc::new(GhostArchive),
+            Arc::new(GhostBackup),
             domain::service::OperatorIdentity::default(),
         )
         .with_registry_reader(operator_repo.clone())

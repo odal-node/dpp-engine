@@ -52,7 +52,7 @@ impl PassportService {
         self.repo.find_by_identity(identity).await
     }
 
-    /// Fetch a passport in any status, including `Archived`. Returns `None` if unknown.
+    /// Fetch a passport in any status, including `Retired`. Returns `None` if unknown.
     pub async fn find_by_id_any_status(
         &self,
         id: PassportId,

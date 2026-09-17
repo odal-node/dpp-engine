@@ -4,11 +4,13 @@
 //! corresponding to a given point in time shall be retrievable by authenticated
 //! and authorized actors"*.
 //!
-//! 🚨 **Not `POST .../archive`**, which moves a passport to the terminal
-//! `archived` lifecycle state after its retention period. Two different things
-//! wear the word; this is the standard's sense — historical versions of a
-//! passport that is still live. The naming collision is tracked upstream, where
-//! the lifecycle status lives.
+//! 🚨 **Not `POST .../retire`**, which moves a passport to the terminal
+//! `retired` lifecycle state after its retention period. That route was called
+//! `/archive` and the status was `archived`, which made this route look like a
+//! duplicate of something already built. It never was: this is the standard's
+//! sense of the word — historical versions of a passport that is still live —
+//! and it is now the only thing here that wears it.
+//! `scripts/vocabulary-check.sh` keeps it that way.
 
 use axum::{
     Json,

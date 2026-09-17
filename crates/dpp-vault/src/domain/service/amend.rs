@@ -82,7 +82,7 @@ impl PassportService {
         let predecessor = self.find_by_id(id).await?;
 
         // `Published` is the only state that can be superseded — a draft is
-        // edited in place, and `Suspended`, `Archived`, `Superseded` and
+        // edited in place, and `Suspended`, `Retired`, `Superseded` and
         // `Deactivated` are either reversible or terminal by another route.
         // Asking the state machine rather than matching on the variant keeps
         // this in step with `can_transition_to` if the table ever widens.
@@ -244,12 +244,12 @@ impl PassportService {
         )
         .await;
 
-        // A superseded passport keeps serving publicly, like an archived or
+        // A superseded passport keeps serving publicly, like a retired or
         // deactivated one — products made under the old specification are still
         // in the field carrying carriers that resolve to it. The reconcile is
         // still needed, and for the opposite reason to a withdrawal: the stored
         // snapshot has to be refreshed to carry the new status rather than the
-        // old one, not removed. Same reconcile `suspend` and `archive` do, and
+        // old one, not removed. Same reconcile `suspend` and `retire` do, and
         // non-fatal for the same reason: the database is the source of truth.
         self.enqueue_snapshot_reconcile(superseded.id).await;
 

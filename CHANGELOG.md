@@ -12,6 +12,51 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ### Breaking
 
+- **`POST /dpp/{dppId}/archive` is now `POST /dpp/{dppId}/retire`, the status it
+  sets is `"retired"`, and the event it emits is `dpp.passport.retired`.**
+  *(Breaking across six surfaces: the route, the `retireDpp` operationId, the
+  `PassportStatus` wire value, the event subject, `trustMode.archive` →
+  `trustMode.backup` on `GET /node/state`, and `odal passport archive` →
+  `odal passport retire`. `"archived"` is **refused** on input, not aliased.)*
+
+  **Migration:** call `/retire` instead of `/archive`; expect `"retired"`
+  wherever you matched `"archived"`; resubscribe webhooks and NATS consumers
+  filtering `dpp.passport.archived`; rename `ARCHIVE_S3_*` to `BACKUP_S3_*`.
+  Migration `0041_retired_status.sql` rewrites stored statuses on upgrade.
+
+  **Why.** The word named three different things here. **EN 18221:2026 clause
+  4.2** — one of the six standards cited by Commission Implementing Decision (EU)
+  2026/1736 — uses "archiving" for the retention of historical versions of a
+  passport that is **still live**, which this node does in `passport_version`
+  and serves at `GET /dpp/{dppId}/versions`. A terminal lifecycle status is not
+  that, and neither is the **ESPR Art. 10(4)** back-up copy held by an
+  **Art. 2(32)** independent provider. While all three wore the word, anyone
+  mapping this system onto EN 18221 by name ticked a box that was not ticked —
+  which is how the clause 4.2 gap survived unnoticed: the name looked taken.
+
+  *Different*, not unrelated, and the difference matters when reading the
+  back-up: clause 4.2 expects archived versions to be held by the back-up
+  provider **as well as** by this node, so a provider is not exempt from the
+  clause. What separates the two here is shape — `BackupCopyPort` carries one
+  copy per passport and no series at all — so no arrangement with a provider
+  wires `passport_version` for us, and nothing here should be read as saying a
+  provider owes no history.
+
+  **Nothing was removed.** Archiving keeps the word and now means only what the
+  standard means by it. The status is `retired`; the Art. 10(4) copy is the
+  back-up copy. `scripts/vocabulary-check.sh`, in `just check`, refuses any new
+  route path, `api/paths/` file or event subject containing "archiv".
+
+  **The audit trail is not rewritten.** `action`, `prevStatus` and `newStatus`
+  are inside the hash chain, so `0041` only *widens* `passport_audit`'s CHECK —
+  `retired` is added and `archived` stays legal. An entry saying `archived`
+  records a transition performed while that was the word, and editing it would
+  make every later entry read as tampered.
+
+  Pins dpp-core **0.21.0**, which carries the status rename and renames the
+  back-up port with it (`ports::archive::ArchivePort` → `ports::backup::BackupCopyPort`,
+  plus `ArchiveReceipt`/`ArchiveStatus`/`ArchiveVerification`/`GhostArchive`).
+
 - **`publishReadiness.passportScope.status` reports six answers where it
   reported three.** *(Breaking: `voluntary` is gone. A record the article does
   not reach now answers `notCovered`, `belowThreshold` or `notYetBinding`

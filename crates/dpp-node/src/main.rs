@@ -18,7 +18,7 @@ use dpp_common::{
 };
 use dpp_crypto::keystore::KeyStore;
 use dpp_domain::{
-    ports::archive::ArchivePort, ports::compliance::ComplianceRegistry,
+    ports::backup::BackupCopyPort, ports::compliance::ComplianceRegistry,
     ports::registry_sync::RegistrySyncPort,
 };
 use dpp_identity_service::state::AppState as IdentityState;
@@ -152,9 +152,9 @@ async fn main() -> anyhow::Result<()> {
         }
     };
 
-    // ── ESPR Art. 13 archive (S3/MinIO or NoOp) ──────────────────────────────
-    let (archive, archive_trust): (Arc<dyn ArchivePort>, TrustMode) =
-        dpp_node::infra::s3_archive::from_env();
+    // ── ESPR Art. 10(4) back-up copy (S3/MinIO or NoOp) ─────────────────────
+    let (backup, backup_trust): (Arc<dyn BackupCopyPort>, TrustMode) =
+        dpp_node::infra::s3_backup::from_env();
 
     // Credential issuers: who may attest which audience. Ghost when unconfigured,
     // so a node that cannot grant credentialed access says so rather than
@@ -182,7 +182,7 @@ async fn main() -> anyhow::Result<()> {
     let trust = boot::trust::build_and_enforce(
         seal_wiring.trust,
         registry_trust,
-        archive_trust,
+        backup_trust,
         credential_trust,
         plugins::compliance_trust(&plugin_host),
     )?;
@@ -254,7 +254,7 @@ async fn main() -> anyhow::Result<()> {
         db.audit_repo.clone(),
         event_bus,
         registry_sync,
-        archive,
+        backup,
         operator,
     )
     .with_registry_reader(db.operator_repo.clone())

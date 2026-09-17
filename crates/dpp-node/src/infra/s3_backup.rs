@@ -1,4 +1,14 @@
-//! S3/MinIO adapter implementing `ArchivePort` for ESPR Art. 13 DPP archival.
+//! S3/MinIO adapter implementing `BackupCopyPort` — the ESPR Art. 10(4)
+//! back-up copy, held by an Art. 2(32) independent provider. Not ESPR Art. 13,
+//! which is the registry.
+//!
+//! **Not EN 18221 clause 4.2 archiving either — but not because a back-up
+//! provider is exempt from it.** Clause 4.2 expects a passport's archived
+//! versions to be held by the back-up provider as well as by the main one. It
+//! is that this adapter implements a port with no series in it: one key per
+//! content hash, `retrieve` answering with one passport. This node's clause 4.2
+//! archiving is `ArchivingPassportRepo` in the DAL, and a provider's is the
+//! provider's to build.
 //!
 //! Key scheme: `passports/{passport_id}/{sha256_hex}` — content-addressed, idempotent.
 //! Same content → same key. Different content (new version) → different key.
@@ -7,13 +17,13 @@
 //!
 //! | Variable                       | Required | Default       |
 //! |--------------------------------|----------|---------------|
-//! | `ARCHIVE_S3_BUCKET`            | Yes      | —             |
-//! | `ARCHIVE_S3_ACCESS_KEY_ID`     | Yes      | —             |
-//! | `ARCHIVE_S3_SECRET_ACCESS_KEY` | Yes      | —             |
-//! | `ARCHIVE_S3_ENDPOINT`          | No       | real AWS      |
-//! | `ARCHIVE_S3_REGION`            | No       | `us-east-1`   |
+//! | `BACKUP_S3_BUCKET`            | Yes      | —             |
+//! | `BACKUP_S3_ACCESS_KEY_ID`     | Yes      | —             |
+//! | `BACKUP_S3_SECRET_ACCESS_KEY` | Yes      | —             |
+//! | `BACKUP_S3_ENDPOINT`          | No       | real AWS      |
+//! | `BACKUP_S3_REGION`            | No       | `us-east-1`   |
 //!
-//! Set `ARCHIVE_S3_ENDPOINT` to a MinIO URL (e.g. `http://localhost:9000`) for
+//! Set `BACKUP_S3_ENDPOINT` to a MinIO URL (e.g. `http://localhost:9000`) for
 //! local dev. Leave it unset to target real AWS S3, Cloudflare R2, or Hetzner.
 
 use async_trait::async_trait;
@@ -21,25 +31,28 @@ use chrono::Utc;
 use dpp_domain::{
     error::DppError,
     passport::{Passport, PassportId},
-    ports::archive::{ArchivePort, ArchiveReceipt, ArchiveStatus, ArchiveVerification},
+    ports::backup::{BackupCopyPort, BackupReceipt, BackupStatus, BackupVerification},
 };
 
-/// Build the archive adapter from env: the real S3 adapter if the `s3` build
-/// feature is enabled and `ARCHIVE_S3_BUCKET` is set, [`NoOpArchive`] otherwise.
-pub fn from_env() -> (std::sync::Arc<dyn ArchivePort>, dpp_types::trust::TrustMode) {
+/// Build the back-up adapter from env: the real S3 adapter if the `s3` build
+/// feature is enabled and `BACKUP_S3_BUCKET` is set, [`NoOpBackup`] otherwise.
+pub fn from_env() -> (
+    std::sync::Arc<dyn BackupCopyPort>,
+    dpp_types::trust::TrustMode,
+) {
     #[cfg(feature = "s3")]
-    if let Some(cfg) = S3ArchiveConfig::from_env() {
-        tracing::info!(bucket = %cfg.bucket, "ESPR archive: S3 adapter active");
+    if let Some(cfg) = S3BackupConfig::from_env() {
+        tracing::info!(bucket = %cfg.bucket, "ESPR back-up copy: S3 adapter active");
         return (
-            std::sync::Arc::new(S3ArchiveAdapter::new(cfg)),
+            std::sync::Arc::new(S3BackupAdapter::new(cfg)),
             dpp_types::trust::TrustMode::Live,
         );
     }
     tracing::info!(
-        "ESPR archive: no-op — set ARCHIVE_S3_BUCKET (and build with --features s3) to enable"
+        "ESPR back-up copy: no-op — set BACKUP_S3_BUCKET (and build with --features s3) to enable"
     );
     (
-        std::sync::Arc::new(NoOpArchive),
+        std::sync::Arc::new(NoOpBackup),
         dpp_types::trust::TrustMode::Ghost,
     )
 }
@@ -56,7 +69,7 @@ use sha2::{Digest, Sha256};
 // ─── Config ──────────────────────────────────────────────────────────────────
 
 #[cfg(feature = "s3")]
-pub struct S3ArchiveConfig {
+pub struct S3BackupConfig {
     pub endpoint: Option<String>,
     pub bucket: String,
     pub access_key_id: String,
@@ -65,22 +78,22 @@ pub struct S3ArchiveConfig {
 }
 
 #[cfg(feature = "s3")]
-impl S3ArchiveConfig {
-    /// Load from env vars. Returns `None` if `ARCHIVE_S3_BUCKET` is absent or empty.
+impl S3BackupConfig {
+    /// Load from env vars. Returns `None` if `BACKUP_S3_BUCKET` is absent or empty.
     pub fn from_env() -> Option<Self> {
-        let bucket = std::env::var("ARCHIVE_S3_BUCKET")
+        let bucket = std::env::var("BACKUP_S3_BUCKET")
             .ok()
             .filter(|s| !s.is_empty())?;
-        let access_key_id = std::env::var("ARCHIVE_S3_ACCESS_KEY_ID")
+        let access_key_id = std::env::var("BACKUP_S3_ACCESS_KEY_ID")
             .ok()
             .filter(|s| !s.is_empty())?;
-        let secret_access_key = std::env::var("ARCHIVE_S3_SECRET_ACCESS_KEY")
+        let secret_access_key = std::env::var("BACKUP_S3_SECRET_ACCESS_KEY")
             .ok()
             .filter(|s| !s.is_empty())?;
-        let endpoint = std::env::var("ARCHIVE_S3_ENDPOINT")
+        let endpoint = std::env::var("BACKUP_S3_ENDPOINT")
             .ok()
             .filter(|s| !s.is_empty());
-        let region = std::env::var("ARCHIVE_S3_REGION").unwrap_or_else(|_| "us-east-1".into());
+        let region = std::env::var("BACKUP_S3_REGION").unwrap_or_else(|_| "us-east-1".into());
         Some(Self {
             endpoint,
             bucket,
@@ -94,14 +107,14 @@ impl S3ArchiveConfig {
 // ─── Adapter ─────────────────────────────────────────────────────────────────
 
 #[cfg(feature = "s3")]
-pub struct S3ArchiveAdapter {
+pub struct S3BackupAdapter {
     client: Client,
     bucket: String,
 }
 
 #[cfg(feature = "s3")]
-impl S3ArchiveAdapter {
-    pub fn new(cfg: S3ArchiveConfig) -> Self {
+impl S3BackupAdapter {
+    pub fn new(cfg: S3BackupConfig) -> Self {
         let credentials = Credentials::new(
             cfg.access_key_id,
             cfg.secret_access_key,
@@ -174,39 +187,39 @@ impl S3ArchiveAdapter {
 
 #[cfg(feature = "s3")]
 #[async_trait]
-impl ArchivePort for S3ArchiveAdapter {
-    async fn archive(
+impl BackupCopyPort for S3BackupAdapter {
+    async fn store(
         &self,
         passport: &Passport,
         retention_years: u32,
-    ) -> Result<ArchiveReceipt, DppError> {
+    ) -> Result<BackupReceipt, DppError> {
         let (bytes, hash) = Self::hash(passport)?;
         let key = Self::object_key(passport.id, &hash);
         self.put(&key, bytes).await?;
 
         let now = Utc::now();
-        Ok(ArchiveReceipt {
-            archive_id: key,
+        Ok(BackupReceipt {
+            backup_id: key,
             passport_id: passport.id,
             content_hash: hash,
-            archived_at: now,
+            stored_at: now,
             retention_until: now + chrono::Duration::days(365 * retention_years as i64),
         })
     }
 
-    async fn update_archive(&self, passport: &Passport) -> Result<ArchiveReceipt, DppError> {
+    async fn update(&self, passport: &Passport) -> Result<BackupReceipt, DppError> {
         // New content → new hash → new key. All versions coexist in the bucket
-        // (append-only archive). `retrieve()` returns the most recently written.
+        // (append-only store). `retrieve()` returns the most recently written.
         let (bytes, hash) = Self::hash(passport)?;
         let key = Self::object_key(passport.id, &hash);
         self.put(&key, bytes).await?;
 
         let now = Utc::now();
-        Ok(ArchiveReceipt {
-            archive_id: key,
+        Ok(BackupReceipt {
+            backup_id: key,
             passport_id: passport.id,
             content_hash: hash,
-            archived_at: now,
+            stored_at: now,
             retention_until: now + chrono::Duration::days(365 * 10),
         })
     }
@@ -215,7 +228,7 @@ impl ArchivePort for S3ArchiveAdapter {
         &self,
         passport_id: PassportId,
         expected_hash: &str,
-    ) -> Result<ArchiveVerification, DppError> {
+    ) -> Result<BackupVerification, DppError> {
         let key = Self::object_key(passport_id, expected_hash);
         let exists = self
             .client
@@ -226,13 +239,13 @@ impl ArchivePort for S3ArchiveAdapter {
             .await
             .is_ok();
 
-        Ok(ArchiveVerification {
+        Ok(BackupVerification {
             integrity_ok: exists,
             accessible: exists,
             status: if exists {
-                ArchiveStatus::Active
+                BackupStatus::Active
             } else {
-                ArchiveStatus::Expired
+                BackupStatus::Expired
             },
             last_verified_at: Utc::now(),
         })
@@ -280,7 +293,7 @@ impl ArchivePort for S3ArchiveAdapter {
             .into_bytes();
 
         let passport: Passport = serde_json::from_slice(&data)
-            .map_err(|e| DppError::Serialisation(format!("corrupt archive record: {e}")))?;
+            .map_err(|e| DppError::Serialisation(format!("corrupt back-up record: {e}")))?;
 
         Ok(Some(passport))
     }
@@ -288,40 +301,40 @@ impl ArchivePort for S3ArchiveAdapter {
 
 // ─── NoOp fallback ───────────────────────────────────────────────────────────
 
-/// Used when `ARCHIVE_S3_BUCKET` is not configured (dev / CI without object storage).
-/// Logs a warning on every archive call and returns a stub receipt.
-pub struct NoOpArchive;
+/// Used when `BACKUP_S3_BUCKET` is not configured (dev / CI without object storage).
+/// Logs a warning on every back-up call and returns a stub receipt.
+pub struct NoOpBackup;
 
 #[async_trait]
-impl ArchivePort for NoOpArchive {
-    async fn archive(
+impl BackupCopyPort for NoOpBackup {
+    async fn store(
         &self,
         passport: &Passport,
         _retention_years: u32,
-    ) -> Result<ArchiveReceipt, DppError> {
+    ) -> Result<BackupReceipt, DppError> {
         tracing::warn!(
             passport_id = %passport.id,
-            "ESPR archive skipped — ARCHIVE_S3_BUCKET not configured"
+            "ESPR back-up copy skipped — BACKUP_S3_BUCKET not configured"
         );
-        Ok(ArchiveReceipt {
-            archive_id: "no-op".into(),
+        Ok(BackupReceipt {
+            backup_id: "no-op".into(),
             passport_id: passport.id,
             content_hash: String::new(),
-            archived_at: Utc::now(),
+            stored_at: Utc::now(),
             retention_until: Utc::now() + chrono::Duration::days(365 * 10),
         })
     }
 
-    async fn update_archive(&self, passport: &Passport) -> Result<ArchiveReceipt, DppError> {
+    async fn update(&self, passport: &Passport) -> Result<BackupReceipt, DppError> {
         tracing::warn!(
             passport_id = %passport.id,
-            "ESPR archive update skipped — ARCHIVE_S3_BUCKET not configured"
+            "ESPR back-up refresh skipped — BACKUP_S3_BUCKET not configured"
         );
-        Ok(ArchiveReceipt {
-            archive_id: "no-op".into(),
+        Ok(BackupReceipt {
+            backup_id: "no-op".into(),
             passport_id: passport.id,
             content_hash: String::new(),
-            archived_at: Utc::now(),
+            stored_at: Utc::now(),
             retention_until: Utc::now() + chrono::Duration::days(365 * 10),
         })
     }
@@ -330,11 +343,11 @@ impl ArchivePort for NoOpArchive {
         &self,
         _passport_id: PassportId,
         _expected_hash: &str,
-    ) -> Result<ArchiveVerification, DppError> {
-        Ok(ArchiveVerification {
+    ) -> Result<BackupVerification, DppError> {
+        Ok(BackupVerification {
             integrity_ok: false,
             accessible: false,
-            status: ArchiveStatus::Expired,
+            status: BackupStatus::Expired,
             last_verified_at: Utc::now(),
         })
     }
