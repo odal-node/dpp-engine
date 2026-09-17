@@ -25,7 +25,7 @@ pub struct PassportAuditEntry {
     pub passport_id: String,
     /// Who triggered this change, stamped from `AuthContext` at the call site.
     pub actor: String,
-    /// Machine-readable action code, e.g. `"create"`, `"publish"`, `"archive"`.
+    /// Machine-readable action code, e.g. `"create"`, `"publish"`, `"retired"`.
     pub action: String,
     /// Passport status before the transition, if applicable.
     pub previous_status: Option<String>,
@@ -323,7 +323,7 @@ mod tests {
 
     #[test]
     fn tampered_content_breaks_at_exact_index() {
-        let mut es = [entry("created"), entry("published"), entry("archived")];
+        let mut es = [entry("created"), entry("published"), entry("retired")];
         chain(&mut es);
         es[1].new_status = Some("suspended".into()); // flip content, keep stored hash
         let brk = verify_audit_chain(&es).expect_err("tamper must be detected");
@@ -375,7 +375,7 @@ mod tests {
 ///
 /// ✅ COMPLIANCE-PIN: EN 18221:2026 clause 4.2.
 ///
-/// 🚨 Nothing to do with `PassportStatus::Archived`, which is a terminal
+/// 🚨 Nothing to do with `PassportStatus::Retired`, which is a terminal
 /// lifecycle state. This is the standard's sense of the word: historical
 /// versions of a passport that is still live. See
 /// `ops/pg/0040_passport_version.sql` for why both wear the name.

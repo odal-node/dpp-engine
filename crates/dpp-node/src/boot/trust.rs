@@ -14,7 +14,7 @@ use dpp_types::trust::{NodeProfile, NodeTrustReport, TrustMode, TrustPort};
 pub fn build_and_enforce(
     seal_trust: TrustMode,
     registry_trust: TrustMode,
-    archive_trust: TrustMode,
+    backup_trust: TrustMode,
     credential_trust: TrustMode,
     compliance_trust: TrustMode,
 ) -> anyhow::Result<Arc<NodeTrustReport>> {
@@ -44,8 +44,8 @@ pub fn build_and_enforce(
                 required: true,
             },
             TrustPort {
-                port: "archive",
-                mode: archive_trust,
+                port: "backup",
+                mode: backup_trust,
                 required: false,
             },
             // Not required: a node serving only public passport views is fully

@@ -36,7 +36,7 @@
     },
     {
       "name": "DPP Lifecycle",
-      "description": "Lifecycle transitions — publish, suspend, archive, end-of-life, and transfer of responsibility."
+      "description": "Lifecycle transitions — publish, suspend, retire, end-of-life, and transfer of responsibility."
     },
     {
       "name": "Evidence Dossiers",
@@ -432,7 +432,7 @@
       "put": {
         "operationId": "updateDpp",
         "summary": "Update a DPP",
-        "description": "JSON merge-patch on a `draft` or `active` DPP.\nThe request body is a free-form JSON object; only supplied\nfields are changed. Returns `409 Conflict` if the DPP is\n`suspended` or `archived`.\n",
+        "description": "JSON merge-patch on a `draft` or `active` DPP.\nThe request body is a free-form JSON object; only supplied\nfields are changed. Returns `409 Conflict` if the DPP is\n`suspended` or `retired`.\n",
         "tags": [
           "DPP Management"
         ],
@@ -553,7 +553,7 @@
       "get": {
         "operationId": "getDppVersions",
         "summary": "List a DPP's archived versions, or reconstitute one",
-        "description": "Returns every archived version of a passport, oldest first — or, with\n`asOf`, the single version that was current at that instant.\n\n✅ EN 18221:2026 clause 4.2: *\"the archived version corresponding to a given\npoint in time shall be retrievable by authenticated and authorized actors\"*.\n\n🚨 **Not `POST /dpp/{dppId}/archive`.** That moves a passport to the terminal\n`archived` lifecycle status after its retention period has elapsed. This is\nthe standard's sense of the word — historical versions of a passport that is\nstill live — and the two are unrelated.\n\nArchiving begins at the **first change** to a passport, as the clause\nrequires, so a passport that has never changed has no archived versions and\nreturns an empty list. That is not a gap: the live record is the state at\nevery moment before the first change.\n\nEach version is the complete record, so a reader reconstitutes rather than\nreplays. Versions are append-only and are kept for the passport's lifetime.\n",
+        "description": "Returns every archived version of a passport, oldest first — or, with\n`asOf`, the single version that was current at that instant.\n\n✅ EN 18221:2026 clause 4.2: *\"the archived version corresponding to a given\npoint in time shall be retrievable by authenticated and authorized actors\"*.\n\n🚨 **Not `POST /dpp/{dppId}/retire`.** That moves a passport to the terminal\n`retired` lifecycle status after its retention period has elapsed. This is\nthe standard's sense of the word — historical versions of a passport that is\nstill live — and the two are unrelated.\n\nArchiving begins at the **first change** to a passport, as the clause\nrequires, so a passport that has never changed has no archived versions and\nreturns an empty list. That is not a gap: the live record is the state at\nevery moment before the first change.\n\nEach version is the complete record, so a reader reconstitutes rather than\nreplays. Versions are append-only and are kept for the passport's lifetime.\n",
         "tags": [
           "DPP Management"
         ],
@@ -950,7 +950,7 @@
       "post": {
         "operationId": "amendDpp",
         "summary": "Amend a published DPP by issuing a successor",
-        "description": "Correct a published DPP. A published passport cannot be edited in place —\nits signatures commit to its bytes and the retention guard refuses the\nwrite — so this issues a **new** passport instead.\n\nThe successor is a copy of `dppId` with the `patch` applied, carrying\n`supersedesId` back to `dppId` and `version` incremented. It goes through\nthe same gates as any first publish: schema validation, product-group\nvalidation, mandatory-content checks, signing, and registry sync. When it\npublishes successfully, `dppId` moves to the terminal `superseded` state.\n\n**The response body is a different passport from the one in the path.** It\nis the successor, with its own `id`. Clients holding the old id keep a valid\nreference: a superseded passport stays resolvable, keeps its signatures and\nits seal, and reports `superseded` as its status.\n\nOnly an `active` DPP can be amended. A draft is edited in place with\n`PUT /vault/api/v1/dpp/{dppId}`; a suspended, archived, superseded or\ndeactivated DPP cannot be superseded.\n\nThe schema version is **inherited**, not advanced to the product group's\ncurrent one. An amendment corrects content; migrating a passport to a newer\nschema is a separate act. This also keeps the successor's disclosure classes\nidentical to the predecessor's, since those are read from the schema\nversion's own annotations.\n\nEmits `dpp.passport.published` for the successor and\n`dpp.passport.superseded` for the predecessor.\n",
+        "description": "Correct a published DPP. A published passport cannot be edited in place —\nits signatures commit to its bytes and the retention guard refuses the\nwrite — so this issues a **new** passport instead.\n\nThe successor is a copy of `dppId` with the `patch` applied, carrying\n`supersedesId` back to `dppId` and `version` incremented. It goes through\nthe same gates as any first publish: schema validation, product-group\nvalidation, mandatory-content checks, signing, and registry sync. When it\npublishes successfully, `dppId` moves to the terminal `superseded` state.\n\n**The response body is a different passport from the one in the path.** It\nis the successor, with its own `id`. Clients holding the old id keep a valid\nreference: a superseded passport stays resolvable, keeps its signatures and\nits seal, and reports `superseded` as its status.\n\nOnly an `active` DPP can be amended. A draft is edited in place with\n`PUT /vault/api/v1/dpp/{dppId}`; a suspended, retired, superseded or\ndeactivated DPP cannot be superseded.\n\nThe schema version is **inherited**, not advanced to the product group's\ncurrent one. An amendment corrects content; migrating a passport to a newer\nschema is a separate act. This also keeps the successor's disclosure classes\nidentical to the predecessor's, since those are read from the schema\nversion's own annotations.\n\nEmits `dpp.passport.published` for the successor and\n`dpp.passport.superseded` for the predecessor.\n",
         "tags": [
           "DPP Lifecycle"
         ],
@@ -1147,11 +1147,11 @@
         }
       }
     },
-    "/vault/api/v1/dpp/{dppId}/archive": {
+    "/vault/api/v1/dpp/{dppId}/retire": {
       "post": {
-        "operationId": "archiveDpp",
-        "summary": "Archive a DPP",
-        "description": "Transition a DPP to `archived`. This is irreversible.\nArchived DPPs are immutable and retained for regulatory record-keeping.\nNo request body is required.\n",
+        "operationId": "retireDpp",
+        "summary": "Retire a DPP",
+        "description": "Transition a DPP to `retired`. This is irreversible.\nRetired DPPs are immutable and retained for regulatory record-keeping.\nNo request body is required.\n\n🚨 **Not archiving.** EN 18221 clause 4.2 archiving is the retention of\nhistorical versions of a passport that is still live, and it is served by\n`GET /dpp/{dppId}/versions`. This route ends a record's publication life.\n",
         "tags": [
           "DPP Lifecycle"
         ],
@@ -1175,7 +1175,7 @@
         ],
         "responses": {
           "200": {
-            "description": "DPP archived. Returns the full passport record.",
+            "description": "DPP retired. Returns the full passport record.",
             "content": {
               "application/json": {
                 "schema": {
@@ -5152,11 +5152,11 @@
           "draft",
           "active",
           "suspended",
-          "archived",
+          "retired",
           "superseded",
           "deactivated"
         ],
-        "description": "DPP lifecycle state. The domain model uses `Published` internally;\nthe wire format uses `active`. Deserialization accepts both.\n- `draft`: under construction; not publicly resolvable\n- `active`: published and signed; publicly resolvable via QR\n- `suspended`: temporarily hidden (recall, dispute); JWS preserved\n- `archived`: end-of-life; immutable; retained for regulatory record-keeping\n- `superseded`: replaced by a newer passport version; terminal\n- `deactivated`: end-of-life declared (recycled, destroyed under a\n  derogation, exported, or lost); terminal. The typed reason is carried by\n  the EOL event, not this field\n\nValid transitions:\ndraft → active, draft → archived,\nactive → suspended, active → archived, active → superseded,\nactive → deactivated,\nsuspended → active, suspended → archived, suspended → deactivated.\n\n`archived`, `superseded` and `deactivated` are terminal.\n"
+        "description": "DPP lifecycle state. The domain model uses `Published` internally;\nthe wire format uses `active`. Deserialization accepts both.\n- `draft`: under construction; not publicly resolvable\n- `active`: published and signed; publicly resolvable via QR\n- `suspended`: temporarily hidden (recall, dispute); JWS preserved\n- `retired`: post-retention; immutable; retained for regulatory record-keeping.\n  Not archiving — see `GET /dpp/{dppId}/versions` for EN 18221 clause 4.2\n- `superseded`: replaced by a newer passport version; terminal\n- `deactivated`: end-of-life declared (recycled, destroyed under a\n  derogation, exported, or lost); terminal. The typed reason is carried by\n  the EOL event, not this field\n\nValid transitions:\ndraft → active, draft → retired,\nactive → suspended, active → retired, active → superseded,\nactive → deactivated,\nsuspended → active, suspended → retired, suspended → deactivated.\n\n`retired`, `superseded` and `deactivated` are terminal.\n\n`archived` is refused on input. It was this status's wire value and now names\nonly what EN 18221 clause 4.2 means by it — the retention of historical\nversions of a passport that is still live.\n"
       },
       "Granularity": {
         "type": "string",
@@ -8996,7 +8996,7 @@
       },
       "PassportVersion": {
         "type": "object",
-        "description": "One archived version of a passport: the record as it stood, and the moment it stopped standing.\n\n✅ EN 18221:2026 clause 4.2 (archiving), one of the six standards cited by Commission Implementing Decision (EU) 2026/1736.\n\n🚨 **Not the `archived` lifecycle status**, which is a terminal state reached after the ESPR retention period and says the record has stopped changing. This is the standard's sense of the word — historical versions of a passport that is still live — and the two are unrelated.",
+        "description": "One archived version of a passport: the record as it stood, and the moment it stopped standing.\n\n✅ EN 18221:2026 clause 4.2 (archiving), one of the six standards cited by Commission Implementing Decision (EU) 2026/1736.\n\n🚨 **Not the `retired` lifecycle status**, which is a terminal state reached after the ESPR retention period and says the record has stopped changing. This is the standard's sense of the word — historical versions of a passport that is still live — and the two are unrelated.",
         "required": [
           "id",
           "passportId",
@@ -9583,7 +9583,7 @@
         }
       },
       "Conflict": {
-        "description": "State conflict — e.g. attempting to publish an already-published DPP\nor updating an archived DPP.\n",
+        "description": "State conflict — e.g. attempting to publish an already-published DPP\nor updating a retired DPP.\n",
         "content": {
           "application/problem+json": {
             "schema": {

@@ -13,7 +13,7 @@ use uuid::Uuid;
 /// Scopes give operators a least-privilege path for integration/partner keys.
 ///
 /// - `Read`  — read-only access (GET passport/operator/key listings).
-/// - `Write` — passport lifecycle (create/update/publish/suspend/archive) but
+/// - `Write` — passport lifecycle (create/update/publish/suspend/retire) but
 ///   NOT key management or operator-config mutation.
 /// - `Admin` — everything, including `/api-keys` and operator-config `PATCH`.
 ///

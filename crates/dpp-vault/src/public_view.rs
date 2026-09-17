@@ -408,7 +408,7 @@ pub fn serves_publicly(status: &PassportStatus) -> bool {
         PassportStatus::Published
         | PassportStatus::Deactivated
         | PassportStatus::Superseded
-        | PassportStatus::Archived => true,
+        | PassportStatus::Retired => true,
         PassportStatus::Suspended | PassportStatus::Draft => false,
         other => {
             tracing::warn!(

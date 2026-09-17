@@ -3,7 +3,7 @@
 use anyhow::{Context as _, Result};
 use serde_json::json;
 
-use super::super::types::{ArchiveParams, HistoryParams, PassportAuditEntry, SuspendParams};
+use super::super::types::{HistoryParams, PassportAuditEntry, RetireParams, SuspendParams};
 use crate::{
     config::Config,
     http::{OdalClient, describe_error},
@@ -17,11 +17,7 @@ pub async fn action_suspend(
     lifecycle_transition(&params.id, "suspend", client, cfg).await
 }
 
-pub async fn action_archive(
-    params: &ArchiveParams,
-    client: &OdalClient,
-    cfg: &Config,
-) -> Result<()> {
+pub async fn action_retire(params: &RetireParams, client: &OdalClient, cfg: &Config) -> Result<()> {
     lifecycle_transition(&params.id, "archive", client, cfg).await
 }
 
@@ -48,12 +44,12 @@ async fn lifecycle_transition(
 
 /// The outcome of a supersession, whichever route produced it.
 ///
-/// Both routes retire one passport in favour of another and the pair is what an
+/// Both routes supersede one passport in favour of another and the pair is what an
 /// operator needs back; they differ in which of the two they return, so this
 /// names both rather than "the passport".
 pub struct Supersession {
     /// The passport now in the terminal `superseded` state.
-    pub retired: String,
+    pub superseded: String,
     /// The passport that takes over.
     pub successor: String,
 }
@@ -61,7 +57,7 @@ pub struct Supersession {
 /// Correct a published passport by issuing a successor.
 ///
 /// Returns `201` with the **successor**, which is a different record from the
-/// one addressed — the opposite of `supersede`, which returns the retired
+/// one addressed — the opposite of `supersede`, which returns the superseded
 /// predecessor. Both are reported here so the caller does not have to know
 /// which way round a given route answers.
 ///
@@ -86,7 +82,7 @@ pub async fn action_amend(
         anyhow::bail!("amend failed: {}", describe_error(status, &response));
     }
     Ok(Supersession {
-        retired: id.to_owned(),
+        superseded: id.to_owned(),
         successor: successor_id(&response)?,
     })
 }
@@ -95,9 +91,9 @@ pub async fn action_amend(
 ///
 /// A missing id is an error rather than a placeholder. Falling back to one made
 /// a failure indistinguishable from a success: the caller was handed a
-/// `Supersession` reporting that the passport had been retired in favour of
+/// `Supersession` reporting that the passport had been superseded in favour of
 /// `(not reported)`, printed as if it were an id, and the operator was left
-/// holding a retirement whose successor they could not name.
+/// holding a supersession whose successor they could not name.
 ///
 /// The status was `201` before this is reached, so the amend HAS been applied
 /// and the successor does exist — which is why this cannot degrade quietly. The
@@ -120,7 +116,7 @@ fn successor_id(response: &str) -> Result<String> {
 /// Retire a published passport in favour of one that already exists.
 ///
 /// The link is **checked** here, not written: the successor must already carry
-/// `supersedesId` back to the passport being retired, set when it was created.
+/// `supersedesId` back to the passport being superseded, set when it was created.
 /// A successor that does not is refused with `422`, and the message says so.
 pub async fn action_supersede(
     id: &str,
@@ -139,7 +135,7 @@ pub async fn action_supersede(
         anyhow::bail!("supersede failed: {}", describe_error(status, &response));
     }
     Ok(Supersession {
-        retired: id.to_owned(),
+        superseded: id.to_owned(),
         successor: superseded_by.to_owned(),
     })
 }

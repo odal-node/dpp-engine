@@ -33,7 +33,7 @@ here; the vault signs in-process instead (see `ATK-1` regression test).
 | PUT | `/vault/api/v1/dpp/{id}` | Bearer | Vault |
 | POST | `/vault/api/v1/dpp/{id}/publish` | Bearer | Vault |
 | POST | `/vault/api/v1/dpp/{id}/suspend` | Bearer | Vault |
-| POST | `/vault/api/v1/dpp/{id}/archive` | Bearer | Vault |
+| POST | `/vault/api/v1/dpp/{id}/retire` | Bearer | Vault |
 | GET | `/vault/api/v1/dpp/{id}/history` | Bearer | Vault |
 | POST | `/vault/api/v1/dpp/{id}/eol` | Bearer | Vault — end-of-life declaration (typed reason) |
 | POST | `/vault/api/v1/dpp/{id}/transfer/initiate` | Bearer | Vault — transfer-of-responsibility (signs) |

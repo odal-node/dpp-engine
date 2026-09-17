@@ -1088,7 +1088,7 @@ async fn t18_snapshot_refresh_renews_only_live_stale_snapshots() {
 
     // The bounded-corpus property, and the one most easily lost: a withdrawn
     // passport has nothing in the public tier to renew. Without the status
-    // filter every suspended, archived and deactivated passport would be
+    // filter every suspended, retired and deactivated passport would be
     // re-armed on every scan for the life of the deployment, each one driving a
     // delete against an object that is already gone.
     outbox.mark_reconciled(due[0].id).await.expect("reconcile");

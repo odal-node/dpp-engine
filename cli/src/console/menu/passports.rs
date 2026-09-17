@@ -9,13 +9,13 @@ use inquire::{Confirm, InquireError, Select, Text};
 use crate::{
     core::{
         passport::{
-            action_archive, action_export, action_get, action_history, action_import, action_list,
-            action_operator_stats, action_passport_stats, action_publish, action_suspend,
-            action_validate,
+            action_export, action_get, action_history, action_import, action_list,
+            action_operator_stats, action_passport_stats, action_publish, action_retire,
+            action_suspend, action_validate,
         },
         types::{
-            ArchiveParams, ExportParams, HistoryParams, ImportParams, ListParams, PassportSummary,
-            ProgressEvent, PublishParams, SuspendParams,
+            ExportParams, HistoryParams, ImportParams, ListParams, PassportSummary, ProgressEvent,
+            PublishParams, RetireParams, SuspendParams,
         },
     },
     http::OdalClient,
@@ -232,7 +232,7 @@ pub(super) async fn passports() -> Result<()> {
                     }
                     match client() {
                         Ok((client, cfg)) => {
-                            match action_archive(&ArchiveParams { id: id.clone() }, &client, &cfg)
+                            match action_retire(&RetireParams { id: id.clone() }, &client, &cfg)
                                 .await
                             {
                                 Ok(_) => {
@@ -647,7 +647,7 @@ async fn passport_actions(
                 .prompt())?
                 .unwrap_or(false);
                 if ok {
-                    match action_archive(&ArchiveParams { id: p.id.clone() }, client, cfg).await {
+                    match action_retire(&RetireParams { id: p.id.clone() }, client, cfg).await {
                         Ok(_) => {
                             println!("\n  {} Archived.", style("✓").green());
                             hint(&format!("odal passport archive {}", p.id));

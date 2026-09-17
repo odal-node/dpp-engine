@@ -1,4 +1,4 @@
-//! `suspend`, `supersede` and `archive` — reversible and terminal passport
+//! `suspend`, `supersede` and `retire` — reversible and terminal passport
 //! status transitions.
 //!
 //! `supersede` links a passport to an already-published replacement. It is the
@@ -188,25 +188,25 @@ impl PassportService {
             .await
     }
 
-    /// Permanently archive a passport after retention expiry.
+    /// Permanently retire a passport after retention expiry.
     ///
     /// Blocked by the ESPR retention guard: if `retention_locked` is set and the
     /// product group's minimum retention period has not yet elapsed from `published_at`,
-    /// returns `DppError::Validation`. Emits `dpp.passport.archived`.
+    /// returns `DppError::Validation`. Emits `dpp.passport.retired`.
     #[tracing::instrument(skip(self), fields(passport_id = %id))]
-    pub async fn archive(&self, id: PassportId, auth: &AuthContext) -> Result<Passport, DppError> {
+    pub async fn retire(&self, id: PassportId, auth: &AuthContext) -> Result<Passport, DppError> {
         let passport = self.find_by_id(id).await?;
 
-        if !passport.status.can_transition_to(&PassportStatus::Archived) {
+        if !passport.status.can_transition_to(&PassportStatus::Retired) {
             return Err(DppError::InvalidTransition {
                 current: passport.status.to_string(),
-                required: PassportStatus::Archived.to_string(),
+                required: PassportStatus::Retired.to_string(),
             });
         }
 
         // ── Retention guard ─────────────────────────────────────────────
         // EU ESPR requires that published DPPs remain accessible for the
-        // period defined in the applicable delegated act.  Archiving before
+        // period defined in the applicable delegated act.  Retiring before
         // the retention period expires is blocked.
         if passport.retention_locked
             && let Some(published_at) = passport.published_at
@@ -220,11 +220,11 @@ impl PassportService {
                     code = event_codes::RETENTION_BLOCKED,
                     passport_id = %id,
                     retention_end = %retention_end.format("%Y-%m-%d"),
-                    "archive blocked by retention policy"
+                    "retirement blocked by retention policy"
                 );
                 return Err(DppError::Validation(
                     format!(
-                        "retention policy forbids archiving before {}",
+                        "retention policy forbids retiring before {}",
                         retention_end.format("%Y-%m-%d")
                     )
                     .into(),
@@ -233,17 +233,14 @@ impl PassportService {
         }
 
         let prev_status = passport.status.to_string();
-        let updated = self
-            .repo
-            .update_status(id, PassportStatus::Archived)
-            .await?;
+        let updated = self.repo.update_status(id, PassportStatus::Retired).await?;
 
         let entry = PassportAuditEntry::new(
             &updated.id.to_string(),
-            "archived",
+            "retired",
             &auth.user_id,
             Some(&prev_status),
-            Some(&PassportStatus::Archived.to_string()),
+            Some(&PassportStatus::Retired.to_string()),
         );
         self.audit.append(entry).await?;
 
@@ -263,16 +260,16 @@ impl PassportService {
         }
 
         self.emit(
-            event::subjects::PASSPORT_ARCHIVED,
+            event::subjects::PASSPORT_RETIRED,
             serde_json::json!({
                 "passportId": updated.id.to_string(),
-                "status": "archived",
+                "status": "retired",
                 "previousStatus": prev_status,
             }),
         )
         .await;
 
-        // Reconcile the continuity tier — an archived passport leaves the
+        // Reconcile the continuity tier — a retired passport leaves the
         // public tier (non-fatal).
         self.enqueue_snapshot_reconcile(updated.id).await;
 

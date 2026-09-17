@@ -146,7 +146,7 @@ The core DPP record. Contains all product data, product-group-specific extension
 |---|---|---|
 | `operatorId` | string | Owner operator |
 | `schemaVersion` | string | Semver schema version |
-| `status` | string | draft, active, suspended, archived |
+| `status` | string | draft, active, suspended, retired |
 | `productName` | string | Product display name |
 | `productCategory` | string | BATTERY, TEXTILE, STEEL |
 | `manufacturer` | object | { name, address } |
@@ -180,7 +180,7 @@ Append-only audit trail for passport lifecycle events.
 | `passportId` | string | FK to passport |
 | `operatorId` | string | Operator who owns the passport |
 | `actor` | string | Who performed the action (key name or user) |
-| `action` | string | created, updated, published, suspended, archived |
+| `action` | string | created, updated, published, suspended, retired |
 | `previousStatus` | string | nullable |
 | `newStatus` | string | |
 | `timestamp` | datetime | |

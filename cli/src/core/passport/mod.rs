@@ -16,7 +16,7 @@ pub use export::action_export;
 pub use import::action_import;
 pub use inspect::{action_eol, action_find_by_identity, action_lint, action_verify_tree};
 pub use lifecycle::{
-    Supersession, action_amend, action_archive, action_history, action_supersede, action_suspend,
+    Supersession, action_amend, action_history, action_retire, action_supersede, action_suspend,
 };
 pub use list::{action_get, action_list};
 pub use publish::action_publish;

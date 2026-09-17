@@ -62,7 +62,7 @@ fails, the operation still succeeds. Consumers must be idempotent.
 | Feature | Status | Notes |
 |---|---|---|
 | Passport CRUD (create, read, update, list) | Done | 7 endpoints |
-| Passport lifecycle (publish, suspend, archive) | Done | State machine enforcement |
+| Passport lifecycle (publish, suspend, retire) | Done | State machine enforcement |
 | Ed25519 signing on publish | Done | JWS compact serialisation via identity service |
 | did:web DID document serving | Done | `/.well-known/did.json` |
 | Key rotation | Done | Non-destructive, old signatures remain valid |

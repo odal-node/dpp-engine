@@ -1,4 +1,4 @@
-//! Integration test: `S3ArchiveAdapter` against a real MinIO instance.
+//! Integration test: `S3BackupAdapter` against a real MinIO instance.
 //!
 //! Run: `cargo test -p dpp-node --features integration-tests`
 
@@ -13,11 +13,11 @@ use testcontainers::{
 use chrono::Utc;
 use dpp_domain::{
     passport::{ManufacturerInfo, Passport, PassportId},
-    ports::archive::ArchivePort,
+    ports::backup::BackupCopyPort,
     product_group::ProductGroup,
     status::PassportStatus,
 };
-use dpp_node::infra::s3_archive::{S3ArchiveAdapter, S3ArchiveConfig};
+use dpp_node::infra::s3_backup::{S3BackupAdapter, S3BackupConfig};
 
 /// The MinIO build every path here tests against.
 ///
@@ -118,8 +118,8 @@ async fn start_minio() -> Minio {
     }
 }
 
-fn build_adapter(minio: &Minio) -> S3ArchiveAdapter {
-    S3ArchiveAdapter::new(S3ArchiveConfig {
+fn build_adapter(minio: &Minio) -> S3BackupAdapter {
+    S3BackupAdapter::new(S3BackupConfig {
         endpoint: Some(minio.endpoint.clone()),
         bucket: minio.bucket.clone(),
         access_key_id: "minioadmin".into(),
@@ -184,10 +184,10 @@ async fn archive_then_verify_integrity() {
     adapter.ensure_bucket().await.expect("create bucket");
 
     let passport = make_passport();
-    let receipt = adapter.archive(&passport, 10).await.expect("archive");
+    let receipt = adapter.store(&passport, 10).await.expect("back up");
 
     assert!(!receipt.content_hash.is_empty());
-    assert!(receipt.archive_id.starts_with("passports/"));
+    assert!(receipt.backup_id.starts_with("passports/"));
 
     let verification = adapter
         .verify(passport.id, &receipt.content_hash)
@@ -205,7 +205,7 @@ async fn verify_wrong_hash_returns_not_ok() {
     adapter.ensure_bucket().await.expect("create bucket");
 
     let passport = make_passport();
-    adapter.archive(&passport, 10).await.expect("archive");
+    adapter.store(&passport, 10).await.expect("back up");
 
     let v = adapter
         .verify(passport.id, "deadbeefdeadbeef")
@@ -221,7 +221,7 @@ async fn retrieve_returns_original_passport() {
     adapter.ensure_bucket().await.expect("create bucket");
 
     let passport = make_passport();
-    adapter.archive(&passport, 10).await.expect("archive");
+    adapter.store(&passport, 10).await.expect("back up");
 
     let retrieved = adapter
         .retrieve(passport.id)

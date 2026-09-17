@@ -414,7 +414,7 @@ impl PassportService {
         // Stamp the exact payloads that were signed (not the current row) as
         // metadata on this publish's audit entry. `jws_signature` and
         // `public_jws_signature` are frozen at this moment and never re-signed
-        // by later lifecycle transitions (suspend/archive/eol only touch
+        // by later lifecycle transitions (suspend/retire/eol only touch
         // `status`), so evidence dossier generation must recover *this*
         // snapshot rather than reconstruct one from the passport's current —
         // by then possibly mutated — row. A re-publish (Suspend -> Published)
@@ -433,16 +433,16 @@ impl PassportService {
         }));
         self.audit.append(entry).await?;
 
-        // ESPR Art. 13 third-party archive — fire-after-commit, non-blocking.
+        // ESPR Art. 10(4) third-party back-up copy — fire-after-commit, non-blocking.
         // Failures are logged but never propagated; the DB write is the source of truth.
-        // Same resolver as the seal above, so the archived copy and the sealed
+        // Same resolver as the seal above, so the backed-up copy and the sealed
         // deadline cannot disagree.
         let retention_years = retention_years_for(&updated.product_group);
-        if let Err(e) = self.archive.archive(&updated, retention_years).await {
+        if let Err(e) = self.backup.store(&updated, retention_years).await {
             tracing::warn!(
                 passport_id = %updated.id,
                 error = %e,
-                "ESPR archive failed (non-fatal)"
+                "ESPR back-up copy failed (non-fatal)"
             );
         }
 

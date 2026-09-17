@@ -2176,7 +2176,6 @@ mod handler_sources {
     pub const VAULT: &[&str] = &[
         include_str!("../../dpp-vault/src/handlers/amend.rs"),
         include_str!("../../dpp-vault/src/handlers/api_keys.rs"),
-        include_str!("../../dpp-vault/src/handlers/archive.rs"),
         include_str!("../../dpp-vault/src/handlers/audience_read.rs"),
         include_str!("../../dpp-vault/src/handlers/create.rs"),
         include_str!("../../dpp-vault/src/handlers/credentials.rs"),
@@ -2197,6 +2196,7 @@ mod handler_sources {
         include_str!("../../dpp-vault/src/handlers/read.rs"),
         include_str!("../../dpp-vault/src/handlers/registry_identity.rs"),
         include_str!("../../dpp-vault/src/handlers/registry_status.rs"),
+        include_str!("../../dpp-vault/src/handlers/retire.rs"),
         include_str!("../../dpp-vault/src/handlers/ruleset.rs"),
         include_str!("../../dpp-vault/src/handlers/scan_ingest.rs"),
         include_str!("../../dpp-vault/src/handlers/seal.rs"),
@@ -2825,7 +2825,7 @@ mod fixtures {
             PassportStatus::Draft,
             PassportStatus::Published,
             PassportStatus::Suspended,
-            PassportStatus::Archived,
+            PassportStatus::Retired,
             PassportStatus::Superseded,
             PassportStatus::Deactivated,
         ]

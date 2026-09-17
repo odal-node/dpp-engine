@@ -23,7 +23,7 @@ use dpp_vault::state::AppState as VaultState;
 /// Assemble the top-level node router by nesting each service's router.
 ///
 /// Route prefixes:
-/// - `/vault`      — DPP write engine (create, update, publish, archive)
+/// - `/vault`      — DPP write engine (create, update, publish, retire)
 /// - `/identity`   — did:web identity management and signing
 /// - `/integrator` — CSV/Excel inbound adapter
 ///

@@ -1,7 +1,7 @@
 //! Ghost-honesty invariant.
 //!
 //! The system refuses to present placeholder trust as real trust. Every trust
-//! port (seal, registry sync, archive, …) reports the *tier* that produced it —
+//! port (seal, registry sync, back-up copy, …) reports the *tier* that produced it —
 //! `Ghost` (placeholder), `Sandbox` (real service, non-production), or `Live` —
 //! and a production node **fails to boot** if a required port resolved to a
 //! ghost. The guard is list-driven: a newly-added port inherits the invariant
@@ -114,7 +114,7 @@ impl NodeProfile {
 /// One resolved trust port and the tier it operates at.
 #[derive(Debug, Clone, Copy, Serialize)]
 pub struct TrustPort {
-    /// Stable port name (`"seal"`, `"registry_sync"`, `"archive"`).
+    /// Stable port name (`"seal"`, `"registry_sync"`, `"backup"`).
     pub port: &'static str,
     /// The tier the resolved adapter operates at.
     pub mode: TrustMode,
@@ -227,7 +227,7 @@ impl NodeTrustReport {
 mod tests {
     use super::*;
 
-    fn ports(seal: TrustMode, registry: TrustMode, archive: TrustMode) -> Vec<TrustPort> {
+    fn ports(seal: TrustMode, registry: TrustMode, backup: TrustMode) -> Vec<TrustPort> {
         vec![
             TrustPort {
                 port: "seal",
@@ -240,8 +240,8 @@ mod tests {
                 required: true,
             },
             TrustPort {
-                port: "archive",
-                mode: archive,
+                port: "backup",
+                mode: backup,
                 required: false,
             },
         ]
@@ -265,8 +265,8 @@ mod tests {
             err.contains("seal"),
             "message names the offending port: {err}"
         );
-        // archive is Ghost but not required → not a blocker.
-        assert!(!err.contains("archive"));
+        // backup is Ghost but not required → not a blocker.
+        assert!(!err.contains("backup"));
         assert_eq!(report.ghosted_required(), vec!["seal"]);
     }
 
@@ -327,7 +327,7 @@ mod tests {
         assert_eq!(j["profile"], "production");
         assert_eq!(j["trustMode"]["seal"], "ghost");
         assert_eq!(j["trustMode"]["registry_sync"], "sandbox");
-        assert_eq!(j["trustMode"]["archive"], "live");
+        assert_eq!(j["trustMode"]["backup"], "live");
     }
 
     /// A production node refuses a **sandbox** tier, not only a ghost.

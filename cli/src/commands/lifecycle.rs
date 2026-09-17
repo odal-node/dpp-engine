@@ -1,14 +1,14 @@
-//! `odal suspend | archive | history <id>` — passport lifecycle operations.
+//! `odal suspend | retire | history <id>` — passport lifecycle operations.
 
 use anyhow::Result;
 
 use crate::{
     core::{
         passport::{
-            Supersession, action_amend, action_archive, action_history, action_supersede,
+            Supersession, action_amend, action_history, action_retire, action_supersede,
             action_suspend,
         },
-        types::{ArchiveParams, HistoryParams, SuspendParams},
+        types::{HistoryParams, RetireParams, SuspendParams},
     },
     stateless::render::render_history,
 };
@@ -16,18 +16,18 @@ use crate::{
 /// Report a supersession the same way whichever route produced it.
 ///
 /// The two routes return opposite halves of the pair — `amend` answers with the
-/// successor it minted, `supersede` with the predecessor it retired — and an
+/// successor it minted, `supersede` with the predecessor it superseded — and an
 /// operator who has to remember which is which will eventually act on the wrong
 /// id. Naming both, in the same order, every time removes the question.
 fn render_supersession(result: &Supersession, verb: &str) {
-    println!("Passport {} {verb}.", result.retired);
+    println!("Passport {} {verb}.", result.superseded);
     println!(
-        "  Retired:   {}  (terminal — it accepts no further transitions)",
-        result.retired
+        "  Superseded: {}  (terminal — it accepts no further transitions)",
+        result.superseded
     );
     println!("  Successor: {}", result.successor);
     println!();
-    println!("The retired record keeps its signatures and stays readable, and its public");
+    println!("The superseded record keeps its signatures and stays readable, and its public");
     println!("URL keeps serving — a carrier already in the field still resolves.");
 }
 
@@ -51,7 +51,7 @@ pub async fn run_amend(id: &str, patch_file: &str, reason: Option<&str>, json: b
     if json {
         println!(
             "{}",
-            serde_json::json!({ "retired": result.retired, "successor": result.successor })
+            serde_json::json!({ "superseded": result.superseded, "successor": result.successor })
         );
         return Ok(());
     }
@@ -59,12 +59,12 @@ pub async fn run_amend(id: &str, patch_file: &str, reason: Option<&str>, json: b
     Ok(())
 }
 
-/// `odal passport supersede` — retire a passport in favour of one that already
+/// `odal passport supersede` — replace a passport with one that already
 /// exists.
 ///
 /// The sibling of `run_amend` and not a variant of it: amend *mints* the
 /// successor, this one *names* an existing passport that must already carry
-/// `supersedesId` back to the id being retired. Use it when the replacement was
+/// `supersedesId` back to the id being superseded. Use it when the replacement was
 /// created independently — a newer schema version, an imported record, or a
 /// successor issued after a transfer.
 pub async fn run_supersede(
@@ -78,7 +78,7 @@ pub async fn run_supersede(
     if json {
         println!(
             "{}",
-            serde_json::json!({ "retired": result.retired, "successor": result.successor })
+            serde_json::json!({ "superseded": result.superseded, "successor": result.successor })
         );
         return Ok(());
     }
@@ -93,10 +93,10 @@ pub async fn run_suspend(id: &str) -> Result<()> {
     Ok(())
 }
 
-pub async fn run_archive(id: &str) -> Result<()> {
+pub async fn run_retire(id: &str) -> Result<()> {
     let (client, cfg) = crate::http::load_client()?;
-    action_archive(&ArchiveParams { id: id.to_owned() }, &client, &cfg).await?;
-    println!("Passport {id} archived.");
+    action_retire(&RetireParams { id: id.to_owned() }, &client, &cfg).await?;
+    println!("Passport {id} retired.");
     Ok(())
 }
 

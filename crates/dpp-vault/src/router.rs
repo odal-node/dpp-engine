@@ -22,7 +22,6 @@ use crate::{
     handlers::{
         amend::amend_handler,
         api_keys::{api_keys_create_handler, api_keys_delete_handler, api_keys_list_handler},
-        archive::archive_handler,
         create::create_handler,
         credentials::issue_credential_handler,
         eol::eol_handler,
@@ -50,6 +49,7 @@ use crate::{
             operator_ids_set_primary_handler,
         },
         registry_status::{passport_registry_handler, registry_rollup_handler},
+        retire::retire_handler,
         ruleset::reload_ruleset_handler,
         scan_ingest::{scan_ingest_handler, scan_ingest_mtls},
         seal::{seal_handler, seal_repair_handler, seal_summary_handler},
@@ -100,7 +100,7 @@ pub fn build(state: AppState) -> Router {
         .route("/dpp/{dppId}/supersede", post(supersede_handler))
         .route("/dpp/{dppId}/lint", post(lint_handler))
         .route("/dpp/{dppId}/suspend", post(suspend_handler))
-        .route("/dpp/{dppId}/archive", post(archive_handler))
+        .route("/dpp/{dppId}/retire", post(retire_handler))
         .route("/dpp/{dppId}/eol", post(eol_handler))
         .route(
             "/dpp/{dppId}/transfer/initiate",

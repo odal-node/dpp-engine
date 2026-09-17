@@ -97,7 +97,7 @@ impl PassportService {
 
         // The exact bytes that were signed, recovered from the most recent
         // "published" audit entry — never reconstructed from the current
-        // passport row, which may have since mutated (suspend/archive/eol
+        // passport row, which may have since mutated (suspend/retire/eol
         // change `status` without re-signing). See `publish.rs` for why this
         // metadata is stamped there.
         let (full_view_payload, public_view_payload) = audit_raw

@@ -48,7 +48,7 @@ passport.retention_locked = true;
 | Operation | Behaviour on locked passport |
 |---|---|
 | Status -> Suspended | Allowed — passport remains accessible |
-| Status -> Archived | Allowed — passport remains accessible |
+| Status -> Retired | Allowed — passport remains accessible |
 | Field update | Blocked — only Draft passports can be patched |
 | Delete | **No delete path exists** in `PassportRepository` by design |
 

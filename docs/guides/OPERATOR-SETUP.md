@@ -160,7 +160,7 @@ odal                         # launch the Console (recommended)
 From the Console you can:
 
 - **Infrastructure** — check status, start/stop services, update container images
-- **Passports** — import, validate, publish, suspend, archive, export
+- **Passports** — import, validate, publish, suspend, retire, export
 - **Operator** — view or update your operator profile
 - **API keys** — create, list, revoke
 - **Registry identity** — facilities (ESPR Annex III) and operator identifiers (ESPR Art. 13)
@@ -319,17 +319,17 @@ Run `odal status` after onboarding and read the **TRUST** section:
 TRUST
 profile             development
 seal                ghost
-archive             ghost
+backup              ghost
 ruleset             baseline
 
-! Running on a stand-in: archive, credential_issuers, registry_sync, seal.
+! Running on a stand-in: backup, credential_issuers, registry_sync, seal.
   Simulated, not the real service — nothing this node produces
   is fit for compliance use.
 ```
 
 A stock node runs every trust port on a stand-in. Passports it issues are
 well-formed, signed with your own Ed25519 key, and independently verifiable —
-but the qualified seal, the third-party archive, and the registry notifications
+but the qualified seal, the third-party back-up copy, and the registry notifications
 are simulated. Wiring those up is a separate exercise; until then, treat the
 output as operationally real and legally not.
 
@@ -357,15 +357,15 @@ Two things to know before you publish at scale:
 passport's QR code at publish time. Getting it wrong means reprinting labels.
 
 **Publishing starts a retention clock.** ESPR retention is enforced by the node,
-not just documented: `odal passport archive` refuses inside the window.
+not just documented: `odal passport retire` refuses inside the window.
 
 ```
-Error: archive failed: retention policy forbids archiving before 2036-08-18
+Error: retire failed: retention policy forbids retiring before 2036-08-18
 ```
 
 To withdraw a passport from public view, suspend it — `odal passport suspend
 <id>` — which serves `410 Gone` on the passport's own URL. Suspension is
-reversible; archiving is terminal and gated.
+reversible; retirement is terminal and gated.
 
 ## Updating the node
 
@@ -398,7 +398,7 @@ ever signed.
 # Copy the key store out of the running node
 docker compose cp node:/data/keystore.enc ./keystore-backup.enc
 
-# Or archive the whole volume
+# Or back up the whole volume
 docker run --rm -v odal-node_node-data:/data -v "$PWD":/backup alpine \
     tar czf /backup/node-data.tar.gz -C /data .
 ```
@@ -442,7 +442,7 @@ location / {
 | Any command: *"No profile configured yet"* | Nothing is configured on this machine | `odal init` or `odal profile create <name> --node-url <url>` |
 | `odal passport publish` fails 422: *"missing required registry identity"* | No default facility and/or no primary operator identifier | `odal facility add … --default` and `odal operator-id add … --primary` |
 | `odal passport import` rejects every row on `gtin` | GTINs are 13-digit, or their check digit is wrong | Use GTIN-14; the error names the expected check digit |
-| `odal passport archive` fails: *"retention policy forbids archiving before …"* | ESPR retention is still running on that passport | Use `odal passport suspend <id>` to withdraw it from public view instead |
+| `odal passport retire` fails: *"retention policy forbids retiring before …"* | ESPR retention is still running on that passport | Use `odal passport suspend <id>` to withdraw it from public view instead |
 | `odal verify <id>` says *"Dossier not found"* | A **passport** id was passed | `verify` takes a **dossier** id — generate one with `odal passport evidence <passport-id>` |
 | Scanned QR codes resolve to nothing | `RESOLVER_BASE_URL` was left at its default when those passports were published | Set it to your own resolver before publishing; already-published carriers cannot be changed |
 | A second `odal up` elsewhere on the host took over the first deployment | The compose project name is fixed, so all install roots share one deployment | Run one deployment per host, or set `COMPOSE_PROJECT_NAME` |
