@@ -10,6 +10,13 @@
 # box that was not ticked, and the clause 4.2 gap stayed invisible for months
 # because the name looked already taken.
 #
+# 🚨 The three differ by SHAPE, not by who holds what — a history, a state, a
+# copy. Clause 4.2 expects archived versions to be held by the back-up provider
+# as well as by this node, so "back-up" never means "exempt from archiving".
+# What makes `BackupCopyPort` not-archiving is that it carries no series at all:
+# one copy per passport, `retrieve` answering with one. Separating them by
+# actor instead is the mistake this comment exists to stop being made twice.
+#
 # The rename is not self-sustaining: nothing stops the next lifecycle verb from
 # being called `archive` again, and nothing would fail if it were. This gate is
 # what stops it.

@@ -605,6 +605,15 @@ Two things that bite:
 
 Not debt — rules that hold, stated once so they are not re-derived.
 
+- **"Archive" means EN 18221 clause 4.2 and nothing else.** Three things once wore the word and the collision hid a real compliance gap for months, because the name looked already taken. They are told apart by **shape**:
+  - **archive / archiving** — a *history*: every past version of a passport that is still live. `ArchivingPassportRepo`, `passport_version`, `GET /dpp/{id}/versions?asOf=`.
+  - **retire** — a *state*: the terminal lifecycle status, the record has stopped changing. `PassportStatus::Retired`, `POST /dpp/{id}/retire`. No legal anchor; it is our own word.
+  - **back-up copy** — a *copy*, held by an independent third party so the passport survives its operator. ESPR **Art. 10(4)** + **Art. 2(32)** (*not* Art. 13, which is the registry). `BackupCopyPort`, `BACKUP_S3_*`.
+
+  🚨 **Shape, never actor.** Clause 4.2 expects archived versions to be held by the back-up provider *as well as* by this node, so a provider is **not** exempt from archiving and no back-up arrangement wires `passport_version` for us. What makes `BackupCopyPort` not-archiving is that it carries no series — one copy per passport, `retrieve` answering with one. Getting this backwards is a mistake already made and corrected once.
+
+  `scripts/vocabulary-check.sh` (in `just check`) refuses any route path, `api/paths/` file name or event subject containing `archiv`. Compound uses are fine and untouched: the keystore's *archived keys*, a seal's *archival timestamp*, *retiring* a facility or an operator identifier.
+
 - **Errors are RFC 7807.** `dpp-common::http_problem::Problem` is the error shape for every HTTP surface (vault, integrator, identity, resolver). A new error path uses `Problem`, not an ad-hoc body.
 - **IDs are UUID v7.** `PassportId`, audit, API-key, event and job IDs all use `now_v7()` so they are time-sortable. Use `now_v7()` for any new identifier; `new_v4()` is acceptable only for throwaway values that are not identifiers (a temp filename).
 - **The passport graph lives in `doc`, not in tables.** Component relationships are `componentRefs` inside the passport JSONB, walked by `dpp-vault`'s `verify_tree`. There are no component/material/supplier tables in `ops/pg/*` and none are planned unless a query pattern demands them — do not add one to model a relationship the document already carries.
