@@ -418,6 +418,41 @@ pub(super) fn apply_patch(
             .map_err(|e| DppError::Validation(format!("invalid productGroupData: {e}").into()))?;
         dpp_domain::validate_product_group_data(&product_group_data)
             .map_err(DppError::Validation)?;
+
+        // 🚨 **The second door to a mislabelled passport, and it is open wider
+        // than the first.**
+        //
+        // `productGroupData` is patchable and `productGroup` is not, so without
+        // this a `PUT` on a draft swaps in another product group's payload while
+        // the protected label stays exactly as it was — reaching the same state
+        // the create path refuses, by a route that never has to state a product
+        // group at all.
+        //
+        // It matters because the label is what picks the disclosure table at
+        // publish. A payload whose fields the label's table does not name falls
+        // to `default_disclosure`, which is `Public` — so textile data under a
+        // battery label publishes the REACH Art. 33 substance declarations that
+        // textile's own table marks `restricted`, signed into
+        // `publicJwsSignature`.
+        //
+        // Refusing rather than re-labelling: `product_group` is protected
+        // precisely because it is not a caller's to change after creation, and
+        // quietly moving it here would route around that on the one path that
+        // does not name it.
+        if product_group_data.product_group() != passport.product_group {
+            return Err(DppError::Validation(
+                format!(
+                    "productGroupData is `{}` and this passport is `{}`. The product group is \
+                     fixed at creation and selects the disclosure table the public view is \
+                     filtered and signed under, so it cannot be changed by patching the payload \
+                     underneath it.",
+                    product_group_data.product_group().catalog_key(),
+                    passport.product_group.catalog_key()
+                )
+                .into(),
+            ));
+        }
+
         passport.product_group_data = Some(product_group_data);
         applied.push("productGroupData");
     }
@@ -805,6 +840,48 @@ mod tests {
         )
         .unwrap_err();
         assert!(matches!(err, DppError::Validation(_)));
+    }
+
+    /// 🚨 A patch cannot move a passport to another product group's payload.
+    ///
+    /// `productGroupData` is in `PATCHABLE_FIELDS` and `productGroup` is not, so
+    /// without this a `PUT` on a draft swaps in another group's payload while the
+    /// protected label stays exactly as it was — the same mislabelled state the
+    /// create path refuses, reached by a route that never names a product group.
+    ///
+    /// It matters because the **label** picks the disclosure table at publish. A
+    /// payload field the label's table does not name falls to
+    /// `default_disclosure`, which is `Public` — so textile data under a battery
+    /// label publishes the REACH Art. 33 substance declarations textile's own
+    /// table marks `restricted`, signed into `publicJwsSignature`.
+    #[test]
+    fn a_patch_may_not_change_the_product_group_under_the_label() {
+        let mut p = stub();
+        assert_eq!(
+            p.product_group,
+            ProductGroup::Battery,
+            "the stub is battery"
+        );
+
+        let err = apply_patch(
+            &mut p,
+            &serde_json::json!({"productGroupData": {
+                "productGroup": "textile",
+                "gtin": "09506000134352",
+                "fibreComposition": [{ "fibre": "cotton", "pct": 100.0 }],
+                "careInstructions": "wash cold",
+                "countryOfOrigin": "PT",
+                "chemicalComplianceStandard": "oeko-tex-100",
+            }}),
+        )
+        .unwrap_err();
+
+        assert!(matches!(err, DppError::Validation(_)), "{err:?}");
+        assert_eq!(
+            p.product_group,
+            ProductGroup::Battery,
+            "and the label is untouched — the refusal must not half-apply"
+        );
     }
 
     #[test]
