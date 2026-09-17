@@ -293,7 +293,7 @@ impl WasmPluginHost {
         // provisional (not-in-force) product group can never surface a binding
         // compliance claim, even if the plugin ignores the advisory __isInForce
         // flag and injects one into its generated output.
-        if !passport_determinable(key)
+        if !passport_obligation_live(key)
             && let Some(obj) = payload.as_object_mut()
         {
             obj.remove("complianceStatus");
@@ -410,7 +410,7 @@ impl PluginHost for WasmPluginHost {
         // Enforce regulatory status centrally: a provisional product group can never
         // surface a binding determination, regardless of what the plugin returns.
         result.compliance_status =
-            gate_determination(passport_determinable(key), result.compliance_status);
+            gate_determination(passport_obligation_live(key), result.compliance_status);
 
         metrics::counter!(
             "plugin_invocations_total",
@@ -464,7 +464,7 @@ pub(crate) fn enrich_input(input: Value, product_group_key: &str) -> Value {
         Value::Object(mut m) => {
             m.insert(
                 "__isInForce".into(),
-                passport_determinable(product_group_key).into(),
+                passport_obligation_live(product_group_key).into(),
             );
             Value::Object(m)
         }
@@ -478,20 +478,20 @@ fn instruments() -> &'static InstrumentCatalog {
     CATALOG.get_or_init(InstrumentCatalog::new)
 }
 
-/// Whether any in-force act reaching `product_group` requires a passport, which
-/// is what gates a *binding passport determination*.
+/// Whether a **binding passport obligation** is live for `product_group`, which
+/// is what gates a binding passport determination.
 ///
-/// Both halves are load-bearing and neither implies the other. An act can bind a
-/// product group today while imposing no passport at all — ESPR Arts. 24-25 — and
-/// an act can bind while its passport duty is discharged through another system
-/// under Art. 9(4)(b), which is the position of the ecodesign and energy
-/// labelling pair for mobile devices. Gating on "is it in force" alone is exactly
-/// how a binding claim came to be asserted against an obligation that does not
-/// exist, for a product group that is in force and owes no passport.
-fn passport_determinable(product_group: &str) -> bool {
-    let catalog = instruments();
-    !catalog.determinable_for(product_group).is_empty()
-        && catalog.passport_required_for(product_group)
+/// The test itself is `dpp_domain`'s — `InstrumentCatalog::passport_obligation_live`
+/// — and this is only the local `instruments()` lookup in front of it. It is a
+/// regulatory predicate: what changes it is a change to the law, so core owns it
+/// and nothing here restates the conjunction.
+///
+/// Named for the same thing the vault names it. The two used to be
+/// `passport_determinable` here and `passport_obligation_live` there, meaning
+/// the same thing under different names, which is its own tax on a reader
+/// checking whether the gates agree.
+fn passport_obligation_live(product_group: &str) -> bool {
+    instruments().passport_obligation_live(product_group)
 }
 
 /// Convert a `PluginResult` into a `ComplianceResult` for the core compliance port.

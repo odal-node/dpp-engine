@@ -421,10 +421,13 @@ pub(crate) fn instruments() -> &'static dpp_domain::InstrumentCatalog {
 ///
 /// Asking only "is it in force" answers *yes* for both, which is how passport
 /// obligations that do not exist came to be enforced at publish.
+///
+/// The test itself is `dpp_domain`'s — `InstrumentCatalog::passport_obligation_live`
+/// — and this is only the local `instruments()` lookup in front of it. What
+/// changes it is a change to the law, so core owns it and the conjunction is not
+/// restated here.
 pub(crate) fn passport_obligation_live(product_group_key: &str) -> bool {
-    let catalog = instruments();
-    !catalog.determinable_for(product_group_key).is_empty()
-        && catalog.passport_required_for(product_group_key)
+    instruments().passport_obligation_live(product_group_key)
 }
 
 /// The retention floor applied when the catalog has no entry for a product group.
