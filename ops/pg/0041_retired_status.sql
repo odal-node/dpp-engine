@@ -48,8 +48,35 @@
 -- The append-only trigger, the hash chain and the grants are unchanged.
 -- ============================================================================
 
--- Current state: rewrite, then narrow the constraint onto the new spelling.
+-- ── `doc` is the one that matters; the column is only a projection ─────────
+--
+-- 🚨 Rewriting `passport.status` alone would leave every pre-rename row
+-- unreadable. `doc` holds the full serde `Passport` — `status` included — and
+-- `PgPassportRepo::read_doc` calls `Passport::from_stored` on **`doc`**, never
+-- on the column, which 0004's own header and the insert's comment both say is
+-- "a projection of `doc`, never a second source of truth". Core refuses
+-- `"archived"` on deserialisation as of 0.21.0, so a row whose `doc` still
+-- carries it fails to read at all: a 500 per request, on exactly the passports
+-- that already existed. That is the shape of the `product_group` envelope
+-- rename, which cost 244 of 276 passports.
+--
+-- So `doc` is rewritten first and the column follows it, in that order and in
+-- one transaction, because a migration that did only the second would look
+-- like it had worked.
+UPDATE odal.passport
+   SET doc = jsonb_set(doc, '{status}', '"retired"'::jsonb)
+ WHERE doc->>'status' = 'archived';
+
 UPDATE odal.passport SET status = 'retired' WHERE status = 'archived';
+
+-- `passport_version.doc` is deliberately NOT rewritten, for two reasons that
+-- agree. It is history, like `passport_audit` above. And it is append-only by
+-- the `passport_version_immutable` trigger (BEFORE UPDATE OR DELETE, 0040), so
+-- an UPDATE here raises rather than silently succeeding. Nothing deserialises a
+-- version into a `Passport` — `PassportVersion.doc` is a `serde_json::Value`
+-- the versions route filters and serves as-is — so a version carrying the old
+-- spelling reads fine and says what the record said at the time, which is the
+-- whole point of keeping it.
 
 ALTER TABLE odal.passport DROP CONSTRAINT passport_status_check;
 ALTER TABLE odal.passport ADD CONSTRAINT passport_status_check
