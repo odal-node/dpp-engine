@@ -1011,11 +1011,49 @@ const TRUSTED_LIST_REFRESH_INTERVAL: std::time::Duration =
 /// or made under a provider since dropped — so which backend is configured now
 /// is the wrong thing to read, the same argument the seal route's `origin` makes
 /// for reading the bytes rather than the configuration.
-pub fn spawn_trusted_list_refresh(store: Arc<dyn dpp_types::trust::TrustedListStore>) {
+pub fn spawn_trusted_list_refresh(
+    store: Arc<dyn dpp_types::trust::TrustedListStore>,
+    inspector: Arc<dpp_seal::CadesInspector>,
+) {
     tokio::spawn(async move {
         tokio::time::sleep(TRUSTED_LIST_FIRST_PASS_DELAY).await;
         loop {
             if let Some(stats) = dpp_node::infra::trusted_list_refresh::refresh_once(&store).await {
+                // 🚨 Publish into the running inspector, and only here — after a
+                // pass that **completed**.
+                //
+                // `refresh_once` returns `None` when it abandoned the pass, so
+                // this is never reached with a set that cannot describe its own
+                // width. A set from half the Union reads exactly like a set from
+                // all of it, which is the rule `0038` already took for the seal
+                // audit; the difference is that here the cache is re-read rather
+                // than assembled from `stats`, so what reaches the verdicts is
+                // the same thing a restart would have loaded.
+                //
+                // Without this the set is whatever boot read, and on a fresh
+                // node that is the empty one — the first pass runs a minute
+                // after boot, so every verdict would answer `consulted: 0` until
+                // an unrelated restart.
+                match store.load().await {
+                    Ok(cached) => {
+                        let (lists, unchecked) = dpp_seal::trustlist::from_cache(&cached);
+                        tracing::info!(
+                            consulted = lists.len(),
+                            unchecked = unchecked.len(),
+                            "trusted lists published to the running node's seal verdicts"
+                        );
+                        inspector.publish(lists, unchecked);
+                    }
+                    // The cache was written and cannot be read back. The
+                    // previous set stays in place rather than being replaced by
+                    // an empty one: stale and wide beats fresh and vacuous, and
+                    // the next pass tries again.
+                    Err(e) => tracing::warn!(
+                        error = %e,
+                        "a trusted-list pass completed and the cache could not be read back; \
+                         seal verdicts keep the set they had"
+                    ),
+                }
                 // Gauges, not counters: these describe the cache as it stands
                 // after a pass, and the second one is the width of every
                 // `notListed` verdict the node will give until the next pass.

@@ -288,16 +288,21 @@ async fn main() -> anyhow::Result<()> {
     // a backend change, still holds seals whose origin a reader needs — and
     // those are precisely the ones least self-explanatory. Gating this would
     // withdraw the answer exactly where it is worth most.
-    // The trusted lists are read **once, at boot**, and handed to the inspector.
+    // The trusted lists are read here at boot, and **republished by the refresh
+    // task** as each pass completes — see `spawn_trusted_list_refresh` below.
     //
-    // 🚨 Read here rather than per request, and that is a deliberate limit: the
-    // inspector is called from read handlers, and one that could reach the
+    // 🚨 Read here rather than per request, and that part is a deliberate limit:
+    // the inspector is called from read handlers, and one that could reach the
     // database — let alone the network — would put that work on the path of a
-    // request somebody is waiting on. The cost is that a refresh landing after
-    // boot does not reach a running node's verdicts until it restarts, which is
-    // honest rather than hidden: every verdict says how many territories it
-    // consulted, so a node serving `consulted: 0` is visibly one that had an
-    // empty cache when it started.
+    // request somebody is waiting on.
+    //
+    // What a boot-time read alone could not do is reach a node that is already
+    // running. The first pass starts a minute *after* boot, so on a fresh
+    // deployment the set read here is always the empty one: the node answered
+    // `consulted: 0` for every seal until somebody restarted it for an unrelated
+    // reason, and nothing said so beyond a count nobody was looking at. The
+    // inspector handle is therefore kept and handed to the refresh task, which
+    // publishes into it.
     let (lists, unchecked) = match db.trusted_lists.load().await {
         Ok(cached) => dpp_seal::trustlist::from_cache(&cached),
         Err(e) => {
@@ -314,9 +319,9 @@ async fn main() -> anyhow::Result<()> {
         unchecked = unchecked.len(),
         "trusted lists loaded for seal qualification"
     );
-    passport_service = passport_service.with_seal_inspector(Arc::new(
-        dpp_seal::CadesInspector::new().with_trusted_lists(lists, unchecked),
-    ));
+    let seal_inspector = Arc::new(dpp_seal::CadesInspector::new());
+    seal_inspector.publish(lists, unchecked);
+    passport_service = passport_service.with_seal_inspector(seal_inspector.clone());
     let service = Arc::new(passport_service);
     let operator_service = Arc::new(OperatorService::new(db.operator_repo.clone()));
     let api_key_service = Arc::new(ApiKeyService::new(db.api_key_repo.clone()));
@@ -459,7 +464,7 @@ async fn main() -> anyhow::Result<()> {
             "TRUSTED_LIST_REFRESH=on — this node will fetch and verify the EU Trusted Lists \
              daily, beginning shortly after boot"
         );
-        boot::tasks::spawn_trusted_list_refresh(db.trusted_lists.clone());
+        boot::tasks::spawn_trusted_list_refresh(db.trusted_lists.clone(), seal_inspector.clone());
     } else {
         tracing::debug!(
             "trusted list refresh is off — seal qualification verdicts will report that no \
