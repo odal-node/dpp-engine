@@ -2493,6 +2493,13 @@ async fn an_amended_passports_printed_carrier_lands_on_the_successor() {
     // Before the amendment the public door serves the passport itself.
     let resp = client.get(&scan).send().await.expect("public read failed");
     assert_eq!(resp.status(), 200);
+    assert!(
+        resp.headers()
+            .get(reqwest::header::CONTENT_LOCATION)
+            .is_none(),
+        "an ordinary read carries no Content-Location — its presence is what tells a \
+         client the body is a different record from the one it asked for"
+    );
     let served: serde_json::Value = resp.json().await.expect("json");
     assert_eq!(served["id"].as_str(), Some(original_id.as_str()));
 
@@ -2517,8 +2524,23 @@ async fn an_amended_passports_printed_carrier_lands_on_the_successor() {
     // The same carrier URL as before, printed on a product that has not changed.
     let resp = client.get(&scan).send().await.expect("public read failed");
     let status = resp.status();
+    // 🚨 The response says, at the protocol layer, that the body is not the
+    // record that was asked for. A human following a QR code never notices; a
+    // client asserting `response.id == requested_id` would, and would be right
+    // to. Relative, because this router is mounted at `/vault` by the node and
+    // at the root when the vault runs alone.
+    let content_location = resp
+        .headers()
+        .get(reqwest::header::CONTENT_LOCATION)
+        .and_then(|v| v.to_str().ok())
+        .map(ToOwned::to_owned);
     let served: serde_json::Value = resp.json().await.expect("json");
     assert_eq!(status, 200, "the carrier must not stop working: {served}");
+    assert_eq!(
+        content_location.as_deref(),
+        Some(format!("./{successor_id}").as_str()),
+        "a superseded read must name where the record it served actually lives"
+    );
 
     assert_eq!(
         served["id"].as_str(),

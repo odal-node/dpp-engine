@@ -78,12 +78,17 @@ pub async fn public_read_handler(
         // gets the pointer as part of a document they can verify.
         Ok(Some(p)) if p.status == PassportStatus::Superseded => {
             match successor_view(&state, &p).await {
-                Ok(Some(view)) => respond_public_view(
-                    view.0,
-                    view.1.catalog_key(),
-                    &view.2,
-                    query.schema_view.as_deref(),
-                ),
+                Ok(Some(s)) => {
+                    let id = s.id;
+                    let mut response = respond_public_view(
+                        s.view,
+                        s.product_group.catalog_key(),
+                        &s.schema_version,
+                        query.schema_view.as_deref(),
+                    );
+                    say_where_the_record_lives(&mut response, id);
+                    response
+                }
                 // Nothing published supersedes it. Its own frozen view is then
                 // the best thing there is, and it is what this route served
                 // before — see the residue noted on `successor_view`.
@@ -144,7 +149,7 @@ pub async fn public_read_handler(
 async fn successor_view(
     state: &AppState,
     retired: &dpp_domain::passport::Passport,
-) -> Result<Option<(Value, dpp_domain::product_group::ProductGroup, String)>, DppError> {
+) -> Result<Option<SuccessorView>, DppError> {
     let Some(lookup) = state.service.successors.as_ref() else {
         return Ok(None);
     };
@@ -152,11 +157,61 @@ async fn successor_view(
         return Ok(None);
     };
     let view = signed_public_view(&successor)?;
-    Ok(Some((
+    Ok(Some(SuccessorView {
         view,
-        successor.product_group,
-        successor.schema_version,
-    )))
+        product_group: successor.product_group,
+        schema_version: successor.schema_version,
+        id: successor.id,
+    }))
+}
+
+/// Name the record this response actually carries, in `Content-Location`.
+///
+/// 🚨 **Set only when the body is a different record from the one asked for.**
+/// An ordinary read carries no such header, so its presence is the signal: a
+/// client that sent `dppId` and gets this back has a mechanical way to tell
+/// "this is your record" from "this is the record that replaced it", without
+/// diffing `id` against what it sent.
+///
+/// RFC 9110 §8.7 is exactly this case — the representation is available at
+/// another URI and the response is still a `200` for the one requested, which is
+/// what a printed carrier needs. A redirect would say the same thing and cost
+/// more: four doors sit in front of this route, and `/01/{gtin}` beside it does
+/// not redirect either, so redirecting here would make the two disagree again in
+/// the opposite direction.
+///
+/// **A relative reference, deliberately.** This router is mounted at `/vault` by
+/// the node and at the root when the vault runs alone, so no absolute path is
+/// correct in both. `./{id}` resolves against the request URI — `…/public/dpp/X`
+/// + `./Y` → `…/public/dpp/Y` — and is right wherever it is mounted.
+fn say_where_the_record_lives(
+    response: &mut axum::response::Response,
+    id: dpp_domain::passport::PassportId,
+) {
+    // A passport id is a UUID, so this cannot fail — but a header value that
+    // refused to build is not a reason to withhold the body a reader came for.
+    if let Ok(value) = axum::http::HeaderValue::from_str(&format!("./{id}")) {
+        response
+            .headers_mut()
+            .insert(axum::http::header::CONTENT_LOCATION, value);
+    }
+}
+
+/// The successor's signed public view, and what serving it takes.
+///
+/// A struct rather than a tuple because it grew a fourth member: the id is what
+/// `Content-Location` names, and `view.0`/`view.1`/`view.2` at the call site was
+/// already at the edge of readable.
+struct SuccessorView {
+    /// The successor's own signed public payload — not the predecessor's.
+    view: Value,
+    /// The successor's product group and schema version. Both drive
+    /// `?schema_view`, and taking either from the predecessor would upcast one
+    /// record's data against another record's version.
+    product_group: dpp_domain::product_group::ProductGroup,
+    schema_version: String,
+    /// Where the record being served actually lives.
+    id: dpp_domain::passport::PassportId,
 }
 
 /// Serve the plain public `view`, or — when `target` is `Some` — the view
