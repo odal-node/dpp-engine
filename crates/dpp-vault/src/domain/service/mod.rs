@@ -94,9 +94,16 @@ pub struct PassportService {
     ///
     /// This is now the only thing in this struct called an archive, and it is
     /// the standard's sense of the word: the history of a passport that is
-    /// still live. Two others wore it and no longer do — `backup` above is the
-    /// ESPR Art. 10(4) back-up copy, a copy rather than a history, and the
-    /// terminal lifecycle status is `Retired`.
+    /// still live. Two others wore it and no longer do — the terminal lifecycle
+    /// status is `Retired`, and `backup` above is the ESPR Art. 10(4) back-up
+    /// copy.
+    ///
+    /// 🚨 `backup` is not a weaker version of this field and does not stand in
+    /// for it. Clause 4.2 expects archived versions to be held by the back-up
+    /// provider as well as by this node, so the provider is not exempt — but
+    /// `BackupCopyPort` has no method that carries a series, so whatever a
+    /// provider does about clause 4.2 happens outside this struct. Inside it,
+    /// this field is the whole of our clause 4.2 read path.
     ///
     /// `None` disables the versions route. It does **not** disable archiving —
     /// that happens in the repository decorator, which a node wires or does

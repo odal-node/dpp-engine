@@ -28,6 +28,23 @@
 -- STAYS, spending one permanently permitted legacy value to keep the trail
 -- verifiable.
 --
+-- ── 0040's header is now stale, and cannot be fixed ────────────────────────
+--
+-- It says "THIS IS NOT WHAT `status = 'archived'` MEANS" and contrasts this
+-- table with `PassportStatus::Archived`. Both name a status that no longer
+-- exists; read it as `retired`. An applied migration cannot be edited — sqlx
+-- checksums every file, so a comment-only change makes a node that has already
+-- run it refuse to boot — so the correction lives here, in the migration that
+-- caused it, rather than there.
+--
+-- While correcting it: the two things 0040 contrasts are not the only two. A
+-- third, `BackupCopyPort`, is the ESPR Art. 10(4) back-up copy. 🚨 Clause 4.2
+-- expects archived versions to be held by the back-up provider as well as by
+-- this node, so the provider is not exempt from the clause — the port simply
+-- carries no series, so nothing about clause 4.2 is expressible through it.
+-- This table is this node's side of the clause and is not made redundant by
+-- any back-up arrangement.
+--
 -- The append-only trigger, the hash chain and the grants are unchanged.
 -- ============================================================================
 

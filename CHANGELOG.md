@@ -24,7 +24,7 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   filtering `dpp.passport.archived`; rename `ARCHIVE_S3_*` to `BACKUP_S3_*`.
   Migration `0041_retired_status.sql` rewrites stored statuses on upgrade.
 
-  **Why.** The word named three unrelated things here. **EN 18221:2026 clause
+  **Why.** The word named three different things here. **EN 18221:2026 clause
   4.2** — one of the six standards cited by Commission Implementing Decision (EU)
   2026/1736 — uses "archiving" for the retention of historical versions of a
   passport that is **still live**, which this node does in `passport_version`
@@ -33,6 +33,14 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   **Art. 2(32)** independent provider. While all three wore the word, anyone
   mapping this system onto EN 18221 by name ticked a box that was not ticked —
   which is how the clause 4.2 gap survived unnoticed: the name looked taken.
+
+  *Different*, not unrelated, and the difference matters when reading the
+  back-up: clause 4.2 expects archived versions to be held by the back-up
+  provider **as well as** by this node, so a provider is not exempt from the
+  clause. What separates the two here is shape — `BackupCopyPort` carries one
+  copy per passport and no series at all — so no arrangement with a provider
+  wires `passport_version` for us, and nothing here should be read as saying a
+  provider owes no history.
 
   **Nothing was removed.** Archiving keeps the word and now means only what the
   standard means by it. The status is `retired`; the Art. 10(4) copy is the

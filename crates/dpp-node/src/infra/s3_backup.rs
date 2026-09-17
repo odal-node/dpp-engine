@@ -1,7 +1,14 @@
 //! S3/MinIO adapter implementing `BackupCopyPort` — the ESPR Art. 10(4)
-//! back-up copy, held by an Art. 2(32) independent provider. Not Art. 13,
-//! which is the registry, and not EN 18221 clause 4.2 archiving, which is a
-//! live passport's version history and lives in the DAL.
+//! back-up copy, held by an Art. 2(32) independent provider. Not ESPR Art. 13,
+//! which is the registry.
+//!
+//! **Not EN 18221 clause 4.2 archiving either — but not because a back-up
+//! provider is exempt from it.** Clause 4.2 expects a passport's archived
+//! versions to be held by the back-up provider as well as by the main one. It
+//! is that this adapter implements a port with no series in it: one key per
+//! content hash, `retrieve` answering with one passport. This node's clause 4.2
+//! archiving is `ArchivingPassportRepo` in the DAL, and a provider's is the
+//! provider's to build.
 //!
 //! Key scheme: `passports/{passport_id}/{sha256_hex}` — content-addressed, idempotent.
 //! Same content → same key. Different content (new version) → different key.

@@ -405,6 +405,15 @@ pub struct PassportVersion {
 /// redacted it cannot satisfy the clause's access-restriction limb even in
 /// principle.
 ///
+/// And not `dpp_domain::ports::backup::BackupCopyPort`, the ESPR Art. 10(4)
+/// back-up copy — the one on this list that is easiest to mis-read in the
+/// *other* direction. Clause 4.2 expects archived versions to be held by the
+/// back-up provider as well as by this node, so the provider is not exempt from
+/// the clause. It is that the port carries no series — one copy per passport,
+/// `retrieve` answering with one — so whatever a provider does about clause 4.2
+/// happens outside it. This trait is the node's own side, and wiring a back-up
+/// adapter leaves it unwired.
+///
 /// # Archiving begins at the first change, not at create
 ///
 /// The clause is explicit about it, and the distinction is load-bearing: the
