@@ -171,24 +171,36 @@ async fn record(
 ) {
     let entry = entry_for(pointer, fetched);
 
-    match &entry {
-        CachedTrustedList::Verified { .. } => stats.verified += 1,
-        CachedTrustedList::Unavailable { reason } => {
-            stats.unavailable += 1;
-            tracing::warn!(
-                %territory,
-                %reason,
-                "a Member State's trusted list could not be verified — a provider listed \
-                 there is indistinguishable from one listed nowhere, and the seal \
-                 qualification verdict reports the territory as unchecked"
-            );
-        }
+    if let CachedTrustedList::Unavailable { reason } = &entry {
+        tracing::warn!(
+            %territory,
+            %reason,
+            "a Member State's trusted list could not be verified — a provider listed \
+             there is indistinguishable from one listed nowhere, and the seal \
+             qualification verdict reports the territory as unchecked"
+        );
     }
 
+    // 🚨 **Counted after the write, never before.**
+    //
+    // These counters describe the *cache*, and the cache is what a verdict is
+    // answered from — `unavailable` is documented as the width of every
+    // `notListed` this node will give until the next pass. Incrementing before
+    // `put` made them describe the pass's intent instead, so a pass whose writes
+    // all failed still reported a full, healthy refresh while the cache silently
+    // stopped ageing and every log line said it had not.
     if let Err(e) = store.put(territory, &entry).await {
         // Loud, because a pass that cannot write is a cache that silently stops
         // ageing while every log line says it refreshed.
         tracing::warn!(%territory, error = %e, "could not store a trusted list");
+        stats.unwritten += 1;
+        stats.unwritten_territories.push(territory.to_owned());
+        return;
+    }
+
+    match &entry {
+        CachedTrustedList::Verified { .. } => stats.verified += 1,
+        CachedTrustedList::Unavailable { .. } => stats.unavailable += 1,
     }
 }
 
@@ -196,7 +208,7 @@ async fn record(
 ///
 /// Returned rather than only logged so the caller can set gauges and a test can
 /// assert on it — the same arrangement `DrainStats` and `SealAudit` use.
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct RefreshStats {
     /// Territories whose list was fetched and verified this pass.
     pub verified: u32,
@@ -208,6 +220,26 @@ pub struct RefreshStats {
     /// be filed under one, and the cache is keyed by territory. Counted so that
     /// a Union which grew such a pointer is visible rather than silently short.
     pub unnamed: u32,
+    /// Territories this pass decided about and could **not** write.
+    ///
+    /// 🚨 Counted apart from the two above because the cache does not reflect
+    /// them, and it is the cache a verdict is answered from. A territory in here
+    /// still holds whatever the last successful pass left — which for a list
+    /// that verified last week and failed today is a `Verified` row the
+    /// fail-closed rule exists to replace.
+    ///
+    /// They are named in [`Self::unwritten_territories`] rather than only
+    /// counted, because the publish step has to admit them: see
+    /// `spawn_trusted_list_refresh`.
+    pub unwritten: u32,
+    /// Which territories those were, so a caller can narrow its verdict to
+    /// match what the cache actually holds.
+    ///
+    /// The database being briefly unavailable is the ordinary cause, and it hits
+    /// every territory in the pass at once — so this is a list rather than a
+    /// flag, and unbounded rather than capped: a pass that could write nothing
+    /// must be able to say so about all of them.
+    pub unwritten_territories: Vec<String>,
 }
 
 /// Run one pass: verify the list of trusted lists, then every national list it
@@ -285,10 +317,21 @@ pub async fn refresh_once(store: &Arc<dyn TrustedListStore>) -> Option<RefreshSt
         record(store, territory, pointer, fetched, &mut stats).await;
     }
 
+    if stats.unwritten > 0 {
+        tracing::warn!(
+            unwritten = stats.unwritten,
+            territories = %stats.unwritten_territories.join(", "),
+            "a pass decided about these territories and could not write them — the cache \
+             still holds whatever the last successful pass left there, so the verdict is \
+             narrowed to admit them and the next pass comes sooner"
+        );
+    }
+
     tracing::info!(
         verified = stats.verified,
         unavailable = stats.unavailable,
         unnamed = stats.unnamed,
+        unwritten = stats.unwritten,
         "trusted list refresh completed a pass over the Union"
     );
     Some(stats)
@@ -450,6 +493,99 @@ mod tests {
                 .insert(territory.to_owned(), entry.clone());
             Ok(())
         }
+    }
+
+    /// A store that refuses every write, as a database briefly down would.
+    struct RefusesToWrite;
+
+    #[async_trait::async_trait]
+    impl TrustedListStore for RefusesToWrite {
+        async fn load(
+            &self,
+        ) -> Result<std::collections::BTreeMap<String, CachedTrustedList>, dpp_domain::DppError>
+        {
+            Ok(std::collections::BTreeMap::new())
+        }
+
+        async fn put(
+            &self,
+            _territory: &str,
+            _entry: &CachedTrustedList,
+        ) -> Result<(), dpp_domain::DppError> {
+            Err(dpp_domain::DppError::Validation(
+                "the database is down".into(),
+            ))
+        }
+    }
+
+    /// 🚨 A write that fails is **not** counted as a refresh.
+    ///
+    /// The counters describe the cache, and a verdict is answered from the
+    /// cache — `unavailable` is documented as the width of every `notListed`
+    /// this node gives until the next pass. Counting before the write made them
+    /// describe the pass's *intent*, so a pass whose every write failed still
+    /// published a full healthy pair of gauges while the cache silently stopped
+    /// ageing.
+    ///
+    /// The territory is named rather than only counted, because the publish step
+    /// has to admit it: what the cache holds for it is no longer what the pass
+    /// found, and a stale `Verified` row left behind by a failed `Unavailable`
+    /// write would otherwise be served as though it had been refreshed.
+    #[tokio::test]
+    async fn a_write_that_fails_is_not_counted_as_a_refresh() {
+        let store: Arc<dyn TrustedListStore> = Arc::new(RefusesToWrite);
+        let mut stats = RefreshStats::default();
+
+        // A list that verifies perfectly — so the only thing that can go wrong
+        // below is the write, and `verified` would have counted it before.
+        record(
+            &store,
+            "FI",
+            &finnish_pointer(),
+            Ok(FI_LIST.to_owned()),
+            &mut stats,
+        )
+        .await;
+
+        assert_eq!(
+            stats.verified, 0,
+            "a list that could not be written is not a list the cache holds"
+        );
+        assert_eq!(stats.unavailable, 0, "and it is not unavailable either");
+        assert_eq!(stats.unwritten, 1);
+        assert_eq!(
+            stats.unwritten_territories,
+            vec!["FI".to_owned()],
+            "named, so the publish step can narrow the verdict to match the cache"
+        );
+    }
+
+    /// The same holds when the entry being written is itself an unavailable one.
+    ///
+    /// This is the case the fail-closed rule is about: the territory verified on
+    /// a previous pass, fails today, and the row that would replace its
+    /// `Verified` copy cannot be written. Counting it as `unavailable` would say
+    /// the cache had been narrowed when it had not.
+    #[tokio::test]
+    async fn an_unavailable_entry_that_cannot_be_written_is_unwritten_not_unavailable() {
+        let store: Arc<dyn TrustedListStore> = Arc::new(RefusesToWrite);
+        let mut stats = RefreshStats::default();
+
+        record(
+            &store,
+            "DE",
+            &finnish_pointer(),
+            Err("could not be fetched: connection refused".to_owned()),
+            &mut stats,
+        )
+        .await;
+
+        assert_eq!(
+            stats.unavailable, 0,
+            "the cache was not narrowed, so the count that describes its width must not say it was"
+        );
+        assert_eq!(stats.unwritten, 1);
+        assert_eq!(stats.unwritten_territories, vec!["DE".to_owned()]);
     }
 
     /// 🚨 An unreachable Member State reaches the cache as **unavailable**.
