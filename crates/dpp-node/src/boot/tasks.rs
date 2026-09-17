@@ -991,6 +991,20 @@ const TRUSTED_LIST_FIRST_PASS_DELAY: std::time::Duration = std::time::Duration::
 const TRUSTED_LIST_REFRESH_INTERVAL: std::time::Duration =
     std::time::Duration::from_secs(24 * 3600);
 
+/// How soon a pass comes back when it could not write what it found.
+///
+/// 🚨 Not the daily cadence, because the thing that failed is not the Union —
+/// it is this node's own database, and the ordinary cause is that it was briefly
+/// unavailable. Until the write lands, every territory it covers is admitted as
+/// unchecked, so the verdict stays narrowed; waiting a day to retry would hold
+/// it narrow for a day over something that usually clears in seconds.
+///
+/// Fifteen minutes rather than seconds: a pass is thirty-odd external fetches,
+/// and hammering the Union because the local database is down would turn one
+/// outage into two. The fetches are the expensive half and they are not what
+/// failed.
+const TRUSTED_LIST_WRITE_RETRY: std::time::Duration = std::time::Duration::from_secs(15 * 60);
+
 /// Spawn the periodic trusted-list refresh, if this node was asked for one.
 ///
 /// ✅ COMPLIANCE-PIN: Reg. (EU) No 910/2014 Art. 22 — Member States publish
@@ -1018,6 +1032,10 @@ pub fn spawn_trusted_list_refresh(
     tokio::spawn(async move {
         tokio::time::sleep(TRUSTED_LIST_FIRST_PASS_DELAY).await;
         loop {
+            // Reset each pass: the wait below is about what *this* pass found,
+            // and an abandoned pass (`None`) leaves it false so the cadence
+            // stays daily rather than spinning on a Union that cannot be reached.
+            let mut unwritten = false;
             if let Some(stats) = dpp_node::infra::trusted_list_refresh::refresh_once(&store).await {
                 // 🚨 Publish into the running inspector, and only here — after a
                 // pass that **completed**.
@@ -1038,10 +1056,42 @@ pub fn spawn_trusted_list_refresh(
                 // an unrelated restart.
                 match store.load().await {
                     Ok(cached) => {
-                        let (lists, unchecked) = dpp_seal::trustlist::from_cache(&cached);
+                        let (mut lists, mut unchecked) = dpp_seal::trustlist::from_cache(&cached);
+
+                        // 🚨 **A territory this pass could not write is admitted
+                        // as unchecked, whatever the cache says about it.**
+                        //
+                        // Without this the fix above makes the hole worse rather
+                        // than better. A list that verified last week and failed
+                        // to verify today keeps its old `Verified` row when the
+                        // `Unavailable` write fails — and this step re-reads the
+                        // cache, so that stale row would be published straight
+                        // into the served verdict, with nothing in `unchecked`
+                        // naming it. The verdict would then answer `notListed`
+                        // for a provider on the strength of a list this node
+                        // knows it could not refresh, which is exactly the
+                        // overclaim the two counts exist to prevent.
+                        //
+                        // Dropped from `lists` as well as added to `unchecked`,
+                        // because leaving it in both would let the stale copy
+                        // answer while the verdict merely admitted doubt about
+                        // it. Narrow and honest beats wide and wrong.
+                        for territory in &stats.unwritten_territories {
+                            lists.retain(|l| l.territory() != Some(territory.as_str()));
+                            unchecked.retain(|u| &u.territory != territory);
+                            unchecked.push(dpp_types::qualification::UncheckedTerritory {
+                                territory: territory.clone(),
+                                reason: "this node could not write the result of its last pass \
+                                         for this territory, so what the cache holds is not \
+                                         what the pass found"
+                                    .to_owned(),
+                            });
+                        }
+
                         tracing::info!(
                             consulted = lists.len(),
                             unchecked = unchecked.len(),
+                            unwritten = stats.unwritten,
                             "trusted lists published to the running node's seal verdicts"
                         );
                         inspector.publish(lists, unchecked);
@@ -1082,8 +1132,25 @@ pub fn spawn_trusted_list_refresh(
                          one listed nowhere. The verdict reports the territories by name"
                     );
                 }
+                unwritten = stats.unwritten > 0;
             }
-            tokio::time::sleep(TRUSTED_LIST_REFRESH_INTERVAL).await;
+
+            // 🚨 A pass that could not write comes back sooner than a day.
+            //
+            // The causes that stop a list being *read* differ in how retryable
+            // they are — a timeout is worth trying again, a signature that does
+            // not verify is not, a document over a parser ceiling never will be
+            // until the parser changes. A failed **write** is none of those: it
+            // is this node's own database, the ordinary cause is that it was
+            // briefly unavailable, and it is the most retryable failure in the
+            // pass. Waiting a full day to try again would leave the verdict
+            // narrowed for a day over something that usually clears in seconds.
+            let wait = if unwritten {
+                TRUSTED_LIST_WRITE_RETRY
+            } else {
+                TRUSTED_LIST_REFRESH_INTERVAL
+            };
+            tokio::time::sleep(wait).await;
         }
     });
 }
