@@ -623,11 +623,15 @@ fn enum_cases() -> Vec<EnumCase> {
                 dpp_types::CreationDevice::NotAQualifiedCertificate,
             ]),
         },
-        // These three read `ALL` off the core enum rather than a hand-written
+        // These four read `ALL` off the core enum rather than a hand-written
         // list, so they cannot drift the way the tripwire below describes.
         EnumCase {
             name: "LifeStatus",
             variants: wire(&fixtures::all_life_statuses()),
+        },
+        EnumCase {
+            name: "CreateLifeStatus",
+            variants: wire(&fixtures::creatable_life_statuses()),
         },
         EnumCase {
             name: "SecondLifeOperation",
@@ -2877,6 +2881,21 @@ mod fixtures {
     /// Read off the core enum, not transcribed — see the `EnumCase` comment.
     pub fn all_life_statuses() -> Vec<LifeStatus> {
         LifeStatus::ALL.to_vec()
+    }
+
+    /// The same list, less the one value `POST /dpp` refuses.
+    ///
+    /// 🚨 Subtracted from `ALL` rather than written out, so a status a later
+    /// `dpp-domain` adds lands here too — and the spec then disagrees until
+    /// somebody decides whether a passport may be created in it. A transcribed
+    /// list would quietly keep passing while the create route accepted a value
+    /// the schema did not offer.
+    pub fn creatable_life_statuses() -> Vec<LifeStatus> {
+        LifeStatus::ALL
+            .iter()
+            .copied()
+            .filter(|s| *s != LifeStatus::Waste)
+            .collect()
     }
 
     pub fn all_second_life_operations() -> Vec<SecondLifeOperation> {

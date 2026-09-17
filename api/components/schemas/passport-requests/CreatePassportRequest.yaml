@@ -98,7 +98,7 @@ properties:
       Regulation (EU) 2023/1542 Art. 77(7) permits several predecessors.
   lifeStatus:
     allOf:
-      - $ref: ../passport/LifeStatus.yaml
+      - $ref: ./CreateLifeStatus.yaml
     description: >-
       Where this unit sits in its **product** life — Annex XIII point 4(c) of
       Regulation (EU) 2023/1542.
