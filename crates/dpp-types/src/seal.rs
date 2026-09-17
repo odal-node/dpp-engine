@@ -929,7 +929,9 @@ pub enum RevocationStanding {
 ///
 /// Art. 32(1)(b) has two limbs — issued by a qualified provider, and **valid at
 /// the time of signing** — and this answers the second. The first is a trusted
-/// list question, answered elsewhere.
+/// list question, answered by
+/// [`SealQualification`](crate::qualification::SealQualification), which the
+/// seal route serves beside this.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CertificateStanding {

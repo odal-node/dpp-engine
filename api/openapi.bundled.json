@@ -9266,7 +9266,7 @@
       },
       "CertificateStanding": {
         "type": "object",
-        "description": "**Was the seal's signing certificate valid when the seal was made?**\n\nThe second limb of Regulation (EU) No 910/2014 Art. 32(1)(b), reached for seals by Art. 40. The first limb — whether a qualified trust service provider issued it — is a Trusted List question and is not answered here.\n\nTwo findings and the moment they were judged against, because the moment is what decides them: a certificate outside its window is a failure when a timestamp proves the seal was made outside it, and merely unproven otherwise. Certificates expire, sealed passports outlive them by years, and an expired certificate today says nothing about a seal made while it was good.",
+        "description": "**Was the seal's signing certificate valid when the seal was made?**\n\nThe second limb of Regulation (EU) No 910/2014 Art. 32(1)(b), reached for seals by Art. 40. The first limb — whether a qualified trust service provider issued it — is a Trusted List question, and is answered in `qualification.issuer` on the same response rather than here. Read the two together: a certificate can be well within its window and issued by nobody any list names.\n\nTwo findings and the moment they were judged against, because the moment is what decides them: a certificate outside its window is a failure when a timestamp proves the seal was made outside it, and merely unproven otherwise. Certificates expire, sealed passports outlive them by years, and an expired certificate today says nothing about a seal made while it was good.",
         "required": [
           "validity",
           "judgedAt",

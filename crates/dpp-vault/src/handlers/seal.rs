@@ -228,7 +228,9 @@ pub struct SealResponse {
     ///
     /// The second limb of Reg. (EU) No 910/2014 Art. 32(1)(b), reached for seals
     /// by Art. 40 — the first being whether a qualified provider issued it,
-    /// which is a Trusted List question this route does not ask.
+    /// which is a Trusted List question and is answered in `qualification`
+    /// beside this. Read the two together: a certificate can be well within its
+    /// window and issued by nobody any list names.
     ///
     /// Two answers in one: where the sealing moment falls in the certificate's
     /// validity window, and what the seal's own revocation material says. The
@@ -305,11 +307,14 @@ const NOT_VALIDATED: &str = "not validated by this node — a full verdict needs
      CAdES and reports the digest it covers, after verifying the signature over the attribute \
      naming it; `certificate` reports the signing certificate's validity window and whatever \
      revocation material the seal carries; `validation` restates both in ETSI EN 319 102-1's \
-     terms. What is not: no certificate path is built to a trust anchor, no validation policy is \
-     applied, and whether the issuer is a qualified provider is a Trusted List question asked \
-     elsewhere — which is why `totalPassed` is unreachable here by construction. `coverage` is \
-     weaker again, reporting which digest this node's own records say was requested; compare it \
-     with `binding`, because the two can disagree.";
+     terms; `qualification` asks the Trusted List question — whether a qualified provider issued \
+     that certificate, and was qualified when the seal was made — against whatever lists this \
+     node holds, which is why it reports how many territories were consulted. What is not: the \
+     issuer check behind `qualification` is one link against a Trusted List entry, not a \
+     certificate path built and validated to a trust anchor, and no validation policy is applied \
+     — which is why `totalPassed` is unreachable here by construction. `coverage` is weaker \
+     again, reporting which digest this node's own records say was requested; compare it with \
+     `binding`, because the two can disagree.";
 
 /// Whether the stored seal covers the passport's current signature.
 ///
