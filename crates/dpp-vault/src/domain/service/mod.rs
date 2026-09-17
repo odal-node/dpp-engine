@@ -100,6 +100,14 @@ pub struct PassportService {
     /// that happens in the repository decorator, which a node wires or does
     /// not wire independently of this.
     pub versions: Option<Arc<dyn dpp_types::audit::PassportVersionStore>>,
+    /// Finds the passport that replaced a superseded one, so a printed carrier
+    /// keeps landing on the current record.
+    ///
+    /// `None` leaves a superseded passport serving its own frozen view, which is
+    /// what every deployment did before this existed. That view is signed and
+    /// verifiable; its `status` is the publish-time one, which is the residue
+    /// this does not reach for a passport with no successor.
+    pub successors: Option<Arc<dyn dpp_types::successor::SuccessorLookup>>,
     /// Persistence for transfer-of-responsibility chains. `None` disables
     /// the transfer endpoints (test doubles without a transfer store).
     pub transfer_store: Option<Arc<dyn TransferStore>>,
@@ -189,6 +197,7 @@ impl PassportService {
             archive,
             registry_outbox: None,
             versions: None,
+            successors: None,
             transfer_store: None,
             transfer_outbox: None,
             evidence_store: None,
@@ -212,6 +221,17 @@ impl PassportService {
     #[must_use]
     pub fn with_versions(mut self, store: Arc<dyn dpp_types::audit::PassportVersionStore>) -> Self {
         self.versions = Some(store);
+        self
+    }
+
+    /// Provide the successor lookup, so a retired passport's carrier resolves on
+    /// to the record that replaced it.
+    #[must_use]
+    pub fn with_successors(
+        mut self,
+        lookup: Arc<dyn dpp_types::successor::SuccessorLookup>,
+    ) -> Self {
+        self.successors = Some(lookup);
         self
     }
 

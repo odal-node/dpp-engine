@@ -189,7 +189,10 @@ async fn start_node_with_ruleset(
         .with_transfer_store(Arc::new(PgTransferRepo::new(dal.clone())))
         .with_evidence_store(Arc::new(PgEvidenceDossierRepo::new(dal.clone())))
         .with_registry_reader(operator_repo.clone())
-        .with_versions(version_store),
+        .with_versions(version_store)
+        // Wired as `boot::db` wires it, so the public-read branch that resolves
+        // a superseded carrier on to its successor is actually exercised here.
+        .with_successors(Arc::new(dpp_dal::pg::PgSuccessorRepo::new(dal.clone()))),
     );
     let operator_service = Arc::new(OperatorService::new(operator_repo));
     let api_key_service = Arc::new(ApiKeyService::new(api_key_repo));
@@ -2414,5 +2417,137 @@ async fn an_archived_version_is_retrievable_and_a_bad_as_of_is_told_from_an_unco
     assert_eq!(
         status, 422,
         "an unparseable asOf must be 422, not 404 — the request is the problem"
+    );
+}
+
+/// A printed carrier keeps working after the passport behind it is amended.
+///
+/// ✅ COMPLIANCE-PIN: ESPR Art. 9(1) — the data carrier links to *the* digital
+/// product passport for the product. A carrier is printed on a physical thing
+/// and cannot be recalled, so the record it lands on has to stay the current one
+/// across an amendment.
+///
+/// 🚨 This is the door that used to answer differently from the one beside it. A
+/// passport carrying a GTIN gets a GS1 Digital Link carrier, and every
+/// `/01/{gtin}` route resolves on the GTIN alone — so an amended product's
+/// printed label already landed on the successor. A passport with **no** GTIN
+/// falls back to `/dpp/{id}`, and that one served the predecessor's frozen view,
+/// whose `status` was fixed at publish and therefore still read `active`.
+///
+/// What a consumer got was a passport that said it was live, described the
+/// superseded product, and pointed nowhere. What they get now is the successor:
+/// published, separately signed, verifiable, and naming the passport they
+/// scanned in its own `supersedesId`.
+#[tokio::test]
+async fn an_amended_passports_printed_carrier_lands_on_the_successor() {
+    let (base, _container) = start_db_and_node().await;
+    let token = make_jwt("00000000-0000-0000-0000-000000000079");
+    let client = reqwest::Client::new();
+
+    // 🚨 **No GTIN**, which is the whole point. `build_carrier_url` mints a GS1
+    // Digital Link carrier when the product group data carries one, and falls
+    // back to `/dpp/{id}` only when it does not — so a passport *with* a GTIN
+    // exercises a door that already worked. This one is printed with the
+    // fallback carrier, and the test follows that URL rather than constructing
+    // its own.
+    let created: serde_json::Value = client
+        .post(format!("{base}/vault/api/v1/dpp"))
+        .bearer_auth(&token)
+        .json(&serde_json::json!({
+            "productName": "Carrier Battery",
+            "manufacturer": {"name": "SmokeTestCorp", "address": "Berlin, DE"},
+            "materials": [],
+        }))
+        .send()
+        .await
+        .expect("create request failed")
+        .json()
+        .await
+        .unwrap();
+    let original_id = created["id"].as_str().expect("id").to_owned();
+
+    let resp = client
+        .post(format!("{base}/vault/api/v1/dpp/{original_id}/publish"))
+        .bearer_auth(&token)
+        .json(&serde_json::json!({}))
+        .send()
+        .await
+        .expect("publish failed");
+    let status = resp.status();
+    let published: serde_json::Value = resp.json().await.expect("json");
+    assert_eq!(status, 200, "publish failed: {published}");
+
+    let carrier = published["qrCodeUrl"]
+        .as_str()
+        .expect("a published passport carries a carrier URL")
+        .to_owned();
+    assert!(
+        carrier.ends_with(&format!("/dpp/{original_id}")),
+        "this passport must fall back to the by-id carrier, or the test is exercising \
+         the Digital Link door that already worked: {carrier}"
+    );
+
+    // The path a scan of that printed carrier resolves to on this node.
+    let scan = format!("{base}/vault/public/dpp/{original_id}");
+
+    // Before the amendment the public door serves the passport itself.
+    let resp = client.get(&scan).send().await.expect("public read failed");
+    assert_eq!(resp.status(), 200);
+    let served: serde_json::Value = resp.json().await.expect("json");
+    assert_eq!(served["id"].as_str(), Some(original_id.as_str()));
+
+    let resp = client
+        .post(format!("{base}/vault/api/v1/dpp/{original_id}/amend"))
+        .bearer_auth(&token)
+        .json(&serde_json::json!({
+            "patch": { "productName": "Corrected Battery" },
+            "reason": "Product name restated after supplier re-declaration"
+        }))
+        .send()
+        .await
+        .expect("amend failed");
+    let status = resp.status();
+    let body = resp.text().await.unwrap_or_default();
+    assert_eq!(status, 201, "amend should mint a successor: {body}");
+    let successor: serde_json::Value = serde_json::from_str(&body).expect("json");
+    let successor_id = successor["id"].as_str().expect("successor id").to_owned();
+    assert_ne!(successor_id, original_id);
+
+    // ── The scan ────────────────────────────────────────────────────────────
+    // The same carrier URL as before, printed on a product that has not changed.
+    let resp = client.get(&scan).send().await.expect("public read failed");
+    let status = resp.status();
+    let served: serde_json::Value = resp.json().await.expect("json");
+    assert_eq!(status, 200, "the carrier must not stop working: {served}");
+
+    assert_eq!(
+        served["id"].as_str(),
+        Some(successor_id.as_str()),
+        "a scan of the printed carrier lands on the record that is current now"
+    );
+    assert_eq!(
+        served["supersedesId"].as_str(),
+        Some(original_id.as_str()),
+        "and the document itself names the passport that was scanned, so the pointer \
+         is part of something the reader can verify rather than a claim beside it"
+    );
+    assert_eq!(
+        served["productName"].as_str(),
+        Some("Corrected Battery"),
+        "with the corrected content, which is the whole reason the amendment happened"
+    );
+    assert_eq!(
+        served["status"].as_str(),
+        Some("active"),
+        "🚨 and `active` is now TRUE of the record being served. It is the \
+         successor's own frozen payload, and the successor is published — where \
+         before this was the predecessor's publish-time status, describing a \
+         passport that had been retired"
+    );
+    assert!(
+        served["publicJwsSignature"]
+            .as_str()
+            .is_some_and(|s| !s.is_empty()),
+        "served with its own proof, so none of the above has to be taken on trust"
     );
 }

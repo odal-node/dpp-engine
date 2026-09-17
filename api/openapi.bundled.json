@@ -3302,7 +3302,7 @@
       "get": {
         "operationId": "publicGetDpp",
         "summary": "Public read of a published DPP",
-        "description": "Unauthenticated read of a published passport. Used by the resolver\nservice internally. Returns 404 for drafts, 410 for suspended.\n",
+        "description": "Unauthenticated read of a published passport. Used by the resolver\nservice internally. Returns 404 for drafts, 410 for suspended.\n\nA passport that has been superseded serves the record that replaced it,\nso the body's `id` is not always `dppId` — see the 200 below.\n",
         "tags": [
           "Public (Vault)"
         ],
@@ -3329,7 +3329,7 @@
         ],
         "responses": {
           "200": {
-            "description": "Published passport record. With `?schema_view`, the body is instead `{ passport, schemaView }`.",
+            "description": "Published passport record. With `?schema_view`, the body is instead `{ passport, schemaView }`.\n\n🚨 **The body's `id` is not always the `dppId` that was asked for.** A passport in the `superseded` status serves the published record that replaced it. ESPR Art. 9(1) has the data carrier link to *the* passport for the product, and a carrier is printed on a physical thing and cannot be recalled — so this door has to keep landing on whichever record is current, which is what `/01/{gtin}` beside it has always done.\n\nWhat is served is the successor's own signed public view, and its `supersedesId` names the passport that was asked for: the pointer is part of a document the reader can verify rather than a claim beside one. The chain is followed rather than stepped once, so `A → B → C` serves `C` when `A` is scanned.\n\nA superseded passport whose successor is **not published yet** keeps serving its own frozen view, as does one retired or deactivated with no replacement at all. In that view `status` reads as it did at publish, because the body is the payload `publicJwsSignature` was computed over.",
             "content": {
               "application/json": {
                 "schema": {
