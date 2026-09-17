@@ -5,7 +5,9 @@ description: >-
 
   The second limb of Regulation (EU) No 910/2014 Art. 32(1)(b), reached for seals
   by Art. 40. The first limb — whether a qualified trust service provider issued
-  it — is a Trusted List question and is not answered here.
+  it — is a Trusted List question, and is answered in `qualification.issuer` on
+  the same response rather than here. Read the two together: a certificate can be
+  well within its window and issued by nobody any list names.
 
 
   Two findings and the moment they were judged against, because the moment is

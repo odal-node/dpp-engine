@@ -192,6 +192,44 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   The refinement that would soften it is honouring each list's own `NextUpdate`,
   which the parser does not read yet.
 
+- **The seal route now answers the Art. 32(1) question it was built around.**
+  `GET /api/v1/dpp/{dppId}/seal` gains `qualification`: what the EU Trusted Lists
+  say about the certificate's issuer, and what the certificate declares about the
+  device that held its key.
+
+  ✅ Reg. (EU) No 910/2014 Art. 32(1)(a)–(b) and (f), applied to seals by Art. 40
+  — the two legs an ordinary AdES validation does not reach. `qualify` has
+  existed since the qualification work landed and **nothing called it**: the
+  route could report *who* issued a certificate, which needs no list, and never
+  whether that issuer was qualified.
+
+  🚨 **Read `consulted` and `unchecked` before reading `standing`.** `notListed`
+  is the only verdict claiming an *absence*, and an absence is only as wide as
+  what was looked at. `consulted: 0` means no list was loaded — the answer is
+  about nothing, and it is what a node with the trusted-list refresh switched off
+  reports for every provider seal, qualified or not. Even at its widest this is
+  not "not qualified in law": a provider can be qualified and its Member State's
+  list wrong.
+
+  **The lists are read once, at boot.** The inspector is called from read
+  handlers, and one that could reach the database — let alone the network — would
+  put that work on the path of a request somebody is waiting on. The cost is that
+  a refresh landing afterwards does not reach a running node's verdicts until it
+  restarts, which every verdict makes visible by reporting how many territories
+  it consulted.
+
+  `IssuerStanding`, `SealQualification` and `UncheckedTerritory` moved from
+  `dpp-seal` into `dpp-types`, joining `SealOrigin`, `SealBinding`,
+  `CertificateStanding` and `ArchivalFreshness` — which were already declared
+  there and computed in the seal crate. `dpp-vault` serves these and reaches the
+  seal crate through one trait, so the shapes had to sit below both. The logic
+  did not move.
+
+  *(⚠️ The lists are questioned about `sealedAt` — this node's clock when the
+  backend answered, not an attested time. Feeding the seal's own timestamp token
+  in would make the verdict stronger and is the other half of the
+  timestamp-authority work.)*
+
 - **Every change to a passport is now archived, and the version that was current
   at any past moment can be read back.** New `odal.passport_version` (migration
   `0040`), `dpp_types::audit::PassportVersionStore` + `PassportVersion`,

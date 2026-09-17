@@ -1,0 +1,46 @@
+type: object
+description: >-
+  What Regulation (EU) No 910/2014 Art. 32(1) says about a seal, read off the
+  seal and the EU Trusted Lists this node holds. Art. 40 applies Art. 32 to seals
+  *mutatis mutandis*.
+
+
+  Two legs, and they are independent — a seal can hold either without the other,
+  which is why they are two fields rather than one ladder:
+
+
+  * **Art. 32(1)(a)–(b)** — the certificate was a qualified certificate issued by
+    a qualified trust service provider. A Trusted List question (Art. 22),
+    answered by `issuer`.
+  * **Art. 32(1)(f)** — the seal was created by a qualified electronic seal
+    creation device, which Annex III(j) requires the certificate to declare in
+    machine-processable form. Answered by `creationDevice`.
+
+
+  🚨 **This is not a qualified validation result.** Under Art. 33, reached for
+  seals by Art. 40, a *qualified* validation service is itself a provider service
+  whose result carries that provider's seal. Nothing here is signed and nothing
+  here is qualified — this is a reading of published lists, and conditions (c),
+  (d) and (h) of Art. 32(1) are not checked at all.
+required:
+  - issuer
+  - creationDevice
+  - unchecked
+properties:
+  issuer:
+    $ref: ./IssuerStanding.yaml
+  creationDevice:
+    $ref: ./CreationDevice.yaml
+  unchecked:
+    type: array
+    items:
+      $ref: ./UncheckedTerritory.yaml
+    description: >-
+      The territories the EU list of trusted lists names and this node could not
+      consult, with the reason for each.
+
+
+      🚨 **Read this before acting on a `notListed` issuer.** The two states a
+      caller must tell apart — *this issuer is on no list* and *the list it would
+      be on could not be read* — are otherwise identical at the point of the
+      verdict. Empty means every territory the list of lists names was read.

@@ -929,7 +929,9 @@ pub enum RevocationStanding {
 ///
 /// Art. 32(1)(b) has two limbs — issued by a qualified provider, and **valid at
 /// the time of signing** — and this answers the second. The first is a trusted
-/// list question, answered elsewhere.
+/// list question, answered by
+/// [`SealQualification`](crate::qualification::SealQualification), which the
+/// seal route serves beside this.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CertificateStanding {
@@ -1193,6 +1195,34 @@ pub trait SealInspector: Send + Sync {
         envelope: &SealedEnvelope,
         now: DateTime<Utc>,
     ) -> Option<CertificateStanding>;
+
+    /// What Art. 32(1) says about the seal, against whatever trusted lists this
+    /// adapter holds.
+    ///
+    /// ✅ Reg. (EU) No 910/2014 Art. 32(1)(a)–(b) and (f), applied to seals by
+    /// Art. 40.
+    ///
+    /// `None` means **not read** — a placeholder envelope, a format this adapter
+    /// does not parse, or bytes that will not decode. Never read it as "not
+    /// qualified": that is a finding, and a finding comes from a certificate
+    /// that was examined.
+    ///
+    /// 🚨 A verdict is not the same as a *wide* verdict, and the difference is
+    /// inside the answer rather than in whether there is one. An adapter holding
+    /// no lists still answers — with
+    /// [`IssuerStanding::NotListed`](crate::qualification::IssuerStanding::NotListed)
+    /// carrying `consulted: 0`, which says the answer is about nothing. Read the
+    /// counts before reading the variant.
+    ///
+    /// Defaulted to `None` so an adapter that cannot reach a trusted list does
+    /// not have to pretend: the ghost backend and any test double inherit "not
+    /// read", which is true of them.
+    fn qualification(
+        &self,
+        _envelope: &SealedEnvelope,
+    ) -> Option<crate::qualification::SealQualification> {
+        None
+    }
 }
 
 #[cfg(test)]

@@ -289,6 +289,29 @@ const UNCHECKED: &[(&str, &str)] = &[
          the only thing that would actually close it",
     ),
     (
+        "TrustServiceStatus",
+        "a `oneOf` mixing `null`, a string enum and an externally-tagged object \
+         — core's `Other(String)` catch-all serialises as `{\"other\": \"<uri>\"}` \
+         so that `undersupervision` cannot be read as a lesser kind of \
+         `granted`. Neither checker can express that union, the same limit \
+         `ResponsibilityBasis` runs into. The three wire shapes are pinned \
+         instead by `a_status_outside_the_granted_withdrawn_pair_is_an_object_\
+         on_the_wire` in `dpp-types`, and the object form is carried through a \
+         real verdict by the `notQualifiedAtSealing` case in \
+         `every_issuer_standing_serialises_as_documented`",
+    ),
+    (
+        "IssuerStanding",
+        "an internally-tagged enum whose seven variants carry seven different \
+         payload fields, so no single fixture can emit the union of documented \
+         properties and the key-set comparison reports the rest as \
+         undocumented — the same shape as `RevocationStanding` below. The wire \
+         form of every variant is pinned instead by \
+         `every_issuer_standing_serialises_as_documented`, which also checks \
+         the documented property list against what the variants can actually \
+         emit",
+    ),
+    (
         "RevocationStanding",
         "an internally-tagged enum whose four variants carry three different \
          payload fields (`asOf`, `at`, `reason`), so no single fixture can emit \
@@ -488,6 +511,15 @@ fn object_cases() -> Vec<ObjectCase> {
     case!("SealResponse", fixtures::seal_response());
     case!("SealOrigin", fixtures::seal_origin());
     case!("SealBinding", fixtures::seal_binding());
+    case!("SealQualification", fixtures::seal_qualification());
+    case!(
+        "UncheckedTerritory",
+        dpp_types::qualification::UncheckedTerritory {
+            territory: "DE".to_owned(),
+            reason: "did not verify against the certificates the list of trusted lists names"
+                .to_owned(),
+        }
+    );
     case!("SealValidationStatus", fixtures::seal_validation_status());
     case!("CertificateStanding", fixtures::certificate_standing());
     case!("ValidityWindow", fixtures::certificate_standing().validity);
@@ -579,6 +611,17 @@ fn enum_cases() -> Vec<EnumCase> {
         EnumCase {
             name: "OperatorRole",
             variants: wire(&fixtures::all_operator_roles()),
+        },
+        // Exhaustive by hand, and it has to be: `CreationDevice` reports what
+        // Annex III(j) *declares*, and a variant the schema does not name is one
+        // a client cannot act on.
+        EnumCase {
+            name: "CreationDevice",
+            variants: wire(&[
+                dpp_types::CreationDevice::DeclaresQualifiedDevice,
+                dpp_types::CreationDevice::NoQualifiedDevice,
+                dpp_types::CreationDevice::NotAQualifiedCertificate,
+            ]),
         },
         // These three read `ALL` off the core enum rather than a hand-written
         // list, so they cannot drift the way the tripwire below describes.
@@ -3687,6 +3730,30 @@ mod fixtures {
         }
     }
 
+    /// The Art. 32(1) verdict, in the state a client most has to reason about.
+    ///
+    /// `notListed` with **both** counts non-zero: some lists were consulted and
+    /// some territories could not be. That is the shape where "this issuer is on
+    /// no list" and "the list it would be on could not be read" have to be told
+    /// apart, and `unchecked` is what tells them apart — so the fixture carries
+    /// an entry rather than an empty array, which would check the key and never
+    /// the element.
+    pub fn seal_qualification() -> dpp_types::qualification::SealQualification {
+        dpp_types::qualification::SealQualification {
+            issuer: dpp_types::qualification::IssuerStanding::NotListed {
+                issuer: "CN=Some Provider CA, O=Some Provider, C=DE".into(),
+                consulted: 26,
+                unchecked: 1,
+            },
+            creation_device: dpp_types::CreationDevice::DeclaresQualifiedDevice,
+            unchecked: vec![dpp_types::qualification::UncheckedTerritory {
+                territory: "DE".into(),
+                reason: "did not verify against the certificates the list of trusted lists names"
+                    .into(),
+            }],
+        }
+    }
+
     pub fn seal_response() -> SealResponse {
         SealResponse {
             declared_by: seal_declarer(),
@@ -3712,6 +3779,12 @@ mod fixtures {
             // `SealOrigin.yaml` — so the schema this exists to pin would go
             // unchecked.
             origin: Some(seal_origin()),
+            // Populated for the same reason `origin` is, and populated with the
+            // variant that carries the **counts**: `notListed` is the only
+            // verdict claiming an absence, so it is the one whose nested shape a
+            // client has to read before acting, and the one most worth pinning
+            // against the schema.
+            qualification: Some(seal_qualification()),
             binding: seal_binding(),
             validation: dpp_types::SealValidationStatus::of(
                 &seal_binding(),
@@ -4334,5 +4407,159 @@ fn the_published_dossier_schema_lists_every_member_the_dossier_emits() {
         unemitted.is_empty(),
         "the published schema lists members the dossier never emits, so a reader would expect \
          fields that cannot appear: {unemitted:?}"
+    );
+}
+
+/// `IssuerStanding` is `UNCHECKED` above because seven variants carry seven
+/// different payload fields, so no one fixture emits the union the key-set
+/// comparison needs. This pins what the schema could not: the tag every variant
+/// serialises to, the field each one carries, and — the part that makes it a
+/// gate rather than a restatement — that the documented property list is exactly
+/// what the variants between them emit.
+///
+/// ✅ Reg. (EU) No 910/2014 Art. 32(1)(a)–(b), reached for seals by Art. 40. The
+/// tag is what a reader switches on to decide whether a seal has legal standing,
+/// so it is the most load-bearing string in this response.
+#[test]
+fn every_issuer_standing_serialises_as_documented() {
+    use dpp_types::qualification::IssuerStanding as I;
+
+    let spec = spec();
+    let schema = &schemas(&spec)["IssuerStanding"];
+    let documented: BTreeSet<String> = schema["properties"]
+        .as_object()
+        .expect("IssuerStanding documents properties")
+        .keys()
+        .cloned()
+        .collect();
+
+    let cases: Vec<(I, &str, &[&str])> = vec![
+        (
+            I::SelfIssued {
+                subject: "CN=Self".to_owned(),
+            },
+            "selfIssued",
+            &["subject"],
+        ),
+        (
+            I::NotListed {
+                issuer: "CN=A".to_owned(),
+                consulted: 26,
+                unchecked: 1,
+            },
+            "notListed",
+            &["issuer", "consulted", "unchecked"],
+        ),
+        (
+            I::ChainIncomplete {
+                issuer: "CN=A".to_owned(),
+                missing_issuer: "CN=B".to_owned(),
+            },
+            "chainIncomplete",
+            &["issuer", "missingIssuer"],
+        ),
+        (
+            I::SignatureNotFromListedCa {
+                issuer: "CN=A".to_owned(),
+                provider: Some("P".to_owned()),
+                territory: Some("FI".to_owned()),
+            },
+            "signatureNotFromListedCa",
+            &["issuer", "provider", "territory"],
+        ),
+        (
+            I::PathUnverifiable {
+                issuer: "CN=A".to_owned(),
+                provider: Some("P".to_owned()),
+                territory: Some("FI".to_owned()),
+                reason: "a key algorithm this build does not verify".to_owned(),
+            },
+            "pathUnverifiable",
+            &["issuer", "provider", "territory", "reason"],
+        ),
+        (
+            I::NotQualifiedAtSealing {
+                issuer: "CN=A".to_owned(),
+                provider: Some("P".to_owned()),
+                territory: Some("FI".to_owned()),
+                // 🚨 `Other`, not `Withdrawn`. `TrustServiceStatus` is
+                // `#[non_exhaustive]` with an `Other(String)` catch-all for
+                // every status a trusted list carries that is not `granted` or
+                // `withdrawn` — `undersupervision`, `recognisedatnationallevel`
+                // and the rest. It serialises as an **object**,
+                // `{"other": "<uri>"}`, not a string, so a schema saying
+                // `string | null` here is violated by the first such entry a
+                // real list produces. This fixture is that case.
+                status: Some(dpp_domain::trusted_list::TrustServiceStatus::Other(
+                    "http://uri.etsi.org/TrstSvc/TrustedList/Svcstatus/undersupervision".to_owned(),
+                )),
+            },
+            "notQualifiedAtSealing",
+            &["issuer", "provider", "territory", "status"],
+        ),
+        (
+            I::QualifiedAtSealing {
+                issuer: "CN=A".to_owned(),
+                provider: Some("P".to_owned()),
+                territory: Some("FI".to_owned()),
+                remote_qscd_management: true,
+            },
+            "qualifiedAtSealing",
+            &["issuer", "provider", "territory", "remoteQscdManagement"],
+        ),
+    ];
+
+    // 🚨 An exhaustive `match` with no `_` arm, purely so the compiler counts
+    // the variants for us. `cases` above is hand-written, and a hand-written
+    // variant list is exactly what this file already records as drifting — three
+    // enum cases read `ALL` off the core enum for that reason. `IssuerStanding`
+    // carries data, so no such constant is possible; this is the substitute.
+    // An eighth variant stops this compiling until somebody adds it to `cases`
+    // **and** to the schema.
+    for (value, _, _) in &cases {
+        match value {
+            I::SelfIssued { .. }
+            | I::NotListed { .. }
+            | I::ChainIncomplete { .. }
+            | I::SignatureNotFromListedCa { .. }
+            | I::PathUnverifiable { .. }
+            | I::NotQualifiedAtSealing { .. }
+            | I::QualifiedAtSealing { .. } => {}
+        }
+    }
+    assert_eq!(
+        cases.len(),
+        7,
+        "every variant the match above names must have a case here"
+    );
+
+    let mut emitted: BTreeSet<String> = BTreeSet::new();
+    for (value, standing, payload) in &cases {
+        let json = serde_json::to_value(value).expect("serialises");
+        let object = json
+            .as_object()
+            .expect("an internally-tagged enum is an object");
+
+        assert_eq!(
+            object["standing"], *standing,
+            "the tag is what a reader switches on: {json}"
+        );
+        for field in *payload {
+            assert!(
+                object.contains_key(*field),
+                "`{standing}` must carry `{field}`: {json}"
+            );
+        }
+        assert_eq!(
+            object.len(),
+            payload.len() + 1,
+            "`{standing}` must carry the tag and exactly those fields: {json}"
+        );
+        emitted.extend(object.keys().cloned());
+    }
+
+    assert_eq!(
+        documented, emitted,
+        "the schema must document exactly the fields these variants emit"
     );
 }
