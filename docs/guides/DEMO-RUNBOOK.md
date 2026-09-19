@@ -212,12 +212,12 @@ a way a sentence does not.
 | Rung | State | Notes |
 |---|---|---|
 | **Local, by CLI** | Ready | Everything above. No domain required |
-| **Staging** | Configuration exists; **never applied** | `evidence/applies/` is empty. Schedule a first apply early rather than during a demo week |
-| **Public site** | A link, not a host | The marketing domain is static. It links to a demo node; it never serves passports |
+| **A hosted environment** | Depends on your deployment | A first deployment is a poor thing to attempt during a demo week. Do it early enough to fail once |
+| **A public site** | A link, not a host | A marketing site should link to a node, never serve passports from a shared endpoint |
 
-That last row is deliberate, not a limitation. Every real node is per-operator
-on its own domain — a shared endpoint serving operators' passports would invert
-the sovereignty the product rests on.
+That last row is deliberate, not a limitation. Every node is per-operator on its
+own domain — a shared endpoint serving several operators' passports would invert
+the sovereignty this design rests on.
 
 ---
 
