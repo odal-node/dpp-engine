@@ -724,6 +724,17 @@ pub(crate) mod tests {
         // table in force is the one the record names.
         passport.schema_version = "2.6.0".into();
         let current = public_view(&passport);
+        // 🚨 Both `stateOfHealth` assertions below index `["productGroupData"]`
+        // and then `.get(..)`. If the whole object were absent the index yields
+        // `Value::Null`, `.get` yields `None`, and both would pass while
+        // checking nothing. `gtin` is declared and public at both versions
+        // tested here, so asserting it present is what makes the absence
+        // assertions mean something.
+        assert_eq!(
+            current["productGroupData"]["gtin"],
+            json!("09506000134352"),
+            "productGroupData is missing, so the assertions below would pass vacuously"
+        );
         assert!(
             current["productGroupData"].get("stateOfHealth").is_none(),
             "stateOfHealth is Individual at v2.6.0 and must not be public"
@@ -747,6 +758,11 @@ pub(crate) mod tests {
         // name no longer reaches the public view merely by being unnamed.
         passport.schema_version = "1.0.0".into();
         let downgraded = public_view(&passport);
+        assert_eq!(
+            downgraded["productGroupData"]["gtin"],
+            json!("09506000134352"),
+            "productGroupData is missing, so the assertion below would pass vacuously"
+        );
         assert!(
             downgraded["productGroupData"]
                 .get("stateOfHealth")
@@ -757,8 +773,6 @@ pub(crate) mod tests {
         );
     }
 
-    /// Minimal published passport. `pub(crate)` because the seal service's
-    /// tests need the same fixture and duplicating it would let the two drift.
     /// A battery passport at a version whose schema declares the fields these
     /// tests exercise.
     ///
@@ -785,6 +799,8 @@ pub(crate) mod tests {
         p
     }
 
+    /// Minimal published passport. `pub(crate)` because the seal service's
+    /// tests need the same fixture and duplicating it would let the two drift.
     pub(crate) fn stub_passport() -> Passport {
         use chrono::Utc;
         use dpp_domain::passport::{ManufacturerInfo, PassportId};
