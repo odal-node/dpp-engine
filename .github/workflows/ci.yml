@@ -43,6 +43,19 @@ on:
   pull_request:
   workflow_dispatch:
 
+# Least privilege by default. Every job here builds, lints and tests; none
+# needs a token that can write, and without this block they inherit the
+# repository default.
+permissions:
+  contents: read
+
+# Cancel a superseded run rather than paying for it. `main` is excluded:
+# the post-merge run is the record for that commit, and cancelling it would
+# leave a merged commit never fully built.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
