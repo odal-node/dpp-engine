@@ -165,9 +165,10 @@ mod completeness {
     //! cannot catch an omission; these tests close that.
     //!
     //! They resolve the public field set through
-    //! `ProductGroupAccessPolicy::for_schema_version` — the exact entry point
-    //! `public_view` uses to decide what the public payload contains — rather
-    //! than restating a field list or re-reading the schema JSON. Same reason
+    //! `ProductGroupAccessPolicy::for_schema_version` — the same resolution
+    //! `dpp_domain::access::redact_passport` performs to decide what the public
+    //! payload contains, and which the vault's `public_view` now delegates to —
+    //! rather than restating a field list or re-reading the schema JSON. Same reason
     //! `typed_fixture` imports `ProductGroupData`: a test carrying its own copy of the
     //! authority agrees with itself forever.
 
