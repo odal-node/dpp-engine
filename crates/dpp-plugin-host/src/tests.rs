@@ -1097,7 +1097,18 @@ fn current(product_group: &str) -> String {
 
 #[test]
 fn a_plugin_behind_the_catalog_is_refused_rather_than_handed_data_it_cannot_read() {
-    let err = crate::host::schema_supported(&caps("1.0.0", "0.0.1"), "battery")
+    // 🚨 A **well-ordered** range whose maximum is genuinely below the
+    // catalog version. This first read `("1.0.0", "0.0.1")` — min above max —
+    // which no version can satisfy, so the test passed because the range was
+    // malformed rather than because it was outdated. That proves a different
+    // thing from the one it claims. Battery is on a 2.x schema, so a range
+    // ending at 1.0.0 is ordered, valid, and behind.
+    let current = current("battery");
+    assert!(
+        current.starts_with("2."),
+        "this fixture assumes battery is on a 2.x schema; it is {current}"
+    );
+    let err = crate::host::schema_supported(&caps("1.0.0", "1.0.0"), "battery")
         .expect_err("a plugin capped below the shipping schema must be refused");
     assert_eq!(err.kind, dpp_domain::ComplianceErrorKind::InvalidInput);
 }
