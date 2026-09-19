@@ -77,6 +77,98 @@ pub fn config_toml(home: &Path) -> String {
         .unwrap_or_else(|e| panic!("no config at {}: {e}", path.display()))
 }
 
+/// A signed continuity snapshot, the key that checks it, and the `did:web`
+/// document carrying that key.
+///
+/// Built in the shape `render_public_snapshot` writes: dates in, sign the
+/// document as it then stands, insert the proof afterwards so it never signs
+/// over itself.
+///
+/// This exists a second time here because Rust cannot share `#[cfg(test)]` code
+/// across a crate boundary — `core::snapshot`'s unit tests build the same shape
+/// for the in-process path, and an integration test is its own crate. The
+/// property that the shape is the one the node actually produces is pinned
+/// where the producer lives (`dpp-vault`'s `continuity_snapshot` suite), not by
+/// either copy.
+pub struct SnapshotFixture {
+    pub _dir: tempfile::TempDir,
+    pub document: serde_json::Value,
+    pub key_b64: String,
+    pub did_document: serde_json::Value,
+}
+
+pub fn signed_snapshot(
+    as_of: chrono::DateTime<chrono::Utc>,
+    valid_until: chrono::DateTime<chrono::Utc>,
+) -> SnapshotFixture {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let store = dpp_crypto::keystore::KeyStore::open(dir.path().join("keystore.json"), "test-pass")
+        .expect("open keystore");
+    store.generate_key("root").expect("generate key");
+
+    let rfc3339 =
+        |t: chrono::DateTime<chrono::Utc>| t.to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+    let mut document = serde_json::json!({
+        "id": "0198f000-0000-7000-8000-000000000000",
+        "productGroup": "battery",
+        "asOf": rfc3339(as_of),
+        "validUntil": rfc3339(valid_until),
+    });
+    let proof = dpp_crypto::jws::sign(&store, "root", &document).expect("sign snapshot");
+    document["snapshotJwsSignature"] = serde_json::Value::String(proof);
+
+    let did_document = dpp_vc::build_did_document(&store, "snapshot-test.example.com", "root")
+        .expect("build did document");
+    let key_b64 = dpp_crypto::jws::extract_primary_public_key(&did_document)
+        .expect("did document carries a primary key");
+
+    SnapshotFixture {
+        _dir: dir,
+        document,
+        key_b64,
+        did_document,
+    }
+}
+
+/// Serve fixed JSON bodies at fixed paths, and 404 everything else.
+///
+/// Enough to stand in for the static tier and for a separately-hosted DID
+/// document, which is all these suites need a server to be. Runs until the test
+/// process exits.
+pub fn static_server(routes: Vec<(String, String)>) -> String {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind a port");
+    let port = listener.local_addr().expect("read the bound port").port();
+
+    thread::spawn(move || {
+        for stream in listener.incoming() {
+            let Ok(mut stream) = stream else { continue };
+            let mut buf = [0u8; 4096];
+            let read = stream.read(&mut buf).unwrap_or(0);
+            let request = String::from_utf8_lossy(&buf[..read]).into_owned();
+            let path = request
+                .split_whitespace()
+                .nth(1)
+                .unwrap_or_default()
+                .to_owned();
+
+            let response = match routes.iter().find(|(p, _)| *p == path) {
+                Some((_, body)) => format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\
+                     Content-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                ),
+                None => "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\
+                         Connection: close\r\n\r\n"
+                    .to_owned(),
+            };
+            let _ = stream.write_all(response.as_bytes());
+            let _ = stream.flush();
+        }
+    });
+
+    format!("http://127.0.0.1:{port}")
+}
+
 /// Start a server that answers every request with one RFC 7807 problem body.
 ///
 /// Returns its origin. This is what lets the error-rendering suite stay in the

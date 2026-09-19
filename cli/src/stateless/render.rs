@@ -8,6 +8,7 @@ use std::io::Write as _;
 use anyhow::Result;
 use console::style;
 use dpp_types::evidence::{CheckStatus, VerificationReport};
+use dpp_vc::SnapshotBound;
 
 use crate::config::{Config, EnvKind};
 use crate::core::types::{
@@ -372,6 +373,69 @@ pub fn render_verification_report(report: &VerificationReport, target: &str) {
     } else {
         println!("TAMPER DETECTED — one or more checks failed. See FAIL lines above.");
     }
+}
+
+/// Render a continuity-snapshot freshness verdict (`odal snapshot verify`).
+///
+/// The three failing outcomes share an exit code and are written out as three
+/// different things on purpose. "Expired" sends a reader to the drain; "the
+/// proof is gone" sends them to whoever can write to the bucket; "the claim
+/// does not hold" sends them to the bytes. Collapsing them into one line would
+/// point all three at the wrong place.
+pub fn render_snapshot_bound(bound: &SnapshotBound, target: &str) {
+    let rfc3339 =
+        |t: &chrono::DateTime<chrono::Utc>| t.to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+    println!("Snapshot: {target}\n");
+
+    match bound {
+        SnapshotBound::Current { as_of, valid_until } => {
+            println!(
+                "  {} — the freshness bound is proven and has not passed.",
+                style("CURRENT").green().bold()
+            );
+            println!("    Taken:      {}", rfc3339(as_of));
+            println!("    Good until: {}", rfc3339(valid_until));
+        }
+        SnapshotBound::Expired { as_of, valid_until } => {
+            println!(
+                "  {} — the bound is proven and has passed. This copy is intact and stale.",
+                style("EXPIRED").yellow().bold()
+            );
+            println!("    Taken:      {}", rfc3339(as_of));
+            println!("    Expired:    {}", rfc3339(valid_until));
+        }
+        SnapshotBound::Absent => {
+            println!(
+                "  {} — this copy carries no snapshot proof.",
+                style("UNVERIFIABLE").red().bold()
+            );
+            println!(
+                "    A static-tier copy with no proof has had its bound stripped: the asOf\n    \
+                 and validUntil on it are text anyone could have written. (A live read\n    \
+                 legitimately carries no bound — this is not that.)"
+            );
+        }
+        SnapshotBound::Unproven(reason) => {
+            println!(
+                "  {} — a bound is claimed and the claim does not hold.",
+                style("UNVERIFIABLE").red().bold()
+            );
+            println!("    {reason}");
+        }
+        // `SnapshotBound` is `#[non_exhaustive]`; a newer core can add an
+        // outcome this build has never seen. Say so rather than guessing.
+        _ => {
+            println!(
+                "  {} — this build does not recognise the outcome, so it is not vouched for.",
+                style("UNRECOGNISED").red().bold()
+            );
+        }
+    }
+
+    println!(
+        "\nChecks the outer snapshot proof only. A consumer serving this content still\n\
+         owes the publish-time publicJwsSignature check, which is a separate answer."
+    );
 }
 
 /// Render the result of a publish run.

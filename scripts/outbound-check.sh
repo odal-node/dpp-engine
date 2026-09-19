@@ -19,6 +19,13 @@
 # their own clients, so they are listed by file rather than caught by a blanket
 # rule. Each entry is a target this operator configured, not one a stranger named.
 #
+# `cli/src/core/snapshot.rs` is the strongest case in that list and also the one
+# the guard would actively break. Its two URLs are command-line arguments —
+# there is no untrusted caller to be a confused deputy for — and the copy being
+# checked routinely lives somewhere the resolving guard refuses: a MinIO on
+# localhost, an internal mirror, a private bucket endpoint. Guarding it would
+# fail the no-node check in exactly the deployments it is for.
+#
 # Test code is exempt (a test double needs no SSRF guard), detected by the repo
 # convention that `#[cfg(test)]` modules sit at the bottom of a file: a match
 # below the first `#[cfg(test)]` line is test code. Whole-file test modules
@@ -38,7 +45,8 @@ crates/dpp-integrator/src/infra/vault_client.rs
 crates/dpp-resolver/src/main.rs
 crates/dpp-seal/src/eideasy/client.rs
 crates/dpp-vault/src/infra/identity_client.rs
-cli/src/http.rs'
+cli/src/http.rs
+cli/src/core/snapshot.rs'
 
 # Pass 1: first `#[cfg(test)]` line per file. Pass 2: every banned construction.
 # `|| true` because grep exits 1 on no matches, which is the success case here.

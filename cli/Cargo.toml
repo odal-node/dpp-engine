@@ -15,6 +15,11 @@ path = "src/main.rs"
 
 [dependencies]
 dpp-types   = { workspace = true }
+# `odal snapshot verify` checks a continuity snapshot with no node: `dpp-vc`
+# for the bound verifier, `dpp-crypto` for reading a key out of a DID document.
+# Both are already workspace pins consumed elsewhere here.
+dpp-vc      = { workspace = true }
+dpp-crypto  = { workspace = true }
 clap        = { workspace = true }
 reqwest     = { workspace = true }
 serde       = { workspace = true }
