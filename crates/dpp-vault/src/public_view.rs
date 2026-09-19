@@ -7,141 +7,57 @@
 //! is what lets anyone verify the public passport against the operator DID
 //! without a trusted resolver.
 //!
-//! ⬅️ Core-candidate: the redaction contract (which fields are public per
-//! access tier) is part of what the DPP standard promises third parties, not
-//! an operational choice this deployment makes — a plausible future home is
-//! `dpp-domain` alongside `Audience`. Not moved yet; recorded for the next
-//! core breaking revision.
+//! The redaction itself is **not** defined here. It is
+//! [`dpp_domain::access::redact_passport`] — part of what the DPP standard
+//! promises third parties rather than an operational choice this deployment
+//! makes. This module's job is the *serving* half: which payload each route
+//! hands back, and which proof travels with it.
 
 use base64::Engine;
 use serde_json::Value;
 
-use dpp_domain::access::{ProductGroupAccessPolicy, filter_by_audience};
 use dpp_domain::passport::Passport;
 use dpp_domain::status::PassportStatus;
 use dpp_domain::{Audience, DppError};
 
-/// Build the public-read redaction policy for a product group **at the schema version
-/// the passport was validated against**: the product group-agnostic passport defaults
-/// plus that version's own per-field tiers.
+/// Redact a passport to its **Public**-tier view — exactly what the public
+/// endpoint serves *and* what `publicJwsSignature` is signed over.
 ///
-/// The version is not optional and not "current". A passport's signatures are
-/// frozen over the redaction that produced them, so filtering it by whatever the
-/// catalog says today would apply rules that may postdate the signature — the
-/// served body and its proof would then disagree for reasons no reader could
-/// distinguish from tampering. Passing `passport.schema_version` is what keeps a
-/// published passport filtered by the classes in force when it was signed, for
-/// the life of the passport.
-///
-/// `None` when the product group or version is unknown, so an unrecognised pair fails
-/// closed. Callers must treat that as "serve no product group data", never as "serve it
-/// unfiltered" — see [`audience_view`].
-pub fn public_policy(
-    product_group_key: &str,
-    schema_version: &str,
-) -> Option<ProductGroupAccessPolicy> {
-    let product_group_policy =
-        ProductGroupAccessPolicy::for_schema_version(product_group_key, schema_version)?;
-    let mut policy = ProductGroupAccessPolicy::passport_default();
-    policy
-        .field_disclosure
-        .extend(product_group_policy.field_disclosure);
-    Some(policy)
+/// [`audience_view`] with [`Audience::Public`], and nothing else.
+#[must_use]
+pub fn public_view(passport: &Passport) -> Value {
+    audience_view(passport, Audience::Public)
 }
 
-/// Redact a full passport JSON value to its **Public**-tier view — exactly what
-/// the public endpoint serves *and* what `publicJwsSignature` is signed over.
-/// `publicJwsSignature` itself is absent at signing time (the field is `None` and
-/// skips serialisation), so the proof never signs over itself.
-pub fn public_view(full: &Value, product_group_key: &str, schema_version: &str) -> Value {
-    audience_view(full, product_group_key, schema_version, Audience::Public)
-}
-
-/// Redact a full passport to the view a given [`Audience`] may see.
+/// Redact a passport to the view a given [`Audience`] may see.
 ///
-/// [`public_view`] is this with [`Audience::Public`]; the fail-closed
-/// unknown-product group backstop below is shared deliberately, because an
-/// unrecognised product group has no field policy for *any* audience, not just the
-/// public one — a credentialed reader must not receive more from an unmodelled
-/// product group than an anonymous one would.
+/// # One line, which is the entire point
 ///
-/// # A view is a payload, never a payload plus someone else's proof
+/// This used to resolve a disclosure policy, run the filter, strip the proof
+/// fields and apply a fail-closed backstop — a second correct implementation of
+/// a rule with one correct implementation. That arrangement had already failed
+/// twice here: `Passport::redact` served `seal` and both signatures to the
+/// public because the proof fields had no disclosure class, and the AAS
+/// projection disclosed a `Restricted` `batchId` that the public JSON stripped,
+/// with a test asserting the leak was correct. Both were found by audit, not by
+/// failure, because the surface nobody serves from is the surface nobody tests.
 ///
-/// Every proof field is stripped, for every audience. A signature covers one
-/// specific redaction of the passport, so carrying it into a *different*
-/// redaction hands the reader a proof that cannot verify against the bytes it
-/// arrived with — a mismatch indistinguishable, to anyone checking, from
-/// tampering. Concretely: `publicJwsSignature` covers the public payload and has
-/// no disclosure-table entry at all (so it defaulted to `Public` and reached
-/// every audience), while `jwsSignature` covers the *full* payload and is
-/// `Conformity`, so an authority received it attached to a body with
-/// individual-item data already removed. Neither is verifiable where it landed.
+/// So the rule lives in [`dpp_domain::access::redact_passport`] and this calls
+/// it. Everything the old copy documented — why proofs never travel in a view,
+/// why the policy is pinned to the passport's own `schemaVersion` rather than
+/// the catalog's current one, why an unresolvable policy reduces
+/// `productGroupData` to its tag rather than serving it unfiltered — is stated
+/// there, next to the code that does it.
 ///
-/// `seal` is stripped for the same reason and is the easiest of the four to get
-/// wrong: it has no disclosure-table entry, so it would default to `Public` and
-/// reach every audience — and it covers the *full*-payload `jwsSignature`, so it
-/// verifies against no redaction at all, not even the public one. The qualified
-/// seal is served on its own route and inside the evidence dossier, where it
-/// travels with the signature it actually attests to.
+/// # What the passport supplies that the caller used to
 ///
-/// So this function returns the payload alone, and whichever layer serves it
-/// attaches the one proof that covers it — [`signed_public_view`] for the public
-/// view, [`signed_audience_view`] for the rest.
-pub fn audience_view(
-    full: &Value,
-    product_group_key: &str,
-    schema_version: &str,
-    audience: Audience,
-) -> Value {
-    let resolved = public_policy(product_group_key, schema_version);
-    // Unresolved means no product group field tiers are known, so the pass below would
-    // treat every `productGroupData` field as public by default. That output is
-    // discarded for `productGroupData` by the fail-closed step at the end; the passport
-    // defaults still apply to the top-level fields, which are version-independent.
-    let policy = resolved
-        .clone()
-        .unwrap_or_else(ProductGroupAccessPolicy::passport_default);
-    let mut view = filter_by_audience(full, &policy, audience).filtered_data;
-
-    // Core's list, not a copy of it. Which keys are proofs is a statement about
-    // the domain — a proof attests to a specific sequence of bytes, so no
-    // audience class can decide who sees one — and core owns that statement in
-    // `PASSPORT_PROOF_FIELDS`, with a build gate that stops core compiling if a
-    // new `Passport` key lands unclassified. A hand-typed copy here opted this
-    // crate out of that gate: adding a fifth proof field in core would have
-    // left it in every audience view, attached to a body it cannot verify.
-    if let Some(obj) = view.as_object_mut() {
-        for proof in dpp_domain::PASSPORT_PROOF_FIELDS {
-            obj.remove(*proof);
-        }
-    }
-
-    // Fail closed whenever the policy could not be resolved: with no field-tier
-    // table for its `productGroupData`, the default-Public pass above would leak
-    // potentially professional/confidential fields. Keep only the `product_group` tag.
-    // Parity with the resolver's backstop, so the signed-and-served view is
-    // identical whether reached directly or via the resolver.
-    //
-    // Keyed on the *policy*, not on whether the catalog knows the product group. Those
-    // were the same condition while the policy was unversioned; they are not
-    // any more. A known product group at an unknown schema version resolves to no
-    // policy, and a product group-only check would have waved it through with every
-    // field public.
-    if resolved.is_none()
-        && let Some(obj) = view.as_object_mut()
-        && let Some(sd) = obj.get("productGroupData")
-        && sd
-            .get("productGroup")
-            .and_then(Value::as_str)
-            .is_some_and(|s| !s.is_empty())
-    {
-        let tag = sd.get("productGroup").cloned().unwrap_or(Value::Null);
-        obj.insert(
-            "productGroupData".into(),
-            serde_json::json!({ "productGroup": tag }),
-        );
-    }
-    view
+/// The product group key and schema version are read off `passport`, not passed
+/// in. A signature is frozen over the redaction that produced it, so the only
+/// correct version is the record's own — and with no parameter there is no way
+/// to hand it a different one.
+#[must_use]
+pub fn audience_view(passport: &Passport, audience: Audience) -> Value {
+    dpp_domain::access::redact_passport(passport, audience).into_value()
 }
 
 /// Render the continuity-snapshot JSON for a passport: the public view the live
@@ -345,10 +261,7 @@ pub fn signed_audience_view(passport: &Passport, audience: Audience) -> Result<V
 /// exactly the half-signed state this function exists to prevent.
 pub async fn sign_disclosure_views(
     identity: &dyn dpp_domain::ports::identity::IdentityPort,
-    passport_id: dpp_domain::PassportId,
-    payload: &Value,
-    product_group_key: &str,
-    schema_version: &str,
+    passport: &Passport,
 ) -> Result<std::collections::BTreeMap<String, String>, DppError> {
     let mut signatures = std::collections::BTreeMap::new();
     for audience in [Audience::LegitimateInterest, Audience::Authority] {
@@ -356,8 +269,8 @@ pub async fn sign_disclosure_views(
         if signatures.contains_key(&key) {
             continue;
         }
-        let view = audience_view(payload, product_group_key, schema_version, audience);
-        let signed = identity.sign_passport(passport_id, &view).await?;
+        let view = audience_view(passport, audience);
+        let signed = identity.sign_passport(passport.id, &view).await?;
         signatures.insert(key, signed.jws);
     }
     Ok(signatures)
@@ -433,12 +346,34 @@ pub(crate) mod tests {
     /// in either repo would have noticed.
     #[test]
     fn no_proof_field_core_declares_survives_any_audience_view() {
-        let mut payload = json!({
-            "productName": "Widget",
-            "productGroupData": { "productGroup": "battery" },
-        });
+        let mut passport = battery_passport();
+        // Every proof field populated, so "absent from the view" cannot be
+        // satisfied by the field simply never having been set.
+        passport.jws_signature = Some("a proof that must not be served".into());
+        passport.public_jws_signature = Some("a proof that must not be served".into());
+        passport.disclosure_signatures = std::collections::BTreeMap::from([(
+            "annexXiiiPoint2".to_owned(),
+            "a proof that must not be served".to_owned(),
+        )]);
+        passport.seal = Some(
+            serde_json::from_value(json!({
+                "format": "CADES",
+                "sealValue": "p7s",
+                "sealedAt": "2026-08-14T00:00:00Z",
+                "placeholder": false,
+            }))
+            .expect("sealed envelope"),
+        );
+
+        // Asserted against core's own list rather than a copy of it: core has a
+        // build gate that fails if a new `Passport` key lands unclassified, and
+        // hand-typing the four here would opt this crate out of it.
+        let populated = serde_json::to_value(&passport).expect("serialises");
         for proof in dpp_domain::PASSPORT_PROOF_FIELDS {
-            payload[*proof] = json!("a proof that must not be served");
+            assert!(
+                populated.get(*proof).is_some(),
+                "{proof} is unset on the fixture, so this test would pass vacuously"
+            );
         }
 
         for audience in [
@@ -446,7 +381,7 @@ pub(crate) mod tests {
             Audience::LegitimateInterest,
             Audience::Authority,
         ] {
-            let view = audience_view(&payload, "battery", "2.6.0", audience);
+            let view = audience_view(&passport, audience);
             for proof in dpp_domain::PASSPORT_PROOF_FIELDS {
                 assert!(
                     view.get(*proof).is_none(),
@@ -678,22 +613,23 @@ pub(crate) mod tests {
     /// to an audience must serve a declarer with it.
     #[test]
     fn no_audience_gets_a_seal_without_a_declarer() {
-        let passport = stub_passport();
-        let mut full = serde_json::to_value(&passport).expect("serialise");
-        full["seal"] = json!({
-            "format": "CADES",
-            "sealValue": "p7s",
-            "sealedAt": "2026-08-14T00:00:00Z",
-            "placeholder": false,
-        });
+        let mut passport = stub_passport();
+        passport.seal = Some(
+            serde_json::from_value(json!({
+                "format": "CADES",
+                "sealValue": "p7s",
+                "sealedAt": "2026-08-14T00:00:00Z",
+                "placeholder": false,
+            }))
+            .expect("sealed envelope"),
+        );
 
         for audience in [
             Audience::Public,
             Audience::LegitimateInterest,
             Audience::Authority,
         ] {
-            // The passport's own version, as every production caller passes it.
-            let view = audience_view(&full, "battery", &passport.schema_version, audience);
+            let view = audience_view(&passport, audience);
             let declarer = view
                 .get("manufacturer")
                 .and_then(|m| m.get("name"))
@@ -743,51 +679,112 @@ pub(crate) mod tests {
         assert!(signed_public_view(&passport).is_err());
     }
 
-    /// An older schema version discloses *more*, not less — which is why the
-    /// stored `schemaVersion` must never be a value the caller chose.
+    /// The declared version picks the disclosure table, and a key that version
+    /// does not declare is **dropped** rather than served public by default.
     ///
-    /// A version's disclosure table only classifies the fields that version
-    /// annotates, and `ProductGroupAccessPolicy` defaults everything else to `Public`.
-    /// Battery v1.0.0 annotates 11 fields; v2.6.0 annotates 68. So a passport
-    /// filtered at v1.0.0 serves publicly every field the newer table holds
-    /// back — `stateOfHealth` among them, the field of a past disclosure defect.
+    /// A version's table classifies only the fields that version annotates, and
+    /// the policy defaults everything else to `Public`. Battery v1.0.0 annotates
+    /// 11 fields; v2.6.0 annotates 68. Under the old local copy that meant a
+    /// passport filtered at v1.0.0 served publicly every field the newer table
+    /// holds back — `stateOfHealth` among them, the field of a past disclosure
+    /// defect. Core closes that by dropping undeclared keys outright.
     ///
-    /// This is correct for *reading an old row*: that document really was signed
-    /// under the old table, and re-filtering it under today's would break its
-    /// proof. It is a hazard only where a **new** passport's version could be
-    /// picked by its author — which `PassportService::create` prevents by
-    /// overwriting it from the catalog, and `create_handler` now refuses outright
-    /// rather than leaving that the only thing that has to hold.
+    /// Filtering by the *declared* version stays correct for reading an old row:
+    /// that document really was signed under the old table, and re-filtering it
+    /// under today's would break its proof. What changed is only the fate of a
+    /// key neither table names.
+    ///
+    /// The stored `schemaVersion` must still never be a value the caller chose —
+    /// `PassportService::create` overwrites it from the catalog and
+    /// `create_handler` refuses a mismatch — because the version still selects
+    /// *which* fields are held back, not merely whether unknown ones leak.
     #[test]
-    fn an_older_schema_version_widens_the_public_view() {
-        let full = json!({
-            "id": dpp_domain::passport::PassportId::new().to_string(),
-            "productName": "Cell",
-            "productGroupData": {
+    fn a_key_the_declared_version_does_not_declare_is_dropped() {
+        let mut passport = battery_passport();
+        passport.product_group_data = Some(
+            serde_json::from_value(json!({
                 "productGroup": "battery",
-                "stateOfHealth": { "remainingCapacityPct": 98.2 },
-            },
-        });
+                "gtin": "09506000134352",
+                "batteryChemistry": "LFP",
+                "batteryType": "ev",
+                "nominalVoltageV": 3.2,
+                "nominalCapacityAh": 100.0,
+                "co2ePerUnitKg": 85.4,
+                "stateOfHealth": {
+                    "parameterSet": "stationaryOrLmt",
+                    "remainingCapacityPct": 98.2,
+                    "selfDischargeRatePctPerMonth": 0.5,
+                },
+            }))
+            .expect("battery data"),
+        );
 
-        let current = public_view(&full, "battery", "2.6.0");
+        // The version now comes off the record, so the two readings are the same
+        // passport declaring two versions — which is exactly the hazard: the
+        // table in force is the one the record names.
+        passport.schema_version = "2.6.0".into();
+        let current = public_view(&passport);
         assert!(
             current["productGroupData"].get("stateOfHealth").is_none(),
             "stateOfHealth is Individual at v2.6.0 and must not be public"
         );
 
-        let downgraded = public_view(&full, "battery", "1.0.0");
+        // 🚨 This assertion was the other way round until the redaction moved to
+        // `dpp_domain::access::redact_passport`.
+        //
+        // The old local copy filtered by the version's disclosure table and
+        // nothing else, so a key that table did not *name* fell to the policy
+        // default — `Public`. `stateOfHealth` is not declared at battery v1.0.0,
+        // so a passport declaring the older version leaked it to anonymous
+        // readers, and this test pinned that leak as expected behaviour.
+        //
+        // Core additionally drops any `productGroupData` key the declared schema
+        // version does not declare, so the key is now removed rather than
+        // defaulted to public. That is the defence in depth this crate never
+        // had, and it narrows — though it does not close — the
+        // coherent-but-wrong-label hazard documented in `create.rs`'s
+        // `the_label_must_match_its_payload`: a field the label's table does not
+        // name no longer reaches the public view merely by being unnamed.
+        passport.schema_version = "1.0.0".into();
+        let downgraded = public_view(&passport);
         assert!(
             downgraded["productGroupData"]
                 .get("stateOfHealth")
-                .is_some(),
-            "expected the older table to expose it — if this now fails, core has \
-             backfilled v1.0.0's annotations and the create-side check that \
-             depends on this hazard should be re-read, not deleted"
+                .is_none(),
+            "a key the declared version does not declare must be dropped, not \
+             served public by default — if this now fails, core has stopped \
+             dropping undeclared keys and the leak this closed is open again: {downgraded}"
         );
     }
 
     /// Minimal published passport. `pub(crate)` because the seal service's
     /// tests need the same fixture and duplicating it would let the two drift.
+    /// A battery passport at a version whose schema declares the fields these
+    /// tests exercise.
+    ///
+    /// Typed rather than a JSON literal: the redaction reads the product group
+    /// and schema version off the record now, so a fixture that is not a real
+    /// `Passport` cannot reach it.
+    fn battery_passport() -> Passport {
+        let mut p = stub_passport();
+        p.schema_version = "2.6.0".into();
+        p.product_group_data = Some(
+            serde_json::from_value(json!({
+                "productGroup": "battery",
+                "gtin": "09506000134352",
+                "batteryChemistry": "LFP",
+                "batteryType": "ev",
+                "nominalVoltageV": 3.2,
+                "nominalCapacityAh": 100.0,
+                "co2ePerUnitKg": 85.4,
+                "stateOfHealthPct": 87.5,
+                "cathodeMaterial": [{ "name": "LFP", "weightPct": 100.0 }],
+            }))
+            .expect("battery data"),
+        );
+        p
+    }
+
     pub(crate) fn stub_passport() -> Passport {
         use chrono::Utc;
         use dpp_domain::passport::{ManufacturerInfo, PassportId};
@@ -927,17 +924,28 @@ pub(crate) mod tests {
     fn unknown_product_group_fails_closed_keeping_only_the_tag() {
         // A product group the catalog does not know: with no field-tier policy we must
         // not pass its productGroupData through at Public tier (parity with resolver RT2-5).
-        let full = json!({
-            "id": "x",
-            "productName": "Widget",
-            "facility": { "value": "4012345000009", "name": "Plant" },
-            "productGroupData": {
+        let mut passport = stub_passport();
+        passport.schema_version = "2.6.0".into();
+        passport.product_group =
+            dpp_domain::product_group::ProductGroup::Other("totallyMadeUpProductGroup".into());
+        passport.facility = Some(
+            serde_json::from_value(json!({
+                "scheme": "gln",
+                "value": "4012345000009",
+                "name": "Plant",
+                "country": "DE",
+            }))
+            .expect("facility"),
+        );
+        passport.product_group_data = Some(
+            serde_json::from_value(json!({
                 "productGroup": "totallyMadeUpProductGroup",
                 "supplierCostEur": 12.50,
-                "internalNotes": "trade secret"
-            }
-        });
-        let view = public_view(&full, "totallyMadeUpProductGroup", "2.6.0");
+                "internalNotes": "trade secret",
+            }))
+            .expect("unmodelled product group data"),
+        );
+        let view = public_view(&passport);
         let sd = &view["productGroupData"];
         assert_eq!(sd["productGroup"], json!("totallyMadeUpProductGroup"));
         assert!(sd.get("supplierCostEur").is_none(), "leaked: {sd}");
@@ -948,14 +956,45 @@ pub(crate) mod tests {
 
     #[test]
     fn known_product_group_keeps_public_fields() {
-        let full = json!({
-            "id": "x",
-            "productName": "EcoBattery",
-            "productGroupData": { "productGroup": "battery", "gtin": "09506000134352" }
-        });
-        let view = public_view(&full, "battery", "2.6.0");
+        let mut passport = battery_passport();
+        passport.product_name = "EcoBattery".into();
+        let view = public_view(&passport);
         // A known product group is filtered by its policy, not blanket-redacted.
         assert_eq!(view["productGroupData"]["gtin"], json!("09506000134352"));
         assert_eq!(view["productGroupData"]["productGroup"], json!("battery"));
+    }
+    /// 🚨 The one behaviour this swap changed, pinned so it is a decision rather
+    /// than a surprise.
+    ///
+    /// The deleted local copy emitted `"productGroupData": null` for a passport
+    /// carrying none; core omits the key. Measured across both fixtures and all
+    /// three audiences before the swap, this was the *only* disagreement — and
+    /// it is reachable, because publish does not require product-group data
+    /// (its whole validation block is inside `if let Some(..)`).
+    ///
+    /// Already-published records are unaffected: every public route serves the
+    /// payload decoded out of the stored proof, never a fresh redaction. What
+    /// changes is what a *future* publish signs.
+    #[test]
+    fn a_passport_without_product_group_data_omits_the_key_rather_than_serving_null() {
+        let passport = stub_passport();
+        assert!(
+            passport.product_group_data.is_none(),
+            "the fixture must carry none for this to mean anything"
+        );
+
+        for audience in [
+            Audience::Public,
+            Audience::LegitimateInterest,
+            Audience::Authority,
+        ] {
+            let view = audience_view(&passport, audience);
+            assert!(
+                view.get("productGroupData").is_none(),
+                "{audience:?} received a productGroupData key for a passport that has \
+                 none — serving `null` says 'there is nothing here' in a field a \
+                 reader has to special-case: {view}"
+            );
+        }
     }
 }
