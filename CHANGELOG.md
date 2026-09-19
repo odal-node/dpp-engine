@@ -177,6 +177,12 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   node*. `--did-url` remains for deployments where identity is genuinely hosted
   elsewhere.
 
+  🚨 **A key beginning with `-` is a key, not a flag.** The public key is
+  base64url, whose alphabet includes `-`, so about one key in sixty-four starts
+  with a hyphen and clap read it as an unknown flag — exit 2, on a command the
+  operator typed correctly, unfixable by retrying. Intermittent by
+  construction: it depends on the operator's key, not on anything they did.
+
   🚨 **`--did-url` requires HTTPS, on every redirect hop, unless it is loopback.**
   The DID document *is* the trust anchor. Over plaintext, an on-path attacker who
   can rewrite both responses substitutes the snapshot and the key that checks it,
