@@ -519,6 +519,26 @@ pub(crate) fn schema_supported(
     let Some(version) = product_groups().current_schema_version(product_group_key) else {
         return Ok(());
     };
+    // 🚨 An empty `supported_schemas` is "declared nothing", not "supports
+    // nothing", and the two must not be conflated. The loader sets exactly this
+    // when a plugin has no `describe()` export — see the fallback in
+    // `LoadedPlugin::from_file`, which synthesises the host's own ABI and lets
+    // such a plugin through on purpose so unversioned dev and test fixtures
+    // still run.
+    //
+    // Refusing here would therefore not tighten the gate against the defect it
+    // exists for — every real plugin declares a range, and a drifted range is
+    // what this catches — it would silently break every plugin built before
+    // `schema_version_range` existed. The trust boundary for an unknown plugin
+    // is the publisher signature checked at load, not this check.
+    if capabilities.supported_schemas.is_empty() {
+        tracing::warn!(
+            product_group = %product_group_key,
+            schema_version = %version,
+            "plugin declares no supported schema versions; dispatching unchecked"
+        );
+        return Ok(());
+    }
     let compat = check_compatibility(capabilities, Some(version), &[]);
     if compat.is_compatible() {
         return Ok(());

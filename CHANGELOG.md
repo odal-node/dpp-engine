@@ -149,6 +149,15 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   second-guessed — the key came from the data, and refusing an unknown one would
   break the untyped forward-compatibility path rather than protect it.
 
+  🚨 **An empty `supported_schemas` means "declared nothing", not "supports
+  nothing", and is dispatched with a warning rather than refused.** That is the
+  value `LoadedPlugin::from_file` synthesises for a plugin with no `describe()`
+  export, and it lets such a plugin through deliberately so unversioned fixtures
+  still run. Refusing it here would not tighten the gate against the defect it
+  exists for — a *declared* range that has drifted — it would silently break
+  every plugin built before ranges existed. The trust boundary for an
+  undeclaring plugin is the publisher signature checked at load, not this check.
+
 - **A printed carrier now keeps working after the passport behind it is
   amended.** `GET /public/dpp/{dppId}` on a `superseded` passport serves the
   record that replaced it, rather than the superseded one's frozen view.

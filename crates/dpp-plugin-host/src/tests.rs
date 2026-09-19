@@ -1117,3 +1117,18 @@ fn a_plugin_covering_the_shipping_version_is_dispatched() {
 fn a_product_group_the_catalog_does_not_know_is_not_second_guessed() {
     assert!(crate::host::schema_supported(&caps("1.0.0", "1.0.0"), "photovoltaic").is_ok());
 }
+
+/// 🚨 "Declared nothing" is not "supports nothing".
+///
+/// The loader sets an empty `supported_schemas` when a plugin has no
+/// `describe()` export, and lets it through deliberately so unversioned dev and
+/// test fixtures still run. Refusing it here would not catch the defect this
+/// gate exists for — a plugin that declares a range and drifts below it — it
+/// would silently break every plugin built before ranges existed. The trust
+/// boundary for an unknown plugin is the publisher signature checked at load.
+#[test]
+fn a_plugin_declaring_no_range_is_dispatched_rather_than_refused() {
+    let mut c = caps("1.0.0", "1.0.0");
+    c.supported_schemas.clear();
+    assert!(crate::host::schema_supported(&c, "battery").is_ok());
+}
