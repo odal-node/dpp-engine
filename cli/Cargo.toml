@@ -20,6 +20,11 @@ dpp-types   = { workspace = true }
 # Both are already workspace pins consumed elsewhere here.
 dpp-vc      = { workspace = true }
 dpp-crypto  = { workspace = true }
+# To decide whether a `--did-url` is reachable over a transport that can
+# authenticate it. Hand-parsing a scheme and host is how `http://127.0.0.1.evil`
+# gets treated as loopback.
+url         = { workspace = true }
+futures     = { workspace = true }
 clap        = { workspace = true }
 reqwest     = { workspace = true }
 serde       = { workspace = true }

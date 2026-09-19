@@ -167,11 +167,18 @@ fn auth() -> AuthContext {
 /// The identity and key are handed back because the snapshot-bound contract
 /// test needs to verify what this service produced, and re-deriving a key from
 /// a second keystore would verify nothing.
+///
+/// 🚨 The `TempDir` is returned, not dropped here. `dpp-crypto 0.20.0` holds the
+/// key records in memory, so letting the directory go still signs today — the
+/// harness worked by accident. `CLAUDE.md`'s test-keystore rule says to return
+/// it alongside the store, and the day the keystore reads back from disk is not
+/// the day to discover why.
 async fn build_service() -> (
     PassportService,
     InMemorySnapshotOutbox,
     Arc<dpp_vc::LocalIdentityService>,
     String,
+    tempfile::TempDir,
 ) {
     // `tempfile` creates the directory with restrictive permissions and removes
     // it on drop; `env::temp_dir()` did neither, leaving an Ed25519 private key
@@ -206,7 +213,7 @@ async fn build_service() -> (
         },
     )
     .with_snapshot_outbox(Arc::new(snapshots.clone()));
-    (service, snapshots, identity, public_key)
+    (service, snapshots, identity, public_key, key_dir)
 }
 
 fn draft_passport() -> Passport {
@@ -272,7 +279,7 @@ fn draft_passport() -> Passport {
 
 #[tokio::test]
 async fn publish_enqueues_a_reconcile() {
-    let (service, outbox, _identity, _key) = build_service().await;
+    let (service, outbox, _identity, _key, _key_dir) = build_service().await;
     let auth = auth();
 
     let created = service
@@ -296,7 +303,7 @@ async fn publish_enqueues_a_reconcile() {
 
 #[tokio::test]
 async fn suspend_enqueues_a_reconcile() {
-    let (service, outbox, _identity, _key) = build_service().await;
+    let (service, outbox, _identity, _key, _key_dir) = build_service().await;
     let auth = auth();
 
     let created = service
@@ -321,7 +328,7 @@ async fn suspend_enqueues_a_reconcile() {
 
 #[tokio::test]
 async fn declaring_end_of_life_enqueues_a_reconcile() {
-    let (service, outbox, _identity, _key) = build_service().await;
+    let (service, outbox, _identity, _key, _key_dir) = build_service().await;
     let auth = auth();
 
     let created = service
@@ -352,7 +359,7 @@ async fn declaring_end_of_life_enqueues_a_reconcile() {
 
 #[tokio::test]
 async fn repeated_state_changes_collapse_to_one_pending_reconcile() {
-    let (service, outbox, _identity, _key) = build_service().await;
+    let (service, outbox, _identity, _key, _key_dir) = build_service().await;
     let auth = auth();
 
     let created = service
@@ -399,7 +406,7 @@ async fn repeated_state_changes_collapse_to_one_pending_reconcile() {
 async fn a_rendered_snapshot_verifies_under_the_operators_key() {
     use chrono::SubsecRound as _;
 
-    let (service, _outbox, identity, public_key) = build_service().await;
+    let (service, _outbox, identity, public_key, _key_dir) = build_service().await;
     let auth = auth();
     let created = service
         .create(draft_passport(), &auth)
@@ -440,7 +447,7 @@ async fn a_rendered_snapshot_verifies_under_the_operators_key() {
 async fn a_rendered_snapshot_with_its_proof_removed_is_absent_not_expired() {
     use chrono::SubsecRound as _;
 
-    let (service, _outbox, identity, public_key) = build_service().await;
+    let (service, _outbox, identity, public_key, _key_dir) = build_service().await;
     let auth = auth();
     let created = service
         .create(draft_passport(), &auth)

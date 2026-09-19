@@ -177,6 +177,16 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   node*. `--did-url` remains for deployments where identity is genuinely hosted
   elsewhere.
 
+  🚨 **`--did-url` requires HTTPS, on every redirect hop, unless it is loopback.**
+  The DID document *is* the trust anchor. Over plaintext, an on-path attacker who
+  can rewrite both responses substitutes the snapshot and the key that checks it,
+  signs the forgery with their own, and this command prints `CURRENT` — signature
+  verification cannot save a check whose anchor the attacker supplied. The
+  snapshot's own URL is deliberately **not** restricted: its bytes are checked
+  against a key obtained elsewhere, so tampering there shows up as a failed
+  verification. Both fetches also cap the body they will buffer, because neither
+  `bytes()` nor `json()` bounds one on its own.
+
 - **And now it fills them.** New `TRUSTED_LIST_REFRESH=on`, a daily pass that
   verifies the EU list of trusted lists against the pinned Official Journal
   anchor and then fetches and verifies every Member State's list it names,

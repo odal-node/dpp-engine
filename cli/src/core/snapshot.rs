@@ -70,9 +70,109 @@ pub async fn action_snapshot_verify(
 fn client() -> Result<reqwest::Client> {
     reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(30))
-        .redirect(reqwest::redirect::Policy::limited(3))
+        .redirect(reqwest::redirect::Policy::limited(MAX_REDIRECTS))
         .build()
         .context("building the HTTP client")
+}
+
+const MAX_REDIRECTS: usize = 3;
+
+/// The client the DID document is fetched with.
+///
+/// Separate from [`client`] for one reason: the transport rule has to hold on
+/// **every hop**, not just the one typed. A plain hop limit would happily follow
+/// `https://…` → `http://…`, which hands the trust anchor to the wire after the
+/// check that was supposed to prevent exactly that.
+///
+/// # Errors
+/// As [`client`].
+fn did_client() -> Result<reqwest::Client> {
+    reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .redirect(reqwest::redirect::Policy::custom(|attempt| {
+            if attempt.previous().len() >= MAX_REDIRECTS {
+                return attempt.error(anyhow!("too many redirects fetching the DID document"));
+            }
+            match require_authenticated_transport(attempt.url()) {
+                Ok(()) => attempt.follow(),
+                Err(e) => attempt.error(e),
+            }
+        }))
+        .build()
+        .context("building the HTTP client")
+}
+
+/// The most we will buffer from a remote body.
+///
+/// A snapshot is one passport's redacted public view — kilobytes. A DID
+/// document is smaller still. Neither `bytes()` nor `json()` bounds what it
+/// buffers, so without a cap a hostile or misconfigured endpoint can hold the
+/// process at the far end of a 30-second timeout and take memory until it dies.
+/// Generous enough that no honest document meets it.
+const MAX_SNAPSHOT_BYTES: usize = 8 * 1024 * 1024;
+const MAX_DID_DOCUMENT_BYTES: usize = 1024 * 1024;
+
+/// Read a response body, refusing one that grows past `limit`.
+///
+/// Streamed rather than measured: `Content-Length` is a claim by the same party
+/// that sends the body, may be absent under chunked encoding, and may simply be
+/// wrong. Counting what actually arrives is the only figure that binds.
+async fn bounded_body(response: reqwest::Response, limit: usize, what: &str) -> Result<Vec<u8>> {
+    use futures::StreamExt as _;
+
+    let mut collected: Vec<u8> = Vec::new();
+    let mut stream = response.bytes_stream();
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.with_context(|| format!("reading {what}"))?;
+        if collected.len() + chunk.len() > limit {
+            return Err(anyhow!(
+                "{what} is larger than {limit} bytes — refusing to buffer it"
+            ));
+        }
+        collected.extend_from_slice(&chunk);
+    }
+    Ok(collected)
+}
+
+/// Refuse a trust anchor served over a transport that cannot authenticate it.
+///
+/// 🚨 This is not the same question as the snapshot's own URL, and the two are
+/// deliberately treated differently. A snapshot fetched over plaintext is fine:
+/// its bytes are checked against a key obtained elsewhere, so tampering shows up
+/// as a failed verification. The **DID document is that key**. Fetched over
+/// plaintext, an on-path attacker who can rewrite both responses swaps the
+/// snapshot *and* the key that checks it, signs the forgery with their own, and
+/// this command reports `Current`. No amount of signature checking helps when
+/// the attacker supplies the anchor.
+///
+/// Loopback is exempt because nothing on the wire can be between the two ends of
+/// it — that is the local sim and the test server, not a weakening.
+///
+/// # Errors
+/// The URL will not parse, or names a plaintext non-loopback host.
+fn require_authenticated_transport(url: &url::Url) -> Result<()> {
+    if url.scheme() == "https" || is_loopback(url) {
+        return Ok(());
+    }
+    Err(anyhow!(
+        "refusing to take a trust anchor from {url} over {}: the DID document supplies the key \
+         this check relies on, so anyone able to rewrite that response can forge a passing \
+         verdict. Use https, or pass the key directly with --key.",
+        url.scheme()
+    ))
+}
+
+/// Whether the URL's host is the loopback interface.
+///
+/// Parsed rather than matched on text: `http://127.0.0.1.evil.example/` starts
+/// with a loopback address and is not one.
+fn is_loopback(url: &url::Url) -> bool {
+    match url.host() {
+        Some(url::Host::Ipv4(ip)) => ip.is_loopback(),
+        Some(url::Host::Ipv6(ip)) => ip.is_loopback(),
+        Some(url::Host::Domain(host)) => host == "localhost",
+        None => false,
+    }
 }
 
 /// Fetch or read the snapshot document.
@@ -91,11 +191,12 @@ async fn load_document(target: &str) -> Result<serde_json::Value> {
         if !status.is_success() {
             return Err(anyhow!("fetching snapshot from {target}: HTTP {status}"));
         }
-        response
-            .bytes()
-            .await
-            .with_context(|| format!("reading snapshot body from {target}"))?
-            .to_vec()
+        bounded_body(
+            response,
+            MAX_SNAPSHOT_BYTES,
+            &format!("the snapshot body from {target}"),
+        )
+        .await?
     } else {
         std::fs::read(target).with_context(|| format!("reading snapshot file {target}"))?
     };
@@ -119,14 +220,27 @@ async fn resolve_key(
         return Ok(key.to_owned());
     }
     let did_url = did_url.ok_or_else(|| anyhow!("no key source given: pass --key or --did-url"))?;
+    let parsed = url::Url::parse(did_url).with_context(|| format!("{did_url} is not a URL"))?;
+    require_authenticated_transport(&parsed)?;
 
-    let did_document: serde_json::Value = client()?
-        .get(did_url)
+    let response = did_client()?
+        .get(parsed.clone())
         .send()
         .await
-        .with_context(|| format!("fetching DID document from {did_url}"))?
-        .json()
-        .await
+        .with_context(|| format!("fetching DID document from {did_url}"))?;
+    let status = response.status();
+    if !status.is_success() {
+        return Err(anyhow!(
+            "fetching DID document from {did_url}: HTTP {status}"
+        ));
+    }
+    let body = bounded_body(
+        response,
+        MAX_DID_DOCUMENT_BYTES,
+        &format!("the DID document from {did_url}"),
+    )
+    .await?;
+    let did_document: serde_json::Value = serde_json::from_slice(&body)
         .with_context(|| format!("{did_url} did not return a JSON DID document"))?;
 
     let kid = document
@@ -418,6 +532,64 @@ mod tests {
     #[test]
     fn a_stripped_bound_is_not_reported_as_valid() {
         assert_eq!(exit_code(&SnapshotBound::Absent), 1);
+    }
+
+    /// 🚨 The trust anchor may not arrive over a transport that cannot
+    /// authenticate it. An attacker who supplies the key can sign a forgery and
+    /// make this command print `CURRENT`, so no amount of signature checking
+    /// downstream recovers from a plaintext fetch.
+    #[test]
+    fn a_plaintext_did_url_is_refused() {
+        let refused = |u: &str| {
+            require_authenticated_transport(&url::Url::parse(u).expect("parses")).is_err()
+        };
+
+        assert!(refused("http://identity.example/.well-known/did.json"));
+        assert!(!refused("https://identity.example/.well-known/did.json"));
+
+        // Loopback is exempt: there is no wire to sit on. This is the local sim
+        // and the test server.
+        assert!(!refused(
+            "http://127.0.0.1:8001/identity/.well-known/did.json"
+        ));
+        assert!(!refused(
+            "http://localhost:8001/identity/.well-known/did.json"
+        ));
+        assert!(!refused("http://[::1]:8001/.well-known/did.json"));
+
+        // Parsed, not string-matched. Both of these merely *look* like loopback.
+        assert!(refused(
+            "http://127.0.0.1.evil.example/.well-known/did.json"
+        ));
+        assert!(refused(
+            "http://localhost.evil.example/.well-known/did.json"
+        ));
+    }
+
+    #[tokio::test]
+    async fn a_plaintext_did_url_fails_before_anything_is_fetched() {
+        let (_dir, store, _key) = keystore();
+        let as_of = Utc::now();
+        let document = signed_snapshot(&store, as_of, as_of + chrono::Duration::days(7));
+        let dir = tempfile::tempdir().expect("temp dir");
+        let path = dir.path().join("public.json");
+        std::fs::write(&path, serde_json::to_vec(&document).expect("serialise")).expect("write");
+
+        let err = action_snapshot_verify(
+            path.to_str().expect("utf-8"),
+            None,
+            // A host that does not resolve: if this were reached, the error
+            // would be a DNS failure rather than the refusal under test.
+            Some("http://identity.invalid/.well-known/did.json"),
+            as_of,
+        )
+        .await
+        .expect_err("a plaintext trust anchor is refused");
+
+        assert!(
+            format!("{err:?}").contains("refusing to take a trust anchor"),
+            "got: {err:?}"
+        );
     }
 
     #[test]

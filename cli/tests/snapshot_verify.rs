@@ -176,8 +176,12 @@ fn a_key_source_is_required_and_only_one_is_accepted() {
     let fixture = signed_snapshot(Utc::now(), Utc::now() + Duration::days(7));
     let path = snapshot_file(&home, &fixture.document);
 
+    // Exit 2, not merely non-zero: a usage error is "the check could not be
+    // made", which is the same class as an unreadable target and the contract
+    // gives it the same code. clap's own usage-error code is 2, so the two
+    // agree — pinned here so a later change to either is caught.
     let neither = odal(home.path(), &["snapshot", "verify", &path]);
-    assert_ne!(neither.code, 0, "got: {}", neither.output());
+    assert_eq!(neither.code, 2, "got: {}", neither.output());
 
     let both = odal(
         home.path(),
@@ -191,9 +195,9 @@ fn a_key_source_is_required_and_only_one_is_accepted() {
             "https://example.invalid/.well-known/did.json",
         ],
     );
-    assert_ne!(
+    assert_eq!(
         both.code,
-        0,
+        2,
         "two key sources must be refused: {}",
         both.output()
     );

@@ -287,6 +287,12 @@ is served *by the node*, so discovery fails in exactly the outage this command i
 for. `--did-url` is there for a deployment where identity really is hosted
 separately; otherwise pass `--key`.
 
+**`--did-url` must be HTTPS** (on every redirect hop), unless it is loopback. The
+DID document *is* the trust anchor: over plaintext, anyone able to rewrite that
+response supplies the key, signs a forged snapshot with it, and this command
+prints `CURRENT`. The snapshot's own URL is deliberately unrestricted — its bytes
+are checked against a key from elsewhere, so tampering there fails the check.
+
 **A missing proof is not a pass.** A copy off the static tier carrying no
 `snapshotJwsSignature` has had its bound removed — the `asOf` and `validUntil`
 still on it are text anyone could have written. The command reports that as
