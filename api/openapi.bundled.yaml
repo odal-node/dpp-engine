@@ -4151,7 +4151,9 @@ components:
             - $ref: '#/components/schemas/LintResult'
           description: Advisory plausibility findings. Absent until a lint pass has run, and recomputable after publish — unlike `complianceResult`.
         productGroupData:
-          description: Explicitly `null` — not omitted — for a passport whose product group data has not been supplied yet, which is every draft created without it. The field has no `skip_serializing_if`, so it is always present on the wire.
+          description: |-
+            On an **authenticated full read**, explicitly `null` rather than omitted for a passport whose product group data has not been supplied yet, which is every draft created without it: the field has no `skip_serializing_if`.
+            On a **redacted read** — the public routes, the resolver, and an audience-scoped credential read — the key is **absent** instead. A view should not carry a key whose value says "there is nothing here", so the redaction drops it. Read an absent key and a `null` as the same answer; neither is in `required`, and which one arrives depends on the route.
           anyOf:
             - $ref: '#/components/schemas/ProductGroupData'
             - type: 'null'
