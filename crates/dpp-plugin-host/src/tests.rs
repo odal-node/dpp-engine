@@ -1064,3 +1064,56 @@ fn install_rejects_incompatible_precompiled_artifact() {
     assert!(host.get_plugin("battery").is_none());
     assert!(!dir.path().join("product-group-battery.cwasm").exists());
 }
+
+// ── schema_supported ─────────────────────────────────────────────────────────
+//
+// 🚨 The check that existed and never ran. Every plugin declares a supported
+// schema range; the only caller of `check_compatibility` was the load-time ABI
+// gate, which passes `None` for the version and so skips the comparison
+// entirely. All ten shipped plugins had drifted below the version their product
+// group serves, and nothing said so.
+
+fn caps(min: &str, max: &str) -> dpp_plugin_traits::PluginCapabilities {
+    dpp_plugin_traits::PluginCapabilities {
+        abi_version: dpp_plugin_traits::AbiVersion::current(),
+        min_host_version: None,
+        supported_schemas: vec![dpp_plugin_traits::SchemaVersionRange {
+            min_version: min.to_owned(),
+            max_version: max.to_owned(),
+        }],
+        capabilities: vec![],
+        max_fuel: None,
+        max_memory_bytes: None,
+    }
+}
+
+/// The catalog is the authority on which version a plugin will be handed.
+fn current(product_group: &str) -> String {
+    dpp_domain::ProductGroupCatalog::new()
+        .current_schema_version(product_group)
+        .expect("product group is in the catalog")
+        .to_owned()
+}
+
+#[test]
+fn a_plugin_behind_the_catalog_is_refused_rather_than_handed_data_it_cannot_read() {
+    let err = crate::host::schema_supported(&caps("1.0.0", "0.0.1"), "battery")
+        .expect_err("a plugin capped below the shipping schema must be refused");
+    assert_eq!(err.kind, dpp_domain::ComplianceErrorKind::InvalidInput);
+}
+
+#[test]
+fn a_plugin_covering_the_shipping_version_is_dispatched() {
+    let now = current("battery");
+    assert!(crate::host::schema_supported(&caps("1.0.0", &now), "battery").is_ok());
+}
+
+/// An unknown key is the untyped forward-compatibility path, not an attack.
+///
+/// The dispatch key came from the data. Inventing a refusal for a product group
+/// the catalog has not heard of would break the case `ProductGroupData::Other`
+/// exists to serve rather than protect anything.
+#[test]
+fn a_product_group_the_catalog_does_not_know_is_not_second_guessed() {
+    assert!(crate::host::schema_supported(&caps("1.0.0", "1.0.0"), "photovoltaic").is_ok());
+}

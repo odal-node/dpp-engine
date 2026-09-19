@@ -286,11 +286,27 @@ pub(super) fn apply_compliance(passport: &mut Passport, registry: &dyn Complianc
     // wrong for every product not placed on the market today, and would change
     // its own answer as phase dates pass.
     let law_in_force_on = passport.placed_on_market_date;
-    if let Ok(mut result) = registry.compute(
+    // A failure here is not fatal — a draft without a backfilled determination
+    // is still a valid draft, and publish re-runs the evaluation behind a gate
+    // that now refuses rather than shrugging. But it must not be *silent*: this
+    // was `if let Ok(..)`, so a plugin that had stopped understanding its own
+    // product group's data left `compliance_result` empty with nothing said,
+    // and the first visible symptom was an absent field nobody was looking at.
+    let computed = registry.compute(
         product_group.catalog_key(),
         product_group_data,
         law_in_force_on,
-    ) {
+    );
+    if let Err(ref e) = computed
+        && e.kind != dpp_domain::ComplianceErrorKind::UnknownProductGroup
+    {
+        tracing::warn!(
+            product_group = %product_group.catalog_key(),
+            error = %e,
+            "compliance determination could not be computed; the draft carries none"
+        );
+    }
+    if let Ok(mut result) = computed {
         // Backfill the two display metrics only when the caller didn't supply them.
         if passport.co2e_per_unit.is_none() {
             passport.co2e_per_unit = result.co2e_score.map(CarbonFootprint::from_kg);

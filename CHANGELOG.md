@@ -109,6 +109,46 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ### Fixed
 
+- **🚨 The publish-time compliance gate could vanish, and did.** The gate that
+  refuses to sign a passport carrying binding violations was written as
+  `if passport_obligation_live(..) && let Ok(determination) = compute(..) && ..`.
+  An `Err` from `compute` makes that whole condition **false**, so a failing
+  evaluator did not fail the publish — it silently skipped the check. There was
+  no log line, no metric, and no difference on the passport between "evaluated,
+  no violations" and "never evaluated".
+
+  It was not hypothetical. When the product group schemas moved to
+  `productIdentifier`, every Wasm plugin still requiring a bare `gtin` began
+  returning an error, and passports across nine product groups published with no
+  determination and no violation check at all.
+
+  A `compute` failure is now a publish refusal under a new
+  `compliance_unavailable` reason, distinct from `compliance_violations` —
+  a determination that never came back is not a determination that found
+  nothing. `UnknownProductGroup` stays permissive and is logged: nothing being
+  registered to evaluate a product group is a deployment shape, not a broken
+  evaluator, and refusing there would break every node running without that
+  plugin rather than catch anything. The same distinction now logs a warning on
+  the draft-creation path, which silently left `complianceResult` empty.
+
+- **🚨 A plugin is no longer handed schema versions it does not support.** Every
+  plugin declares a `schema_version_range` and **nothing ever read it**. The one
+  call to `check_compatibility` is the load-time ABI gate, which passes `None`
+  for the requested version — and `None` skips the schema comparison entirely.
+  Its own comment deferred dispatch-time schema selection as "a separate
+  concern"; that concern was never implemented, so the declarations were
+  decorative and all ten shipped plugins had drifted below the version their
+  product group serves without a word.
+
+  `compute` and `generate_passport_payload` now check the plugin against the
+  catalog's current schema version before dispatch, and refuse with
+  `plugin_schema_unsupported_total` and an error-level log. The version compared
+  is the catalog's rather than the passport's because that is what the data
+  actually is by then: stored `productGroupData` is upcast through the lens
+  chain on read. A product group the catalog does not know is **not**
+  second-guessed — the key came from the data, and refusing an unknown one would
+  break the untyped forward-compatibility path rather than protect it.
+
 - **A printed carrier now keeps working after the passport behind it is
   amended.** `GET /public/dpp/{dppId}` on a `superseded` passport serves the
   record that replaced it, rather than the superseded one's frozen view.
