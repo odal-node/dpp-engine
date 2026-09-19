@@ -2289,7 +2289,10 @@ dependencies = [
  "console",
  "csv",
  "dirs",
+ "dpp-crypto",
  "dpp-types",
+ "dpp-vc",
+ "futures",
  "indicatif",
  "inquire",
  "reqwest",
@@ -2299,6 +2302,7 @@ dependencies = [
  "tempfile",
  "tokio",
  "toml",
+ "url",
  "wayland-client",
 ]
 

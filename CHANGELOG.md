@@ -150,6 +150,43 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ### Added
 
+- **`odal snapshot verify <path|url>` — the one check that needs no node.** A
+  continuity snapshot carries a signed `validUntil` that the drain re-signs on a
+  cadence, and nothing could read it back: `dpp-vc` has shipped
+  `verify_snapshot_bound` since 0.20.0 and this repository called it zero times.
+  An operator had no way to ask whether what is in their public bucket is still
+  good, and the first sign that the drain had quietly stopped would have been a
+  consumer reporting an expired copy for a passport that is perfectly live.
+
+  Exit 0 the bound is proven and current, 1 it is not, 2 the check could not be
+  made at all. Verifies the **outer** proof only — content served from a snapshot
+  still owes the publish-time `publicJwsSignature` check, and the command says so
+  in both its rendered and `--json` output.
+
+  🚨 **A missing proof is reported as unverifiable, never as valid.** Stripping
+  `snapshotJwsSignature` while leaving the dates behind yields `Absent`, not
+  `Expired` — an unproven `validUntil` is not a bound. On a live read `Absent` is
+  normal; on a copy off the static tier it means the bound was removed, and only
+  the caller knows which it fetched. This command is only ever pointed at the
+  latter, so it resolves that ambiguity to "unverifiable" and exits non-zero.
+
+  🚨 **The key is an argument, not a discovery.** `--key` or `--did-url`, exactly
+  one required. Reading it from the configured identity URL would have been the
+  obvious design and would fail in precisely the outage the static tier exists to
+  survive: on the single-binary node, the `did:web` document is served *by the
+  node*. `--did-url` remains for deployments where identity is genuinely hosted
+  elsewhere.
+
+  🚨 **`--did-url` requires HTTPS, on every redirect hop, unless it is loopback.**
+  The DID document *is* the trust anchor. Over plaintext, an on-path attacker who
+  can rewrite both responses substitutes the snapshot and the key that checks it,
+  signs the forgery with their own, and this command prints `CURRENT` — signature
+  verification cannot save a check whose anchor the attacker supplied. The
+  snapshot's own URL is deliberately **not** restricted: its bytes are checked
+  against a key obtained elsewhere, so tampering there shows up as a failed
+  verification. Both fetches also cap the body they will buffer, because neither
+  `bytes()` nor `json()` bounds one on its own.
+
 - **And now it fills them.** New `TRUSTED_LIST_REFRESH=on`, a daily pass that
   verifies the EU list of trusted lists against the pinned Official Journal
   anchor and then fetches and verifies every Member State's list it names,

@@ -3,8 +3,8 @@
 use crate::cli_args::{
     Commands, CredentialCommands, FacilityCommands, KeyCommands, OperatorCommands,
     OperatorIdCommands, PassportCommands, PluginCommands, ProductGroupCommands, ProfileCommands,
-    RulesetCommands, SchemaCommands, SealCommands, TransferCommands, UnsoldGoodsCommands,
-    WebhookCommands,
+    RulesetCommands, SchemaCommands, SealCommands, SnapshotCommands, TransferCommands,
+    UnsoldGoodsCommands, WebhookCommands,
 };
 use crate::commands::{
     bootstrap::run_bootstrap,
@@ -40,6 +40,7 @@ use crate::commands::{
     ruleset::run_ruleset_reload,
     schema::run_schema,
     seal::{run_seal_repair, run_seal_status},
+    snapshot::run_snapshot_verify,
     stats::{run_operator_stats, run_passport_stats},
     status::run_status,
     transfer::{run_transfer_initiate, run_transfer_resolve},
@@ -436,6 +437,15 @@ pub async fn dispatch(cmd: Commands) -> anyhow::Result<()> {
         } => run_template(&product_group, output.as_deref()).await,
         Commands::Registry { id, json } => run_registry(id.as_deref(), json).await,
         Commands::Verify { target } => run_verify(&target).await,
+        Commands::Snapshot {
+            command:
+                SnapshotCommands::Verify {
+                    target,
+                    key,
+                    did_url,
+                    json,
+                },
+        } => run_snapshot_verify(&target, key.as_deref(), did_url.as_deref(), json).await,
         Commands::Seal {
             command: SealCommands::Status { id, json },
         } => run_seal_status(id.as_deref(), json).await,

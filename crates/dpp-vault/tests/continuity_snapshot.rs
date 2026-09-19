@@ -160,8 +160,26 @@ fn auth() -> AuthContext {
     }
 }
 
-/// A `PassportService` with real signing + in-memory ports + the reconcile outbox.
-async fn build_service() -> (PassportService, InMemorySnapshotOutbox) {
+/// A `PassportService` with real signing + in-memory ports + the reconcile
+/// outbox, plus the identity it signs with and the base64 public key that
+/// checks those signatures.
+///
+/// The identity and key are handed back because the snapshot-bound contract
+/// test needs to verify what this service produced, and re-deriving a key from
+/// a second keystore would verify nothing.
+///
+/// 🚨 The `TempDir` is returned, not dropped here. `dpp-crypto 0.20.0` holds the
+/// key records in memory, so letting the directory go still signs today — the
+/// harness worked by accident. `CLAUDE.md`'s test-keystore rule says to return
+/// it alongside the store, and the day the keystore reads back from disk is not
+/// the day to discover why.
+async fn build_service() -> (
+    PassportService,
+    InMemorySnapshotOutbox,
+    Arc<dpp_vc::LocalIdentityService>,
+    String,
+    tempfile::TempDir,
+) {
     // `tempfile` creates the directory with restrictive permissions and removes
     // it on drop; `env::temp_dir()` did neither, leaving an Ed25519 private key
     // behind on every run.
@@ -170,6 +188,10 @@ async fn build_service() -> (PassportService, InMemorySnapshotOutbox) {
         dpp_crypto::keystore::KeyStore::open(key_dir.path().join("keystore.json"), "test-pass")
             .expect("open keystore");
     store.generate_key("root").expect("generate key");
+    let did_document = dpp_vc::build_did_document(&store, "snapshot-test.example.com", "root")
+        .expect("build did document");
+    let public_key = dpp_crypto::jws::extract_primary_public_key(&did_document)
+        .expect("did document carries a primary key");
     let identity = Arc::new(dpp_vc::LocalIdentityService::new(
         Arc::new(store),
         "root".to_owned(),
@@ -179,7 +201,7 @@ async fn build_service() -> (PassportService, InMemorySnapshotOutbox) {
     let snapshots = InMemorySnapshotOutbox::default();
     let service = PassportService::new(
         Arc::new(InMemoryPassportRepo::default()),
-        identity,
+        Arc::clone(&identity) as Arc<dyn dpp_domain::ports::identity::IdentityPort>,
         Arc::new(PassthroughRegistry::new()),
         Arc::new(InMemoryAuditRepo::default()),
         Arc::new(dpp_common::event::NoOpEventBus),
@@ -191,7 +213,7 @@ async fn build_service() -> (PassportService, InMemorySnapshotOutbox) {
         },
     )
     .with_snapshot_outbox(Arc::new(snapshots.clone()));
-    (service, snapshots)
+    (service, snapshots, identity, public_key, key_dir)
 }
 
 fn draft_passport() -> Passport {
@@ -257,7 +279,7 @@ fn draft_passport() -> Passport {
 
 #[tokio::test]
 async fn publish_enqueues_a_reconcile() {
-    let (service, outbox) = build_service().await;
+    let (service, outbox, _identity, _key, _key_dir) = build_service().await;
     let auth = auth();
 
     let created = service
@@ -281,7 +303,7 @@ async fn publish_enqueues_a_reconcile() {
 
 #[tokio::test]
 async fn suspend_enqueues_a_reconcile() {
-    let (service, outbox) = build_service().await;
+    let (service, outbox, _identity, _key, _key_dir) = build_service().await;
     let auth = auth();
 
     let created = service
@@ -306,7 +328,7 @@ async fn suspend_enqueues_a_reconcile() {
 
 #[tokio::test]
 async fn declaring_end_of_life_enqueues_a_reconcile() {
-    let (service, outbox) = build_service().await;
+    let (service, outbox, _identity, _key, _key_dir) = build_service().await;
     let auth = auth();
 
     let created = service
@@ -337,7 +359,7 @@ async fn declaring_end_of_life_enqueues_a_reconcile() {
 
 #[tokio::test]
 async fn repeated_state_changes_collapse_to_one_pending_reconcile() {
-    let (service, outbox) = build_service().await;
+    let (service, outbox, _identity, _key, _key_dir) = build_service().await;
     let auth = auth();
 
     let created = service
@@ -363,4 +385,104 @@ async fn repeated_state_changes_collapse_to_one_pending_reconcile() {
         "repeat changes to one passport must collapse to a single pending reconcile"
     );
     assert_eq!(due[0].passport_id, published.id);
+}
+
+// ---------------------------------------------------------------------------
+// The bound this side writes is the bound core's verifier reads
+// ---------------------------------------------------------------------------
+//
+// `render_public_snapshot` and `dpp_vc::verify_snapshot_bound` are two crates
+// agreeing on three key names (`asOf`, `validUntil`, `snapshotJwsSignature`)
+// and on what the proof covers — the document *without* the proof. Nothing
+// mechanical holds them together: renaming a key on either side leaves both
+// compiling and every existing test here green, and the first sign would be a
+// holder being told a perfectly good snapshot is unproven.
+//
+// These two pin the agreement from the producing side. `odal snapshot verify`
+// reads the same pair from the consuming side.
+
+/// A snapshot the node actually rendered verifies as `Current`.
+#[tokio::test]
+async fn a_rendered_snapshot_verifies_under_the_operators_key() {
+    use chrono::SubsecRound as _;
+
+    let (service, _outbox, identity, public_key, _key_dir) = build_service().await;
+    let auth = auth();
+    let created = service
+        .create(draft_passport(), &auth)
+        .await
+        .expect("create");
+    let published = service.publish(created.id, &auth).await.expect("publish");
+
+    // The drain truncates to whole seconds so the signed claim and the object
+    // metadata cannot disagree about the same instant; match it here.
+    let as_of = Utc::now().trunc_subsecs(0);
+    let valid_until = as_of + chrono::Duration::days(7);
+    let bytes = dpp_vault::public_view::render_public_snapshot(
+        identity.as_ref(),
+        &published,
+        as_of,
+        valid_until,
+    )
+    .await
+    .expect("render the snapshot");
+    let document: serde_json::Value = serde_json::from_slice(&bytes).expect("the snapshot is JSON");
+
+    let bound =
+        dpp_vc::verify_snapshot_bound(&document, &public_key, as_of + chrono::Duration::days(1));
+
+    assert!(
+        matches!(bound, dpp_vc::SnapshotBound::Current { .. }),
+        "a freshly rendered snapshot must verify as Current, got {bound:?}"
+    );
+}
+
+/// 🚨 Removing the proof from a rendered snapshot yields `Absent`, not
+/// `Expired` — the dates survive the edit and mean nothing without it.
+///
+/// This is the distinction `odal snapshot verify` reports as unverifiable. It is
+/// pinned here, against a real rendered document, because a hand-built fixture
+/// could agree with the verifier while disagreeing with what the node writes.
+#[tokio::test]
+async fn a_rendered_snapshot_with_its_proof_removed_is_absent_not_expired() {
+    use chrono::SubsecRound as _;
+
+    let (service, _outbox, identity, public_key, _key_dir) = build_service().await;
+    let auth = auth();
+    let created = service
+        .create(draft_passport(), &auth)
+        .await
+        .expect("create");
+    let published = service.publish(created.id, &auth).await.expect("publish");
+
+    let as_of = Utc::now().trunc_subsecs(0);
+    let bytes = dpp_vault::public_view::render_public_snapshot(
+        identity.as_ref(),
+        &published,
+        as_of,
+        as_of + chrono::Duration::days(7),
+    )
+    .await
+    .expect("render the snapshot");
+    let mut document: serde_json::Value =
+        serde_json::from_slice(&bytes).expect("the snapshot is JSON");
+
+    let removed = document
+        .as_object_mut()
+        .expect("the snapshot is an object")
+        .remove("snapshotJwsSignature");
+    assert!(
+        removed.is_some(),
+        "the rendered snapshot must carry a proof under this exact key — if this \
+         fails, the producer and `verify_snapshot_bound` have drifted apart"
+    );
+
+    let bound = dpp_vc::verify_snapshot_bound(&document, &public_key, as_of);
+
+    assert_eq!(
+        bound,
+        dpp_vc::SnapshotBound::Absent,
+        "a stripped proof is Absent, never Expired: the dates are still there and \
+         nothing vouches for them"
+    );
 }

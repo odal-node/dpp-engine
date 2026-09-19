@@ -164,6 +164,13 @@ pub enum Commands {
         /// Stored dossier id, or path to a dossier JSON file
         target: String,
     },
+    // ── Continuity snapshots ─────────────────────────────────────────────────
+    /// Continuity-snapshot inspection — the static tier a passport is served
+    /// from when the node is not there
+    Snapshot {
+        #[command(subcommand)]
+        command: SnapshotCommands,
+    },
     // ── Qualified seals ──────────────────────────────────────────────────────
     /// eIDAS qualified seal inspection
     Seal {
@@ -850,6 +857,39 @@ pub enum WebhookCommands {
     Remove {
         /// Webhook subscription id
         id: String,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum SnapshotCommands {
+    /// Check a continuity snapshot's signed freshness bound.
+    ///
+    /// Answers one question about a copy served off the static tier: is the
+    /// `validUntil` on it proven, and has it passed? The key is supplied rather
+    /// than discovered, because this command exists for the case where the node
+    /// is unreachable — and on a single-binary deployment the node is also what
+    /// serves the DID document, so there is no key to discover.
+    ///
+    /// Verifies the **outer** snapshot proof only. A consumer serving passport
+    /// content still needs the publish-time `publicJwsSignature`, which is a
+    /// separate check with a separate answer.
+    #[command(group(
+        clap::ArgGroup::new("trust").required(true).args(["key", "did_url"])
+    ))]
+    Verify {
+        /// Path to a snapshot JSON file, or an http(s) URL to fetch one from
+        target: String,
+        /// The operator's base64 Ed25519 public key
+        #[arg(long, value_name = "BASE64")]
+        key: Option<String>,
+        /// Fetch the key from a `did:web` document at this URL instead. Only
+        /// useful when the DID document is served from somewhere the node's
+        /// outage does not take down with it.
+        #[arg(long, value_name = "URL")]
+        did_url: Option<String>,
+        /// Output the verdict as JSON instead of a summary
+        #[arg(long)]
+        json: bool,
     },
 }
 
