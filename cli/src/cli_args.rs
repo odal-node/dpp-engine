@@ -880,7 +880,13 @@ pub enum SnapshotCommands {
         /// Path to a snapshot JSON file, or an http(s) URL to fetch one from
         target: String,
         /// The operator's base64 Ed25519 public key
-        #[arg(long, value_name = "BASE64")]
+        ///
+        /// 🚨 `allow_hyphen_values`: the key is **base64url**, whose alphabet
+        /// includes `-`. Roughly one key in sixty-four begins with one, and
+        /// without this clap reads `--key -Sxy…` as an unknown flag and exits 2.
+        /// Intermittent by construction — it depends on the operator's key, not
+        /// on anything they typed.
+        #[arg(long, value_name = "BASE64", allow_hyphen_values = true)]
         key: Option<String>,
         /// Fetch the key from a `did:web` document at this URL instead. Only
         /// useful when the DID document is served from somewhere the node's
