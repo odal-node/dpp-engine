@@ -14,6 +14,10 @@ cargo-fuzz = true
 libfuzzer-sys = "0.4"
 dpp-integrator = { path = "../crates/dpp-integrator" }
 dpp-vault = { path = "../crates/dpp-vault" }
+# The `SealInspector` the verify target hands to `verify_dossier_json`. dpp-vault
+# takes the trait from dpp-types and never the adapter, so — like the node's
+# composition root — the caller supplies it.
+dpp-seal = { path = "../crates/dpp-seal" }
 
 [[bin]]
 name = "parse_csv"
