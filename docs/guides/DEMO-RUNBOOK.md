@@ -16,9 +16,10 @@ Two things that are hard to convey any other way:
 1. **One passport, two answers.** The same record served publicly and to a
    credentialed reader, showing that disclosure is enforced per field rather
    than per document.
-2. **A product identified without GS1.** EN 18219 clause 5 offers three
-   identifier schemes as alternatives. Only the first needs GS1 membership, and
-   the carrier URL visibly differs — see [§7](#7-the-carrier-url-tells-you-which-scheme-issued-the-passport).
+2. **The carrier URL is derived, not configured.** `build_carrier_url` mints a
+   GS1 Digital Link from the product's GTIN — see
+   [§7](#7-the-carrier-url-is-derived-from-the-product-gtin), which
+   also covers why the shipped corpus cannot yet show the non-GS1 alternative.
 
 ---
 
@@ -111,7 +112,7 @@ The corpus lives in `ops/demo/`:
 
 | Directory | Contents |
 |---|---|
-| `passports/` | 8 fully-populated Annex XIII batteries |
+| `passports/` | 6 fully-populated Annex XIII batteries, every one carrying a GTIN |
 | `datasets/` | 19 CSV import fixtures, valid and deliberately broken |
 | `dossiers/` | 11 evidence dossiers, including transfer and end-of-life |
 
@@ -119,26 +120,25 @@ These files are the **only** demonstration that a fully-populated Annex XIII
 battery publishes at all — the CSV importer cannot carry those fields.
 `crates/dpp-vault/tests/demo_passports_publish.rs` guards them against drift.
 
-`odal import` accepts JSON as well as CSV/TSV and creates drafts; `odal publish`
-signs them. Dry-run first if you want to see the verdict without creating
-anything:
+`odal passport import` accepts JSON as well as CSV/TSV and creates drafts;
+`odal passport publish` signs them. Dry-run first if you want to see the verdict
+without creating anything:
 
 ```bash
 # Optional: dry-run one file, creates nothing
-odal validate ops/demo/passports/01-battery-industrial-nmc.json
+odal passport validate ops/demo/passports/01-battery-industrial-nmc.json
 
 # Create as a draft, then sign and publish
-odal import ops/demo/passports/01-battery-industrial-nmc.json
-odal publish                 # publishes every draft; pass an id for just one
+odal passport import ops/demo/passports/01-battery-industrial-nmc.json
+odal passport publish        # publishes every draft; pass an id for just one
 ```
 
-`odal list` shows the passports and their ids.
+`odal passport list` shows the passports and their ids.
 
 ## 5. Issue a credential
 
 ```bash
-odal credential issue \
-  --holder-did did:web:repairs.example \
+odal credential issue did:web:repairs.example \
   --name "Example Repairs Ltd" \
   --role recycler \
   --country DE \
@@ -189,21 +189,36 @@ wires it whenever credentials are live. So a self-issued credential works on
 A credential from *another* issuer does need that issuer's DID to be publicly
 resolvable — which is the guard doing its job.
 
-## 7. The carrier URL tells you which scheme issued the passport
+## 7. The carrier URL is derived from the product GTIN
 
 `build_carrier_url` branches on whether the product group data carries a GTIN:
 
-| Identifier scheme | Carrier URL | Needs GS1 membership? |
+| Product group data | Carrier URL | Needs GS1 membership? |
 |---|---|---|
-| 1 — GS1 | `{base}/01/{gtin}/21/{serial}` — a GS1 Digital Link | **Yes** |
-| 2 — Identification Link | `{base}/dpp/{id}` | No |
-| 3 — DID | `{base}/dpp/{id}` | No |
+| Carries a GTIN | `{base}/01/{gtin}[/10/{batch}]/21/{serial}` — a GS1 Digital Link | **Yes** |
+| Carries none | `{base}/dpp/{id}` | No |
 
-This is worth putting on screen. Requiring a GTIN would mean requiring GS1
-membership, and schemes 2 and 3 exist precisely so a manufacturer without a
-Company Identification Number can still issue a conformant passport. Two
-passports side by side, with two different carrier forms, make that concrete in
-a way a sentence does not.
+The `/10/{batch}` segment appears whenever the passport has a `batchId`, which
+every passport in `ops/demo/passports/` does — so that is the form you will
+actually see on screen.
+
+### 🚨 The non-GS1 form cannot be demonstrated from the shipped corpus
+
+All six demo passports carry a GTIN, and
+`crates/dpp-vault/tests/demo_passports_publish.rs::every_demo_passport_carries_a_gtin`
+asserts they always will. Every one therefore mints a Digital Link, and there is
+no second passport to stand beside it showing `{base}/dpp/{id}`.
+
+This matters more than a missing fixture. Requiring a GTIN would mean requiring
+GS1 membership, and EN 18219 clause 5 offers identifier schemes that do not —
+which is exactly the claim a side-by-side comparison would make concrete. The
+fallback branch exists in `build_carrier_url`, but the code comment there scopes
+it to records that identify no trade item (an unsold-goods report or an untyped
+record), not to a manufacturer without GS1 membership.
+
+**Do not promise this comparison in a demo.** Showing it needs a non-GS1 demo
+passport and a decision about whether that guard test should still hold — both
+out of scope here.
 
 ---
 
