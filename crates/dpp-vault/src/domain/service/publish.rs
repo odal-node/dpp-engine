@@ -95,16 +95,28 @@ fn reject(reason: &'static str, e: DppError) -> DppError {
 /// - `Ok(Some(_))` — a determination was made; the gate judges it.
 /// - `Ok(None)` — nothing is registered to evaluate this product group. A
 ///   deployment shape, not a failure: a node may legitimately run without a
-///   plugin for a group. Publishing proceeds, as it always did.
+///   plugin for a group. Publishing proceeds, as it always did, **and says so** —
+///   the caller's `None` is also what "no obligation is live" looks like, so
+///   without a line here the two are indistinguishable and a node silently
+///   missing a plugin reads exactly like one that never needed it.
 /// - `Err(_)` — the evaluator was reached and did not answer. The gate cannot
 ///   run, and a gate that cannot run must not be reported as a gate that
 ///   passed.
 fn gate_outcome(
+    product_group: &str,
     computed: Result<ComplianceResult, ComplianceError>,
 ) -> Result<Option<ComplianceResult>, ComplianceError> {
     match computed {
         Ok(determination) => Ok(Some(determination)),
-        Err(e) if e.kind == ComplianceErrorKind::UnknownProductGroup => Ok(None),
+        Err(e) if e.kind == ComplianceErrorKind::UnknownProductGroup => {
+            tracing::warn!(
+                product_group,
+                error = %e,
+                "no compliance evaluator is registered for this product group; \
+                 publishing without a determination"
+            );
+            Ok(None)
+        }
         Err(e) => Err(e),
     }
 }
@@ -249,11 +261,16 @@ impl PassportService {
             let determination = if super::passport_obligation_live(
                 product_group_data.product_group().catalog_key(),
             ) {
-                gate_outcome(self.compliance.compute(
-                    product_group_data.product_group().catalog_key(),
-                    product_group_data,
-                    passport.placed_on_market_date,
-                ))
+                let product_group = product_group_data.product_group();
+                let catalog_key = product_group.catalog_key();
+                gate_outcome(
+                    catalog_key,
+                    self.compliance.compute(
+                        catalog_key,
+                        product_group_data,
+                        passport.placed_on_market_date,
+                    ),
+                )
                 .map_err(|e| {
                     reject(
                         REASON_COMPLIANCE_UNAVAILABLE,
@@ -870,7 +887,7 @@ mod tests {
             dpp_domain::ComplianceErrorKind::InvalidInput,
         ] {
             assert!(
-                gate_outcome(Err(err(kind))).is_err(),
+                gate_outcome("battery", Err(err(kind))).is_err(),
                 "an evaluator that failed must refuse the publish, not pass it"
             );
         }
@@ -881,15 +898,19 @@ mod tests {
         // The one error that is not a failure. A node running without a plugin
         // for this product group is a deployment shape, and refusing here would
         // break every such node rather than catching anything.
-        let outcome = gate_outcome(Err(err(
-            dpp_domain::ComplianceErrorKind::UnknownProductGroup,
-        )));
+        let outcome = gate_outcome(
+            "battery",
+            Err(err(dpp_domain::ComplianceErrorKind::UnknownProductGroup)),
+        );
         assert!(matches!(outcome, Ok(None)));
     }
 
     #[test]
     fn a_determination_reaches_the_gate_to_be_judged() {
         let determination = dpp_domain::ComplianceResult::default();
-        assert!(matches!(gate_outcome(Ok(determination)), Ok(Some(_))));
+        assert!(matches!(
+            gate_outcome("battery", Ok(determination)),
+            Ok(Some(_))
+        ));
     }
 }
