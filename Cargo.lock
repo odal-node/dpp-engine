@@ -2682,7 +2682,7 @@ dependencies = [
  "dpp-types",
  "hex",
  "hmac 0.13.0",
- "p256 0.13.2",
+ "p256 0.14.0",
  "rcgen",
  "reqwest",
  "roxmltree",
