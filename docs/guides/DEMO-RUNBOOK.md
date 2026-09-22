@@ -29,7 +29,7 @@ Two things that are hard to convey any other way:
 |---|---|
 | **Docker ≥ 24** with Compose | `docker compose version` |
 | **`odal` binary** | `cargo build -p dpp-cli --release` |
-| A domain | **Only for rungs 2–3.** A laptop demo needs none — see [§6](#6-yes-this-works-on-a-laptop) |
+| A domain | **Only for rungs 2–3.** A laptop demo needs none — see [§6](#6-show-the-contrast) |
 
 ---
 
