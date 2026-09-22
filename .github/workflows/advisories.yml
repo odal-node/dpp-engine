@@ -1,0 +1,68 @@
+name: Advisories
+
+# 🚨 Two things change without a commit, and neither reaches anyone on push.
+#
+# The `audit` job in ci.yml runs on pull requests and on pushes to `main`, so it
+# answers "is this change safe" and nothing else. Both of the things that can go
+# wrong here happen while the tree sits still:
+#
+#   1. **A new RUSTSEC advisory** is published against a dependency already in
+#      the tree. The tree does not change, so nothing triggers a run, and the
+#      first anyone hears of it is whenever somebody next opens a pull request.
+#
+#   2. **A suppression in `.cargo/audit.toml` expires.** Every ignore entry
+#      carries an `expires` date that `scripts/check-audit-register.sh` enforces
+#      against the clock. That date passes on a calendar, not on a commit — so
+#      on the push-only path an accepted risk can quietly outlive the argument
+#      that justified accepting it, and the gate that was written to catch that
+#      never runs.
+#
+# The second reason is why this matters more here than in a library: this
+# repository is the deployed artifact, and it is the one carrying the register.
+#
+# This run exists to fail on a day when nothing was committed. It scans the
+# committed `Cargo.lock` — without that file the graph is re-resolved per run
+# and a finding can appear or vanish between two scans over an identical tree.
+
+on:
+  schedule:
+    # 06:00 UTC daily — early enough that a finding is waiting at the start of
+    # the day rather than after it.
+    - cron: "0 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  advisories:
+    name: RUSTSEC advisories against the committed lockfile
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+        with:
+          toolchain: stable
+
+      # The same invocation and the same flags as the pull-request path, so a
+      # nightly failure and a CI failure mean the same thing. `--deny yanked`
+      # catches the other thing that changes without a commit: a crate
+      # withdrawn from the registry after we pinned it.
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --locked
+      - name: cargo audit
+        run: cargo audit --deny yanked --deny unmaintained
+
+      # Reason 2 above. This is the check that cannot be reached by pushing.
+      - name: Suppression register is current
+        run: bash scripts/check-audit-register.sh
+      - name: Suppression register checker self-test
+        run: bash scripts/check-audit-register.test.sh
+
+      # Bans, licences and sources are properties of the tree and cannot change
+      # without a commit, so they stay on the pull-request run. Advisories stay
+      # with cargo-audit and the register, per deny.toml's [advisories] comment
+      # — a second opinion on the same question would only disagree quietly.
