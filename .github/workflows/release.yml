@@ -84,3 +84,24 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha,scope=${{ matrix.image }}
           cache-to: type=gha,mode=max,scope=${{ matrix.image }}
+          # Two attestations, pushed alongside the image and readable with
+          # `docker buildx imagetools inspect ghcr.io/odal-node/<image>:<tag>`.
+          #
+          # sbom       — BuildKit scans the final image and records what is in
+          #              it. On its own that would be the Debian runtime layer
+          #              and nothing else, because a Rust binary carries no
+          #              manifest; the Dockerfiles build with `cargo auditable`
+          #              so the crate graph is embedded in the binary and this
+          #              scan recovers it. The two changes only work together —
+          #              either alone produces an SBOM that is true and useless.
+          # provenance — mode=max records the build: the source commit, the
+          #              workflow that ran, the base images and the build args.
+          #              For a project whose whole claim is verifiable
+          #              provenance, shipping artefacts nobody could verify was
+          #              the sharpest thing we were doing wrong.
+          #
+          # Both need `packages: write`, which this job already has, and neither
+          # needs OIDC. They turn the pushed tag into an image index with the
+          # attestations as referring manifests — `docker pull` is unaffected.
+          sbom: true
+          provenance: mode=max
