@@ -516,7 +516,15 @@ jobs:
   # the GHCR labels stay in `release.yml`, which is the only place they can be
   # tested for real anyway.
   images:
-    name: Container images build
+    # Named off `matrix.image` alone, deliberately. A matrix job with no `name`
+    # expression is reported as `images (dpp-node, dpp-engine/docker/node.Dockerfile)`
+    # — every matrix value, dockerfile path included. That string is what a
+    # branch ruleset stores when this is made a required check, so moving or
+    # renaming a Dockerfile would silently stop the rule matching, and a
+    # required check that no longer matches is *missing* rather than failing:
+    # the exact shape ci.yml's trigger comment above describes, where
+    # `gh pr checks` reads green and only the ruleset knows better.
+    name: Container image — ${{ matrix.image }}
     runs-on: ubuntu-latest
     strategy:
       # Both images, independently: a break in one is not a reason to stop
