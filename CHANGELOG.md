@@ -10,6 +10,8 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ## [Unreleased]
 
+## [0.14.0] - 2026-09-22
+
 ### Breaking
 
 - **The redaction moved to `dpp-domain`, and two things it does differently are
@@ -231,7 +233,265 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   and no authenticated way to say "this is over" inside a payload signed before
   it was. That residue is #236.)*
 
+
+- **An archive timestamp from another seal was accepted as archiving this one.**
+  `cades::archival_freshness` verified the token's own signature and its
+  authority's window, and never checked that the token was a timestamp of *this*
+  signature. An unsigned attribute is covered by nothing in the enclosing
+  signature, so a genuine token — real authority, real signature, internally
+  consistent — could be pasted in, and the passport reported archival protection
+  until somebody else's authority certificate expired.
+
+  ✅ COMPLIANCE-PIN: ETSI EN 319 122-1 V1.3.1, clauses 5.5.2 and 5.5.3. The new
+  `ats` module builds and checks the imprint the clause specifies: a
+  concatenation of the content type, the signed-data hash, six fields of the
+  `SignerInfo` and an `ats-hash-index-v3` naming exactly which certificates,
+  revocation entries and unsigned attribute values were covered.
+
+  **The local backend moved with it**, and had to. It emitted an imprint over the
+  signer's encoded form and no index at all — documented as a deliberate
+  departure, on the reasonable argument that conformance is wasted on a validator
+  that rejects a self-signed certificate on its first check. What changed is that
+  **the reader in this workspace is now that validator**: left alone, the backend
+  would have produced seals its own node correctly reported as unarchived.
+
+  🚨 **The index is checked by containment, not equality**, and the difference is
+  the design of the attribute rather than a detail. It lists what was present
+  *when the timestamp was requested*, and the clause exists precisely so later
+  additions do not invalidate it — the archive timestamp is itself such an
+  addition, so an equality check fails on the very signature it was built for.
+  Recomputing and comparing wholesale looks stricter and is wrong; it is what the
+  round-trip test reported first.
+
+  The rule is `claimed ⊆ present`: an index may name less than is there, and may
+  never name **more** — that is how one would go on claiming to protect
+  validation material somebody removed after stamping. Both directions are
+  pinned, and the removal case is tested in isolation, because the borrowed-token
+  case above would be refused on the signer's fields even if index validation
+  never ran.
+
+  The hash algorithm is tied down at both ends: an index naming anything but
+  SHA-256 is refused rather than compared against hashes computed under a
+  different one, and the timestamp's own `messageImprint` algorithm must equal
+  the index's before the digest bytes are compared at all.
+
+  A token that cannot be tied to this signature now contributes no date, so a
+  seal carrying only such tokens reports `unknown` rather than `current` —
+  present, and unreadable *as this seal's*.
+
+  What this does **not** do is prove conformance. The round trip proves this
+  workspace's writer and reader agree; if both misread the clause they would
+  agree and both be wrong. What is checked against the standard is the code, by
+  reading it — not by interoperating with an independent implementation, which
+  nothing here can currently do.
+
+- **The published evidence-dossier JSON Schema rejected every dossier carrying a
+  seal.** `docs/architecture/evidence-dossier-v1.schema.json` is published as the
+  machine-readable description of the format and sets
+  `"additionalProperties": false`, which makes an omission a **rejection** rather
+  than a documentation gap. It listed ten members; `DossierV1` emits twelve.
+
+  Missing were `qualifiedSeal` — present on every dossier for a sealed passport,
+  and the one member carrying an Art. 35(2) presumption — and `componentGraph`,
+  present whenever the passport has a bill of materials. So the artifact an
+  authority is handed failed validation against the schema this repository
+  publishes for validating it, in the two cases that matter most.
+
+  **Nothing ran it**, which is why it drifted while the OpenAPI description of
+  the same artifact stayed current: that half is compared against the Rust types
+  by the contract suite, and this half was referenced only from a "See also"
+  line. `the_published_dossier_schema_lists_every_member_the_dossier_emits` now
+  compares it against `DossierV1` in both directions — a member emitted but not
+  described, and a member described but never emitted.
+
+  Generating one description from the other was the alternative and was rejected:
+  the OpenAPI side marks `QualifiedSealMember` `UNCHECKED` because the dossier
+  holds that member as an untyped `serde_json::Value`, so generating from it
+  would propagate that hole into the file an outside verifier reads. Giving
+  `qualified_seal` a real type would close this, that marker, and the reason the
+  new gate can compare only names and not shapes.
+
+  `EVIDENCE-DOSSIER.md`'s Members table had the same two gaps — it did not
+  mention a seal at all — and now lists both.
+
+- **A stalled integration test now says which request stalled.** `TestClient`
+  used `reqwest::Client::new()`, and **`reqwest` sets no request timeout by
+  default** — so a request the server never answered parked until nextest killed
+  the test at 120 seconds, with no assertion, no panic and nothing naming the
+  call. `publish_serve_cycle::published_passport_is_served_as_the_payload_its_proof_signed`
+  failed CI twice that way, each time costing a full integration cycle and each
+  time telling nobody anything.
+
+  The client now carries a 30-second timeout — far above what a local container
+  needs, far below the harness ceiling — and every request that fails panics with
+  its method, its URL and the cause, saying explicitly when the server accepted
+  the request and never answered.
+
+  🚨 **This does not fix the stall.** It makes the next one diagnosable, which is
+  what the previous two were not. The root cause is still open, and the wider
+  surface is untouched: `dpp-node/tests/smoke.rs` builds bare
+  `reqwest::Client::new()` in ten places with the same property.
+
+- **A certificate authority mid-rotation was reported as not having signed the
+  seal.** `cades::check_path_to` climbs the seal's embedded chain, and at each
+  link it took the **first** certificate carrying the issuer's name and returned
+  that certificate's verdict. A CA rotating its key publishes the old and the new
+  together under one subject name so relying parties do not break at the cutover,
+  and a CAdES seal made in that window legitimately carries both.
+
+  Pick the wrong one and the walk returned `NotSignedByThisIssuer`, which
+  `qualification::standing` turns into `SignatureNotFromListedCa` — the variant
+  this crate reserves for *this CA did not sign it* and documents as the one that
+  is an accusation, as against `PathUnverifiable`'s *we could not check*. So the
+  failure was not a missed detection. It was a false statement about a provider
+  who did nothing wrong, intermittent, and only during a rotation.
+
+  Every certificate under a matching subject is now tried, and the link is
+  accepted if any of them verifies. `NotSignedByThisIssuer` is reserved for the
+  case where none does, and a candidate whose key cannot be read yields
+  `Unverifiable` rather than convicting the CA that holds the other one.
+  `qualification::find_issuer_candidates` already worked this way on the
+  **listed** side of the same question; this is the embedded side, and the two
+  now agree.
+
+  The test builds a real three-level chain — root, intermediate, leaf — with a
+  second intermediate under the same subject name that signed nothing.
+  🚨 A CMS `certificates` field is a DER `SET OF`, ordered by encoding rather
+  than insertion, so which one the walk meets first is decided by bytes nobody
+  chooses; left to chance the test would pass about half the time against a
+  broken walk. Decoys are generated until one sorts **before** the real
+  intermediate, making the adversarial order certain.
+
+- **`no-rsa-private-key` could pass while finding exactly what it looks for, and
+  never looked in `cli/tests`.** The gate enforces the claim that suppresses
+  `RUSTSEC-2023-0071` — that this workspace holds no RSA private key and performs
+  no RSA private-key operation.
+
+  `grep` exits **2** on a path error and **1** on no match, and `if grep …; then`
+  reads both as "nothing found" while `2>/dev/null` hid the reason. Bash expands
+  `crates/*/tests` only to directories that exist, so a layout where none did
+  would have handed grep a literal glob and the whole source check would have
+  gone green **while printing its matches to stdout**. Observed against a fixture
+  tree with no `tests/` directory: it found a planted `RsaPrivateKey`, printed
+  it, and exited 0.
+
+  The status is now read explicitly — 0 found, 1 clean, anything else the scan
+  did not run, which exits 2 rather than passing. `cli/tests` joined the scanned
+  roots, which is a real gap rather than a hypothetical one: the directory
+  exists.
+
+  **The gate now proves it can fail, on every invocation.** `--self-test` plants
+  an `RsaPrivateKey` in each root that must be scanned and a direct `rsa`
+  dependency in a manifest, and fails if either is not caught. It runs before the
+  real scan, because a gate that has not demonstrated it can fail has not
+  demonstrated anything.
+
+  🚨 The self-test's list of roots is **written out rather than taken from the
+  scan's own list**, and that is the difference between a self-test and a
+  tautology. Derived, dropping a root would stop the scan looking there and stop
+  the self-test planting there, and the gate would pass — blind to precisely the
+  regression it exists to catch. The first version of this fix had that defect
+  and it was found by dropping `cli/tests` and watching the gate still pass.
+
+- **The trusted-list fetch cap refused the two documents the vendored `xml-sec`
+  fork exists for.** *(No node has run this path yet — the reader is not wired
+  into anything — so nothing was broken in the field. What was broken is that the
+  two features contradicted each other and no test could notice.)*
+
+  The fork raises a compile-time node-set ceiling so Italy and France verify;
+  they carry 65 540 and 65 541 entries against a limit of 65 536. The fetch cap
+  was sized at one mebibyte from a survey of "roughly 140 KiB to over 600 KiB" —
+  a range that excluded those same two lists, which are 2.72 MiB and 2.43 MiB.
+
+  So `fetch_trusted_list` refused both before verification was ever attempted,
+  and the fork's entire purpose was unreachable through this crate's own path.
+  Neither feature was exercised: the chain tests read fixtures via `include_str!`
+  and never call the fetcher, and the cap was asserted nowhere.
+
+  The cap is now 8 MiB, sized against **every** list the LOTL points at rather
+  than against a sample — Germany, the largest, is 5.11 MiB. Asserted against a
+  dated measurement of the published set rather than against the repository's own
+  fixtures, because sizing it from those would be the original mistake with a
+  different sample.
+
+
+- **A refreshed trusted-list set now reaches a node that is already running.**
+  The seal inspector held the lists it was handed at boot and had no way to be
+  given a newer set, so a completed refresh pass reached a running node's
+  verdicts not at all — only the next restart.
+
+  🚨 That made the feature inert by default rather than in an edge case. The
+  first pass runs a minute *after* boot, so on a fresh deployment the set read at
+  startup is always the empty one: `TRUSTED_LIST_REFRESH=on`, wait a day, and
+  every seal still answered `consulted: 0` with the lists sitting in Postgres the
+  whole time.
+
+  The held set is now swappable and a clone shares it, so the composition root
+  keeps one handle for the read path and gives another to the refresh task, which
+  publishes after each **completed** pass. The read path clones a snapshot and
+  drops the lock before any ASN.1 or signature work, so no lock is held across a
+  verdict. Both halves of the set — the verified lists and the unchecked
+  territories — travel in one struct and can no longer be replaced independently.
+
+- **A cache write that failed was counted as a refresh.** `RefreshStats` was
+  incremented before `TrustedListStore::put` was attempted and the error was
+  dropped, so the counters described what a pass intended rather than what the
+  cache holds — and it is the cache a verdict is answered from. A pass whose
+  every write failed still reported a full, healthy refresh.
+
+  🚨 It also left the stale copy the fail-closed rule exists to drop. A territory
+  that verified last week and fails today keeps its `Verified` row when the
+  `Unavailable` write fails, and since a completed pass now republishes by
+  re-reading the cache, that stale row would reach served verdicts with nothing
+  in `unchecked` naming it.
+
+  Counting now happens after the write; a failed one increments `unwritten` and
+  names the territory, the publish step drops those territories from the
+  consulted lists and admits them as unchecked, and a pass that could not write
+  comes back in fifteen minutes rather than a day — a failed write is this node's
+  own database, which is the most retryable failure in a pass.
+
+- **A product group that contradicts its payload is refused.** A create body
+  could carry an explicit `productGroup` and a `productGroupData` whose internal
+  tag said something else, and nothing compared them: the explicit value became
+  the stored product group and chose `schemaVersion`, while the payload was
+  schema-validated against its own tag, so both halves passed.
+
+  🚨 The stored label is what picks the disclosure table the public view is
+  filtered and signed under. A coherent-but-wrong label resolves, so the
+  fail-closed backstop — which keys on the policy failing to resolve — never
+  fired, and every payload field the label's table does not name fell to
+  `default_disclosure`, which is `Public`. Battery's table names neither
+  `svhcSubstances` nor `disassemblyInstructions`; textile's marks both
+  `restricted`. Textile data under a battery label therefore published the REACH
+  Art. 33 substance declarations, signed into `publicJwsSignature`.
+
+  Both doors are closed: `POST /dpp` refuses a contradiction with `422`, and
+  `PUT /dpp/{dppId}` refuses a patched payload whose group differs from the
+  passport's — `productGroupData` is patchable and `productGroup` is not, so
+  without that a patch reached the same state by a route that never names a
+  product group.
+
 ### Added
+
+- **Both published images now carry an SBOM and SLSA provenance.** Read them
+  with `docker buildx imagetools inspect ghcr.io/odal-node/<image>:<tag>`. The
+  provenance is `mode=max` — source commit, the workflow that built it, the base
+  images and the build arguments. The SBOM lists the Debian runtime packages
+  *and* the Rust crates, because the Dockerfiles now build with
+  `cargo auditable`, which embeds the `Cargo.lock` graph into the binary where a
+  filesystem scanner can recover it. `cargo audit bin` reads the same graph
+  straight out of a pulled image, so "is the thing I am running affected by this
+  advisory" is answerable against the artefact rather than against a lockfile
+  someone says matches it.
+
+  🚨 **The two halves only work together.** A plain `cargo build` produces a
+  binary that records nothing about itself, so the attestation would be an SBOM
+  that is accurate about the base layer and silent about the application — and
+  nothing fails when that happens: the image builds, the push succeeds, the
+  attestation is still produced. CI now builds both images on any change that
+  reaches them and refuses one whose binary carries no dependency graph, which
+  is the only thing standing between that silence and a release.
 
 - **`odal snapshot verify <path|url>` — the one check that needs no node.** A
   continuity snapshot carries a signed `validUntil` that the drain re-signs on a
@@ -1281,189 +1541,6 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   variant. The three new enums in this repin read `ALL` off the core enum
   instead, so they cannot drift that way.
 
-### Fixed
-
-- **An archive timestamp from another seal was accepted as archiving this one.**
-  `cades::archival_freshness` verified the token's own signature and its
-  authority's window, and never checked that the token was a timestamp of *this*
-  signature. An unsigned attribute is covered by nothing in the enclosing
-  signature, so a genuine token — real authority, real signature, internally
-  consistent — could be pasted in, and the passport reported archival protection
-  until somebody else's authority certificate expired.
-
-  ✅ COMPLIANCE-PIN: ETSI EN 319 122-1 V1.3.1, clauses 5.5.2 and 5.5.3. The new
-  `ats` module builds and checks the imprint the clause specifies: a
-  concatenation of the content type, the signed-data hash, six fields of the
-  `SignerInfo` and an `ats-hash-index-v3` naming exactly which certificates,
-  revocation entries and unsigned attribute values were covered.
-
-  **The local backend moved with it**, and had to. It emitted an imprint over the
-  signer's encoded form and no index at all — documented as a deliberate
-  departure, on the reasonable argument that conformance is wasted on a validator
-  that rejects a self-signed certificate on its first check. What changed is that
-  **the reader in this workspace is now that validator**: left alone, the backend
-  would have produced seals its own node correctly reported as unarchived.
-
-  🚨 **The index is checked by containment, not equality**, and the difference is
-  the design of the attribute rather than a detail. It lists what was present
-  *when the timestamp was requested*, and the clause exists precisely so later
-  additions do not invalidate it — the archive timestamp is itself such an
-  addition, so an equality check fails on the very signature it was built for.
-  Recomputing and comparing wholesale looks stricter and is wrong; it is what the
-  round-trip test reported first.
-
-  The rule is `claimed ⊆ present`: an index may name less than is there, and may
-  never name **more** — that is how one would go on claiming to protect
-  validation material somebody removed after stamping. Both directions are
-  pinned, and the removal case is tested in isolation, because the borrowed-token
-  case above would be refused on the signer's fields even if index validation
-  never ran.
-
-  The hash algorithm is tied down at both ends: an index naming anything but
-  SHA-256 is refused rather than compared against hashes computed under a
-  different one, and the timestamp's own `messageImprint` algorithm must equal
-  the index's before the digest bytes are compared at all.
-
-  A token that cannot be tied to this signature now contributes no date, so a
-  seal carrying only such tokens reports `unknown` rather than `current` —
-  present, and unreadable *as this seal's*.
-
-  What this does **not** do is prove conformance. The round trip proves this
-  workspace's writer and reader agree; if both misread the clause they would
-  agree and both be wrong. What is checked against the standard is the code, by
-  reading it — not by interoperating with an independent implementation, which
-  nothing here can currently do.
-
-- **The published evidence-dossier JSON Schema rejected every dossier carrying a
-  seal.** `docs/architecture/evidence-dossier-v1.schema.json` is published as the
-  machine-readable description of the format and sets
-  `"additionalProperties": false`, which makes an omission a **rejection** rather
-  than a documentation gap. It listed ten members; `DossierV1` emits twelve.
-
-  Missing were `qualifiedSeal` — present on every dossier for a sealed passport,
-  and the one member carrying an Art. 35(2) presumption — and `componentGraph`,
-  present whenever the passport has a bill of materials. So the artifact an
-  authority is handed failed validation against the schema this repository
-  publishes for validating it, in the two cases that matter most.
-
-  **Nothing ran it**, which is why it drifted while the OpenAPI description of
-  the same artifact stayed current: that half is compared against the Rust types
-  by the contract suite, and this half was referenced only from a "See also"
-  line. `the_published_dossier_schema_lists_every_member_the_dossier_emits` now
-  compares it against `DossierV1` in both directions — a member emitted but not
-  described, and a member described but never emitted.
-
-  Generating one description from the other was the alternative and was rejected:
-  the OpenAPI side marks `QualifiedSealMember` `UNCHECKED` because the dossier
-  holds that member as an untyped `serde_json::Value`, so generating from it
-  would propagate that hole into the file an outside verifier reads. Giving
-  `qualified_seal` a real type would close this, that marker, and the reason the
-  new gate can compare only names and not shapes.
-
-  `EVIDENCE-DOSSIER.md`'s Members table had the same two gaps — it did not
-  mention a seal at all — and now lists both.
-
-- **A stalled integration test now says which request stalled.** `TestClient`
-  used `reqwest::Client::new()`, and **`reqwest` sets no request timeout by
-  default** — so a request the server never answered parked until nextest killed
-  the test at 120 seconds, with no assertion, no panic and nothing naming the
-  call. `publish_serve_cycle::published_passport_is_served_as_the_payload_its_proof_signed`
-  failed CI twice that way, each time costing a full integration cycle and each
-  time telling nobody anything.
-
-  The client now carries a 30-second timeout — far above what a local container
-  needs, far below the harness ceiling — and every request that fails panics with
-  its method, its URL and the cause, saying explicitly when the server accepted
-  the request and never answered.
-
-  🚨 **This does not fix the stall.** It makes the next one diagnosable, which is
-  what the previous two were not. The root cause is still open, and the wider
-  surface is untouched: `dpp-node/tests/smoke.rs` builds bare
-  `reqwest::Client::new()` in ten places with the same property.
-
-- **A certificate authority mid-rotation was reported as not having signed the
-  seal.** `cades::check_path_to` climbs the seal's embedded chain, and at each
-  link it took the **first** certificate carrying the issuer's name and returned
-  that certificate's verdict. A CA rotating its key publishes the old and the new
-  together under one subject name so relying parties do not break at the cutover,
-  and a CAdES seal made in that window legitimately carries both.
-
-  Pick the wrong one and the walk returned `NotSignedByThisIssuer`, which
-  `qualification::standing` turns into `SignatureNotFromListedCa` — the variant
-  this crate reserves for *this CA did not sign it* and documents as the one that
-  is an accusation, as against `PathUnverifiable`'s *we could not check*. So the
-  failure was not a missed detection. It was a false statement about a provider
-  who did nothing wrong, intermittent, and only during a rotation.
-
-  Every certificate under a matching subject is now tried, and the link is
-  accepted if any of them verifies. `NotSignedByThisIssuer` is reserved for the
-  case where none does, and a candidate whose key cannot be read yields
-  `Unverifiable` rather than convicting the CA that holds the other one.
-  `qualification::find_issuer_candidates` already worked this way on the
-  **listed** side of the same question; this is the embedded side, and the two
-  now agree.
-
-  The test builds a real three-level chain — root, intermediate, leaf — with a
-  second intermediate under the same subject name that signed nothing.
-  🚨 A CMS `certificates` field is a DER `SET OF`, ordered by encoding rather
-  than insertion, so which one the walk meets first is decided by bytes nobody
-  chooses; left to chance the test would pass about half the time against a
-  broken walk. Decoys are generated until one sorts **before** the real
-  intermediate, making the adversarial order certain.
-
-- **`no-rsa-private-key` could pass while finding exactly what it looks for, and
-  never looked in `cli/tests`.** The gate enforces the claim that suppresses
-  `RUSTSEC-2023-0071` — that this workspace holds no RSA private key and performs
-  no RSA private-key operation.
-
-  `grep` exits **2** on a path error and **1** on no match, and `if grep …; then`
-  reads both as "nothing found" while `2>/dev/null` hid the reason. Bash expands
-  `crates/*/tests` only to directories that exist, so a layout where none did
-  would have handed grep a literal glob and the whole source check would have
-  gone green **while printing its matches to stdout**. Observed against a fixture
-  tree with no `tests/` directory: it found a planted `RsaPrivateKey`, printed
-  it, and exited 0.
-
-  The status is now read explicitly — 0 found, 1 clean, anything else the scan
-  did not run, which exits 2 rather than passing. `cli/tests` joined the scanned
-  roots, which is a real gap rather than a hypothetical one: the directory
-  exists.
-
-  **The gate now proves it can fail, on every invocation.** `--self-test` plants
-  an `RsaPrivateKey` in each root that must be scanned and a direct `rsa`
-  dependency in a manifest, and fails if either is not caught. It runs before the
-  real scan, because a gate that has not demonstrated it can fail has not
-  demonstrated anything.
-
-  🚨 The self-test's list of roots is **written out rather than taken from the
-  scan's own list**, and that is the difference between a self-test and a
-  tautology. Derived, dropping a root would stop the scan looking there and stop
-  the self-test planting there, and the gate would pass — blind to precisely the
-  regression it exists to catch. The first version of this fix had that defect
-  and it was found by dropping `cli/tests` and watching the gate still pass.
-
-- **The trusted-list fetch cap refused the two documents the vendored `xml-sec`
-  fork exists for.** *(No node has run this path yet — the reader is not wired
-  into anything — so nothing was broken in the field. What was broken is that the
-  two features contradicted each other and no test could notice.)*
-
-  The fork raises a compile-time node-set ceiling so Italy and France verify;
-  they carry 65 540 and 65 541 entries against a limit of 65 536. The fetch cap
-  was sized at one mebibyte from a survey of "roughly 140 KiB to over 600 KiB" —
-  a range that excluded those same two lists, which are 2.72 MiB and 2.43 MiB.
-
-  So `fetch_trusted_list` refused both before verification was ever attempted,
-  and the fork's entire purpose was unreachable through this crate's own path.
-  Neither feature was exercised: the chain tests read fixtures via `include_str!`
-  and never call the fetcher, and the cap was asserted nowhere.
-
-  The cap is now 8 MiB, sized against **every** list the LOTL points at rather
-  than against a sample — Germany, the largest, is 5.11 MiB. Asserted against a
-  dated measurement of the published set rather than against the repository's own
-  fixtures, because sizing it from those would be the original mistake with a
-  different sample.
-
-### Added
 
 - **The `xml-sec` fork's justification is demonstrated rather than asserted.**
   `the_two_largest_lists_verify_which_is_what_the_fork_is_for` verifies Italy's
@@ -1605,6 +1682,23 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   tampering by every peer still reading the old one, on evidence that is nothing
   but a version difference, and for as long as that passport existed.
 
+
+
+- **A superseded read says so in `Content-Location`.**
+  `GET /public/dpp/{dppId}` serves the record that replaced a superseded
+  passport, which is right for a printed carrier that cannot be recalled — but it
+  leaves a `200` whose body is not the resource that was asked for, and nothing
+  said so at the protocol layer.
+
+  The response now names where the served record actually lives (RFC 9110 §8.7).
+  Its **presence** is the signal: an ordinary read carries no such header, so a
+  client can tell "this is your record" from "this is the record that replaced
+  it" without comparing `id` against what it sent. A relative reference, because
+  this router is mounted at `/vault` by the node and at the root when the vault
+  runs alone, so no absolute path is correct in both.
+
+  A header rather than a redirect: four doors sit in front of this route, and
+  `/01/{gtin}` beside it does not redirect either.
 
 ## [0.13.0] - 2026-09-13
 
