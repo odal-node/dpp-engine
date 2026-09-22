@@ -6,6 +6,7 @@ use chrono::Utc;
 use dpp_common::{event, event_codes};
 use dpp_digital_link::{build_qr_url, short_serial};
 use dpp_domain::{
+    ComplianceError, ComplianceErrorKind, ComplianceResult,
     error::DppError,
     passport::{Passport, PassportId},
     ports::registry_sync::{RegisteringOperator, RegistrationGranularity, RegistrationRequest},
@@ -38,9 +39,20 @@ mod reason {
     /// cannot diagnose from their own request: the requirement lives in
     /// `dpp-domain`'s category table, not in anything they sent.
     pub const MANDATORY_CONTENT: &str = "mandatory_content";
+    /// The compliance evaluation could not be made at all.
+    ///
+    /// 🚨 Distinct from `compliance_violations`, which is a determination that
+    /// came back and said no. This is a determination that never came back —
+    /// the strategy or plugin was reached and failed — and it used to be
+    /// indistinguishable from "no violations", because the gate below read
+    /// `&& let Ok(determination) = …` and an `Err` simply made the whole
+    /// condition false. A passport carrying binding violations published
+    /// because the thing that would have caught it had broken.
+    pub const COMPLIANCE_UNAVAILABLE: &str = "compliance_unavailable";
 }
 
 use reason::{
+    COMPLIANCE_UNAVAILABLE as REASON_COMPLIANCE_UNAVAILABLE,
     COMPLIANCE_VIOLATIONS as REASON_COMPLIANCE_VIOLATIONS,
     INVALID_TRANSITION as REASON_INVALID_TRANSITION, MANDATORY_CONTENT as REASON_MANDATORY_CONTENT,
     MISSING_REGISTRY_IDENTITY as REASON_MISSING_REGISTRY_IDENTITY,
@@ -71,6 +83,42 @@ fn reject(reason: &'static str, e: DppError) -> DppError {
     metrics::counter!("passport_publish_rejected_total", "reason" => reason).increment(1);
     tracing::warn!(reason, error = %e, "publish rejected");
     e
+}
+
+/// What a `compute()` outcome means for the publish-time violation gate.
+///
+/// 🚨 The distinction this function exists to make is between **no evaluator**
+/// and **a broken evaluator**, which the gate used to treat identically because
+/// it read `&& let Ok(determination) = …` — any `Err` made the condition false
+/// and the gate quietly did not run.
+///
+/// - `Ok(Some(_))` — a determination was made; the gate judges it.
+/// - `Ok(None)` — nothing is registered to evaluate this product group. A
+///   deployment shape, not a failure: a node may legitimately run without a
+///   plugin for a group. Publishing proceeds, as it always did, **and says so** —
+///   the caller's `None` is also what "no obligation is live" looks like, so
+///   without a line here the two are indistinguishable and a node silently
+///   missing a plugin reads exactly like one that never needed it.
+/// - `Err(_)` — the evaluator was reached and did not answer. The gate cannot
+///   run, and a gate that cannot run must not be reported as a gate that
+///   passed.
+fn gate_outcome(
+    product_group: &str,
+    computed: Result<ComplianceResult, ComplianceError>,
+) -> Result<Option<ComplianceResult>, ComplianceError> {
+    match computed {
+        Ok(determination) => Ok(Some(determination)),
+        Err(e) if e.kind == ComplianceErrorKind::UnknownProductGroup => {
+            tracing::warn!(
+                product_group,
+                error = %e,
+                "no compliance evaluator is registered for this product group; \
+                 publishing without a determination"
+            );
+            Ok(None)
+        }
+        Err(e) => Err(e),
+    }
 }
 
 impl PassportService {
@@ -191,12 +239,55 @@ impl PassportService {
             // be signed/published while it carries *binding* violations. Advisory
             // warnings (e.g. recycled-content thresholds not yet in force) never
             // block — they are surfaced on the persisted determination instead.
-            if super::passport_obligation_live(product_group_data.product_group().catalog_key())
-                && let Ok(determination) = self.compliance.compute(
-                    product_group_data.product_group().catalog_key(),
-                    product_group_data,
-                    passport.placed_on_market_date,
+            // 🚨 An evaluation that *fails* is not an evaluation that passed.
+            //
+            // This read `&& let Ok(determination) = …compute(…)`, so an `Err`
+            // made the whole condition false and the gate silently did not
+            // fire. That is not hypothetical: when the product group schemas
+            // moved to `productIdentifier`, every plugin still asking for a
+            // bare `gtin` began returning an error, and nine product groups
+            // published with no compliance determination and no violation check
+            // for as long as it took to notice. Nothing logged a failure,
+            // because nothing treated it as one.
+            //
+            // `UnknownProductGroup` is the one error that is *not* a failure:
+            // it means nothing is registered to evaluate this product group,
+            // which is a deployment shape (a node with no plugin loaded), not a
+            // broken evaluator. It keeps the previous behaviour and is logged
+            // rather than refused. Every other kind means the evaluator was
+            // reached and did not answer, and the honest response to "the gate
+            // could not run" is to refuse the publish, exactly as the schema
+            // gate above does.
+            let determination = if super::passport_obligation_live(
+                product_group_data.product_group().catalog_key(),
+            ) {
+                let product_group = product_group_data.product_group();
+                let catalog_key = product_group.catalog_key();
+                gate_outcome(
+                    catalog_key,
+                    self.compliance.compute(
+                        catalog_key,
+                        product_group_data,
+                        passport.placed_on_market_date,
+                    ),
                 )
+                .map_err(|e| {
+                    reject(
+                        REASON_COMPLIANCE_UNAVAILABLE,
+                        DppError::Validation(
+                            format!(
+                                "cannot publish: the compliance determination could not be made, \
+                                 so the violation gate could not run — {e}"
+                            )
+                            .into(),
+                        ),
+                    )
+                })?
+            } else {
+                None
+            };
+
+            if let Some(determination) = determination
                 && determination.has_violations()
             {
                 let summary = determination
@@ -287,17 +378,14 @@ impl PassportService {
         // Public verifiability: also sign the *public (redacted) view* — the exact
         // payload the unauthenticated `/public/dpp/{id}` route serves — so anyone
         // can verify the public passport against the operator DID without trusting
-        // the resolver. Derived from the same `payload` above rather than a
-        // second full serialize: `public_view` strips `jwsSignature`
-        // unconditionally, so `payload` still carrying the pre-signing value
-        // here is immaterial. `public_jws_signature` is `None` here, so it is
-        // never signed over itself; the full-payload `jws_signature` above
-        // stays Confidential for authenticated full-passport verification.
-        let public_view = crate::public_view::public_view(
-            &payload,
-            passport.product_group.catalog_key(),
-            &passport.schema_version,
-        );
+        // the resolver. Taken from the passport rather than the `payload` above
+        // because the redaction now reads the product group and schema version off
+        // the record itself; the only field that has changed in between is
+        // `jws_signature`, which the redaction strips unconditionally for every
+        // audience. `public_jws_signature` is `None` here, so it is never signed
+        // over itself; the full-payload `jws_signature` above stays Confidential
+        // for authenticated full-passport verification.
+        let public_view = crate::public_view::public_view(&passport);
         let public_jws = self
             .identity
             .sign_passport(passport.id, &public_view)
@@ -325,10 +413,7 @@ impl PassportService {
         // the actor vocabulary of one regulation.
         passport.disclosure_signatures = crate::public_view::sign_disclosure_views(
             self.identity.as_ref(),
-            passport.id,
-            &payload,
-            passport.product_group.catalog_key(),
-            &passport.schema_version,
+            &passport,
         )
         .await
         .map_err(|e| {
@@ -624,7 +709,8 @@ mod rejection_reasons {
 #[cfg(test)]
 mod tests {
     use super::{
-        build_carrier_url, snapshot_backup_url, snapshot_json_key, validate_schema_for_publish,
+        build_carrier_url, gate_outcome, snapshot_backup_url, snapshot_json_key,
+        validate_schema_for_publish,
     };
     use chrono::Utc;
     use dpp_domain::{
@@ -771,5 +857,54 @@ mod tests {
             !snapshot_backup_url("https://backup.example.com/dpp/", id).contains("//dpp"),
             "no empty path segment"
         );
+    }
+
+    // ── gate_outcome ─────────────────────────────────────────────────────────
+    //
+    // 🚨 The gate that vanished. These assert the distinction the old
+    // `&& let Ok(..)` could not make: a determination that never came back is
+    // not a determination that found nothing.
+
+    fn err(kind: dpp_domain::ComplianceErrorKind) -> dpp_domain::ComplianceError {
+        dpp_domain::ComplianceError {
+            kind,
+            message: "boom".into(),
+        }
+    }
+
+    #[test]
+    fn a_broken_evaluator_is_not_a_clean_bill_of_health() {
+        // The case that shipped: every plugin began erroring when the product
+        // group schemas moved, and nine groups published unevaluated.
+        for kind in [
+            dpp_domain::ComplianceErrorKind::Internal,
+            dpp_domain::ComplianceErrorKind::InvalidInput,
+        ] {
+            assert!(
+                gate_outcome("battery", Err(err(kind))).is_err(),
+                "an evaluator that failed must refuse the publish, not pass it"
+            );
+        }
+    }
+
+    #[test]
+    fn an_unregistered_product_group_still_publishes() {
+        // The one error that is not a failure. A node running without a plugin
+        // for this product group is a deployment shape, and refusing here would
+        // break every such node rather than catching anything.
+        let outcome = gate_outcome(
+            "battery",
+            Err(err(dpp_domain::ComplianceErrorKind::UnknownProductGroup)),
+        );
+        assert!(matches!(outcome, Ok(None)));
+    }
+
+    #[test]
+    fn a_determination_reaches_the_gate_to_be_judged() {
+        let determination = dpp_domain::ComplianceResult::default();
+        assert!(matches!(
+            gate_outcome("battery", Ok(determination)),
+            Ok(Some(_))
+        ));
     }
 }

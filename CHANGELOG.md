@@ -14,6 +14,40 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ### Breaking
 
+- **The redaction moved to `dpp-domain`, and two things it does differently are
+  visible on the wire.** *(Breaking for **newly published** passports only.
+  Every public and audience route serves the payload decoded out of the stored
+  proof, never a fresh redaction, so no already-published record changes shape
+  or stops verifying. Migration: none for stored data; a client that reads
+  `productGroupData` must treat an absent key the same as `null`.)*
+
+  `dpp-vault`'s `audience_view` resolved a disclosure policy, ran the filter,
+  stripped the proof fields and applied its own fail-closed backstop — a second
+  correct implementation of a rule that has one correct implementation in
+  `dpp_domain::access::redact_passport`. It is now a call to that function, and
+  the policy resolution, proof strip and backstop are deleted rather than kept
+  alongside. `public_view`, `audience_view` and `sign_disclosure_views` take a
+  `&Passport` instead of a JSON value plus a product group key and schema
+  version, because the record carries both and a caller can no longer supply the
+  wrong one.
+
+  The two differences were measured across both fixtures and all three audiences
+  before the swap, not assumed:
+
+  1. **A passport carrying no `productGroupData` no longer serves
+     `"productGroupData": null`** — the key is absent. Reachable, because
+     publish does not require product-group data: its whole validation block
+     sits inside `if let Some(..)`.
+  2. 🚨 **A `productGroupData` key the declared schema version does not declare
+     is now dropped instead of defaulting to `Public`.** This is the defence in
+     depth this crate never had. Battery v1.0.0 annotates 11 fields and v2.6.0
+     annotates 68, so a passport declaring the older version previously served
+     publicly every field the newer table holds back — `stateOfHealth` among
+     them, the field of a past disclosure defect. A test pinned that leak as
+     expected behaviour; it now pins the drop. This narrows, but does not close,
+     the coherent-but-wrong-label hazard in `create.rs`'s
+     `the_label_must_match_its_payload`.
+
 - **`publishReadiness.passportScope.status` reports six answers where it
   reported three.** *(Breaking: `voluntary` is gone. A record the article does
   not reach now answers `notCovered`, `belowThreshold` or `notYetBinding`
@@ -110,6 +144,55 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   window.
 
 ### Fixed
+
+- **🚨 The publish-time compliance gate could vanish, and did.** The gate that
+  refuses to sign a passport carrying binding violations was written as
+  `if passport_obligation_live(..) && let Ok(determination) = compute(..) && ..`.
+  An `Err` from `compute` makes that whole condition **false**, so a failing
+  evaluator did not fail the publish — it silently skipped the check. There was
+  no log line, no metric, and no difference on the passport between "evaluated,
+  no violations" and "never evaluated".
+
+  It was not hypothetical. When the product group schemas moved to
+  `productIdentifier`, every Wasm plugin still requiring a bare `gtin` began
+  returning an error, and passports across nine product groups published with no
+  determination and no violation check at all.
+
+  A `compute` failure is now a publish refusal under a new
+  `compliance_unavailable` reason, distinct from `compliance_violations` —
+  a determination that never came back is not a determination that found
+  nothing. `UnknownProductGroup` stays permissive and is logged: nothing being
+  registered to evaluate a product group is a deployment shape, not a broken
+  evaluator, and refusing there would break every node running without that
+  plugin rather than catch anything. The same distinction now logs a warning on
+  the draft-creation path, which silently left `complianceResult` empty.
+
+- **🚨 A plugin is no longer handed schema versions it does not support.** Every
+  plugin declares a `schema_version_range` and **nothing ever read it**. The one
+  call to `check_compatibility` is the load-time ABI gate, which passes `None`
+  for the requested version — and `None` skips the schema comparison entirely.
+  Its own comment deferred dispatch-time schema selection as "a separate
+  concern"; that concern was never implemented, so the declarations were
+  decorative and all ten shipped plugins had drifted below the version their
+  product group serves without a word.
+
+  `compute` and `generate_passport_payload` now check the plugin against the
+  catalog's current schema version before dispatch, and refuse with
+  `plugin_schema_unsupported_total` and an error-level log. The version compared
+  is the catalog's rather than the passport's because that is what the data
+  actually is by then: stored `productGroupData` is upcast through the lens
+  chain on read. A product group the catalog does not know is **not**
+  second-guessed — the key came from the data, and refusing an unknown one would
+  break the untyped forward-compatibility path rather than protect it.
+
+  🚨 **An empty `supported_schemas` means "declared nothing", not "supports
+  nothing", and is dispatched with a warning rather than refused.** That is the
+  value `LoadedPlugin::from_file` synthesises for a plugin with no `describe()`
+  export, and it lets such a plugin through deliberately so unversioned fixtures
+  still run. Refusing it here would not tighten the gate against the defect it
+  exists for — a *declared* range that has drifted — it would silently break
+  every plugin built before ranges existed. The trust boundary for an
+  undeclaring plugin is the publisher signature checked at load, not this check.
 
 - **A printed carrier now keeps working after the passport behind it is
   amended.** `GET /public/dpp/{dppId}` on a `superseded` passport serves the
@@ -390,6 +473,49 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   product group.
 
 ### Added
+
+- **`odal snapshot verify <path|url>` — the one check that needs no node.** A
+  continuity snapshot carries a signed `validUntil` that the drain re-signs on a
+  cadence, and nothing could read it back: `dpp-vc` has shipped
+  `verify_snapshot_bound` since 0.20.0 and this repository called it zero times.
+  An operator had no way to ask whether what is in their public bucket is still
+  good, and the first sign that the drain had quietly stopped would have been a
+  consumer reporting an expired copy for a passport that is perfectly live.
+
+  Exit 0 the bound is proven and current, 1 it is not, 2 the check could not be
+  made at all. Verifies the **outer** proof only — content served from a snapshot
+  still owes the publish-time `publicJwsSignature` check, and the command says so
+  in both its rendered and `--json` output.
+
+  🚨 **A missing proof is reported as unverifiable, never as valid.** Stripping
+  `snapshotJwsSignature` while leaving the dates behind yields `Absent`, not
+  `Expired` — an unproven `validUntil` is not a bound. On a live read `Absent` is
+  normal; on a copy off the static tier it means the bound was removed, and only
+  the caller knows which it fetched. This command is only ever pointed at the
+  latter, so it resolves that ambiguity to "unverifiable" and exits non-zero.
+
+  🚨 **The key is an argument, not a discovery.** `--key` or `--did-url`, exactly
+  one required. Reading it from the configured identity URL would have been the
+  obvious design and would fail in precisely the outage the static tier exists to
+  survive: on the single-binary node, the `did:web` document is served *by the
+  node*. `--did-url` remains for deployments where identity is genuinely hosted
+  elsewhere.
+
+  🚨 **A key beginning with `-` is a key, not a flag.** The public key is
+  base64url, whose alphabet includes `-`, so about one key in sixty-four starts
+  with a hyphen and clap read it as an unknown flag — exit 2, on a command the
+  operator typed correctly, unfixable by retrying. Intermittent by
+  construction: it depends on the operator's key, not on anything they did.
+
+  🚨 **`--did-url` requires HTTPS, on every redirect hop, unless it is loopback.**
+  The DID document *is* the trust anchor. Over plaintext, an on-path attacker who
+  can rewrite both responses substitutes the snapshot and the key that checks it,
+  signs the forgery with their own, and this command prints `CURRENT` — signature
+  verification cannot save a check whose anchor the attacker supplied. The
+  snapshot's own URL is deliberately **not** restricted: its bytes are checked
+  against a key obtained elsewhere, so tampering there shows up as a failed
+  verification. Both fetches also cap the body they will buffer, because neither
+  `bytes()` nor `json()` bounds one on its own.
 
 - **And now it fills them.** New `TRUSTED_LIST_REFRESH=on`, a daily pass that
   verifies the EU list of trusted lists against the pinned Official Journal

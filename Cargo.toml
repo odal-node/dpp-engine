@@ -180,7 +180,7 @@ rfd          = { version = "0.16", default-features = false, features = ["tokio"
 # in on the same targets ashpd does; see wayland-sys's build.rs, which skips
 # its pkg-config probe entirely once CARGO_FEATURE_DLOPEN is set.
 wayland-client = { version = "0.31", features = ["dlopen"] }
-dirs         = "5"
+dirs         = "7"
 
 # Integration tests
 testcontainers        = "0.27"
