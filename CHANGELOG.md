@@ -10,7 +10,7 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ## [Unreleased]
 
-## [0.14.0] - 2026-09-17
+## [0.14.0] - 2026-09-22
 
 ### Breaking
 
@@ -473,6 +473,25 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   product group.
 
 ### Added
+
+- **Both published images now carry an SBOM and SLSA provenance.** Read them
+  with `docker buildx imagetools inspect ghcr.io/odal-node/<image>:<tag>`. The
+  provenance is `mode=max` — source commit, the workflow that built it, the base
+  images and the build arguments. The SBOM lists the Debian runtime packages
+  *and* the Rust crates, because the Dockerfiles now build with
+  `cargo auditable`, which embeds the `Cargo.lock` graph into the binary where a
+  filesystem scanner can recover it. `cargo audit bin` reads the same graph
+  straight out of a pulled image, so "is the thing I am running affected by this
+  advisory" is answerable against the artefact rather than against a lockfile
+  someone says matches it.
+
+  🚨 **The two halves only work together.** A plain `cargo build` produces a
+  binary that records nothing about itself, so the attestation would be an SBOM
+  that is accurate about the base layer and silent about the application — and
+  nothing fails when that happens: the image builds, the push succeeds, the
+  attestation is still produced. CI now builds both images on any change that
+  reaches them and refuses one whose binary carries no dependency graph, which
+  is the only thing standing between that silence and a release.
 
 - **`odal snapshot verify <path|url>` — the one check that needs no node.** A
   continuity snapshot carries a signed `validUntil` that the drain re-signs on a
