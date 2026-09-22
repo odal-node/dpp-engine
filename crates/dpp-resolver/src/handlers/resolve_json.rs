@@ -330,4 +330,106 @@ mod security_regression {
             Some("value")
         );
     }
+
+    /// 🚨 This filter must never remove a field from a view the vault already
+    /// signed, because the handler re-attaches `publicJwsSignature` to whatever
+    /// this returns.
+    ///
+    /// `verify_passport_jws` hands this function the **decoded JWS payload** —
+    /// the exact bytes the operator signed — and the caller then puts the
+    /// signature back on the filtered result. So anything removed here produces
+    /// a body its own proof does not cover, which to every consumer is
+    /// indistinguishable from tampering. That is the failure the vault's
+    /// `signed_public_view` exists to prevent, re-entering through the door
+    /// next to it.
+    ///
+    /// The vault's redaction is `dpp_domain::access::redact_passport`. This
+    /// filter is a **second, hand-rolled implementation** of the same rule
+    /// (envelope pass plus a scoped `productGroupData` pass, its own unknown-
+    /// group backstop, and no undeclared-key drop), so nothing but a test holds
+    /// the two together. Asserting identity — not merely "nothing sensitive
+    /// leaked" — is what makes a divergence visible before a consumer meets it
+    /// as a broken signature.
+    #[test]
+    fn this_filter_removes_nothing_from_a_view_the_vault_already_signed() {
+        use dpp_domain::passport::{ManufacturerInfo, Passport, PassportId};
+        use dpp_domain::product_group::ProductGroup;
+        use dpp_domain::status::PassportStatus;
+
+        let mut passport = Passport {
+            id: PassportId::new(),
+            batch_id: Some("BATCH-42".into()),
+            serial_number: None,
+            product_name: "Cell".into(),
+            product_group: ProductGroup::Battery,
+            applicable_instruments: Vec::new(),
+            granularity: None,
+            manufacturer: ManufacturerInfo {
+                name: "ACME".into(),
+                address: "1 Street".into(),
+                registered_trade_name: None,
+                electronic_address: None,
+                country: None,
+                did_web_url: None,
+            },
+            materials: vec![],
+            co2e_per_unit: None,
+            repairability_score: None,
+            compliance_result: None,
+            lint_result: None,
+            product_group_data: None,
+            status: PassportStatus::Published,
+            qr_code_url: None,
+            jws_signature: Some("eyJ.full.proof".into()),
+            public_jws_signature: Some("eyJ.public.proof".into()),
+            disclosure_signatures: Default::default(),
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+            published_at: Some(chrono::Utc::now()),
+            placed_on_market_date: None,
+            schema_version: "2.6.0".into(),
+            retention_locked: true,
+            version: 1,
+            supersedes_id: None,
+            derived_from: Vec::new(),
+            component_refs: Vec::new(),
+            life_status: None,
+            retention_until: None,
+            product_id: None,
+            commodity_code: None,
+            operator_identifier: None,
+            responsible_operator: None,
+            facility: None,
+            seal: None,
+        };
+        passport.product_group_data = Some(
+            serde_json::from_value(json!({
+                "productGroup": "battery",
+                "gtin": "09506000134352",
+                "batteryChemistry": "LFP",
+                "batteryType": "ev",
+                "nominalVoltageV": 3.2,
+                "nominalCapacityAh": 100.0,
+                "co2ePerUnitKg": 85.4,
+                "stateOfHealthPct": 87.5,
+                "cathodeMaterial": [{ "name": "LFP", "weightPct": 100.0 }],
+            }))
+            .expect("battery data"),
+        );
+
+        // Exactly what `publish` signs and what `verify_passport_jws` hands back.
+        let signed = dpp_domain::access::redact_passport(&passport, Audience::Public).into_value();
+        assert!(
+            signed.get("productGroupData").is_some(),
+            "the fixture must reach the productGroupData branch for this to mean anything"
+        );
+
+        let served = apply_access_tier_filter(signed.clone(), Audience::Public);
+
+        assert_eq!(
+            served, signed,
+            "the resolver filtered a field out of the payload the vault signed — the \
+             re-attached publicJwsSignature no longer covers the served body"
+        );
+    }
 }

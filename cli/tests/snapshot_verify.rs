@@ -148,6 +148,52 @@ fn the_key_can_come_from_a_separately_hosted_did_document() {
     assert!(run.output().contains("CURRENT"), "got: {}", run.output());
 }
 
+/// 🚨 A key beginning with `-` is a key, not a flag.
+///
+/// The public key is **base64url**, whose alphabet includes `-` and `_`. About
+/// one key in sixty-four therefore starts with a hyphen, and clap read it as an
+/// unknown flag: `error: unexpected argument '-S' found`, exit 2. Nothing the
+/// operator typed was wrong, and re-running never helped, because it depends on
+/// their key rather than their command.
+///
+/// This surfaced as an intermittent failure of
+/// `a_current_snapshot_exits_zero_and_says_so`, whose key is freshly generated
+/// each run — so the suite passed until a run happened to generate one. The key
+/// here is a **fixed** wrong-but-hyphen-leading value so the parse is exercised
+/// every time; the verdict is `UNVERIFIABLE` because it is not the signing key,
+/// which is exactly the point: the argument has to reach the verifier at all.
+#[test]
+fn a_key_beginning_with_a_hyphen_is_parsed_as_a_value() {
+    let home = TempDir::new().unwrap();
+    let as_of = Utc::now();
+    let fixture = signed_snapshot(as_of, as_of + Duration::days(7));
+    let path = snapshot_file(&home, &fixture.document);
+
+    let run = odal(
+        home.path(),
+        &[
+            "snapshot",
+            "verify",
+            &path,
+            "--key",
+            "-Sm1bW9ja19rZXlfdGhhdF9zdGFydHNfd2l0aF9hX2h5cGhlbg",
+        ],
+    );
+
+    assert_ne!(
+        run.code,
+        2,
+        "a hyphen-leading key was rejected as a flag rather than read as a value: {}",
+        run.output()
+    );
+    assert_eq!(run.code, 1, "got: {}", run.output());
+    assert!(
+        run.output().contains("UNVERIFIABLE"),
+        "got: {}",
+        run.output()
+    );
+}
+
 #[test]
 fn a_target_that_cannot_be_read_exits_two() {
     let home = TempDir::new().unwrap();

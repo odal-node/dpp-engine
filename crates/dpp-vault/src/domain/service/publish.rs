@@ -378,17 +378,14 @@ impl PassportService {
         // Public verifiability: also sign the *public (redacted) view* — the exact
         // payload the unauthenticated `/public/dpp/{id}` route serves — so anyone
         // can verify the public passport against the operator DID without trusting
-        // the resolver. Derived from the same `payload` above rather than a
-        // second full serialize: `public_view` strips `jwsSignature`
-        // unconditionally, so `payload` still carrying the pre-signing value
-        // here is immaterial. `public_jws_signature` is `None` here, so it is
-        // never signed over itself; the full-payload `jws_signature` above
-        // stays Confidential for authenticated full-passport verification.
-        let public_view = crate::public_view::public_view(
-            &payload,
-            passport.product_group.catalog_key(),
-            &passport.schema_version,
-        );
+        // the resolver. Taken from the passport rather than the `payload` above
+        // because the redaction now reads the product group and schema version off
+        // the record itself; the only field that has changed in between is
+        // `jws_signature`, which the redaction strips unconditionally for every
+        // audience. `public_jws_signature` is `None` here, so it is never signed
+        // over itself; the full-payload `jws_signature` above stays Confidential
+        // for authenticated full-passport verification.
+        let public_view = crate::public_view::public_view(&passport);
         let public_jws = self
             .identity
             .sign_passport(passport.id, &public_view)
@@ -416,10 +413,7 @@ impl PassportService {
         // the actor vocabulary of one regulation.
         passport.disclosure_signatures = crate::public_view::sign_disclosure_views(
             self.identity.as_ref(),
-            passport.id,
-            &payload,
-            passport.product_group.catalog_key(),
-            &passport.schema_version,
+            &passport,
         )
         .await
         .map_err(|e| {

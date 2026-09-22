@@ -55,7 +55,6 @@ use axum::{
     http::{HeaderMap, StatusCode},
     response::IntoResponse,
 };
-use serde_json::Value;
 
 use dpp_domain::Audience;
 use dpp_domain::status::PassportStatus;
@@ -63,7 +62,7 @@ use dpp_domain::status::PassportStatus;
 use dpp_types::audit::PassportAuditEntry;
 
 use crate::middleware::credential::{CredentialOutcome, VerifiedCredential, read_and_verify};
-use crate::public_view::{audience_view, signed_audience_view, signed_public_view};
+use crate::public_view::{signed_audience_view, signed_public_view};
 use crate::state::AppState;
 
 use super::error::{api_error, internal_error, not_found_error, parse_passport_id};
@@ -215,22 +214,11 @@ async fn record_access(
     state.service.audit.append(entry).await
 }
 
-/// Strip the fields a given audience may not see. Exposed for tests and for the
-/// snapshot path; the route above is the only production caller.
-#[must_use]
-pub fn view_for(
-    full: &Value,
-    product_group_key: &str,
-    schema_version: &str,
-    audience: Audience,
-) -> Value {
-    audience_view(full, product_group_key, schema_version, audience)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::json;
+    use crate::public_view::audience_view;
+    use serde_json::{Value, json};
 
     /// The battery schema version these fixtures are written against.
     ///
@@ -249,20 +237,33 @@ mod tests {
     /// here deliberately: proof fields are stripped from every view (they are
     /// attached by the serving layer, which knows which one covers the body), so
     /// a signature can no longer stand in for a disclosure class.
-    fn battery() -> Value {
-        json!({
-            "id": "0190a9f0-1234-7abc-8def-0123456789ab",
-            "productName": "Cell",
-            "retentionLocked": true,
-            "jwsSignature": "eyJ.signed.value",
-            "publicJwsSignature": "eyJ.public.proof",
-            "productGroupData": {
+    /// A published battery, typed.
+    ///
+    /// Typed rather than a JSON literal because the redaction now reads the
+    /// product group and schema version off the record — the two things this
+    /// fixture used to pass separately, and the two a caller could previously
+    /// get wrong.
+    fn battery() -> dpp_domain::passport::Passport {
+        let mut p = crate::public_view::tests::stub_passport();
+        p.schema_version = BATTERY_SCHEMA.into();
+        p.product_name = "Cell".into();
+        p.jws_signature = Some("eyJ.signed.value".into());
+        p.public_jws_signature = Some("eyJ.public.proof".into());
+        p.product_group_data = Some(
+            serde_json::from_value(json!({
                 "productGroup": "battery",
                 "gtin": "09506000134352",
+                "batteryChemistry": "LFP",
+                "batteryType": "ev",
+                "nominalVoltageV": 3.2,
+                "nominalCapacityAh": 100.0,
+                "co2ePerUnitKg": 85.4,
                 "stateOfHealthPct": 87.5,
-                "cathodeMaterial": "LFP"
-            }
-        })
+                "cathodeMaterial": [{ "name": "LFP", "weightPct": 100.0 }],
+            }))
+            .expect("battery data"),
+        );
+        p
     }
 
     fn product_group_data(v: &Value) -> &serde_json::Map<String, Value> {
@@ -274,12 +275,7 @@ mod tests {
     /// Art. 77(2)(c): individual-item data goes to legitimate-interest holders.
     #[test]
     fn legitimate_interest_sees_individual_item_data() {
-        let v = view_for(
-            &battery(),
-            "battery",
-            BATTERY_SCHEMA,
-            Audience::LegitimateInterest,
-        );
+        let v = audience_view(&battery(), Audience::LegitimateInterest);
         assert!(product_group_data(&v).contains_key("stateOfHealthPct"));
         assert!(product_group_data(&v).contains_key("cathodeMaterial"));
     }
@@ -289,7 +285,7 @@ mod tests {
     /// the case an ordered tier model gets wrong.
     #[test]
     fn an_authority_does_not_see_individual_item_data() {
-        let v = view_for(&battery(), "battery", BATTERY_SCHEMA, Audience::Authority);
+        let v = audience_view(&battery(), Audience::Authority);
         assert!(
             !product_group_data(&v).contains_key("stateOfHealthPct"),
             "Art. 77(2)(b) withholds point 4 from authorities"
@@ -304,13 +300,8 @@ mod tests {
     /// Art. 77(2)(b), and explicitly withheld from legitimate interest.
     #[test]
     fn conformity_evidence_is_authority_only() {
-        let authority = view_for(&battery(), "battery", BATTERY_SCHEMA, Audience::Authority);
-        let interest = view_for(
-            &battery(),
-            "battery",
-            BATTERY_SCHEMA,
-            Audience::LegitimateInterest,
-        );
+        let authority = audience_view(&battery(), Audience::Authority);
+        let interest = audience_view(&battery(), Audience::LegitimateInterest);
         assert_eq!(authority.get("retentionLocked"), Some(&json!(true)));
         assert!(interest.get("retentionLocked").is_none());
     }
@@ -331,7 +322,7 @@ mod tests {
             Audience::LegitimateInterest,
             Audience::Authority,
         ] {
-            let v = view_for(&battery(), "battery", BATTERY_SCHEMA, audience);
+            let v = audience_view(&battery(), audience);
             for proof in ["publicJwsSignature", "jwsSignature", "disclosureSignatures"] {
                 assert!(
                     v.get(proof).is_none(),
@@ -344,7 +335,7 @@ mod tests {
     /// The public view is the floor: neither restricted nor individual data.
     #[test]
     fn the_public_view_carries_neither() {
-        let v = view_for(&battery(), "battery", BATTERY_SCHEMA, Audience::Public);
+        let v = audience_view(&battery(), Audience::Public);
         assert!(!product_group_data(&v).contains_key("stateOfHealthPct"));
         assert!(!product_group_data(&v).contains_key("cathodeMaterial"));
         assert!(v.get("jwsSignature").is_none());
@@ -354,16 +345,22 @@ mod tests {
     /// credentialed reader must not get more from it than an anonymous one.
     #[test]
     fn an_unknown_product_group_fails_closed_for_every_audience() {
-        let unknown = json!({
-            "id": "0190a9f0-1234-7abc-8def-0123456789ab",
-            "productGroupData": { "productGroup": "not-a-product_group", "secret": "value" }
-        });
+        let mut unknown = crate::public_view::tests::stub_passport();
+        unknown.product_group =
+            dpp_domain::product_group::ProductGroup::Other("not-a-product-group".into());
+        unknown.product_group_data = Some(
+            serde_json::from_value(json!({
+                "productGroup": "not-a-product-group",
+                "secret": "value",
+            }))
+            .expect("unmodelled product group data"),
+        );
         for audience in [
             Audience::Public,
             Audience::LegitimateInterest,
             Audience::Authority,
         ] {
-            let v = view_for(&unknown, "not-a-product_group", BATTERY_SCHEMA, audience);
+            let v = audience_view(&unknown, audience);
             assert!(
                 !product_group_data(&v).contains_key("secret"),
                 "{audience:?} must not receive unmodelled product_group data"

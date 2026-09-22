@@ -12,6 +12,40 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ### Breaking
 
+- **The redaction moved to `dpp-domain`, and two things it does differently are
+  visible on the wire.** *(Breaking for **newly published** passports only.
+  Every public and audience route serves the payload decoded out of the stored
+  proof, never a fresh redaction, so no already-published record changes shape
+  or stops verifying. Migration: none for stored data; a client that reads
+  `productGroupData` must treat an absent key the same as `null`.)*
+
+  `dpp-vault`'s `audience_view` resolved a disclosure policy, ran the filter,
+  stripped the proof fields and applied its own fail-closed backstop — a second
+  correct implementation of a rule that has one correct implementation in
+  `dpp_domain::access::redact_passport`. It is now a call to that function, and
+  the policy resolution, proof strip and backstop are deleted rather than kept
+  alongside. `public_view`, `audience_view` and `sign_disclosure_views` take a
+  `&Passport` instead of a JSON value plus a product group key and schema
+  version, because the record carries both and a caller can no longer supply the
+  wrong one.
+
+  The two differences were measured across both fixtures and all three audiences
+  before the swap, not assumed:
+
+  1. **A passport carrying no `productGroupData` no longer serves
+     `"productGroupData": null`** — the key is absent. Reachable, because
+     publish does not require product-group data: its whole validation block
+     sits inside `if let Some(..)`.
+  2. 🚨 **A `productGroupData` key the declared schema version does not declare
+     is now dropped instead of defaulting to `Public`.** This is the defence in
+     depth this crate never had. Battery v1.0.0 annotates 11 fields and v2.6.0
+     annotates 68, so a passport declaring the older version previously served
+     publicly every field the newer table holds back — `stateOfHealth` among
+     them, the field of a past disclosure defect. A test pinned that leak as
+     expected behaviour; it now pins the drop. This narrows, but does not close,
+     the coherent-but-wrong-label hazard in `create.rs`'s
+     `the_label_must_match_its_payload`.
+
 - **`publishReadiness.passportScope.status` reports six answers where it
   reported three.** *(Breaking: `voluntary` is gone. A record the article does
   not reach now answers `notCovered`, `belowThreshold` or `notYetBinding`
@@ -225,6 +259,12 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   survive: on the single-binary node, the `did:web` document is served *by the
   node*. `--did-url` remains for deployments where identity is genuinely hosted
   elsewhere.
+
+  🚨 **A key beginning with `-` is a key, not a flag.** The public key is
+  base64url, whose alphabet includes `-`, so about one key in sixty-four starts
+  with a hyphen and clap read it as an unknown flag — exit 2, on a command the
+  operator typed correctly, unfixable by retrying. Intermittent by
+  construction: it depends on the operator's key, not on anything they did.
 
   🚨 **`--did-url` requires HTTPS, on every redirect hop, unless it is loopback.**
   The DID document *is* the trust anchor. Over plaintext, an on-path attacker who
