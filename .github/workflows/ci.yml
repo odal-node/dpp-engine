@@ -43,6 +43,19 @@ on:
   pull_request:
   workflow_dispatch:
 
+# Least privilege by default. Every job here builds, lints and tests; none
+# needs a token that can write, and without this block they inherit the
+# repository default.
+permissions:
+  contents: read
+
+# Cancel a superseded run rather than paying for it. `main` is excluded:
+# the post-merge run is the record for that commit, and cancelling it would
+# leave a merged commit never fully built.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
@@ -116,7 +129,7 @@ jobs:
         with:
           workspaces: dpp-engine
       - name: Install cargo-nextest
-        uses: taiki-e/install-action@3f74d7c16a4242f1c95561e98edc25d36adb4375 # v2.87.12
+        uses: taiki-e/install-action@4076c08d76dba979c11a7285295b0716c1d67908 # v2.87.15
         with:
           tool: nextest
       # Run first, and as its own step, so "the API description no longer
@@ -186,7 +199,7 @@ jobs:
         with:
           workspaces: dpp-engine
       - name: Install cargo-nextest
-        uses: taiki-e/install-action@3f74d7c16a4242f1c95561e98edc25d36adb4375 # v2.87.12
+        uses: taiki-e/install-action@4076c08d76dba979c11a7285295b0716c1d67908 # v2.87.15
         with:
           tool: nextest
       - name: Create results dir
@@ -469,7 +482,7 @@ jobs:
         working-directory: dpp-engine
         run: bash scripts/check-audit-register.test.sh
       - name: Install cargo-deny
-        uses: taiki-e/install-action@3f74d7c16a4242f1c95561e98edc25d36adb4375 # v2.87.12
+        uses: taiki-e/install-action@4076c08d76dba979c11a7285295b0716c1d67908 # v2.87.15
         with:
           tool: cargo-deny
       - name: cargo deny (bans, licenses, sources)
@@ -492,7 +505,7 @@ jobs:
         with:
           workspaces: dpp-engine
       - name: Install cargo-nextest
-        uses: taiki-e/install-action@3f74d7c16a4242f1c95561e98edc25d36adb4375 # v2.87.12
+        uses: taiki-e/install-action@4076c08d76dba979c11a7285295b0716c1d67908 # v2.87.15
         with:
           tool: nextest
       - name: PostgreSQL integration tests (check + clippy + pg_integration)

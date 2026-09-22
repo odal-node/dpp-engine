@@ -76,12 +76,54 @@ docker build -t ghcr.io/odal-node/dpp-resolver:v0.1.0 -f dpp-engine/docker/resol
 docker push ghcr.io/odal-node/dpp-resolver:v0.1.0
 ```
 
+## Supply-Chain Attestations
+
+Images pushed by `release.yml` carry two attestations alongside the image, not
+inside it. Read them with:
+
+```sh
+docker buildx imagetools inspect ghcr.io/odal-node/dpp-node:v0.1.0 \
+  --format '{{ json .SBOM }}'
+docker buildx imagetools inspect ghcr.io/odal-node/dpp-node:v0.1.0 \
+  --format '{{ json .Provenance }}'
+```
+
+- **SBOM** — what is in the image. The Debian runtime packages come from
+  BuildKit's filesystem scan; the Rust crates come from the dependency graph
+  `cargo auditable` embeds in the binary at build time. **Both halves are
+  needed.** A plain `cargo build` produces a binary that records nothing about
+  itself, so a scan of that image would list the base layer and none of the
+  application's dependencies — accurate, and useless for the question anyone is
+  actually asking.
+- **Provenance** — SLSA `mode=max`: the source commit, the workflow that built
+  it, the base images and the build arguments.
+
+The same crate list is readable straight out of a pulled image, without the
+registry:
+
+```sh
+docker create --name tmp ghcr.io/odal-node/dpp-node:v0.1.0
+docker cp tmp:/usr/local/bin/dpp-node ./dpp-node && docker rm tmp
+cargo audit bin ./dpp-node
+```
+
+That command answers "is the thing I am running affected by this advisory"
+against the artefact itself rather than against a lockfile someone says matches
+it.
+
+**If a release is ever cut without `cargo auditable`**, the image still builds
+and still pushes, the SBOM attestation is still produced, and it is silently
+missing every crate. Nothing fails. The Dockerfiles are the only thing keeping
+this true — treat a change to their build command as a supply-chain change.
+
 ## Post-Release
 
 1. Verify the GitHub Release is published with the binary attached.
 2. Verify the Docker image runs correctly against a fresh PostgreSQL instance.
-3. Run the seed script against the released version to confirm compatibility.
-4. Announce the release in project communication channels.
+3. **Verify the attestations are present** — run the `imagetools inspect`
+   commands above and confirm the SBOM lists crates, not only Debian packages.
+4. Run the seed script against the released version to confirm compatibility.
+5. Announce the release in project communication channels.
 
 ## Hotfix Process
 
