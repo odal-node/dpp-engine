@@ -502,3 +502,154 @@ jobs:
           cargo check -p dpp-node
           cargo clippy -p dpp-dal -p dpp-node -- -D warnings
           cargo nextest run -p dpp-dal --features integration-tests --no-tests=fail --test pg_integration
+
+  # 🚨 Until this job existed, nothing built either container image until a
+  # `v*` tag was pushed — and that push *publishes*. `release.yml` is the only
+  # workflow referencing `docker/node.Dockerfile` or `docker/resolver.Dockerfile`,
+  # and it triggers on tags alone, so a change to either Dockerfile passed every
+  # check here and was first executed while shipping. The Dockerfiles are also
+  # the only thing keeping `cargo auditable` in the build, and a release cut
+  # without it still builds, still pushes, and is silently missing every crate
+  # from its SBOM (see docs/governance/RELEASE.md).
+  #
+  # Builds only — `push: false`. The registry, the tags, the attestations and
+  # the GHCR labels stay in `release.yml`, which is the only place they can be
+  # tested for real anyway.
+  images:
+    name: Container images build
+    runs-on: ubuntu-latest
+    strategy:
+      # Both images, independently: a break in one is not a reason to stop
+      # learning whether the other survived.
+      fail-fast: false
+      matrix:
+        include:
+          - image: dpp-node
+            dockerfile: dpp-engine/docker/node.Dockerfile
+          - image: dpp-resolver
+            dockerfile: dpp-engine/docker/resolver.Dockerfile
+    steps:
+      # `fetch-depth: 0` so the scope step below can diff against the base
+      # commit; the default shallow clone does not contain it.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          path: dpp-engine
+          fetch-depth: 0
+
+      # The job always runs and always reports — the expensive half is what is
+      # conditional. A job skipped by a workflow-level `paths:` filter reports
+      # nothing at all, and ci.yml's own trigger comment records what that cost
+      # the last time a filter was used here: required checks simply missing,
+      # while `gh pr checks` reads green.
+      #
+      # `crates/**` is deliberately NOT a trigger. The one way a source change
+      # could break the image build and not the rest of CI would be a feature
+      # combination only the image uses — `--features s3` for the node — and
+      # clippy already compiles that, because `dpp-node/integration-tests`
+      # enables `s3` and the clippy job turns that feature on.
+      - name: Does this change reach the images?
+        id: scope
+        working-directory: dpp-engine
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          # A push to `main` or a manual run always builds. That commit is what
+          # a release tag gets cut from, so it is exactly the one that must be
+          # known-good before `release.yml` builds it for real.
+          if [ -z "${BASE_SHA:-}" ]; then
+            echo "build=true" >> "$GITHUB_OUTPUT"
+            echo "Building: not a pull request, so this is a commit a tag could be cut from."
+            exit 0
+          fi
+          # One pattern, read twice — deciding and reporting must not be able to
+          # disagree about what counted.
+          #
+          # Any Cargo.toml, not only the root one: a crate manifest can change
+          # what goes into the binary through a feature default without moving
+          # Cargo.lock at all. rust-toolchain.toml is here because
+          # docker/*.dockerignore does NOT exclude it, so it reaches the build
+          # context and rustup in the builder stage honours it — the images
+          # compile with the channel it names, not with the one in the base
+          # image's tag. ci.yml is here so a change to this job is exercised by
+          # this job.
+          reaches_images='(^docker/|(^|/)Cargo\.toml$|^Cargo\.lock$|^rust-toolchain\.toml$|^\.github/workflows/ci\.yml$)'
+          changed="$(git diff --name-only "${BASE_SHA}...HEAD")"
+          if printf '%s\n' "$changed" | grep -qE "$reaches_images"; then
+            echo "build=true" >> "$GITHUB_OUTPUT"
+            echo "Building. These changed paths reach the images:"
+            printf '%s\n' "$changed" | grep -E "$reaches_images"
+          else
+            echo "build=false" >> "$GITHUB_OUTPUT"
+            echo "Skipping the image build: no Dockerfile, manifest, lockfile, toolchain file or ci.yml change."
+          fi
+
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
+        if: steps.scope.outputs.build == 'true'
+
+      # Context is the workspace root holding the checked-out repo, matching
+      # `release.yml` and `just docker-node`. BUILD_MODE defaults to
+      # `published`, which takes dpp-core from crates.io, so only this
+      # repository needs checking out.
+      #
+      # Same `scope=` as release.yml on purpose: Actions cache is already
+      # partitioned per branch, so a pull request reads main's layers and
+      # cannot overwrite them, and a release build on main starts warm from
+      # the merge that preceded it.
+      - name: Build ${{ matrix.image }} (no push)
+        if: steps.scope.outputs.build == 'true'
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          push: false
+          load: true
+          tags: ${{ matrix.image }}:ci
+          cache-from: type=gha,scope=${{ matrix.image }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.image }}
+
+      # 🚨 The assertion this job exists for, beyond "it built".
+      #
+      # `cargo auditable` writes the Cargo.lock dependency graph into a
+      # `.dep-v0` ELF section. Drop it — revert `cargo auditable build` to
+      # `cargo build`, or lose the `cargo install` line above it — and
+      # everything still succeeds: the image builds, the push works, the SBOM
+      # attestation is still produced, and it lists the Debian base packages
+      # and not one of the several hundred crates that are the half anyone
+      # cares about. Nothing fails. This is what makes it fail.
+      #
+      # `readelf` (binutils, preinstalled on the runner) rather than
+      # `cargo audit bin`: the question here is whether the section is present,
+      # which is structural and answerable in milliseconds with nothing
+      # installed. Scanning the graph against the advisory database is a
+      # different question, and the `audit` job and the daily `advisories.yml`
+      # already own it — a second scan here would only be a second opinion that
+      # disagrees quietly.
+      - name: The shipped binary carries its dependency graph
+        if: steps.scope.outputs.build == 'true'
+        run: |
+          set -euo pipefail
+          container="$(docker create "${{ matrix.image }}:ci")"
+          trap 'docker rm -f "$container" >/dev/null 2>&1 || true' EXIT
+          docker cp "$container:/usr/local/bin/${{ matrix.image }}" "./${{ matrix.image }}"
+          if ! readelf -S -W "./${{ matrix.image }}" | grep -q '\.dep-v0'; then
+            echo "::error::${{ matrix.image }} carries no .dep-v0 section — it was not built with 'cargo auditable', so this image's SBOM would list the Debian base packages and none of its Rust crates."
+            exit 1
+          fi
+          # Read the size by extracting the section rather than by parsing
+          # readelf's table: the column positions there shift with the width of
+          # the section index, so an awk field number is wrong on some binaries
+          # and right on others.
+          #
+          # `--dump-section`, NOT `-O binary --only-section=`. The latter writes
+          # only *allocated* sections, and `.dep-v0` deliberately is not one —
+          # it is metadata the loader never maps. That spelling silently emits
+          # an empty file for a perfectly good binary, which is a gate that
+          # fails on everything.
+          objcopy --dump-section .dep-v0=./dep-v0.bin "./${{ matrix.image }}" /dev/null
+          bytes="$(wc -c < ./dep-v0.bin)"
+          if [ "$bytes" -eq 0 ]; then
+            echo "::error::${{ matrix.image }} has a .dep-v0 section with nothing in it."
+            exit 1
+          fi
+          echo "${{ matrix.image }}: .dep-v0 carries ${bytes} bytes of compressed dependency graph."
