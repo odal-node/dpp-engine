@@ -21,6 +21,16 @@ FROM rust:1.98-slim-bookworm AS builder-base
 WORKDIR /build
 ENV RUSTC_WRAPPER=""
 
+# A Rust binary carries no record of what went into it. Scanning this image
+# with syft or trivy finds the Debian packages in the runtime stage and **zero**
+# of the crates the binary was built from — so an image SBOM would be accurate
+# about the base layer and silent about the application, which is the half that
+# matters. `cargo auditable` embeds the dependency graph from Cargo.lock into
+# the binary itself, so the scanner recovers it and `cargo audit bin` can read
+# it straight out of a shipped image. It changes no code: the crate list lands
+# in its own section and the program is byte-for-byte the same otherwise.
+RUN cargo install cargo-auditable --locked
+
 # ── published: dpp-* from crates.io; strip any local [patch.crates-io] override ──
 # Never honour a developer's local dpp-core override — it points at a sibling
 # ../dpp-core that isn't in this context. (.dockerignore already strips it; the
@@ -34,7 +44,7 @@ RUN rm -f .cargo/config.toml
 # work out of the box. This is the artefact operators run — any claim about
 # what the shipped binary contains must be checked against *this* feature
 # set, not against a bare `cargo build`.
-RUN cargo build --release -p dpp-node --features s3
+RUN cargo auditable build --release -p dpp-node --features s3
 
 # ── local: patch dpp-* to the sibling ../dpp-core source ─────────────────────────
 FROM builder-base AS builder-local
@@ -47,7 +57,7 @@ COPY dpp-engine/ dpp-engine/
 # the context via .dockerignore, so this is deterministic).
 COPY dpp-engine/.cargo/config.toml.example /build/dpp-engine/.cargo/config.toml
 WORKDIR /build/dpp-engine
-RUN cargo build --release -p dpp-node --features s3
+RUN cargo auditable build --release -p dpp-node --features s3
 
 # Select the active builder from BUILD_MODE; only the chosen stage is built.
 FROM builder-${BUILD_MODE} AS builder
