@@ -1064,3 +1064,82 @@ fn install_rejects_incompatible_precompiled_artifact() {
     assert!(host.get_plugin("battery").is_none());
     assert!(!dir.path().join("product-group-battery.cwasm").exists());
 }
+
+// ── schema_supported ─────────────────────────────────────────────────────────
+//
+// 🚨 The check that existed and never ran. Every plugin declares a supported
+// schema range; the only caller of `check_compatibility` was the load-time ABI
+// gate, which passes `None` for the version and so skips the comparison
+// entirely. All ten shipped plugins had drifted below the version their product
+// group serves, and nothing said so.
+
+fn caps(min: &str, max: &str) -> dpp_plugin_traits::PluginCapabilities {
+    dpp_plugin_traits::PluginCapabilities {
+        abi_version: dpp_plugin_traits::AbiVersion::current(),
+        min_host_version: None,
+        supported_schemas: vec![dpp_plugin_traits::SchemaVersionRange {
+            min_version: min.to_owned(),
+            max_version: max.to_owned(),
+        }],
+        capabilities: vec![],
+        max_fuel: None,
+        max_memory_bytes: None,
+    }
+}
+
+/// The catalog is the authority on which version a plugin will be handed.
+fn current(product_group: &str) -> String {
+    dpp_domain::ProductGroupCatalog::new()
+        .current_schema_version(product_group)
+        .expect("product group is in the catalog")
+        .to_owned()
+}
+
+#[test]
+fn a_plugin_behind_the_catalog_is_refused_rather_than_handed_data_it_cannot_read() {
+    // 🚨 A **well-ordered** range whose maximum is genuinely below the
+    // catalog version. This first read `("1.0.0", "0.0.1")` — min above max —
+    // which no version can satisfy, so the test passed because the range was
+    // malformed rather than because it was outdated. That proves a different
+    // thing from the one it claims. Battery is on a 2.x schema, so a range
+    // ending at 1.0.0 is ordered, valid, and behind.
+    let current = current("battery");
+    assert!(
+        current.starts_with("2."),
+        "this fixture assumes battery is on a 2.x schema; it is {current}"
+    );
+    let err = crate::host::schema_supported(&caps("1.0.0", "1.0.0"), "battery")
+        .expect_err("a plugin capped below the shipping schema must be refused");
+    assert_eq!(err.kind, dpp_domain::ComplianceErrorKind::InvalidInput);
+}
+
+#[test]
+fn a_plugin_covering_the_shipping_version_is_dispatched() {
+    let now = current("battery");
+    assert!(crate::host::schema_supported(&caps("1.0.0", &now), "battery").is_ok());
+}
+
+/// An unknown key is the untyped forward-compatibility path, not an attack.
+///
+/// The dispatch key came from the data. Inventing a refusal for a product group
+/// the catalog has not heard of would break the case `ProductGroupData::Other`
+/// exists to serve rather than protect anything.
+#[test]
+fn a_product_group_the_catalog_does_not_know_is_not_second_guessed() {
+    assert!(crate::host::schema_supported(&caps("1.0.0", "1.0.0"), "photovoltaic").is_ok());
+}
+
+/// 🚨 "Declared nothing" is not "supports nothing".
+///
+/// The loader sets an empty `supported_schemas` when a plugin has no
+/// `describe()` export, and lets it through deliberately so unversioned dev and
+/// test fixtures still run. Refusing it here would not catch the defect this
+/// gate exists for — a plugin that declares a range and drifts below it — it
+/// would silently break every plugin built before ranges existed. The trust
+/// boundary for an unknown plugin is the publisher signature checked at load.
+#[test]
+fn a_plugin_declaring_no_range_is_dispatched_rather_than_refused() {
+    let mut c = caps("1.0.0", "1.0.0");
+    c.supported_schemas.clear();
+    assert!(crate::host::schema_supported(&c, "battery").is_ok());
+}

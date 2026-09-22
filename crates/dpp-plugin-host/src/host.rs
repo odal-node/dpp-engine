@@ -8,7 +8,7 @@ use std::sync::{Arc, RwLock};
 use chrono::NaiveDate;
 use dpp_common::plugin_admin::{InstalledPlugin, PluginAdmin, PluginInstallError};
 use dpp_domain::{
-    InstrumentCatalog, PassthroughRegistry,
+    InstrumentCatalog, PassthroughRegistry, ProductGroupCatalog,
     compliance::{
         ComplianceError, ComplianceErrorKind, ComplianceFinding, ComplianceResult,
         ComplianceStatus, gate_determination,
@@ -20,6 +20,8 @@ use dpp_domain::{
 use ed25519_dalek::VerifyingKey;
 use serde_json::Value;
 use wasmtime::Engine;
+
+use dpp_plugin_traits::{PluginCapabilities, check_compatibility};
 
 use crate::loader::LoadedPlugin;
 
@@ -258,6 +260,8 @@ impl WasmPluginHost {
             message: format!("no Wasm plugin loaded for product_group '{key}'"),
         })?;
 
+        schema_supported(&plugin.capabilities, key)?;
+
         let input = enrich_input(
             serde_json::to_value(data).map_err(|e| ComplianceError {
                 kind: ComplianceErrorKind::InvalidInput,
@@ -352,6 +356,8 @@ impl PluginHost for WasmPluginHost {
             kind: ComplianceErrorKind::UnknownProductGroup,
             message: format!("no Wasm plugin loaded for product_group '{key}'"),
         })?;
+
+        schema_supported(&plugin.capabilities, key)?;
 
         let input = enrich_input(
             serde_json::to_value(data).map_err(|e| ComplianceError {
@@ -476,6 +482,86 @@ pub(crate) fn enrich_input(input: Value, product_group_key: &str) -> Value {
 fn instruments() -> &'static InstrumentCatalog {
     static CATALOG: std::sync::OnceLock<InstrumentCatalog> = std::sync::OnceLock::new();
     CATALOG.get_or_init(InstrumentCatalog::new)
+}
+
+/// Process-wide product group catalog, for the schema version a plugin is
+/// dispatched against.
+fn product_groups() -> &'static ProductGroupCatalog {
+    static CATALOG: std::sync::OnceLock<ProductGroupCatalog> = std::sync::OnceLock::new();
+    CATALOG.get_or_init(ProductGroupCatalog::new)
+}
+
+/// Refuse a plugin that does not declare support for the schema version it is
+/// about to be handed.
+///
+/// 🚨 **This check existed and never ran.** Every plugin declares a
+/// `schema_version_range`, and the only caller of [`check_compatibility`] was
+/// the load-time ABI gate, which passes `None` for the requested version —
+/// and `None` skips the schema comparison entirely. Its own comment called
+/// dispatch-time schema selection "a separate concern"; the separate concern
+/// was never written, so the declarations were decorative. Every one of the ten
+/// shipped plugins had drifted below the version its product group serves, and
+/// nothing said so.
+///
+/// The version compared against is the **catalog's current** one rather than
+/// anything on the passport, because that is what the data actually is by the
+/// time it arrives: stored `productGroupData` is upcast through the lens chain
+/// on read, so a plugin is always handed the current shape regardless of the
+/// version the record was written against.
+///
+/// A product group the catalog does not know is not second-guessed here — the
+/// dispatch key came from the data, and inventing a refusal for an unknown key
+/// would break the untyped forward-compatibility path rather than protect it.
+pub(crate) fn schema_supported(
+    capabilities: &PluginCapabilities,
+    product_group_key: &str,
+) -> Result<(), ComplianceError> {
+    let Some(version) = product_groups().current_schema_version(product_group_key) else {
+        return Ok(());
+    };
+    // 🚨 An empty `supported_schemas` is "declared nothing", not "supports
+    // nothing", and the two must not be conflated. The loader sets exactly this
+    // when a plugin has no `describe()` export — see the fallback in
+    // `LoadedPlugin::from_file`, which synthesises the host's own ABI and lets
+    // such a plugin through on purpose so unversioned dev and test fixtures
+    // still run.
+    //
+    // Refusing here would therefore not tighten the gate against the defect it
+    // exists for — every real plugin declares a range, and a drifted range is
+    // what this catches — it would silently break every plugin built before
+    // `schema_version_range` existed. The trust boundary for an unknown plugin
+    // is the publisher signature checked at load, not this check.
+    if capabilities.supported_schemas.is_empty() {
+        tracing::warn!(
+            product_group = %product_group_key,
+            schema_version = %version,
+            "plugin declares no supported schema versions; dispatching unchecked"
+        );
+        return Ok(());
+    }
+    let compat = check_compatibility(capabilities, Some(version), &[]);
+    if compat.is_compatible() {
+        return Ok(());
+    }
+    metrics::counter!(
+        "plugin_schema_unsupported_total",
+        "productGroup" => product_group_key.to_owned()
+    )
+    .increment(1);
+    tracing::error!(
+        code = dpp_common::event_codes::PLUGIN_REFUSED,
+        product_group = %product_group_key,
+        schema_version = %version,
+        report = ?compat,
+        "Wasm plugin refused — it does not support the schema version it would be handed"
+    );
+    Err(ComplianceError {
+        kind: ComplianceErrorKind::InvalidInput,
+        message: format!(
+            "plugin for '{product_group_key}' does not support schema version {version}: \
+             {compat:?}"
+        ),
+    })
 }
 
 /// Whether a **binding passport obligation** is live for `product_group`, which
