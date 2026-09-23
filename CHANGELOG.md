@@ -32,9 +32,12 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   credentials, query or fragment, returned without a trailing `/`. The compose
   file passes it to both services with `${RESOLVER_BASE_URL:?}`, so `odal up`
   refuses before anything starts; under a production profile, `odal up`'s
-  preflight also refuses any value naming this machine — `localhost` or a
-  loopback address, however spelled. A refusal never echoes a password, query
-  or fragment from the value. A default here was a guess about where
+  preflight also refuses any value naming this machine — `localhost`, a
+  loopback or unspecified address, IPv4-mapped included, however spelled. It
+  judges the value compose will actually interpolate: a variable exported in the
+  shell overrides `.env`, so a stale export was what got signed while the file
+  read fine — true of every key the preflight checks, not only this one. A
+  refusal never echoes a password, query or fragment from the value. A default here was a guess about where
   another component lives — which is exactly what neither binary can know, and
   a wrong guess is signed into labels that cannot be recalled.
 

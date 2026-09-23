@@ -177,9 +177,21 @@ pub fn compose_file() -> Result<PathBuf> {
     Ok(path)
 }
 
+/// What a production stack's environment must carry before it starts.
+const PROD_REQUIRED: &[&str] = &[
+    "DATABASE_POSTGRES_PASS",
+    "DATABASE_APP_PASS",
+    "KEY_STORE_PASSPHRASE",
+    "DID_WEB_BASE_URL",
+    "RESOLVER_BASE_URL",
+    "ADMIN_USERNAME",
+    "ADMIN_PASSWORD",
+];
+
 /// Production preflight: a prod stack must not boot on missing or dev-default
 /// secrets. Verifies the deployment `.env` (next to the compose file's parent)
-/// has every required secret set to a non-default value.
+/// has every required secret set to a non-default value — judged on the value
+/// compose will actually use, which is the shell's where it exports one.
 pub fn preflight_prod_env(compose_file: &Path) -> Result<()> {
     // compose lives at <root>/docker/<file>; the deployment .env is at <root>/.env.
     let root = compose_file
@@ -188,48 +200,17 @@ pub fn preflight_prod_env(compose_file: &Path) -> Result<()> {
         .unwrap_or_else(|| Path::new("."));
     let env_path = root.join(".env");
 
-    const REQUIRED: &[&str] = &[
-        "DATABASE_POSTGRES_PASS",
-        "DATABASE_APP_PASS",
-        "KEY_STORE_PASSPHRASE",
-        "DID_WEB_BASE_URL",
-        "RESOLVER_BASE_URL",
-        "ADMIN_USERNAME",
-        "ADMIN_PASSWORD",
-    ];
-    const INSECURE_DEFAULTS: &[&str] = &[
-        "dev_only_password",
-        "change_me_in_env",
-        "dev-passphrase-change-in-prod",
-        "admin",
-    ];
-
     if !env_path.exists() {
         anyhow::bail!(
             "no .env found at {} — a production node needs its secrets set first.\n\
              Required: {}",
             env_path.display(),
-            REQUIRED.join(", ")
+            PROD_REQUIRED.join(", ")
         );
     }
 
     let vars = parse_env(&fs::read_to_string(&env_path)?);
-    let mut problems = Vec::new();
-    for key in REQUIRED {
-        match vars.get(*key).map(String::as_str) {
-            None | Some("") => problems.push(format!("  • {key} is missing or empty")),
-            Some(v) if INSECURE_DEFAULTS.contains(&v) => {
-                problems.push(format!("  • {key} is still a dev default ({v})"))
-            }
-            _ => {}
-        }
-    }
-    if let Some(host) = vars.get("RESOLVER_BASE_URL").and_then(|v| loopback_host(v)) {
-        problems.push(format!(
-            "  • RESOLVER_BASE_URL points at this machine ({host}) — a production node \
-             signs it into every carrier, and no customer can scan one"
-        ));
-    }
+    let problems = prod_env_problems(&vars, &|key| std::env::var(key).ok());
     if !problems.is_empty() {
         anyhow::bail!(
             "production .env at {} is not safe to start:\n{}\nEdit it and try again.",
@@ -240,22 +221,79 @@ pub fn preflight_prod_env(compose_file: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Every reason [`preflight_prod_env`] refuses, judged on the value compose
+/// will interpolate for each key.
+///
+/// 🚨 **A variable exported in the invoking shell overrides the same key in
+/// `.env`** for compose interpolation, and `odal up` hands compose its own
+/// environment. Reading `.env` alone passed a file holding a real resolver
+/// origin while a stale `RESOLVER_BASE_URL=http://localhost:8003` in the shell
+/// was what got signed into every carrier — and the same for a shell-exported
+/// `ADMIN_PASSWORD=admin`. `shell` is that environment, a parameter so the rule
+/// is testable without mutating the process's own.
+fn prod_env_problems(
+    file: &HashMap<String, String>,
+    shell: &dyn Fn(&str) -> Option<String>,
+) -> Vec<String> {
+    const INSECURE_DEFAULTS: &[&str] = &[
+        "dev_only_password",
+        "change_me_in_env",
+        "dev-passphrase-change-in-prod",
+        "admin",
+    ];
+
+    let mut problems = Vec::new();
+    for key in PROD_REQUIRED {
+        let (value, source) = match shell(key) {
+            Some(v) => (Some(v), " (exported in your shell, which overrides .env)"),
+            None => (file.get(*key).cloned(), ""),
+        };
+        match value.as_deref() {
+            None | Some("") => problems.push(format!("  • {key} is missing or empty{source}")),
+            Some(v) if INSECURE_DEFAULTS.contains(&v) => {
+                problems.push(format!("  • {key} is still a dev default ({v}){source}"))
+            }
+            Some(v) if *key == "RESOLVER_BASE_URL" => {
+                if let Some(host) = loopback_host(v) {
+                    problems.push(format!(
+                        "  • RESOLVER_BASE_URL points at this machine ({host}){source} — a \
+                         production node signs it into every carrier, and no customer can \
+                         scan one"
+                    ));
+                }
+            }
+            _ => {}
+        }
+    }
+    problems
+}
+
 /// The host of `value` when it names this machine — `localhost` (or a
-/// subdomain of it), or a loopback address — however it is spelled: a trailing
-/// `/`, a path, `127.0.0.2`, `[::1]` all normalise to the same answer. `None`
-/// for anything else, including a value that does not parse: whether it is a
-/// usable URL is the node's refusal to make at boot, not this preflight's.
+/// subdomain of it), a loopback or unspecified address, or a loopback address
+/// in IPv4-mapped IPv6 form — however it is spelled: a trailing `/`, a path,
+/// `127.0.0.2`, `[::1]`, `[::ffff:127.0.0.1]`, `0.0.0.0` all normalise to the
+/// same answer. `None` for anything else, including a value that does not
+/// parse: whether it is a usable URL is the node's refusal to make at boot, not
+/// this preflight's.
 fn loopback_host(value: &str) -> Option<String> {
     let url = url::Url::parse(value.trim()).ok()?;
-    let loopback = match url.host()? {
+    let this_machine = match url.host()? {
         url::Host::Domain(d) => {
             let d = d.trim_end_matches('.').to_ascii_lowercase();
             d == "localhost" || d.ends_with(".localhost")
         }
-        url::Host::Ipv4(ip) => ip.is_loopback(),
-        url::Host::Ipv6(ip) => ip.is_loopback(),
+        url::Host::Ipv4(ip) => ip.is_loopback() || ip.is_unspecified(),
+        // `Ipv6Addr::is_loopback` is `::1` only, so `::ffff:127.0.0.1` — the
+        // same address, mapped — has to be unwrapped to be recognised.
+        url::Host::Ipv6(ip) => {
+            ip.is_loopback()
+                || ip.is_unspecified()
+                || ip
+                    .to_ipv4_mapped()
+                    .is_some_and(|v4| v4.is_loopback() || v4.is_unspecified())
+        }
     };
-    loopback.then(|| url.host_str().unwrap_or_default().to_owned())
+    this_machine.then(|| url.host_str().unwrap_or_default().to_owned())
 }
 
 /// Read a single variable from the deployment `.env` at the install root.
@@ -606,29 +644,31 @@ mod tests {
         assert!(missing_scaffold_files(root.path()).is_empty());
     }
 
+    /// A production `.env` that passes every check, with the resolver origin
+    /// left for the caller to fill in.
+    fn prod_env_file(resolver: &str) -> HashMap<String, String> {
+        parse_env(&format!(
+            "DATABASE_POSTGRES_PASS=pg-strong\n\
+             DATABASE_APP_PASS=app-strong\n\
+             KEY_STORE_PASSPHRASE=ks-strong\n\
+             DID_WEB_BASE_URL=https://acme.example\n\
+             RESOLVER_BASE_URL={resolver}\n\
+             ADMIN_USERNAME=acme-admin\n\
+             ADMIN_PASSWORD=admin-strong\n"
+        ))
+    }
+
+    /// An empty shell, so these tests judge the file alone. The real one is not
+    /// hermetic: `just` loads the developer's own `.env` into the environment
+    /// every recipe — and so every test — inherits.
+    fn no_shell(_: &str) -> Option<String> {
+        None
+    }
+
     /// The laptop value `.env.example` ships is right for a demo and wrong for a
     /// production node, where it would be signed into every carrier it prints.
     #[test]
     fn a_production_env_left_on_the_laptop_resolver_is_refused() {
-        let root = tempfile::TempDir::new().unwrap();
-        let compose = root.path().join("docker").join(COMPOSE_FILE);
-        let with_resolver = |value: &str| {
-            std::fs::write(
-                root.path().join(".env"),
-                format!(
-                    "DATABASE_POSTGRES_PASS=pg-strong\n\
-                     DATABASE_APP_PASS=app-strong\n\
-                     KEY_STORE_PASSPHRASE=ks-strong\n\
-                     DID_WEB_BASE_URL=https://acme.example\n\
-                     RESOLVER_BASE_URL={value}\n\
-                     ADMIN_USERNAME=acme-admin\n\
-                     ADMIN_PASSWORD=admin-strong\n"
-                ),
-            )
-            .unwrap();
-            preflight_prod_env(&compose)
-        };
-
         // Every spelling of "this machine", not only the one `.env.example`
         // ships — the node trims a trailing `/` before signing, so a literal
         // comparison would have passed the second one straight through.
@@ -640,18 +680,59 @@ mod tests {
             "http://127.0.0.1:8003",
             "http://127.0.0.2:8003/resolve",
             "http://[::1]:8003",
+            "http://[::ffff:127.0.0.1]:8003",
+            "http://0.0.0.0:8003",
+            "http://[::]:8003",
         ] {
-            let msg = with_resolver(local).unwrap_err().to_string();
-            assert!(msg.contains("RESOLVER_BASE_URL"), "{local}: {msg}");
+            let problems = prod_env_problems(&prod_env_file(local), &no_shell);
+            assert!(
+                problems.iter().any(|p| p.contains("RESOLVER_BASE_URL")),
+                "{local} passed: {problems:?}"
+            );
         }
 
         for public in [
             "https://dpp.acme.example",
             "https://localhost.acme.example",
             "http://192.0.2.10:8003",
+            "http://[2001:db8::10]:8003",
         ] {
-            with_resolver(public).unwrap_or_else(|e| panic!("{public} was refused: {e}"));
+            let problems = prod_env_problems(&prod_env_file(public), &no_shell);
+            assert!(problems.is_empty(), "{public} was refused: {problems:?}");
         }
+    }
+
+    /// Compose interpolates the shell's value over `.env`'s, so a stale export
+    /// in the operator's shell is what gets signed — the file is not the whole
+    /// answer. Judged in both directions, and the refusal says where the value
+    /// came from, since the operator will look in `.env` and find it fine.
+    #[test]
+    fn a_shell_export_is_judged_over_the_env_file() {
+        let file = prod_env_file("https://dpp.acme.example");
+
+        let laptop_in_shell =
+            |key: &str| (key == "RESOLVER_BASE_URL").then(|| "http://localhost:8003".to_owned());
+        let problems = prod_env_problems(&file, &laptop_in_shell);
+        assert!(
+            problems
+                .iter()
+                .any(|p| p.contains("RESOLVER_BASE_URL") && p.contains("shell")),
+            "a shell export of the laptop resolver passed: {problems:?}"
+        );
+
+        let weak_admin_in_shell = |key: &str| (key == "ADMIN_PASSWORD").then(|| "admin".to_owned());
+        let problems = prod_env_problems(&file, &weak_admin_in_shell);
+        assert!(
+            problems.iter().any(|p| p.contains("ADMIN_PASSWORD")),
+            "a shell-exported dev default passed: {problems:?}"
+        );
+
+        // And the other way: a real origin exported in the shell rescues a
+        // laptop value left in the file, because the shell's is what is used.
+        let public_in_shell =
+            |key: &str| (key == "RESOLVER_BASE_URL").then(|| "https://dpp.acme.example".to_owned());
+        let problems = prod_env_problems(&prod_env_file("http://localhost:8003"), &public_in_shell);
+        assert!(problems.is_empty(), "{problems:?}");
     }
 
     /// Re-running `odal init` on a configured install must not overwrite an
