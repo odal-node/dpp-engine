@@ -202,9 +202,6 @@ pub fn preflight_prod_env(compose_file: &Path) -> Result<()> {
         "change_me_in_env",
         "dev-passphrase-change-in-prod",
         "admin",
-        // `.env.example`'s laptop resolver. Not a secret, but a production node
-        // publishing with it signs a carrier no customer can scan, permanently.
-        "http://localhost:8003",
     ];
 
     if !env_path.exists() {
@@ -227,6 +224,12 @@ pub fn preflight_prod_env(compose_file: &Path) -> Result<()> {
             _ => {}
         }
     }
+    if let Some(host) = vars.get("RESOLVER_BASE_URL").and_then(|v| loopback_host(v)) {
+        problems.push(format!(
+            "  • RESOLVER_BASE_URL points at this machine ({host}) — a production node \
+             signs it into every carrier, and no customer can scan one"
+        ));
+    }
     if !problems.is_empty() {
         anyhow::bail!(
             "production .env at {} is not safe to start:\n{}\nEdit it and try again.",
@@ -235,6 +238,24 @@ pub fn preflight_prod_env(compose_file: &Path) -> Result<()> {
         );
     }
     Ok(())
+}
+
+/// The host of `value` when it names this machine — `localhost` (or a
+/// subdomain of it), or a loopback address — however it is spelled: a trailing
+/// `/`, a path, `127.0.0.2`, `[::1]` all normalise to the same answer. `None`
+/// for anything else, including a value that does not parse: whether it is a
+/// usable URL is the node's refusal to make at boot, not this preflight's.
+fn loopback_host(value: &str) -> Option<String> {
+    let url = url::Url::parse(value.trim()).ok()?;
+    let loopback = match url.host()? {
+        url::Host::Domain(d) => {
+            let d = d.trim_end_matches('.').to_ascii_lowercase();
+            d == "localhost" || d.ends_with(".localhost")
+        }
+        url::Host::Ipv4(ip) => ip.is_loopback(),
+        url::Host::Ipv6(ip) => ip.is_loopback(),
+    };
+    loopback.then(|| url.host_str().unwrap_or_default().to_owned())
 }
 
 /// Read a single variable from the deployment `.env` at the install root.
@@ -591,29 +612,46 @@ mod tests {
     fn a_production_env_left_on_the_laptop_resolver_is_refused() {
         let root = tempfile::TempDir::new().unwrap();
         let compose = root.path().join("docker").join(COMPOSE_FILE);
-        std::fs::write(
-            root.path().join(".env"),
-            "DATABASE_POSTGRES_PASS=pg-strong\n\
-             DATABASE_APP_PASS=app-strong\n\
-             KEY_STORE_PASSPHRASE=ks-strong\n\
-             DID_WEB_BASE_URL=https://acme.example\n\
-             RESOLVER_BASE_URL=http://localhost:8003\n\
-             ADMIN_USERNAME=acme-admin\n\
-             ADMIN_PASSWORD=admin-strong\n",
-        )
-        .unwrap();
+        let with_resolver = |value: &str| {
+            std::fs::write(
+                root.path().join(".env"),
+                format!(
+                    "DATABASE_POSTGRES_PASS=pg-strong\n\
+                     DATABASE_APP_PASS=app-strong\n\
+                     KEY_STORE_PASSPHRASE=ks-strong\n\
+                     DID_WEB_BASE_URL=https://acme.example\n\
+                     RESOLVER_BASE_URL={value}\n\
+                     ADMIN_USERNAME=acme-admin\n\
+                     ADMIN_PASSWORD=admin-strong\n"
+                ),
+            )
+            .unwrap();
+            preflight_prod_env(&compose)
+        };
 
-        let msg = preflight_prod_env(&compose).unwrap_err().to_string();
-        assert!(msg.contains("RESOLVER_BASE_URL"), "{msg}");
+        // Every spelling of "this machine", not only the one `.env.example`
+        // ships — the node trims a trailing `/` before signing, so a literal
+        // comparison would have passed the second one straight through.
+        for local in [
+            "http://localhost:8003",
+            "http://localhost:8003/",
+            "http://LOCALHOST.:8003",
+            "http://demo.localhost:8003",
+            "http://127.0.0.1:8003",
+            "http://127.0.0.2:8003/resolve",
+            "http://[::1]:8003",
+        ] {
+            let msg = with_resolver(local).unwrap_err().to_string();
+            assert!(msg.contains("RESOLVER_BASE_URL"), "{local}: {msg}");
+        }
 
-        std::fs::write(
-            root.path().join(".env"),
-            std::fs::read_to_string(root.path().join(".env"))
-                .unwrap()
-                .replace("http://localhost:8003", "https://dpp.acme.example"),
-        )
-        .unwrap();
-        preflight_prod_env(&compose).expect("a real resolver origin passes");
+        for public in [
+            "https://dpp.acme.example",
+            "https://localhost.acme.example",
+            "http://192.0.2.10:8003",
+        ] {
+            with_resolver(public).unwrap_or_else(|e| panic!("{public} was refused: {e}"));
+        }
     }
 
     /// Re-running `odal init` on a configured install must not overwrite an

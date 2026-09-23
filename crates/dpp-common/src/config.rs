@@ -69,7 +69,10 @@ pub fn resolver_base_url() -> Result<String> {
 ///
 /// # Errors
 ///
-/// Names [`RESOLVER_BASE_URL`] and says what is wrong with the value.
+/// Names [`RESOLVER_BASE_URL`] and says what is wrong with the value. The value
+/// is echoed only with its credentials, query and fragment removed: a refusal
+/// is a startup error that lands in logs, and a mistyped value is exactly the
+/// one likely to carry something that should not.
 pub fn parse_resolver_base_url(raw: Option<&str>) -> Result<String> {
     let value = raw
         .map(str::trim)
@@ -82,21 +85,32 @@ pub fn parse_resolver_base_url(raw: Option<&str>) -> Result<String> {
              cannot be changed afterwards, so there is no default"
             )
         })?;
+    let shown = shown_without_secrets(value);
     let url = url::Url::parse(value)
-        .with_context(|| format!("{RESOLVER_BASE_URL} is not an absolute URL: {value}"))?;
+        .with_context(|| format!("{RESOLVER_BASE_URL} is not an absolute URL: {shown}"))?;
     if !matches!(url.scheme(), "http" | "https") {
-        anyhow::bail!("{RESOLVER_BASE_URL} must be an http or https URL: {value}");
+        anyhow::bail!("{RESOLVER_BASE_URL} must be an http or https URL: {shown}");
     }
     if url.host_str().is_none_or(str::is_empty) {
-        anyhow::bail!("{RESOLVER_BASE_URL} names no host: {value}");
+        anyhow::bail!("{RESOLVER_BASE_URL} names no host: {shown}");
     }
     if !url.username().is_empty() || url.password().is_some() {
-        anyhow::bail!("{RESOLVER_BASE_URL} must not carry credentials");
+        anyhow::bail!("{RESOLVER_BASE_URL} must not carry credentials: {shown}");
     }
     if url.query().is_some() || url.fragment().is_some() {
-        anyhow::bail!("{RESOLVER_BASE_URL} must not carry a query or fragment: {value}");
+        anyhow::bail!(
+            "{RESOLVER_BASE_URL} must not carry a query or fragment (not shown): {shown}"
+        );
     }
     Ok(value.trim_end_matches('/').to_owned())
+}
+
+/// A rejected value, fit to print: userinfo stripped by
+/// [`redact_url_credentials`], and everything from the first `?` or `#` cut.
+fn shown_without_secrets(value: &str) -> String {
+    let redacted = redact_url_credentials(value);
+    let end = redacted.find(['?', '#']).unwrap_or(redacted.len());
+    redacted[..end].to_owned()
 }
 
 /// Read a `u16` port from an environment variable, defaulting to `default_port`.
@@ -214,6 +228,24 @@ mod tests {
             "https://resolver.example/#top",
         ] {
             assert!(parse_resolver_base_url(Some(raw)).is_err(), "{raw}");
+        }
+    }
+
+    /// A refusal is a startup error, so it lands in logs. Every path that
+    /// echoes the value must leave out a password or a query token — including
+    /// the refusals that are about something else entirely (here, the scheme).
+    #[test]
+    fn a_refused_resolver_base_url_never_echoes_its_secrets() {
+        for raw in [
+            "ftp://user:s3cret@resolver.example",
+            "https://user:s3cret@resolver.example",
+            "https://resolver.example/?token=s3cret",
+            "https://resolver.example/#s3cret",
+            "not a url with user:s3cret@",
+        ] {
+            let msg = parse_resolver_base_url(Some(raw)).unwrap_err().to_string();
+            assert!(!msg.contains("s3cret"), "{raw} leaked into: {msg}");
+            assert!(msg.contains(RESOLVER_BASE_URL), "{msg}");
         }
     }
 

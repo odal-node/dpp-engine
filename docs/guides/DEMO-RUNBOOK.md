@@ -35,7 +35,9 @@ Two things that are hard to convey any other way:
 
 ## 🚨 The three settings that decide whether this works
 
-Two of the three fail **silently**. Read this section before running anything.
+Left unset, the first refuses to start and the second fails **silently**. Set
+to the wrong host, the first fails silently too — inside every signature. Read
+this section before running anything.
 
 ### 1. `RESOLVER_BASE_URL` — required, and it must be the right one
 

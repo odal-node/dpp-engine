@@ -532,6 +532,11 @@ mod tests {
     use super::*;
     use serial_test::serial;
 
+    // SAFETY, for every `set_var`/`remove_var` in this module: mutating the
+    // environment is unsound only while another thread reads or writes it.
+    // Every test here that touches it is `#[serial]`, so under `cargo test`'s
+    // shared process no two run at once, and nextest runs each test in a
+    // process of its own. Nothing in `NodeConfig::from_env` spawns a thread.
     /// Reset to a clean baseline, then set only the five required vars. Clearing
     /// first makes these tests hermetic: a `.env` loaded into the process (e.g.
     /// via `just`'s `set dotenv-load`) cannot leak optional vars such as

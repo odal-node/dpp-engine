@@ -32,7 +32,9 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   credentials, query or fragment, returned without a trailing `/`. The compose
   file passes it to both services with `${RESOLVER_BASE_URL:?}`, so `odal up`
   refuses before anything starts; under a production profile, `odal up`'s
-  preflight also refuses the laptop value as a dev default. A default here was a guess about where
+  preflight also refuses any value naming this machine — `localhost` or a
+  loopback address, however spelled. A refusal never echoes a password, query
+  or fragment from the value. A default here was a guess about where
   another component lives — which is exactly what neither binary can know, and
   a wrong guess is signed into labels that cannot be recalled.
 
