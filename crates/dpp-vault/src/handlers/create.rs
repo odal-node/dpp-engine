@@ -171,8 +171,10 @@ pub async fn create_handler(
         // because a default here would be a claim about a unit nobody made and a
         // published passport is corrected by a successor rather than an edit.
         life_status: body.life_status,
-        // Established through the transfer routes, which is where the chain and
-        // its Art. 77(7) basis are checked. Creation records no operator.
+        // Nothing writes this yet, here or anywhere else — the transfer routes
+        // record the chain but do not set it. The snapshot needs the operator's
+        // role and the legal basis that makes them answerable, and neither is
+        // operator configuration today. Served, and always absent, until then.
         responsible_operator: None,
         retention_until: None,
         product_id: None,
