@@ -55,7 +55,7 @@ zeroize      = { workspace = true }
 # `roxmltree` forbids unsafe, has no transitive dependencies beyond its own
 # tokenizer, and does no entity expansion — so the billion-laughs class of
 # attack does not apply.
-roxmltree    = "0.20"
+roxmltree    = "0.21"
 
 # XMLDSig verification for trusted lists. Pure Rust, so the node stays a single
 # self-hosted binary — the constraint that ruled out libxmlsec1 bindings and the
