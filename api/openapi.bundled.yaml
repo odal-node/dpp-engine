@@ -3410,7 +3410,7 @@ paths:
                   payload and its proof.
 
                   `resolverBase` is per-deployment (`RESOLVER_BASE_URL`,
-                  default `https://id.odal-node.io`). Error responses carry no
+                  required, no default). Error responses carry no
                   `Link` — an error is not a representation of the passport.
         '404':
           description: |
@@ -4164,7 +4164,7 @@ components:
             - string
             - 'null'
           format: uri
-          description: 'GS1 Digital Link the carrier (QR) encodes, set on publish: {resolverBase}/01/{gtin}/21/{serial} for a trade item, else {resolverBase}/dpp/{id}. resolverBase is per-deployment (RESOLVER_BASE_URL, default https://id.odal-node.io).'
+          description: 'GS1 Digital Link the carrier (QR) encodes, set on publish: {resolverBase}/01/{gtin}/21/{serial} for a trade item, else {resolverBase}/dpp/{id}. resolverBase is per-deployment (RESOLVER_BASE_URL, required, no default).'
         jwsSignature:
           type:
             - string

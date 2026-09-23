@@ -195,12 +195,6 @@ async fn main() -> anyhow::Result<()> {
         "verifying passport signatures against operator DID"
     );
 
-    // The resolver's own public GS1 Digital Link host — printed on carriers and
-    // used to build /01/{gtin} and /dpp/{id} links. Defaults to the shared
-    // Odal-hosted resolver; self-hosters override with their own domain.
-    let resolver_base_url =
-        std::env::var("RESOLVER_BASE_URL").unwrap_or_else(|_| "https://id.odal-node.io".into());
-
     // Scan telemetry (privacy-safe aggregate resolution counts). Off unless
     // SCAN_INGEST_URL is configured: the resolver then accumulates counts in
     // memory and a background task flushes them to the node's internal,
@@ -239,7 +233,7 @@ async fn main() -> anyhow::Result<()> {
     let state = AppState {
         vault_base_url,
         operator_did_url,
-        resolver_base_url,
+        resolver_base_url: cfg.resolver_base_url.clone(),
         cache,
         http,
         scan_counter,

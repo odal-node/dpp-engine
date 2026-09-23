@@ -322,7 +322,7 @@ Anything not covered by a recipe is plain cargo — e.g. `cargo run -p dpp-node`
 to run the node, and `cargo run -p dpp-cli -- bootstrap` to seed operator config
 and the first API key.
 
-**Environment**: Copy `.env.example` to `.env` before running. Required vars: `DATABASE_URL`, `KEY_STORE_PATH`, `KEY_STORE_PASSPHRASE`, `DID_WEB_BASE_URL`.
+**Environment**: Copy `.env.example` to `.env` before running. Required vars: `DATABASE_URL`, `KEY_STORE_PATH`, `KEY_STORE_PASSPHRASE`, `DID_WEB_BASE_URL`, `RESOLVER_BASE_URL` (the resolver requires it too — it has no default in either binary).
 
 ## Architecture
 
