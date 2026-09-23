@@ -99,6 +99,11 @@ services:
       # a recreate would mint a new key and invalidate every passport ever
       # signed. Pin it onto the node-data volume so the key survives restarts.
       KEY_STORE_PATH: keystore.enc
+      # Stamped into every carrier at publish, inside the signature. Named here
+      # as well as in `.env` so both services below read the one value, and so
+      # `odal up` refuses before anything starts rather than a node booting on
+      # a guess.
+      RESOLVER_BASE_URL: ${RESOLVER_BASE_URL:?RESOLVER_BASE_URL must be set in .env}
     volumes:
       - node-data:/data
       - node-plugins:/plugins
@@ -120,6 +125,10 @@ services:
       PORT: "8003"
       VAULT_BASE_URL: http://node:8000/vault
       OPERATOR_DID_URL: http://node:8000/identity/.well-known/did.json
+      # The same value the node signs into each carrier. This service reads no
+      # `env_file`, so without this line every GS1 Digital Link it answered
+      # redirected to a host the operator never configured.
+      RESOLVER_BASE_URL: ${RESOLVER_BASE_URL:?RESOLVER_BASE_URL must be set in .env}
       REDIS_URL: redis://redis:6379
       LOG_LEVEL: ${LOG_LEVEL:-info}
     depends_on:

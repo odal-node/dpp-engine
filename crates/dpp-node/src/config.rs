@@ -78,9 +78,9 @@ pub struct NodeConfig {
 
     // ── Resolver ────────────────────────────────────────────────────────────
     /// Base URL the public resolver serves on, stamped into each passport's
-    /// carrier (QR) URL at publish. Defaults to `https://id.odal-node.io`; a
-    /// self-hoster sets `RESOLVER_BASE_URL` to their own domain so printed
-    /// labels carry it. Must match the resolver deployment's own base.
+    /// carrier (QR) URL at publish. Required, with no default — read through
+    /// [`dpp_common::config::resolver_base_url`], which the resolver reads its
+    /// own copy through too, so the two cannot disagree about the rule.
     pub resolver_base_url: String,
     /// Public base URL under which this deployment serves its continuity
     /// snapshots, declared to the EU registry as each passport's back-up link.
@@ -135,13 +135,12 @@ impl NodeConfig {
     /// Load unified node configuration from environment variables.
     ///
     /// **Required**: `DATABASE_URL`, `KEY_STORE_PATH`, `KEY_STORE_PASSPHRASE`,
-    /// `DID_WEB_BASE_URL`.
+    /// `DID_WEB_BASE_URL`, `RESOLVER_BASE_URL`.
     ///
     /// **Optional**: `DATABASE_MIGRATE_URL`, `NODE_PORT` / `PORT` (default 8001),
     /// `LOG_LEVEL` (default "info"), `CORS_ALLOWED_ORIGINS`, `ADMIN_USERNAME`,
     /// `ADMIN_PASSWORD`, `BATCH_CONCURRENCY` (default 20), `NATS_URL`,
-    /// `PLUGINS_DIR` (default "./plugins"), `METRICS_ADDR` (default "127.0.0.1:9100"),
-    /// `RESOLVER_BASE_URL` (default `https://id.odal-node.io`).
+    /// `PLUGINS_DIR` (default "./plugins"), `METRICS_ADDR` (default "127.0.0.1:9100").
     ///
     /// # Errors
     ///
@@ -156,6 +155,7 @@ impl NodeConfig {
         let key_store_path = var("KEY_STORE_PATH")?;
         let key_store_passphrase = var("KEY_STORE_PASSPHRASE")?;
         let did_web_base_url = var("DID_WEB_BASE_URL")?;
+        let resolver_base_url = dpp_common::config::resolver_base_url()?;
         let admin_username = std::env::var("ADMIN_USERNAME")
             .ok()
             .filter(|s| !s.is_empty());
@@ -213,10 +213,7 @@ impl NodeConfig {
             webhook_allow_private_targets: std::env::var("WEBHOOK_ALLOW_PRIVATE_TARGETS")
                 .map(|s| matches!(s.trim().to_ascii_lowercase().as_str(), "1" | "true" | "yes"))
                 .unwrap_or(false),
-            resolver_base_url: std::env::var("RESOLVER_BASE_URL")
-                .ok()
-                .filter(|s| !s.is_empty())
-                .unwrap_or_else(|| "https://id.odal-node.io".into()),
+            resolver_base_url,
             snapshot_public_base_url: std::env::var("SNAPSHOT_PUBLIC_BASE_URL")
                 .ok()
                 .map(|s| s.trim().to_owned())
@@ -535,7 +532,12 @@ mod tests {
     use super::*;
     use serial_test::serial;
 
-    /// Reset to a clean baseline, then set only the four required vars. Clearing
+    // SAFETY, for every `set_var`/`remove_var` in this module: mutating the
+    // environment is unsound only while another thread reads or writes it.
+    // Every test here that touches it is `#[serial]`, so under `cargo test`'s
+    // shared process no two run at once, and nextest runs each test in a
+    // process of its own. Nothing in `NodeConfig::from_env` spawns a thread.
+    /// Reset to a clean baseline, then set only the five required vars. Clearing
     /// first makes these tests hermetic: a `.env` loaded into the process (e.g.
     /// via `just`'s `set dotenv-load`) cannot leak optional vars such as
     /// `NODE_PORT` or `DATABASE_MIGRATE_URL` into the assertions below.
@@ -550,6 +552,7 @@ mod tests {
         unsafe { std::env::set_var("KEY_STORE_PATH", "/tmp/keys.json") };
         unsafe { std::env::set_var("KEY_STORE_PASSPHRASE", "test-passphrase") };
         unsafe { std::env::set_var("DID_WEB_BASE_URL", "http://localhost") };
+        unsafe { std::env::set_var("RESOLVER_BASE_URL", "http://localhost:8003") };
     }
 
     fn clear_env() {
@@ -570,6 +573,7 @@ mod tests {
             "PLUGINS_DIR",
             "METRICS_ADDR",
             "WEBHOOK_ALLOW_PRIVATE_TARGETS",
+            "RESOLVER_BASE_URL",
         ] {
             unsafe { std::env::remove_var(key) };
         }
@@ -649,6 +653,29 @@ mod tests {
         assert!(msg.contains("DATABASE_URL"));
     }
 
+    /// The value lands inside every signed carrier, so a node that would have
+    /// to guess it does not boot. Everything else required is present here —
+    /// this is the only reason the load can fail.
+    #[test]
+    #[serial]
+    fn a_node_without_a_resolver_base_url_does_not_boot() {
+        set_required_env();
+        unsafe { std::env::remove_var("RESOLVER_BASE_URL") };
+        let msg = NodeConfig::from_env().unwrap_err().to_string();
+        clear_env();
+        assert!(msg.contains("RESOLVER_BASE_URL"), "{msg}");
+    }
+
+    #[test]
+    #[serial]
+    fn the_resolver_base_url_is_carried_without_a_trailing_slash() {
+        set_required_env();
+        unsafe { std::env::set_var("RESOLVER_BASE_URL", "https://dpp.example.com/") };
+        let cfg = NodeConfig::from_env().unwrap();
+        clear_env();
+        assert_eq!(cfg.resolver_base_url, "https://dpp.example.com");
+    }
+
     #[test]
     #[serial]
     fn invalid_port_errors() {
@@ -678,6 +705,7 @@ mod tests {
             std::env::set_var("KEY_STORE_PATH", "/tmp/ks.json");
             std::env::set_var("KEY_STORE_PASSPHRASE", "passphrase-must-not-leak");
             std::env::set_var("DID_WEB_BASE_URL", "https://node.example.com");
+            std::env::set_var("RESOLVER_BASE_URL", "https://dpp.example.com");
             std::env::set_var("ADMIN_USERNAME", "odal-admin");
             std::env::set_var("ADMIN_PASSWORD", "admin-pass-must-not-leak");
         }
