@@ -14,10 +14,18 @@
 #
 # Builder is pinned to bookworm so the binary's glibc matches the bookworm-slim
 # runtime below (rust:1.96-slim tracks newer Debian and would link glibc 2.38+).
+#
+# 🚨 The tag's Rust version MUST equal `rust-toolchain.toml`'s channel — the
+# toolchain CI tests with. The images job fails when they differ. The toolchain
+# file is kept OUT of the build context (see node.Dockerfile.dockerignore), so
+# the compiler is this digest-recorded base image's and nothing else: when the
+# file was in the context, rustup quietly fetched the channel it names over the
+# base image, and the images were built by a compiler neither the tag nor the
+# provenance attestation named.
 ARG BUILD_MODE=published
 
 # ── Build deps shared by both modes ─────────────────────────────────────────────
-FROM rust:1.98-slim-bookworm AS builder-base
+FROM rust:1.96.0-slim-bookworm AS builder-base
 WORKDIR /build
 ENV RUSTC_WRAPPER=""
 
@@ -44,7 +52,12 @@ RUN rm -f .cargo/config.toml
 # work out of the box. This is the artefact operators run — any claim about
 # what the shipped binary contains must be checked against *this* feature
 # set, not against a bare `cargo build`.
-RUN cargo auditable build --release -p dpp-node --features s3
+#
+# `--locked`: the graph `cargo auditable` embeds is the SBOM's crate list, so
+# it must be the committed Cargo.lock — never one cargo quietly re-resolved in
+# the builder. (Not in the local stage below: its [patch] onto ../dpp-core
+# changes the lock by design.)
+RUN cargo auditable build --locked --release -p dpp-node --features s3
 
 # ── local: patch dpp-* to the sibling ../dpp-core source ─────────────────────────
 FROM builder-base AS builder-local

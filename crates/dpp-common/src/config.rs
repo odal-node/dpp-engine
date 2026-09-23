@@ -36,6 +36,83 @@ pub fn required_var(name: &str) -> Result<String> {
     std::env::var(name).with_context(|| format!("missing required env var: {name}"))
 }
 
+/// The public origin every printed data carrier resolves at.
+pub const RESOLVER_BASE_URL: &str = "RESOLVER_BASE_URL";
+
+/// Read [`RESOLVER_BASE_URL`], the one value the node and the resolver must
+/// agree on.
+///
+/// **Required, with no default, in both binaries.** The node writes it into
+/// every passport's carrier URL at publish, inside the signature, so a wrong
+/// value cannot be corrected afterwards. The resolver builds its GS1 Digital
+/// Link redirects and canonical links from it. Both used to fall back to a
+/// hosted address that does not resolve, and the resolver's copy was never
+/// handed the operator's value by the compose file — so every scanned carrier
+/// redirected to a dead host while the node's own configuration looked right.
+/// A default here is a guess about where another component lives, which is
+/// exactly what neither binary can know.
+///
+/// # Errors
+///
+/// When the variable is unset or blank, or is not a URL this value can be (see
+/// [`parse_resolver_base_url`]).
+pub fn resolver_base_url() -> Result<String> {
+    parse_resolver_base_url(std::env::var(RESOLVER_BASE_URL).ok().as_deref())
+}
+
+/// Validate a raw `RESOLVER_BASE_URL` value and return it without a trailing
+/// `/`, so every caller joins paths onto the same form.
+///
+/// Refuses anything that is not an absolute `http` or `https` URL with a host,
+/// and anything carrying credentials, a query or a fragment: each would be
+/// concatenated into every carrier this node prints.
+///
+/// # Errors
+///
+/// Names [`RESOLVER_BASE_URL`] and says what is wrong with the value. The value
+/// is echoed only with its credentials, query and fragment removed: a refusal
+/// is a startup error that lands in logs, and a mistyped value is exactly the
+/// one likely to carry something that should not.
+pub fn parse_resolver_base_url(raw: Option<&str>) -> Result<String> {
+    let value = raw
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .with_context(|| {
+            format!(
+                "missing required env var: {RESOLVER_BASE_URL} — the public origin \
+             this deployment's resolver serves at (e.g. http://localhost:8003 \
+             on a laptop). It is written into every carrier at publish and \
+             cannot be changed afterwards, so there is no default"
+            )
+        })?;
+    let shown = shown_without_secrets(value);
+    let url = url::Url::parse(value)
+        .with_context(|| format!("{RESOLVER_BASE_URL} is not an absolute URL: {shown}"))?;
+    if !matches!(url.scheme(), "http" | "https") {
+        anyhow::bail!("{RESOLVER_BASE_URL} must be an http or https URL: {shown}");
+    }
+    if url.host_str().is_none_or(str::is_empty) {
+        anyhow::bail!("{RESOLVER_BASE_URL} names no host: {shown}");
+    }
+    if !url.username().is_empty() || url.password().is_some() {
+        anyhow::bail!("{RESOLVER_BASE_URL} must not carry credentials: {shown}");
+    }
+    if url.query().is_some() || url.fragment().is_some() {
+        anyhow::bail!(
+            "{RESOLVER_BASE_URL} must not carry a query or fragment (not shown): {shown}"
+        );
+    }
+    Ok(value.trim_end_matches('/').to_owned())
+}
+
+/// A rejected value, fit to print: userinfo stripped by
+/// [`redact_url_credentials`], and everything from the first `?` or `#` cut.
+fn shown_without_secrets(value: &str) -> String {
+    let redacted = redact_url_credentials(value);
+    let end = redacted.find(['?', '#']).unwrap_or(redacted.len());
+    redacted[..end].to_owned()
+}
+
 /// Read a `u16` port from an environment variable, defaulting to `default_port`.
 pub fn port_var(name: &str, default_port: u16) -> Result<u16> {
     std::env::var(name)
@@ -115,5 +192,74 @@ mod tests {
     fn a_schemeless_value_is_redacted_up_to_the_last_at() {
         assert_eq!(redact_url_credentials("user@host"), "host");
         assert_eq!(redact_url_credentials("user:pw@host"), "host");
+    }
+
+    /// No value means no carrier anyone can scan, so there is nothing to fall
+    /// back to — and the refusal has to say which variable, and why.
+    #[test]
+    fn an_absent_or_blank_resolver_base_url_is_refused_by_name() {
+        for raw in [None, Some(""), Some("   ")] {
+            let msg = parse_resolver_base_url(raw).unwrap_err().to_string();
+            assert!(msg.contains(RESOLVER_BASE_URL), "{msg}");
+            assert!(msg.contains("no default"), "{msg}");
+        }
+    }
+
+    /// `localhost:8003` parses as a URL whose *scheme* is `localhost`, so the
+    /// scheme check is what refuses the most likely typo rather than signing a
+    /// relative-looking carrier into every passport.
+    #[test]
+    fn a_resolver_base_url_that_is_not_http_is_refused() {
+        for raw in [
+            "localhost:8003",
+            "ftp://resolver.example",
+            "/dpp",
+            "file:///tmp/resolver",
+        ] {
+            assert!(parse_resolver_base_url(Some(raw)).is_err(), "{raw}");
+        }
+    }
+
+    #[test]
+    fn a_resolver_base_url_carrying_credentials_a_query_or_a_fragment_is_refused() {
+        for raw in [
+            "https://user:pw@resolver.example",
+            "https://resolver.example/?tenant=a",
+            "https://resolver.example/#top",
+        ] {
+            assert!(parse_resolver_base_url(Some(raw)).is_err(), "{raw}");
+        }
+    }
+
+    /// A refusal is a startup error, so it lands in logs. Every path that
+    /// echoes the value must leave out a password or a query token — including
+    /// the refusals that are about something else entirely (here, the scheme).
+    #[test]
+    fn a_refused_resolver_base_url_never_echoes_its_secrets() {
+        for raw in [
+            "ftp://user:s3cret@resolver.example",
+            "https://user:s3cret@resolver.example",
+            "https://resolver.example/?token=s3cret",
+            "https://resolver.example/#s3cret",
+            "not a url with user:s3cret@",
+        ] {
+            let msg = parse_resolver_base_url(Some(raw)).unwrap_err().to_string();
+            assert!(!msg.contains("s3cret"), "{raw} leaked into: {msg}");
+            assert!(msg.contains(RESOLVER_BASE_URL), "{msg}");
+        }
+    }
+
+    /// Both consumers join paths onto the value, and the GTIN redirect used it
+    /// as-is — so a trailing `/` is dropped here, once, rather than by each.
+    #[test]
+    fn a_resolver_base_url_is_returned_without_a_trailing_slash() {
+        assert_eq!(
+            parse_resolver_base_url(Some(" http://localhost:8003/ ")).unwrap(),
+            "http://localhost:8003"
+        );
+        assert_eq!(
+            parse_resolver_base_url(Some("https://dpp.example.com/resolve/")).unwrap(),
+            "https://dpp.example.com/resolve"
+        );
     }
 }

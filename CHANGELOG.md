@@ -10,9 +10,36 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ## [Unreleased]
 
-## [0.14.0] - 2026-09-22
+## [0.14.0] - 2026-09-23
 
 ### Breaking
+
+- **`RESOLVER_BASE_URL` is required, by the node and the resolver, and the
+  resolver now receives it.** *(Breaking: a deployment that never set it no
+  longer starts. Set it to the public origin your resolver serves at —
+  `.env.example` ships `http://localhost:8003` for a laptop — and both services
+  read that one line.)* Both binaries fell back to `https://id.odal-node.io`,
+  which does not resolve, and the compose file handed the resolver an explicit
+  environment with no `env_file` — so it **never saw the operator's value**.
+  Measured on a stack configured exactly as the demo runbook said: the node
+  signed `http://localhost:8003/01/…/21/…` into every carrier, and the resolver
+  answered that very URL with a `307` to the dead host, as did the AAS
+  response's canonical `Link`. Every scanned QR code went nowhere while the
+  node's own configuration looked right.
+
+  The value now has one reader, `dpp_common::config::resolver_base_url`, which
+  both binaries call: required, an absolute `http`/`https` URL with a host, no
+  credentials, query or fragment, returned without a trailing `/`. The compose
+  file passes it to both services with `${RESOLVER_BASE_URL:?}`, so `odal up`
+  refuses before anything starts; under a production profile, `odal up`'s
+  preflight also refuses any value naming this machine — `localhost`, a
+  loopback or unspecified address, IPv4-mapped included, however spelled. It
+  judges the value compose will actually interpolate: a variable exported in the
+  shell overrides `.env`, so a stale export was what got signed while the file
+  read fine — true of every key the preflight checks, not only this one. A
+  refusal never echoes a password, query or fragment from the value. A default here was a guess about where
+  another component lives — which is exactly what neither binary can know, and
+  a wrong guess is signed into labels that cannot be recalled.
 
 - **The redaction moved to `dpp-domain`, and two things it does differently are
   visible on the wire.** *(Breaking for **newly published** passports only.
@@ -143,6 +170,15 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   deployments, so version skew is the steady state rather than a migration
   window.
 
+- **`SEAL_CONFORMANCE_LEVEL` now defaults to the backend's own level — `LTA`
+  for all three backends — where 0.13.0 defaulted to `LT`.** *(Breaking for a
+  node that leaves it unset: every seal it buys now carries an archive
+  timestamp. Set `SEAL_CONFORMANCE_LEVEL=LT` to keep 0.13.0's behaviour.)* Why
+  the default follows the backend is under Added, with the local backend that
+  now emits the whole `B-LTA` structure. Nothing yet renews an archive
+  timestamp before it lapses; the seal audit's `archivalDue` and
+  `archivalLapsed` make the window visible in the meantime.
+
 ### Fixed
 
 - **🚨 The publish-time compliance gate could vanish, and did.** The gate that
@@ -153,10 +189,12 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   no log line, no metric, and no difference on the passport between "evaluated,
   no violations" and "never evaluated".
 
-  It was not hypothetical. When the product group schemas moved to
+  It was not hypothetical, though it was not seen on the core this release pins.
+  Built against core's next schemas, where product identity moves to
   `productIdentifier`, every Wasm plugin still requiring a bare `gtin` began
   returning an error, and passports across nine product groups published with no
-  determination and no violation check at all.
+  determination and no violation check at all. Core 0.20.0's schemas still carry
+  `gtin`, so this release was exposed to the gate vanishing, not to that cause.
 
   A `compute` failure is now a publish refusal under a new
   `compliance_unavailable` reason, distinct from `compliance_violations` —
@@ -173,8 +211,11 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   for the requested version — and `None` skips the schema comparison entirely.
   Its own comment deferred dispatch-time schema selection as "a separate
   concern"; that concern was never implemented, so the declarations were
-  decorative and all ten shipped plugins had drifted below the version their
-  product group serves without a word.
+  decorative and a plugin could fall behind its product group without a word.
+  Against the catalog this release pins (core 0.20.0), one had: **furniture**
+  declares up to `1.1.0` while furniture is served at `1.2.0`, so this release
+  refuses to dispatch to it. The other nine match — measured from each plugin's
+  declared range at core `v0.20.0` against that tag's catalog.
 
   `compute` and `generate_passport_payload` now check the plugin against the
   catalog's current schema version before dispatch, and refuse with
@@ -471,6 +512,24 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   passport's — `productGroupData` is patchable and `productGroup` is not, so
   without that a patch reached the same state by a route that never names a
   product group.
+
+- **The images are compiled by the toolchain their provenance names, from the
+  committed lock.** Both Dockerfiles said `FROM rust:1.98-slim-bookworm`, and
+  both shipped binaries were built by **rustc 1.96.0** — read out of the
+  node binary's own `.comment` section. `rust-toolchain.toml` reached the build
+  context, so rustup fetched the channel it names over the base image mid-build:
+  the SLSA provenance recorded a base image whose compiler built nothing, and
+  the compiler that did was recorded nowhere. The builders now use
+  `rust:1.96.0-slim-bookworm`, the toolchain file is kept out of the context so
+  the base image's compiler is the only one, and a step in CI's images job
+  fails when the tag and `rust-toolchain.toml` disagree — tested in all three
+  directions, including its own patterns no longer matching. Dependabot no
+  longer proposes `rust` bumps on its own, which is how the tag drifted.
+
+  The published builds also run `cargo auditable build --locked`. The crate
+  graph that step embeds is the SBOM's crate list, so it must be the committed
+  `Cargo.lock` rather than whatever cargo would have re-resolved in the
+  builder.
 
 ### Added
 
@@ -1488,9 +1547,13 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 - **The passport response now serves `serialNumber`, `lifeStatus` and
   `responsibleOperator`.** All three are modelled on the core aggregate and were
-  being dropped at the API boundary, so a client reading a passport could not see
-  which physical unit it covered, where that unit sat in its product life, or who
-  was answerable for it under Annex III(k).
+  being dropped at the API boundary. Serving them is not the same as filling
+  them, and only one is filled: `lifeStatus` is set at create for a battery (see
+  above). `serialNumber` is deliberately never written until an adopted
+  delegated act makes a passport cover one unit, and **nothing writes
+  `responsibleOperator` yet** — the role and legal basis it needs are operator
+  configuration that does not exist. Both read as absent on every passport this
+  release publishes.
 
 - **The manufacturer can state a trade name, an electronic address and a
   country.** `ManufacturerInfo` gains `registeredTradeName`, `electronicAddress`
@@ -1632,7 +1695,8 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   this node does not parse could never seal anything.
 
 - **The QTSP seal profile now follows the level actually requested.**
-  `SEAL_CONFORMANCE_LEVEL` defaults to `LT` while this provider's
+  `SEAL_CONFORMANCE_LEVEL` defaulted to `LT` (it is now `LTA` — see Breaking)
+  while this provider's
   `signature_profile` defaulted to `CAdES_BASELINE_T`, so a node configured for
   the provider and nothing else **refused to boot**. That refusal was correct —
   every published passport would have enqueued a seal row that could never drain
