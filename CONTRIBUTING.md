@@ -59,7 +59,7 @@ dpp-engine/
   Cargo.toml              # Workspace root — 10 member crates
   LICENSE                  # BSL-1.1
   docker/                  # Dockerfiles + compose (dev infra + prod stack)
-  scripts/                 # install.sh (curl|bash bootstrap)
+  scripts/                 # the check scripts `just check` runs
   ops/
     pg/                    # PostgreSQL DDL migrations (0001–0012_*.sql)
     demo/                  # CSV/XLSX import fixtures + JSON samples

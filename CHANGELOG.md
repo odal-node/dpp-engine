@@ -10,7 +10,7 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ## [Unreleased]
 
-## [0.14.0] - 2026-09-22
+## [0.14.0] - 2026-09-23
 
 ### Breaking
 
@@ -170,6 +170,15 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   deployments, so version skew is the steady state rather than a migration
   window.
 
+- **`SEAL_CONFORMANCE_LEVEL` now defaults to the backend's own level — `LTA`
+  for all three backends — where 0.13.0 defaulted to `LT`.** *(Breaking for a
+  node that leaves it unset: every seal it buys now carries an archive
+  timestamp. Set `SEAL_CONFORMANCE_LEVEL=LT` to keep 0.13.0's behaviour.)* Why
+  the default follows the backend is under Added, with the local backend that
+  now emits the whole `B-LTA` structure. Nothing yet renews an archive
+  timestamp before it lapses; the seal audit's `archivalDue` and
+  `archivalLapsed` make the window visible in the meantime.
+
 ### Fixed
 
 - **🚨 The publish-time compliance gate could vanish, and did.** The gate that
@@ -180,10 +189,12 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   no log line, no metric, and no difference on the passport between "evaluated,
   no violations" and "never evaluated".
 
-  It was not hypothetical. When the product group schemas moved to
+  It was not hypothetical, though it was not seen on the core this release pins.
+  Built against core's next schemas, where product identity moves to
   `productIdentifier`, every Wasm plugin still requiring a bare `gtin` began
   returning an error, and passports across nine product groups published with no
-  determination and no violation check at all.
+  determination and no violation check at all. Core 0.20.0's schemas still carry
+  `gtin`, so this release was exposed to the gate vanishing, not to that cause.
 
   A `compute` failure is now a publish refusal under a new
   `compliance_unavailable` reason, distinct from `compliance_violations` —
@@ -200,8 +211,11 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   for the requested version — and `None` skips the schema comparison entirely.
   Its own comment deferred dispatch-time schema selection as "a separate
   concern"; that concern was never implemented, so the declarations were
-  decorative and all ten shipped plugins had drifted below the version their
-  product group serves without a word.
+  decorative and a plugin could fall behind its product group without a word.
+  Against the catalog this release pins (core 0.20.0), one had: **furniture**
+  declares up to `1.1.0` while furniture is served at `1.2.0`, so this release
+  refuses to dispatch to it. The other nine match — measured from each plugin's
+  declared range at core `v0.20.0` against that tag's catalog.
 
   `compute` and `generate_passport_payload` now check the plugin against the
   catalog's current schema version before dispatch, and refuse with
@@ -1533,9 +1547,13 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 - **The passport response now serves `serialNumber`, `lifeStatus` and
   `responsibleOperator`.** All three are modelled on the core aggregate and were
-  being dropped at the API boundary, so a client reading a passport could not see
-  which physical unit it covered, where that unit sat in its product life, or who
-  was answerable for it under Annex III(k).
+  being dropped at the API boundary. Serving them is not the same as filling
+  them, and only one is filled: `lifeStatus` is set at create for a battery (see
+  above). `serialNumber` is deliberately never written until an adopted
+  delegated act makes a passport cover one unit, and **nothing writes
+  `responsibleOperator` yet** — the role and legal basis it needs are operator
+  configuration that does not exist. Both read as absent on every passport this
+  release publishes.
 
 - **The manufacturer can state a trade name, an electronic address and a
   country.** `ManufacturerInfo` gains `registeredTradeName`, `electronicAddress`
@@ -1677,7 +1695,8 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   this node does not parse could never seal anything.
 
 - **The QTSP seal profile now follows the level actually requested.**
-  `SEAL_CONFORMANCE_LEVEL` defaults to `LT` while this provider's
+  `SEAL_CONFORMANCE_LEVEL` defaulted to `LT` (it is now `LTA` — see Breaking)
+  while this provider's
   `signature_profile` defaulted to `CAdES_BASELINE_T`, so a node configured for
   the provider and nothing else **refused to boot**. That refusal was correct —
   every published passport would have enqueued a seal row that could never drain
@@ -1744,6 +1763,24 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
   A header rather than a redirect: four doors sit in front of this route, and
   `/01/{gtin}` beside it does not redirect either.
+
+### Removed
+
+- **`scripts/install.sh`, the one-click installer, which could not install
+  anything.** Every source it fetched returned `404` — the script itself, the
+  compose file (saved as a 404 page, since the download had no `--fail`) and the
+  CLI binary, because no GitHub Release exists. The images it would pull are not
+  public. Its `.env` lacked both database passwords and the admin credentials
+  compose requires, and the compose file it placed at the install root reads
+  `../.env` and bind-mounts `../ops/bootstrap/`, so role provisioning would
+  silently never have run. It printed a locally generated `odal_sk_…` as the
+  "API Key", which the node never issued. And when `cargo` was present it ran
+  `cargo install odal-cli`, **a crate name nobody owns** — whoever registered it
+  would have run code on every machine that followed the installer.
+
+  The maintained path is `docs/guides/OPERATOR-SETUP.md`: build `odal`, then
+  `odal init` and `odal up`. A replacement installer is tracked for before 1.0,
+  once the images and the CLI are published for it to install (#397).
 
 ## [0.13.0] - 2026-09-13
 
