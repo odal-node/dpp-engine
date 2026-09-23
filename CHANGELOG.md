@@ -1764,6 +1764,24 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   A header rather than a redirect: four doors sit in front of this route, and
   `/01/{gtin}` beside it does not redirect either.
 
+### Removed
+
+- **`scripts/install.sh`, the one-click installer, which could not install
+  anything.** Every source it fetched returned `404` — the script itself, the
+  compose file (saved as a 404 page, since the download had no `--fail`) and the
+  CLI binary, because no GitHub Release exists. The images it would pull are not
+  public. Its `.env` lacked both database passwords and the admin credentials
+  compose requires, and the compose file it placed at the install root reads
+  `../.env` and bind-mounts `../ops/bootstrap/`, so role provisioning would
+  silently never have run. It printed a locally generated `odal_sk_…` as the
+  "API Key", which the node never issued. And when `cargo` was present it ran
+  `cargo install odal-cli`, **a crate name nobody owns** — whoever registered it
+  would have run code on every machine that followed the installer.
+
+  The maintained path is `docs/guides/OPERATOR-SETUP.md`: build `odal`, then
+  `odal init` and `odal up`. A replacement installer is tracked for before 1.0,
+  once the images and the CLI are published for it to install (#397).
+
 ## [0.13.0] - 2026-09-13
 
 ### Breaking

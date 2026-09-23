@@ -1,91 +1,19 @@
-# Odal Node Installer
+# scripts/
 
-**License:** BSL-1.1
+The checks `just check` runs, and the few helpers the `justfile` calls. Each
+script's header comment says what it enforces and why; `just --list` shows which
+recipe runs it. A `*.test.sh` beside a script proves that gate actually fails —
+a check that has never been seen red proves nothing.
 
----
+These are repository tooling, not something an operator runs.
 
-## What This Is
+## Installing a node
 
-A one-click setup script that scaffolds a complete self-hosted Odal Node stack
-using Docker Compose.
+There is no one-click installer. The one that lived here fetched a script, a
+compose file and a CLI binary that are not published anywhere, and pulled images
+that are not public, so it could not install anything; it was removed rather than
+repaired. A replacement is tracked for before 1.0, once there is something
+published for it to install: #397.
 
----
-
-## Usage
-
-```bash
-curl -sSL https://odal-node.io/install.sh | bash
-```
-
-### Options
-
-| Flag | Default | Description |
-|---|---|---|
-| `--no-cli` | — | Skip installing the `odal` CLI |
-| `--port PORT` | `8001` | Override the node port |
-| `--dir DIR` | `~/.odal` | Installation directory |
-| `--version VERSION` | `latest` | Odal Node image tag to install |
-
-Example — custom port, no CLI:
-```bash
-curl -sSL https://odal-node.io/install.sh | bash -s -- --port 9001 --no-cli
-```
-
----
-
-## What the Script Does
-
-1. Checks prerequisites (`docker`, `docker compose`)
-2. Creates `~/.odal/` (or `--dir`)
-3. Downloads `docker-compose.yml`
-4. Generates a random PostgreSQL password, KeyStore passphrase, and API key
-5. Writes `.env` with the generated secrets
-6. Runs `docker compose up -d`
-7. Polls `/health` endpoints until all services are healthy
-8. Optionally installs the `odal` CLI binary
-9. Prints a summary: node URL, resolver URL, API key, next steps
-
-The script is **idempotent** — re-running it against an existing installation
-will skip secret generation and reuse the existing `.env`.
-
----
-
-## What Gets Deployed
-
-| Service | Port | Description |
-|---|---|---|
-| `dpp-node` | 8001 | MVP binary (vault + identity + integrator) |
-| `dpp-resolver` | 8003 | Public QR resolution |
-| `postgres` | 5432 | PostgreSQL database |
-
-The node exposes sub-routes: `/vault/*`, `/identity/*`, `/integrator/*`.
-
----
-
-## Files
-
-| File | Description |
-|---|---|
-| `install.sh` | One-click installer script |
-| `docker-compose.yml` | Production Docker Compose file |
-| `README.md` | This file |
-
----
-
-## Manual Setup
-
-If you prefer not to pipe from the internet:
-
-```bash
-git clone https://github.com/odal-node/dpp-engine
-cd dpp-engine/installer
-cp ../. env.example .env
-# Edit .env with your preferred passwords
-docker compose up -d
-```
-
----
-
-## Architecture
-
-See [../docs/](../docs/) for full architecture documentation.
+To run a node today, follow [docs/guides/OPERATOR-SETUP.md](../docs/guides/OPERATOR-SETUP.md):
+build `odal` from this repository, then `odal init` and `odal up`.
