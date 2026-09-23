@@ -119,6 +119,9 @@ RESOLVER_PORT=${RESOLVER_PORT}
 KEY_STORE_PATH=keystore.enc
 KEY_STORE_PASSPHRASE=${KS_PASS}
 DID_WEB_BASE_URL=http://localhost:${NODE_PORT}
+# Written into every carrier at publish and never changeable afterwards —
+# replace with your public resolver origin before issuing real labels.
+RESOLVER_BASE_URL=http://localhost:${RESOLVER_PORT}
 
 JWKS_URL=
 JWT_AUDIENCE=odal-api

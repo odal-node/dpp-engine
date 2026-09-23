@@ -588,12 +588,11 @@ jobs:
           #
           # Any Cargo.toml, not only the root one: a crate manifest can change
           # what goes into the binary through a feature default without moving
-          # Cargo.lock at all. rust-toolchain.toml is here because
-          # docker/*.dockerignore does NOT exclude it, so it reaches the build
-          # context and rustup in the builder stage honours it — the images
-          # compile with the channel it names, not with the one in the base
-          # image's tag. ci.yml is here so a change to this job is exercised by
-          # this job.
+          # Cargo.lock at all. rust-toolchain.toml is here because the
+          # Dockerfiles' FROM tag must follow it (the step below fails when they
+          # differ), so a toolchain bump moves the base image too and has to be
+          # built to prove the new tag works. ci.yml is here so a change to this
+          # job is exercised by this job.
           reaches_images='(^docker/|(^|/)Cargo\.toml$|^Cargo\.lock$|^rust-toolchain\.toml$|^\.github/workflows/ci\.yml$)'
           changed="$(git diff --name-only "${BASE_SHA}...HEAD")"
           if printf '%s\n' "$changed" | grep -qE "$reaches_images"; then
@@ -604,6 +603,32 @@ jobs:
             echo "build=false" >> "$GITHUB_OUTPUT"
             echo "Skipping the image build: no Dockerfile, manifest, lockfile, toolchain file or ci.yml change."
           fi
+
+      # Unconditional and cheap: it reads two files. The images once named
+      # `rust:1.98` while compiling with 1.96 — rust-toolchain.toml reached the
+      # build context and rustup fetched its channel over the base image — so
+      # the provenance attestation recorded a base image whose compiler built
+      # nothing. The file is now excluded from the context, which makes the
+      # FROM tag the whole truth; this keeps that tag equal to the toolchain CI
+      # tests with, so what ships and what was tested are one compiler.
+      - name: The image compiles with the toolchain the repository pins
+        working-directory: dpp-engine
+        env:
+          DOCKERFILE: ${{ matrix.dockerfile }}
+        run: |
+          set -euo pipefail
+          dockerfile="${DOCKERFILE#dpp-engine/}"
+          pinned="$(sed -n 's/^channel *= *"\([^"]*\)".*/\1/p' rust-toolchain.toml)"
+          base="$(sed -n 's/^FROM rust:\([^ ]*\)-slim-bookworm AS builder-base$/\1/p' "$dockerfile")"
+          if [ -z "$pinned" ] || [ -z "$base" ]; then
+            echo "::error file=${dockerfile}::could not read the pinned channel ('${pinned}') or the builder's rust tag ('${base}') — the patterns in this step no longer match the files"
+            exit 1
+          fi
+          if [ "$pinned" != "$base" ]; then
+            echo "::error file=${dockerfile}::builder is rust:${base} but rust-toolchain.toml pins ${pinned}. Move both together."
+            exit 1
+          fi
+          echo "${dockerfile} builds with rust ${base}, the channel rust-toolchain.toml pins."
 
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
         if: steps.scope.outputs.build == 'true'

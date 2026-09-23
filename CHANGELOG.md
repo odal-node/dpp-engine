@@ -14,6 +14,33 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ### Breaking
 
+- **`RESOLVER_BASE_URL` is required, by the node and the resolver, and the
+  resolver now receives it.** *(Breaking: a deployment that never set it no
+  longer starts. Set it to the public origin your resolver serves at —
+  `.env.example` ships `http://localhost:8003` for a laptop — and both services
+  read that one line.)* Both binaries fell back to `https://id.odal-node.io`,
+  which does not resolve, and the compose file handed the resolver an explicit
+  environment with no `env_file` — so it **never saw the operator's value**.
+  Measured on a stack configured exactly as the demo runbook said: the node
+  signed `http://localhost:8003/01/…/21/…` into every carrier, and the resolver
+  answered that very URL with a `307` to the dead host, as did the AAS
+  response's canonical `Link`. Every scanned QR code went nowhere while the
+  node's own configuration looked right.
+
+  The value now has one reader, `dpp_common::config::resolver_base_url`, which
+  both binaries call: required, an absolute `http`/`https` URL with a host, no
+  credentials, query or fragment, returned without a trailing `/`. The compose
+  file passes it to both services with `${RESOLVER_BASE_URL:?}`, so `odal up`
+  refuses before anything starts; under a production profile, `odal up`'s
+  preflight also refuses any value naming this machine — `localhost`, a
+  loopback or unspecified address, IPv4-mapped included, however spelled. It
+  judges the value compose will actually interpolate: a variable exported in the
+  shell overrides `.env`, so a stale export was what got signed while the file
+  read fine — true of every key the preflight checks, not only this one. A
+  refusal never echoes a password, query or fragment from the value. A default here was a guess about where
+  another component lives — which is exactly what neither binary can know, and
+  a wrong guess is signed into labels that cannot be recalled.
+
 - **The redaction moved to `dpp-domain`, and two things it does differently are
   visible on the wire.** *(Breaking for **newly published** passports only.
   Every public and audience route serves the payload decoded out of the stored
@@ -485,6 +512,24 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   passport's — `productGroupData` is patchable and `productGroup` is not, so
   without that a patch reached the same state by a route that never names a
   product group.
+
+- **The images are compiled by the toolchain their provenance names, from the
+  committed lock.** Both Dockerfiles said `FROM rust:1.98-slim-bookworm`, and
+  both shipped binaries were built by **rustc 1.96.0** — read out of the
+  node binary's own `.comment` section. `rust-toolchain.toml` reached the build
+  context, so rustup fetched the channel it names over the base image mid-build:
+  the SLSA provenance recorded a base image whose compiler built nothing, and
+  the compiler that did was recorded nowhere. The builders now use
+  `rust:1.96.0-slim-bookworm`, the toolchain file is kept out of the context so
+  the base image's compiler is the only one, and a step in CI's images job
+  fails when the tag and `rust-toolchain.toml` disagree — tested in all three
+  directions, including its own patterns no longer matching. Dependabot no
+  longer proposes `rust` bumps on its own, which is how the tag drifted.
+
+  The published builds also run `cargo auditable build --locked`. The crate
+  graph that step embeds is the SBOM's crate list, so it must be the committed
+  `Cargo.lock` rather than whatever cargo would have re-resolved in the
+  builder.
 
 ### Added
 

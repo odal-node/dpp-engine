@@ -125,6 +125,10 @@ async fn step_infrastructure(cfg: &Config) -> Result<()> {
             "    {}  (e.g. https://your-domain.example)",
             style("DID_WEB_BASE_URL").dim()
         );
+        println!(
+            "    {}  (your resolver's public origin — signed into every QR code)",
+            style("RESOLVER_BASE_URL").dim()
+        );
         println!();
     }
 

@@ -35,21 +35,28 @@ Two things that are hard to convey any other way:
 
 ## 🚨 The three settings that decide whether this works
 
-Two of the three fail **silently**. Read this section before running anything.
+Left unset, the first refuses to start and the second fails **silently**. Set
+to the wrong host, the first fails silently too — inside every signature. Read
+this section before running anything.
 
-### 1. `RESOLVER_BASE_URL` — the default does not resolve
+### 1. `RESOLVER_BASE_URL` — required, and it must be the right one
 
 ```bash
 RESOLVER_BASE_URL=http://localhost:8003      # or your demo host
 ```
 
-The built-in default is `https://id.odal-node.io`, which **does not exist**.
+There is no default: the node and the resolver both refuse to start without it,
+and `odal up` refuses before either does. `.env.example` ships the value above,
+which is right for a laptop.
+
 `build_carrier_url` writes this value into every passport's `qr_code_url` at
 publish, and the passport is then signed — so a wrong value is **inside the
-signature** and cannot be corrected without reissuing. Every QR code would scan
-to nothing.
+signature** and cannot be corrected without reissuing. The resolver builds its
+GS1 Digital Link redirects on the same value, and the compose file hands both
+services the one line in `.env`.
 
-**Set it before the first publish.** Not after.
+**Point it at the host the demo will be scanned from before the first
+publish.** Not after.
 
 ### 2. `CREDENTIAL_ISSUERS_SELF` — without it the demo shows nothing
 
