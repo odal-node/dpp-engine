@@ -72,6 +72,12 @@ updates:
     labels:
       - dependencies
       - docker
+    ignore:
+      # The builder's `rust` tag follows rust-toolchain.toml — the toolchain CI
+      # tests with — and the images job fails when they differ. A bump here
+      # alone is how the images came to name 1.98 while compiling with 1.96.
+      # Move the toolchain file and both FROM lines together, by hand.
+      - dependency-name: "rust"
 
   # Actions are pinned to full commit SHAs — an unpinned third-party action is
   # arbitrary code running against this repo's token. Dependabot understands

@@ -18,3 +18,9 @@ research
 # Local [patch.crates-io] override — never bake the sibling-path patch into an
 # image that must build from crates.io.
 **/.cargo/config.toml
+# The toolchain file stays out of the context. Inside it, rustup honoured the
+# channel it names over the base image and fetched that compiler mid-build —
+# a compiler neither the FROM tag nor the provenance attestation records. The
+# FROM tag is pinned to the same version instead, and CI's images job fails
+# when the two differ.
+**/rust-toolchain.toml
