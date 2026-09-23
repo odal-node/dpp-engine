@@ -12,7 +12,7 @@ bare metal to a live, passport-issuing node.
 | **Docker ≥ 24** (with Compose plugin) | `docker compose version` to verify |
 | **A domain name** | Required for `did:web` — passports are signed against it |
 | **TLS termination** | Reverse proxy (nginx, Caddy) in front of port 8001 recommended for production |
-| **`odal` binary** | Build: `cargo build -p dpp-cli --release` or download a release |
+| **`odal` binary** | Build: `cargo build -p dpp-cli --release` — no prebuilt binary is published yet |
 
 ---
 
