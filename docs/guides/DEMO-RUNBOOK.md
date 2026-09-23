@@ -113,6 +113,21 @@ odal bootstrap
 Seeds operator config and mints the first API key. Keep the key — it is shown
 once.
 
+🚨 **Then register a facility and an operator identifier. Publish refuses
+without both** — every passport in step 4 would come back `422` *"missing
+required registry identity"*, however complete the operator config is. They are
+what answer ESPR Annex III's facility identifier and Art. 13's operator
+identifier on every passport. Demo values are fine, as long as they are valid:
+
+```bash
+odal facility add --name "Demo Plant" --scheme gln --value 4012345000009 \
+  --country DE --default
+odal operator-id add --scheme vat --value DE123456789 --primary
+```
+
+A draft created before these exist still publishes once they do; nothing needs
+re-importing.
+
 ## 4. Publish the demo passports
 
 The corpus lives in `ops/demo/`:

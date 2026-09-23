@@ -5,8 +5,8 @@
 #
 # The scripts below are why that matters. A shell script committed with CRLF
 # fails on Linux with `bad interpreter: /bin/bash^M`, and the two places it would
-# surface are the least convenient possible: CI, and `scripts/install.sh`, which
-# users run. Nothing is broken today (every script is LF in the index); this is
+# surface are the least convenient possible: CI, and `ops/bootstrap/pg-init.sh`,
+# which the Postgres container runs on an operator's machine. Nothing is broken today (every script is LF in the index); this is
 # what keeps it that way.
 * text=auto eol=lf
 

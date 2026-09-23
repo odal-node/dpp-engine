@@ -32,10 +32,9 @@ REDOCLY_VERSION := "2.46.2"
 # environment, and compose interpolation reads the env file it was given, not
 # the environment it inherits.
 #
-# The installer path was never affected — `scripts/install.sh` writes
-# `docker-compose.yml` and `.env` into the same directory, so they line up
-# there. This was only ever the in-repo developer path, which is the one
-# CLAUDE.md tells you to use.
+# `odal up` was never affected — it passes `--env-file` itself
+# (`cli/src/core/infra.rs`). This was only ever the in-repo developer path,
+# which is the one CLAUDE.md tells you to use.
 COMPOSE := "docker compose --env-file .env"
 
 # ---------------------------------------------------------------------------
