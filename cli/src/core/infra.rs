@@ -193,6 +193,7 @@ pub fn preflight_prod_env(compose_file: &Path) -> Result<()> {
         "DATABASE_APP_PASS",
         "KEY_STORE_PASSPHRASE",
         "DID_WEB_BASE_URL",
+        "RESOLVER_BASE_URL",
         "ADMIN_USERNAME",
         "ADMIN_PASSWORD",
     ];
@@ -201,6 +202,9 @@ pub fn preflight_prod_env(compose_file: &Path) -> Result<()> {
         "change_me_in_env",
         "dev-passphrase-change-in-prod",
         "admin",
+        // `.env.example`'s laptop resolver. Not a secret, but a production node
+        // publishing with it signs a carrier no customer can scan, permanently.
+        "http://localhost:8003",
     ];
 
     if !env_path.exists() {
@@ -579,6 +583,37 @@ mod tests {
             assert!(path.metadata().unwrap().len() > 0, "{} is empty", file.rel);
         }
         assert!(missing_scaffold_files(root.path()).is_empty());
+    }
+
+    /// The laptop value `.env.example` ships is right for a demo and wrong for a
+    /// production node, where it would be signed into every carrier it prints.
+    #[test]
+    fn a_production_env_left_on_the_laptop_resolver_is_refused() {
+        let root = tempfile::TempDir::new().unwrap();
+        let compose = root.path().join("docker").join(COMPOSE_FILE);
+        std::fs::write(
+            root.path().join(".env"),
+            "DATABASE_POSTGRES_PASS=pg-strong\n\
+             DATABASE_APP_PASS=app-strong\n\
+             KEY_STORE_PASSPHRASE=ks-strong\n\
+             DID_WEB_BASE_URL=https://acme.example\n\
+             RESOLVER_BASE_URL=http://localhost:8003\n\
+             ADMIN_USERNAME=acme-admin\n\
+             ADMIN_PASSWORD=admin-strong\n",
+        )
+        .unwrap();
+
+        let msg = preflight_prod_env(&compose).unwrap_err().to_string();
+        assert!(msg.contains("RESOLVER_BASE_URL"), "{msg}");
+
+        std::fs::write(
+            root.path().join(".env"),
+            std::fs::read_to_string(root.path().join(".env"))
+                .unwrap()
+                .replace("http://localhost:8003", "https://dpp.acme.example"),
+        )
+        .unwrap();
+        preflight_prod_env(&compose).expect("a real resolver origin passes");
     }
 
     /// Re-running `odal init` on a configured install must not overwrite an

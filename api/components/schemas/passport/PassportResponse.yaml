@@ -132,7 +132,7 @@ properties:
       GS1 Digital Link the carrier (QR) encodes, set on publish:
       {resolverBase}/01/{gtin}/21/{serial} for a trade item, else
       {resolverBase}/dpp/{id}. resolverBase is per-deployment
-      (RESOLVER_BASE_URL, default https://id.odal-node.io).
+      (RESOLVER_BASE_URL, required, no default).
   jwsSignature:
     type:
       - string

@@ -14,6 +14,28 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ### Breaking
 
+- **`RESOLVER_BASE_URL` is required, by the node and the resolver, and the
+  resolver now receives it.** *(Breaking: a deployment that never set it no
+  longer starts. Set it to the public origin your resolver serves at —
+  `.env.example` ships `http://localhost:8003` for a laptop — and both services
+  read that one line.)* Both binaries fell back to `https://id.odal-node.io`,
+  which does not resolve, and the compose file handed the resolver an explicit
+  environment with no `env_file` — so it **never saw the operator's value**.
+  Measured on a stack configured exactly as the demo runbook said: the node
+  signed `http://localhost:8003/01/…/21/…` into every carrier, and the resolver
+  answered that very URL with a `307` to the dead host, as did the AAS
+  response's canonical `Link`. Every scanned QR code went nowhere while the
+  node's own configuration looked right.
+
+  The value now has one reader, `dpp_common::config::resolver_base_url`, which
+  both binaries call: required, an absolute `http`/`https` URL with a host, no
+  credentials, query or fragment, returned without a trailing `/`. The compose
+  file passes it to both services with `${RESOLVER_BASE_URL:?}`, so `odal up`
+  refuses before anything starts; under a production profile, `odal up`'s
+  preflight also refuses the laptop value as a dev default. A default here was a guess about where
+  another component lives — which is exactly what neither binary can know, and
+  a wrong guess is signed into labels that cannot be recalled.
+
 - **The redaction moved to `dpp-domain`, and two things it does differently are
   visible on the wire.** *(Breaking for **newly published** passports only.
   Every public and audience route serves the payload decoded out of the stored
