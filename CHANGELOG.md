@@ -499,6 +499,24 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   without that a patch reached the same state by a route that never names a
   product group.
 
+- **The images are compiled by the toolchain their provenance names, from the
+  committed lock.** Both Dockerfiles said `FROM rust:1.98-slim-bookworm`, and
+  both shipped binaries were built by **rustc 1.96.0** — read out of the
+  node binary's own `.comment` section. `rust-toolchain.toml` reached the build
+  context, so rustup fetched the channel it names over the base image mid-build:
+  the SLSA provenance recorded a base image whose compiler built nothing, and
+  the compiler that did was recorded nowhere. The builders now use
+  `rust:1.96.0-slim-bookworm`, the toolchain file is kept out of the context so
+  the base image's compiler is the only one, and a step in CI's images job
+  fails when the tag and `rust-toolchain.toml` disagree — tested in all three
+  directions, including its own patterns no longer matching. Dependabot no
+  longer proposes `rust` bumps on its own, which is how the tag drifted.
+
+  The published builds also run `cargo auditable build --locked`. The crate
+  graph that step embeds is the SBOM's crate list, so it must be the committed
+  `Cargo.lock` rather than whatever cargo would have re-resolved in the
+  builder.
+
 ### Added
 
 - **Both published images now carry an SBOM and SLSA provenance.** Read them
