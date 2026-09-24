@@ -1,7 +1,7 @@
 //! On-disk profile file (`config.toml`): load/save, legacy migration, the
 //! active-profile override, and the `odal profile …` CRUD surface.
 
-use std::{collections::BTreeMap, fs, sync::OnceLock};
+use std::{collections::BTreeMap, fs, path::Path, sync::OnceLock};
 
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
@@ -120,16 +120,18 @@ pub(super) fn normalize(mut p: Profile) -> Profile {
 
 /// Resolve a profile's API key: `ODAL_API_KEY` env → credentials store →
 /// (back-compat) any `api_key` still inline in `config.toml`.
-pub(super) fn resolve_api_key(name: &str, profile: &Profile) -> String {
+/// The env var wins before the store is even opened, so a corrupt credentials
+/// file cannot block the 12-factor path that does not need it.
+pub(super) fn resolve_api_key(name: &str, profile: &Profile) -> Result<String> {
     if let Ok(key) = std::env::var("ODAL_API_KEY")
         && !key.is_empty()
     {
-        return key;
+        return Ok(key);
     }
-    if let Some(key) = crate::credentials::load_key(name) {
-        return key;
+    if let Some(key) = crate::credentials::load_key(name)? {
+        return Ok(key);
     }
-    profile.api_key.clone()
+    Ok(profile.api_key.clone())
 }
 
 impl ConfigFile {
@@ -142,15 +144,39 @@ impl ConfigFile {
         }
         let content = fs::read_to_string(&path)
             .with_context(|| format!("Failed to read config: {}", path.display()))?;
+        Self::parse(&content, &path)
+    }
 
+    /// Parse the config file's contents, naming the file in any failure.
+    ///
+    /// A parse failure must **never** degrade to `Self::default()`. An empty
+    /// `ConfigFile` is indistinguishable from a fresh install, and
+    /// [`Self::write`] replaces the whole file, so a swallowed error made the
+    /// next command that persists anything — `profile create`, `profile use`,
+    /// `Config::save` — rewrite `config.toml` with that one profile and drop
+    /// every other, silently.
+    ///
+    /// The legacy fallback below is a different thing and is preserved: a
+    /// pre-profiles flat file is *valid* TOML whose keys this struct does not
+    /// name, so it parses here as an empty `ConfigFile` (serde ignores unknown
+    /// fields) and reaches the migration on the empty-profiles branch — not via
+    /// a parse error. Only the unconditional swallow is gone.
+    fn parse(content: &str, path: &Path) -> Result<Self> {
         // Try the new profile-based format first.
-        let file: ConfigFile = toml::from_str(&content).unwrap_or_default();
+        let file: ConfigFile = toml::from_str(content).with_context(|| {
+            format!(
+                "Failed to parse config: {}. Fix or move that file — refusing to \
+                 continue as though nothing were configured, because saving a profile \
+                 would then overwrite every profile it still holds.",
+                path.display()
+            )
+        })?;
         if !file.profiles.is_empty() {
             return Ok(file);
         }
 
         // Fall back to migrating a legacy flat config.
-        if let Ok(legacy) = toml::from_str::<LegacyConfig>(&content)
+        if let Ok(legacy) = toml::from_str::<LegacyConfig>(content)
             && legacy.has_content()
         {
             let mut profiles = BTreeMap::new();
@@ -348,6 +374,59 @@ mod tests {
         assert_eq!(p.api_key, "odal_sk_legacy");
         // Non-localhost vault → inferred prod.
         assert_eq!(p.kind, EnvKind::Prod);
+    }
+
+    /// A config that does not parse must be an error, never `Self::default()`.
+    ///
+    /// The round-trip test above cannot reach this: it serialises and
+    /// deserialises with the same `toml` version, so it only ever sees input
+    /// this build can parse. The case guarded here is input this build *cannot*
+    /// parse degrading to an empty file that `write` then commits over every
+    /// configured profile.
+    #[test]
+    fn a_malformed_config_is_an_error_not_an_empty_default() {
+        let malformed = "current_profile = \"new_dev\"\n\
+                         [profiles.new_dev]\n\
+                         vault_url = \"https://node.example.com/vault\n";
+        let path = Path::new("/home/op/.config/odal/config.toml");
+        let err = ConfigFile::parse(malformed, path)
+            .expect_err("a malformed config must not parse as an empty file");
+        let rendered = format!("{err:#}");
+        assert!(
+            rendered.contains("config.toml"),
+            "the error must name the file to fix:\n{rendered}"
+        );
+    }
+
+    /// The legacy migration must survive the change above.
+    ///
+    /// It is reached on the parsed-but-no-profiles branch, not on a parse error:
+    /// a flat pre-profiles file is valid TOML whose keys `ConfigFile` does not
+    /// name, so serde ignores them. Asserting that through `parse` — rather than
+    /// against `LegacyConfig` alone, as the test below it does — is what pins
+    /// the branch order, since propagating the error would otherwise be free to
+    /// cut the fallback off.
+    #[test]
+    fn a_legacy_flat_config_still_migrates_through_parse() {
+        let legacy = "vault_url = \"https://old.example/vault\"\n\
+                      api_key = \"odal_sk_legacy\"\n";
+        let path = Path::new("/home/op/.config/odal/config.toml");
+        let file = ConfigFile::parse(legacy, path).expect("a legacy flat config must still load");
+        assert_eq!(file.current_profile.as_deref(), Some(DEFAULT_PROFILE));
+        let p = file
+            .profiles
+            .get(DEFAULT_PROFILE)
+            .expect("migrated into the default profile");
+        assert_eq!(p.vault_url, "https://old.example/vault");
+        assert_eq!(p.api_key, "odal_sk_legacy");
+    }
+
+    /// An absent file is a fresh install; an empty one carries no profiles.
+    /// Making a parse failure loud must not make either of those loud.
+    #[test]
+    fn an_empty_config_still_parses_as_no_profiles() {
+        let path = Path::new("/home/op/.config/odal/config.toml");
+        assert!(ConfigFile::parse("", path).unwrap().profiles.is_empty());
     }
 
     #[test]
