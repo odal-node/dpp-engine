@@ -256,6 +256,21 @@ debug-check:
 no-rsa-private-key:
     bash scripts/no-rsa-private-key.sh
 
+# Hold the claim in crates/dpp-seal/Cargo.toml: trusted list XML is parsed on
+# roxmltree's default, DTD-refusing path. roxmltree 0.21.0 added
+# `ParsingOptions::entity_resolver`, which resolves external entities by URI —
+# XXE, on documents this node fetches over the network. Safety is now a property
+# of the call sites, so naming either `parse_with_options` or `ParsingOptions`
+# in dpp-seal is the failure.
+no-xml-entity-resolution:
+    bash scripts/no-xml-entity-resolution.sh
+
+# Prove the gate above still rejects what it claims to reject, and still accepts
+# the committed crate. Its built-in self-test runs against a scratch tree and can
+# pass where the real crate has been renamed out from under it; this cannot.
+no-xml-entity-resolution-self-test:
+    bash scripts/no-xml-entity-resolution.test.sh
+
 # Forbid raw "dpp.passport."/"dpp.import." subject literals outside dpp-common::event
 # (event_type/NATS-subject strings must come from the `subjects` constants, or a
 # renamed subject silently stops matching subscribers).
@@ -327,7 +342,7 @@ doc:
     cargo doc --workspace --no-deps
 
 # Fast gate (no Docker) — mirrors CI jobs: fmt, clippy, debug-prints, test-unit, audit
-check: fmt-check lint debug-check no-rsa-private-key subjects-check mod-rs-check harness-check contract-fixture-check contract-fixture-check-self-test spec-version-check outbound-check grants-check migrations-check check-plugins test check-integration audit
+check: fmt-check lint debug-check no-rsa-private-key no-xml-entity-resolution no-xml-entity-resolution-self-test subjects-check mod-rs-check harness-check contract-fixture-check contract-fixture-check-self-test spec-version-check outbound-check grants-check migrations-check check-plugins test check-integration audit
 
 # Full local CI mirror — adds integration-feature clippy + the Docker tiers (needs Docker running)
 ci: check lint-integration test-integration test-pg

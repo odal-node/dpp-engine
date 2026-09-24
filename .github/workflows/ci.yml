@@ -379,6 +379,31 @@ jobs:
         working-directory: dpp-engine
         run: bash scripts/contract-fixture-check.test.sh
 
+  no-xml-entity-resolution:
+    name: Trusted list XML stays on roxmltree's DTD-refusing default
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          path: dpp-engine
+      # Shell only — no Rust toolchain, so this reports in seconds and is
+      # independent of whether the workspace builds. Its own job rather than a
+      # step inside another, so "someone enabled the XML entity resolver" is a
+      # distinct red check.
+      #
+      # roxmltree 0.21.0 added `ParsingOptions::entity_resolver`, which resolves
+      # external entities by public ID and URI. dpp-seal parses trusted lists
+      # fetched over the network, so enabling it would have the parser
+      # dereference a URI the parsed document chose.
+      - name: dpp-seal names no parse_with_options or ParsingOptions
+        working-directory: dpp-engine
+        run: bash scripts/no-xml-entity-resolution.sh
+      # A grep gate with a broken anchor exits 0 forever and is
+      # indistinguishable from a passing one, so the gate is itself tested.
+      - name: Gate self-test
+        working-directory: dpp-engine
+        run: bash scripts/no-xml-entity-resolution.test.sh
+
   mod-rs-check:
     name: No public items in mod.rs (index files only)
     runs-on: ubuntu-latest

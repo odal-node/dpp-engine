@@ -10,6 +10,35 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ## [Unreleased]
 
+### Security
+
+- **The trusted list signature-profile check reads unprefixed XMLDSig
+  attributes again.** `roxmltree` 0.21.0 changed an unprefixed
+  `Node::attribute("URI")` lookup to match any attribute whose *local* name is
+  `URI` — `x:URI` included — returning the first in document order. Trusted
+  lists arrive over the network, so that order is the document's to choose: a
+  decoy `x:URI=""` placed ahead of a real `URI="#elsewhere"` made a fragment
+  reference read as the document-wide one, and `check_signature_profile` waved
+  through exactly the signature wrapping it exists to stop. The same lookup
+  reads the transform `Algorithm`, where a decoy naming the mandated transform
+  ahead of a real XPath would have hidden a permissive chain — and `xml-sec`
+  accepts XPath by default. Both now go through a helper that matches only an
+  attribute with no namespace, which is what CID (EU) 2015/1505 Annex I
+  describes; two cases in `signature_profile` pin it, and both fail against the
+  old lookup.
+
+### Changed
+
+- `roxmltree` 0.21.1 (from 0.20.0). It now depends on `memchr`, which was
+  already in the lock with 22 other dependents, so the graph gains an edge and
+  no crate. The note in `crates/dpp-seal/Cargo.toml` is rewritten to match: the
+  release also added `ParsingOptions::entity_resolver`, which resolves external
+  entities by URI, so refusing XXE on network-fetched XML is now a property of
+  the call sites — every one uses `Document::parse`, whose defaults are
+  `allow_dtd: false` and `entity_resolver: None` — rather than something the
+  crate is incapable of. `scripts/no-xml-entity-resolution.sh` fails the build
+  if `parse_with_options` or `ParsingOptions` appears in `dpp-seal`.
+
 ## [0.14.0] - 2026-09-23
 
 ### Breaking
