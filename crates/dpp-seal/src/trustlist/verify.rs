@@ -610,6 +610,30 @@ const ENVELOPED_SIGNATURE: &str = "http://www.w3.org/2000/09/xmldsig#enveloped-s
 /// Exclusive canonicalization, the second.
 const EXCLUSIVE_C14N: &str = "http://www.w3.org/2001/10/xml-exc-c14n#";
 
+/// The value of an attribute with this local name and **no namespace**.
+///
+/// `Node::attribute` cannot express that since roxmltree 0.21.0, and the
+/// difference is load-bearing here. Before 0.21.0 an unprefixed lookup compared
+/// expanded names, so `attribute("URI")` matched only an unprefixed `URI`. Since
+/// 0.21.0 it matches any attribute whose *local* name is `URI` — `x:URI`
+/// included — and returns the first in document order.
+///
+/// XMLDSig attributes are unprefixed by specification, so on a conformant
+/// document the two behave identically. On a hostile one they do not: a
+/// `<ds:Reference x:URI="" URI="#elsewhere">` reads back as `URI=""` under
+/// 0.21.0, which is this module mistaking a fragment reference for the
+/// document-wide one. Attribute order is the attacker's to choose, so the decoy
+/// always wins.
+///
+/// That was confirmed rather than reasoned about — see
+/// `signature_profile::a_namespaced_decoy_uri_does_not_impersonate_the_document_reference`,
+/// which fails against `node.attribute(…)` and passes against this.
+fn unprefixed_attribute<'a>(node: Node<'a, '_>, name: &str) -> Option<&'a str> {
+    node.attributes()
+        .find(|a| a.namespace().is_none() && a.name() == name)
+        .map(|a| a.value())
+}
+
 /// Check the signature against the transform profile the law mandates.
 ///
 /// ✅ COMPLIANCE-PIN: CID (EU) 2015/1505 Annex I, Chapter II, the "Signature
@@ -664,7 +688,9 @@ fn check_signature_profile(xml: &str) -> Result<(), String> {
     let whole_document: Vec<Node> = signed_info
         .children()
         .filter(|n| {
-            n.is_element() && n.tag_name().name() == "Reference" && n.attribute("URI") == Some("")
+            n.is_element()
+                && n.tag_name().name() == "Reference"
+                && unprefixed_attribute(*n, "URI") == Some("")
         })
         .collect();
 
@@ -701,7 +727,7 @@ fn check_signature_profile(xml: &str) -> Result<(), String> {
     let algorithms: Vec<&str> = transform_sets[0]
         .children()
         .filter(|n| n.is_element() && n.tag_name().name() == "Transform")
-        .map(|n| n.attribute("Algorithm").unwrap_or_default())
+        .map(|n| unprefixed_attribute(n, "Algorithm").unwrap_or_default())
         .collect();
 
     match algorithms.as_slice() {

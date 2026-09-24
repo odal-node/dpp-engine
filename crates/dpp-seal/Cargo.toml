@@ -52,10 +52,41 @@ zeroize      = { workspace = true }
 # Documents are bounded by the caller's fetch cap before they reach here, so
 # holding one in memory is affordable and correctness wins.
 #
-# `roxmltree` forbids unsafe, has no transitive dependencies beyond its own
-# tokenizer, and does no entity expansion — so the billion-laughs class of
-# attack does not apply.
-roxmltree    = "0.20"
+# `roxmltree` itself forbids unsafe (`#![forbid(unsafe_code)]`), and its
+# tokenizer is an internal module rather than a dependency. Since 0.21.0 it also
+# pulls `memchr`, for delimiter scanning. That edge adds no crate to the supply
+# chain — `memchr` is already in `Cargo.lock` with 22 other dependents — but it
+# does mean "forbids unsafe" is now a statement about `roxmltree` alone and not
+# about its tree: `memchr` uses unsafe for its SIMD paths.
+#
+# ── XXE is now a call-site property, not a crate property ──────────────────
+#
+# This note used to say `roxmltree` "does no entity expansion", and that stopped
+# being true of the crate in 0.21.0, which added `ParsingOptions::entity_resolver`
+# — a hook that resolves **external** entities referenced by public ID and URI.
+# On XML this node fetches over the network, that is XXE: the parser would
+# dereference a URI chosen by the document being parsed.
+#
+# What makes the code safe is therefore no longer that the parser cannot do it.
+# It is that every production call site uses `Document::parse`, which takes
+# `ParsingOptions::default()` — `allow_dtd: false` (roxmltree's own docs: set
+# "to false by default for security reasons") and `entity_resolver: None`. Both
+# defaults have to be flipped to open the hole, and `allow_dtd` is the outer
+# one: the tokenizer rejects a document carrying a DTD before any entity
+# declaration is read, so the resolver is unreachable while it stays false.
+#
+# That is discipline, and discipline rots silently, so it is enforced rather
+# than asserted: `scripts/no-xml-entity-resolution.sh` fails if
+# `parse_with_options` or `ParsingOptions` appears anywhere in this crate.
+# Reaching for either means taking on the argument this note is making.
+#
+# Billion laughs is a separate question and the answer has not changed. The old
+# note credited "no entity expansion" for it, which was never quite the reason:
+# `roxmltree` carries its own entity loop-and-depth detector, there is no option
+# to switch it off, and its own docs call `allow_dtd: false` "just an extra
+# security measure" on top. So that class stays defended either way, and it is
+# not what the gate above is about — external entities are.
+roxmltree    = "0.21"
 
 # XMLDSig verification for trusted lists. Pure Rust, so the node stays a single
 # self-hosted binary — the constraint that ruled out libxmlsec1 bindings and the
