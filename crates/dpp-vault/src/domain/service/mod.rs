@@ -168,9 +168,11 @@ pub struct PassportService {
     /// URL the registry cannot fetch is worse than none.
     pub snapshot_public_base_url: Option<String>,
     /// Base URL the resolver serves on, used to build each passport's carrier
-    /// (QR) URL at publish. Defaults to `https://id.odal-node.io`; set per
-    /// deployment (a self-hoster's own domain) via [`Self::with_resolver_base_url`]
-    /// so printed labels carry the operator's domain, not a hardcoded host.
+    /// (QR) URL at publish. A constructor argument with no default: it is
+    /// signed into every carrier, so a fallback here would be a guess about
+    /// where the resolver lives — the same guess `RESOLVER_BASE_URL` stopped
+    /// making in the binaries. A binary reads it through
+    /// `dpp_common::config::resolver_base_url`.
     pub resolver_base_url: String,
 }
 
@@ -186,6 +188,7 @@ impl PassportService {
         registry_sync: Arc<dyn RegistrySyncPort>,
         archive: Arc<dyn ArchivePort>,
         operator: OperatorIdentity,
+        resolver_base_url: String,
     ) -> Self {
         Self {
             repo,
@@ -208,7 +211,7 @@ impl PassportService {
             seal_outbox: None,
             seal_inspector: None,
             snapshot_public_base_url: None,
-            resolver_base_url: "https://id.odal-node.io".to_owned(),
+            resolver_base_url,
         }
     }
 
@@ -318,14 +321,6 @@ impl PassportService {
     #[must_use]
     pub fn with_seal_inspector(mut self, inspector: Arc<dyn dpp_types::SealInspector>) -> Self {
         self.seal_inspector = Some(inspector);
-        self
-    }
-
-    /// Set the resolver base URL used to build passport carrier (QR) URLs at
-    /// publish. Defaults to `https://id.odal-node.io` when not set.
-    #[must_use]
-    pub fn with_resolver_base_url(mut self, base: String) -> Self {
-        self.resolver_base_url = base;
         self
     }
 
