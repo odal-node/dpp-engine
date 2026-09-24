@@ -1,4 +1,4 @@
-//! Integration test: `S3SnapshotStore` against a real MinIO instance.
+//! Integration test: `S3SnapshotStore` against a real S3-compatible server.
 //!
 //! Run: `cargo test -p dpp-node --features integration-tests`
 //!
@@ -28,7 +28,7 @@
 
 use testcontainers::{
     GenericImage, ImageExt,
-    core::{WaitFor, ports::ContainerPort},
+    core::{Host, ports::ContainerPort},
     runners::AsyncRunner,
 };
 
@@ -36,65 +36,114 @@ use chrono::{Duration, SubsecRound as _, Utc};
 use dpp_node::infra::s3_snapshot::{S3SnapshotConfig, S3SnapshotStore};
 use dpp_types::snapshot::{SnapshotMeta, SnapshotStore, snapshot_json_key};
 
-/// The MinIO build this file tests against.
+/// The S3 server build this file tests against.
 ///
-/// 🚨 `quay.io`, not Docker Hub — `docker.io/minio/minio` was removed and every
-/// pull is denied. Pinned to the same pair `s3_archive.rs` and the CI workflow
+/// 🚨 RustFS, not MinIO — neither `docker.io/minio/minio` nor
+/// `quay.io/minio/minio` can be pulled any more; `s3_archive.rs` says how that
+/// was established. Pinned to the same pair `s3_archive.rs` and the CI workflow
 /// use; the three must move together.
-const MINIO_IMAGE: (&str, &str) = ("quay.io/minio/minio", "RELEASE.2025-09-07T16-13-09Z");
+const S3_IMAGE: (&str, &str) = ("rustfs/rustfs", "1.0.0");
 
-/// Point this at a running MinIO and the suite uses it instead of starting a
+/// Point this at a running S3 server and the suite uses it instead of starting a
 /// container. Same arrangement `s3_archive.rs` uses, for the same reason:
 /// nextest gives each test its own process, so an in-process shared container
 /// is one container per test again.
 const SHARED_ENDPOINT_ENV: &str = "ODAL_TEST_S3_ENDPOINT";
 
-struct Minio {
+/// The shared server's key pair — same variables `s3_archive.rs` reads.
+const SHARED_ACCESS_KEY_ENV: &str = "ODAL_TEST_S3_ACCESS_KEY";
+const SHARED_SECRET_KEY_ENV: &str = "ODAL_TEST_S3_SECRET_KEY";
+
+struct S3Server {
     _container: Option<testcontainers::ContainerAsync<GenericImage>>,
     endpoint: String,
     bucket: String,
+    access_key: String,
+    secret_key: String,
 }
 
-async fn start_minio() -> Minio {
+fn shared_key(name: &str) -> String {
+    std::env::var(name)
+        .ok()
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| panic!("{SHARED_ENDPOINT_ENV} is set, so {name} must be too"))
+}
+
+async fn start_s3() -> S3Server {
     let bucket = format!("test-snapshot-{}", uuid::Uuid::new_v4().simple());
 
     if let Some(endpoint) = std::env::var(SHARED_ENDPOINT_ENV)
         .ok()
         .filter(|s| !s.is_empty())
     {
-        return Minio {
+        return S3Server {
             _container: None,
             endpoint,
             bucket,
+            access_key: shared_key(SHARED_ACCESS_KEY_ENV),
+            secret_key: shared_key(SHARED_SECRET_KEY_ENV),
         };
     }
 
-    let image = GenericImage::new(MINIO_IMAGE.0, MINIO_IMAGE.1)
-        .with_exposed_port(ContainerPort::Tcp(9000))
-        .with_wait_for(WaitFor::message_on_stderr("API:"))
-        .with_env_var("MINIO_ROOT_USER", "minioadmin")
-        .with_env_var("MINIO_ROOT_PASSWORD", "minioadmin")
-        .with_cmd(vec!["server", "/data", "--console-address", ":9001"]);
+    // A fresh pair per container, so no reusable credential is written down.
+    let access_key = uuid::Uuid::new_v4().simple().to_string();
+    let secret_key = uuid::Uuid::new_v4().simple().to_string();
 
-    let container = image.start().await.expect("start minio container");
+    let image = GenericImage::new(S3_IMAGE.0, S3_IMAGE.1)
+        .with_exposed_port(ContainerPort::Tcp(9000))
+        .with_env_var("RUSTFS_ACCESS_KEY", access_key.clone())
+        .with_env_var("RUSTFS_SECRET_KEY", secret_key.clone())
+        // No update check reaches the network; `s3_archive.rs` says why this
+        // is a host pin and not an environment variable.
+        .with_host(
+            "version.rustfs.com",
+            Host::Addr(std::net::Ipv4Addr::LOCALHOST.into()),
+        );
+
+    let container = image.start().await.expect("start the S3 server container");
     let port = container
         .get_host_port_ipv4(9000)
         .await
-        .expect("minio mapped port");
+        .expect("S3 server mapped port");
+    let endpoint = format!("http://127.0.0.1:{port}");
+    wait_until_ready(&endpoint).await;
 
-    Minio {
+    S3Server {
         _container: Some(container),
-        endpoint: format!("http://127.0.0.1:{port}"),
+        endpoint,
         bucket,
+        access_key,
+        secret_key,
     }
 }
 
-fn config(minio: &Minio) -> S3SnapshotConfig {
+/// Poll the server's readiness route for at most 30 seconds, each probe under
+/// its own timeout. `s3_archive.rs` says why readiness and why the per-probe
+/// bound.
+async fn wait_until_ready(endpoint: &str) {
+    let url = format!("{endpoint}/health/ready");
+    let probe = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(2))
+        .build()
+        .expect("probe client");
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(30);
+    while tokio::time::Instant::now() < deadline {
+        if let Ok(r) = probe.get(&url).send().await
+            && r.status().is_success()
+        {
+            return;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    }
+    panic!("the S3 server at {endpoint} was not ready within 30s");
+}
+
+fn config(s3: &S3Server) -> S3SnapshotConfig {
     S3SnapshotConfig {
-        endpoint: Some(minio.endpoint.clone()),
-        bucket: minio.bucket.clone(),
-        access_key_id: "minioadmin".into(),
-        secret_access_key: "minioadmin".into(),
+        endpoint: Some(s3.endpoint.clone()),
+        bucket: s3.bucket.clone(),
+        access_key_id: s3.access_key.clone(),
+        secret_access_key: s3.secret_key.clone(),
         region: "us-east-1".into(),
     }
 }
@@ -105,34 +154,51 @@ fn config(minio: &Minio) -> S3SnapshotConfig {
 /// by infrastructure, public by policy, because the tier's readers are
 /// anonymous. The test has to reproduce both halves or it would be checking a
 /// private bucket and proving nothing about the reader that matters.
-async fn ensure_public_bucket(minio: &Minio) {
-    let credentials =
-        aws_sdk_s3::config::Credentials::new("minioadmin", "minioadmin", None, None, "static");
+async fn ensure_public_bucket(s3: &S3Server) {
+    let client = admin_client(s3);
+    create_bucket(&client, s3).await;
+    allow_anonymous_reads(&client, s3).await;
+}
+
+/// An SDK client holding the server's credentials.
+fn admin_client(s3: &S3Server) -> aws_sdk_s3::Client {
+    let credentials = aws_sdk_s3::config::Credentials::new(
+        s3.access_key.clone(),
+        s3.secret_key.clone(),
+        None,
+        None,
+        "static",
+    );
     let conf = aws_sdk_s3::config::Builder::new()
         .credentials_provider(credentials)
         .region(aws_sdk_s3::config::Region::new("us-east-1"))
         .behavior_version(aws_sdk_s3::config::BehaviorVersion::latest())
-        .endpoint_url(minio.endpoint.clone())
+        .endpoint_url(s3.endpoint.clone())
         .force_path_style(true)
         .build();
-    let client = aws_sdk_s3::Client::from_conf(conf);
+    aws_sdk_s3::Client::from_conf(conf)
+}
 
+async fn create_bucket(client: &aws_sdk_s3::Client, s3: &S3Server) {
     client
         .create_bucket()
-        .bucket(&minio.bucket)
+        .bucket(&s3.bucket)
         .send()
         .await
         .expect("create bucket");
+}
 
+/// The production bucket's policy: anyone may `GetObject`, nothing else.
+async fn allow_anonymous_reads(client: &aws_sdk_s3::Client, s3: &S3Server) {
     let policy = format!(
         r#"{{"Version":"2012-10-17","Statement":[{{"Effect":"Allow",
             "Principal":{{"AWS":["*"]}},"Action":["s3:GetObject"],
             "Resource":["arn:aws:s3:::{}/*"]}}]}}"#,
-        minio.bucket
+        s3.bucket
     );
     client
         .put_bucket_policy()
-        .bucket(&minio.bucket)
+        .bucket(&s3.bucket)
         .policy(policy)
         .send()
         .await
@@ -172,9 +238,9 @@ fn signed_snapshot(
 /// verifies.
 #[tokio::test]
 async fn a_stored_snapshot_verifies_when_fetched_anonymously() {
-    let minio = start_minio().await;
-    ensure_public_bucket(&minio).await;
-    let store = S3SnapshotStore::new(config(&minio));
+    let s3 = start_s3().await;
+    ensure_public_bucket(&s3).await;
+    let store = S3SnapshotStore::new(config(&s3));
 
     let as_of = Utc::now().trunc_subsecs(0);
     let valid_until = as_of + Duration::days(7);
@@ -197,8 +263,8 @@ async fn a_stored_snapshot_verifies_when_fetched_anonymously() {
     // No credential, no SDK — exactly what a holder with no node has.
     let url = format!(
         "{}/{}/{}",
-        minio.endpoint,
-        minio.bucket,
+        s3.endpoint,
+        s3.bucket,
         snapshot_json_key(dpp_id)
     );
     let response = reqwest::get(&url).await.expect("fetch the stored snapshot");
@@ -232,6 +298,60 @@ async fn a_stored_snapshot_verifies_when_fetched_anonymously() {
     );
 }
 
+/// An anonymous read is refused until the bucket policy allows it.
+///
+/// Every other test here reads anonymously *after* `ensure_public_bucket`, so a
+/// server that let anyone read any bucket would pass them all while proving
+/// nothing about the policy the production bucket depends on. This pins the
+/// difference on whichever server the suite runs against — a guard against the
+/// test double, not the adapter, and it matters because that double has already
+/// had to be replaced once.
+#[tokio::test]
+async fn an_anonymous_read_is_refused_until_the_bucket_policy_allows_it() {
+    let s3 = start_s3().await;
+    let client = admin_client(&s3);
+    create_bucket(&client, &s3).await;
+    let store = S3SnapshotStore::new(config(&s3));
+
+    let as_of = Utc::now().trunc_subsecs(0);
+    let valid_until = as_of + Duration::days(7);
+    let (_dir, document, _key) = signed_snapshot(as_of, valid_until);
+    let dpp_id = "0198f000-0000-7000-8000-000000000002";
+    store
+        .put_public_json(
+            dpp_id,
+            &serde_json::to_vec(&document).expect("serialise"),
+            SnapshotMeta {
+                as_of,
+                valid_until,
+                max_age: std::time::Duration::from_secs(86_400),
+            },
+        )
+        .await
+        .expect("store the snapshot");
+
+    let url = format!(
+        "{}/{}/{}",
+        s3.endpoint,
+        s3.bucket,
+        snapshot_json_key(dpp_id)
+    );
+    let before = reqwest::get(&url).await.expect("fetch").status();
+    assert_eq!(
+        before,
+        reqwest::StatusCode::FORBIDDEN,
+        "with no policy the object must not be anonymously readable, or every \
+         anonymous read in this suite passes for the server's reasons, not the policy's"
+    );
+
+    allow_anonymous_reads(&client, &s3).await;
+    let after = reqwest::get(&url).await.expect("fetch").status();
+    assert!(
+        after.is_success(),
+        "the policy must be what grants the read: HTTP {after}"
+    );
+}
+
 /// A copy served off the bucket with its proof removed is `Absent`, and
 /// `Absent` off the static tier means the bound was stripped.
 ///
@@ -240,9 +360,9 @@ async fn a_stored_snapshot_verifies_when_fetched_anonymously() {
 /// copy as fresh.
 #[tokio::test]
 async fn a_stored_snapshot_stripped_of_its_proof_is_absent() {
-    let minio = start_minio().await;
-    ensure_public_bucket(&minio).await;
-    let store = S3SnapshotStore::new(config(&minio));
+    let s3 = start_s3().await;
+    ensure_public_bucket(&s3).await;
+    let store = S3SnapshotStore::new(config(&s3));
 
     let as_of = Utc::now().trunc_subsecs(0);
     let valid_until = as_of + Duration::days(7);
@@ -268,8 +388,8 @@ async fn a_stored_snapshot_stripped_of_its_proof_is_absent() {
 
     let url = format!(
         "{}/{}/{}",
-        minio.endpoint,
-        minio.bucket,
+        s3.endpoint,
+        s3.bucket,
         snapshot_json_key(dpp_id)
     );
     let fetched: serde_json::Value = reqwest::get(&url)

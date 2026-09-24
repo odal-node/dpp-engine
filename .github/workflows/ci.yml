@@ -204,7 +204,7 @@ jobs:
           tool: nextest
       - name: Create results dir
         run: mkdir -p dpp-engine/results
-      # One MinIO for the whole job, rather than one per S3 test — the same
+      # One S3 server for the whole job, rather than one per S3 test — the same
       # arrangement as the Postgres service above, for the same reason. The four
       # `s3_archive` tests booted their own and spent about ten seconds each
       # doing it, which put them on the wrong side of the slow-test budget
@@ -212,35 +212,49 @@ jobs:
       # unset, they still start their own container, so a bare `cargo test`
       # keeps working.
       #
-      # A step rather than a `services:` entry because MinIO needs `server /data`
-      # as its command, and a service container can set `image`, `env`, `ports`,
-      # `volumes` and `options` but not a command. The alternative — an image
-      # that runs the server by default — would have CI and a local run testing
-      # two different MinIO builds, which is a worse trade than a longer step.
-      # The image and tag are the ones `s3_archive.rs` pins for its own container;
-      # the two must move together.
+      # A step rather than a `services:` entry so the readiness wait and the
+      # server's own log on failure sit in one place. The image and tag are the
+      # ones `s3_archive.rs` and `snapshot_static_tier.rs` pin for their own
+      # containers; the three must move together.
       #
-      # `quay.io`, not Docker Hub: `docker.io/minio/minio` was removed. The Hub API
-      # answers 404 for the repository and every tag is denied, including this one,
-      # which this step pulled successfully until it vanished. quay.io is MinIO's own
-      # registry and carries this exact release — same publisher, same tag.
-      - name: Start MinIO
+      # RustFS, not MinIO: `docker.io/minio/minio` was removed, and on 2026-09-24
+      # `quay.io/minio/minio` stopped granting anonymous pulls — the registry's
+      # token for it carries no actions. RustFS takes the same shape (port 9000,
+      # an access key pair, `/data`), and enforces bucket policies, which the
+      # snapshot suite depends on. It fetches `version.rustfs.com` at every
+      # start and `RUSTFS_CHECK_UPDATES=false` does not stop that in 1.0.0, so
+      # the host resolves to loopback instead: a test double has no business
+      # reaching the network.
+      #
+      # The key pair is generated per run and handed to the tests through
+      # `ODAL_TEST_S3_ACCESS_KEY`/`_SECRET_KEY`, so no credential is written into
+      # the repository. The readiness probe (not liveness: the first thing every
+      # test does is create a bucket) carries its own `--max-time`, so a server
+      # that accepts and never answers cannot hold one probe past the deadline.
+      - name: Start S3 test server
         run: |
-          docker run -d --name minio \
+          access_key=$(openssl rand -hex 16)
+          secret_key=$(openssl rand -hex 16)
+          echo "::add-mask::$access_key"
+          echo "::add-mask::$secret_key"
+          echo "ODAL_TEST_S3_ACCESS_KEY=$access_key" >> "$GITHUB_ENV"
+          echo "ODAL_TEST_S3_SECRET_KEY=$secret_key" >> "$GITHUB_ENV"
+          docker run -d --name s3 \
             -p 9000:9000 \
-            -e MINIO_ROOT_USER=minioadmin \
-            -e MINIO_ROOT_PASSWORD=minioadmin \
-            quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z \
-            server /data --console-address :9001
+            --add-host version.rustfs.com:127.0.0.1 \
+            -e RUSTFS_ACCESS_KEY="$access_key" \
+            -e RUSTFS_SECRET_KEY="$secret_key" \
+            rustfs/rustfs:1.0.0
           for _ in $(seq 1 30); do
-            if curl -fsS http://127.0.0.1:9000/minio/health/live >/dev/null 2>&1; then
-              echo "minio ready"
+            if curl -fsS --max-time 2 http://127.0.0.1:9000/health/ready >/dev/null 2>&1; then
+              echo "s3 server ready"
               exit 0
             fi
             sleep 1
           done
-          echo "minio did not become ready in 30s"
-          docker logs minio
+          echo "s3 server did not become ready in 30s"
+          docker logs s3
+          docker exec s3 sh -c 'tail -n 50 /logs/*' || true
           exit 1
       # Docker is pre-installed on ubuntu-latest; testcontainers uses it.
       # The plugin-host suite includes the fuel-exhaustion sandbox test, which

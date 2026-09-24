@@ -10,6 +10,35 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ## [Unreleased]
 
+### Fixed
+
+- **CI could not pull its S3 test server, so nothing could go green — again.**
+  `docker.io/minio/minio` was removed on 2026-09-13 and the pin moved to
+  `quay.io/minio/minio`; on 2026-09-24 that repository stopped granting
+  anonymous pulls. Its anonymous token carries an empty `actions` list, while a
+  control repository on the same registry grants `pull`, so this is the
+  repository closing rather than the registry failing. Every run failed at the
+  server's start, before a test ran.
+
+  The S3 suites now run against **RustFS 1.0.0** (`rustfs/rustfs`, Apache-2.0)
+  in CI and locally, pinned at the same three sites. Same shape — port 9000, an
+  access-key pair, `/data`. RustFS fetches `version.rustfs.com` at every start,
+  and `RUSTFS_CHECK_UPDATES=false` does not stop it in 1.0.0, so every container
+  resolves that host to loopback: the test double makes no outbound call. The
+  tests' own containers wait on `/health/ready` rather than a log line, because
+  RustFS logs to a file inside the container, and every probe carries its own
+  timeout. The `minioadmin` key pair the suites carried is gone: a container a
+  test starts gets a random pair, and the shared CI server's pair is generated
+  per run and passed as `ODAL_TEST_S3_ACCESS_KEY`/`_SECRET_KEY`.
+
+  **A new test pins what made the swap safe.**
+  `an_anonymous_read_is_refused_until_the_bucket_policy_allows_it` checks that an
+  unauthenticated read fails before the public-read policy is applied and
+  succeeds after. Every other snapshot test reads anonymously only after that
+  policy, so a server that let anyone read anything would have passed them all
+  while proving nothing about the policy the production bucket depends on — the
+  exact risk in replacing the server under them.
+
 ## [0.14.0] - 2026-09-24
 
 ### Breaking
