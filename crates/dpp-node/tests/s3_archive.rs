@@ -1,4 +1,4 @@
-//! Integration test: `S3ArchiveAdapter` against a real MinIO instance.
+//! Integration test: `S3ArchiveAdapter` against a real S3-compatible server.
 //!
 //! Run: `cargo test -p dpp-node --features integration-tests`
 
@@ -6,7 +6,7 @@
 
 use testcontainers::{
     GenericImage, ImageExt,
-    core::{WaitFor, ports::ContainerPort},
+    core::{Host, ports::ContainerPort},
     runners::AsyncRunner,
 };
 
@@ -19,23 +19,24 @@ use dpp_domain::{
 };
 use dpp_node::infra::s3_archive::{S3ArchiveAdapter, S3ArchiveConfig};
 
-/// The MinIO build every path here tests against.
+/// The S3 server build every path here tests against.
 ///
 /// One constant so the shared server CI starts and the container this file
 /// starts locally cannot drift onto different releases. A suite that runs
-/// against one MinIO in CI and a different one on a developer machine proves
-/// less than it looks like it does.
-/// `quay.io`, not Docker Hub.
+/// against one server in CI and a different one on a developer machine proves
+/// less than it looks like it does. The CI workflow and `snapshot_static_tier.rs`
+/// pin the same pair; the three must move together.
 ///
-/// `docker.io/minio/minio` was removed: the Hub API answers **404** for the
-/// repository and a pull is denied for every tag, including this one, which CI
-/// had been pulling successfully until it vanished. quay.io is MinIO's own
-/// registry and carries this exact release, so the pin is otherwise unchanged —
-/// same publisher, same tag. The CI workflow pins the same pair and the two must
-/// move together.
-const MINIO_IMAGE: (&str, &str) = ("quay.io/minio/minio", "RELEASE.2025-09-07T16-13-09Z");
+/// **RustFS, because MinIO can no longer be pulled.** `docker.io/minio/minio` was
+/// removed, and on 2026-09-24 `quay.io/minio/minio` stopped granting anonymous
+/// pulls: the registry hands out a token whose `access` carries no actions,
+/// while a control repository on the same registry grants `pull`. RustFS is an
+/// Apache-2.0 S3 server configured the way MinIO was, and it enforces bucket
+/// policies — which `snapshot_static_tier.rs` depends on, and a mock that
+/// ignored them would pass while proving nothing.
+const S3_IMAGE: (&str, &str) = ("rustfs/rustfs", "1.0.0");
 
-/// Point this at a running MinIO and the suite uses it instead of starting a
+/// Point this at a running S3 server and the suite uses it instead of starting a
 /// container per test.
 ///
 /// # Why this exists
@@ -66,8 +67,8 @@ const MINIO_IMAGE: (&str, &str) = ("quay.io/minio/minio", "RELEASE.2025-09-07T16
 /// `cargo test` needs no orchestration.
 const SHARED_ENDPOINT_ENV: &str = "ODAL_TEST_S3_ENDPOINT";
 
-/// A MinIO to talk to, and the bucket this test owns on it.
-struct Minio {
+/// An S3 server to talk to, and the bucket this test owns on it.
+struct S3Server {
     /// Held only on the container path — dropping it stops the container.
     /// `None` when the endpoint came from the environment, where the server
     /// outlives every test process and is not this test's to stop.
@@ -76,7 +77,7 @@ struct Minio {
     bucket: String,
 }
 
-async fn start_minio() -> Minio {
+async fn start_s3() -> S3Server {
     // A bucket per test, so one shared server gives the same isolation a
     // container per test gave. `ensure_bucket` creates it, buckets are cheap,
     // and simple lowercase hex keeps the name inside S3's naming rules.
@@ -86,42 +87,62 @@ async fn start_minio() -> Minio {
         .ok()
         .filter(|s| !s.is_empty())
     {
-        return Minio {
+        return S3Server {
             _container: None,
             endpoint,
             bucket,
         };
     }
 
-    // `with_wait_for` is a `GenericImage` method; the `ImageExt` builders
-    // (`with_env_var`/`with_cmd`) convert to `ContainerRequest`, which has no
-    // `with_wait_for`. So set the wait condition before those calls.
-    // Pinned (not `latest`) for reproducibility — `latest` drifts its startup
-    // log (this release emits the `API:` banner on stderr).
-    let image = GenericImage::new(MINIO_IMAGE.0, MINIO_IMAGE.1)
+    // The image's default command runs the server on `/data`. RustFS fetches
+    // `version.rustfs.com` at every start, and `RUSTFS_CHECK_UPDATES=false` does
+    // not stop it in this release — measured, not assumed. Resolving the host to
+    // loopback does: a test double has no business reaching the network.
+    let image = GenericImage::new(S3_IMAGE.0, S3_IMAGE.1)
         .with_exposed_port(ContainerPort::Tcp(9000))
-        .with_wait_for(WaitFor::message_on_stderr("API:"))
-        .with_env_var("MINIO_ROOT_USER", "minioadmin")
-        .with_env_var("MINIO_ROOT_PASSWORD", "minioadmin")
-        .with_cmd(vec!["server", "/data", "--console-address", ":9001"]);
+        .with_env_var("RUSTFS_ACCESS_KEY", "minioadmin")
+        .with_env_var("RUSTFS_SECRET_KEY", "minioadmin")
+        .with_host(
+            "version.rustfs.com",
+            Host::Addr(std::net::Ipv4Addr::LOCALHOST.into()),
+        );
 
-    let container = image.start().await.expect("start minio container");
+    let container = image.start().await.expect("start the S3 server container");
     let port = container
         .get_host_port_ipv4(9000)
         .await
-        .expect("minio mapped port");
+        .expect("S3 server mapped port");
+    let endpoint = format!("http://127.0.0.1:{port}");
+    wait_until_live(&endpoint).await;
 
-    Minio {
+    S3Server {
         _container: Some(container),
-        endpoint: format!("http://127.0.0.1:{port}"),
+        endpoint,
         bucket,
     }
 }
 
-fn build_adapter(minio: &Minio) -> S3ArchiveAdapter {
+/// Poll the server's liveness route until it answers.
+///
+/// Not a log-line wait: RustFS writes its log to a file inside the container, so
+/// nothing on stdout or stderr marks the moment it starts serving.
+async fn wait_until_live(endpoint: &str) {
+    let url = format!("{endpoint}/health/live");
+    for _ in 0..60 {
+        if let Ok(r) = reqwest::get(&url).await
+            && r.status().is_success()
+        {
+            return;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    }
+    panic!("the S3 server at {endpoint} did not become live in 30s");
+}
+
+fn build_adapter(s3: &S3Server) -> S3ArchiveAdapter {
     S3ArchiveAdapter::new(S3ArchiveConfig {
-        endpoint: Some(minio.endpoint.clone()),
-        bucket: minio.bucket.clone(),
+        endpoint: Some(s3.endpoint.clone()),
+        bucket: s3.bucket.clone(),
         access_key_id: "minioadmin".into(),
         secret_access_key: "minioadmin".into(),
         region: "us-east-1".into(),
@@ -179,8 +200,8 @@ fn make_passport() -> Passport {
 
 #[tokio::test]
 async fn archive_then_verify_integrity() {
-    let minio = start_minio().await;
-    let adapter = build_adapter(&minio);
+    let s3 = start_s3().await;
+    let adapter = build_adapter(&s3);
     adapter.ensure_bucket().await.expect("create bucket");
 
     let passport = make_passport();
@@ -200,8 +221,8 @@ async fn archive_then_verify_integrity() {
 
 #[tokio::test]
 async fn verify_wrong_hash_returns_not_ok() {
-    let minio = start_minio().await;
-    let adapter = build_adapter(&minio);
+    let s3 = start_s3().await;
+    let adapter = build_adapter(&s3);
     adapter.ensure_bucket().await.expect("create bucket");
 
     let passport = make_passport();
@@ -216,8 +237,8 @@ async fn verify_wrong_hash_returns_not_ok() {
 
 #[tokio::test]
 async fn retrieve_returns_original_passport() {
-    let minio = start_minio().await;
-    let adapter = build_adapter(&minio);
+    let s3 = start_s3().await;
+    let adapter = build_adapter(&s3);
     adapter.ensure_bucket().await.expect("create bucket");
 
     let passport = make_passport();
@@ -235,8 +256,8 @@ async fn retrieve_returns_original_passport() {
 
 #[tokio::test]
 async fn retrieve_unknown_passport_returns_none() {
-    let minio = start_minio().await;
-    let adapter = build_adapter(&minio);
+    let s3 = start_s3().await;
+    let adapter = build_adapter(&s3);
     adapter.ensure_bucket().await.expect("create bucket");
 
     let result = adapter.retrieve(PassportId::new()).await.expect("retrieve");
