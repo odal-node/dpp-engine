@@ -203,6 +203,7 @@ async fn build_service() -> (PassportService, Arc<InMemoryEvidenceRepo>, String)
             legal_name: "Test Operator GmbH".to_owned(),
             country: "DE".to_owned(),
         },
+        "https://resolver.example.com".to_owned(),
     )
     .with_transfer_store(Arc::new(InMemoryTransferStore::default()))
     .with_evidence_store(evidence_store.clone());

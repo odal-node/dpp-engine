@@ -211,6 +211,7 @@ async fn build_service() -> (
             legal_name: "Test Operator GmbH".to_owned(),
             country: "DE".to_owned(),
         },
+        "https://resolver.example.com".to_owned(),
     )
     .with_snapshot_outbox(Arc::new(snapshots.clone()));
     (service, snapshots, identity, public_key, key_dir)

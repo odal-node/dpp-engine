@@ -126,6 +126,7 @@ async fn main() -> anyhow::Result<()> {
             registry_sync,
             Arc::new(GhostArchive),
             domain::service::OperatorIdentity::default(),
+            cfg.resolver_base_url.clone(),
         )
         .with_registry_reader(operator_repo.clone())
         .with_evidence_store(evidence_repo)
