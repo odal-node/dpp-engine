@@ -145,7 +145,7 @@ dotenvy      = "0.15"
 # Event bus
 async-nats   = "0.50"
 
-# AWS S3 (MinIO / R2 compatible)
+# AWS S3 and S3-compatible stores (RustFS, R2, …)
 #
 # Default features minus `rustls`. That feature is a legacy alias: it resolves
 # to aws-smithy-runtime/tls-rustls -> aws-smithy-http-client/legacy-rustls-ring,

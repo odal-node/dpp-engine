@@ -39,6 +39,17 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   while proving nothing about the policy the production bucket depends on — the
   exact risk in replacing the server under them.
 
+  **The snapshot store's delete now runs against a real server too.**
+  `S3SnapshotStore::remove` holds the node's only `delete_object` call, and no
+  suite had ever sent it to a server — under MinIO or RustFS — nor
+  `put_public_html`, the page it removes first.
+  `a_removed_snapshot_is_gone_from_the_bucket_and_removing_again_is_fine` stores
+  both representations, removes them, confirms each is gone, and removes again:
+  `SnapshotStore::remove` promises a missing object is success, and a retired
+  passport depends on the static tier stopping serving its copy. Absence is read
+  with the server's credentials, because a public-read policy that grants
+  `GetObject` alone may answer `403` rather than `404` for a missing key.
+
 ## [0.14.0] - 2026-09-24
 
 ### Breaking

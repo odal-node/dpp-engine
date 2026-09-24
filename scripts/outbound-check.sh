@@ -22,8 +22,8 @@
 # `cli/src/core/snapshot.rs` is the strongest case in that list and also the one
 # the guard would actively break. Its two URLs are command-line arguments —
 # there is no untrusted caller to be a confused deputy for — and the copy being
-# checked routinely lives somewhere the resolving guard refuses: a MinIO on
-# localhost, an internal mirror, a private bucket endpoint. Guarding it would
+# checked routinely lives somewhere the resolving guard refuses: an S3 server
+# on localhost, an internal mirror, a private bucket endpoint. Guarding it would
 # fail the no-node check in exactly the deployments it is for.
 #
 # Test code is exempt (a test double needs no SSRF guard), detected by the repo

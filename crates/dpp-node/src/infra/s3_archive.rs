@@ -1,4 +1,4 @@
-//! S3/MinIO adapter implementing `ArchivePort` for ESPR Art. 13 DPP archival.
+//! S3 adapter implementing `ArchivePort` for ESPR Art. 13 DPP archival.
 //!
 //! Key scheme: `passports/{passport_id}/{sha256_hex}` — content-addressed, idempotent.
 //! Same content → same key. Different content (new version) → different key.
@@ -13,8 +13,9 @@
 //! | `ARCHIVE_S3_ENDPOINT`          | No       | real AWS      |
 //! | `ARCHIVE_S3_REGION`            | No       | `us-east-1`   |
 //!
-//! Set `ARCHIVE_S3_ENDPOINT` to a MinIO URL (e.g. `http://localhost:9000`) for
-//! local dev. Leave it unset to target real AWS S3, Cloudflare R2, or Hetzner.
+//! Set `ARCHIVE_S3_ENDPOINT` for any S3-compatible store — Cloudflare R2,
+//! Hetzner, or a local RustFS (`http://localhost:9000`) in development. Leave it
+//! unset for AWS S3 itself.
 
 use async_trait::async_trait;
 use chrono::Utc;
@@ -116,7 +117,9 @@ impl S3ArchiveAdapter {
             .behavior_version(BehaviorVersion::latest());
 
         if let Some(endpoint) = cfg.endpoint {
-            // Path-style is required for MinIO and most S3-compatible stores.
+            // Path-style needs no per-bucket DNS, so it works against any
+            // S3-compatible endpoint; virtual-hosted style would need the server
+            // configured for it.
             builder = builder.endpoint_url(endpoint).force_path_style(true);
         }
 
