@@ -10,36 +10,7 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ## [Unreleased]
 
-### Security
-
-- **The trusted list signature-profile check reads unprefixed XMLDSig
-  attributes again.** `roxmltree` 0.21.0 changed an unprefixed
-  `Node::attribute("URI")` lookup to match any attribute whose *local* name is
-  `URI` — `x:URI` included — returning the first in document order. Trusted
-  lists arrive over the network, so that order is the document's to choose: a
-  decoy `x:URI=""` placed ahead of a real `URI="#elsewhere"` made a fragment
-  reference read as the document-wide one, and `check_signature_profile` waved
-  through exactly the signature wrapping it exists to stop. The same lookup
-  reads the transform `Algorithm`, where a decoy naming the mandated transform
-  ahead of a real XPath would have hidden a permissive chain — and `xml-sec`
-  accepts XPath by default. Both now go through a helper that matches only an
-  attribute with no namespace, which is what CID (EU) 2015/1505 Annex I
-  describes; two cases in `signature_profile` pin it, and both fail against the
-  old lookup.
-
-### Changed
-
-- `roxmltree` 0.21.1 (from 0.20.0). It now depends on `memchr`, which was
-  already in the lock with 22 other dependents, so the graph gains an edge and
-  no crate. The note in `crates/dpp-seal/Cargo.toml` is rewritten to match: the
-  release also added `ParsingOptions::entity_resolver`, which resolves external
-  entities by URI, so refusing XXE on network-fetched XML is now a property of
-  the call sites — every one uses `Document::parse`, whose defaults are
-  `allow_dtd: false` and `entity_resolver: None` — rather than something the
-  crate is incapable of. `scripts/no-xml-entity-resolution.sh` fails the build
-  if `parse_with_options` or `ParsingOptions` appears in `dpp-seal`.
-
-## [0.14.0] - 2026-09-23
+## [0.14.0] - 2026-09-24
 
 ### Breaking
 
@@ -303,7 +274,6 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   and no authenticated way to say "this is over" inside a payload signed before
   it was. That residue is #236.)*
 
-
 - **An archive timestamp from another seal was accepted as archiving this one.**
   `cades::archival_freshness` verified the token's own signature and its
   authority's window, and never checked that the token was a timestamp of *this*
@@ -484,7 +454,6 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   fixtures, because sizing it from those would be the original mistake with a
   different sample.
 
-
 - **A refreshed trusted-list set now reaches a node that is already running.**
   The seal inspector held the lists it was handed at boot and had no way to be
   given a newer set, so a completed refresh pass reached a running node's
@@ -559,6 +528,23 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   graph that step embeds is the SBOM's crate list, so it must be the committed
   `Cargo.lock` rather than whatever cargo would have re-resolved in the
   builder.
+
+- **🚨 `odal` erased every stored API key when its key store failed to parse,
+  and every profile when its config did.** Both files were read with the parse
+  error discarded, so an unterminated string from a hand edit read as "no keys"
+  or "no profiles" — and each command that saves then wrote that empty state
+  over the file: `odal bootstrap`, `init`, `key create --use`, `key use`,
+  `profile create`. Exit status 0, nothing printed, and the real values gone
+  from the one place they were kept. Present since the CLI's first release.
+
+  A file that does not parse is now an error naming it, both where it is read
+  and at the five places that loaded, fell back to an empty default and saved.
+  A missing or empty file is still a fresh install, and a legacy flat
+  `config.toml` still migrates — but one that does not parse is an error rather
+  than an empty profile set, since saving over it is the same erase one branch
+  further down. Nor is a store that cannot be read taken as "no key" when a
+  command looks one up, which sent an operator chasing a `401` while the key
+  sat intact in the file.
 
 ### Added
 
@@ -914,6 +900,18 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   Separate from `SignatureInvalid` deliberately: a non-conformant profile is a
   problem at the publisher, a bad signature is an altered document, and the two
   send an operator to different people.
+
+  **`URI` and `Algorithm` are read only as attributes in no namespace**, the
+  form XMLDSig declares them in, through a helper rather than
+  `Node::attribute`. Since `roxmltree` 0.21.0 an unprefixed
+  `Node::attribute("URI")` matches any attribute whose *local* name is `URI` —
+  `x:URI` included — and returns the first in document order, which on a
+  network-fetched list is the document's to choose. A decoy `x:URI=""` ahead of
+  a real `URI="#elsewhere"` would make a fragment reference read as the
+  document-wide one, and a decoy `Algorithm` naming the mandated transform ahead
+  of a real XPath would hide exactly the permissive chain this check refuses.
+  Two cases in `signature_profile` pin it, and both fail against the plain
+  lookup.
 
 - **A verified list of trusted lists now says whether the pin it verified
   against is still the notice in force.** New `AnchorFreshness` on
@@ -1633,7 +1631,6 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   variant. The three new enums in this repin read `ALL` off the core enum
   instead, so they cannot drift that way.
 
-
 - **The `xml-sec` fork's justification is demonstrated rather than asserted.**
   `the_two_largest_lists_verify_which_is_what_the_fork_is_for` verifies Italy's
   and France's published lists through the verified LOTL. Confirmed by removing
@@ -1672,6 +1669,18 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   Cargo reconciles the lock against the manifest before building, so a
   hand-edited source line is rewritten back. That is the check being sound rather
   than a gap — the lock always describes the build that ran.
+
+- **Trusted lists are parsed by `roxmltree` 0.21, and refusing external
+  entities is enforced at the call sites.** 0.21.0 added
+  `ParsingOptions::entity_resolver`, which resolves external entities by public
+  ID and URI — on XML this node fetches over the network, that is XXE. So it is
+  no longer something the parser cannot do: it is that every call site uses
+  `Document::parse`, whose defaults are `allow_dtd: false` and
+  `entity_resolver: None`. `scripts/no-xml-entity-resolution.sh`, run by
+  `just check` and in CI, fails if `parse_with_options` or `ParsingOptions`
+  appears in `dpp-seal`, and the note in `crates/dpp-seal/Cargo.toml` makes the
+  same argument. `roxmltree` 0.21 also brings `memchr`, already in the lock with
+  22 other dependents, so the graph gains an edge and no crate.
 
 - **Every node-supplied string the CLI prints is now sanitised** (#327). The
   ANSI/newline guard covered one field by design, with the passport-document
@@ -1775,8 +1784,6 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   tampering by every peer still reading the old one, on evidence that is nothing
   but a version difference, and for as long as that passport existed.
 
-
-
 - **A superseded read says so in `Content-Location`.**
   `GET /public/dpp/{dppId}` serves the record that replaced a superseded
   passport, which is right for a printed carrier that cannot be recalled — but it
@@ -1792,6 +1799,17 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
   A header rather than a redirect: four doors sit in front of this route, and
   `/01/{gtin}` beside it does not redirect either.
+
+### Changed
+
+- **`odal` reads and writes its config and key store with `toml` 1.1** (from
+  0.8). TOML 1.1 is a superset of 1.0, so the files an earlier `odal` wrote
+  load unchanged. Checked in both directions against files the 0.8 serialiser
+  wrote: this release reads them, a save leaves their existing entries
+  byte-for-byte as they were, and what it adds still loads in an earlier
+  `odal`. One direction needs care: a file **hand-edited** with syntax only
+  TOML 1.1 allows will not parse in an earlier `odal` — and before this release
+  a file that did not parse was erased by the next save (see Fixed).
 
 ### Removed
 
