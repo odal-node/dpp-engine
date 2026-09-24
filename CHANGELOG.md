@@ -25,8 +25,11 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   access-key pair, `/data`. RustFS fetches `version.rustfs.com` at every start,
   and `RUSTFS_CHECK_UPDATES=false` does not stop it in 1.0.0, so every container
   resolves that host to loopback: the test double makes no outbound call. The
-  tests' own containers wait on `/health/live` rather than a log line, because
-  RustFS logs to a file inside the container.
+  tests' own containers wait on `/health/ready` rather than a log line, because
+  RustFS logs to a file inside the container, and every probe carries its own
+  timeout. The `minioadmin` key pair the suites carried is gone: a container a
+  test starts gets a random pair, and the shared CI server's pair is generated
+  per run and passed as `ODAL_TEST_S3_ACCESS_KEY`/`_SECRET_KEY`.
 
   **A new test pins what made the swap safe.**
   `an_anonymous_read_is_refused_until_the_bucket_policy_allows_it` checks that an

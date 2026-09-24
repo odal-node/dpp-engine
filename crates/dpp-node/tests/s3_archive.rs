@@ -67,7 +67,13 @@ const S3_IMAGE: (&str, &str) = ("rustfs/rustfs", "1.0.0");
 /// `cargo test` needs no orchestration.
 const SHARED_ENDPOINT_ENV: &str = "ODAL_TEST_S3_ENDPOINT";
 
-/// An S3 server to talk to, and the bucket this test owns on it.
+/// The shared server's key pair, read beside [`SHARED_ENDPOINT_ENV`]. Whoever
+/// starts that server generates the pair; none is written into this file.
+const SHARED_ACCESS_KEY_ENV: &str = "ODAL_TEST_S3_ACCESS_KEY";
+const SHARED_SECRET_KEY_ENV: &str = "ODAL_TEST_S3_SECRET_KEY";
+
+/// An S3 server to talk to, the bucket this test owns on it, and the key pair
+/// that authenticates to it.
 struct S3Server {
     /// Held only on the container path — dropping it stops the container.
     /// `None` when the endpoint came from the environment, where the server
@@ -75,6 +81,17 @@ struct S3Server {
     _container: Option<testcontainers::ContainerAsync<GenericImage>>,
     endpoint: String,
     bucket: String,
+    access_key: String,
+    secret_key: String,
+}
+
+/// A required variable of the shared-server arrangement, or a panic that says
+/// which one is missing.
+fn shared_key(name: &str) -> String {
+    std::env::var(name)
+        .ok()
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| panic!("{SHARED_ENDPOINT_ENV} is set, so {name} must be too"))
 }
 
 async fn start_s3() -> S3Server {
@@ -91,8 +108,15 @@ async fn start_s3() -> S3Server {
             _container: None,
             endpoint,
             bucket,
+            access_key: shared_key(SHARED_ACCESS_KEY_ENV),
+            secret_key: shared_key(SHARED_SECRET_KEY_ENV),
         };
     }
+
+    // A fresh pair for a container that lives as long as this test, so no
+    // reusable credential is written down anywhere.
+    let access_key = uuid::Uuid::new_v4().simple().to_string();
+    let secret_key = uuid::Uuid::new_v4().simple().to_string();
 
     // The image's default command runs the server on `/data`. RustFS fetches
     // `version.rustfs.com` at every start, and `RUSTFS_CHECK_UPDATES=false` does
@@ -100,8 +124,8 @@ async fn start_s3() -> S3Server {
     // loopback does: a test double has no business reaching the network.
     let image = GenericImage::new(S3_IMAGE.0, S3_IMAGE.1)
         .with_exposed_port(ContainerPort::Tcp(9000))
-        .with_env_var("RUSTFS_ACCESS_KEY", "minioadmin")
-        .with_env_var("RUSTFS_SECRET_KEY", "minioadmin")
+        .with_env_var("RUSTFS_ACCESS_KEY", access_key.clone())
+        .with_env_var("RUSTFS_SECRET_KEY", secret_key.clone())
         .with_host(
             "version.rustfs.com",
             Host::Addr(std::net::Ipv4Addr::LOCALHOST.into()),
@@ -113,38 +137,49 @@ async fn start_s3() -> S3Server {
         .await
         .expect("S3 server mapped port");
     let endpoint = format!("http://127.0.0.1:{port}");
-    wait_until_live(&endpoint).await;
+    wait_until_ready(&endpoint).await;
 
     S3Server {
         _container: Some(container),
         endpoint,
         bucket,
+        access_key,
+        secret_key,
     }
 }
 
-/// Poll the server's liveness route until it answers.
+/// Poll the server's readiness route until it answers, for at most 30 seconds.
 ///
-/// Not a log-line wait: RustFS writes its log to a file inside the container, so
-/// nothing on stdout or stderr marks the moment it starts serving.
-async fn wait_until_live(endpoint: &str) {
-    let url = format!("{endpoint}/health/live");
-    for _ in 0..60 {
-        if let Ok(r) = reqwest::get(&url).await
+/// Readiness, not liveness: a server can be up before its storage is, and the
+/// first thing every test does is create a bucket. Each probe carries its own
+/// timeout, because a server that accepts a connection and never answers would
+/// otherwise hold a single probe past any deadline. Not a log-line wait: RustFS
+/// writes its log to a file inside the container, so nothing on stdout or
+/// stderr marks the moment it starts serving.
+async fn wait_until_ready(endpoint: &str) {
+    let url = format!("{endpoint}/health/ready");
+    let probe = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(2))
+        .build()
+        .expect("probe client");
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(30);
+    while tokio::time::Instant::now() < deadline {
+        if let Ok(r) = probe.get(&url).send().await
             && r.status().is_success()
         {
             return;
         }
         tokio::time::sleep(std::time::Duration::from_millis(500)).await;
     }
-    panic!("the S3 server at {endpoint} did not become live in 30s");
+    panic!("the S3 server at {endpoint} was not ready within 30s");
 }
 
 fn build_adapter(s3: &S3Server) -> S3ArchiveAdapter {
     S3ArchiveAdapter::new(S3ArchiveConfig {
         endpoint: Some(s3.endpoint.clone()),
         bucket: s3.bucket.clone(),
-        access_key_id: "minioadmin".into(),
-        secret_access_key: "minioadmin".into(),
+        access_key_id: s3.access_key.clone(),
+        secret_access_key: s3.secret_key.clone(),
         region: "us-east-1".into(),
     })
 }

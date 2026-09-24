@@ -225,16 +225,28 @@ jobs:
       # start and `RUSTFS_CHECK_UPDATES=false` does not stop that in 1.0.0, so
       # the host resolves to loopback instead: a test double has no business
       # reaching the network.
+      #
+      # The key pair is generated per run and handed to the tests through
+      # `ODAL_TEST_S3_ACCESS_KEY`/`_SECRET_KEY`, so no credential is written into
+      # the repository. The readiness probe (not liveness: the first thing every
+      # test does is create a bucket) carries its own `--max-time`, so a server
+      # that accepts and never answers cannot hold one probe past the deadline.
       - name: Start S3 test server
         run: |
+          access_key=$(openssl rand -hex 16)
+          secret_key=$(openssl rand -hex 16)
+          echo "::add-mask::$access_key"
+          echo "::add-mask::$secret_key"
+          echo "ODAL_TEST_S3_ACCESS_KEY=$access_key" >> "$GITHUB_ENV"
+          echo "ODAL_TEST_S3_SECRET_KEY=$secret_key" >> "$GITHUB_ENV"
           docker run -d --name s3 \
             -p 9000:9000 \
             --add-host version.rustfs.com:127.0.0.1 \
-            -e RUSTFS_ACCESS_KEY=minioadmin \
-            -e RUSTFS_SECRET_KEY=minioadmin \
+            -e RUSTFS_ACCESS_KEY="$access_key" \
+            -e RUSTFS_SECRET_KEY="$secret_key" \
             rustfs/rustfs:1.0.0
           for _ in $(seq 1 30); do
-            if curl -fsS http://127.0.0.1:9000/health/live >/dev/null 2>&1; then
+            if curl -fsS --max-time 2 http://127.0.0.1:9000/health/ready >/dev/null 2>&1; then
               echo "s3 server ready"
               exit 0
             fi

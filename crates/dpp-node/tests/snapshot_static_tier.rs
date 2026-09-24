@@ -50,10 +50,23 @@ const S3_IMAGE: (&str, &str) = ("rustfs/rustfs", "1.0.0");
 /// is one container per test again.
 const SHARED_ENDPOINT_ENV: &str = "ODAL_TEST_S3_ENDPOINT";
 
+/// The shared server's key pair — same variables `s3_archive.rs` reads.
+const SHARED_ACCESS_KEY_ENV: &str = "ODAL_TEST_S3_ACCESS_KEY";
+const SHARED_SECRET_KEY_ENV: &str = "ODAL_TEST_S3_SECRET_KEY";
+
 struct S3Server {
     _container: Option<testcontainers::ContainerAsync<GenericImage>>,
     endpoint: String,
     bucket: String,
+    access_key: String,
+    secret_key: String,
+}
+
+fn shared_key(name: &str) -> String {
+    std::env::var(name)
+        .ok()
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| panic!("{SHARED_ENDPOINT_ENV} is set, so {name} must be too"))
 }
 
 async fn start_s3() -> S3Server {
@@ -67,13 +80,19 @@ async fn start_s3() -> S3Server {
             _container: None,
             endpoint,
             bucket,
+            access_key: shared_key(SHARED_ACCESS_KEY_ENV),
+            secret_key: shared_key(SHARED_SECRET_KEY_ENV),
         };
     }
 
+    // A fresh pair per container, so no reusable credential is written down.
+    let access_key = uuid::Uuid::new_v4().simple().to_string();
+    let secret_key = uuid::Uuid::new_v4().simple().to_string();
+
     let image = GenericImage::new(S3_IMAGE.0, S3_IMAGE.1)
         .with_exposed_port(ContainerPort::Tcp(9000))
-        .with_env_var("RUSTFS_ACCESS_KEY", "minioadmin")
-        .with_env_var("RUSTFS_SECRET_KEY", "minioadmin")
+        .with_env_var("RUSTFS_ACCESS_KEY", access_key.clone())
+        .with_env_var("RUSTFS_SECRET_KEY", secret_key.clone())
         // No update check reaches the network; `s3_archive.rs` says why this
         // is a host pin and not an environment variable.
         .with_host(
@@ -87,36 +106,44 @@ async fn start_s3() -> S3Server {
         .await
         .expect("S3 server mapped port");
     let endpoint = format!("http://127.0.0.1:{port}");
-    wait_until_live(&endpoint).await;
+    wait_until_ready(&endpoint).await;
 
     S3Server {
         _container: Some(container),
         endpoint,
         bucket,
+        access_key,
+        secret_key,
     }
 }
 
-/// Poll the server's liveness route until it answers. Not a log-line wait:
-/// RustFS logs to a file inside the container, not to stdout or stderr.
-async fn wait_until_live(endpoint: &str) {
-    let url = format!("{endpoint}/health/live");
-    for _ in 0..60 {
-        if let Ok(r) = reqwest::get(&url).await
+/// Poll the server's readiness route for at most 30 seconds, each probe under
+/// its own timeout. `s3_archive.rs` says why readiness and why the per-probe
+/// bound.
+async fn wait_until_ready(endpoint: &str) {
+    let url = format!("{endpoint}/health/ready");
+    let probe = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(2))
+        .build()
+        .expect("probe client");
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(30);
+    while tokio::time::Instant::now() < deadline {
+        if let Ok(r) = probe.get(&url).send().await
             && r.status().is_success()
         {
             return;
         }
         tokio::time::sleep(std::time::Duration::from_millis(500)).await;
     }
-    panic!("the S3 server at {endpoint} did not become live in 30s");
+    panic!("the S3 server at {endpoint} was not ready within 30s");
 }
 
 fn config(s3: &S3Server) -> S3SnapshotConfig {
     S3SnapshotConfig {
         endpoint: Some(s3.endpoint.clone()),
         bucket: s3.bucket.clone(),
-        access_key_id: "minioadmin".into(),
-        secret_access_key: "minioadmin".into(),
+        access_key_id: s3.access_key.clone(),
+        secret_access_key: s3.secret_key.clone(),
         region: "us-east-1".into(),
     }
 }
@@ -135,8 +162,13 @@ async fn ensure_public_bucket(s3: &S3Server) {
 
 /// An SDK client holding the server's credentials.
 fn admin_client(s3: &S3Server) -> aws_sdk_s3::Client {
-    let credentials =
-        aws_sdk_s3::config::Credentials::new("minioadmin", "minioadmin", None, None, "static");
+    let credentials = aws_sdk_s3::config::Credentials::new(
+        s3.access_key.clone(),
+        s3.secret_key.clone(),
+        None,
+        None,
+        "static",
+    );
     let conf = aws_sdk_s3::config::Builder::new()
         .credentials_provider(credentials)
         .region(aws_sdk_s3::config::Region::new("us-east-1"))
