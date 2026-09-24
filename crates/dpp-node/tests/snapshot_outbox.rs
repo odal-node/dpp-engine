@@ -1,7 +1,8 @@
 //! Continuity-tier drain: convergence semantics of the snapshot reconcile pass.
 //!
 //! In-memory ports throughout — no Docker, no S3. The point of these tests is
-//! not "does S3 work" (the MinIO tier covers the adapter) but "does the drain
+//! not "does S3 work" (`snapshot_static_tier.rs` covers the adapter against a
+//! real server) but "does the drain
 //! always leave object storage agreeing with the database", including when rows
 //! are stale, replayed, or arrive out of order.
 //!
