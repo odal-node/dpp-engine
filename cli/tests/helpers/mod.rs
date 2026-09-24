@@ -36,7 +36,15 @@ impl Run {
 /// `std::env` would be process-global, and these suites must not depend on
 /// whether the runner gives each test its own process.
 pub fn odal(home: &Path, args: &[&str]) -> Run {
-    let output = Command::new(env!("CARGO_BIN_EXE_odal"))
+    odal_env(home, args, &[])
+}
+
+/// [`odal`], plus `env` applied last — so a suite can put back one of the
+/// variables the clean-machine baseline below strips, when that variable is the
+/// thing under test.
+pub fn odal_env(home: &Path, args: &[&str], env: &[(&str, &str)]) -> Run {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_odal"));
+    let command = command
         .args(args)
         // `config::paths` resolves the config dir from HOME, then USERPROFILE,
         // then HOMEDRIVE+HOMEPATH. Set the first two and clear the fallback
@@ -54,9 +62,11 @@ pub fn odal(home: &Path, args: &[&str]) -> Run {
         // `docker/docker-compose.yml`. Left at the repo root it finds the real
         // one, and `status` then shells out to `docker compose ps` while `init`
         // scaffolds into the working tree.
-        .current_dir(home)
-        .output()
-        .expect("failed to run the odal binary");
+        .current_dir(home);
+    for (key, value) in env {
+        command.env(key, value);
+    }
+    let output = command.output().expect("failed to run the odal binary");
 
     Run {
         code: output.status.code().unwrap_or(-1),
