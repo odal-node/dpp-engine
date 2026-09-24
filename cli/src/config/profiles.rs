@@ -156,11 +156,14 @@ impl ConfigFile {
     /// `Config::save` — rewrite `config.toml` with that one profile and drop
     /// every other, silently.
     ///
-    /// The legacy fallback below is a different thing and is preserved: a
+    /// The legacy migration below is a different thing and is preserved: a
     /// pre-profiles flat file is *valid* TOML whose keys this struct does not
     /// name, so it parses here as an empty `ConfigFile` (serde ignores unknown
     /// fields) and reaches the migration on the empty-profiles branch — not via
-    /// a parse error. Only the unconditional swallow is gone.
+    /// a parse error. What is gone is the swallow: **both** reads propagate now,
+    /// because that same unknown-field tolerance means a flat file with a
+    /// wrong-typed value reaches the second read, where dropping its error
+    /// produced the identical erase (see the comment on that read).
     fn parse(content: &str, path: &Path) -> Result<Self> {
         // Try the new profile-based format first.
         let file: ConfigFile = toml::from_str(content).with_context(|| {
@@ -176,9 +179,28 @@ impl ConfigFile {
         }
 
         // Fall back to migrating a legacy flat config.
-        if let Ok(legacy) = toml::from_str::<LegacyConfig>(content)
-            && legacy.has_content()
-        {
+        //
+        // This read must propagate for the same reason the one above does, and the
+        // reachable case is narrow enough to be worth naming: `ConfigFile` ignores
+        // unknown top-level keys, so a flat file whose `vault_url` or `api_key`
+        // carries the wrong type parses *there* as an empty file and arrives here,
+        // where reading it as `LegacyConfig` is what fails. Dropping that failure
+        // returned the empty `file` and the next save overwrote the operator's
+        // values — the same erase, one branch further down.
+        //
+        // It cannot fire for a new-format file: the four legacy keys only ever
+        // appear under `[profiles.*]` there, so at the top level `LegacyConfig`
+        // finds none of them and parses as all-`None`.
+        let legacy: LegacyConfig = toml::from_str(content).with_context(|| {
+            format!(
+                "Failed to parse config: {}. It holds no [profiles.*] table, and \
+                 reading it as a pre-profiles flat config failed too — refusing to \
+                 continue as though nothing were configured, because saving a profile \
+                 would then overwrite what it still holds.",
+                path.display()
+            )
+        })?;
+        if legacy.has_content() {
             let mut profiles = BTreeMap::new();
             profiles.insert(DEFAULT_PROFILE.to_owned(), legacy.into_profile());
             return Ok(ConfigFile {
@@ -419,6 +441,36 @@ mod tests {
             .expect("migrated into the default profile");
         assert_eq!(p.vault_url, "https://old.example/vault");
         assert_eq!(p.api_key, "odal_sk_legacy");
+    }
+
+    /// The legacy branch must not swallow its own parse error.
+    ///
+    /// `ConfigFile` ignores unknown top-level keys, so a flat file whose
+    /// `vault_url` (or any of the four) carries the wrong type still parses as an
+    /// empty `ConfigFile` and lands on the empty-profiles branch. Reading it as
+    /// `LegacyConfig` is what fails — and dropping that failure hands back the
+    /// empty file, so the next save overwrites the operator's values. Same erase
+    /// as the main read, one branch further down.
+    #[test]
+    fn a_malformed_legacy_config_is_an_error_not_an_empty_default() {
+        // A legacy flat file with an integer where a URL belongs.
+        let malformed = "vault_url = 8001\napi_key = \"odal_sk_legacy\"\n";
+        let path = Path::new("/home/op/.config/odal/config.toml");
+        // It must reach the legacy branch at all — i.e. the new-format parse has
+        // to accept it, which is what makes the swallow reachable.
+        assert!(
+            toml::from_str::<ConfigFile>(malformed)
+                .expect("unknown top-level keys are ignored, so this parses")
+                .profiles
+                .is_empty()
+        );
+        let err = ConfigFile::parse(malformed, path)
+            .expect_err("a malformed legacy config must not parse as an empty file");
+        let rendered = format!("{err:#}");
+        assert!(
+            rendered.contains("config.toml"),
+            "the error must name the file to fix:\n{rendered}"
+        );
     }
 
     /// An absent file is a fresh install; an empty one carries no profiles.

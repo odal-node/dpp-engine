@@ -277,6 +277,51 @@ fn a_corrupt_config_is_not_overwritten_by_init() {
     );
 }
 
+/// The unknown-field tolerance that makes the migration reachable also lets a
+/// *broken* flat config through the first read, and that erase is the same one.
+///
+/// `ConfigFile` ignores unknown top-level keys, so a flat file with a wrong-typed
+/// value parses there as an empty file and only fails on the second read, as
+/// `LegacyConfig`. While that second error was dropped, an operator still on a
+/// pre-profiles config lost it to the next `profile create` — a whole class of
+/// user the main fix did not reach. Found in review of this PR, not by me.
+#[test]
+fn a_broken_legacy_config_is_not_overwritten_by_profile_create() {
+    let home = TempDir::new().unwrap();
+    let path = config_path(home.path());
+    // An integer where a URL belongs: valid TOML, invalid `LegacyConfig`.
+    let broken = "vault_url = 8001\napi_key = \"odal_sk_legacy\"\n";
+    seed(&path, broken);
+
+    let run = odal(
+        home.path(),
+        &[
+            "profile",
+            "create",
+            "other",
+            "--node-url",
+            "http://localhost:8001",
+        ],
+    );
+
+    assert_ne!(
+        run.code,
+        0,
+        "a legacy config that does not parse must fail the command:\n{}",
+        run.output()
+    );
+    assert_eq!(
+        std::fs::read_to_string(&path).unwrap(),
+        broken,
+        "the operator's legacy config was rewritten — this is the data loss under test"
+    );
+    assert!(
+        run.output().contains("config.toml"),
+        "the error must name the file to fix:\n{}",
+        run.output()
+    );
+}
+
 /// The legacy pre-profiles migration has to survive making the parse loud.
 ///
 /// A flat config is valid TOML whose keys `ConfigFile` does not name, so it
