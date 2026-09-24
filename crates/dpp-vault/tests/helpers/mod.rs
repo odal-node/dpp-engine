@@ -317,6 +317,7 @@ async fn start_vault_with_identity(
             legal_name: "Test Operator GmbH".to_owned(),
             country: "DE".to_owned(),
         },
+        "https://resolver.example.com".to_owned(),
     )
     .with_registry_reader(operator_repo.clone())
     // Mirror production here too: the node wires both registry outboxes, so

@@ -41,6 +41,14 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   another component lives — which is exactly what neither binary can know, and
   a wrong guess is signed into labels that cannot be recalled.
 
+  **A standalone vault requires it too.** *(Breaking for `dpp-vault` run as its
+  own binary, which no image or compose file ships.)* It never read the
+  variable: it built its passport service through a constructor that defaulted
+  to the same dead host, so every carrier it signed pointed there whatever the
+  environment said. It now reads the value through the same reader, and the
+  constructor takes it as an argument with no default, so no caller can build a
+  service that signs carriers without being told where they resolve.
+
 - **The redaction moved to `dpp-domain`, and two things it does differently are
   visible on the wire.** *(Breaking for **newly published** passports only.
   Every public and audience route serves the payload decoded out of the stored

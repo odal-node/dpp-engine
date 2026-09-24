@@ -42,15 +42,15 @@ pub const RESOLVER_BASE_URL: &str = "RESOLVER_BASE_URL";
 /// Read [`RESOLVER_BASE_URL`], the one value the node and the resolver must
 /// agree on.
 ///
-/// **Required, with no default, in both binaries.** The node writes it into
-/// every passport's carrier URL at publish, inside the signature, so a wrong
-/// value cannot be corrected afterwards. The resolver builds its GS1 Digital
-/// Link redirects and canonical links from it. Both used to fall back to a
-/// hosted address that does not resolve, and the resolver's copy was never
-/// handed the operator's value by the compose file — so every scanned carrier
-/// redirected to a dead host while the node's own configuration looked right.
-/// A default here is a guess about where another component lives, which is
-/// exactly what neither binary can know.
+/// **Required, with no default, in every binary that reads it.** The node — or
+/// a standalone vault — writes it into every passport's carrier URL at publish,
+/// inside the signature, so a wrong value cannot be corrected afterwards. The
+/// resolver builds its GS1 Digital Link redirects and canonical links from it.
+/// All three used to fall back to a hosted address that does not resolve, and
+/// the resolver's copy was never handed the operator's value by the compose
+/// file — so every scanned carrier redirected to a dead host while the node's
+/// own configuration looked right. A default here is a guess about where
+/// another component lives, which is exactly what no binary can know.
 ///
 /// # Errors
 ///

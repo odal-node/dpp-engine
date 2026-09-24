@@ -185,6 +185,7 @@ async fn start_node_with_ruleset(
                 legal_name: "Test Operator GmbH".to_owned(),
                 country: "DE".to_owned(),
             },
+            "https://resolver.example.com".to_owned(),
         )
         .with_transfer_store(Arc::new(PgTransferRepo::new(dal.clone())))
         .with_evidence_store(Arc::new(PgEvidenceDossierRepo::new(dal.clone())))

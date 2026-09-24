@@ -256,6 +256,7 @@ async fn main() -> anyhow::Result<()> {
         registry_sync,
         archive,
         operator,
+        cfg.resolver_base_url.clone(),
     )
     .with_registry_reader(db.operator_repo.clone())
     .with_registry_outbox(db.registry_outbox.clone())
@@ -264,8 +265,7 @@ async fn main() -> anyhow::Result<()> {
     .with_transfer_store(db.transfer_store.clone())
     .with_transfer_outbox(db.transfer_outbox.clone())
     .with_evidence_store(db.evidence_store.clone())
-    .with_webhooks(db.webhook_outbox.clone())
-    .with_resolver_base_url(cfg.resolver_base_url.clone());
+    .with_webhooks(db.webhook_outbox.clone());
     if let Some(base) = cfg.snapshot_public_base_url.clone() {
         passport_service = passport_service.with_snapshot_public_base_url(base);
     }
