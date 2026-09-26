@@ -3,13 +3,13 @@ use std::sync::Arc;
 
 use anyhow::Result;
 
-use dpp_domain::{PassthroughRegistry, ProductGroupCatalog, ports::plugin_host::PluginHost};
+use dpp_domain::{PassthroughRegistry, ProductGroupCatalog};
 use dpp_plugin_host::{
     WasmPluginHost,
     loader::{LoadedPlugin, discover_plugins},
     runtime::build_engine,
 };
-use dpp_types::trust::TrustMode;
+use dpp_types::trust::{NodeProfile, TrustMode};
 use dpp_vault::domain::compliance::CalcBatteryStrategy;
 
 /// Boot the Wasm plugin host and load all `*.wasm` files from `plugins_dir`.
@@ -17,7 +17,10 @@ use dpp_vault::domain::compliance::CalcBatteryStrategy;
 /// Returns an `Arc<WasmPluginHost>` that implements `PluginHost` from core.
 /// If `plugins_dir` does not exist or is empty, the host boots with zero plugins;
 /// the compliance engine falls back to `PassthroughRegistry` for each product group.
-pub fn boot(plugins_dir: &str) -> Result<Arc<WasmPluginHost>> {
+///
+/// `profile` decides whether `ALLOW_UNSIGNED_PLUGINS` is honoured at all — see
+/// [`ensure_signing_policy`].
+pub fn boot(plugins_dir: &str, profile: NodeProfile) -> Result<Arc<WasmPluginHost>> {
     let engine = build_engine().map_err(|e| anyhow::anyhow!("{e}"))?;
     let dir = Path::new(plugins_dir);
 
@@ -66,10 +69,19 @@ pub fn boot(plugins_dir: &str) -> Result<Arc<WasmPluginHost>> {
     // `PLUGINS_DIR` (only a log warning) — code execution + the ability to forge
     // `Compliant` determinations. An explicit `ALLOW_UNSIGNED_PLUGINS=true` dev
     // escape hatch mirrors the identity service's `MTLS_ALLOW_INSECURE`.
+    //
+    // This parse trims and the loader's does not, so every value the loader
+    // acts on is one this sees too — which is what lets the profile check in
+    // `ensure_signing_policy` stand in front of it.
     let allow_unsigned = std::env::var("ALLOW_UNSIGNED_PLUGINS")
         .map(|v| v.trim().eq_ignore_ascii_case("true"))
         .unwrap_or(false);
-    ensure_signing_policy(trusted_key.is_some(), discovered.len(), allow_unsigned)?;
+    ensure_signing_policy(
+        trusted_key.is_some(),
+        discovered.len(),
+        allow_unsigned,
+        profile,
+    )?;
 
     let mut loaded: Vec<String> = Vec::with_capacity(discovered.len());
 
@@ -188,15 +200,31 @@ fn fallback_registry() -> PassthroughRegistry {
 /// invariant exists to prevent, on the one port that decides whether a passport
 /// was checked against EU rules at all.
 ///
-/// - `Ghost` — no plugin for any in-force product group. Nothing is evaluated.
-/// - `Sandbox` — some in-force product groups have rules and some do not. A real
-///   determination is possible, but not for every product this node may publish.
-/// - `Live` — every in-force product group in the catalog has a plugin loaded.
+/// - `Ghost` — no signature-verified plugin for any in-force product group.
+///   Nothing trustworthy is evaluated.
+/// - `Sandbox` — some in-force product groups have verified rules and some do
+///   not. A real determination is possible, but not for every product this node
+///   may publish.
+/// - `Live` — every in-force product group in the catalog has a verified plugin.
 ///
 /// ProductGroups that are **not** in force are deliberately not counted: their
 /// determinations are gated to non-binding by `gate_determination` regardless of
 /// what a plugin returns, so a missing plugin there changes nothing a consumer
 /// could rely on.
+///
+/// # An unsigned plugin counts as no plugin
+///
+/// A plugin loaded under `ALLOW_UNSIGNED_PLUGINS=true` does evaluate, but no
+/// publisher key vouches for what it evaluates — it can return `Compliant` for
+/// anything. Counting it as coverage made a development node running unsigned
+/// builds report `compliance: live`, which is placeholder trust presented as
+/// real: the case the ghost-honesty invariant exists to refuse.
+///
+/// `Ghost` rather than `Sandbox` because `Sandbox` means a real authority's test
+/// instance, and there is no authority behind an unsigned file. It also keeps
+/// this tier in agreement with [`ensure_signing_policy`]: both the production
+/// and sandbox floors refuse `Ghost`, so the tier alone would stop an unsigned
+/// node from booting in either profile even if that check were removed.
 pub fn compliance_trust(host: &WasmPluginHost) -> TrustMode {
     let catalog = ProductGroupCatalog::new();
     let instruments = dpp_domain::InstrumentCatalog::new();
@@ -218,7 +246,10 @@ pub fn compliance_trust(host: &WasmPluginHost) -> TrustMode {
         return TrustMode::Ghost;
     }
 
-    let covered = in_force.iter().filter(|k| host.has_plugin(k)).count();
+    let covered = in_force
+        .iter()
+        .filter(|k| host.get_plugin(k).is_some_and(|p| p.signature_verified()))
+        .count();
     match covered {
         0 => TrustMode::Ghost,
         n if n == in_force.len() => TrustMode::Live,
@@ -228,8 +259,44 @@ pub fn compliance_trust(host: &WasmPluginHost) -> TrustMode {
 
 /// Enforce the plugin-signing policy: unsigned plugins may only be loaded when
 /// there are none to load, or the operator has explicitly opted into unsigned
-/// loading for development. Returns an error that aborts startup otherwise.
-fn ensure_signing_policy(has_key: bool, plugin_count: usize, allow_unsigned: bool) -> Result<()> {
+/// loading on a development node. Returns an error that aborts startup otherwise.
+///
+/// # The opt-in is honoured only under `NODE_PROFILE=development`
+///
+/// The flag was documented as "development only", and nothing enforced it: a
+/// production node with `ALLOW_UNSIGNED_PLUGINS=true` ran
+/// unsigned Wasm that could forge `Compliant` determinations. Sandbox refuses it
+/// too. A sandbox node is a rehearsal of production against test authorities,
+/// and the plugin signing key is not one of those authorities: it runs the same
+/// signed plugins production does, so admitting unsigned code there would leave
+/// signature verification as the one path the rehearsal never exercised.
+///
+/// The refusal holds whether or not a key is set and whether or not any plugin
+/// is present. With a key, the flag does nothing today, but it is one blanked
+/// variable away from doing something: `PLUGIN_SIGNING_KEY=` reads as unset, and
+/// the node would then load unsigned plugins instead of refusing to boot.
+fn ensure_signing_policy(
+    has_key: bool,
+    plugin_count: usize,
+    allow_unsigned: bool,
+    profile: NodeProfile,
+) -> Result<()> {
+    if allow_unsigned {
+        let refusing = match profile {
+            NodeProfile::Development => None,
+            NodeProfile::Sandbox => Some("sandbox"),
+            NodeProfile::Production => Some("production"),
+        };
+        if let Some(profile) = refusing {
+            anyhow::bail!(
+                "NODE_PROFILE={profile} refuses ALLOW_UNSIGNED_PLUGINS=true — unsigned plugins \
+                 are honoured only under NODE_PROFILE=development. An unsigned plugin is code \
+                 no publisher key vouches for, and it can forge a `Compliant` determination. \
+                 Remove ALLOW_UNSIGNED_PLUGINS and set PLUGIN_SIGNING_KEY to the publisher's \
+                 Ed25519 public key."
+            );
+        }
+    }
     if !has_key && plugin_count > 0 && !allow_unsigned {
         anyhow::bail!(
             "found {plugin_count} Wasm plugin(s) but PLUGIN_SIGNING_KEY is not set — \
@@ -243,6 +310,13 @@ fn ensure_signing_policy(has_key: bool, plugin_count: usize, allow_unsigned: boo
 #[cfg(test)]
 mod tests {
     use super::*;
+    use dpp_domain::ports::plugin_host::PluginHost;
+
+    const PROFILES: [NodeProfile; 3] = [
+        NodeProfile::Development,
+        NodeProfile::Sandbox,
+        NodeProfile::Production,
+    ];
 
     #[test]
     fn a_product_group_with_no_plugin_is_named() {
@@ -275,14 +349,14 @@ mod tests {
     fn boot_with_empty_dir() {
         let tmp = std::env::temp_dir().join(format!("odal-test-{}", uuid::Uuid::now_v7()));
         std::fs::create_dir_all(&tmp).unwrap();
-        let host = boot(tmp.to_str().unwrap()).unwrap();
+        let host = boot(tmp.to_str().unwrap(), NodeProfile::Development).unwrap();
         assert!(!host.has_any_plugin());
         std::fs::remove_dir_all(&tmp).ok();
     }
 
     #[test]
     fn boot_with_missing_dir() {
-        let host = boot("/nonexistent/plugins/dir").unwrap();
+        let host = boot("/nonexistent/plugins/dir", NodeProfile::Development).unwrap();
         assert!(!host.has_any_plugin());
     }
 
@@ -291,24 +365,78 @@ mod tests {
     // closed. The policy is a pure function so it is testable without env races.
     #[test]
     fn unsigned_plugins_refused_without_key() {
-        // Plugins present, no key, no dev opt-in → must abort startup.
-        assert!(ensure_signing_policy(false, 1, false).is_err());
+        // Plugins present, no key, no dev opt-in → must abort startup, under
+        // every profile.
+        for profile in PROFILES {
+            assert!(ensure_signing_policy(false, 1, false, profile).is_err());
+        }
     }
 
     #[test]
     fn unsigned_plugins_allowed_with_dev_optin() {
-        assert!(ensure_signing_policy(false, 1, true).is_ok());
+        assert!(ensure_signing_policy(false, 1, true, NodeProfile::Development).is_ok());
     }
 
     #[test]
     fn signed_plugins_always_allowed() {
-        assert!(ensure_signing_policy(true, 3, false).is_ok());
+        for profile in PROFILES {
+            assert!(ensure_signing_policy(true, 3, false, profile).is_ok());
+        }
     }
 
     #[test]
     fn no_plugins_needs_no_key() {
         // An empty plugins dir must boot cleanly even without a key.
-        assert!(ensure_signing_policy(false, 0, false).is_ok());
+        for profile in PROFILES {
+            assert!(ensure_signing_policy(false, 0, false, profile).is_ok());
+        }
+    }
+
+    /// The development escape hatch is refused on a production node, and the
+    /// refusal names both settings so the operator knows which one to change.
+    ///
+    /// Before this, `ALLOW_UNSIGNED_PLUGINS=true` was "development only" in its
+    /// error text and nowhere else: `NODE_PROFILE=production` booted with it and
+    /// ran unsigned Wasm that could forge `Compliant` determinations.
+    #[test]
+    fn unsigned_plugins_refused_in_production_even_with_the_optin() {
+        let err = ensure_signing_policy(false, 1, true, NodeProfile::Production)
+            .expect_err("production must not honour the unsigned opt-in")
+            .to_string();
+        assert!(
+            err.contains("NODE_PROFILE=production") && err.contains("ALLOW_UNSIGNED_PLUGINS=true"),
+            "the refusal must name both settings, got: {err}"
+        );
+    }
+
+    /// Sandbox refuses the opt-in too. A sandbox node rehearses production
+    /// against test authorities; the plugin signing key is not one of them, so
+    /// it runs the same signed plugins and must exercise the same verification.
+    #[test]
+    fn unsigned_plugins_refused_in_sandbox_even_with_the_optin() {
+        let err = ensure_signing_policy(false, 1, true, NodeProfile::Sandbox)
+            .expect_err("sandbox must not honour the unsigned opt-in")
+            .to_string();
+        assert!(
+            err.contains("NODE_PROFILE=sandbox") && err.contains("ALLOW_UNSIGNED_PLUGINS=true"),
+            "the refusal must name both settings, got: {err}"
+        );
+    }
+
+    /// The refusal does not wait for the flag to have an effect. With a key set
+    /// it is inert, and with no plugins there is nothing to load, but blanking
+    /// `PLUGIN_SIGNING_KEY` would make it live — so a production node carrying
+    /// it is refused now rather than when the key goes.
+    #[test]
+    fn production_refuses_the_optin_even_where_it_does_nothing_yet() {
+        assert!(
+            ensure_signing_policy(true, 3, true, NodeProfile::Production).is_err(),
+            "a configured key does not make the flag acceptable"
+        );
+        assert!(
+            ensure_signing_policy(false, 0, true, NodeProfile::Production).is_err(),
+            "an empty plugins dir does not make the flag acceptable"
+        );
     }
 
     // Live PoC: drop an (unsigned) `.wasm` into PLUGINS_DIR with no signing
@@ -336,7 +464,7 @@ mod tests {
         )
         .unwrap();
 
-        let result = boot(tmp.to_str().unwrap());
+        let result = boot(tmp.to_str().unwrap(), NodeProfile::Development);
 
         std::fs::remove_dir_all(&tmp).ok();
         // Avoid `expect_err` (would require `WasmPluginHost: Debug`).
@@ -396,7 +524,7 @@ mod tests {
         )
         .unwrap();
 
-        let result = boot(tmp.to_str().unwrap());
+        let result = boot(tmp.to_str().unwrap(), NodeProfile::Development);
 
         std::fs::remove_dir_all(&tmp).ok();
         unsafe { std::env::remove_var("ALLOW_UNSIGNED_PLUGINS") };
@@ -405,6 +533,46 @@ mod tests {
         assert!(
             host.has_any_plugin(),
             "the unsigned plugin must actually be loaded and registered, not silently skipped"
+        );
+    }
+
+    /// End to end: the directory the test above boots under development is
+    /// refused under production, with nothing else changed — the profile alone
+    /// decides. Sets `ALLOW_UNSIGNED_PLUGINS` itself rather than skipping on it,
+    /// so a local `.env` that opts in cannot turn this into a no-op.
+    #[test]
+    #[serial_test::serial]
+    fn a_production_boot_refuses_a_real_unsigned_plugin() {
+        if std::env::var("PLUGIN_SIGNING_KEY").is_ok() {
+            return; // environment opts into a different policy; skip
+        }
+        // Safety: test is `#[serial]`, so no concurrent env mutation in this process.
+        unsafe { std::env::set_var("ALLOW_UNSIGNED_PLUGINS", "true") };
+
+        let tmp = tempfile::tempdir().expect("tempdir");
+        std::fs::write(
+            tmp.path().join("product-group-battery.wasm"),
+            minimal_plugin_wasm(),
+        )
+        .unwrap();
+        let dir = tmp.path().to_str().expect("utf-8 path");
+
+        let production = boot(dir, NodeProfile::Production);
+        let development = boot(dir, NodeProfile::Development);
+
+        unsafe { std::env::remove_var("ALLOW_UNSIGNED_PLUGINS") };
+
+        let err = match production {
+            Ok(_) => panic!("a production node must not load an unsigned plugin"),
+            Err(e) => e.to_string(),
+        };
+        assert!(
+            err.contains("NODE_PROFILE=production") && err.contains("ALLOW_UNSIGNED_PLUGINS=true"),
+            "the refusal must name both settings, got: {err}"
+        );
+        assert!(
+            development.is_ok_and(|host| host.has_any_plugin()),
+            "the control: the same directory boots and loads under development"
         );
     }
 
@@ -430,7 +598,7 @@ mod tests {
         )
         .unwrap();
 
-        let result = boot(tmp.to_str().unwrap());
+        let result = boot(tmp.to_str().unwrap(), NodeProfile::Development);
 
         std::fs::remove_dir_all(&tmp).ok();
         unsafe { std::env::remove_var("ALLOW_UNSIGNED_PLUGINS") };
@@ -454,7 +622,7 @@ mod tests {
     fn no_plugins_is_ghost() {
         let tmp = std::env::temp_dir().join(format!("odal-ct-{}", uuid::Uuid::now_v7()));
         std::fs::create_dir_all(&tmp).unwrap();
-        let host = boot(tmp.to_str().unwrap()).unwrap();
+        let host = boot(tmp.to_str().unwrap(), NodeProfile::Development).unwrap();
         std::fs::remove_dir_all(&tmp).ok();
         assert_eq!(compliance_trust(&host), TrustMode::Ghost);
     }
@@ -473,6 +641,68 @@ mod tests {
             .collect()
     }
 
+    /// Boot a development node whose plugins directory holds a minimal plugin
+    /// for each of `groups`: signed by a key the node pins when `signed`, and
+    /// admitted under `ALLOW_UNSIGNED_PLUGINS=true` otherwise.
+    ///
+    /// Callers are `#[serial]` and skip when `PLUGIN_SIGNING_KEY` is already
+    /// set, because this sets and clears process-global variables.
+    fn boot_with_plugins(groups: &[String], signed: bool) -> Arc<WasmPluginHost> {
+        use ed25519_dalek::Signer;
+        use sha2::{Digest, Sha256};
+
+        // An empty set would boot a node with no plugins, and every tier
+        // assertion about "these plugins" would then hold vacuously.
+        assert!(
+            !groups.is_empty(),
+            "fixture assumption: some group is counted"
+        );
+
+        let signer = ed25519_dalek::SigningKey::from_bytes(&[42; 32]);
+        let wasm = minimal_plugin_wasm();
+        let tmp = tempfile::tempdir().expect("tempdir");
+        for group in groups {
+            std::fs::write(
+                tmp.path().join(format!("product-group-{group}.wasm")),
+                &wasm,
+            )
+            .unwrap();
+            if signed {
+                std::fs::write(
+                    tmp.path().join(format!("product-group-{group}.wasm.sig")),
+                    signer.sign(&Sha256::digest(&wasm)).to_bytes(),
+                )
+                .unwrap();
+            }
+        }
+
+        // Safety: every caller is `#[serial]`.
+        unsafe {
+            if signed {
+                std::env::set_var(
+                    "PLUGIN_SIGNING_KEY",
+                    hex::encode(signer.verifying_key().to_bytes()),
+                );
+            } else {
+                std::env::set_var("ALLOW_UNSIGNED_PLUGINS", "true");
+            }
+        }
+        let result = boot(
+            tmp.path().to_str().expect("utf-8 path"),
+            NodeProfile::Development,
+        );
+        unsafe {
+            std::env::remove_var("PLUGIN_SIGNING_KEY");
+            std::env::remove_var("ALLOW_UNSIGNED_PLUGINS");
+        }
+
+        let host = result.expect("a directory of loadable plugins boots under development");
+        for group in groups {
+            assert!(host.has_plugin(group), "{group} must actually be loaded");
+        }
+        host
+    }
+
     /// Partial coverage is `Sandbox`: a real determination is possible, but not
     /// for every product this node may publish. Collapsing it into `Live` would
     /// let a node claim rules it has for one product group as rules it has for all.
@@ -488,28 +718,46 @@ mod tests {
         if in_force.len() < 2 {
             return;
         }
-        unsafe { std::env::set_var("ALLOW_UNSIGNED_PLUGINS", "true") };
 
-        let tmp = std::env::temp_dir().join(format!("odal-ct2-{}", uuid::Uuid::now_v7()));
-        std::fs::create_dir_all(&tmp).unwrap();
-        let one = in_force[0].clone();
-        std::fs::write(
-            tmp.join(format!("product-group-{one}.wasm")),
-            minimal_plugin_wasm(),
-        )
-        .unwrap();
-
-        let result = boot(tmp.to_str().unwrap());
-        std::fs::remove_dir_all(&tmp).ok();
-        unsafe { std::env::remove_var("ALLOW_UNSIGNED_PLUGINS") };
-
-        let host = result.expect("one valid plugin boots");
+        // Signed: an unsigned plugin is not coverage at all (see below), so
+        // unsigned fixtures would make this read `Ghost` for the wrong reason.
+        let host = boot_with_plugins(&in_force[..1], true);
         assert_eq!(
             compliance_trust(&host),
             TrustMode::Sandbox,
-            "{one} is covered but the other {} in-force product_group(s) are not",
+            "{} is covered but the other {} in-force product_group(s) are not",
+            in_force[0],
             in_force.len() - 1
         );
+    }
+
+    /// The control for the test below: every in-force product group covered by
+    /// a signature-verified plugin is `Live`.
+    #[test]
+    #[serial_test::serial]
+    fn verified_plugins_for_every_in_force_group_are_live() {
+        if std::env::var("PLUGIN_SIGNING_KEY").is_ok() {
+            return;
+        }
+        let host = boot_with_plugins(&counted_product_groups(), true);
+        assert_eq!(compliance_trust(&host), TrustMode::Live);
+    }
+
+    /// The same plugins, loaded unsigned, are `Ghost` and not `Live`.
+    ///
+    /// An unsigned plugin evaluates, but nothing vouches for what it evaluates,
+    /// so it can return `Compliant` for anything. Counting it as coverage made a
+    /// node running unsigned builds report `compliance: live` at boot and on the
+    /// node-state route. `Ghost` is also what both enforcing profiles refuse, so
+    /// the tier agrees with `ensure_signing_policy`.
+    #[test]
+    #[serial_test::serial]
+    fn unsigned_plugins_for_every_in_force_group_are_ghost_not_live() {
+        if std::env::var("PLUGIN_SIGNING_KEY").is_ok() {
+            return;
+        }
+        let host = boot_with_plugins(&counted_product_groups(), false);
+        assert_eq!(compliance_trust(&host), TrustMode::Ghost);
     }
 
     /// The tier is computed over **in-force** product groups only. A provisional
@@ -526,7 +774,7 @@ mod tests {
         );
         let tmp = std::env::temp_dir().join(format!("odal-ct3-{}", uuid::Uuid::now_v7()));
         std::fs::create_dir_all(&tmp).unwrap();
-        let host = boot(tmp.to_str().unwrap()).unwrap();
+        let host = boot(tmp.to_str().unwrap(), NodeProfile::Development).unwrap();
         std::fs::remove_dir_all(&tmp).ok();
         // Ghost because no *in-force* product group is covered — not because of the
         // provisional ones, which are simply not counted either way.
@@ -604,7 +852,11 @@ mod tests {
         // for a predictable path, and drops it on unwind as well as on success.
         // The neighbouring tests predate this and still build their own path.
         let tmp = tempfile::tempdir().expect("tempdir");
-        let host = boot(tmp.path().to_str().expect("utf-8 path")).expect("boot with no plugins");
+        let host = boot(
+            tmp.path().to_str().expect("utf-8 path"),
+            NodeProfile::Development,
+        )
+        .expect("boot with no plugins");
 
         // No battery plugin is loaded, so the host dispatches to the fallback.
         assert!(!host.has_plugin("battery"));
