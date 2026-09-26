@@ -54,9 +54,25 @@ pub struct LoadedPlugin {
     /// Used to configure per-invocation resource limits without an extra
     /// Wasm round-trip.
     pub capabilities: PluginCapabilities,
+    /// Whether this artifact's detached signature was checked against a pinned
+    /// publisher key before it was compiled. Private and set only in
+    /// [`from_file`](Self::from_file), at the one place the check happens, so
+    /// nothing downstream has to infer it from whether a key was configured.
+    signature_verified: bool,
 }
 
 impl LoadedPlugin {
+    /// True when the artifact was signature-verified at load, false when it was
+    /// loaded under `ALLOW_UNSIGNED_PLUGINS=true` with no key configured.
+    ///
+    /// An unverified plugin is code nobody vouched for deciding compliance
+    /// determinations, so a caller rating the node's compliance trust must not
+    /// count it as coverage.
+    #[must_use]
+    pub fn signature_verified(&self) -> bool {
+        self.signature_verified
+    }
+
     /// Compile a `.wasm` file into a `LoadedPlugin`.
     ///
     /// If `trusted_key` is `Some`, the loader verifies a detached Ed25519
@@ -72,7 +88,7 @@ impl LoadedPlugin {
         product_group_key: &str,
         trusted_key: Option<&VerifyingKey>,
     ) -> Result<Self> {
-        if let Some(key) = trusted_key {
+        let signature_verified = if let Some(key) = trusted_key {
             if let Err(e) = verify_plugin_signature(path, key) {
                 tracing::warn!(
                     code = event_codes::PLUGIN_REFUSED,
@@ -83,6 +99,7 @@ impl LoadedPlugin {
                 );
                 return Err(e);
             }
+            true
         } else {
             // No trusted key configured. Unsigned loading is a development-only
             // convenience and must be explicitly opted into — otherwise a
@@ -102,7 +119,8 @@ impl LoadedPlugin {
                 "loading Wasm plugin WITHOUT signature verification \
                  (ALLOW_UNSIGNED_PLUGINS=true) — not safe for production"
             );
-        }
+            false
+        };
 
         // A `.cwasm` artifact is a precompiled (AOT) module: deserialize it
         // rather than compile. Everything else — signature policy above, the
@@ -229,6 +247,7 @@ impl LoadedPlugin {
             linker,
             product_group_key: product_group_key.to_owned(),
             capabilities,
+            signature_verified,
         })
     }
 
@@ -604,6 +623,34 @@ mod tests {
             Err(e) => e,
         };
         assert!(err.to_string().contains("signature file not found"));
+    }
+
+    /// `signature_verified` reports the branch that admitted the artifact: the
+    /// same module is `false` under the unsigned opt-in and `true` once a pinned
+    /// key has checked its signature.
+    #[test]
+    fn signature_verified_reports_which_load_path_admitted_the_plugin() {
+        use ed25519_dalek::Signer;
+        use sha2::{Digest, Sha256};
+
+        let engine = build_engine().unwrap();
+        let dir = TempDir::new().unwrap();
+        let wasm = full_plugin_wasm();
+        let path = write_plugin_file(&dir, &wasm);
+
+        let unsigned = load_unsigned(&engine, &path, "battery").unwrap();
+        assert!(!unsigned.signature_verified());
+
+        let signer = SigningKey::from_bytes(&[21; 32]);
+        std::fs::write(
+            dir.path().join("plugin.wasm.sig"),
+            signer.sign(&Sha256::digest(&wasm)).to_bytes(),
+        )
+        .unwrap();
+        let signed =
+            LoadedPlugin::from_file(&engine, &path, "battery", Some(&signer.verifying_key()))
+                .unwrap();
+        assert!(signed.signature_verified());
     }
 
     #[test]

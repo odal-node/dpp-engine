@@ -10,6 +10,37 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ## [Unreleased]
 
+### Breaking
+
+- **A production or sandbox node refuses `ALLOW_UNSIGNED_PLUGINS=true`.**
+  *(Breaking: a node started with `NODE_PROFILE=production` or
+  `NODE_PROFILE=sandbox` and that variable set to `true` no longer boots.
+  Remove the variable and set `PLUGIN_SIGNING_KEY` to the plugin publisher's
+  Ed25519 public key.)* The variable was documented as development-only — in
+  the node's own refusal message, the loader's warning and `.env.example` — and
+  nothing enforced it: a production node with it set loaded unsigned Wasm,
+  which can forge a `Compliant` determination. The refusal names both settings.
+  It holds whether or not a key is set and whether or not any plugin is
+  present, because a set key leaves the flag one blanked variable away from
+  taking effect: `PLUGIN_SIGNING_KEY=` reads as unset.
+
+  Sandbox refuses it too. A sandbox node rehearses production against test
+  authorities, and the plugin signing key is not one of them: it runs the same
+  signed plugins production does, so admitting unsigned ones would leave
+  signature verification as the one path the rehearsal never runs. Development
+  is unchanged.
+
+  **Unsigned plugins no longer count toward compliance trust.** A plugin loaded
+  without signature verification now counts as no plugin when the node rates
+  its `compliance` port, so a development node running unsigned builds reports
+  `ghost` at boot and on `GET /vault/api/v1/node/state` where it reported
+  `live`. `ghost` rather than `sandbox`, because `sandbox` means a real
+  authority's test instance and no authority stands behind an unsigned file.
+  Both enforcing profiles refuse `ghost`, so the tier would now stop an
+  unsigned node booting there on its own, even without the check above.
+  `LoadedPlugin::signature_verified()` records the fact where the loader
+  establishes it.
+
 ### Fixed
 
 - **CI could not pull its S3 test server, so nothing could go green — again.**
