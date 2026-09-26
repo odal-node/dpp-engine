@@ -39,6 +39,23 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   while proving nothing about the policy the production bucket depends on — the
   exact risk in replacing the server under them.
 
+- **The API description listed a node profile no node has, and omitted one
+  every sandbox node serves.** `NodeState.profile` on
+  `GET /vault/api/v1/node/state` was documented as
+  `development | staging | production`. `NodeProfile` serialises
+  `development | sandbox | production`, so a sandbox node answered with a value
+  the description called invalid, and a client generated from it as a closed
+  enum would reject the response. `staging` never existed in the code.
+
+  The enum is now its own schema, `NodeProfile`, and the OpenAPI contract test
+  checks it against the profiles `posture_json` actually serves. Written inline
+  on the property, it was checked by nothing: the enum check reaches only named
+  schemas, and the object check compares key names and JSON types — `profile`
+  is a string on both sides, and the fixture's one value was `production`,
+  which the description did list. Against the old list the new check reports
+  both halves: `sandbox` emitted and undocumented, `staging` documented and
+  never emitted.
+
 ## [0.14.0] - 2026-09-24
 
 ### Breaking

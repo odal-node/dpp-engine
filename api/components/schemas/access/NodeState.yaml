@@ -10,8 +10,7 @@ properties:
     type: boolean
     description: True once the operator identity is complete enough to publish.
   profile:
-    type: string
-    enum: [development, staging, production]
+    $ref: ./NodeProfile.yaml
     description: |
       The node's deployment profile. Absent on a standalone vault, which has no
       composition root to resolve one.
