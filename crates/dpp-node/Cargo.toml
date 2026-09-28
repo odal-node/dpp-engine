@@ -65,7 +65,7 @@ thiserror    = { workspace = true }
 aws-sdk-s3   = { workspace = true, optional = true }
 
 [features]
-# ESPR Art. 13 archive + continuity-snapshot S3/MinIO adapters. Off by
+# ESPR Art. 13 archive + continuity-snapshot S3 adapters. Off by
 # default because object storage is an optional deployment dependency for a
 # self-hosted node, not because of an advisory: the AWS SDK's vulnerable TLS
 # edge was removed outright in the workspace `aws-sdk-s3` feature list (see
