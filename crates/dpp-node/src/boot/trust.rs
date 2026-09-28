@@ -12,6 +12,7 @@ use dpp_types::trust::{NodeProfile, NodeTrustReport, TrustMode, TrustPort};
 /// Build the node's trust report from each port's resolved tier and enforce
 /// the deployment profile.
 pub fn build_and_enforce(
+    profile: NodeProfile,
     seal_trust: TrustMode,
     registry_trust: TrustMode,
     archive_trust: TrustMode,
@@ -19,7 +20,7 @@ pub fn build_and_enforce(
     compliance_trust: TrustMode,
 ) -> anyhow::Result<Arc<NodeTrustReport>> {
     let trust = Arc::new(NodeTrustReport::new(
-        NodeProfile::from_env(),
+        profile,
         vec![
             // Required, and the one whose absence is hardest to notice from
             // outside: a node with no product group plugins evaluates nothing, returns
@@ -92,6 +93,7 @@ mod tests {
     #[test]
     fn the_seal_port_is_named_what_the_seal_route_looks_up() {
         let report = build_and_enforce(
+            NodeProfile::Production,
             TrustMode::Live,
             TrustMode::Live,
             TrustMode::Live,
