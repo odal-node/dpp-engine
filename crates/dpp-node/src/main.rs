@@ -23,7 +23,7 @@ use dpp_domain::{
 };
 use dpp_identity_service::state::AppState as IdentityState;
 use dpp_integrator::{infra::vault_client::VaultHttpClient, state::AppState as IntegratorState};
-use dpp_types::trust::TrustMode;
+use dpp_types::trust::{NodeProfile, TrustMode};
 use dpp_vault::{
     domain::{
         api_key_service::ApiKeyService,
@@ -62,8 +62,13 @@ async fn main() -> anyhow::Result<()> {
     // ── Database (backend selected at compile time) ────────────────────────
     let db = boot::db::init_db(&cfg).await?;
 
+    // Read once and handed to both gates that depend on it — the plugin signing
+    // policy below and the trust report — so the two cannot disagree about it.
+    let profile = NodeProfile::from_env();
+
     // ── Wasm plugin host ──────────────────────────────────────────────────────
-    let plugin_host = plugins::boot(&cfg.plugins_dir).context("Failed to boot Wasm plugin host")?;
+    let plugin_host =
+        plugins::boot(&cfg.plugins_dir, profile).context("Failed to boot Wasm plugin host")?;
     tracing::info!(dir = %cfg.plugins_dir, "plugin host ready");
 
     // ── Event bus (NATS JetStream or NoOp) ────────────────────────────────────
@@ -180,6 +185,7 @@ async fn main() -> anyhow::Result<()> {
     let sealing_live = seal_wiring.drains;
 
     let trust = boot::trust::build_and_enforce(
+        profile,
         seal_wiring.trust,
         registry_trust,
         archive_trust,

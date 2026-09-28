@@ -1,68 +1,73 @@
 {
   "auditEntries": [
     {
-      "action": "tampered",
-      "actor": "demo-user",
-      "entryHash": "fa72cb2522edb056fa585be2cce23bcdbacaff1ebd9b8010cc07181e2ac15b1f",
-      "id": "019f3fa1-1c47-7153-a69f-59d63982ba3e",
+      "action": "delete",
+      "actor": "operator:ops@acme.example",
+      "entryHash": "871ae92990314e9023afb2465f131aaf9deda025770ed57893feb45c0d49913d",
+      "id": "0199a3c2-7b10-7e4a-9c3d-000000000001",
       "metadata": null,
-      "newStatus": "active",
-      "passportId": "01HXYZDEMO0000000000000001",
+      "newStatus": "draft",
+      "passportId": "0199a3c2-7b10-7e4a-9c3d-2f1e8b6a5d40",
       "prevHash": "",
       "previousStatus": null,
-      "timestamp": "2026-07-01T12:00:00Z"
+      "timestamp": "2026-09-01T09:00:00Z"
     },
     {
-      "action": "published",
-      "actor": "demo-user",
-      "entryHash": "5c2e31e5c696b7eff85db19039435ccf85cc652f35f51a3320bce69190d9c0e8",
-      "id": "019f3fa1-1c47-7153-a69f-59ed531277a6",
-      "metadata": null,
+      "action": "publish",
+      "actor": "operator:ops@acme.example",
+      "entryHash": "ffdbcc02599bfe4cb32133206de2bca025c1c76cbab824dcb27ded330e18fb9f",
+      "id": "0199a3c2-7b10-7e4a-9c3d-000000000002",
+      "metadata": {
+        "schemaVersion": "2.7.0"
+      },
       "newStatus": "active",
-      "passportId": "01HXYZDEMO0000000000000001",
-      "prevHash": "fa72cb2522edb056fa585be2cce23bcdbacaff1ebd9b8010cc07181e2ac15b1f",
-      "previousStatus": null,
-      "timestamp": "2026-07-01T12:05:00Z"
+      "passportId": "0199a3c2-7b10-7e4a-9c3d-2f1e8b6a5d40",
+      "prevHash": "871ae92990314e9023afb2465f131aaf9deda025770ed57893feb45c0d49913d",
+      "previousStatus": "draft",
+      "timestamp": "2026-09-01T09:05:00.250Z"
     },
     {
-      "action": "deactivated",
-      "actor": "demo-user",
-      "entryHash": "3d2c61460e9b83627e556bf507b4e23e1605cd63e737d4fac5d9e9a1ad368a33",
-      "id": "019f3fa1-1c47-7153-a69f-59fb8e83f18c",
-      "metadata": null,
+      "action": "transfer_completed",
+      "actor": "operator:ops@acme.example",
+      "entryHash": "25719a9ebd7d548cdbaddc026f5c5d3d5ee76dcba0ab1de1a073d511c91e8a25",
+      "id": "0199a3c2-7b10-7e4a-9c3d-000000000003",
+      "metadata": {
+        "transferId": "0199a3c2-7b10-7e4a-9c3d-0000000000aa"
+      },
       "newStatus": "active",
-      "passportId": "01HXYZDEMO0000000000000001",
-      "prevHash": "5c2e31e5c696b7eff85db19039435ccf85cc652f35f51a3320bce69190d9c0e8",
-      "previousStatus": null,
-      "timestamp": "2027-08-05T12:00:00Z"
+      "passportId": "0199a3c2-7b10-7e4a-9c3d-2f1e8b6a5d40",
+      "prevHash": "ffdbcc02599bfe4cb32133206de2bca025c1c76cbab824dcb27ded330e18fb9f",
+      "previousStatus": "active",
+      "timestamp": "2026-09-10T14:30:00.123456Z"
+    },
+    {
+      "action": "eol",
+      "actor": "operator:ops@acme.example",
+      "entryHash": "84e93f7ef6393b43098018bd99f3e062698c3c2e89dda3609ba72a4b58652ab0",
+      "id": "0199a3c2-7b10-7e4a-9c3d-000000000004",
+      "metadata": {
+        "eolType": "recycled"
+      },
+      "newStatus": "end_of_life",
+      "passportId": "0199a3c2-7b10-7e4a-9c3d-2f1e8b6a5d40",
+      "prevHash": "25719a9ebd7d548cdbaddc026f5c5d3d5ee76dcba0ab1de1a073d511c91e8a25",
+      "previousStatus": "active",
+      "timestamp": "2026-09-20T08:00:00Z"
     }
   ],
   "didDocuments": {
-    "did:web:demo.odal-node.io": {
-      "assertionMethod": [
-        "did:web:demo.odal-node.io#root"
+    "did:web:node.acme.example": {
+      "@context": [
+        "https://www.w3.org/ns/did/v1"
       ],
-      "id": "did:web:demo.odal-node.io",
+      "assertionMethod": [
+        "did:web:node.acme.example#key-1"
+      ],
+      "id": "did:web:node.acme.example",
       "verificationMethod": [
         {
-          "id": "did:web:demo.odal-node.io#root",
-          "publicKeyJwk": {
-            "crv": "Ed25519",
-            "kty": "OKP",
-            "x": "GX9rI-FshTLGq8g4-s1ep4m-DHaykgM0A5v6iz02jWE"
-          },
-          "type": "JsonWebKey2020"
-        }
-      ]
-    },
-    "did:web:from.example": {
-      "assertionMethod": [
-        "did:web:from.example#root"
-      ],
-      "id": "did:web:from.example",
-      "verificationMethod": [
-        {
-          "id": "did:web:from.example#root",
+          "controller": "did:web:node.acme.example",
+          "id": "did:web:node.acme.example#key-1",
           "publicKeyJwk": {
             "crv": "Ed25519",
             "kty": "OKP",
@@ -72,18 +77,22 @@
         }
       ]
     },
-    "did:web:to.example": {
-      "assertionMethod": [
-        "did:web:to.example#root"
+    "did:web:secondlife.example": {
+      "@context": [
+        "https://www.w3.org/ns/did/v1"
       ],
-      "id": "did:web:to.example",
+      "assertionMethod": [
+        "did:web:secondlife.example#key-1"
+      ],
+      "id": "did:web:secondlife.example",
       "verificationMethod": [
         {
-          "id": "did:web:to.example#root",
+          "controller": "did:web:secondlife.example",
+          "id": "did:web:secondlife.example#key-1",
           "publicKeyJwk": {
             "crv": "Ed25519",
             "kty": "OKP",
-            "x": "E5j2LG0aRXxRumpLXz29L2n8qTIWIY3ImX5Ba9F9k8o"
+            "x": "_RckOFqgx1tk-3jNYC-h2ZH96_drE8WO1wLqyDXp9hg"
           },
           "type": "JsonWebKey2020"
         }
@@ -91,76 +100,123 @@
     }
   },
   "eolEvent": {
-    "declaredAt": "2027-08-05T12:00:00+00:00",
-    "declaredBy": "did:web:demo.odal-node.io",
-    "passportId": "01HXYZDEMO0000000000000001",
-    "reason": "recycled"
+    "declaredAt": "2026-09-20T08:00:00Z",
+    "facility": "Recycling Nord GmbH",
+    "type": "recycled"
   },
   "fullView": {
-    "jws": "eyJhbGciOiJFZERTQSJ9.eyJpZCI6IjAxSFhZWkRFTU8wMDAwMDAwMDAwMDAwMDAxIiwicHJvZHVjdE5hbWUiOiJEZW1vIEJhdHRlcnkgUGFjayIsInNlY3RvciI6ImJhdHRlcnkiLCJzdGF0dXMiOiJhY3RpdmUifQ.cbIYcBZFEtjJwUrAVwl-yezFQQTSHl87KC2t3gDZ-GXhjqSm8_A-f4Uu12yjSrRK4fFWsGDCgRQHqr8O6e_5Dg",
+    "jws": "eyJhbGciOiJFZERTQSIsImtpZCI6ImZlODEyYzEyZjNhYjRjZTZhYzVkYjY5YWMzNTJmOTA2Y2IxYjExZWY0M2ZiMzNlMjUyZWY3ZmY1NTIyNjM4ODkifQ.eyJjb250ZW50Ijp7IkIiOjIsImIiOjEsImJhdHRlcnlDaGVtaXN0cnkiOiJOTUMiLCJiYXR0ZXJ5TW9kZWxJZCI6IkFDTUUtTE1ULTQ4ViIsImJhdHRlcnlXZWlnaHRLZyI6MTIuNCwiY2F0aG9kZU1hdGVyaWFsIjoiTk1DIDgxMSIsImh1Z2VOdW1iZXIiOjFlKzIxLCJuZWdhdGl2ZVplcm9TYWZlIjotMC4yNSwicmF0ZWRDYXBhY2l0eUFoIjoyMCwic3RhdGVPZkhlYWx0aFBjdCI6MTAwLCJ0aW55TnVtYmVyIjo1ZS03LCLDiW1pc3Npb24iOiIwLjVlLTMgdGVzdCIsIsOpIjozLCLigqwiOjQsIvCfmIAiOjV9LCJpZCI6IjAxOTlhM2MyLTdiMTAtN2U0YS05YzNkLTJmMWU4YjZhNWQ0MCIsImlzc3VlciI6ImRpZDp3ZWI6bm9kZS5hY21lLmV4YW1wbGUiLCJvcGVyYXRvciI6eyJjaXR5IjoiTcO8bmNoZW4iLCJjb3VudHJ5IjoiREUiLCJuYW1lIjoiQWNtZSBaZWxsZW4gR21iSCJ9LCJwcm9kdWN0R3JvdXAiOiJiYXR0ZXJ5IiwicHVibGlzaGVkQXQiOiIyMDI2LTA5LTAxVDA5OjA1OjAwWiIsInNjaGVtYVZlcnNpb24iOiIyLjcuMCIsInN0YXR1cyI6ImFjdGl2ZSJ9.56KnYFaD2s9v01NhcheQZGIqBujqLCNrGcbnEe6ZbNV2UozvcQsgYQQKegxFqNMKQpoPeuJJW_tN5gPuhBolDA",
     "payload": {
-      "id": "01HXYZDEMO0000000000000001",
-      "productName": "Demo Battery Pack",
-      "sector": "battery",
+      "content": {
+        "B": 2,
+        "b": 1,
+        "batteryChemistry": "NMC",
+        "batteryModelId": "ACME-LMT-48V",
+        "batteryWeightKg": 12.4,
+        "cathodeMaterial": "NMC 811",
+        "hugeNumber": 1e+21,
+        "negativeZeroSafe": -0.25,
+        "ratedCapacityAh": 20,
+        "stateOfHealthPct": 100,
+        "tinyNumber": 5e-7,
+        "Émission": "0.5e-3 test",
+        "é": 3,
+        "€": 4,
+        "😀": 5
+      },
+      "id": "0199a3c2-7b10-7e4a-9c3d-2f1e8b6a5d40",
+      "issuer": "did:web:node.acme.example",
+      "operator": {
+        "city": "München",
+        "country": "DE",
+        "name": "Acme Zellen GmbH"
+      },
+      "productGroup": "battery",
+      "publishedAt": "2026-09-01T09:05:00Z",
+      "schemaVersion": "2.7.0",
       "status": "active"
     }
   },
   "manifest": {
     "contentHashes": {
-      "auditEntries": "169eee1ea4d0c843502d1381c05c4e28eccad29ae87abb7963fdb61101f0d9d5",
-      "eolEvent": "c6c5951e479e67bbd539dc15a10bd06bc7269e0026eb6c4ad34cdfbcad3783f8",
-      "fullView": "765fd8783f8d3b940dd34654125469b3e3bd9355f769d4a35c2c9d42900e9335",
-      "publicView": "7fdf780387f75c1b9734e6f9066e8a1355e60ea23aa74e20939329686ef546bf",
-      "transferChain": "6ad5b41d41f4a795f9d032fb7921c6d76f4485c693baefcadde9e0540df43d0c"
+      "auditEntries": "e085a133b614c68a136354d07c0dcc960f33df17c4b405bf424a8b1336b2cdfe",
+      "eolEvent": "92ed1fde3e99fa59df0fb158a03bc10cad0174ed486271f3b6c715b9b633d964",
+      "fullView": "750252051b902ddd89a447e209f7794b999f3c3c90c4edf63b5dfd356f671080",
+      "publicView": "1689c57aa9a6db1a2f069d88d3859ff4f389e05f12070c080265c614df6e4bc2",
+      "transferChain": "52e0fd4f91be57a81e6219557f5f3c4f2331b0cbbc9461d376c967dae5445445"
     },
-    "createdAt": "2026-07-01T15:00:00Z",
+    "coreVersion": "0.20.0",
+    "createdAt": "2026-09-25T12:00:00Z",
     "formatVersion": "1",
-    "issuerDid": "did:web:demo.odal-node.io",
-    "nodeVersion": "0.7.0-demo",
-    "passportId": "01HXYZDEMO0000000000000001"
+    "issuerDid": "did:web:node.acme.example",
+    "nodeVersion": "0.14.0",
+    "passportId": "0199a3c2-7b10-7e4a-9c3d-2f1e8b6a5d40"
   },
-  "manifestJws": "eyJhbGciOiJFZERTQSJ9.eyJjb250ZW50SGFzaGVzIjp7ImF1ZGl0RW50cmllcyI6IjE2OWVlZTFlYTRkMGM4NDM1MDJkMTM4MWMwNWM0ZTI4ZWNjYWQyOWFlODdhYmI3OTYzZmRiNjExMDFmMGQ5ZDUiLCJlb2xFdmVudCI6ImM2YzU5NTFlNDc5ZTY3YmJkNTM5ZGMxNWExMGJkMDZiYzcyNjllMDAyNmViNmM0YWQzNGNkZmJjYWQzNzgzZjgiLCJmdWxsVmlldyI6Ijc2NWZkODc4M2Y4ZDNiOTQwZGQzNDY1NDEyNTQ2OWIzZTNiZDkzNTVmNzY5ZDRhMzVjMmM5ZDQyOTAwZTkzMzUiLCJwdWJsaWNWaWV3IjoiN2ZkZjc4MDM4N2Y3NWMxYjk3MzRlNmY5MDY2ZThhMTM1NWU2MGVhMjNhYTc0ZTIwOTM5MzI5Njg2ZWY1NDZiZiIsInRyYW5zZmVyQ2hhaW4iOiI2YWQ1YjQxZDQxZjRhNzk1ZjlkMDMyZmI3OTIxYzZkNzZmNDQ4NWM2OTNiYWVmY2FkZGU5ZTA1NDBkZjQzZDBjIn0sImNyZWF0ZWRBdCI6IjIwMjYtMDctMDFUMTU6MDA6MDBaIiwiZm9ybWF0VmVyc2lvbiI6IjEiLCJpc3N1ZXJEaWQiOiJkaWQ6d2ViOmRlbW8ub2RhbC1ub2RlLmlvIiwibm9kZVZlcnNpb24iOiIwLjcuMC1kZW1vIiwicGFzc3BvcnRJZCI6IjAxSFhZWkRFTU8wMDAwMDAwMDAwMDAwMDAxIn0.-N7ZCCd5e8a-EUfCQexy8KSu5wUH4BIVeM6Tb69JFIZL-fEAQ4JYe_2pZRTWwYU_5ebd43TGlepsisolNaSEDg",
+  "manifestJws": "eyJhbGciOiJFZERTQSIsImtpZCI6ImZlODEyYzEyZjNhYjRjZTZhYzVkYjY5YWMzNTJmOTA2Y2IxYjExZWY0M2ZiMzNlMjUyZWY3ZmY1NTIyNjM4ODkifQ.eyJjb250ZW50SGFzaGVzIjp7ImF1ZGl0RW50cmllcyI6ImUwODVhMTMzYjYxNGM2OGExMzYzNTRkMDdjMGRjYzk2MGYzM2RmMTdjNGI0MDViZjQyNGE4YjEzMzZiMmNkZmUiLCJlb2xFdmVudCI6IjkyZWQxZmRlM2U5OWZhNTlkZjBmYjE1OGEwM2JjMTBjYWQwMTc0ZWQ0ODYyNzFmM2I2YzcxNWI5YjYzM2Q5NjQiLCJmdWxsVmlldyI6Ijc1MDI1MjA1MWI5MDJkZGQ4OWE0NDdlMjA5Zjc3OTRiOTk5ZjNjM2M5MGM0ZWRmNjNiNWRmZDM1NmY2NzEwODAiLCJwdWJsaWNWaWV3IjoiMTY4OWM1N2FhOWE2ZGIxYTJmMDY5ZDg4ZDM4NTlmZjRmMzg5ZTA1ZjEyMDcwYzA4MDI2NWM2MTRkZjZlNGJjMiIsInRyYW5zZmVyQ2hhaW4iOiI1MmUwZmQ0ZjkxYmU1N2E4MWU2MjE5NTU3ZjVmM2M0ZjIzMzFiMGNiYmM5NDYxZDM3NmM5NjdkYWU1NDQ1NDQ1In0sImNvcmVWZXJzaW9uIjoiMC4yMC4wIiwiY3JlYXRlZEF0IjoiMjAyNi0wOS0yNVQxMjowMDowMFoiLCJmb3JtYXRWZXJzaW9uIjoiMSIsImlzc3VlckRpZCI6ImRpZDp3ZWI6bm9kZS5hY21lLmV4YW1wbGUiLCJub2RlVmVyc2lvbiI6IjAuMTQuMCIsInBhc3Nwb3J0SWQiOiIwMTk5YTNjMi03YjEwLTdlNGEtOWMzZC0yZjFlOGI2YTVkNDAifQ.Z0D_04GOq7-C-uIJlLqSshl99lzcjFFc_v7FRmtewsJYIo4950_Ui-gvLhQgZO5JSSiXc2UTn9aDlBXRpAL8BQ",
   "publicView": {
-    "jws": "eyJhbGciOiJFZERTQSJ9.eyJpZCI6IjAxSFhZWkRFTU8wMDAwMDAwMDAwMDAwMDAxIiwicHJvZHVjdE5hbWUiOiJEZW1vIEJhdHRlcnkgUGFjayIsInNlY3RvciI6ImJhdHRlcnkifQ.q0gr_RFORGbgkOn_dmMtQwKn7G_kBXUx2YamaZU4aWCxgbgYI43sApT1qIM9afJRVXPpLMjAsyiAEk2YF5c4AQ",
+    "jws": "eyJhbGciOiJFZERTQSIsImtpZCI6ImZlODEyYzEyZjNhYjRjZTZhYzVkYjY5YWMzNTJmOTA2Y2IxYjExZWY0M2ZiMzNlMjUyZWY3ZmY1NTIyNjM4ODkifQ.eyJjb250ZW50Ijp7IkIiOjIsImIiOjEsImJhdHRlcnlDaGVtaXN0cnkiOiJOTUMiLCJiYXR0ZXJ5TW9kZWxJZCI6IkFDTUUtTE1ULTQ4ViIsImJhdHRlcnlXZWlnaHRLZyI6MTIuNCwiaHVnZU51bWJlciI6MWUrMjEsIm5lZ2F0aXZlWmVyb1NhZmUiOi0wLjI1LCJyYXRlZENhcGFjaXR5QWgiOjIwLCJ0aW55TnVtYmVyIjo1ZS03LCLDiW1pc3Npb24iOiIwLjVlLTMgdGVzdCIsIsOpIjozLCLigqwiOjQsIvCfmIAiOjV9LCJpZCI6IjAxOTlhM2MyLTdiMTAtN2U0YS05YzNkLTJmMWU4YjZhNWQ0MCIsImlzc3VlciI6ImRpZDp3ZWI6bm9kZS5hY21lLmV4YW1wbGUiLCJvcGVyYXRvciI6eyJjaXR5IjoiTcO8bmNoZW4iLCJjb3VudHJ5IjoiREUiLCJuYW1lIjoiQWNtZSBaZWxsZW4gR21iSCJ9LCJwcm9kdWN0R3JvdXAiOiJiYXR0ZXJ5IiwicHVibGlzaGVkQXQiOiIyMDI2LTA5LTAxVDA5OjA1OjAwWiIsInNjaGVtYVZlcnNpb24iOiIyLjcuMCIsInN0YXR1cyI6ImFjdGl2ZSJ9.RPgAGQWX_gMRUmIX3tE25prFcCCUo5Bije_ZyuQ96SqDaLiWOZUC_Dm834Z2eUzKRdSPT1Jn3frRTUs19W5IAw",
     "payload": {
-      "id": "01HXYZDEMO0000000000000001",
-      "productName": "Demo Battery Pack",
-      "sector": "battery"
+      "content": {
+        "B": 2,
+        "b": 1,
+        "batteryChemistry": "NMC",
+        "batteryModelId": "ACME-LMT-48V",
+        "batteryWeightKg": 12.4,
+        "hugeNumber": 1e+21,
+        "negativeZeroSafe": -0.25,
+        "ratedCapacityAh": 20,
+        "tinyNumber": 5e-7,
+        "Émission": "0.5e-3 test",
+        "é": 3,
+        "€": 4,
+        "😀": 5
+      },
+      "id": "0199a3c2-7b10-7e4a-9c3d-2f1e8b6a5d40",
+      "issuer": "did:web:node.acme.example",
+      "operator": {
+        "city": "München",
+        "country": "DE",
+        "name": "Acme Zellen GmbH"
+      },
+      "productGroup": "battery",
+      "publishedAt": "2026-09-01T09:05:00Z",
+      "schemaVersion": "2.7.0",
+      "status": "active"
     }
   },
   "transferChain": {
     "originalOperator": {
       "country": "DE",
-      "did": "did:web:from.example",
+      "did": "did:web:node.acme.example",
       "euOperatorId": null,
-      "name": "From Operator GmbH",
+      "name": "Acme Zellen GmbH",
       "role": "manufacturer"
     },
-    "passportId": "019f3fa1-1c48-73d0-afed-551f94c76080",
+    "passportId": "0199a3c2-7b10-7e4a-9c3d-2f1e8b6a5d40",
     "transfers": [
       {
-        "completedAt": "2026-07-01T14:00:00Z",
+        "completedAt": "2026-09-10T14:30:00Z",
         "fromOperator": {
           "country": "DE",
-          "did": "did:web:from.example",
+          "did": "did:web:node.acme.example",
           "euOperatorId": null,
-          "name": "From Operator GmbH",
+          "name": "Acme Zellen GmbH",
           "role": "manufacturer"
         },
-        "fromSignature": "eyJhbGciOiJFZERTQSJ9.eyJmcm9tT3BlcmF0b3IiOnsiY291bnRyeSI6IkRFIiwiZGlkIjoiZGlkOndlYjpmcm9tLmV4YW1wbGUiLCJldU9wZXJhdG9ySWQiOm51bGwsIm5hbWUiOiJGcm9tIE9wZXJhdG9yIEdtYkgiLCJyb2xlIjoibWFudWZhY3R1cmVyIn0sImluaXRpYXRlZEF0IjoiMjAyNi0wNy0wMVQxMzowMDowMFoiLCJwYXNzcG9ydElkIjoiMDE5ZjNmYTEtMWM0OC03M2QwLWFmZWQtNTUxZjk0Yzc2MDgwIiwicmVhc29uIjoic2FsZSIsInRvT3BlcmF0b3IiOnsiY291bnRyeSI6IkRFIiwiZGlkIjoiZGlkOndlYjp0by5leGFtcGxlIiwiZXVPcGVyYXRvcklkIjpudWxsLCJuYW1lIjoiVG8gT3BlcmF0b3IgU0FSTCIsInJvbGUiOiJtYW51ZmFjdHVyZXIifSwidHJhbnNmZXJJZCI6IjAxOWYzZmExLTFjNDgtNzNkMC1hZmVkLTU1MDczN2E3ZDRhMCJ9.hW3mNm2oD08EN0DZEvDaVbk7vyCtlDMc2xzADgt9rgPv5pXOeXTF3gMC1_7-biFIGob0lDR7YOrgB8jPbgrlDQ",
-        "initiatedAt": "2026-07-01T13:00:00Z",
-        "notes": "demo fixture transfer",
-        "passportId": "019f3fa1-1c48-73d0-afed-551f94c76080",
-        "reason": "sale",
+        "fromSignature": "eyJhbGciOiJFZERTQSIsImtpZCI6ImZlODEyYzEyZjNhYjRjZTZhYzVkYjY5YWMzNTJmOTA2Y2IxYjExZWY0M2ZiMzNlMjUyZWY3ZmY1NTIyNjM4ODkifQ.eyJmcm9tT3BlcmF0b3IiOnsiY291bnRyeSI6IkRFIiwiZGlkIjoiZGlkOndlYjpub2RlLmFjbWUuZXhhbXBsZSIsImV1T3BlcmF0b3JJZCI6bnVsbCwibmFtZSI6IkFjbWUgWmVsbGVuIEdtYkgiLCJyb2xlIjoibWFudWZhY3R1cmVyIn0sImluaXRpYXRlZEF0IjoiMjAyNi0wOS0xMFQxNDowMDowMFoiLCJwYXNzcG9ydElkIjoiMDE5OWEzYzItN2IxMC03ZTRhLTljM2QtMmYxZThiNmE1ZDQwIiwicmVhc29uIjoicmVwdXJwb3NpbmciLCJ0b09wZXJhdG9yIjp7ImNvdW50cnkiOiJOTCIsImRpZCI6ImRpZDp3ZWI6c2Vjb25kbGlmZS5leGFtcGxlIiwiZXVPcGVyYXRvcklkIjpudWxsLCJuYW1lIjoiU2Vjb25kIExpZmUgU3RvcmFnZSBCViIsInJvbGUiOiJyZXB1cnBvc2VyIn0sInRyYW5zZmVySWQiOiIwMTk5YTNjMi03YjEwLTdlNGEtOWMzZC0wMDAwMDAwMDAwYWEifQ.mtQCd6lEOMHAMcpsKZUFbx0vvRBS05El5_PWWXqItXxIp-lJO9VV1PILF9lTPceECXVTAgDfxCFsTdf29k3iCw",
+        "initiatedAt": "2026-09-10T14:00:00Z",
+        "nodeAcceptanceAttestation": "eyJhbGciOiJFZERTQSIsImtpZCI6ImZlODEyYzEyZjNhYjRjZTZhYzVkYjY5YWMzNTJmOTA2Y2IxYjExZWY0M2ZiMzNlMjUyZWY3ZmY1NTIyNjM4ODkifQ.eyJhdHRlc3RzIjoiYWNjZXB0YW5jZSIsImZyb21PcGVyYXRvciI6eyJjb3VudHJ5IjoiREUiLCJkaWQiOiJkaWQ6d2ViOm5vZGUuYWNtZS5leGFtcGxlIiwiZXVPcGVyYXRvcklkIjpudWxsLCJuYW1lIjoiQWNtZSBaZWxsZW4gR21iSCIsInJvbGUiOiJtYW51ZmFjdHVyZXIifSwiaW5pdGlhdGVkQXQiOiIyMDI2LTA5LTEwVDE0OjAwOjAwWiIsInBhc3Nwb3J0SWQiOiIwMTk5YTNjMi03YjEwLTdlNGEtOWMzZC0yZjFlOGI2YTVkNDAiLCJyZWFzb24iOiJyZXB1cnBvc2luZyIsInRvT3BlcmF0b3IiOnsiY291bnRyeSI6Ik5MIiwiZGlkIjoiZGlkOndlYjpzZWNvbmRsaWZlLmV4YW1wbGUiLCJldU9wZXJhdG9ySWQiOm51bGwsIm5hbWUiOiJTZWNvbmQgTGlmZSBTdG9yYWdlIEJWIiwicm9sZSI6InJlcHVycG9zZXIifSwidHJhbnNmZXJJZCI6IjAxOTlhM2MyLTdiMTAtN2U0YS05YzNkLTAwMDAwMDAwMDBhYSJ9.hrv0yKqeb1DVf-X9ysNDsFOawnrocRUUaFo9ygKqitjNmxaFlj6o1Xyf6eXsyGDjOW7kBSjbrbSkbSbbsmHfCg",
+        "notes": "Repurposed into stationary storage.",
+        "passportId": "0199a3c2-7b10-7e4a-9c3d-2f1e8b6a5d40",
+        "reason": "repurposing",
         "toOperator": {
-          "country": "DE",
-          "did": "did:web:to.example",
+          "country": "NL",
+          "did": "did:web:secondlife.example",
           "euOperatorId": null,
-          "name": "To Operator SARL",
-          "role": "manufacturer"
+          "name": "Second Life Storage BV",
+          "role": "repurposer"
         },
-        "toSignature": "eyJhbGciOiJFZERTQSJ9.eyJmcm9tT3BlcmF0b3IiOnsiY291bnRyeSI6IkRFIiwiZGlkIjoiZGlkOndlYjpmcm9tLmV4YW1wbGUiLCJldU9wZXJhdG9ySWQiOm51bGwsIm5hbWUiOiJGcm9tIE9wZXJhdG9yIEdtYkgiLCJyb2xlIjoibWFudWZhY3R1cmVyIn0sImluaXRpYXRlZEF0IjoiMjAyNi0wNy0wMVQxMzowMDowMFoiLCJwYXNzcG9ydElkIjoiMDE5ZjNmYTEtMWM0OC03M2QwLWFmZWQtNTUxZjk0Yzc2MDgwIiwicmVhc29uIjoic2FsZSIsInRvT3BlcmF0b3IiOnsiY291bnRyeSI6IkRFIiwiZGlkIjoiZGlkOndlYjp0by5leGFtcGxlIiwiZXVPcGVyYXRvcklkIjpudWxsLCJuYW1lIjoiVG8gT3BlcmF0b3IgU0FSTCIsInJvbGUiOiJtYW51ZmFjdHVyZXIifSwidHJhbnNmZXJJZCI6IjAxOWYzZmExLTFjNDgtNzNkMC1hZmVkLTU1MDczN2E3ZDRhMCJ9.VBuCCrLSG5T-q_Q3w_kWUx2p6xm-9gvl-Ig0OZpAn-N6qsmzY8136wbY8tOmgdEq6uqGSAt0KxrFV0o2ger2Dg",
-        "transferId": "019f3fa1-1c48-73d0-afed-550737a7d4a0"
+        "transferId": "0199a3c2-7b10-7e4a-9c3d-0000000000aa"
       }
     ]
   }

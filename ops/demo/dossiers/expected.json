@@ -1,0 +1,442 @@
+{
+  "01-valid-simple.json": {
+    "checks": [
+      {
+        "name": "manifest_signature",
+        "status": "pass"
+      },
+      {
+        "name": "content_integrity",
+        "status": "pass"
+      },
+      {
+        "name": "full_view_signature",
+        "status": "pass"
+      },
+      {
+        "name": "public_view_signature",
+        "status": "pass"
+      },
+      {
+        "name": "audit_chain",
+        "status": "pass"
+      },
+      {
+        "detail": "no transfer chain on this passport",
+        "name": "transfer_chain",
+        "status": "absent"
+      },
+      {
+        "detail": "checkpoint layer not yet implemented — audit chain integrity is checked, but nothing pins the chain head against third-party re-hash",
+        "name": "checkpoint",
+        "status": "absent"
+      },
+      {
+        "detail": "no calculation receipts — dpp-calc invocation is not yet wired (licensed factor data pending)",
+        "name": "calc_receipts",
+        "status": "absent"
+      },
+      {
+        "detail": "no component graph on this passport",
+        "name": "component_graph",
+        "status": "absent"
+      },
+      {
+        "detail": "this passport carries no qualified seal",
+        "name": "qualified_seal",
+        "status": "absent"
+      },
+      {
+        "name": "input_fidelity",
+        "status": "pass"
+      }
+    ],
+    "exit": 0
+  },
+  "02-valid-with-transfer.json": {
+    "checks": [
+      {
+        "name": "manifest_signature",
+        "status": "pass"
+      },
+      {
+        "name": "content_integrity",
+        "status": "pass"
+      },
+      {
+        "name": "full_view_signature",
+        "status": "pass"
+      },
+      {
+        "name": "public_view_signature",
+        "status": "pass"
+      },
+      {
+        "name": "audit_chain",
+        "status": "pass"
+      },
+      {
+        "name": "transfer_chain",
+        "status": "pass"
+      },
+      {
+        "detail": "checkpoint layer not yet implemented — audit chain integrity is checked, but nothing pins the chain head against third-party re-hash",
+        "name": "checkpoint",
+        "status": "absent"
+      },
+      {
+        "detail": "no calculation receipts — dpp-calc invocation is not yet wired (licensed factor data pending)",
+        "name": "calc_receipts",
+        "status": "absent"
+      },
+      {
+        "detail": "no component graph on this passport",
+        "name": "component_graph",
+        "status": "absent"
+      },
+      {
+        "detail": "this passport carries no qualified seal",
+        "name": "qualified_seal",
+        "status": "absent"
+      },
+      {
+        "name": "input_fidelity",
+        "status": "pass"
+      }
+    ],
+    "exit": 0
+  },
+  "03-valid-with-eol.json": {
+    "checks": [
+      {
+        "name": "manifest_signature",
+        "status": "pass"
+      },
+      {
+        "name": "content_integrity",
+        "status": "pass"
+      },
+      {
+        "name": "full_view_signature",
+        "status": "pass"
+      },
+      {
+        "name": "public_view_signature",
+        "status": "pass"
+      },
+      {
+        "name": "audit_chain",
+        "status": "pass"
+      },
+      {
+        "detail": "no transfer chain on this passport",
+        "name": "transfer_chain",
+        "status": "absent"
+      },
+      {
+        "detail": "checkpoint layer not yet implemented — audit chain integrity is checked, but nothing pins the chain head against third-party re-hash",
+        "name": "checkpoint",
+        "status": "absent"
+      },
+      {
+        "detail": "no calculation receipts — dpp-calc invocation is not yet wired (licensed factor data pending)",
+        "name": "calc_receipts",
+        "status": "absent"
+      },
+      {
+        "detail": "no component graph on this passport",
+        "name": "component_graph",
+        "status": "absent"
+      },
+      {
+        "detail": "this passport carries no qualified seal",
+        "name": "qualified_seal",
+        "status": "absent"
+      },
+      {
+        "name": "input_fidelity",
+        "status": "pass"
+      }
+    ],
+    "exit": 0
+  },
+  "04-valid-full-lifecycle.json": {
+    "checks": [
+      {
+        "name": "manifest_signature",
+        "status": "pass"
+      },
+      {
+        "name": "content_integrity",
+        "status": "pass"
+      },
+      {
+        "name": "full_view_signature",
+        "status": "pass"
+      },
+      {
+        "name": "public_view_signature",
+        "status": "pass"
+      },
+      {
+        "name": "audit_chain",
+        "status": "pass"
+      },
+      {
+        "name": "transfer_chain",
+        "status": "pass"
+      },
+      {
+        "detail": "checkpoint layer not yet implemented — audit chain integrity is checked, but nothing pins the chain head against third-party re-hash",
+        "name": "checkpoint",
+        "status": "absent"
+      },
+      {
+        "detail": "no calculation receipts — dpp-calc invocation is not yet wired (licensed factor data pending)",
+        "name": "calc_receipts",
+        "status": "absent"
+      },
+      {
+        "detail": "no component graph on this passport",
+        "name": "component_graph",
+        "status": "absent"
+      },
+      {
+        "detail": "this passport carries no qualified seal",
+        "name": "qualified_seal",
+        "status": "absent"
+      },
+      {
+        "name": "input_fidelity",
+        "status": "pass"
+      }
+    ],
+    "exit": 0
+  },
+  "05-tampered-signature.json": {
+    "checks": [
+      {
+        "name": "manifest_signature",
+        "status": "pass"
+      },
+      {
+        "name": "content_integrity",
+        "status": "pass"
+      },
+      {
+        "name": "full_view_signature",
+        "status": "pass"
+      },
+      {
+        "detail": "signature invalid, or covers different content than this payload",
+        "name": "public_view_signature",
+        "status": "fail"
+      },
+      {
+        "name": "audit_chain",
+        "status": "pass"
+      },
+      {
+        "name": "transfer_chain",
+        "status": "pass"
+      },
+      {
+        "detail": "checkpoint layer not yet implemented — audit chain integrity is checked, but nothing pins the chain head against third-party re-hash",
+        "name": "checkpoint",
+        "status": "absent"
+      },
+      {
+        "detail": "no calculation receipts — dpp-calc invocation is not yet wired (licensed factor data pending)",
+        "name": "calc_receipts",
+        "status": "absent"
+      },
+      {
+        "detail": "no component graph on this passport",
+        "name": "component_graph",
+        "status": "absent"
+      },
+      {
+        "detail": "this passport carries no qualified seal",
+        "name": "qualified_seal",
+        "status": "absent"
+      },
+      {
+        "name": "input_fidelity",
+        "status": "pass"
+      }
+    ],
+    "exit": 1
+  },
+  "06-tampered-audit-entry.json": {
+    "checks": [
+      {
+        "name": "manifest_signature",
+        "status": "pass"
+      },
+      {
+        "detail": "content hash mismatch for: auditEntries",
+        "name": "content_integrity",
+        "status": "fail"
+      },
+      {
+        "name": "full_view_signature",
+        "status": "pass"
+      },
+      {
+        "name": "public_view_signature",
+        "status": "pass"
+      },
+      {
+        "detail": "broken at entry 0: entry_hash mismatch — content tampered",
+        "name": "audit_chain",
+        "status": "fail"
+      },
+      {
+        "name": "transfer_chain",
+        "status": "pass"
+      },
+      {
+        "detail": "checkpoint layer not yet implemented — audit chain integrity is checked, but nothing pins the chain head against third-party re-hash",
+        "name": "checkpoint",
+        "status": "absent"
+      },
+      {
+        "detail": "no calculation receipts — dpp-calc invocation is not yet wired (licensed factor data pending)",
+        "name": "calc_receipts",
+        "status": "absent"
+      },
+      {
+        "detail": "no component graph on this passport",
+        "name": "component_graph",
+        "status": "absent"
+      },
+      {
+        "detail": "this passport carries no qualified seal",
+        "name": "qualified_seal",
+        "status": "absent"
+      },
+      {
+        "name": "input_fidelity",
+        "status": "pass"
+      }
+    ],
+    "exit": 1
+  },
+  "07-tampered-transfer-signature.json": {
+    "checks": [
+      {
+        "name": "manifest_signature",
+        "status": "pass"
+      },
+      {
+        "detail": "content hash mismatch for: transferChain",
+        "name": "content_integrity",
+        "status": "fail"
+      },
+      {
+        "name": "full_view_signature",
+        "status": "pass"
+      },
+      {
+        "name": "public_view_signature",
+        "status": "pass"
+      },
+      {
+        "name": "audit_chain",
+        "status": "pass"
+      },
+      {
+        "detail": "broken at transfer 0: Acceptance(\"signature does not verify against did:web:node.acme.example's key, or covers different content than the transfer terms\")",
+        "name": "transfer_chain",
+        "status": "fail"
+      },
+      {
+        "detail": "checkpoint layer not yet implemented — audit chain integrity is checked, but nothing pins the chain head against third-party re-hash",
+        "name": "checkpoint",
+        "status": "absent"
+      },
+      {
+        "detail": "no calculation receipts — dpp-calc invocation is not yet wired (licensed factor data pending)",
+        "name": "calc_receipts",
+        "status": "absent"
+      },
+      {
+        "detail": "no component graph on this passport",
+        "name": "component_graph",
+        "status": "absent"
+      },
+      {
+        "detail": "this passport carries no qualified seal",
+        "name": "qualified_seal",
+        "status": "absent"
+      },
+      {
+        "name": "input_fidelity",
+        "status": "pass"
+      }
+    ],
+    "exit": 1
+  },
+  "08-hidden-field-injection.json": {
+    "checks": [
+      {
+        "name": "manifest_signature",
+        "status": "pass"
+      },
+      {
+        "name": "content_integrity",
+        "status": "pass"
+      },
+      {
+        "name": "full_view_signature",
+        "status": "pass"
+      },
+      {
+        "name": "public_view_signature",
+        "status": "pass"
+      },
+      {
+        "name": "audit_chain",
+        "status": "pass"
+      },
+      {
+        "name": "transfer_chain",
+        "status": "pass"
+      },
+      {
+        "detail": "checkpoint layer not yet implemented — audit chain integrity is checked, but nothing pins the chain head against third-party re-hash",
+        "name": "checkpoint",
+        "status": "absent"
+      },
+      {
+        "detail": "no calculation receipts — dpp-calc invocation is not yet wired (licensed factor data pending)",
+        "name": "calc_receipts",
+        "status": "absent"
+      },
+      {
+        "detail": "no component graph on this passport",
+        "name": "component_graph",
+        "status": "absent"
+      },
+      {
+        "detail": "this passport carries no qualified seal",
+        "name": "qualified_seal",
+        "status": "absent"
+      },
+      {
+        "detail": "dossier content changed after parsing — a field was likely dropped silently (e.g. an unknown field nested inside a tolerant type such as a transfer record)",
+        "name": "input_fidelity",
+        "status": "fail"
+      }
+    ],
+    "exit": 1
+  },
+  "09-unknown-top-level-field.json": {
+    "error": "not a valid dossier — malformed JSON or an unrecognised field: unknown field `verifiedBy`, expected one of `manifest`, `manifestJws`, `fullView`, `publicView`, `didDocuments`, `auditEntries`, `transferChain`, `eolEvent`, `checkpoint`, `calcReceipts`, `componentGraph`, `qualifiedSeal` at line 223 column 14",
+    "exit": 2
+  },
+  "10-not-json.txt": {
+    "error": "not a valid dossier — malformed JSON or an unrecognised field: expected value at line 1 column 1",
+    "exit": 2
+  }
+}
