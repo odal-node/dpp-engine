@@ -653,6 +653,16 @@ fn enum_cases() -> Vec<EnumCase> {
             name: "ApiKeyScope",
             variants: wire(&fixtures::all_api_key_scopes()),
         },
+        // Written inline on `NodeState.profile` until it was lifted out, and so
+        // checked by nothing: this check reaches only named schemas, and the
+        // object check compares key names and JSON types — `profile` is a string
+        // on both sides, and the fixture's one value, `production`, was listed.
+        // The spec listed `staging`, which no node emits, and omitted `sandbox`,
+        // which every sandbox node serves.
+        EnumCase {
+            name: "NodeProfile",
+            variants: fixtures::node_profiles_as_served(),
+        },
         EnumCase {
             name: "ComplianceStatus",
             variants: wire(&fixtures::all_compliance_statuses()),
@@ -3548,6 +3558,28 @@ mod fixtures {
             trust: Some(report.posture_json()),
             ruleset_version: Some("2026.1.0".into()),
         }
+    }
+
+    /// Every deployment profile, as the node-state route serialises it.
+    ///
+    /// Read through `posture_json`, the one producer of `profile` on that
+    /// route, for the same reason `node_state` is built through it: what a
+    /// client receives is what that function emits, whatever `NodeProfile`'s
+    /// own `Serialize` says.
+    pub fn node_profiles_as_served() -> Vec<String> {
+        [
+            NodeProfile::Development,
+            NodeProfile::Sandbox,
+            NodeProfile::Production,
+        ]
+        .into_iter()
+        .map(|profile| {
+            NodeTrustReport::new(profile, vec![]).posture_json()["profile"]
+                .as_str()
+                .expect("posture_json serves `profile` as a string")
+                .to_owned()
+        })
+        .collect()
     }
 
     pub fn vault_info() -> VaultInfo {

@@ -274,6 +274,8 @@ components:
       $ref: components/schemas/access/InstalledPlugin.yaml
     NodeState:
       $ref: components/schemas/access/NodeState.yaml
+    NodeProfile:
+      $ref: components/schemas/access/NodeProfile.yaml
     WhoamiResponse:
       $ref: components/schemas/access/WhoamiResponse.yaml
     VaultInfo:

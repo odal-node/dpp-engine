@@ -6994,11 +6994,7 @@ components:
           type: boolean
           description: True once the operator identity is complete enough to publish.
         profile:
-          type: string
-          enum:
-            - development
-            - staging
-            - production
+          $ref: '#/components/schemas/NodeProfile'
           description: |
             The node's deployment profile. Absent on a standalone vault, which has no
             composition root to resolve one.
@@ -7031,6 +7027,13 @@ components:
             the rules a passport was checked under are observable. Absent on a
             standalone vault.
           example: baseline
+    NodeProfile:
+      type: string
+      description: 'The deployment profile a node was started under (`NODE_PROFILE`), which decides the trust tiers it will boot on. `development` boots on any tier, placeholders included, and is what an unset or unrecognised value means. `sandbox` is a real deployment against test authorities: it refuses a placeholder on a required trust port and accepts a sandbox tier. `production` accepts only live tiers on required ports.'
+      enum:
+        - development
+        - sandbox
+        - production
     WhoamiResponse:
       type: object
       description: What the presented credential is. Reports only what the caller already sent — it reveals nothing about any other key, and the key's secret is never stored in a recoverable form.
