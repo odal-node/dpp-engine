@@ -43,6 +43,24 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ### Fixed
 
+- **The demo evidence dossiers were no longer dossiers.** Every file in
+  `ops/demo/dossiers/` predated `manifest.coreVersion` becoming required, so the
+  verifier refused all ten as malformed, the four meant to verify included. Their
+  transfers also carried an acceptance signed over the initiation payload, which
+  fails `transfer_chain` now that the acceptance signs its own. The README named
+  a generator in a crate that no longer exists, so nothing could rebuild them.
+
+  `crates/dpp-vault/examples/generate_demo_dossiers.rs` now builds them from the
+  engine's own types (`DossierV1`, `compute_content_hashes`,
+  `PassportAuditEntry::chain_hash`, `TransferRecord::signing_payload`,
+  `acceptance_payload`) with fixed keys, ids and timestamps, and records
+  `verify_dossier_json`'s verdict on each in `expected.json`. Same ten scenarios
+  and file names; 07 now flips `nodeAcceptanceAttestation`, not `toSignature`.
+  `tests/demo_dossiers_verify.rs` holds the committed files to those verdicts
+  and to the README table's exit codes and failing checks, so the next format
+  change fails the build rather than the demo. The README also stops calling
+  `odal verify` stateless: it uploads the file to the connected node.
+
 - **CI could not pull its S3 test server, so nothing could go green — again.**
   `docker.io/minio/minio` was removed on 2026-09-13 and the pin moved to
   `quay.io/minio/minio`; on 2026-09-24 that repository stopped granting
@@ -69,6 +87,17 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   policy, so a server that let anyone read anything would have passed them all
   while proving nothing about the policy the production bucket depends on — the
   exact risk in replacing the server under them.
+
+  **The snapshot store's delete now runs against a real server too.**
+  `S3SnapshotStore::remove` holds the node's only `delete_object` call, and no
+  suite had ever sent it to a server — under MinIO or RustFS — nor
+  `put_public_html`, the page it removes first.
+  `a_removed_snapshot_is_gone_from_the_bucket_and_removing_again_is_fine` stores
+  both representations, removes them, confirms each is gone, and removes again:
+  `SnapshotStore::remove` promises a missing object is success, and a retired
+  passport depends on the static tier stopping serving its copy. Absence is read
+  with the server's credentials, because a public-read policy that grants
+  `GetObject` alone may answer `403` rather than `404` for a missing key.
 
 ## [0.14.0] - 2026-09-24
 

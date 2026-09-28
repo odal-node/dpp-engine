@@ -4,11 +4,11 @@
 //!
 //! # What this covers that nothing else did
 //!
-//! `snapshot_outbox.rs` drives the drain against an in-memory store and says
-//! "the MinIO tier covers the adapter" — but the MinIO tier only ever covered
-//! `S3ArchiveAdapter`. The snapshot store's S3 path had no test against a real
-//! object store at all, so nothing checked the property the continuity tier
-//! rests on: that an **unauthenticated** reader who fetches the stored object
+//! `snapshot_outbox.rs` drives the drain against an in-memory store and leaves
+//! "does S3 work" to a real-server suite — but until this file, the only one
+//! covered `S3ArchiveAdapter`. The snapshot store's S3 path had no test against
+//! a real object store at all, so nothing checked the property the continuity
+//! tier rests on: that an **unauthenticated** reader who fetches the stored object
 //! over plain HTTP gets bytes whose signed freshness bound still verifies.
 //!
 //! That reader is the whole point of the tier. It is what `odal snapshot
@@ -34,7 +34,7 @@ use testcontainers::{
 
 use chrono::{Duration, SubsecRound as _, Utc};
 use dpp_node::infra::s3_snapshot::{S3SnapshotConfig, S3SnapshotStore};
-use dpp_types::snapshot::{SnapshotMeta, SnapshotStore, snapshot_json_key};
+use dpp_types::snapshot::{SnapshotMeta, SnapshotStore, snapshot_html_key, snapshot_json_key};
 
 /// The S3 server build this file tests against.
 ///
@@ -412,5 +412,83 @@ async fn a_stored_snapshot_stripped_of_its_proof_is_absent() {
     assert!(
         fetched["validUntil"].is_string(),
         "the dates survive the edit, which is the point"
+    );
+}
+
+/// `remove` retires both representations, and a second `remove` is not an
+/// error.
+///
+/// This is the only `delete_object` call in the node, and until this test no
+/// suite sent it to a real server — nor `put_public_html`, the page `remove`
+/// deletes first. A withdrawn passport depends on it: the static tier must stop
+/// serving the copy when the node retires it, or the continuity tier goes on
+/// answering for a record that no longer stands.
+///
+/// Absence is read with the server's credentials, not anonymously: the public
+/// policy grants `GetObject` alone, and without `ListBucket` a store may answer
+/// `403` rather than `404` for a missing key, which would read the same as a
+/// policy failure.
+#[tokio::test]
+async fn a_removed_snapshot_is_gone_from_the_bucket_and_removing_again_is_fine() {
+    let s3 = start_s3().await;
+    ensure_public_bucket(&s3).await;
+    let client = admin_client(&s3);
+    let store = S3SnapshotStore::new(config(&s3));
+
+    let as_of = Utc::now().trunc_subsecs(0);
+    let valid_until = as_of + Duration::days(7);
+    let (_dir, document, _key) = signed_snapshot(as_of, valid_until);
+    let dpp_id = "0198f000-0000-7000-8000-000000000003";
+    let meta = SnapshotMeta {
+        as_of,
+        valid_until,
+        max_age: std::time::Duration::from_secs(86_400),
+    };
+    store
+        .put_public_json(
+            dpp_id,
+            &serde_json::to_vec(&document).expect("serialise"),
+            meta,
+        )
+        .await
+        .expect("store the JSON snapshot");
+    store
+        .put_public_html(dpp_id, b"<!doctype html><title>snapshot</title>", meta)
+        .await
+        .expect("store the HTML snapshot");
+
+    let exists = |key: String| {
+        let client = client.clone();
+        let bucket = s3.bucket.clone();
+        async move {
+            match client.head_object().bucket(bucket).key(&key).send().await {
+                Ok(_) => true,
+                Err(e) if e.as_service_error().is_some_and(|se| se.is_not_found()) => false,
+                Err(e) => panic!("HEAD {key} failed for a reason other than absence: {e:?}"),
+            }
+        }
+    };
+
+    assert!(
+        exists(snapshot_json_key(dpp_id)).await,
+        "the JSON was stored"
+    );
+    assert!(
+        exists(snapshot_html_key(dpp_id)).await,
+        "the HTML was stored"
+    );
+
+    store.remove(dpp_id).await.expect("remove the snapshot");
+    assert!(
+        !exists(snapshot_json_key(dpp_id)).await,
+        "the signed JSON must be gone after remove"
+    );
+    assert!(
+        !exists(snapshot_html_key(dpp_id)).await,
+        "the HTML page must be gone after remove"
+    );
+
+    store.remove(dpp_id).await.expect(
+        "removing a snapshot that is already gone must succeed — the trait promises idempotence",
     );
 }
