@@ -152,7 +152,7 @@ async fn main() -> anyhow::Result<()> {
         }
     };
 
-    // ── ESPR Art. 13 archive (S3/MinIO or NoOp) ──────────────────────────────
+    // ── ESPR Art. 13 archive (S3 or NoOp) ────────────────────────────────────
     let (archive, archive_trust): (Arc<dyn ArchivePort>, TrustMode) =
         dpp_node::infra::s3_archive::from_env();
 
