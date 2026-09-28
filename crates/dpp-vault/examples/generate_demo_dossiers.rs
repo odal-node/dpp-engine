@@ -9,6 +9,13 @@
 //! The previous corpus was built by a generator in a crate that no longer
 //! exists, and nothing noticed when the format moved on from it.
 //!
+//! The history is written the way the node writes it, entry by entry: the
+//! action names, statuses and metadata of `create`, `publish`, the transfer legs
+//! and `declare_eol`. The dossier's views and `eolEvent` are then read back out
+//! of that history with [`published_views`] and [`declared_eol`], the lookups the
+//! assembler uses, so each file is one a node could have exported. The payloads
+//! themselves stay synthetic (see [`full_payload`]).
+//!
 //! Deterministic: fixed Ed25519 seeds (node `[7; 32]`, partner `[9; 32]`),
 //! fixed ids and timestamps, so a rerun on the same build is byte-identical.
 //! The manifest records `nodeVersion` and `coreVersion` the way the real
@@ -26,15 +33,23 @@ use std::path::Path;
 
 use base64::Engine;
 use dpp_crypto::jws::algorithm::KeyAlgorithm;
+use dpp_domain::eol::{DeactivationReason, EolEvent};
+use dpp_domain::passport::PassportId;
 use dpp_domain::transfer::{TransferChain, TransferRecord};
 use dpp_types::audit::PassportAuditEntry;
 use dpp_types::evidence::{DossierManifest, DossierV1, SignedLayer, compute_content_hashes};
+use dpp_vault::domain::service::{declared_eol, published_views};
 use dpp_vault::domain::verify::{acceptance_payload, verify_dossier_json};
 use ed25519_dalek::{Signer, SigningKey};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
 const PID: &str = "0199a3c2-7b10-7e4a-9c3d-2f1e8b6a5d40";
+const TRANSFER_ID: &str = "0199a3c2-7b10-7e4a-9c3d-0000000000aa";
+
+/// Every write in the demo history came through the API on an `odal_sk_` key,
+/// and `ApiKeyAuthProvider` records every such caller as `"api-key"`.
+const ACTOR: &str = "api-key";
 
 struct Party {
     did: String,
@@ -88,25 +103,38 @@ fn sign(p: &Party, payload: &Value) -> String {
     format!("{input}.{}", b64().encode(sig.to_bytes()))
 }
 
-/// `(id, action, from status, to status, metadata, timestamp)`.
-type AuditSpec<'a> = (
-    &'a str,
-    &'a str,
-    Option<&'a str>,
-    Option<&'a str>,
-    Option<Value>,
-    &'a str,
-);
+/// One audit entry, with the action name, statuses and metadata the service
+/// that writes it uses — see the comment on each in [`history`].
+struct Step {
+    /// The last hex digits of the entry id and of its request id, which the
+    /// two share so a reader can pair them.
+    n: u8,
+    action: &'static str,
+    from: Option<&'static str>,
+    to: Option<&'static str>,
+    metadata: Option<Value>,
+    at: &'static str,
+}
 
-fn audit(specs: Vec<AuditSpec>) -> Vec<PassportAuditEntry> {
+/// Chain the steps as `PgAuditRepo` does, each hashed over the one before.
+///
+/// Every step is an API call, so each entry carries a request id, as
+/// `RequestStampedAudit` stamps one on anything written while serving a
+/// request. The id is not part of the hash.
+fn chain(steps: Vec<Step>) -> Vec<PassportAuditEntry> {
     let mut prev = String::new();
-    specs
+    steps
         .into_iter()
-        .map(|(id, action, from, to, meta, ts)| {
-            let mut e = PassportAuditEntry::new(PID, action, "operator:ops@acme.example", from, to);
-            e.id = id.parse().expect("audit id");
-            e.timestamp = ts.parse().expect("audit timestamp");
-            e.metadata = meta;
+        .map(|s| {
+            let mut e =
+                PassportAuditEntry::new(PID, s.action, ACTOR, s.from, s.to).with_request_id(Some(
+                    format!("0199a3c2-7b10-7e4a-8d2e-0000000000{:02x}", s.n),
+                ));
+            e.id = format!("0199a3c2-7b10-7e4a-9c3d-0000000000{:02x}", s.n)
+                .parse()
+                .expect("audit id");
+            e.timestamp = s.at.parse().expect("audit timestamp");
+            e.metadata = s.metadata;
             let h = e.chain_hash(&prev);
             e.prev_hash = Some(prev.clone());
             e.entry_hash = Some(h.clone());
@@ -114,6 +142,81 @@ fn audit(specs: Vec<AuditSpec>) -> Vec<PassportAuditEntry> {
             e
         })
         .collect()
+}
+
+/// The end-of-life declaration `POST /dpp/{id}/eol` builds: `declaredBy` taken
+/// from the request body, `declaredAt` just before the entry that records it.
+fn eol_record() -> Value {
+    let mut eol = EolEvent::new(
+        PassportId(PID.parse().expect("passport id")),
+        DeactivationReason::Recycled,
+        "Recycling Nord GmbH",
+    );
+    eol.declared_at = "2026-09-20T08:00:00Z".parse().expect("declaredAt");
+    eol.notes = Some("Pack dismantled; cells sent for hydrometallurgical recovery.".into());
+    serde_json::to_value(&eol).expect("serialise EOL record")
+}
+
+/// The passport's history, in the node's own vocabulary.
+fn history(node: &Party, partner: &Party, o: &Opts) -> Vec<PassportAuditEntry> {
+    let mut steps = vec![
+        // `create.rs`: no previous status, lands in `draft`.
+        Step {
+            n: 1,
+            action: "created",
+            from: None,
+            to: Some("draft"),
+            metadata: None,
+            at: "2026-09-01T09:00:00Z",
+        },
+        // `publish.rs`: no previous status, and the metadata is the exact pair
+        // of payloads the two signatures cover — the assembler's only source
+        // for the dossier's views.
+        Step {
+            n: 2,
+            action: "published",
+            from: None,
+            to: Some("active"),
+            metadata: Some(json!({
+                "fullViewPayload": full_payload(node),
+                "publicViewPayload": public_payload(node),
+            })),
+            at: "2026-09-01T09:05:00.250Z",
+        },
+    ];
+    if o.transfer {
+        // `transfer.rs`: one entry per leg, no status change.
+        for (n, event, at) in [
+            (3, "transfer.initiated", "2026-09-10T14:00:00.042Z"),
+            (4, "transfer.accepted", "2026-09-10T14:30:00.123456Z"),
+        ] {
+            steps.push(Step {
+                n,
+                action: "transferred",
+                from: None,
+                to: None,
+                metadata: Some(json!({
+                    "event": event,
+                    "transferId": TRANSFER_ID,
+                    "toOperator": partner.did,
+                })),
+                at,
+            });
+        }
+    }
+    if o.eol {
+        // `eol.rs`: `active` to the terminal `deactivated`, carrying the typed
+        // EOL record — the assembler's only source for `eolEvent`.
+        steps.push(Step {
+            n: 5,
+            action: "deactivated",
+            from: Some("active"),
+            to: Some("deactivated"),
+            metadata: Some(eol_record()),
+            at: "2026-09-20T08:00:00.018Z",
+        });
+    }
+    chain(steps)
 }
 
 /// The last keys and numbers are there for canonicalisation, not realism: a
@@ -164,51 +267,14 @@ struct Opts {
 }
 
 fn dossier(node: &Party, partner: &Party, o: Opts) -> DossierV1 {
-    let mut specs: Vec<AuditSpec> = vec![
-        (
-            "0199a3c2-7b10-7e4a-9c3d-000000000001",
-            "create",
-            None,
-            Some("draft"),
-            None,
-            "2026-09-01T09:00:00Z",
-        ),
-        (
-            "0199a3c2-7b10-7e4a-9c3d-000000000002",
-            "publish",
-            Some("draft"),
-            Some("active"),
-            Some(json!({ "schemaVersion": "2.7.0" })),
-            "2026-09-01T09:05:00.250Z",
-        ),
-    ];
-    if o.transfer {
-        specs.push((
-            "0199a3c2-7b10-7e4a-9c3d-000000000003",
-            "transfer_completed",
-            Some("active"),
-            Some("active"),
-            Some(json!({ "transferId": "0199a3c2-7b10-7e4a-9c3d-0000000000aa" })),
-            "2026-09-10T14:30:00.123456Z",
-        ));
-    }
-    if o.eol {
-        specs.push((
-            "0199a3c2-7b10-7e4a-9c3d-000000000004",
-            "eol",
-            Some("active"),
-            Some("end_of_life"),
-            Some(json!({ "eolType": "recycled" })),
-            "2026-09-20T08:00:00Z",
-        ));
-    }
+    let audit_entries = history(node, partner, &o);
 
     // A completed transfer carries two signatures, both by the node here: it is
     // the outgoing operator too, so it signs the initiation terms, and it signs
     // the acceptance it ran. Each over its own payload.
     let transfer_chain = o.transfer.then(|| {
         let mut rec: TransferRecord = serde_json::from_value(json!({
-            "transferId": "0199a3c2-7b10-7e4a-9c3d-0000000000aa",
+            "transferId": TRANSFER_ID,
             "passportId": PID,
             "fromOperator": operator(node, "Acme Zellen GmbH", "manufacturer", "DE"),
             "toOperator": operator(partner, "Second Life Storage BV", "repurposer", "NL"),
@@ -236,8 +302,11 @@ fn dossier(node: &Party, partner: &Party, o: Opts) -> DossierV1 {
         did_documents.insert(partner.did.clone(), did_doc(partner));
     }
 
-    let full = full_payload(node);
-    let public = public_payload(node);
+    // Read back out of the history exactly as the assembler reads them, never
+    // built alongside it: a dossier whose views or EOL record disagree with its
+    // own audit trail is one no node exports.
+    let (full, public) = published_views(&audit_entries).expect("a published entry");
+    let eol_event = declared_eol(&audit_entries);
     let mut d = DossierV1 {
         manifest: DossierManifest {
             format_version: "1".into(),
@@ -259,15 +328,9 @@ fn dossier(node: &Party, partner: &Party, o: Opts) -> DossierV1 {
             payload: public,
         },
         did_documents,
-        audit_entries: audit(specs),
+        audit_entries,
         transfer_chain,
-        eol_event: o.eol.then(|| {
-            json!({
-                "type": "recycled",
-                "declaredAt": "2026-09-20T08:00:00Z",
-                "facility": "Recycling Nord GmbH"
-            })
-        }),
+        eol_event,
         checkpoint: None,
         calc_receipts: vec![],
         component_graph: None,

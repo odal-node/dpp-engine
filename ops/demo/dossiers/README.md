@@ -6,11 +6,19 @@ types with real Ed25519 signing (not hand-crafted JSON) by
 `crates/dpp-vault/examples/generate_demo_dossiers.rs`. Every operator, DID and
 host in them is fictional.
 
+Each is a dossier a node could have exported. Its history uses the node's own
+entries — `created`, `published`, `transferred`, `deactivated` — with the
+statuses and metadata the node records, and its views and end-of-life record are
+read back out of that history the way the node's assembler reads them. Only the
+passport payload is synthetic: it carries keys and numbers chosen to exercise
+canonicalisation, not a real product's data.
+
 `expected.json` holds `verify_dossier_json`'s verdict on each file, check by
 check. `crates/dpp-vault/tests/demo_dossiers_verify.rs` fails when a file stops
-getting that verdict, or when the **Expected** or **Fails** column below stops
-matching it — so a format change that breaks this corpus breaks the build, not
-the demo.
+getting that verdict, when the **Expected** or **Fails** column below stops
+matching it, or when a dossier's views or end-of-life record stop being what its
+own history says — so a format change that breaks this corpus breaks the build,
+not the demo.
 
 Try each with `odal verify <file>`, or the console's **Dossiers** menu item, in
 `dpp-engine`. Both upload the file to the node `odal` is connected to
@@ -23,8 +31,8 @@ the node's. `odal verify` exits 0 when every check passes, 1 when one fails, and
 | # | File | Expected | Fails | Purpose |
 |---|------|----------|-------|---------|
 | 01 | `01-valid-simple.json` | exit 0, VERIFIED | — | Minimal passport: created + published, no transfer, no EOL. `transfer_chain` correctly reports absent (not a failure). |
-| 02 | `02-valid-with-transfer.json` | exit 0, VERIFIED | — | Adds a completed transfer of responsibility: the outgoing operator's `fromSignature` over the transfer terms, and the node's `nodeAcceptanceAttestation` over the acceptance it ran. |
-| 03 | `03-valid-with-eol.json` | exit 0, VERIFIED | — | Adds an end-of-life audit entry and `eolEvent` (no transfer). |
+| 02 | `02-valid-with-transfer.json` | exit 0, VERIFIED | — | Adds a completed transfer of responsibility: a `transferred` history entry for each leg (initiated, accepted), the outgoing operator's `fromSignature` over the transfer terms, and the node's `nodeAcceptanceAttestation` over the acceptance it ran. |
+| 03 | `03-valid-with-eol.json` | exit 0, VERIFIED | — | Adds an end-of-life declaration (no transfer): a `deactivated` history entry whose metadata is the typed EOL record, which is also the dossier's `eolEvent`. |
 | 04 | `04-valid-full-lifecycle.json` | exit 0, VERIFIED | — | Transfer + EOL both present. Base fixture the tampered variants below are derived from. |
 | 05 | `05-tampered-signature.json` | exit 1, TAMPER | `public_view_signature` | One character flipped in `publicView.jws`. Every other check, including `content_integrity`, stays green: the manifest hashes the public view's payload, not its JWS. |
 | 06 | `06-tampered-audit-entry.json` | exit 1, TAMPER | `content_integrity`, `audit_chain` | `auditEntries[0].action` changed post-signing. Both `audit_chain` (hash-chain break) and `content_integrity` (manifest hash mismatch) fire together — a realistic cascade, not surgically isolated. |
