@@ -12,6 +12,24 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ### Fixed
 
+- **The demo evidence dossiers were no longer dossiers.** Every file in
+  `ops/demo/dossiers/` predated `manifest.coreVersion` becoming required, so the
+  verifier refused all ten as malformed, the four meant to verify included. Their
+  transfers also carried an acceptance signed over the initiation payload, which
+  fails `transfer_chain` now that the acceptance signs its own. The README named
+  a generator in a crate that no longer exists, so nothing could rebuild them.
+
+  `crates/dpp-vault/examples/generate_demo_dossiers.rs` now builds them from the
+  engine's own types (`DossierV1`, `compute_content_hashes`,
+  `PassportAuditEntry::chain_hash`, `TransferRecord::signing_payload`,
+  `acceptance_payload`) with fixed keys, ids and timestamps, and records
+  `verify_dossier_json`'s verdict on each in `expected.json`. Same ten scenarios
+  and file names; 07 now flips `nodeAcceptanceAttestation`, not `toSignature`.
+  `tests/demo_dossiers_verify.rs` holds the committed files to those verdicts
+  and to the README table's exit codes and failing checks, so the next format
+  change fails the build rather than the demo. The README also stops calling
+  `odal verify` stateless: it uploads the file to the connected node.
+
 - **CI could not pull its S3 test server, so nothing could go green — again.**
   `docker.io/minio/minio` was removed on 2026-09-13 and the pin moved to
   `quay.io/minio/minio`; on 2026-09-24 that repository stopped granting
