@@ -61,6 +61,28 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   change fails the build rather than the demo. The README also stops calling
   `odal verify` stateless: it uploads the file to the connected node.
 
+- **The regenerated demo dossiers still carried a history no node writes.**
+  Their audit entries said `create`, `publish`, `transfer_completed` and `eol`
+  (to a status `end_of_life` that does not exist). The node writes `created`,
+  `published`, `transferred` and `deactivated`, and the dossier assembler reads
+  its inputs by those names: the signed views from the last `published`
+  entry's `fullViewPayload`/`publicViewPayload`, the `eolEvent` from the
+  `deactivated` entry's metadata. The corpus's `published` stand-in carried
+  neither view, and its `eolEvent` was a different object from its EOL entry's
+  metadata, in neither case the shape of core's `EolEvent`. The verifier checks
+  none of this, so every verdict was right while no node could have exported
+  the files.
+
+  The generator now writes each entry as the service that owns it does — action,
+  statuses, metadata, the `api-key` actor and a request id — and reads the views
+  and `eolEvent` back out with `published_views` and `declared_eol`, the two
+  lookups lifted out of the assembler for it. A completed transfer is two
+  `transferred` entries, one per leg. `demo_dossiers_verify.rs` gains
+  `every_dossier_is_one_a_node_could_have_assembled`, which applies those same
+  lookups to every committed dossier. Every verdict is unchanged but for the
+  line number in 09's parse error, since the file grew; the README's
+  **Expected** and **Fails** columns stand as they were.
+
 - **CI could not pull its S3 test server, so nothing could go green — again.**
   `docker.io/minio/minio` was removed on 2026-09-13 and the pin moved to
   `quay.io/minio/minio`; on 2026-09-24 that repository stopped granting

@@ -16,12 +16,18 @@
 //! - The README table's `Expected` exit code and `Fails` column, which are what
 //!   a person running the demo reads.
 //!
+//! And one thing the verifier cannot see: that each dossier is one a node could
+//! have exported, its views and end-of-life record being what the assembler
+//! reads out of its own audit trail.
+//!
 //! Pure file-and-verify: no Docker, no HTTP, so it runs in the fast gate.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use dpp_types::evidence::DossierV1;
+use dpp_vault::domain::service::{declared_eol, published_views};
 use dpp_vault::domain::verify::verify_dossier_json;
 use serde_json::{Value, json};
 
@@ -178,6 +184,56 @@ fn every_dossier_gets_the_verdict_its_readme_row_promises() {
     assert!(
         wrong.is_empty(),
         "the README's table no longer describes the dossiers:\n{}",
+        wrong.join("\n")
+    );
+}
+
+/// Every dossier is one a node could have exported: its signed views are the
+/// payloads its last `published` entry recorded, and its `eolEvent` is its
+/// `deactivated` entry's metadata — [`published_views`] and [`declared_eol`],
+/// the lookups the assembler builds a real dossier with.
+///
+/// The verifier checks neither, and does not need to: the manifest signature
+/// binds every member either way. So the corpus went on verifying with a
+/// history no node writes — `publish` for `published`, `eol` for
+/// `deactivated`, an `eolEvent` no entry held — until someone set it beside a
+/// live export.
+#[test]
+fn every_dossier_is_one_a_node_could_have_assembled() {
+    let expected = expected_verdicts();
+    let wrong: Vec<String> = dossier_files()
+        .into_iter()
+        // 09 and 10 are refused before a history exists to read.
+        .filter(|file| expected.get(file).is_none_or(|v| v["exit"] != 2))
+        .filter_map(|file| {
+            let bytes = fs::read(dossier_dir().join(&file)).expect("read dossier");
+            let d: DossierV1 = serde_json::from_slice(&bytes)
+                .unwrap_or_else(|e| panic!("{file} verifies, so it must parse: {e}"));
+            let mut faults = Vec::new();
+            match published_views(&d.audit_entries) {
+                None => faults.push("no `published` entry carries the signed views".to_owned()),
+                Some((full, public)) => {
+                    if full != d.full_view.payload {
+                        faults.push(
+                            "fullView is not what the last `published` entry recorded".into(),
+                        );
+                    }
+                    if public != d.public_view.payload {
+                        faults.push(
+                            "publicView is not what the last `published` entry recorded".into(),
+                        );
+                    }
+                }
+            }
+            if declared_eol(&d.audit_entries) != d.eol_event {
+                faults.push("eolEvent is not the `deactivated` entry's metadata".into());
+            }
+            (!faults.is_empty()).then(|| format!("{file}: {}", faults.join("; ")))
+        })
+        .collect();
+    assert!(
+        wrong.is_empty(),
+        "a node could not have exported these — {REGENERATE}:\n{}",
         wrong.join("\n")
     );
 }
