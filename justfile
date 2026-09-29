@@ -295,7 +295,7 @@ subjects-check:
 vocabulary-check:
     bash scripts/vocabulary-check.sh
 
-# Prove each of vocabulary-check's three rules actually refuses something.
+# Prove each of vocabulary-check's five rules actually refuses something.
 vocabulary-check-self-test:
     bash scripts/vocabulary-check.test.sh
 

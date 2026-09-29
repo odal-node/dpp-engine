@@ -2,9 +2,9 @@
 # Self-test for scripts/vocabulary-check.sh.
 #
 # A gate nobody has watched fail is a gate nobody knows works — and this one is
-# three independent greps, so a green run proves nothing about any single rule.
-# Each case below reintroduces exactly one of the three collisions the rename
-# removed and asserts the gate refuses it.
+# five independent greps, so a green run proves nothing about any single rule.
+# Each case below reintroduces exactly one collision the rename removed and
+# asserts the gate refuses it.
 #
 # The gate reads relative paths (`crates/`, `cli/`, `api/paths/`), so each case
 # builds a synthetic tree in a temp directory and runs the gate from inside it.
@@ -78,6 +78,29 @@ run_case "an_event_subject_naming_archived_is_refused" reject \
 # 4. The CLI is in scope too — the gate reads `cli/` as well as `crates/`.
 run_case "a_route_in_the_cli_tree_is_refused" reject \
     'mkdir -p cli/src && printf %s\\n "        .route(\"/archive\", post(h))" > cli/src/r.rs'
+
+# 5. A client URL. No `.route(…)` anywhere, so rule 1 is blind to it.
+run_case "a_client_url_naming_archive_is_refused" reject \
+    'printf %s\\n "    let url = format!(\"{}/api/v1/dpp/{id}/archive\", base);" > cli/src/url.rs'
+
+# 6. The shape that shipped: the segment passed bare to a URL builder, with no
+#    slash for rule 5 to find.
+run_case "a_bare_archive_segment_in_source_is_refused" reject \
+    'printf %s\\n "    lifecycle_transition(\&params.id, \"archive\", client, cfg).await" > cli/src/lifecycle.rs'
+
+# 7. The status value sent on the wire, which core refuses on input.
+run_case "an_archived_status_value_in_source_is_refused" reject \
+    'printf %s\\n "    let status = \"archived\";" >> crates/dpp-vault/src/event.rs'
+
+# 8. A test calling the old route. It can pass for the wrong reason, expecting
+#    the 404 an unknown route gives.
+run_case "a_test_calling_the_old_route_is_refused" reject \
+    'mkdir -p crates/dpp-vault/tests && printf %s\\n "    .uri(\"/vault/api/v1/dpp/x/archive\")" > crates/dpp-vault/tests/old.rs'
+
+# 9. A test building a record with the legacy status stays legal — that is how
+#    the rename's own migration is tested.
+run_case "a_test_building_the_legacy_status_is_accepted" accept \
+    'mkdir -p crates/dpp-dal/tests && printf %s\\n "    doc[\"status\"] = \"archived\".into();" > crates/dpp-dal/tests/legacy.rs'
 
 echo
 echo "$pass passed, $fail failed"

@@ -26,7 +26,9 @@
 # Clause 4.2 archiving is served by `GET /dpp/{dppId}/versions` and carries no
 # "archive" in any route path, path file or event subject. So the rule is
 # absolute rather than a list of blessed exceptions: **no route path, no
-# OpenAPI path file, and no event subject may contain "archiv" at all.**
+# OpenAPI path file, no event subject and no URL a client builds may contain
+# "archiv" at all, and no production source may send "archive" or "archived"
+# as a value.**
 #
 # An absolute rule is the point. An allow-list is a place to add the next one.
 #
@@ -57,6 +59,26 @@ fi
 #    worth failing the build rather than discovering it in a consumer.
 if grep -rn --include="*.rs" -E '"dpp\.[a-z]+\.[a-z]*archiv' crates/; then
     echo "ERROR: an event subject contains \"archiv\" — see above."
+    status=1
+fi
+
+# 4. A path segment inside any string. A client builds its URLs from string
+#    literals, never from `.route(…)`, so rule 1 cannot see one — which is how
+#    `odal passport retire` kept posting to `/archive` after the node stopped
+#    serving it. Tests are in scope: a test that calls the old route can pass
+#    for the wrong reason, by expecting a 404.
+if grep -rn --include="*.rs" -E '"[^"]*/archiv' crates/ cli/; then
+    echo "ERROR: a string carries an \"/archiv…\" path segment — the route is /retire, and clause 4.2 archiving is served at /versions."
+    status=1
+fi
+
+# 5. The bare words as values in production source. A path segment handed to a
+#    URL builder (`"archive"`) and a status sent on the wire (`"archived"`) are
+#    each a whole literal, and core refuses the second on input. Only `src/` is
+#    read: a test may still build a record carrying the legacy status, which is
+#    how the rename's own migration is tested.
+if grep -rn --include="*.rs" -E '"archived?"' crates/*/src cli/src; then
+    echo "ERROR: \"archive\" or \"archived\" is used as a value — the transition and the status are \`retire\` / \`retired\`."
     status=1
 fi
 
