@@ -267,7 +267,10 @@ fn every_example_passport_is_one_a_node_would_publish() {
         dpp_domain::validate_product_group_data(data)
             .unwrap_or_else(|e| panic!("{file}: {e:?}; {REGENERATE}"));
         let mut inner = serde_json::to_value(data).expect("serialise product group data");
-        inner.as_object_mut().expect("an object").remove("productGroup");
+        inner
+            .as_object_mut()
+            .expect("an object")
+            .remove("productGroup");
         dpp_domain::schemas::VersionedSchemaRegistry::new()
             .validate_strict("battery", &passport.schema_version, &inner)
             .unwrap_or_else(|e| panic!("{file}: {e:?}; {REGENERATE}"));

@@ -538,8 +538,16 @@ fn main() {
 
     let valid = |transfer, eol| {
         let payload = Payload::Passport;
-        serde_json::to_value(dossier(&node, &partner, Opts { transfer, eol, payload }))
-            .expect("serialise dossier")
+        serde_json::to_value(dossier(
+            &node,
+            &partner,
+            Opts {
+                transfer,
+                eol,
+                payload,
+            },
+        ))
+        .expect("serialise dossier")
     };
     let full = valid(true, true);
 
@@ -586,7 +594,9 @@ fn main() {
     };
     files.push((
         "11-canonicalisation-vectors.json",
-        pretty(&serde_json::to_value(dossier(&node, &partner, vectors)).expect("serialise dossier")),
+        pretty(
+            &serde_json::to_value(dossier(&node, &partner, vectors)).expect("serialise dossier"),
+        ),
     ));
 
     let mut expected = serde_json::Map::new();

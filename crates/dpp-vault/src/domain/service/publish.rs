@@ -626,7 +626,11 @@ fn snapshot_backup_url(base: &str, dpp_id: &str) -> String {
 ///
 /// Public so the demo dossier generator stamps a passport exactly as publish
 /// does, rather than restating either rule.
-pub fn stamp_publish_obligations(passport: &mut Passport, first_publish: bool, resolver_base: &str) {
+pub fn stamp_publish_obligations(
+    passport: &mut Passport,
+    first_publish: bool,
+    resolver_base: &str,
+) {
     if first_publish && passport.retention_until.is_none() {
         // Compute and seal retention_until once at first publish, from the
         // catalog — the single source of the obligation, held beside the
