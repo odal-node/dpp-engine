@@ -1,4 +1,4 @@
-//! Lifecycle: suspend, archive, and audit history.
+//! Lifecycle: suspend, retire, and audit history.
 
 use anyhow::{Context as _, Result};
 use serde_json::json;
@@ -18,12 +18,12 @@ pub async fn action_suspend(
 }
 
 pub async fn action_retire(params: &RetireParams, client: &OdalClient, cfg: &Config) -> Result<()> {
-    lifecycle_transition(&params.id, "archive", client, cfg).await
+    lifecycle_transition(&params.id, "retire", client, cfg).await
 }
 
 /// POST an empty body to one of the passport's state-transition routes.
 ///
-/// Shared by `suspend` and `archive` because those two really are the same
+/// Shared by `suspend` and `retire` because those two really are the same
 /// request with a different path segment — they take no body and return
 /// nothing. `amend` and `supersede` deliberately do not route through here:
 /// both carry a payload and both answer with a pair of ids, so folding them in

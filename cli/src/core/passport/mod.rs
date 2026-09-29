@@ -1,4 +1,4 @@
-//! Passport actions: import, export, list, publish, suspend, archive, history, validate.
+//! Passport actions: import, export, list, publish, suspend, retire, history, validate.
 
 mod evidence;
 mod export;

@@ -86,7 +86,7 @@ Key behaviours:
 
 - **Guided forms** — each action prompts for its inputs with help text and
   sensible defaults; Esc at any prompt cancels back to the submenu.
-- **Confirmation before irreversible actions** — Suspend, Archive, and bulk
+- **Confirmation before irreversible actions** — Suspend, Retire, and bulk
   Publish each show a plain-language consequence statement before proceeding.
 - **Suggested next steps** — after a successful Import the console offers to
   Validate immediately; after a clean Validate it offers to Publish.
@@ -210,7 +210,7 @@ least-privilege key cannot mutate the operator's registry identity).
 | `odal passport validate <file>` | Dry-run a passport body — would create accept it, and does it pass the publish schema gate. Persists nothing | API key (write) |
 | `odal passport publish [id]` | Sign + publish all drafts (or one) | API key |
 | `odal passport suspend <id>` | Suspend a published passport (serves 410) | API key |
-| `odal passport archive <id>` | Archive (terminal state) | API key |
+| `odal passport retire <id>` | Retire (terminal state; the public page keeps serving) | API key |
 | `odal passport history <id>` | Passport audit trail | API key |
 | `odal passport export [--format] [--status] [-o]` | Export passports (JSON/CSV) | API key |
 | `odal passport find --product-group --identifier [--batch] [--json]` | Look a passport up by its business identity instead of its ID: the product identifier is the GTIN-14 for a GS1 identifier, else the identification link or DID. The batch is part of that identity, not a filter on it | API key |
@@ -351,7 +351,7 @@ publish a single draft; omit to publish all.
 ### `odal passport export`
 
 Walks the full set (paginated) and writes JSON (default) or CSV to a file
-(`-o file`) or stdout. Filter with `--status draft|active|suspended|archived`.
+(`-o file`) or stdout. Filter with `--status draft|active|suspended|retired`.
 CSV cells are formula-injection-neutralised.
 
 A bare filename (`-o report.csv`) is written to `~/.config/odal/exports/`, so
