@@ -46,10 +46,13 @@ RUN rm -f .cargo/config.toml
 # `--locked`: the graph this embeds is the SBOM's crate list, so it must be the
 # committed Cargo.lock — never one cargo quietly re-resolved in the builder.
 RUN cargo auditable build --locked --release -p dpp-resolver
-# Same package and lockfile as the build above; see node.Dockerfile for the flags.
-RUN cargo about generate --frozen --fail -c docker/about.toml \
-    -m crates/dpp-resolver/Cargo.toml \
-    -o /build/THIRD-PARTY-NOTICES docker/third-party-notices.hbs
+# Same package and lockfile as the build above; see node.Dockerfile for why the
+# fetch comes first and for the flags.
+RUN cargo fetch --locked \
+    && cargo about generate --frozen --fail -c docker/about.toml \
+       --target "$(rustc -vV | sed -n 's/^host: //p')" \
+       -m crates/dpp-resolver/Cargo.toml \
+       -o /build/THIRD-PARTY-NOTICES docker/third-party-notices.hbs
 
 # ── local: patch dpp-* to the sibling ../dpp-core source ─────────────────────────
 FROM builder-base AS builder-local
@@ -62,9 +65,11 @@ COPY dpp-engine/ dpp-engine/
 COPY dpp-engine/.cargo/config.toml.example /build/dpp-engine/.cargo/config.toml
 WORKDIR /build/dpp-engine
 RUN cargo auditable build --release -p dpp-resolver
-RUN cargo about generate --offline --fail -c docker/about.toml \
-    -m crates/dpp-resolver/Cargo.toml \
-    -o /build/THIRD-PARTY-NOTICES docker/third-party-notices.hbs
+RUN cargo fetch \
+    && cargo about generate --offline --fail -c docker/about.toml \
+       --target "$(rustc -vV | sed -n 's/^host: //p')" \
+       -m crates/dpp-resolver/Cargo.toml \
+       -o /build/THIRD-PARTY-NOTICES docker/third-party-notices.hbs
 
 # Select the active builder from BUILD_MODE; only the chosen stage is built.
 FROM builder-${BUILD_MODE} AS builder
