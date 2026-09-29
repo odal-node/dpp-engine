@@ -237,3 +237,31 @@ fn every_dossier_is_one_a_node_could_have_assembled() {
         wrong.join("\n")
     );
 }
+
+/// The corpus is only a canonicalisation vector while it holds a pair of keys
+/// that UTF-16 order and code point order put the other way round. `😀` is the
+/// surrogate pair `0xD83D 0xDE00`; `\u{FF21}` is the single unit `0xFF21`. The
+/// signed bytes must have the emoji first, which is what a verifier sorting by
+/// code point or by UTF-8 bytes gets wrong.
+#[test]
+fn the_signed_full_view_orders_keys_by_utf16_code_unit() {
+    use base64::Engine as _;
+
+    let path = dossier_dir().join("04-valid-full-lifecycle.json");
+    let doc: Value = serde_json::from_slice(&fs::read(&path).expect("read the dossier"))
+        .expect("the dossier is JSON");
+    let jws = doc["fullView"]["jws"].as_str().expect("fullView.jws");
+    let payload = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(jws.split('.').nth(1).expect("a JWS payload segment"))
+        .expect("the payload segment is base64url");
+    let payload = String::from_utf8(payload).expect("the signed payload is UTF-8");
+
+    let emoji = payload.find("\"😀\":5").expect("the emoji key is signed");
+    let fullwidth = payload
+        .find("\"\u{FF21}\":6")
+        .expect("the fullwidth key is signed");
+    assert!(
+        emoji < fullwidth,
+        "keys must be ordered by UTF-16 code unit, so 😀 (0xD83D) comes before \u{FF21} (0xFF21)"
+    );
+}

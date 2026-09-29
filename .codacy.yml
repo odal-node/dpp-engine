@@ -32,7 +32,17 @@
 # edits to an applied file, `just grants-check` gates the app role's privileges
 # against `ops/pg/README.md`, and the Postgres test tier exercises the schema
 # they produce.
+
+# The demo dossiers hold up to seven JWS compact strings each (`eyJ...`): a signed
+# view or a signed manifest, which anyone can read and which contain no key. A
+# secret scanner matches the shape of the string, not what is in it. They are
+# also generated: `crates/dpp-vault/examples/generate_demo_dossiers.rs` rewrites
+# every signature whenever the payload or the format changes, so each token
+# re-appears as a new finding on a diff nobody wrote by hand. What holds them to
+# account is `crates/dpp-vault/tests/demo_dossiers_verify.rs`, which checks every
+# file against its recorded verdict.
 exclude_paths:
   - "api/openapi.bundled.yaml"
   - "api/openapi.bundled.json"
   - "ops/pg/**"
+  - "ops/demo/dossiers/**"
