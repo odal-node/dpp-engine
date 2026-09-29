@@ -43,6 +43,18 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ### Fixed
 
+- **The demo dossiers' canonicalisation keys could not tell UTF-16 order from
+  code point order.** The signed payload carries keys meant to catch a verifier
+  that sorts them wrongly, but every one of them sorts the same under both
+  orders, so a verifier sorting by code point or by UTF-8 bytes would still have
+  verified all ten files. The payload gains `"\u{FF21}"` (fullwidth `Ａ`, the
+  single UTF-16 unit `0xFF21`) beside `"😀"` (the pair `0xD83D 0xDE00`): the
+  emoji sorts first by code unit and last by code point. The dossiers and
+  `expected.json` are regenerated, so every hash and signature in them changes;
+  no verdict does. `demo_dossiers_verify.rs` gains
+  `the_signed_full_view_orders_keys_by_utf16_code_unit`, which fails if the pair
+  leaves the corpus or the signed bytes stop putting the emoji first.
+
 - **The demo evidence dossiers were no longer dossiers.** Every file in
   `ops/demo/dossiers/` predated `manifest.coreVersion` becoming required, so the
   verifier refused all ten as malformed, the four meant to verify included. Their

@@ -223,6 +223,12 @@ fn history(node: &Party, partner: &Party, o: &Opts) -> Vec<PassportAuditEntry> {
 /// verifier that sorts keys by anything but UTF-16 code units, or formats
 /// numbers other than as ECMAScript does, computes different JCS bytes and
 /// fails a signature these dossiers carry.
+///
+/// `"\u{FF21}"` (fullwidth `Ａ`) and `"😀"` are the pair that tells the two
+/// orders apart: the first is the single UTF-16 unit `0xFF21`, the second the
+/// surrogate pair `0xD83D 0xDE00`. Sorted by UTF-16 code unit the emoji comes
+/// first; sorted by code point, or by UTF-8 bytes, it comes last. Every other
+/// key here sorts the same either way.
 fn full_payload(node: &Party) -> Value {
     json!({
         "id": PID,
@@ -242,7 +248,7 @@ fn full_payload(node: &Party) -> Value {
             "tinyNumber": 0.0000005,
             "hugeNumber": 1e21,
             "negativeZeroSafe": -0.25,
-            "b": 1, "B": 2, "é": 3, "€": 4, "😀": 5
+            "b": 1, "B": 2, "é": 3, "€": 4, "😀": 5, "\u{FF21}": 6
         },
         "publishedAt": "2026-09-01T09:05:00Z"
     })

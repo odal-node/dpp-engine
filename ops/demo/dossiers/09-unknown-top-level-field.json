@@ -16,7 +16,7 @@
     {
       "action": "published",
       "actor": "api-key",
-      "entryHash": "f854cfc5ec021fcb193e0ea9b8ac0f0063454be673a6ecbbcb5fcc51a617167d",
+      "entryHash": "122cc906e4c0fd2172cfd97b1d6f5b0813c2db22f301b9e96f044c614fa84fdb",
       "id": "0199a3c2-7b10-7e4a-9c3d-000000000002",
       "metadata": {
         "fullViewPayload": {
@@ -35,6 +35,7 @@
             "Émission": "0.5e-3 test",
             "é": 3,
             "€": 4,
+            "Ａ": 6,
             "😀": 5
           },
           "id": "0199a3c2-7b10-7e4a-9c3d-2f1e8b6a5d40",
@@ -63,6 +64,7 @@
             "Émission": "0.5e-3 test",
             "é": 3,
             "€": 4,
+            "Ａ": 6,
             "😀": 5
           },
           "id": "0199a3c2-7b10-7e4a-9c3d-2f1e8b6a5d40",
@@ -88,7 +90,7 @@
     {
       "action": "transferred",
       "actor": "api-key",
-      "entryHash": "cd69537bc2f7aca20492411ef6e0bdb72f0353b6a1c0937ea0d1fda5b56885dc",
+      "entryHash": "fb94dc5d624df166d3c8818ca7314033d9686dc629ddb1fbfb2be44c04b758af",
       "id": "0199a3c2-7b10-7e4a-9c3d-000000000003",
       "metadata": {
         "event": "transfer.initiated",
@@ -97,7 +99,7 @@
       },
       "newStatus": null,
       "passportId": "0199a3c2-7b10-7e4a-9c3d-2f1e8b6a5d40",
-      "prevHash": "f854cfc5ec021fcb193e0ea9b8ac0f0063454be673a6ecbbcb5fcc51a617167d",
+      "prevHash": "122cc906e4c0fd2172cfd97b1d6f5b0813c2db22f301b9e96f044c614fa84fdb",
       "previousStatus": null,
       "requestId": "0199a3c2-7b10-7e4a-8d2e-000000000003",
       "timestamp": "2026-09-10T14:00:00.042Z"
@@ -105,7 +107,7 @@
     {
       "action": "transferred",
       "actor": "api-key",
-      "entryHash": "b44608325240c6553fee3e51c7a397179f6e0dcde722019e72f488dc99abb5d1",
+      "entryHash": "c4862c22734f57d4834cdb0b7aead85efd2351164ee6119b2a56c95ffd76dd9c",
       "id": "0199a3c2-7b10-7e4a-9c3d-000000000004",
       "metadata": {
         "event": "transfer.accepted",
@@ -114,7 +116,7 @@
       },
       "newStatus": null,
       "passportId": "0199a3c2-7b10-7e4a-9c3d-2f1e8b6a5d40",
-      "prevHash": "cd69537bc2f7aca20492411ef6e0bdb72f0353b6a1c0937ea0d1fda5b56885dc",
+      "prevHash": "fb94dc5d624df166d3c8818ca7314033d9686dc629ddb1fbfb2be44c04b758af",
       "previousStatus": null,
       "requestId": "0199a3c2-7b10-7e4a-8d2e-000000000004",
       "timestamp": "2026-09-10T14:30:00.123456Z"
@@ -122,7 +124,7 @@
     {
       "action": "deactivated",
       "actor": "api-key",
-      "entryHash": "50de4abbe6aa59db3e8c9fac6063bc7ebd2cc65df5aca2eb276a73619c060cfe",
+      "entryHash": "05d0c1bb01b38181270d81c02a52fb46f8fca04b6f69cac79b74208224aa6a82",
       "id": "0199a3c2-7b10-7e4a-9c3d-000000000005",
       "metadata": {
         "declaredAt": "2026-09-20T08:00:00Z",
@@ -135,7 +137,7 @@
       },
       "newStatus": "deactivated",
       "passportId": "0199a3c2-7b10-7e4a-9c3d-2f1e8b6a5d40",
-      "prevHash": "b44608325240c6553fee3e51c7a397179f6e0dcde722019e72f488dc99abb5d1",
+      "prevHash": "c4862c22734f57d4834cdb0b7aead85efd2351164ee6119b2a56c95ffd76dd9c",
       "previousStatus": "active",
       "requestId": "0199a3c2-7b10-7e4a-8d2e-000000000005",
       "timestamp": "2026-09-20T08:00:00.018Z"
@@ -195,7 +197,7 @@
     }
   },
   "fullView": {
-    "jws": "eyJhbGciOiJFZERTQSIsImtpZCI6ImZlODEyYzEyZjNhYjRjZTZhYzVkYjY5YWMzNTJmOTA2Y2IxYjExZWY0M2ZiMzNlMjUyZWY3ZmY1NTIyNjM4ODkifQ.eyJjb250ZW50Ijp7IkIiOjIsImIiOjEsImJhdHRlcnlDaGVtaXN0cnkiOiJOTUMiLCJiYXR0ZXJ5TW9kZWxJZCI6IkFDTUUtTE1ULTQ4ViIsImJhdHRlcnlXZWlnaHRLZyI6MTIuNCwiY2F0aG9kZU1hdGVyaWFsIjoiTk1DIDgxMSIsImh1Z2VOdW1iZXIiOjFlKzIxLCJuZWdhdGl2ZVplcm9TYWZlIjotMC4yNSwicmF0ZWRDYXBhY2l0eUFoIjoyMCwic3RhdGVPZkhlYWx0aFBjdCI6MTAwLCJ0aW55TnVtYmVyIjo1ZS03LCLDiW1pc3Npb24iOiIwLjVlLTMgdGVzdCIsIsOpIjozLCLigqwiOjQsIvCfmIAiOjV9LCJpZCI6IjAxOTlhM2MyLTdiMTAtN2U0YS05YzNkLTJmMWU4YjZhNWQ0MCIsImlzc3VlciI6ImRpZDp3ZWI6bm9kZS5hY21lLmV4YW1wbGUiLCJvcGVyYXRvciI6eyJjaXR5IjoiTcO8bmNoZW4iLCJjb3VudHJ5IjoiREUiLCJuYW1lIjoiQWNtZSBaZWxsZW4gR21iSCJ9LCJwcm9kdWN0R3JvdXAiOiJiYXR0ZXJ5IiwicHVibGlzaGVkQXQiOiIyMDI2LTA5LTAxVDA5OjA1OjAwWiIsInNjaGVtYVZlcnNpb24iOiIyLjcuMCIsInN0YXR1cyI6ImFjdGl2ZSJ9.56KnYFaD2s9v01NhcheQZGIqBujqLCNrGcbnEe6ZbNV2UozvcQsgYQQKegxFqNMKQpoPeuJJW_tN5gPuhBolDA",
+    "jws": "eyJhbGciOiJFZERTQSIsImtpZCI6ImZlODEyYzEyZjNhYjRjZTZhYzVkYjY5YWMzNTJmOTA2Y2IxYjExZWY0M2ZiMzNlMjUyZWY3ZmY1NTIyNjM4ODkifQ.eyJjb250ZW50Ijp7IkIiOjIsImIiOjEsImJhdHRlcnlDaGVtaXN0cnkiOiJOTUMiLCJiYXR0ZXJ5TW9kZWxJZCI6IkFDTUUtTE1ULTQ4ViIsImJhdHRlcnlXZWlnaHRLZyI6MTIuNCwiY2F0aG9kZU1hdGVyaWFsIjoiTk1DIDgxMSIsImh1Z2VOdW1iZXIiOjFlKzIxLCJuZWdhdGl2ZVplcm9TYWZlIjotMC4yNSwicmF0ZWRDYXBhY2l0eUFoIjoyMCwic3RhdGVPZkhlYWx0aFBjdCI6MTAwLCJ0aW55TnVtYmVyIjo1ZS03LCLDiW1pc3Npb24iOiIwLjVlLTMgdGVzdCIsIsOpIjozLCLigqwiOjQsIvCfmIAiOjUsIu-8oSI6Nn0sImlkIjoiMDE5OWEzYzItN2IxMC03ZTRhLTljM2QtMmYxZThiNmE1ZDQwIiwiaXNzdWVyIjoiZGlkOndlYjpub2RlLmFjbWUuZXhhbXBsZSIsIm9wZXJhdG9yIjp7ImNpdHkiOiJNw7xuY2hlbiIsImNvdW50cnkiOiJERSIsIm5hbWUiOiJBY21lIFplbGxlbiBHbWJIIn0sInByb2R1Y3RHcm91cCI6ImJhdHRlcnkiLCJwdWJsaXNoZWRBdCI6IjIwMjYtMDktMDFUMDk6MDU6MDBaIiwic2NoZW1hVmVyc2lvbiI6IjIuNy4wIiwic3RhdHVzIjoiYWN0aXZlIn0.bXoh9eU-rTvN-_heLcDWRfRe5hNQA_JmZnmSzNKr2t0f56qklAYFHb8xyevrfbb3phscXigOs8vbyAPMcOJ_Dg",
     "payload": {
       "content": {
         "B": 2,
@@ -212,6 +214,7 @@
         "Émission": "0.5e-3 test",
         "é": 3,
         "€": 4,
+        "Ａ": 6,
         "😀": 5
       },
       "id": "0199a3c2-7b10-7e4a-9c3d-2f1e8b6a5d40",
@@ -229,10 +232,10 @@
   },
   "manifest": {
     "contentHashes": {
-      "auditEntries": "8f5f26a71897ee0145435cb7efcbe6873ad0401466747bd6ec9e680b5c4391b5",
+      "auditEntries": "4e4ce37e3baccfbf97c635a4c14f1f59867fdb5d9bd4e1f2b5b7b042d87bdd92",
       "eolEvent": "7cb65bb485538e109105404e15c7bc411aa3050694fa4d63339c70dbe431d3a0",
-      "fullView": "750252051b902ddd89a447e209f7794b999f3c3c90c4edf63b5dfd356f671080",
-      "publicView": "1689c57aa9a6db1a2f069d88d3859ff4f389e05f12070c080265c614df6e4bc2",
+      "fullView": "b53ff594240922c190a6d957f4725b0e2353711426811b463f5e8916c3b39678",
+      "publicView": "53bdb718a8598f84b9a107774e05ad9495e1575237752a3d5cc2e12eeaa6d572",
       "transferChain": "52e0fd4f91be57a81e6219557f5f3c4f2331b0cbbc9461d376c967dae5445445"
     },
     "coreVersion": "0.20.0",
@@ -242,9 +245,9 @@
     "nodeVersion": "0.14.0",
     "passportId": "0199a3c2-7b10-7e4a-9c3d-2f1e8b6a5d40"
   },
-  "manifestJws": "eyJhbGciOiJFZERTQSIsImtpZCI6ImZlODEyYzEyZjNhYjRjZTZhYzVkYjY5YWMzNTJmOTA2Y2IxYjExZWY0M2ZiMzNlMjUyZWY3ZmY1NTIyNjM4ODkifQ.eyJjb250ZW50SGFzaGVzIjp7ImF1ZGl0RW50cmllcyI6IjhmNWYyNmE3MTg5N2VlMDE0NTQzNWNiN2VmY2JlNjg3M2FkMDQwMTQ2Njc0N2JkNmVjOWU2ODBiNWM0MzkxYjUiLCJlb2xFdmVudCI6IjdjYjY1YmI0ODU1MzhlMTA5MTA1NDA0ZTE1YzdiYzQxMWFhMzA1MDY5NGZhNGQ2MzMzOWM3MGRiZTQzMWQzYTAiLCJmdWxsVmlldyI6Ijc1MDI1MjA1MWI5MDJkZGQ4OWE0NDdlMjA5Zjc3OTRiOTk5ZjNjM2M5MGM0ZWRmNjNiNWRmZDM1NmY2NzEwODAiLCJwdWJsaWNWaWV3IjoiMTY4OWM1N2FhOWE2ZGIxYTJmMDY5ZDg4ZDM4NTlmZjRmMzg5ZTA1ZjEyMDcwYzA4MDI2NWM2MTRkZjZlNGJjMiIsInRyYW5zZmVyQ2hhaW4iOiI1MmUwZmQ0ZjkxYmU1N2E4MWU2MjE5NTU3ZjVmM2M0ZjIzMzFiMGNiYmM5NDYxZDM3NmM5NjdkYWU1NDQ1NDQ1In0sImNvcmVWZXJzaW9uIjoiMC4yMC4wIiwiY3JlYXRlZEF0IjoiMjAyNi0wOS0yNVQxMjowMDowMFoiLCJmb3JtYXRWZXJzaW9uIjoiMSIsImlzc3VlckRpZCI6ImRpZDp3ZWI6bm9kZS5hY21lLmV4YW1wbGUiLCJub2RlVmVyc2lvbiI6IjAuMTQuMCIsInBhc3Nwb3J0SWQiOiIwMTk5YTNjMi03YjEwLTdlNGEtOWMzZC0yZjFlOGI2YTVkNDAifQ.BLrgHn3Xkq9vJZNFV1fgdSMYeaHntdGNfsUBMnmDVWyjeqA5dEzI39OtLsZrY5QPjCYm7--C3s5tjA0l8nU3DA",
+  "manifestJws": "eyJhbGciOiJFZERTQSIsImtpZCI6ImZlODEyYzEyZjNhYjRjZTZhYzVkYjY5YWMzNTJmOTA2Y2IxYjExZWY0M2ZiMzNlMjUyZWY3ZmY1NTIyNjM4ODkifQ.eyJjb250ZW50SGFzaGVzIjp7ImF1ZGl0RW50cmllcyI6IjRlNGNlMzdlM2JhY2NmYmY5N2M2MzVhNGMxNGYxZjU5ODY3ZmRiNWQ5YmQ0ZTFmMmI1YjdiMDQyZDg3YmRkOTIiLCJlb2xFdmVudCI6IjdjYjY1YmI0ODU1MzhlMTA5MTA1NDA0ZTE1YzdiYzQxMWFhMzA1MDY5NGZhNGQ2MzMzOWM3MGRiZTQzMWQzYTAiLCJmdWxsVmlldyI6ImI1M2ZmNTk0MjQwOTIyYzE5MGE2ZDk1N2Y0NzI1YjBlMjM1MzcxMTQyNjgxMWI0NjNmNWU4OTE2YzNiMzk2NzgiLCJwdWJsaWNWaWV3IjoiNTNiZGI3MThhODU5OGY4NGI5YTEwNzc3NGUwNWFkOTQ5NWUxNTc1MjM3NzUyYTNkNWNjMmUxMmVlYWE2ZDU3MiIsInRyYW5zZmVyQ2hhaW4iOiI1MmUwZmQ0ZjkxYmU1N2E4MWU2MjE5NTU3ZjVmM2M0ZjIzMzFiMGNiYmM5NDYxZDM3NmM5NjdkYWU1NDQ1NDQ1In0sImNvcmVWZXJzaW9uIjoiMC4yMC4wIiwiY3JlYXRlZEF0IjoiMjAyNi0wOS0yNVQxMjowMDowMFoiLCJmb3JtYXRWZXJzaW9uIjoiMSIsImlzc3VlckRpZCI6ImRpZDp3ZWI6bm9kZS5hY21lLmV4YW1wbGUiLCJub2RlVmVyc2lvbiI6IjAuMTQuMCIsInBhc3Nwb3J0SWQiOiIwMTk5YTNjMi03YjEwLTdlNGEtOWMzZC0yZjFlOGI2YTVkNDAifQ.-RH5CefIIgnBJ33VqE9-flY978EP3fD3ooT5X49R1hn7Vj_2z80ipco9Lf-zaw7jTZ6WXF92VPpG6yUjGNkJBg",
   "publicView": {
-    "jws": "eyJhbGciOiJFZERTQSIsImtpZCI6ImZlODEyYzEyZjNhYjRjZTZhYzVkYjY5YWMzNTJmOTA2Y2IxYjExZWY0M2ZiMzNlMjUyZWY3ZmY1NTIyNjM4ODkifQ.eyJjb250ZW50Ijp7IkIiOjIsImIiOjEsImJhdHRlcnlDaGVtaXN0cnkiOiJOTUMiLCJiYXR0ZXJ5TW9kZWxJZCI6IkFDTUUtTE1ULTQ4ViIsImJhdHRlcnlXZWlnaHRLZyI6MTIuNCwiaHVnZU51bWJlciI6MWUrMjEsIm5lZ2F0aXZlWmVyb1NhZmUiOi0wLjI1LCJyYXRlZENhcGFjaXR5QWgiOjIwLCJ0aW55TnVtYmVyIjo1ZS03LCLDiW1pc3Npb24iOiIwLjVlLTMgdGVzdCIsIsOpIjozLCLigqwiOjQsIvCfmIAiOjV9LCJpZCI6IjAxOTlhM2MyLTdiMTAtN2U0YS05YzNkLTJmMWU4YjZhNWQ0MCIsImlzc3VlciI6ImRpZDp3ZWI6bm9kZS5hY21lLmV4YW1wbGUiLCJvcGVyYXRvciI6eyJjaXR5IjoiTcO8bmNoZW4iLCJjb3VudHJ5IjoiREUiLCJuYW1lIjoiQWNtZSBaZWxsZW4gR21iSCJ9LCJwcm9kdWN0R3JvdXAiOiJiYXR0ZXJ5IiwicHVibGlzaGVkQXQiOiIyMDI2LTA5LTAxVDA5OjA1OjAwWiIsInNjaGVtYVZlcnNpb24iOiIyLjcuMCIsInN0YXR1cyI6ImFjdGl2ZSJ9.RPgAGQWX_gMRUmIX3tE25prFcCCUo5Bije_ZyuQ96SqDaLiWOZUC_Dm834Z2eUzKRdSPT1Jn3frRTUs19W5IAw",
+    "jws": "eyJhbGciOiJFZERTQSIsImtpZCI6ImZlODEyYzEyZjNhYjRjZTZhYzVkYjY5YWMzNTJmOTA2Y2IxYjExZWY0M2ZiMzNlMjUyZWY3ZmY1NTIyNjM4ODkifQ.eyJjb250ZW50Ijp7IkIiOjIsImIiOjEsImJhdHRlcnlDaGVtaXN0cnkiOiJOTUMiLCJiYXR0ZXJ5TW9kZWxJZCI6IkFDTUUtTE1ULTQ4ViIsImJhdHRlcnlXZWlnaHRLZyI6MTIuNCwiaHVnZU51bWJlciI6MWUrMjEsIm5lZ2F0aXZlWmVyb1NhZmUiOi0wLjI1LCJyYXRlZENhcGFjaXR5QWgiOjIwLCJ0aW55TnVtYmVyIjo1ZS03LCLDiW1pc3Npb24iOiIwLjVlLTMgdGVzdCIsIsOpIjozLCLigqwiOjQsIvCfmIAiOjUsIu-8oSI6Nn0sImlkIjoiMDE5OWEzYzItN2IxMC03ZTRhLTljM2QtMmYxZThiNmE1ZDQwIiwiaXNzdWVyIjoiZGlkOndlYjpub2RlLmFjbWUuZXhhbXBsZSIsIm9wZXJhdG9yIjp7ImNpdHkiOiJNw7xuY2hlbiIsImNvdW50cnkiOiJERSIsIm5hbWUiOiJBY21lIFplbGxlbiBHbWJIIn0sInByb2R1Y3RHcm91cCI6ImJhdHRlcnkiLCJwdWJsaXNoZWRBdCI6IjIwMjYtMDktMDFUMDk6MDU6MDBaIiwic2NoZW1hVmVyc2lvbiI6IjIuNy4wIiwic3RhdHVzIjoiYWN0aXZlIn0.TewhsuBa83tHnqMcTgSUZf7CtbzAVvHXVRVOJYFkjJEgzOvMa6O7NGiIWQdwDFtVh-wWvztRkUTprTGV6PqsAQ",
     "payload": {
       "content": {
         "B": 2,
@@ -259,6 +262,7 @@
         "Émission": "0.5e-3 test",
         "é": 3,
         "€": 4,
+        "Ａ": 6,
         "😀": 5
       },
       "id": "0199a3c2-7b10-7e4a-9c3d-2f1e8b6a5d40",
