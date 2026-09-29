@@ -38,9 +38,10 @@ kind: localhost → `dev`, otherwise → `prod`). You can hold several profiles
 
 ### Step 2 — Infrastructure *(localhost only)*
 
-The Console offers to scaffold `docker/docker-compose.yml` in the current
-directory and start your services. Before confirming **Start services**, create a
-`.env` file in the same directory:
+The Console offers to scaffold `docker/docker-compose.yml` and `.env.example` in
+the current directory and start your services. Before confirming **Start
+services**, copy `.env.example` to `.env` in the same directory and set at least
+these values:
 
 ```sh
 # .env — never commit this file. `odal` does not create or modify it.
@@ -194,9 +195,9 @@ depends on the ones above it:
 # 1. Point the CLI at the node, and scaffold the install files.
 odal profile create prod --node-url https://node.example.com \
     --resolver-url https://dpp.example.com
-odal --profile prod init          # writes docker/ and ops/bootstrap/
+odal --profile prod init          # writes docker/, ops/bootstrap/ and .env.example
 
-# 2. Create .env next to docker/ — see "First-time setup" above.
+# 2. Copy .env.example to .env next to docker/ and set it — see "First-time setup" above.
 #    `odal` never writes this file. `odal up` refuses without it.
 
 # 3. Start the stack. First boot takes ~90s (Wasm plugins load serially).
@@ -369,7 +370,7 @@ reversible; archiving is terminal and gated.
 ## Updating the node
 
 ```sh
-odal update        # pull latest container images
+odal update        # pull the images for ODAL_VERSION (inside a clone: rebuild from source)
 odal down          # stop running services
 odal up            # restart with new images
 odal status        # verify healthy

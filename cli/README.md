@@ -122,9 +122,10 @@ For scripting and CI, all steps are also available as subcommands:
 odal profile create prod --node-url https://node.acme.example \
     --resolver-url https://dpp.acme.example
 odal profile use prod
-odal init                            # scaffold docker/docker-compose.yml for the active profile
-# create .env in the deployment root (DATABASE_POSTGRES_PASS, DATABASE_APP_PASS,
-# KEY_STORE_PASSPHRASE, DID_WEB_BASE_URL, ADMIN_USERNAME, ADMIN_PASSWORD)
+odal init                            # scaffold the compose file, its bootstrap hook and .env.example
+# copy .env.example to .env in the deployment root and set DATABASE_POSTGRES_PASS,
+# DATABASE_APP_PASS, KEY_STORE_PASSPHRASE, DID_WEB_BASE_URL, RESOLVER_BASE_URL,
+# ADMIN_USERNAME and ADMIN_PASSWORD
 odal up                              # build/pull + start the full stack (node + resolver + infra)
 odal status                          # verify services healthy
 odal bootstrap                       # mint the first API key (idempotent — refuses if already done)
@@ -152,10 +153,10 @@ odal passport publish                # sign + publish (mints GS1 Digital Link / 
 
 | Command | Purpose | Auth |
 |---|---|---|
-| `odal init` | Scaffold `docker/docker-compose.yml`; save connection config | none |
-| `odal up` | Start the full stack (node + resolver + infra); dev builds from source, prod pulls + runs a `.env` secret preflight | none |
+| `odal init` | Scaffold `docker/docker-compose.yml`, `ops/bootstrap/` and `.env.example`; save connection config | none |
+| `odal up` | Start the full stack (node + resolver + infra); builds from source inside a clone of the engine, otherwise runs the published images; prod also runs a `.env` secret preflight | none |
 | `odal down` | Stop the full stack | none |
-| `odal update` | Pull latest container images | none |
+| `odal update` | Pull the published images for the pinned `ODAL_VERSION`; inside a clone, rebuild from source and restart instead | none |
 | `odal status` | Health of vault, identity, resolver, containers, and the node's trust posture | none (trust posture needs an API key) |
 | `odal whoami` | What the configured API key is: identity, scope, key id | API key |
 
@@ -306,9 +307,11 @@ this command is never pointed at one.)
 ### `odal init`
 
 Saves connection config for the active profile to `~/.config/odal/config.toml`
-and scaffolds `docker/docker-compose.yml` in the current directory if it does not
-already exist. Never overwrites an existing compose file. Intended for scripting —
-interactive operators should run `odal` instead.
+and scaffolds, in the current directory, whichever of `docker/docker-compose.yml`,
+`ops/bootstrap/` and `.env.example` do not already exist. Never overwrites an
+existing file, and never writes `.env`: copy `.env.example` to `.env` and set its
+values yourself. Intended for scripting — interactive operators should run `odal`
+instead.
 
 ### `odal bootstrap`
 

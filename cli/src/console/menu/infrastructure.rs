@@ -8,6 +8,7 @@ use crate::{
     config::{Config, EnvKind},
     core::infra::{
         action_down, action_status, action_up, action_update, compose_file, preflight_prod_env,
+        source_tree_present,
     },
     stateless::render::render_status,
 };
@@ -33,7 +34,7 @@ pub(super) async fn infrastructure() -> Result<()> {
             v.push(MenuItem::new("Stop", "docker compose down"));
             v.push(MenuItem::new(
                 "Update images",
-                "pull latest container images",
+                "pull the published images, or rebuild from source",
             ));
         }
         v.push(MenuItem::new("← Back", ""));
@@ -76,7 +77,7 @@ pub(super) async fn infrastructure() -> Result<()> {
                                     }
                                 };
                             if safe {
-                                let build = matches!(cfg.kind, EnvKind::Dev);
+                                let build = source_tree_present(&compose);
                                 println!(
                                     "\n  {} ({})\n",
                                     if build {
@@ -120,24 +121,53 @@ pub(super) async fn infrastructure() -> Result<()> {
                     }
                     Err(e) => print_err(e),
                 },
-                "Update images" => match compose_file() {
-                    Ok(compose) => {
-                        println!(
-                            "\n  Pulling latest images ({})\n",
-                            style(compose.display()).dim()
-                        );
-                        match action_update(&compose).await {
-                            Ok(_) => {
+                // The same decision `odal update` makes, so the hint it prints
+                // names a command that does what this just did.
+                "Update images" => match Config::load() {
+                    Ok(cfg) => match compose_file() {
+                        Ok(compose) if source_tree_present(&compose) => {
+                            let safe = !matches!(cfg.kind, EnvKind::Prod)
+                                || match preflight_prod_env(&compose) {
+                                    Ok(()) => true,
+                                    Err(e) => {
+                                        print_err(e);
+                                        false
+                                    }
+                                };
+                            if safe {
                                 println!(
-                                    "\n  {} Images updated. Run Start to restart with new images.",
-                                    style("✓").green()
+                                    "\n  Rebuilding Odal Node from source ({})\n",
+                                    style(compose.display()).dim()
                                 );
-                                hint("odal update");
-                                println!();
+                                match action_up(&compose, true).await {
+                                    Ok(_) => {
+                                        println!(
+                                            "\n  {} Rebuilt and restarted. Run Status to verify.",
+                                            style("✓").green()
+                                        );
+                                        hint("odal update");
+                                        println!();
+                                    }
+                                    Err(e) => print_err(e),
+                                }
                             }
-                            Err(e) => print_err(e),
                         }
-                    }
+                        Ok(compose) => {
+                            println!("\n  Pulling images ({})\n", style(compose.display()).dim());
+                            match action_update(&compose).await {
+                                Ok(_) => {
+                                    println!(
+                                        "\n  {} Images updated. Run Start to restart with new images.",
+                                        style("✓").green()
+                                    );
+                                    hint("odal update");
+                                    println!();
+                                }
+                                Err(e) => print_err(e),
+                            }
+                        }
+                        Err(e) => print_err(e),
+                    },
                     Err(e) => print_err(e),
                 },
                 "← Back" => break,
