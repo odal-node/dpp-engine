@@ -243,6 +243,68 @@ mod signature_profile {
             "a signature covering something other than the document must be refused, got: {err}"
         );
     }
+
+    /// A namespaced `x:URI=""` must not be read as the document-wide reference.
+    ///
+    /// The case above with one attribute added. roxmltree 0.21.0 changed an
+    /// unprefixed `attribute("URI")` lookup to match any *local* name — `x:URI`
+    /// included — returning the first in document order, which the document
+    /// being parsed chooses. So a decoy placed ahead of the real `URI` makes a
+    /// reference covering `#not-the-document` read back as covering everything,
+    /// and the profile check waves through exactly the wrapping it exists to
+    /// stop.
+    ///
+    /// # Why this asserts the variant rather than merely an error
+    ///
+    /// For the same reason the module above does, and here it is the whole
+    /// point: with the decoy in place and the unprefixed lookup restored, this
+    /// document *is* still rejected — by `xml-sec`, for a dangling ID
+    /// reference, incidentally and one layer too late. `NonConformantProfile`
+    /// is what distinguishes "the profile check caught it" from "something
+    /// else happened to". Asserting `is_err()` would pass against the bug.
+    #[test]
+    fn a_namespaced_decoy_uri_does_not_impersonate_the_document_reference() {
+        const WHOLE_DOCUMENT: &str = "<ds:Reference Id=\"ref-enveloped-signature\" URI=\"\">";
+        assert_eq!(
+            EU_LOTL.matches(WHOLE_DOCUMENT).count(),
+            1,
+            "the fixture no longer carries the document-wide reference this case rewrites"
+        );
+        let xml = EU_LOTL.replace(
+            WHOLE_DOCUMENT,
+            "<ds:Reference xmlns:x=\"urn:x\" Id=\"ref-enveloped-signature\" x:URI=\"\" \
+             URI=\"#not-the-document\">",
+        );
+        let err = rejection(&xml);
+        assert!(
+            matches!(err, LotlRejected::NonConformantProfile(ref why) if why.contains("covers the")),
+            "the profile check must read the real URI, not a namespaced decoy, got: {err}"
+        );
+    }
+
+    /// The same decoy, against the transform algorithms.
+    ///
+    /// `Algorithm` is read by the identical lookup, so it carries the identical
+    /// exposure — and this is the sharper half. A wrapped signature needs a
+    /// permissive transform, and `xml-sec` accepts XPath by default (the
+    /// module doc above measured it evaluating one). A decoy `x:Algorithm`
+    /// naming the mandated transform, ahead of a real `Algorithm` naming XPath,
+    /// would let the chain read as conformant while something else entirely was
+    /// canonicalised.
+    #[test]
+    fn a_namespaced_decoy_algorithm_does_not_impersonate_the_mandated_transform() {
+        let decoyed = CONFORMANT.replace(
+            "<ds:Transform Algorithm=\"http://www.w3.org/2001/10/xml-exc-c14n#\"/>",
+            "<ds:Transform xmlns:x=\"urn:x\" \
+             x:Algorithm=\"http://www.w3.org/2001/10/xml-exc-c14n#\" \
+             Algorithm=\"http://www.w3.org/TR/1999/REC-xpath-19991116\"/>",
+        );
+        let err = rejection(&lotl_with(&decoyed));
+        assert!(
+            matches!(err, LotlRejected::NonConformantProfile(ref why) if why.contains("in that order")),
+            "the profile check must read the real Algorithm, not a namespaced decoy, got: {err}"
+        );
+    }
 }
 
 /// The certificate the anchor is checked against is the one the signature is

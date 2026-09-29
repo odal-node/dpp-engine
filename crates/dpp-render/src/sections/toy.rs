@@ -30,7 +30,7 @@ mod tests {
     fn full_data_populates_all_fields() {
         let p = crate::sections::typed_fixture(serde_json::json!({
             "productGroup": "toy",
-            "gtin": "09506000134352",
+            "productIdentifier": { "scheme": "gs1", "gtin": "09506000134352" },
             "ageGroup": "3+",
             "primaryMaterial": "ABS Plastic",
             "countryOfOrigin": "CN",

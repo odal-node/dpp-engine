@@ -238,7 +238,9 @@ pub fn validate_battery_row(
             .unwrap_or(BatteryChemistry::Other);
 
     let battery_data = ProductGroupData::Battery(Box::new(BatteryData {
-        gtin: gtin.expect("field verified present by errors.is_empty() guard above"),
+        product_identifier: dpp_domain::identifier::ProductIdentifier::gs1(
+            gtin.expect("field verified present by errors.is_empty() guard above"),
+        ),
         battery_chemistry: battery_chemistry_parsed,
         nominal_voltage_v: nominal_voltage_v
             .expect("field verified present by errors.is_empty() guard above"),
@@ -380,6 +382,11 @@ pub fn validate_battery_row(
         // by hand — an invented one produces a link that fails verification.
         // Absent because the format cannot carry them, not by oversight.
         derived_from: Vec::new(),
+        // Empty for the same reason `derived_from` above is. A CSV column
+        // cannot express a cross-operator predecessor, and core's lineage rule
+        // asks that a status be supported by a derivation edge — so an
+        // imported `repurposed` would be exactly the defect that rule catches.
+        life_status: None,
         component_refs: Vec::new(),
     })
 }
@@ -425,7 +432,7 @@ mod tests {
         assert_eq!(req.product_group, Some(ProductGroup::Battery));
         match req.product_group_data.unwrap() {
             ProductGroupData::Battery(b) => {
-                assert_eq!(b.gtin.as_str(), "09506000134352");
+                assert_eq!(b.product_identifier.as_str(), "09506000134352");
                 assert_eq!(b.battery_chemistry, BatteryChemistry::Lfp);
                 assert_eq!(b.nominal_voltage_v, 48.0);
             }

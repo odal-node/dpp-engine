@@ -1,0 +1,38 @@
+oneOf:
+  - type: 'null'
+  - type: string
+    enum:
+      - granted
+      - withdrawn
+  - type: object
+    required:
+      - other
+    properties:
+      other:
+        type: string
+        description: The trusted-list status URI, verbatim.
+description: >-
+  The status a trusted list records for a service — ETSI TS 119 612 Annex D.5.
+
+
+  🚨 **Three shapes, not two.** `granted` and `withdrawn` are the pair that
+  answers whether a service holds qualified status. Every other status a list can
+  carry — `undersupervision`, `recognisedatnationallevel`, and whatever a Member
+  State publishes next — arrives as an **object**, `{"other": "<the status
+  URI>"}`.
+
+
+  They are kept apart deliberately. Folding them into the same string vocabulary
+  as `granted` would invite the reading that `undersupervision` is a lesser kind
+  of qualified, or `recognisedatnationallevel` a weaker `granted`. Neither is
+  true: they answer a different question, asked of a different kind of service.
+
+
+  A client that assumes a string here breaks on the first list entry it meets
+  that is neither granted nor withdrawn. `granted` is the only value that means
+  qualified.
+
+
+  `null` where it appears on a verdict means the list's history does not reach
+  back to the moment asked about — the list is *silent* about it rather than
+  negative, which is a different finding from a recorded non-granted status.

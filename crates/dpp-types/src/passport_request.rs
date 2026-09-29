@@ -92,6 +92,36 @@ pub struct CreatePassportRequest {
     /// which one occurred records less than it asks for.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub derived_from: Vec<DerivationRef>,
+    /// Where this unit sits in its **product** life — Annex XIII point 4(c) of
+    /// Reg. (EU) 2023/1542.
+    ///
+    /// Orthogonal to the publication lifecycle: a `repurposed` unit's passport
+    /// is `Published` like any other. `None` where the product group does not
+    /// call for one, which is every group but battery — only Reg. (EU) 2023/1542
+    /// defines this vocabulary, and a textile passport asserting `original`
+    /// would be borrowing a battery term for a question its own instrument does
+    /// not ask.
+    ///
+    /// # Why this is a create-time field and not a transition
+    ///
+    /// Art. 77(7) makes each operation produce a **new** passport, so a
+    /// repurposed unit is *created* as `repurposed` with a `derivedFrom` edge
+    /// naming the operation that produced it. There is nothing to transition:
+    /// the predecessor keeps its own record and its own status.
+    ///
+    /// It is also the only way to set it. `lifeStatus` is in core's
+    /// `PROTECTED_PATCH_FIELDS`, so `PATCH` refuses it — deliberately, because
+    /// the field is part of a body that gets signed, and rewriting it after
+    /// publication would change what a proof covers.
+    ///
+    /// 🚨 `waste` is **not** accepted here. It is the one value that happens to a
+    /// record which continues, and under Art. 77(7)'s second subparagraph it is
+    /// also a responsibility handover — so it belongs to a versioning event with
+    /// an audit trail rather than to the creation of a fresh record. Creating a
+    /// passport that is already waste would record the end of a life this node
+    /// never saw.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub life_status: Option<dpp_domain::passport::LifeStatus>,
     /// Cross-operator references to this product's constituent passports (its
     /// bill of materials), each optionally qualified by how much of it the
     /// assembly contains and in what role. Shape-validated on receipt; local

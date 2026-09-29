@@ -207,6 +207,17 @@ change, a doc typo, a version bump, a dependency bump.
 
 **Core Purity Rule**: NEVER push tenant, audit, API-key, or auth concerns into `dpp-core`. The platform adapts to core, not the reverse.
 
+**Where shared logic lives — "domain-shaped" is not the test.** When two service crates both need the same logic, the question is *what makes it change*:
+
+- a change to **the law** changes it → it belongs in `dpp-core`, and every crate here that sees `dpp-domain` can reach it;
+- a change to **deployment, storage, or operation** changes it → it stays engine-side, in `dpp-types`, which already carries `dpp-domain`.
+
+Asking whether it is "about passports" gives the wrong answer in both directions. `snapshot_json_key` is about passports and changes when the object-storage layout changes — it is operational and stays here. The live-passport-obligation test is also about passports and changes when an implementing act comes into force — it is core's, and is `InstrumentCatalog::passport_obligation_live`.
+
+🚨 **Copying is what happens when the home is unclear, and nothing in CI can see a copied rule.** A duplicated *shape* fails the OpenAPI contract test; a duplicated *rule* is N individually correct files that compile, pass, and diverge the first time somebody adds a condition to one of them. That has bitten three times: `PROTECTED_PATCH_FIELDS` restated three entries short, making protected fields writable; a query parameter spelled three ways; and the passport-obligation conjunction written out in four places. Reach for the predicate core already exposes before writing the conjunction again.
+
+Two named functions here wrap `passport_obligation_live` for the local `instruments()` lookup — `dpp-plugin-host` cannot see `dpp-types`, so the wrapper is the seam, not a second copy. Wrapping the call is fine; restating the `&&` is not.
+
 **Operator Isolation**: NEVER shared clusters. Every deployment is single-operator (self-hosted or Odal-hosted). Zero cross-operator data access. The node is **strictly single-tenant** — there is no in-process operator scoping (no RLS). Tenant isolation is an **infrastructure** boundary (one node per operator), not an application concern. `operator_id` columns persist only as the node's constant identity for provenance.
 
 ## Port Layout
@@ -311,7 +322,7 @@ Anything not covered by a recipe is plain cargo — e.g. `cargo run -p dpp-node`
 to run the node, and `cargo run -p dpp-cli -- bootstrap` to seed operator config
 and the first API key.
 
-**Environment**: Copy `.env.example` to `.env` before running. Required vars: `DATABASE_URL`, `KEY_STORE_PATH`, `KEY_STORE_PASSPHRASE`, `DID_WEB_BASE_URL`.
+**Environment**: Copy `.env.example` to `.env` before running. Required vars: `DATABASE_URL`, `KEY_STORE_PATH`, `KEY_STORE_PASSPHRASE`, `DID_WEB_BASE_URL`, `RESOLVER_BASE_URL` (the resolver and a standalone vault require it too — no binary has a default).
 
 ## Architecture
 
@@ -414,7 +425,7 @@ unprotected one. Read the table in the code.
 | GET | `/vault/ready` | None | Pings the primary datastore (PostgreSQL) |
 | GET | `/vault/api/v1/info` | None | Build info |
 | GET | `/vault/public/dpp/{dppId}` | None | Public passport read |
-| GET | `/vault/public/dpp/by-gtin/{gtin}` | None | Public passport read by GTIN |
+| GET | `/vault/public/dpp/by-gtin/{gtin}` | None | Public read of the passport a printed GS1 label names; `?batch=` / `?serial=` carry the label's AI 10 / AI 21 |
 | GET | `/vault/credential/dpp/{dppId}` | **None** — `X-DPP-Credential` only | Audience-scoped read. Deliberately outside both `/public` (a public URL whose body varies by caller breaks caching and the meaning of `publicJwsSignature`) and `/api/v1` (a repairer or authority holds a credential and no API key). **Unauthenticated and network-touching**: it resolves the credential issuer's `did:web` over the guarded outbound path before anything is verified, and a verified read appends to the passport's audit trail. No credential ⇒ the public view, byte-identical to `/public/dpp/{dppId}` |
 | POST | `/vault/api/v1/dpp` | Bearer | Create passport |
 | POST | `/vault/api/v1/dpp/validate` | Bearer **(write)** | Dry-run a create body, persisting nothing. Runs the same `validate_create_request` the create route runs, so the preview cannot disagree with it, and returns the identical `422` on rejection. Reports `createValid` **and** `publishValid` separately — create is lenient about an unresolvable product group schema, publish fails closed on it |
@@ -422,7 +433,7 @@ unprotected one. Read the table in the code.
 | GET | `/vault/api/v1/dpp/{dppId}` | Bearer | Read passport |
 | PUT | `/vault/api/v1/dpp/{dppId}` | Bearer | Update passport (draft only) |
 | POST | `/vault/api/v1/dpp/{dppId}/publish` | Bearer | Publish (signs with Ed25519) |
-| POST | `/vault/api/v1/dpp/{dppId}/amend` | Bearer **(write)** | Correct a published passport by publishing a **successor** (`supersedesId` → this id, `version` + 1) and moving this one to the terminal `superseded` state. Returns `201` with the successor — **a different record from the one in the path**. The superseded passport keeps its signatures and stays readable here and in the audit trail; its **public** by-id URL keeps serving (the frozen signed view, so `status` reads as it did at publish), while the product's GTIN resolves on past it to the successor |
+| POST | `/vault/api/v1/dpp/{dppId}/amend` | Bearer **(write)** | Correct a published passport by publishing a **successor** (`supersedesId` → this id, `version` + 1) and moving this one to the terminal `superseded` state. Returns `201` with the successor — **a different record from the one in the path**. The superseded passport keeps its signatures and stays readable here and in the audit trail; its **public** by-id URL keeps serving (the frozen signed view, so `status` reads as it did at publish), while the product's printed label resolves on past it to the successor |
 | POST | `/vault/api/v1/dpp/{dppId}/supersede` | Bearer **(write)** | Supersede this passport in favour of an **already-published** successor named in `supersededBy`, which must already carry `supersedesId` back to this id (declared on `POST /dpp`; this route only checks it). Returns `200` with **the superseded passport** — the opposite subject from `amend`, which mints its successor and returns that. Use this when the replacement was created independently: a newer schema version, an imported record, a successor issued after a transfer |
 | POST | `/vault/api/v1/dpp/{dppId}/suspend` | Bearer | Suspend |
 | POST | `/vault/api/v1/dpp/{dppId}/retire` | Bearer | Retire (terminal; **not** EN 18221 archiving — see `/versions`) |
@@ -432,7 +443,7 @@ unprotected one. Read the table in the code.
 | POST | `/vault/api/v1/dpp/{dppId}/transfer/accept` | Bearer (write) | Countersign and complete it |
 | POST | `/vault/api/v1/dpp/{dppId}/transfer/reject` | Bearer (write) | End the pending handover as refused — terminal, frees the chain |
 | POST | `/vault/api/v1/dpp/{dppId}/transfer/cancel` | Bearer (write) | End the pending handover as withdrawn — terminal, frees the chain |
-| GET | `/vault/api/v1/dpp/by-identity` | Bearer | Find by (product group, GTIN, batch) — backs the import delta-matcher |
+| GET | `/vault/api/v1/dpp/by-identity` | Bearer | Find by (product group, product identifier, batch) — backs the import delta-matcher |
 | GET | `/vault/api/v1/dpp/{dppId}/verify-tree` | Bearer | Walk and verify the component (BOM) graph |
 | GET | `/vault/api/v1/dpp/{dppId}/registry` | Bearer | EU-registry sync status for one passport |
 | GET | `/vault/api/v1/registry` | Bearer | EU-registry sync rollup |
@@ -511,7 +522,7 @@ The internal endpoints are mTLS-gated (`CN=odal-vault`).
 | GET | `/dpp/{dppId}` | None | Content-negotiated (HTML, JSON-LD, or AAS Environment); `406` for anything else |
 | GET | `/dpp/{dppId}/qr` | None | QR code PNG |
 | GET | `/01/{gtin}` | None | GS1 Digital Link resolver (redirect / linkset) |
-| GET | `/01/{gtin}/21/{serial}` | None | Same, with AI 21 — **the shape `publish` actually mints** |
+| GET | `/01/{gtin}/21/{serial}` | None | Same, with AI 21 — what `publish` mints for an item-level passport or one stating no level |
 | GET | `/01/{gtin}/10/{batch}` | None | Same, with AI 10 |
 | GET | `/01/{gtin}/10/{batch}/21/{serial}` | None | Same, with both |
 

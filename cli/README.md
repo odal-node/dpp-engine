@@ -213,7 +213,7 @@ least-privilege key cannot mutate the operator's registry identity).
 | `odal passport archive <id>` | Archive (terminal state) | API key |
 | `odal passport history <id>` | Passport audit trail | API key |
 | `odal passport export [--format] [--status] [-o]` | Export passports (JSON/CSV) | API key |
-| `odal passport find --product-group --gtin [--batch] [--json]` | Look a passport up by its business identity instead of its ID. The batch is part of that identity, not a filter on it | API key |
+| `odal passport find --product-group --identifier [--batch] [--json]` | Look a passport up by its business identity instead of its ID: the product identifier is the GTIN-14 for a GS1 identifier, else the identification link or DID. The batch is part of that identity, not a filter on it | API key |
 | `odal passport lint <id> [--json]` | Re-run the plausibility lint pack and store the findings. Advisory — they never gate publish. Also reports **publish readiness**: the blocking fields, and whether Art. 77(1) requires a battery passport for this record at all | API key (write) |
 | `odal passport amend <id> --patch <file> [--reason] [--json]` | Correct a published passport by issuing a **successor**. The passport named moves to the terminal `superseded` state and a new record is returned — a different id from the one passed. Only the patchable content fields take effect | API key (write) |
 | `odal passport supersede <id> --superseded-by <id> [--reason] [--json]` | Retire a published passport in favour of one that **already exists**. The successor must already carry `supersedesId` back to it — declared when the successor was created, and only checked here. Use `amend` when the replacement is a correction rather than an independently created passport | API key (write) |
@@ -270,6 +270,34 @@ stock, none of which is a product placed on the market.
 |---|---|---|
 | `odal unsold-goods record --period --units --kg --category --reason --destination [--justification] --country` | Record one disclosure line. Art. 24(1)(a) asks for the number **and** the weight, so both are required. `--destination exemptDestruction` requires a `--justification` — Art. 25 bans the destruction outright from 19 July 2026 — and every other destination refuses one | API key (write) |
 | `odal unsold-goods list [--period] [--json]` | The recorded lines, newest first, optionally for one financial year. Admin rather than write: reading the operator's own annual figures back is an administrative act, not part of producing passports | API key (Admin) |
+
+### Continuity snapshots
+
+The static tier a passport is served from when the node is not there. This is
+the one check in the CLI that needs **no node and no credential** — which is the
+point, since the node being unreachable is the situation the tier exists for.
+
+| Command | Purpose | Auth |
+|---|---|---|
+| `odal snapshot verify <path\|url> (--key <b64> \| --did-url <url>) [--json]` | Check a snapshot's signed freshness bound. Exit 0 the bound is proven and current, 1 it is not (expired, stripped, or the claim does not hold), 2 the check could not be made. Verifies the **outer** proof only | none |
+
+**Why the key is an argument.** The obvious design reads it from the `did:web`
+document at the configured identity URL. On the single-binary node that document
+is served *by the node*, so discovery fails in exactly the outage this command is
+for. `--did-url` is there for a deployment where identity really is hosted
+separately; otherwise pass `--key`.
+
+**`--did-url` must be HTTPS** (on every redirect hop), unless it is loopback. The
+DID document *is* the trust anchor: over plaintext, anyone able to rewrite that
+response supplies the key, signs a forged snapshot with it, and this command
+prints `CURRENT`. The snapshot's own URL is deliberately unrestricted — its bytes
+are checked against a key from elsewhere, so tampering there fails the check.
+
+**A missing proof is not a pass.** A copy off the static tier carrying no
+`snapshotJwsSignature` has had its bound removed — the `asOf` and `validUntil`
+still on it are text anyone could have written. The command reports that as
+unverifiable, never as current. (A *live* read legitimately carries no bound;
+this command is never pointed at one.)
 
 ---
 

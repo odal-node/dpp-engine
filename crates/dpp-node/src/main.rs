@@ -23,7 +23,7 @@ use dpp_domain::{
 };
 use dpp_identity_service::state::AppState as IdentityState;
 use dpp_integrator::{infra::vault_client::VaultHttpClient, state::AppState as IntegratorState};
-use dpp_types::trust::TrustMode;
+use dpp_types::trust::{NodeProfile, TrustMode};
 use dpp_vault::{
     domain::{
         api_key_service::ApiKeyService,
@@ -62,8 +62,13 @@ async fn main() -> anyhow::Result<()> {
     // ── Database (backend selected at compile time) ────────────────────────
     let db = boot::db::init_db(&cfg).await?;
 
+    // Read once and handed to both gates that depend on it — the plugin signing
+    // policy below and the trust report — so the two cannot disagree about it.
+    let profile = NodeProfile::from_env();
+
     // ── Wasm plugin host ──────────────────────────────────────────────────────
-    let plugin_host = plugins::boot(&cfg.plugins_dir).context("Failed to boot Wasm plugin host")?;
+    let plugin_host =
+        plugins::boot(&cfg.plugins_dir, profile).context("Failed to boot Wasm plugin host")?;
     tracing::info!(dir = %cfg.plugins_dir, "plugin host ready");
 
     // ── Event bus (NATS JetStream or NoOp) ────────────────────────────────────
@@ -152,7 +157,7 @@ async fn main() -> anyhow::Result<()> {
         }
     };
 
-    // ── ESPR Art. 10(4) back-up copy (S3/MinIO or NoOp) ─────────────────────
+    // ── ESPR Art. 10(4) back-up copy (S3 or NoOp) ───────────────────────────
     let (backup, backup_trust): (Arc<dyn BackupCopyPort>, TrustMode) =
         dpp_node::infra::s3_backup::from_env();
 
@@ -180,6 +185,7 @@ async fn main() -> anyhow::Result<()> {
     let sealing_live = seal_wiring.drains;
 
     let trust = boot::trust::build_and_enforce(
+        profile,
         seal_wiring.trust,
         registry_trust,
         backup_trust,
@@ -256,15 +262,16 @@ async fn main() -> anyhow::Result<()> {
         registry_sync,
         backup,
         operator,
+        cfg.resolver_base_url.clone(),
     )
     .with_registry_reader(db.operator_repo.clone())
     .with_registry_outbox(db.registry_outbox.clone())
     .with_versions(db.version_store.clone())
+    .with_successors(db.successors.clone())
     .with_transfer_store(db.transfer_store.clone())
     .with_transfer_outbox(db.transfer_outbox.clone())
     .with_evidence_store(db.evidence_store.clone())
-    .with_webhooks(db.webhook_outbox.clone())
-    .with_resolver_base_url(cfg.resolver_base_url.clone());
+    .with_webhooks(db.webhook_outbox.clone());
     if let Some(base) = cfg.snapshot_public_base_url.clone() {
         passport_service = passport_service.with_snapshot_public_base_url(base);
     }
@@ -287,8 +294,40 @@ async fn main() -> anyhow::Result<()> {
     // a backend change, still holds seals whose origin a reader needs — and
     // those are precisely the ones least self-explanatory. Gating this would
     // withdraw the answer exactly where it is worth most.
-    passport_service =
-        passport_service.with_seal_inspector(Arc::new(dpp_seal::CadesInspector::new()));
+    // The trusted lists are read here at boot, and **republished by the refresh
+    // task** as each pass completes — see `spawn_trusted_list_refresh` below.
+    //
+    // 🚨 Read here rather than per request, and that part is a deliberate limit:
+    // the inspector is called from read handlers, and one that could reach the
+    // database — let alone the network — would put that work on the path of a
+    // request somebody is waiting on.
+    //
+    // What a boot-time read alone could not do is reach a node that is already
+    // running. The first pass starts a minute *after* boot, so on a fresh
+    // deployment the set read here is always the empty one: the node answered
+    // `consulted: 0` for every seal until somebody restarted it for an unrelated
+    // reason, and nothing said so beyond a count nobody was looking at. The
+    // inspector handle is therefore kept and handed to the refresh task, which
+    // publishes into it.
+    let (lists, unchecked) = match db.trusted_lists.load().await {
+        Ok(cached) => dpp_seal::trustlist::from_cache(&cached),
+        Err(e) => {
+            // Not fatal. A node that cannot read its cache answers
+            // `consulted: 0` — the verdict is about nothing and says so — which
+            // is the same answer a node that has never refreshed gives.
+            tracing::warn!(error = %e, "could not read the trusted-list cache; seal \
+                 qualification verdicts will report that no list was consulted");
+            (Vec::new(), Vec::new())
+        }
+    };
+    tracing::info!(
+        consulted = lists.len(),
+        unchecked = unchecked.len(),
+        "trusted lists loaded for seal qualification"
+    );
+    let seal_inspector = Arc::new(dpp_seal::CadesInspector::new());
+    seal_inspector.publish(lists, unchecked);
+    passport_service = passport_service.with_seal_inspector(seal_inspector.clone());
     let service = Arc::new(passport_service);
     let operator_service = Arc::new(OperatorService::new(db.operator_repo.clone()));
     let api_key_service = Arc::new(ApiKeyService::new(db.api_key_repo.clone()));
@@ -422,6 +461,22 @@ async fn main() -> anyhow::Result<()> {
         seal_audit.clone(),
         Some(db.seal_audit.clone()),
     )?;
+    // Also outside `sealing_live`, and for a second reason on top of that one:
+    // the lists answer questions about *other people's* certificates, so a node
+    // that has never sealed anything still has verdicts to give about seals it
+    // was sent. Off unless asked — see `trusted_list_refresh_enabled`.
+    if dpp_node::infra::seal::trusted_list_refresh_enabled() {
+        tracing::info!(
+            "TRUSTED_LIST_REFRESH=on — this node will fetch and verify the EU Trusted Lists \
+             daily, beginning shortly after boot"
+        );
+        boot::tasks::spawn_trusted_list_refresh(db.trusted_lists.clone(), seal_inspector.clone());
+    } else {
+        tracing::debug!(
+            "trusted list refresh is off — seal qualification verdicts will report that no \
+             list was consulted. Set TRUSTED_LIST_REFRESH=on to change that"
+        );
+    }
     // Continuity tier: only spawn when object storage is configured — without a
     // store there is nothing to reconcile against (and the vault never enqueues).
     if let Some(store) = snapshot_store {

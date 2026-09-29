@@ -178,7 +178,7 @@ impl Config {
         }
 
         let profile = normalize(profile);
-        let api_key = resolve_api_key(&name, &profile);
+        let api_key = resolve_api_key(&name, &profile)?;
 
         Ok(Config {
             name,
@@ -196,7 +196,9 @@ impl Config {
     /// The API key is **not** written to `config.toml` — it goes to the separate
     /// 0600 credentials store (see [`crate::credentials`]).
     pub fn save(&self) -> Result<()> {
-        let mut file = ConfigFile::load().unwrap_or_default();
+        // `?`, never `unwrap_or_default()`: `write` replaces the whole file, so
+        // proceeding from an empty load drops every profile but this one.
+        let mut file = ConfigFile::load()?;
         file.profiles.insert(self.name.clone(), self.to_profile());
         if file.current_profile.is_none() {
             file.current_profile = Some(self.name.clone());

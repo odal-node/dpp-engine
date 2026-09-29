@@ -7,6 +7,11 @@ on:
     - cron: "0 3 * * *" # nightly 03:00 UTC
   workflow_dispatch:
 
+# Least privilege by default. This run builds and fuzzes; it writes nothing
+# back to the repository.
+permissions:
+  contents: read
+
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1

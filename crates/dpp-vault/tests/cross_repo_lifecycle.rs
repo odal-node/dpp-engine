@@ -49,7 +49,7 @@ async fn full_lifecycle_draft_to_archived() {
         ],
         "productGroupData": {
             "productGroup": "battery",
-            "gtin": "09506000134352",
+            "productIdentifier": { "scheme": "gs1", "gtin": "09506000134352" },
             "batteryChemistry": "NMC",
             "batteryType": "portable",
             "nominalVoltageV": 3.7,
@@ -152,7 +152,7 @@ async fn full_lifecycle_draft_to_archived() {
     // its retention period elapses; the guard must reject with 422 (a client
     // error, not a 500).
     let resp = client
-        .post_json(&format!("/api/v1/dpp/{id}/archive"), serde_json::json!({}))
+        .post_json(&format!("/api/v1/dpp/{id}/retire"), serde_json::json!({}))
         .await;
     assert_eq!(
         resp.status(),
@@ -304,7 +304,7 @@ async fn a_successor_must_declare_the_link_before_it_can_replace_anything() {
             ],
             "productGroupData": {
                 "productGroup": "battery",
-                "gtin": gtin,
+                "productIdentifier": { "scheme": "gs1", "gtin": gtin },
                 "batteryChemistry": "NMC",
                 "batteryType": "portable",
                 "nominalVoltageV": 3.7,
@@ -483,7 +483,7 @@ async fn both_routes_retire_a_passport_the_same_way() {
             ],
             "productGroupData": {
                 "productGroup": "battery",
-                "gtin": gtin,
+                "productIdentifier": { "scheme": "gs1", "gtin": gtin },
                 "batteryChemistry": "NMC",
                 "batteryType": "portable",
                 "nominalVoltageV": 3.7,
@@ -710,20 +710,17 @@ async fn a_recorded_destruction_must_name_its_exemption() {
     assert_eq!(resp.status(), 422);
 }
 
-/// A voluntary passport is named as voluntary, and the node's stricter gate is
-/// admitted rather than left to puzzle the operator.
+/// A voluntary passport is named as voluntary, and is not held to content the
+/// article does not require.
 ///
 /// Art. 77(1) reaches industrial batteries **above** 2 kWh. One at 1.5 kWh is
-/// outside it entirely — and this node still asks for the full category content,
-/// because that gate lives in `dpp-core`'s `transition_to` and fires on first
-/// publish regardless of scope. The engine cannot relax it from here.
-///
-/// So this pins both halves: the obligation is reported as `voluntary`, and the
-/// blockers are non-empty anyway. If core ever narrows the gate to the article's
-/// scope, this test fails and the note that admits the discrepancy should go
-/// with it.
+/// outside it entirely. Until dpp-core 0.21.0 the content gate in
+/// `transition_to` fired regardless of scope, so this node asked for the full
+/// category content and the note admitted it. Core now asks the article first,
+/// so this pins the other side: the small battery is `belowThreshold` with no
+/// blockers, and the large one of the same kind is `required` and blocked.
 #[tokio::test(flavor = "multi_thread")]
-async fn a_battery_outside_article_77_is_voluntary_and_still_gated() {
+async fn a_battery_outside_article_77_is_voluntary_and_not_gated() {
     let pg = start_postgres().await;
     let base_url = start_vault(pg.dal.clone()).await;
     seed_complete_operator(&pg.dal).await;
@@ -733,7 +730,7 @@ async fn a_battery_outside_article_77_is_voluntary_and_still_gated() {
     let create = |gtin: &str, battery_type: &str, rated_capacity_kwh: Option<f64>| {
         let mut data = serde_json::json!({
             "productGroup": "battery",
-            "gtin": gtin,
+            "productIdentifier": { "scheme": "gs1", "gtin": gtin },
             "batteryChemistry": "NMC",
             "batteryType": battery_type,
             "nominalVoltageV": 48.0,
@@ -772,7 +769,7 @@ async fn a_battery_outside_article_77_is_voluntary_and_still_gated() {
         resp.json().await.unwrap()
     };
 
-    // Below the threshold: outside the article, still gated.
+    // Below the threshold: outside the article, so not gated.
     //
     // `belowThreshold` and not a shared "outside the article" answer — the
     // category *is* in scope and a larger battery of the same kind would owe a
@@ -782,26 +779,32 @@ async fn a_battery_outside_article_77_is_voluntary_and_still_gated() {
     let readiness = &small["publishReadiness"];
     assert_eq!(readiness["passportScope"]["status"], "belowThreshold");
     assert!(
-        !readiness["blockers"]
+        readiness["blockers"]
             .as_array()
             .expect("blockers")
             .is_empty(),
-        "the node applies the content gate even outside Art. 77(1); if that changed, \
-         update the note that admits it: {readiness}"
+        "a battery Art. 77(1) does not reach owes none of the category content: {readiness}"
     );
     assert!(
         readiness["passportScope"]["note"]
             .as_str()
             .expect("a voluntary passport explains itself")
-            .contains("stricter"),
-        "the discrepancy has to be stated, not hidden: {readiness}"
+            .contains("voluntary"),
+        "the scope has to be stated, not left implicit: {readiness}"
     );
 
-    // Above it: the same gate, now because the article asks for it.
+    // Above it: the article asks for the content, so the gate applies.
     let large = lint(create("09506000134369", "industrial", Some(64.0))).await;
     assert_eq!(
         large["publishReadiness"]["passportScope"]["status"],
         "required"
+    );
+    assert!(
+        !large["publishReadiness"]["blockers"]
+            .as_array()
+            .expect("blockers")
+            .is_empty(),
+        "a battery the article reaches is held to its category content"
     );
 
     // A portable battery is outside the article and, because the guidance names

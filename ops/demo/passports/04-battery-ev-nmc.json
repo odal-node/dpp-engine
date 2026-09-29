@@ -16,7 +16,7 @@
   "repairabilityScore": 5.5,
   "productGroupData": {
     "productGroup": "battery",
-    "gtin": "09590000000045",
+    "productIdentifier": { "scheme": "gs1", "gtin": "09590000000045" },
     "batteryType": "ev",
     "batteryChemistry": "NMC",
     "co2ePerUnitKg": 61.2,

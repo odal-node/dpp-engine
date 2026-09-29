@@ -57,7 +57,7 @@ async fn api_created_facility_and_operator_id_are_stamped_on_create() {
         "manufacturer": { "name": "GreenCell GmbH", "address": "Berlin, DE" },
         "productGroupData": {
             "productGroup": "battery",
-            "gtin": "09506000134352",
+            "productIdentifier": { "scheme": "gs1", "gtin": "09506000134352" },
             "batteryChemistry": "LFP",
             "batteryType": "portable",
             "nominalVoltageV": 48.0,

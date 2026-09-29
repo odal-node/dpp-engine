@@ -2,7 +2,8 @@ get:
   operationId: resolveByGtin
   summary: GS1 Digital Link resolver
   description: |
-    GS1-conformant resolver (GS1-CRSV1) keyed by GTIN-14. Behaviour depends
+    GS1-conformant resolver (GS1-CRSV1) keyed by GTIN-14 — the carrier this node
+    prints for a model-level passport. Behaviour depends
     on the `linkType` query / `Accept` header:
     - default → `307` redirect to the HTML DPP page
     - `?linkType=gs1:pip` / `gs1:dpp` (and related) → `307` redirect to the DPP

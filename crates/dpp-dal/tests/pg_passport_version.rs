@@ -82,6 +82,7 @@ fn a_passport() -> Passport {
         responsible_operator: None,
         facility: None,
         seal: None,
+        carrier_serial: None,
     }
 }
 

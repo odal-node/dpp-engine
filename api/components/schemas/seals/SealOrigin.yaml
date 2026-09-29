@@ -33,27 +33,4 @@ properties:
       this node holds signed a digest and **nothing else**: it carries no legal
       weight, and no Trusted List would give it any.
   creationDevice:
-    type: string
-    enum:
-      - declaresQualifiedDevice
-      - noQualifiedDevice
-      - notAQualifiedCertificate
-    description: >-
-      What the certificate declares about the device holding its private key — a
-      declaration, never a verification.
-
-
-      `declaresQualifiedDevice`: the certificate carries the Annex III(j)
-      indication that Regulation (EU) No 910/2014 Art. 32(1)(f), reached for
-      seals through Art. 40, requires.
-
-
-      `noQualifiedDevice`: it carries qualified-certificate statements but not
-      that one. Lawful, and enough for Art. 40a — validation of an *advanced*
-      seal based on a qualified certificate, which omits the device leg — but
-      not for the Art. 32/40 pair.
-
-
-      `notAQualifiedCertificate`: it carries no qualified-certificate statements
-      at all, so it is not presenting itself as a qualified certificate in the
-      first place. A self-signed development certificate lands here.
+    $ref: ./CreationDevice.yaml

@@ -22,6 +22,7 @@ pub mod registry;
 pub mod ruleset;
 pub mod schema;
 pub mod seal;
+pub mod snapshot;
 pub mod stats;
 pub mod status;
 pub mod transfer;

@@ -134,7 +134,8 @@ fn wiring() -> (
 ///
 /// - `stateOfHealthPct` — `individual` (Annex XIII point 4), product group-level
 /// - `cathodeMaterial` — `restricted` (point 2), product group-level
-/// - `batchId` — `restricted`, passport-level
+/// - `lintResult` — `restricted`, passport-level (`batchId` would not do: the
+///   battery schema opens it to the public, as Annex XIII point 1(a) requires)
 /// - `retentionLocked` — `conformity` (point 3), stamped at publish
 ///
 /// Both a product group-level and a passport-level restricted field are present on
@@ -152,7 +153,7 @@ async fn publish_battery(client: &TestClient) -> String {
                 "batchId": "LOT-2026-07",
                 "productGroupData": {
                     "productGroup": "battery",
-                    "gtin": "09506000134352",
+                    "productIdentifier": { "scheme": "gs1", "gtin": "09506000134352" },
                     "batteryChemistry": "LFP",
                     "batteryType": "portable",
                     "nominalVoltageV": 48.0,
@@ -259,9 +260,8 @@ async fn a_legitimate_interest_credential_unlocks_individual_item_data() {
         product_group_data(&body).contains_key("cathodeMaterial"),
         "product_group-level restricted data is shared with legitimate interest"
     );
-    assert_eq!(
-        body.get("batchId"),
-        Some(&json!("LOT-2026-07")),
+    assert!(
+        body.get("lintResult").is_some(),
         "passport-level restricted data too"
     );
     assert!(
@@ -464,7 +464,7 @@ async fn a_credential_for_another_product_group_grants_only_public() {
         !product_group_data(&body).contains_key("stateOfHealthPct"),
         "a textile credential must not unlock battery individual-item data"
     );
-    assert!(body.get("batchId").is_none(), "nor restricted data");
+    assert!(body.get("lintResult").is_none(), "nor restricted data");
 }
 
 /// An unusable credential is a 401 carrying an RFC 7807 body, and it names the
@@ -583,7 +583,8 @@ async fn an_unconfigured_node_serves_public_and_grants_nothing() {
     );
     let body: Value = resp.json().await.unwrap();
     assert!(
-        !product_group_data(&body).contains_key("cathodeMaterial") && body.get("batchId").is_none(),
+        !product_group_data(&body).contains_key("cathodeMaterial")
+            && body.get("lintResult").is_none(),
         "an unconfigured node must not grant restricted data either"
     );
 }

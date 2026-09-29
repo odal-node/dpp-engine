@@ -6,7 +6,7 @@ use std::fmt::Write as _;
 use chrono::{DateTime, Utc};
 use qrcode::QrCode;
 
-use crate::carrier::carrier_uri;
+use crate::carrier::{carrier_uri, product_identifier};
 use crate::esc::esc;
 use crate::sections;
 
@@ -77,17 +77,13 @@ pub fn render_page(
         .get("status")
         .and_then(|v| v.as_str())
         .unwrap_or("unknown"));
-    // `gtin` lives in the product group-specific payload, not on the passport itself
-    // (see `crate::domain::carrier_uri`'s doc comment for the JSON shape).
-    let gtin = esc(p
-        .get("productGroupData")
-        .and_then(|sd| sd.get("gtin"))
-        .and_then(|v| v.as_str())
-        .unwrap_or("-"));
+    // The identifier lives in the product group payload, not on the envelope,
+    // and may be a GTIN, an identification link or a DID.
+    let product_identifier = esc(product_identifier(p).unwrap_or("-"));
     let batch_id = esc(p.get("batchId").and_then(|v| v.as_str()).unwrap_or("-"));
 
     let product_group_html = sections::build_product_group_section(p);
-    let qr_svg = carrier_uri(p, resolver_base_url, dpp_id)
+    let qr_svg = carrier_uri(p)
         .map(|uri| build_qr_svg(&uri))
         .unwrap_or_default();
     // Escape the id for HTML contexts (the QR above encodes the carrier URI).
@@ -141,7 +137,7 @@ pub fn render_page(
     <table aria-label="Product information">
       <tr><th scope="row">Passport ID</th><td><code>{dpp_id}</code></td></tr>
       <tr><th scope="row">Manufacturer</th><td>{manufacturer}</td></tr>
-      <tr><th scope="row">GTIN</th><td>{gtin}</td></tr>
+      <tr><th scope="row">Product identifier</th><td>{product_identifier}</td></tr>
       <tr><th scope="row">Batch ID</th><td>{batch_id}</td></tr>
     </table>
 
@@ -326,7 +322,7 @@ mod tests {
         assert!(html.contains("badge-unknown"));
         assert!(
             html.contains(">-<"),
-            "gtin/batch must fall back to a dash, not be omitted"
+            "identifier/batch must fall back to a dash, not be omitted"
         );
     }
 

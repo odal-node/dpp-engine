@@ -142,14 +142,28 @@ reviews:
         DEPENDENCY DIRECTION is one-way: platform depends on core, and core has
         zero knowledge of the platform. No engine crate may modify a dpp-core
         type or trait — the engine adapts to core, never the reverse. The
-        internal graph is acyclic: dpp-types and dpp-common are standalone;
-        dpp-dal depends on dpp-types and core's dpp-domain; dpp-vault on
-        dpp-dal, dpp-types, dpp-common and dpp-domain; dpp-integrator on
-        dpp-types and dpp-common; dpp-node on dpp-vault, dpp-identity,
-        dpp-integrator and dpp-common. Flag any edge outside that list. Core
-        crate versions are pinned in [workspace.dependencies] — read the pin
-        there and never from a copy restated in prose, which is how one document
-        claimed 0.1.0 for fourteen releases.
+        internal graph is acyclic, and its edges are declared in each crate's
+        Cargo.toml: read them there, and do not flag an edge for being absent
+        from a list written here.
+        This paragraph used to carry that list, and every clause of it was
+        wrong. It called dpp-types standalone when dpp-types has declared
+        dpp-domain and dpp-rules all along; it gave dpp-integrator two
+        dependencies when it has four; it omitted dpp-seal, dpp-plugin-host,
+        dpp-resolver and dpp-render entirely — while instructing that any edge
+        outside the list be flagged. The cost was not theoretical: it produced a
+        Major finding recommending that a public type be duplicated into
+        dpp-types and converted at a crate boundary, to fix a leak that did not
+        exist, in a crate that had depended on dpp-domain since it was written.
+        What does hold, and is worth flagging: dpp-common is shared
+        *infrastructure* — event bus, telemetry, mTLS, request-id, URL guards —
+        and carries no dependency on dpp-domain or any other core crate. A
+        regulatory predicate, a domain type or a core import appearing there is
+        a real finding, and it is the one edge in this workspace whose absence
+        is load-bearing rather than incidental.
+        Core crate versions are pinned in [workspace.dependencies] — read the
+        pin there and never from a copy restated in prose, which is how one
+        document claimed 0.1.0 for fourteen releases. The list this paragraph
+        used to carry failed the same way, for the same reason.
 
         STANDING CONVENTIONS — rules that hold, so they are not re-derived.
         Errors are RFC 7807: `dpp-common::http_problem::Problem` is the error

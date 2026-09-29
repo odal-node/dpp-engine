@@ -7,10 +7,11 @@
 //! replaces, with the predecessor moved to the terminal `Superseded` state and
 //! kept, never deleted.
 //!
-//! The product's printed carrier keeps working, because it addresses the GTIN
-//! and the by-GTIN lookup resolves past a superseded record to the successor —
-//! that exclusion is in the query itself (`status <> 'superseded'`), not in the
-//! public handler, so it holds however the handler decides what to serve.
+//! The product's printed carrier keeps working. The successor carries its
+//! predecessor's carrier serial, level and lot, so the label names both records,
+//! and the label lookup (`PassportService::resolve_label`) serves the one that
+//! was not superseded. A successor issued before it carried the serial is
+//! reached by walking forward from the superseded record.
 //!
 //! The predecessor's own `/public/dpp/{id}` URL **serves**, and no longer
 //! `404`s — see `public_view::serves_publicly`. This module used to argue the
@@ -136,6 +137,16 @@ impl PassportService {
         successor.status = PassportStatus::Draft;
         successor.created_at = Utc::now();
         successor.updated_at = Utc::now();
+
+        // ── Label, kept ──────────────────────────────────────────────────
+        // The label on the object does not change when the record does. A
+        // passport that attributed no carrier serial prints one derived from its
+        // id, and the successor's new id would derive a different one, so its
+        // carrier would name nothing the object carries. Carrying the effective
+        // serial forward explicitly keeps the printed label naming every record
+        // in the chain, and `resolve_label` picks the current one. `carrierSerial`
+        // is a protected field, so the patch below cannot undo this.
+        successor.carrier_serial = Some(predecessor.effective_carrier_serial().into_owned());
 
         // ── Proof, cleared ───────────────────────────────────────────────
         // Every artefact below commits to the predecessor's bytes. Carrying any

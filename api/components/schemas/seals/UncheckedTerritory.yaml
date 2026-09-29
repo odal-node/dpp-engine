@@ -1,0 +1,28 @@
+type: object
+description: >-
+  A territory the EU list of trusted lists names and this node could not consult.
+
+
+  Carried rather than dropped because the two states a caller must tell apart —
+  *this issuer is on no list* and *the list it would be on could not be read* —
+  are otherwise identical at the point of the verdict.
+required:
+  - territory
+  - reason
+properties:
+  territory:
+    type: string
+    description: >-
+      The `SchemeTerritory` the list of trusted lists names — the two-letter
+      country code.
+  reason:
+    type: string
+    description: >-
+      Why this node could not consult it, in terms an operator can act on.
+
+
+      Free text on purpose. What stops a list being consulted is not an
+      enumerable set: a signature that does not verify, a document over a parser
+      ceiling, a fetch that failed, a scheme operator mid-rotation whose entry
+      has not caught up. An operator needs the sentence; a caller deciding what
+      to do needs only that the territory is absent.

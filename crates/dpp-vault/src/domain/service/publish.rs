@@ -4,8 +4,9 @@
 
 use chrono::Utc;
 use dpp_common::{event, event_codes};
-use dpp_digital_link::{build_qr_url, short_serial};
+use dpp_digital_link::build_qr_url;
 use dpp_domain::{
+    ComplianceError, ComplianceErrorKind, ComplianceResult,
     error::DppError,
     passport::{Passport, PassportId},
     ports::registry_sync::{RegisteringOperator, RegistrationGranularity, RegistrationRequest},
@@ -38,9 +39,23 @@ mod reason {
     /// cannot diagnose from their own request: the requirement lives in
     /// `dpp-domain`'s category table, not in anything they sent.
     pub const MANDATORY_CONTENT: &str = "mandatory_content";
+    /// The compliance evaluation could not be made at all.
+    ///
+    /// 🚨 Distinct from `compliance_violations`, which is a determination that
+    /// came back and said no. This is a determination that never came back —
+    /// the strategy or plugin was reached and failed — and it used to be
+    /// indistinguishable from "no violations", because the gate below read
+    /// `&& let Ok(determination) = …` and an `Err` simply made the whole
+    /// condition false. A passport carrying binding violations published
+    /// because the thing that would have caught it had broken.
+    pub const COMPLIANCE_UNAVAILABLE: &str = "compliance_unavailable";
+    /// The GS1 carrier would carry a serial or lot GS1 rejects.
+    pub const CARRIER_INVALID: &str = "carrier_invalid";
 }
 
 use reason::{
+    CARRIER_INVALID as REASON_CARRIER_INVALID,
+    COMPLIANCE_UNAVAILABLE as REASON_COMPLIANCE_UNAVAILABLE,
     COMPLIANCE_VIOLATIONS as REASON_COMPLIANCE_VIOLATIONS,
     INVALID_TRANSITION as REASON_INVALID_TRANSITION, MANDATORY_CONTENT as REASON_MANDATORY_CONTENT,
     MISSING_REGISTRY_IDENTITY as REASON_MISSING_REGISTRY_IDENTITY,
@@ -71,6 +86,42 @@ fn reject(reason: &'static str, e: DppError) -> DppError {
     metrics::counter!("passport_publish_rejected_total", "reason" => reason).increment(1);
     tracing::warn!(reason, error = %e, "publish rejected");
     e
+}
+
+/// What a `compute()` outcome means for the publish-time violation gate.
+///
+/// 🚨 The distinction this function exists to make is between **no evaluator**
+/// and **a broken evaluator**, which the gate used to treat identically because
+/// it read `&& let Ok(determination) = …` — any `Err` made the condition false
+/// and the gate quietly did not run.
+///
+/// - `Ok(Some(_))` — a determination was made; the gate judges it.
+/// - `Ok(None)` — nothing is registered to evaluate this product group. A
+///   deployment shape, not a failure: a node may legitimately run without a
+///   plugin for a group. Publishing proceeds, as it always did, **and says so** —
+///   the caller's `None` is also what "no obligation is live" looks like, so
+///   without a line here the two are indistinguishable and a node silently
+///   missing a plugin reads exactly like one that never needed it.
+/// - `Err(_)` — the evaluator was reached and did not answer. The gate cannot
+///   run, and a gate that cannot run must not be reported as a gate that
+///   passed.
+fn gate_outcome(
+    product_group: &str,
+    computed: Result<ComplianceResult, ComplianceError>,
+) -> Result<Option<ComplianceResult>, ComplianceError> {
+    match computed {
+        Ok(determination) => Ok(Some(determination)),
+        Err(e) if e.kind == ComplianceErrorKind::UnknownProductGroup => {
+            tracing::warn!(
+                product_group,
+                error = %e,
+                "no compliance evaluator is registered for this product group; \
+                 publishing without a determination"
+            );
+            Ok(None)
+        }
+        Err(e) => Err(e),
+    }
 }
 
 impl PassportService {
@@ -191,12 +242,55 @@ impl PassportService {
             // be signed/published while it carries *binding* violations. Advisory
             // warnings (e.g. recycled-content thresholds not yet in force) never
             // block — they are surfaced on the persisted determination instead.
-            if super::passport_obligation_live(product_group_data.product_group().catalog_key())
-                && let Ok(determination) = self.compliance.compute(
-                    product_group_data.product_group().catalog_key(),
-                    product_group_data,
-                    passport.placed_on_market_date,
+            // 🚨 An evaluation that *fails* is not an evaluation that passed.
+            //
+            // This read `&& let Ok(determination) = …compute(…)`, so an `Err`
+            // made the whole condition false and the gate silently did not
+            // fire. That is not hypothetical: when the product group schemas
+            // moved to `productIdentifier`, every plugin still asking for a
+            // bare `gtin` began returning an error, and nine product groups
+            // published with no compliance determination and no violation check
+            // for as long as it took to notice. Nothing logged a failure,
+            // because nothing treated it as one.
+            //
+            // `UnknownProductGroup` is the one error that is *not* a failure:
+            // it means nothing is registered to evaluate this product group,
+            // which is a deployment shape (a node with no plugin loaded), not a
+            // broken evaluator. It keeps the previous behaviour and is logged
+            // rather than refused. Every other kind means the evaluator was
+            // reached and did not answer, and the honest response to "the gate
+            // could not run" is to refuse the publish, exactly as the schema
+            // gate above does.
+            let determination = if super::passport_obligation_live(
+                product_group_data.product_group().catalog_key(),
+            ) {
+                let product_group = product_group_data.product_group();
+                let catalog_key = product_group.catalog_key();
+                gate_outcome(
+                    catalog_key,
+                    self.compliance.compute(
+                        catalog_key,
+                        product_group_data,
+                        passport.placed_on_market_date,
+                    ),
                 )
+                .map_err(|e| {
+                    reject(
+                        REASON_COMPLIANCE_UNAVAILABLE,
+                        DppError::Validation(
+                            format!(
+                                "cannot publish: the compliance determination could not be made, \
+                                 so the violation gate could not run — {e}"
+                            )
+                            .into(),
+                        ),
+                    )
+                })?
+            } else {
+                None
+            };
+
+            if let Some(determination) = determination
                 && determination.has_violations()
             {
                 let summary = determination
@@ -259,7 +353,10 @@ impl PassportService {
             passport.retention_until =
                 Some(published_at + chrono::Duration::days(365 * i64::from(years)));
         }
-        passport.qr_code_url = Some(build_carrier_url(&passport, &self.resolver_base_url));
+        passport.qr_code_url = Some(
+            build_carrier_url(&passport, &self.resolver_base_url)
+                .map_err(|e| reject(REASON_CARRIER_INVALID, e))?,
+        );
 
         // `status` serialises to the API wire string ("active") via
         // `PassportStatus`'s own `Serialize` impl — already reflects the
@@ -287,17 +384,14 @@ impl PassportService {
         // Public verifiability: also sign the *public (redacted) view* — the exact
         // payload the unauthenticated `/public/dpp/{id}` route serves — so anyone
         // can verify the public passport against the operator DID without trusting
-        // the resolver. Derived from the same `payload` above rather than a
-        // second full serialize: `public_view` strips `jwsSignature`
-        // unconditionally, so `payload` still carrying the pre-signing value
-        // here is immaterial. `public_jws_signature` is `None` here, so it is
-        // never signed over itself; the full-payload `jws_signature` above
-        // stays Confidential for authenticated full-passport verification.
-        let public_view = crate::public_view::public_view(
-            &payload,
-            passport.product_group.catalog_key(),
-            &passport.schema_version,
-        );
+        // the resolver. Taken from the passport rather than the `payload` above
+        // because the redaction now reads the product group and schema version off
+        // the record itself; the only field that has changed in between is
+        // `jws_signature`, which the redaction strips unconditionally for every
+        // audience. `public_jws_signature` is `None` here, so it is never signed
+        // over itself; the full-payload `jws_signature` above stays Confidential
+        // for authenticated full-passport verification.
+        let public_view = crate::public_view::public_view(&passport);
         let public_jws = self
             .identity
             .sign_passport(passport.id, &public_view)
@@ -325,10 +419,7 @@ impl PassportService {
         // the actor vocabulary of one regulation.
         passport.disclosure_signatures = crate::public_view::sign_disclosure_views(
             self.identity.as_ref(),
-            passport.id,
-            &payload,
-            passport.product_group.catalog_key(),
-            &passport.schema_version,
+            &passport,
         )
         .await
         .map_err(|e| {
@@ -343,13 +434,27 @@ impl PassportService {
             DppError::Signing(e.to_string())
         })?;
 
-        // Persist the published passport. With the transactional outbox present,
-        // the passport write and the EU-registry registration enqueue commit
-        // atomically (ESPR Art. 13) — a Published passport can never exist
-        // without a queued registration, and the node's drain task performs the
-        // actual registration with backoff. Without an outbox (in-memory test
-        // doubles), fall back to a plain update.
-        let updated = match &self.registry_outbox {
+        // The EU-registry registration this publish owes, if one can be built.
+        //
+        // Core refuses to build one without the operator identifier, the
+        // facility, the carrier or the product identifier, and nothing here
+        // completes it with invented values: a registration is a statement to
+        // a public authority. What happens instead depends on whether the
+        // product group's passport obligation is live.
+        //
+        // - **Live:** refused, and nothing has been persisted, so the passport
+        //   stays a draft. The same gate as the facility and operator check at
+        //   the top of this function, which this reaches only for the product
+        //   identifier.
+        // - **Not live:** published without a registration. No delegated act
+        //   requires this passport, and so none requires it registered. It is
+        //   not hidden: `GET /registry` counts a published passport with no
+        //   registration as `unregisteredPublished`. Refusing here would make
+        //   product group data mandatory at publish for every group — a
+        //   decision deferred above, not one to take as a side effect of how
+        //   registrations are built.
+        let registration = match &self.registry_outbox {
+            None => None,
             Some(outbox) => {
                 // The scheme is only assertable for the value the passport
                 // actually carries. If that value did not come from the current
@@ -362,15 +467,7 @@ impl PassportService {
                     .filter(|(_, value)| Some(value) == passport.operator_identifier.as_ref())
                     .map(|(scheme, _)| scheme.as_str())
                     .unwrap_or_default();
-                // Declare the back-up only where this deployment actually
-                // publishes one. The snapshot tier writing to object storage is
-                // not enough — the registry has to be able to fetch it.
-                //
-                let backup_url = self
-                    .snapshot_public_base_url
-                    .as_ref()
-                    .map(|base| snapshot_backup_url(base, &passport.id.to_string()));
-                let mut reg_req = RegistrationRequest::from_published_passport(
+                match RegistrationRequest::from_published_passport(
                     &passport,
                     RegisteringOperator {
                         legal_name: &self.operator.legal_name,
@@ -381,23 +478,60 @@ impl PassportService {
                     // defined at, and the only one the registry accepts today.
                     // Set per product group once further delegated acts land.
                     RegistrationGranularity::Item,
-                );
-                reg_req.backup_url = backup_url;
-                let payload = serde_json::to_value(&reg_req)
-                    .map_err(|e| DppError::Serialisation(e.to_string()))?;
-                match outbox.commit_publish(&passport, payload).await {
-                    Ok(()) => {
-                        metrics::counter!("passport_publish_total", "outcome" => "success")
-                            .increment(1);
-                        passport
+                ) {
+                    Ok(mut reg_req) => {
+                        // Declare the back-up only where this deployment actually
+                        // publishes one. The snapshot tier writing to object
+                        // storage is not enough — the registry has to be able to
+                        // fetch it.
+                        reg_req.backup_url = self
+                            .snapshot_public_base_url
+                            .as_ref()
+                            .map(|base| snapshot_backup_url(base, &passport.id.to_string()));
+                        let payload = serde_json::to_value(&reg_req)
+                            .map_err(|e| DppError::Serialisation(e.to_string()))?;
+                        Some((outbox, payload))
                     }
-                    Err(e) => {
-                        metrics::counter!("passport_publish_total", "outcome" => "error")
-                            .increment(1);
-                        return Err(e);
+                    Err(missing)
+                        if super::passport_obligation_live(
+                            passport.product_group.catalog_key(),
+                        ) =>
+                    {
+                        return Err(reject(
+                            REASON_MISSING_REGISTRY_IDENTITY,
+                            DppError::Validation(missing),
+                        ));
+                    }
+                    Err(missing) => {
+                        tracing::warn!(
+                            passport_id = %id,
+                            missing = %missing,
+                            "publishing without an EU-registry registration: the passport \
+                             cannot be registered and its product group's obligation is not live"
+                        );
+                        None
                     }
                 }
             }
+        };
+
+        // Persist the published passport. With a registration, the passport
+        // write and its enqueue commit atomically (ESPR Art. 13), and the node's
+        // drain task performs the registration with backoff. Without one — no
+        // outbox (in-memory test doubles), or nothing registrable — a plain
+        // update.
+        let updated = match registration {
+            Some((outbox, payload)) => match outbox.commit_publish(&passport, payload).await {
+                Ok(()) => {
+                    metrics::counter!("passport_publish_total", "outcome" => "success")
+                        .increment(1);
+                    passport
+                }
+                Err(e) => {
+                    metrics::counter!("passport_publish_total", "outcome" => "error").increment(1);
+                    return Err(e);
+                }
+            },
             None => match self.repo.update(passport).await {
                 Ok(p) => {
                     metrics::counter!("passport_publish_total", "outcome" => "success")
@@ -553,20 +687,20 @@ fn snapshot_backup_url(base: &str, dpp_id: &str) -> String {
 /// (an unsold-goods report or untyped record, which identify no trade item),
 /// points at the passport's own resolver page on the same configured base —
 /// never a hardcoded host.
-fn build_carrier_url(passport: &Passport, resolver_base: &str) -> String {
+///
+/// Since dpp-core 0.21.0 the GS1 carrier follows the passport's stated level and
+/// its effective carrier serial (`build_qr_url(base, &passport)`). `Ok(None)` is a
+/// passport with no GTIN — EN 18219 scheme 2 or 3, or a record identifying no
+/// trade item — and keeps the by-id fallback. An `Err` is a serial or lot GS1
+/// would reject: refused here rather than printed onto a label.
+fn build_carrier_url(passport: &Passport, resolver_base: &str) -> Result<String, DppError> {
     let base = resolver_base.trim_end_matches('/');
-    match passport
-        .product_group_data
-        .as_ref()
-        .and_then(ProductGroupData::gtin)
-    {
-        Some(gtin) => build_qr_url(
-            base,
-            gtin,
-            &short_serial(passport.id.0.as_bytes()),
-            passport.batch_id.as_deref(),
-        ),
-        None => format!("{base}/dpp/{}", passport.id),
+    match build_qr_url(base, passport) {
+        Ok(Some(url)) => Ok(url),
+        Ok(None) => Ok(format!("{base}/dpp/{}", passport.id)),
+        Err(e) => Err(DppError::Validation(
+            format!("the passport's data carrier cannot be built: {e}").into(),
+        )),
     }
 }
 
@@ -591,6 +725,8 @@ mod rejection_reasons {
             reason::COMPLIANCE_VIOLATIONS,
             reason::SIGNING_FAILED,
             reason::MANDATORY_CONTENT,
+            reason::COMPLIANCE_UNAVAILABLE,
+            reason::CARRIER_INVALID,
         ];
         let mut sorted = all.to_vec();
         sorted.sort_unstable();
@@ -612,6 +748,8 @@ mod rejection_reasons {
             reason::COMPLIANCE_VIOLATIONS,
             reason::SIGNING_FAILED,
             reason::MANDATORY_CONTENT,
+            reason::COMPLIANCE_UNAVAILABLE,
+            reason::CARRIER_INVALID,
         ] {
             assert!(
                 !r.is_empty() && r.bytes().all(|b| b.is_ascii_lowercase() || b == b'_'),
@@ -624,7 +762,8 @@ mod rejection_reasons {
 #[cfg(test)]
 mod tests {
     use super::{
-        build_carrier_url, snapshot_backup_url, snapshot_json_key, validate_schema_for_publish,
+        build_carrier_url, gate_outcome, snapshot_backup_url, snapshot_json_key,
+        validate_schema_for_publish,
     };
     use chrono::Utc;
     use dpp_domain::{
@@ -680,6 +819,7 @@ mod tests {
             responsible_operator: None,
             facility: None,
             seal: None,
+            carrier_serial: None,
         }
     }
 
@@ -691,7 +831,7 @@ mod tests {
         // the carrier points at the passport's own page on the configured base —
         // never the old hardcoded `p.odal-node.io` host.
         let p = stub(); // product_group_data is None → no GTIN
-        let url = build_carrier_url(&p, "https://id.example.com/");
+        let url = build_carrier_url(&p, "https://id.example.com/").expect("by-id carrier");
         assert_eq!(url, format!("https://id.example.com/dpp/{}", p.id));
         assert!(!url.contains("p.odal-node.io"));
     }
@@ -701,7 +841,9 @@ mod tests {
         use dpp_domain::product_group::ConstructionData;
         let mut p = stub();
         p.product_group_data = Some(ProductGroupData::Construction(ConstructionData {
-            gtin: dpp_domain::Gtin::parse("09506000134352").unwrap(),
+            product_identifier: dpp_domain::ProductIdentifier::gs1(
+                dpp_domain::Gtin::parse("09506000134352").unwrap(),
+            ),
             product_family: "cement".into(),
             country_of_origin: "DE".into(),
             co2e_per_functional_unit_kg: 100.0,
@@ -710,7 +852,7 @@ mod tests {
             epd_url: None,
             ce_marking: None,
         }));
-        let url = build_carrier_url(&p, "https://id.example.com");
+        let url = build_carrier_url(&p, "https://id.example.com").expect("GS1 carrier");
         // Must be a parseable GS1 Digital Link — parse enforces the AI 21 cap, so
         // a >20-char serial would make this fail.
         let parsed = dpp_digital_link::DigitalLink::parse(&url)
@@ -722,6 +864,32 @@ mod tests {
         );
         assert!(url.starts_with("https://id.example.com/01/09506000134352/21/"));
         assert!(!url.contains("p.odal-node.io"));
+        // The serial printed is the one a label is resolved by.
+        assert_eq!(serial, p.effective_carrier_serial());
+    }
+
+    /// A label is printed on physical products, so a serial GS1 would reject is
+    /// refused at publish rather than printed and found wanting by a scanner.
+    #[test]
+    fn an_attributed_serial_gs1_rejects_is_refused_not_printed() {
+        use dpp_domain::product_group::ConstructionData;
+        let mut p = stub();
+        p.product_group_data = Some(ProductGroupData::Construction(ConstructionData {
+            product_identifier: dpp_domain::ProductIdentifier::gs1(
+                dpp_domain::Gtin::parse("09506000134352").unwrap(),
+            ),
+            product_family: "cement".into(),
+            country_of_origin: "DE".into(),
+            co2e_per_functional_unit_kg: 100.0,
+            functional_unit: "per tonne".into(),
+            recycled_content_pct: None,
+            epd_url: None,
+            ce_marking: None,
+        }));
+        // `#` is outside CSET 82, the character set AI 21 allows.
+        p.carrier_serial = Some("SN#1".into());
+        let err = build_carrier_url(&p, "https://id.example.com").unwrap_err();
+        assert!(matches!(err, DppError::Validation(_)), "{err:?}");
     }
 
     // ── validate_schema_for_publish (Q-2) ────────────────────────────────────
@@ -771,5 +939,54 @@ mod tests {
             !snapshot_backup_url("https://backup.example.com/dpp/", id).contains("//dpp"),
             "no empty path segment"
         );
+    }
+
+    // ── gate_outcome ─────────────────────────────────────────────────────────
+    //
+    // 🚨 The gate that vanished. These assert the distinction the old
+    // `&& let Ok(..)` could not make: a determination that never came back is
+    // not a determination that found nothing.
+
+    fn err(kind: dpp_domain::ComplianceErrorKind) -> dpp_domain::ComplianceError {
+        dpp_domain::ComplianceError {
+            kind,
+            message: "boom".into(),
+        }
+    }
+
+    #[test]
+    fn a_broken_evaluator_is_not_a_clean_bill_of_health() {
+        // The case that shipped: every plugin began erroring when the product
+        // group schemas moved, and nine groups published unevaluated.
+        for kind in [
+            dpp_domain::ComplianceErrorKind::Internal,
+            dpp_domain::ComplianceErrorKind::InvalidInput,
+        ] {
+            assert!(
+                gate_outcome("battery", Err(err(kind))).is_err(),
+                "an evaluator that failed must refuse the publish, not pass it"
+            );
+        }
+    }
+
+    #[test]
+    fn an_unregistered_product_group_still_publishes() {
+        // The one error that is not a failure. A node running without a plugin
+        // for this product group is a deployment shape, and refusing here would
+        // break every such node rather than catching anything.
+        let outcome = gate_outcome(
+            "battery",
+            Err(err(dpp_domain::ComplianceErrorKind::UnknownProductGroup)),
+        );
+        assert!(matches!(outcome, Ok(None)));
+    }
+
+    #[test]
+    fn a_determination_reaches_the_gate_to_be_judged() {
+        let determination = dpp_domain::ComplianceResult::default();
+        assert!(matches!(
+            gate_outcome("battery", Ok(determination)),
+            Ok(Some(_))
+        ));
     }
 }

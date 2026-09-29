@@ -63,6 +63,12 @@
 -- So `doc` is rewritten first and the column follows it, in that order and in
 -- one transaction, because a migration that did only the second would look
 -- like it had worked.
+--
+-- The old CHECK is dropped before either write and the new one added after
+-- both: the old one refuses `retired`, and the new one refuses `archived`, so
+-- neither can be in force while a row is being moved from one to the other.
+ALTER TABLE odal.passport DROP CONSTRAINT passport_status_check;
+
 UPDATE odal.passport
    SET doc = jsonb_set(doc, '{status}', '"retired"'::jsonb)
  WHERE doc->>'status' = 'archived';
@@ -78,7 +84,6 @@ UPDATE odal.passport SET status = 'retired' WHERE status = 'archived';
 -- spelling reads fine and says what the record said at the time, which is the
 -- whole point of keeping it.
 
-ALTER TABLE odal.passport DROP CONSTRAINT passport_status_check;
 ALTER TABLE odal.passport ADD CONSTRAINT passport_status_check
   CHECK (status IN ('draft','active','suspended','retired','superseded','deactivated'));
 

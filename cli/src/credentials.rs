@@ -10,7 +10,11 @@
 //! `ODAL_API_KEY` env → this store → (back-compat) any `api_key` still inline in
 //! `config.toml`.
 
-use std::{collections::BTreeMap, fs, path::PathBuf};
+use std::{
+    collections::BTreeMap,
+    fs,
+    path::{Path, PathBuf},
+};
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
@@ -37,7 +41,27 @@ impl CredentialsFile {
         }
         let content = fs::read_to_string(&path)
             .with_context(|| format!("Failed to read credentials: {}", path.display()))?;
-        Ok(toml::from_str(&content).unwrap_or_default())
+        Self::parse(&content, &path)
+    }
+
+    /// Parse the store's contents, naming the file in any failure.
+    ///
+    /// A parse failure must **never** degrade to `Self::default()`. An empty
+    /// store is indistinguishable from "no keys are stored", and [`Self::write`]
+    /// replaces the whole file, so a swallowed error turned the next command
+    /// that saves a key — `odal bootstrap`, `init --api-key`, `key create --use`,
+    /// `key use` — into a wholesale erase of every other profile's credential,
+    /// with nothing printed at any point. Refusing to load is recoverable by
+    /// hand; the write is not.
+    fn parse(content: &str, path: &Path) -> Result<Self> {
+        toml::from_str(content).with_context(|| {
+            format!(
+                "Failed to parse credentials: {}. Fix or move that file — refusing to \
+                 continue with an empty key store, because saving a key would then \
+                 overwrite every key it still holds.",
+                path.display()
+            )
+        })
     }
 
     fn write(&self) -> Result<()> {
@@ -56,25 +80,31 @@ impl CredentialsFile {
 }
 
 /// Read a profile's stored API key, if any.
-pub fn load_key(profile: &str) -> Option<String> {
-    CredentialsFile::load()
-        .ok()?
+///
+/// `Ok(None)` means "no key is stored for this profile"; an unreadable or
+/// unparseable store is an `Err`, not an absent key. Reporting a corrupt file as
+/// "no credential" sent the operator after a 401 — the one cause they cannot act
+/// on — while the real key sat in the file, intact and unread.
+pub fn load_key(profile: &str) -> Result<Option<String>> {
+    Ok(CredentialsFile::load()?
         .keys
         .get(profile)
         .filter(|s| !s.is_empty())
-        .cloned()
+        .cloned())
 }
 
 /// Store (or replace) a profile's API key.
 pub fn save_key(profile: &str, key: &str) -> Result<()> {
-    let mut file = CredentialsFile::load().unwrap_or_default();
+    // `?`, never `unwrap_or_default()`: the load failing and the write then
+    // proceeding from an empty map is precisely how the whole store got erased.
+    let mut file = CredentialsFile::load()?;
     file.keys.insert(profile.to_owned(), key.to_owned());
     file.write()
 }
 
 /// Remove a profile's API key (no-op if absent).
 pub fn remove_key(profile: &str) -> Result<()> {
-    let mut file = CredentialsFile::load().unwrap_or_default();
+    let mut file = CredentialsFile::load()?;
     if file.keys.remove(profile).is_some() {
         file.write()?;
     }
@@ -83,7 +113,7 @@ pub fn remove_key(profile: &str) -> Result<()> {
 
 /// Move a profile's API key under a new profile name (used by `profile rename`).
 pub fn rename_key(old: &str, new: &str) -> Result<()> {
-    let mut file = CredentialsFile::load().unwrap_or_default();
+    let mut file = CredentialsFile::load()?;
     if let Some(key) = file.keys.remove(old) {
         file.keys.insert(new.to_owned(), key);
         file.write()?;
@@ -175,6 +205,43 @@ mod tests {
         let back: CredentialsFile = toml::from_str(&s).unwrap();
         assert_eq!(back.keys.get("dev").unwrap(), "odal_sk_dev");
         assert_eq!(back.keys.get("prod").unwrap(), "odal_sk_prod");
+    }
+
+    /// A store that does not parse must be an error, never `Self::default()`.
+    ///
+    /// This is the one property the round-trip test above cannot reach: it
+    /// serialises and deserialises with the same `toml` version, so it only ever
+    /// sees input this build can parse. The failure guarded here is the opposite
+    /// case — input this build *cannot* parse (a hand-edit slip, a half-written
+    /// file, a future format) degrading to an empty map that `write` then commits
+    /// over a real key.
+    #[test]
+    fn a_malformed_store_is_an_error_not_an_empty_default() {
+        // An unterminated string: what a fat-fingered hand-edit leaves behind,
+        // with the real key still plainly in the file.
+        let malformed = "[keys]\nnew_dev = \"odal_sk_real_key\n";
+        let path = Path::new("/home/op/.config/odal/credentials.toml");
+        let err = CredentialsFile::parse(malformed, path)
+            .expect_err("a malformed credentials file must not parse as an empty store");
+        let rendered = format!("{err:#}");
+        assert!(
+            rendered.contains("credentials.toml"),
+            "the error must name the file to fix:\n{rendered}"
+        );
+    }
+
+    /// The empty case is a legitimate empty store and must stay one — making a
+    /// parse failure loud must not make a fresh install loud.
+    #[test]
+    fn an_empty_store_still_parses_as_no_keys() {
+        let path = Path::new("/home/op/.config/odal/credentials.toml");
+        assert!(CredentialsFile::parse("", path).unwrap().keys.is_empty());
+        assert!(
+            CredentialsFile::parse("[keys]\n", path)
+                .unwrap()
+                .keys
+                .is_empty()
+        );
     }
 
     /// Omitting the argument must stay "no value" so the caller can fall back

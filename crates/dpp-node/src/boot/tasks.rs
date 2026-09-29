@@ -967,6 +967,194 @@ pub fn spawn_ruleset_poll(
     });
 }
 
+/// How long a node waits before its first trusted-list pass.
+///
+/// Not zero. A pass fetches the list of trusted lists and then every national
+/// list it names — roughly 40 MB of XML across the Union, with an XAdES
+/// signature check per document — and a node has better things to do with its
+/// first minute than that. Nothing depends on the cache being warm: an empty one
+/// reports `consulted: 0`, which is a defined and honest answer, and the seal
+/// route says so rather than claiming an issuer is unlisted.
+const TRUSTED_LIST_FIRST_PASS_DELAY: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// How often the Union is re-read.
+///
+/// Daily, and deliberately not driven by each list's own `NextUpdate`.
+///
+/// 🚨 **A pass is the unit, because completeness is.** `NotListed` is a claim
+/// about the set of territories consulted, so the set is what has to be
+/// coherent; per-list scheduling would make the cache a patchwork of ages with
+/// no moment at which it describes the Union. Daily is well inside the cadence
+/// Member States publish at, and a list that changes between passes is a
+/// provider whose status moved — which is exactly what `verifiedAt` on each
+/// entry is for.
+const TRUSTED_LIST_REFRESH_INTERVAL: std::time::Duration =
+    std::time::Duration::from_secs(24 * 3600);
+
+/// How soon a pass comes back when it could not write what it found.
+///
+/// 🚨 Not the daily cadence, because the thing that failed is not the Union —
+/// it is this node's own database, and the ordinary cause is that it was briefly
+/// unavailable. Until the write lands, every territory it covers is admitted as
+/// unchecked, so the verdict stays narrowed; waiting a day to retry would hold
+/// it narrow for a day over something that usually clears in seconds.
+///
+/// Fifteen minutes rather than seconds: a pass is thirty-odd external fetches,
+/// and hammering the Union because the local database is down would turn one
+/// outage into two. The fetches are the expensive half and they are not what
+/// failed.
+const TRUSTED_LIST_WRITE_RETRY: std::time::Duration = std::time::Duration::from_secs(15 * 60);
+
+/// Spawn the periodic trusted-list refresh, if this node was asked for one.
+///
+/// ✅ COMPLIANCE-PIN: Reg. (EU) No 910/2014 Art. 22 — Member States publish
+/// trusted lists, and Art. 32(1)(a)–(b) (reached for seals by Art. 40) can only
+/// be answered from them.
+///
+/// # 🚨 Off unless asked
+///
+/// A pass reaches ~30 external hosts and pulls tens of megabytes, on a timer,
+/// for ever. That is not something to start doing to an operator who has not
+/// asked: a node with no qualified seals to judge gains nothing from it, and the
+/// verdict it feeds is honest about being empty. So the switch is explicit, and
+/// a node that has not set it reports `consulted: 0` rather than quietly
+/// dialling the Union.
+///
+/// It is also why this is not inferred from `SEAL_PROVIDER`. The lists answer
+/// questions about seals a node **holds**, including ones restored from a backup
+/// or made under a provider since dropped — so which backend is configured now
+/// is the wrong thing to read, the same argument the seal route's `origin` makes
+/// for reading the bytes rather than the configuration.
+pub fn spawn_trusted_list_refresh(
+    store: Arc<dyn dpp_types::trust::TrustedListStore>,
+    inspector: Arc<dpp_seal::CadesInspector>,
+) {
+    tokio::spawn(async move {
+        tokio::time::sleep(TRUSTED_LIST_FIRST_PASS_DELAY).await;
+        loop {
+            // Reset each pass: the wait below is about what *this* pass found,
+            // and an abandoned pass (`None`) leaves it false so the cadence
+            // stays daily rather than spinning on a Union that cannot be reached.
+            let mut unwritten = false;
+            if let Some(stats) = dpp_node::infra::trusted_list_refresh::refresh_once(&store).await {
+                // 🚨 Publish into the running inspector, and only here — after a
+                // pass that **completed**.
+                //
+                // `refresh_once` returns `None` when it abandoned the pass, so
+                // this is never reached with a set that cannot describe its own
+                // width. A set from half the Union reads exactly like a set from
+                // all of it — the rule the seal audit already took in migration
+                // `ops/pg/0038_seal_audit_state.sql`, which keeps its report
+                // NULL until a walk reaches the end of the estate. The
+                // difference is that here the cache is re-read rather
+                // than assembled from `stats`, so what reaches the verdicts is
+                // the same thing a restart would have loaded.
+                //
+                // Without this the set is whatever boot read, and on a fresh
+                // node that is the empty one — the first pass runs a minute
+                // after boot, so every verdict would answer `consulted: 0` until
+                // an unrelated restart.
+                match store.load().await {
+                    Ok(cached) => {
+                        let (mut lists, mut unchecked) = dpp_seal::trustlist::from_cache(&cached);
+
+                        // 🚨 **A territory this pass could not write is admitted
+                        // as unchecked, whatever the cache says about it.**
+                        //
+                        // Without this the fix above makes the hole worse rather
+                        // than better. A list that verified last week and failed
+                        // to verify today keeps its old `Verified` row when the
+                        // `Unavailable` write fails — and this step re-reads the
+                        // cache, so that stale row would be published straight
+                        // into the served verdict, with nothing in `unchecked`
+                        // naming it. The verdict would then answer `notListed`
+                        // for a provider on the strength of a list this node
+                        // knows it could not refresh, which is exactly the
+                        // overclaim the two counts exist to prevent.
+                        //
+                        // Dropped from `lists` as well as added to `unchecked`,
+                        // because leaving it in both would let the stale copy
+                        // answer while the verdict merely admitted doubt about
+                        // it. Narrow and honest beats wide and wrong.
+                        for territory in &stats.unwritten_territories {
+                            lists.retain(|l| l.territory() != Some(territory.as_str()));
+                            unchecked.retain(|u| &u.territory != territory);
+                            unchecked.push(dpp_types::qualification::UncheckedTerritory {
+                                territory: territory.clone(),
+                                reason: "this node could not write the result of its last pass \
+                                         for this territory, so what the cache holds is not \
+                                         what the pass found"
+                                    .to_owned(),
+                            });
+                        }
+
+                        tracing::info!(
+                            consulted = lists.len(),
+                            unchecked = unchecked.len(),
+                            unwritten = stats.unwritten,
+                            "trusted lists published to the running node's seal verdicts"
+                        );
+                        inspector.publish(lists, unchecked);
+                        // 🚨 Set **after** the publish, and only on this branch.
+                        //
+                        // These are gauges about the set the node is answering
+                        // from, not about the pass — the second one is
+                        // documented as the width of every `notListed` verdict
+                        // until the next pass, and that is only true of a set
+                        // the inspector actually holds. Moving them ahead of the
+                        // publish, or setting them on the branch below, would
+                        // describe a set no verdict is using: the same shape as
+                        // counting a cache write that did not land (#362).
+                        //
+                        // On the `Err` arm they are deliberately left at their
+                        // previous values, because the previous set is what is
+                        // still being served.
+                        metrics::gauge!("trusted_list_verified").set(f64::from(stats.verified));
+                        metrics::gauge!("trusted_list_unavailable")
+                            .set(f64::from(stats.unavailable));
+                    }
+                    // The cache was written and cannot be read back. The
+                    // previous set stays in place rather than being replaced by
+                    // an empty one: stale and wide beats fresh and vacuous, and
+                    // the next pass tries again.
+                    Err(e) => tracing::warn!(
+                        error = %e,
+                        "a trusted-list pass completed and the cache could not be read back; \
+                         seal verdicts keep the set they had"
+                    ),
+                }
+                if stats.unavailable > 0 {
+                    tracing::warn!(
+                        unavailable = stats.unavailable,
+                        verified = stats.verified,
+                        "some Member States' trusted lists could not be verified — until the \
+                         next pass, a seal whose issuer is listed only there reads the same as \
+                         one listed nowhere. The verdict reports the territories by name"
+                    );
+                }
+                unwritten = stats.unwritten > 0;
+            }
+
+            // 🚨 A pass that could not write comes back sooner than a day.
+            //
+            // The causes that stop a list being *read* differ in how retryable
+            // they are — a timeout is worth trying again, a signature that does
+            // not verify is not, a document over a parser ceiling never will be
+            // until the parser changes. A failed **write** is none of those: it
+            // is this node's own database, the ordinary cause is that it was
+            // briefly unavailable, and it is the most retryable failure in the
+            // pass. Waiting a full day to try again would leave the verdict
+            // narrowed for a day over something that usually clears in seconds.
+            let wait = if unwritten {
+                TRUSTED_LIST_WRITE_RETRY
+            } else {
+                TRUSTED_LIST_REFRESH_INTERVAL
+            };
+            tokio::time::sleep(wait).await;
+        }
+    });
+}
+
 #[cfg(test)]
 mod seal_audit_cadence_tests {
     use super::*;

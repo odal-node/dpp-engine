@@ -32,7 +32,7 @@ async fn lifecycle_actions_are_recorded_in_audit_history() {
         "materials": [{"name": "Nickel", "weightKg": 0.5}],
         "productGroupData": {
             "productGroup": "battery",
-            "gtin": "09506000134352",
+            "productIdentifier": { "scheme": "gs1", "gtin": "09506000134352" },
             "batteryChemistry": "NiMH",
             "batteryType": "portable",
             "nominalVoltageV": 12.0,

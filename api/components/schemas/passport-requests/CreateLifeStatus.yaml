@@ -1,0 +1,16 @@
+type: string
+description: >-
+  The subset of `LifeStatus` a passport may be **created** in — Regulation (EU)
+  2023/1542, Annex XIII point 4(c), less `waste`.
+
+
+  A separate schema rather than a note on the full one, because a generated
+  client must not be able to offer a value `POST /dpp` always refuses: `waste` is
+  a transition of an existing record and is rejected here with `422`. The field's
+  own description says why; the full vocabulary a passport can be *read* in is
+  `LifeStatus`.
+enum:
+  - original
+  - repurposed
+  - re-used
+  - remanufactured

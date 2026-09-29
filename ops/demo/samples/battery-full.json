@@ -18,7 +18,7 @@
   "repairabilityScore": 7.5,
   "productGroupData": {
     "productGroup": "battery",
-    "gtin": "09506000134352",
+    "productIdentifier": { "scheme": "gs1", "gtin": "09506000134352" },
     "batteryType": "industrial",
     "batteryChemistry": "LFP",
     "co2ePerUnitKg": 45.2,

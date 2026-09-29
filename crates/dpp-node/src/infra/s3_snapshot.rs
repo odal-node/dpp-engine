@@ -1,4 +1,4 @@
-//! S3/MinIO adapter implementing `SnapshotStore` — the static continuity tier.
+//! S3 adapter implementing `SnapshotStore` — the static continuity tier.
 //!
 //! Writes the passport's signed public view, bounded by its own `asOf` /
 //! `validUntil` proof, to a **public** bucket under `{dpp_id}/public.json`, so a
@@ -18,7 +18,8 @@
 //! | `SNAPSHOT_S3_REGION`            | No       | `us-east-1` |
 //!
 //! The bucket must be configured for public read (bucket policy / website / CDN);
-//! objects are written without a per-object ACL so MinIO and S3 behave alike.
+//! objects are written without a per-object ACL, so the bucket policy alone
+//! decides who may read them, on AWS and S3-compatible stores alike.
 
 use async_trait::async_trait;
 use aws_sdk_s3::{
@@ -85,7 +86,9 @@ impl S3SnapshotStore {
             .behavior_version(BehaviorVersion::latest());
 
         if let Some(endpoint) = cfg.endpoint {
-            // Path-style is required for MinIO and most S3-compatible stores.
+            // Path-style needs no per-bucket DNS, so it works against any
+            // S3-compatible endpoint; virtual-hosted style would need the server
+            // configured for it.
             builder = builder.endpoint_url(endpoint).force_path_style(true);
         }
 

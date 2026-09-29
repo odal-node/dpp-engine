@@ -15,7 +15,7 @@
   "repairabilityScore": 1.0,
   "productGroupData": {
     "productGroup": "battery",
-    "gtin": "09590000000069",
+    "productIdentifier": { "scheme": "gs1", "gtin": "09590000000069" },
     "batteryType": "portable",
     "batteryChemistry": "NiMH",
     "co2ePerUnitKg": 0.42,

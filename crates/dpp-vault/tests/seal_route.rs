@@ -80,6 +80,7 @@ async fn seed(dal: &PgDal, seal: Option<SealedEnvelope>, jws: Option<&str>) -> P
         responsible_operator: None,
         facility: None,
         seal,
+        carrier_serial: None,
     };
     let id = passport.id;
     PgPassportRepo::new(dal.clone())
@@ -136,7 +137,7 @@ async fn a_sealed_passport_returns_the_seal_and_its_preimage() {
         "the response must send a reader to a real validator for the verdict: {verification}"
     );
     assert!(
-        verification.contains("no certificate path is built"),
+        verification.contains("no validation policy is applied"),
         "and must name what it did not check, not only what it did: {verification}"
     );
 }

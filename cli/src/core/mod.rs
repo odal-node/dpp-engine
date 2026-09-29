@@ -11,6 +11,7 @@ pub mod registry_identity;
 pub mod ruleset;
 pub mod schema;
 pub mod seal;
+pub mod snapshot;
 pub mod types;
 pub mod unsold_goods;
 pub mod verify;

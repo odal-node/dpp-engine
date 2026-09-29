@@ -18,7 +18,7 @@ use dpp_domain::{
 use dpp_registry::{
     EuRegistryEnvelope, EuRegistryResponse, FacilityIdentifier, Granularity, OperatorIdentifier,
     ProductIdentifier, ProductItemIdentifier, RegistrationLevel, RegistrationPayload,
-    StatusResponse, TransferNotification,
+    RegistrationSubmission, ServiceProviderReference, StatusResponse, TransferNotification,
 };
 
 impl EuRegistrySync {
@@ -163,18 +163,32 @@ pub(super) fn item_id_for(request: &RegistrationRequest) -> Option<ProductItemId
     }
 }
 
-/// Extract GTIN-14 from a GS1 Digital Link URI.
+/// The registry's product identifier for a registration: the passport's own
+/// EN 18219 identifier, carried on the request.
 ///
-/// GS1 DL format: `https://host/01/{gtin14}[/extra/segments]`.
-/// Returns `None` if the URI does not contain a valid 14-digit GTIN segment.
-pub(super) fn extract_gtin_from_gs1_dl(uri: &str) -> Option<String> {
-    let after = uri.split("/01/").nth(1)?;
-    let gtin = after.split('/').next()?.trim();
-    if gtin.len() == 14 && gtin.chars().all(|c| c.is_ascii_digit()) {
-        Some(gtin.to_owned())
-    } else {
-        None
-    }
+/// This used to be scraped out of the data carrier URI, with the internal
+/// passport id under an invented `passport_id` scheme as the fallback. That
+/// registered a product with a public authority under a value meaningless
+/// outside this node, and it was reached for exactly the passports identified
+/// without GS1, whose carrier holds no GTIN to scrape.
+///
+/// # Errors
+///
+/// [`DppError::Validation`] when the request carries no identifier — it was
+/// queued before the field existed — or one the registry has no scheme for.
+/// Neither is completed with an invented value, and `allow_invalid_payloads`
+/// does not reach this: there is no payload to send without one.
+pub(super) fn product_id_for(request: &RegistrationRequest) -> Result<ProductIdentifier, DppError> {
+    let identifier = request.product_identifier.as_ref().ok_or_else(|| {
+        DppError::Validation(
+            "the registration carries no product identifier; it was queued before \
+             registrations carried one"
+                .into(),
+        )
+    })?;
+    ProductIdentifier::try_from(identifier).map_err(|e| {
+        DppError::Validation(format!("the product identifier cannot be registered: {e}").into())
+    })
 }
 
 #[async_trait]
@@ -183,11 +197,7 @@ impl RegistrySyncPort for EuRegistrySync {
     async fn register(&self, request: RegistrationRequest) -> Result<RegistryRecord, DppError> {
         let base_url = &self.config.endpoint.base_url;
 
-        // Extract GTIN from the GS1 Digital Link URI when present; fall back to
-        // passport_id scheme so the payload carries a product identifier either way.
-        let (product_scheme, product_value) = extract_gtin_from_gs1_dl(&request.data_carrier_uri)
-            .map(|g| ("gtin".to_owned(), g))
-            .unwrap_or_else(|| ("passport_id".to_owned(), request.passport_id.to_string()));
+        let product_id = product_id_for(&request)?;
 
         // Build the bridge envelope from the port request.
         let envelope = EuRegistryEnvelope {
@@ -198,13 +208,9 @@ impl RegistrySyncPort for EuRegistrySync {
             // had already committed looked like a new one on the next attempt.
             request_id: request.request_id,
             timestamp: Utc::now(),
-            payload: RegistrationPayload {
+            submission: RegistrationSubmission::single(RegistrationPayload {
                 passport_id: request.passport_id.0,
-                product_id: ProductIdentifier {
-                    scheme: product_scheme,
-                    value: product_value,
-                    label: None,
-                },
+                product_id,
                 level: level_for(&request),
                 item_id: item_id_for(&request),
                 facility_id: facility_identifier_for(&request),
@@ -234,7 +240,15 @@ impl RegistrySyncPort for EuRegistrySync {
                 jws_signature: request.jws_signature.clone(),
                 commodity_code: request.commodity_code.clone(),
                 backup_url: request.backup_url.clone(),
-            },
+                service_provider: request.service_provider.as_ref().map(|provider| {
+                    ServiceProviderReference {
+                        name: provider.name.clone(),
+                        scheme: provider.scheme.clone(),
+                        value: provider.value.clone(),
+                        country: provider.country.clone(),
+                    }
+                }),
+            }),
         };
 
         // Fail closed. A registration is a regulatory submission, and the
@@ -243,7 +257,7 @@ impl RegistrySyncPort for EuRegistrySync {
         // record in front of a live registry. Refusing here also keeps the
         // failure attached to the passport that caused it, rather than surfacing
         // later as an opaque remote rejection.
-        if let Err(e) = envelope.payload.validate() {
+        if let Err(e) = envelope.validate() {
             if !self.config.allow_invalid_payloads {
                 metrics::counter!("registry_payload_rejected_total").increment(1);
                 tracing::error!(

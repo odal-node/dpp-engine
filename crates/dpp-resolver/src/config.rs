@@ -28,12 +28,18 @@ pub struct Config {
     /// Loopback by default so it is never served on the public resolver port; set
     /// to a private interface for remote scraping, or empty to disable.
     pub metrics_addr: Option<String>,
+
+    /// This resolver's own public origin — what the GS1 Digital Link redirects
+    /// and canonical links are built on. Required, with no default, and read
+    /// through [`dpp_common::config::resolver_base_url`], the same reader the
+    /// node stamps carriers with.
+    pub resolver_base_url: String,
 }
 
 impl Config {
     /// Load configuration from environment variables.
     ///
-    /// Required: `REDIS_URL`.
+    /// Required: `REDIS_URL`, `RESOLVER_BASE_URL`.
     /// Optional with defaults: `CACHE_TTL_SECS` (30), `RESOLVER_PORT`/`PORT` (8003),
     /// `LOG_LEVEL` (info), `METRICS_ADDR` (127.0.0.1:9101).
     ///
@@ -43,6 +49,7 @@ impl Config {
     pub fn from_env() -> Result<Self> {
         Ok(Self {
             redis_url: var("REDIS_URL")?,
+            resolver_base_url: dpp_common::config::resolver_base_url()?,
             cache_ttl_secs: std::env::var("CACHE_TTL_SECS")
                 .unwrap_or_else(|_| "30".into())
                 .parse()

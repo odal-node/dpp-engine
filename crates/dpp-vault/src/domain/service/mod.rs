@@ -26,6 +26,9 @@ mod create;
 pub(crate) use create::validate_component_ref;
 mod eol;
 mod evidence;
+/// Public: the demo dossier corpus is generated and tested outside the node,
+/// and must derive its views and EOL record the way the assembler does.
+pub use evidence::{declared_eol, published_views};
 mod lifecycle;
 mod lint;
 mod publish;
@@ -109,6 +112,14 @@ pub struct PassportService {
     /// that happens in the repository decorator, which a node wires or does
     /// not wire independently of this.
     pub versions: Option<Arc<dyn dpp_types::audit::PassportVersionStore>>,
+    /// Finds the passport that replaced a superseded one, so a printed carrier
+    /// keeps landing on the current record.
+    ///
+    /// `None` leaves a superseded passport serving its own frozen view, which is
+    /// what every deployment did before this existed. That view is signed and
+    /// verifiable; its `status` is the publish-time one, which is the residue
+    /// this does not reach for a passport with no successor.
+    pub successors: Option<Arc<dyn dpp_types::successor::SuccessorLookup>>,
     /// Persistence for transfer-of-responsibility chains. `None` disables
     /// the transfer endpoints (test doubles without a transfer store).
     pub transfer_store: Option<Arc<dyn TransferStore>>,
@@ -169,9 +180,11 @@ pub struct PassportService {
     /// URL the registry cannot fetch is worse than none.
     pub snapshot_public_base_url: Option<String>,
     /// Base URL the resolver serves on, used to build each passport's carrier
-    /// (QR) URL at publish. Defaults to `https://id.odal-node.io`; set per
-    /// deployment (a self-hoster's own domain) via [`Self::with_resolver_base_url`]
-    /// so printed labels carry the operator's domain, not a hardcoded host.
+    /// (QR) URL at publish. A constructor argument with no default: it is
+    /// signed into every carrier, so a fallback here would be a guess about
+    /// where the resolver lives — the same guess `RESOLVER_BASE_URL` stopped
+    /// making in the binaries. A binary reads it through
+    /// `dpp_common::config::resolver_base_url`.
     pub resolver_base_url: String,
 }
 
@@ -187,6 +200,7 @@ impl PassportService {
         registry_sync: Arc<dyn RegistrySyncPort>,
         backup: Arc<dyn BackupCopyPort>,
         operator: OperatorIdentity,
+        resolver_base_url: String,
     ) -> Self {
         Self {
             repo,
@@ -198,6 +212,7 @@ impl PassportService {
             backup,
             registry_outbox: None,
             versions: None,
+            successors: None,
             transfer_store: None,
             transfer_outbox: None,
             evidence_store: None,
@@ -208,7 +223,7 @@ impl PassportService {
             seal_outbox: None,
             seal_inspector: None,
             snapshot_public_base_url: None,
-            resolver_base_url: "https://id.odal-node.io".to_owned(),
+            resolver_base_url,
         }
     }
 
@@ -221,6 +236,17 @@ impl PassportService {
     #[must_use]
     pub fn with_versions(mut self, store: Arc<dyn dpp_types::audit::PassportVersionStore>) -> Self {
         self.versions = Some(store);
+        self
+    }
+
+    /// Provide the successor lookup, so a retired passport's carrier resolves on
+    /// to the record that replaced it.
+    #[must_use]
+    pub fn with_successors(
+        mut self,
+        lookup: Arc<dyn dpp_types::successor::SuccessorLookup>,
+    ) -> Self {
+        self.successors = Some(lookup);
         self
     }
 
@@ -307,14 +333,6 @@ impl PassportService {
     #[must_use]
     pub fn with_seal_inspector(mut self, inspector: Arc<dyn dpp_types::SealInspector>) -> Self {
         self.seal_inspector = Some(inspector);
-        self
-    }
-
-    /// Set the resolver base URL used to build passport carrier (QR) URLs at
-    /// publish. Defaults to `https://id.odal-node.io` when not set.
-    #[must_use]
-    pub fn with_resolver_base_url(mut self, base: String) -> Self {
-        self.resolver_base_url = base;
         self
     }
 
@@ -410,10 +428,13 @@ pub(crate) fn instruments() -> &'static dpp_domain::InstrumentCatalog {
 ///
 /// Asking only "is it in force" answers *yes* for both, which is how passport
 /// obligations that do not exist came to be enforced at publish.
+///
+/// The test itself is `dpp_domain`'s — `InstrumentCatalog::passport_obligation_live`
+/// — and this is only the local `instruments()` lookup in front of it. What
+/// changes it is a change to the law, so core owns it and the conjunction is not
+/// restated here.
 pub(crate) fn passport_obligation_live(product_group_key: &str) -> bool {
-    let catalog = instruments();
-    !catalog.determinable_for(product_group_key).is_empty()
-        && catalog.passport_required_for(product_group_key)
+    instruments().passport_obligation_live(product_group_key)
 }
 
 /// The retention floor applied when the catalog has no entry for a product group.
@@ -518,6 +539,7 @@ mod snapshot_render_tests {
             responsible_operator: None,
             facility: None,
             seal: None,
+            carrier_serial: None,
         }
     }
 

@@ -15,7 +15,11 @@ pub async fn run_init(
     resolver_url: Option<String>,
     api_key: Option<String>,
 ) -> Result<()> {
-    let mut cfg = Config::load().unwrap_or_default();
+    // `?`, never `unwrap_or_default()`: `save` below replaces the whole config
+    // file, so starting from a default after a failed load discards whatever the
+    // flags did not restate. `save` refuses in that state too, but the error
+    // belongs here, where the file that cannot be read is what went wrong.
+    let mut cfg = Config::load()?;
 
     // The parser makes these two mutually exclusive, so at most one arm runs.
     if let Some(origin) = node_url.filter(|s| !s.trim().is_empty()) {

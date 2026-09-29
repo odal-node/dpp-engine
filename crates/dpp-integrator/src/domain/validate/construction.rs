@@ -92,7 +92,9 @@ pub fn validate_construction_row(
         co2e_per_unit: None,
         repairability_score: None,
         product_group_data: Some(ProductGroupData::Construction(ConstructionData {
-            gtin: gtin.expect("field verified present by errors.is_empty() guard above"),
+            product_identifier: dpp_domain::identifier::ProductIdentifier::gs1(
+                gtin.expect("field verified present by errors.is_empty() guard above"),
+            ),
             product_family: product_family
                 .expect("field verified present by errors.is_empty() guard above"),
             country_of_origin: country_of_origin
@@ -117,6 +119,11 @@ pub fn validate_construction_row(
         // by hand — an invented one produces a link that fails verification.
         // Absent because the format cannot carry them, not by oversight.
         derived_from: Vec::new(),
+        // Empty for the same reason `derived_from` above is. A CSV column
+        // cannot express a cross-operator predecessor, and core's lineage rule
+        // asks that a status be supported by a derivation edge — so an
+        // imported `repurposed` would be exactly the defect that rule catches.
+        life_status: None,
         component_refs: Vec::new(),
     })
 }

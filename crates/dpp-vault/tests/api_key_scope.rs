@@ -91,7 +91,7 @@ async fn read_scoped_credential_cannot_mutate_passports() {
     for path in [
         format!("/api/v1/dpp/{id}/publish"),
         format!("/api/v1/dpp/{id}/suspend"),
-        format!("/api/v1/dpp/{id}/archive"),
+        format!("/api/v1/dpp/{id}/retire"),
         format!("/api/v1/dpp/{id}/transfer/accept"),
         // `lint` persists a recomputed `lintResult` via `patch_fields` — a
         // database write on any passport the caller can name, and one that

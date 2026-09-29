@@ -218,22 +218,30 @@ pub async fn action_verify_tree(id: &str, client: &OdalClient, cfg: &Config) -> 
     })
 }
 
-/// Find a passport by (product group, GTIN, batch) — the identity an operator
-/// actually holds, rather than the node-assigned ID.
+/// Find a passport by (product group, product identifier, batch) — the identity
+/// an operator actually holds, rather than the node-assigned ID.
+///
+/// The query is encoded rather than formatted: an identification link is a URL,
+/// and its `?`, `&` or `#` would otherwise end the parameter early.
 pub async fn action_find_by_identity(
     product_group: &str,
-    gtin: &str,
+    identifier: &str,
     batch: Option<&str>,
     client: &OdalClient,
     cfg: &Config,
 ) -> Result<Option<PassportSummary>> {
-    let mut url = format!(
-        "{}/api/v1/dpp/by-identity?productGroup={product_group}&gtin={gtin}",
-        cfg.vault_url
-    );
+    let mut query = url::form_urlencoded::Serializer::new(String::new());
+    query
+        .append_pair("productGroup", product_group)
+        .append_pair("identifier", identifier);
     if let Some(b) = batch {
-        url.push_str(&format!("&batchId={b}"));
+        query.append_pair("batchId", b);
     }
+    let url = format!(
+        "{}/api/v1/dpp/by-identity?{}",
+        cfg.vault_url,
+        query.finish()
+    );
 
     let (status, body) = client.get(&url).await?;
     if status == reqwest::StatusCode::NOT_FOUND {

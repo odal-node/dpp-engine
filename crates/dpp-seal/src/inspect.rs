@@ -19,17 +19,132 @@ use crate::cades;
 
 /// Reads CAdES seals.
 ///
-/// Stateless: it holds no credential and reaches no network, because reading a
-/// certificate out of bytes needs neither. Construct it with
+/// Holds no credential and reaches no network — reading a certificate out of
+/// bytes needs neither, and neither does asking a trusted list a question once
+/// somebody else has fetched and verified it. Construct it with
 /// [`CadesInspector::new`] wherever a [`SealInspector`] is wanted.
-#[derive(Debug, Clone, Copy, Default)]
-pub struct CadesInspector;
+///
+/// # The lists are given to it, never fetched by it
+///
+/// [`with_trusted_lists`](Self::with_trusted_lists) hands over an already
+/// verified set. That keeps this adapter synchronous and offline, which matters
+/// because [`SealInspector`] is called from read handlers: an inspector that
+/// could fetch would put a multi-megabyte download on the path of a request
+/// somebody is waiting on. Filling the set is a background job's work.
+///
+/// **Without them it still answers**, and the answer is honest rather than
+/// absent: `IssuerStanding::NotListed` with `consulted: 0`, which says the
+/// verdict is about nothing. That is what a node with the refresh switched off
+/// reports for every provider seal.
+///
+/// # 🚨 The set is swappable, because a boot-time read is not enough
+///
+/// [`publish`](Self::publish) replaces the held set on a **live** inspector, and
+/// a [`Clone`] of one shares it. That is deliberate: the composition root hands
+/// one handle to the read path and keeps another for the background refresh, so
+/// a completed pass reaches the verdicts of a node that is already running.
+///
+/// Without it the set is frozen at boot, and on a fresh deployment the first
+/// pass runs *after* the read — so the node answers `consulted: 0` for ever,
+/// until somebody restarts it for an unrelated reason. Every verdict would be
+/// vacuous and nothing would say so beyond the count.
+#[derive(Debug, Clone, Default)]
+pub struct CadesInspector {
+    /// The set to consult, replaceable while the node runs.
+    ///
+    /// `Arc<RwLock<Arc<..>>>` rather than a plain `RwLock`: the read path clones
+    /// the inner `Arc` and drops the guard immediately, so a verdict is computed
+    /// against a stable snapshot and never holds a lock across the work. The
+    /// outer `Arc` is what lets a clone of this inspector see a publish.
+    held: std::sync::Arc<std::sync::RwLock<std::sync::Arc<TrustedListSet>>>,
+}
+
+/// The two halves of a trusted-list snapshot, which travel together.
+///
+/// 🚨 One struct rather than two fields, so they cannot be replaced
+/// independently. A node holding 26 of 27 lists that reported only the 26 would
+/// answer "this issuer is on no list" for a perfectly qualified provider in the
+/// twenty-seventh, and nothing in the verdict would distinguish that from a
+/// genuine miss.
+#[derive(Debug, Default)]
+struct TrustedListSet {
+    /// The national lists to consult, each already verified through a verified
+    /// list of trusted lists.
+    lists: Vec<crate::trustlist::VerifiedTrustedList>,
+    /// The territories the list of trusted lists names and this node could not
+    /// read — carried so the verdict can say how wide it is.
+    unchecked: Vec<dpp_types::qualification::UncheckedTerritory>,
+}
 
 impl CadesInspector {
-    /// A new inspector.
+    /// A new inspector, holding no trusted lists.
     #[must_use]
     pub fn new() -> Self {
-        Self
+        Self::default()
+    }
+
+    /// Consult these lists, and admit these territories as unread.
+    ///
+    /// The builder form of [`publish`](Self::publish), for a caller that has the
+    /// set before it has an inspector.
+    #[must_use]
+    pub fn with_trusted_lists(
+        self,
+        lists: Vec<crate::trustlist::VerifiedTrustedList>,
+        unchecked: Vec<dpp_types::qualification::UncheckedTerritory>,
+    ) -> Self {
+        self.publish(lists, unchecked);
+        self
+    }
+
+    /// Replace the held set on a running inspector.
+    ///
+    /// Takes `&self` so the background refresh can call it through the same
+    /// handle the read path holds. Publish only what a **completed** pass
+    /// produced: a set from half the Union reads exactly like a set from all of
+    /// it — the rule the seal audit already took in migration
+    /// `ops/pg/0038_seal_audit_state.sql`, which keeps its report NULL until a
+    /// walk reaches the end of the estate.
+    ///
+    /// 🚨 Both halves or neither — see [`TrustedListSet`].
+    pub fn publish(
+        &self,
+        lists: Vec<crate::trustlist::VerifiedTrustedList>,
+        unchecked: Vec<dpp_types::qualification::UncheckedTerritory>,
+    ) {
+        let next = std::sync::Arc::new(TrustedListSet { lists, unchecked });
+        // A poisoned lock is not a reason to stop answering. The only writer is
+        // this function and the only reader clones and leaves, so nothing here
+        // can observe a half-written set — recovering the inner value keeps a
+        // panic in some unrelated task from silently freezing the verdicts.
+        let mut held = self
+            .held
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        *held = next;
+    }
+
+    /// How many lists and unchecked territories the held set carries.
+    ///
+    /// Test-only, and it exists because the two halves are not equally
+    /// observable through a verdict: a self-issued seal short-circuits to
+    /// `IssuerStanding::SelfIssued` before any list is consulted, so the `lists`
+    /// half of a swap cannot be seen through `qualification` without a
+    /// provider-issued certificate this crate cannot produce. Asserting the
+    /// snapshot directly is honest about that, rather than dressing a
+    /// half-observation up as a whole one.
+    #[cfg(test)]
+    fn held_counts(&self) -> (usize, usize) {
+        let held = self.snapshot();
+        (held.lists.len(), held.unchecked.len())
+    }
+
+    /// The set a verdict should be computed against, as a stable snapshot.
+    fn snapshot(&self) -> std::sync::Arc<TrustedListSet> {
+        self.held
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
     }
 }
 
@@ -182,6 +297,47 @@ impl SealInspector for CadesInspector {
             // from bytes nobody could read.
             Err(e) => {
                 tracing::warn!(error = %e, "stored seal could not be read; certificate standing unknown");
+                None
+            }
+        }
+    }
+
+    /// # What the lists are questioned about
+    ///
+    /// `envelope.sealed_at`, not the present moment. A provider granted
+    /// qualified status in 2029 was not qualified in 2027, and a present-tense
+    /// check would certify a seal that never was; a provider withdrawn last week
+    /// did not retroactively unmake the seals it issued. Art. 32(1)(b) asks
+    /// about the time of sealing, and trusted lists carry the history to answer
+    /// it.
+    ///
+    /// ⚠️ `sealed_at` is **this node's clock when the backend answered** — an
+    /// unattested claim by the party that bought the seal. An attested time
+    /// lives in the seal's own timestamp token and is read by
+    /// [`cades::attested_sealing_time`]; feeding it here would make the verdict
+    /// stronger, and is the other half of the timestamp-authority work that is
+    /// tracked separately. Using the recorded time meanwhile is what the seal
+    /// route already does for the certificate's validity window.
+    fn qualification(
+        &self,
+        envelope: &SealedEnvelope,
+    ) -> Option<dpp_types::qualification::SealQualification> {
+        let der = self.readable(envelope)?;
+        // Snapshot first, then compute: the guard is released before any of the
+        // ASN.1 and signature work below, so a refresh publishing mid-verdict
+        // never blocks a read and never changes the set underneath one.
+        let held = self.snapshot();
+        match crate::qualification::qualify(&der, &held.lists, &held.unchecked, envelope.sealed_at)
+        {
+            Ok(verdict) => Some(verdict),
+            // Not read, rather than a verdict drawn from bytes nobody could
+            // parse. `readable` has already refused what it can see — a
+            // placeholder, a format this adapter does not parse, a `sealValue`
+            // that is not base64 — so reaching here means the bytes decoded and
+            // `signer_certificate`, inside `qualify`, could not read a CMS out
+            // of them.
+            Err(e) => {
+                tracing::warn!(error = %e, "stored seal could not be read; qualification unknown");
                 None
             }
         }
@@ -427,6 +583,85 @@ mod tests {
                 .origin(&envelope(value, SealFormat::Jades, false))
                 .is_none(),
             "the declared format decides, not what the bytes happen to be"
+        );
+    }
+
+    /// 🚨 A published set reaches a verdict taken through a **clone** of the
+    /// inspector, without rebuilding it.
+    ///
+    /// This is the property the composition root depends on and that a
+    /// boot-time read alone cannot provide. `main` keeps one handle for the read
+    /// path and hands another to the refresh task; the two are clones of each
+    /// other, so a pass that completes has to be visible through the first one
+    /// or the node answers `consulted: 0` until it is restarted.
+    ///
+    /// Observed through `unchecked` rather than `consulted` deliberately: the
+    /// local backend is self-signed, so `standing` returns `SelfIssued` without
+    /// consulting anything, while `qualify` copies the unchecked territories
+    /// onto every verdict whatever the standing. That makes the swap observable
+    /// with a real seal and no network.
+    #[test]
+    fn a_published_set_reaches_a_verdict_through_a_clone_of_the_inspector() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let id = crate::local::LocalIdentity::load_or_create(dir.path()).expect("identity");
+        let der = id.sign_detached(&[0x11; 32]).expect("sign");
+        let value = base64::engine::general_purpose::STANDARD.encode(&der);
+        let seal = envelope(value, SealFormat::Cades, false);
+
+        // The read path's handle, and the refresh task's — as `main` wires them.
+        let read_path = CadesInspector::new();
+        let refresher = read_path.clone();
+
+        let before = read_path
+            .qualification(&seal)
+            .expect("a readable seal yields a verdict");
+        assert!(
+            before.unchecked.is_empty(),
+            "a node that has not refreshed admits no territories: {:?}",
+            before.unchecked
+        );
+
+        assert_eq!(
+            read_path.held_counts(),
+            (0, 0),
+            "nothing held before a pass publishes"
+        );
+
+        // 🚨 **Both halves, populated.** Publishing an empty `lists` beside a
+        // populated `unchecked` would pass even if `publish` swapped only the
+        // half the verdict happens to expose — which is exactly the failure
+        // `TrustedListSet` exists to make unrepresentable.
+        let parsed: crate::trustlist::UnverifiedTrustedList =
+            serde_json::from_value(serde_json::json!({ "territory": "FI", "providers": [] }))
+                .expect("a minimal parsed list");
+        let fi = crate::trustlist::VerifiedTrustedList::from_store(parsed, "a digest".to_owned());
+
+        refresher.publish(
+            vec![fi],
+            vec![dpp_types::qualification::UncheckedTerritory {
+                territory: "DE".to_owned(),
+                reason: "over the parser ceiling".to_owned(),
+            }],
+        );
+
+        assert_eq!(
+            read_path.held_counts(),
+            (1, 1),
+            "both halves of the published set must reach the read path's handle"
+        );
+
+        let after = read_path
+            .qualification(&seal)
+            .expect("a readable seal yields a verdict");
+        assert_eq!(
+            after.unchecked.len(),
+            1,
+            "the pass published by the refresher must reach the read path without a restart"
+        );
+        assert_eq!(after.unchecked[0].territory, "DE");
+        assert_eq!(
+            after.unchecked[0].reason, "over the parser ceiling",
+            "and the reason travels with it, so the verdict can say why it is narrow"
         );
     }
 }

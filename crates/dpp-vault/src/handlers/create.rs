@@ -6,7 +6,7 @@ use chrono::Utc;
 use dpp_common::url_guard::validate_public_https_url;
 use dpp_domain::{
     ProductGroupCatalog,
-    passport::{Passport, PassportId, PassportRef},
+    passport::{LifeStatus, Passport, PassportId, PassportRef},
     product_group::{CarbonFootprint, ProductGroup, ProductGroupData, RepairabilityScore},
     schemas::VersionedSchemaRegistry,
     status::PassportStatus,
@@ -156,12 +156,25 @@ pub async fn create_handler(
         // serial through the create body before then would let a caller stamp
         // one onto a passport whose own record does not claim to be per-unit.
         serial_number: None,
-        // Set by the life-status transitions, not at creation: a passport being
-        // created is an original by construction, and `None` is "no transition
-        // has been recorded" rather than a claim that one has not happened.
-        life_status: None,
-        // Established through the transfer routes, which is where the chain and
-        // its Art. 77(7) basis are checked. Creation records no operator.
+        // Declared by the caller, and only here: `lifeStatus` is in core's
+        // `PROTECTED_PATCH_FIELDS`, so a patch cannot reach it and this is the
+        // one request that can carry it.
+        //
+        // The comment this replaces said it was "set by the life-status
+        // transitions" — there were none, and there was no create field either,
+        // so every passport this node produced carried `None` permanently and
+        // the core rule that checks the field's consistency had nothing to check.
+        //
+        // `None` stays a legitimate answer: it is what every non-battery product
+        // group carries, and for a battery it reads as *not stated* rather than
+        // *not applicable*. Publish does not refuse it — the lint says so instead,
+        // because a default here would be a claim about a unit nobody made and a
+        // published passport is corrected by a successor rather than an edit.
+        life_status: body.life_status,
+        // Nothing writes this yet, here or anywhere else — the transfer routes
+        // record the chain but do not set it. The snapshot needs the operator's
+        // role and the legal basis that makes them answerable, and neither is
+        // operator configuration today. Served, and always absent, until then.
         responsible_operator: None,
         retention_until: None,
         product_id: None,
@@ -169,6 +182,10 @@ pub async fn create_handler(
         operator_identifier: None,
         facility: None,
         seal: None,
+        // Not accepted on the create body yet, so every passport created here
+        // prints the default serial derived from its id. An amendment carries
+        // its predecessor's forward; see `amend`.
+        carrier_serial: None,
     };
 
     match state.service.create(passport, &auth).await {
@@ -307,7 +324,9 @@ mod schema_validation {
 
     fn valid_battery() -> ProductGroupData {
         ProductGroupData::Battery(Box::new(BatteryData {
-            gtin: Gtin::parse("09506000134352").unwrap(),
+            product_identifier: dpp_domain::ProductIdentifier::gs1(
+                Gtin::parse("09506000134352").unwrap(),
+            ),
             battery_chemistry: BatteryChemistry::Lfp,
             nominal_voltage_v: 3.2,
             nominal_capacity_ah: 100.0,
@@ -400,12 +419,22 @@ mod schema_validation {
     fn schema_rejects_pattern_violation_the_types_allow() {
         // A GTIN of the wrong length is rejected by the schema's `^[0-9]{14}$`
         // pattern — a constraint the Rust types don't carry on the wire shape.
+        let version = catalog()
+            .resolve_schema_version("battery", None)
+            .expect("battery has a current schema");
         let mut json = serde_json::to_value(valid_battery()).unwrap();
         json.as_object_mut().unwrap().remove("productGroup");
-        json["gtin"] = serde_json::json!("123"); // too short for ^[0-9]{14}$
+        // The unmodified body passes, so the refusal below is the pattern's.
         assert!(
             schema_registry()
-                .validate_if_present("battery", "2.0.0", &json)
+                .validate_if_present("battery", &version, &json)
+                .is_ok(),
+            "the valid battery must pass before one field is broken"
+        );
+        json["productIdentifier"]["gtin"] = serde_json::json!("123"); // too short for ^[0-9]{14}$
+        assert!(
+            schema_registry()
+                .validate_if_present("battery", &version, &json)
                 .is_err(),
             "schema must reject a GTIN that violates its pattern"
         );
@@ -481,7 +510,8 @@ mod manufacturer_fields {
 mod gtin_boundary {
     //! Where a malformed GTIN is actually refused.
     //!
-    //! Every typed payload declares `gtin: Gtin`, and `Gtin`'s `Deserialize`
+    //! Every typed payload declares `productIdentifier: ProductIdentifier`, whose GS1
+    //! arm holds a `Gtin`, and `Gtin`'s `Deserialize`
     //! calls `Gtin::parse`. So a bad check digit is rejected while the request
     //! body is being parsed, for every product group at once, before any handler
     //! validation runs. These tests pin that, because the handler's own GTIN
@@ -494,7 +524,7 @@ mod gtin_boundary {
             "manufacturer": { "name": "M", "address": "A" },
             "productGroupData": {
                 "productGroup": "tyre",
-                "gtin": gtin,
+                "productIdentifier": { "scheme": "gs1", "gtin": gtin },
                 "tyreClass": "C1",
                 "fuelEfficiencyClass": "A",
                 "wetGripClass": "A",
@@ -676,6 +706,45 @@ pub fn validate_create_request(body: &CreatePassportRequest) -> Option<axum::res
     // typed product group data, else Other. Derived again here rather than passed in —
     // it is pure, and computing it locally keeps this function callable on a
     // bare request body with nothing else in hand.
+    // 🚨 **The two declarations must agree, and this is a disclosure rule, not
+    // tidiness.**
+    //
+    // A create body can carry an explicit `productGroup` *and* a
+    // `productGroupData` whose internal tag says something else. Nothing
+    // compared them, and the two are read by different things: the explicit
+    // value becomes the stored `product_group` and picks `schemaVersion`, while
+    // the payload is schema-validated against its own tag. Both halves pass.
+    //
+    // What that reaches is the public view. `publish` filters through
+    // `ProductGroupAccessPolicy::for_schema_version(passport.product_group, …)`
+    // — the **label** — and a policy that resolves is not the fail-closed case,
+    // so the backstop never fires. Every payload field the label's table does
+    // not name falls to `default_disclosure`, which is `Public`. Battery's table
+    // names neither `svhcSubstances` nor `disassemblyInstructions`; textile's
+    // marks both `restricted`. So textile data under a battery label publishes
+    // the REACH Art. 33 substance declarations — and signs them into
+    // `publicJwsSignature`, where a published passport cannot be edited, only
+    // superseded.
+    //
+    // Refused rather than reconciled: either choice silently discards a
+    // declaration the caller made, and this is a create, so there is no existing
+    // record whose meaning a rejection would change.
+    if let (Some(explicit), Some(data)) = (&body.product_group, &body.product_group_data)
+        && explicit != &data.product_group()
+    {
+        return api_error(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "VALIDATION_ERROR",
+            &format!(
+                "productGroup says `{}` and productGroupData says `{}`. They select different \
+                 disclosure tables, so a passport carrying both would be published under one \
+                 product group's rules while holding another's data. Send one, or make them agree.",
+                explicit.catalog_key(),
+                data.product_group().catalog_key()
+            ),
+        );
+    }
+
     let product_group = body
         .product_group
         .clone()
@@ -701,5 +770,255 @@ pub fn validate_create_request(body: &CreatePassportRequest) -> Option<axum::res
             ),
         );
     }
+
+    if let Some(life_status) = body.life_status {
+        // ✅ Annex XIII point 4(c) of Reg. (EU) 2023/1542 enumerates the literal
+        // values this status is "defined as", and only that regulation defines
+        // them. A textile passport asserting `original` would be borrowing a
+        // battery term for a question its own instrument does not ask — so this
+        // is refused rather than silently stored, which would put a claim on the
+        // record that nothing supports.
+        if product_group != ProductGroup::Battery {
+            return api_error(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "VALIDATION_ERROR",
+                &format!(
+                    "lifeStatus is defined by Annex XIII point 4(c) of Reg. (EU) 2023/1542 and \
+                     applies to batteries; product_group `{}` has no such vocabulary. Omit it.",
+                    product_group.catalog_key()
+                ),
+            );
+        }
+
+        // 🚨 `waste` is a transition, not a creation state.
+        //
+        // The other four describe how a unit came to be, and under Art. 77(7)
+        // each operation produces a new passport — so a repurposed unit is
+        // created as `repurposed`. `waste` is the one that happens to a record
+        // which continues, and the article's second subparagraph makes it a
+        // responsibility handover as well. Accepting it here would let a caller
+        // record the end of a life this node never saw, with no predecessor, no
+        // version bump and no transfer.
+        if life_status == LifeStatus::Waste {
+            return api_error(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "VALIDATION_ERROR",
+                "lifeStatus `waste` cannot be set when a passport is created. It is a \
+                 transition of an existing record and, under Art. 77(7) second subparagraph, \
+                 a transfer of responsibility — so it belongs to a versioning event on the \
+                 passport that is becoming waste, not to the creation of a new one.",
+            );
+        }
+
+        // The consistency between a status and the operation that produced it is
+        // core's rule (`dpp_rules::lineage::check_life_status_consistency`) and is
+        // reported as a lint finding rather than refused here. Deliberate: lints
+        // in this workspace are advisory and never block a write, and a create
+        // that refused would also have to refuse every import row, where the
+        // derivation edges cannot be expressed at all.
+    }
+
     None
+}
+
+#[cfg(test)]
+mod life_status_at_create {
+    //! Where `lifeStatus` can be set, and where it cannot.
+    //!
+    //! ✅ COMPLIANCE-PIN: Annex XIII point 4(c) of Reg. (EU) 2023/1542, and
+    //! Art. 77(7) for why four of the five values are create-time.
+    //!
+    //! 🚨 Before this, the field could not be set **at all**. It was in core's
+    //! `PROTECTED_PATCH_FIELDS` so `PATCH` refused it, the create body had no
+    //! field for it, and the handler wrote a literal `None` under a comment
+    //! saying it was "set by the life-status transitions" — of which there were
+    //! none. So every passport this node produced carried `None` for ever, the
+    //! read route served a field nothing could fill, and core's consistency rule
+    //! had nothing to check.
+    use super::*;
+
+    fn body(product_group: &str, life_status: serde_json::Value) -> serde_json::Value {
+        let mut b = serde_json::json!({
+            "productName": "A unit",
+            "manufacturer": { "name": "M", "address": "A" },
+            "productGroup": product_group,
+        });
+        if !life_status.is_null() {
+            b["lifeStatus"] = life_status;
+        }
+        b
+    }
+
+    fn parse(v: serde_json::Value) -> CreatePassportRequest {
+        serde_json::from_value(v).expect("a well-formed create body")
+    }
+
+    /// A battery may be created as any of the four operation outcomes.
+    ///
+    /// Art. 77(7) makes each operation produce a *new* passport, so a repurposed
+    /// unit is created as `repurposed` rather than transitioned into it.
+    #[test]
+    fn a_battery_may_be_created_in_any_status_an_operation_produces() {
+        for status in ["original", "repurposed", "re-used", "remanufactured"] {
+            let req = parse(body("battery", serde_json::json!(status)));
+            assert!(
+                req.life_status.is_some(),
+                "`{status}` must parse into the request"
+            );
+            assert!(
+                validate_create_request(&req).is_none(),
+                "`{status}` is a lawful creation state and must be accepted"
+            );
+        }
+    }
+
+    /// 🚨 `waste` is refused, because it is a transition and a handover.
+    ///
+    /// It is the one value that happens to a record which continues, and under
+    /// Art. 77(7)'s second subparagraph it moves responsibility too. Accepting
+    /// it here would let a caller record the end of a life this node never saw —
+    /// with no predecessor, no version bump and no transfer.
+    #[test]
+    fn a_passport_cannot_be_created_already_waste() {
+        let req = parse(body("battery", serde_json::json!("waste")));
+        assert_eq!(
+            req.life_status,
+            Some(LifeStatus::Waste),
+            "it parses — the refusal is a decision, not a parse failure"
+        );
+        assert!(
+            validate_create_request(&req).is_some(),
+            "and creating a passport that is already waste must be refused"
+        );
+    }
+
+    /// The vocabulary belongs to one regulation, so it belongs to one product
+    /// group.
+    ///
+    /// Only Reg. (EU) 2023/1542 defines these values. A textile passport
+    /// asserting `original` would be borrowing a battery term for a question its
+    /// own instrument does not ask, so it is refused rather than stored — a
+    /// stored claim nothing supports is worse than a rejected request.
+    #[test]
+    fn a_non_battery_passport_may_not_claim_a_battery_vocabulary() {
+        let req = parse(body("textile", serde_json::json!("original")));
+        assert!(
+            validate_create_request(&req).is_some(),
+            "textile has no Annex XIII point 4(c) status and must not be given one"
+        );
+    }
+
+    /// Omitting it stays lawful, for every product group.
+    ///
+    /// `None` is what every non-battery group carries. For a battery it reads as
+    /// *not stated* rather than *not applicable*, and publish does not refuse it:
+    /// the lint says so instead, because defaulting would put a claim about a
+    /// unit on a record that is about to be signed, and a published passport is
+    /// corrected by a successor rather than edited.
+    #[test]
+    fn omitting_it_is_lawful_for_every_product_group() {
+        for group in ["battery", "textile"] {
+            let req = parse(body(group, serde_json::Value::Null));
+            assert_eq!(req.life_status, None);
+            assert!(
+                validate_create_request(&req).is_none(),
+                "`{group}` must be creatable without a life status"
+            );
+        }
+    }
+}
+
+#[cfg(test)]
+mod the_label_must_match_its_payload {
+    //! A passport's product group is the key that picks the disclosure table its
+    //! public view is filtered and signed under. These pin that it cannot
+    //! disagree with the payload it is filtering.
+    //!
+    //! 🚨 The failure this prevents is a **disclosure** one, not a tidiness one.
+    //! `publish` resolves `ProductGroupAccessPolicy::for_schema_version` from the
+    //! stored `product_group` — the label. A coherent-but-wrong label resolves
+    //! perfectly, so `audience_view`'s fail-closed backstop (which keys on the
+    //! policy failing to resolve) never fires, and every payload field the
+    //! label's table does not name falls to `default_disclosure`, which is
+    //! `Public`. Battery's table names neither `svhcSubstances` nor
+    //! `disassemblyInstructions`; textile's marks both `restricted`.
+    use super::*;
+
+    fn textile_payload() -> serde_json::Value {
+        serde_json::json!({
+            "productGroup": "textile",
+            "productIdentifier": { "scheme": "gs1", "gtin": "09506000134352" },
+            "fibreComposition": [{ "fibre": "cotton", "pct": 100.0 }],
+            "careInstructions": "wash cold",
+            "countryOfOrigin": "PT",
+            "chemicalComplianceStandard": "oeko-tex-100",
+        })
+    }
+
+    fn parse(v: serde_json::Value) -> CreatePassportRequest {
+        serde_json::from_value(v).expect("a well-formed create body")
+    }
+
+    /// 🚨 A label that contradicts its payload is refused at create.
+    #[test]
+    fn a_product_group_that_contradicts_its_payload_is_refused() {
+        let req = parse(serde_json::json!({
+            "productName": "A unit",
+            "manufacturer": { "name": "M", "address": "A" },
+            "productGroup": "battery",
+            "productGroupData": textile_payload(),
+        }));
+
+        assert!(
+            validate_create_request(&req).is_some(),
+            "battery label over textile data must be refused — it would publish textile's \
+             restricted fields through battery's disclosure table"
+        );
+    }
+
+    /// The two agreeing is the ordinary case and stays lawful.
+    #[test]
+    fn a_label_that_matches_its_payload_is_accepted() {
+        let req = parse(serde_json::json!({
+            "productName": "A unit",
+            "manufacturer": { "name": "M", "address": "A" },
+            "productGroup": "textile",
+            "productGroupData": textile_payload(),
+        }));
+
+        assert!(
+            validate_create_request(&req).is_none(),
+            "a body whose two declarations agree must be accepted"
+        );
+    }
+
+    /// Declaring only the payload stays lawful — the label is derived from it.
+    ///
+    /// The check is about a *contradiction*, not about requiring both. Omitting
+    /// the explicit group is the documented way to let `productGroupData` decide.
+    #[test]
+    fn omitting_the_explicit_group_is_not_a_contradiction() {
+        let req = parse(serde_json::json!({
+            "productName": "A unit",
+            "manufacturer": { "name": "M", "address": "A" },
+            "productGroupData": textile_payload(),
+        }));
+
+        assert!(
+            validate_create_request(&req).is_none(),
+            "with no explicit productGroup there is nothing to contradict"
+        );
+    }
+
+    /// And a label with no payload at all is still fine.
+    #[test]
+    fn a_label_with_no_payload_is_not_a_contradiction() {
+        let req = parse(serde_json::json!({
+            "productName": "A unit",
+            "manufacturer": { "name": "M", "address": "A" },
+            "productGroup": "battery",
+        }));
+
+        assert!(validate_create_request(&req).is_none());
+    }
 }

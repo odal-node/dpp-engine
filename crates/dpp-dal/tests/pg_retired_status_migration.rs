@@ -86,6 +86,7 @@ fn doc_with_the_old_spelling(id: PassportId) -> serde_json::Value {
         responsible_operator: None,
         facility: None,
         seal: None,
+        carrier_serial: None,
     };
 
     let mut doc = serde_json::to_value(&passport).expect("serialise passport");

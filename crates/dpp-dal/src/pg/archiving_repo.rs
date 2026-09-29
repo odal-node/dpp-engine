@@ -104,8 +104,10 @@ use chrono::Utc;
 
 use dpp_domain::{
     DppError,
-    passport::{Passport, PassportId},
+    identifier::ProductIdentifier,
+    passport::{CarrierQualifier, Passport, PassportId},
     ports::passport_repo::PassportRepository,
+    product::ProductIdentity,
     status::PassportStatus,
 };
 use dpp_types::audit::PassportVersionStore;
@@ -156,16 +158,43 @@ impl<R: PassportRepository> PassportRepository for ArchivingPassportRepo<R> {
         self.inner.find_published_by_id(id).await
     }
 
-    async fn find_published_by_gtin(&self, gtin: &str) -> Result<Option<Passport>, DppError> {
-        self.inner.find_published_by_gtin(gtin).await
-    }
-
-    async fn find_by_gtin_any_status(&self, gtin: &str) -> Result<Option<Passport>, DppError> {
-        self.inner.find_by_gtin_any_status(gtin).await
-    }
-
     async fn find_by_id_any_status(&self, id: PassportId) -> Result<Option<Passport>, DppError> {
         self.inner.find_by_id_any_status(id).await
+    }
+
+    // 🚨 The next four have default bodies on the port, so leaving one out here
+    // still compiles — and routes it to the default, an unindexed scan of every
+    // passport through `list`, in front of the inner store's indexed query.
+    // `every_defaulted_read_is_forwarded` holds the list complete.
+
+    async fn find_by_identifier(
+        &self,
+        identifier: &ProductIdentifier,
+        batch_id: Option<&str>,
+        serial_number: Option<&str>,
+    ) -> Result<Vec<Passport>, DppError> {
+        self.inner
+            .find_by_identifier(identifier, batch_id, serial_number)
+            .await
+    }
+
+    async fn find_by_carrier(
+        &self,
+        identifier: &ProductIdentifier,
+        qualifier: &CarrierQualifier<'_>,
+    ) -> Result<Vec<Passport>, DppError> {
+        self.inner.find_by_carrier(identifier, qualifier).await
+    }
+
+    async fn find_by_identity(
+        &self,
+        identity: &ProductIdentity,
+    ) -> Result<Option<Passport>, DppError> {
+        self.inner.find_by_identity(identity).await
+    }
+
+    async fn find_superseding(&self, id: PassportId) -> Result<Option<Passport>, DppError> {
+        self.inner.find_superseding(id).await
     }
 
     async fn list(
@@ -263,6 +292,7 @@ mod tests {
 
     fn a_passport() -> Passport {
         Passport {
+            carrier_serial: None,
             id: PassportId::new(),
             batch_id: None,
             serial_number: None,
@@ -470,6 +500,130 @@ mod tests {
             "and this is why the cost is acceptable: the stray version is byte-identical \
              to the record that is still current, so reading over the interval it claims \
              returns exactly what the live passport says"
+        );
+    }
+
+    /// An inner store that answers every defaulted read itself and refuses a
+    /// `list` scan, so a read the wrapper fails to forward fails the test
+    /// instead of quietly running the port's default in front of it.
+    #[derive(Default)]
+    struct NoScan {
+        forwarded: Mutex<Vec<&'static str>>,
+    }
+
+    impl NoScan {
+        fn saw(&self, read: &'static str) {
+            self.forwarded.lock().expect("lock").push(read);
+        }
+    }
+
+    #[async_trait]
+    impl PassportRepository for NoScan {
+        async fn create(&self, p: Passport) -> Result<Passport, DppError> {
+            Ok(p)
+        }
+        async fn find_by_id(&self, _: PassportId) -> Result<Option<Passport>, DppError> {
+            Ok(None)
+        }
+        async fn find_published_by_id(&self, _: PassportId) -> Result<Option<Passport>, DppError> {
+            Ok(None)
+        }
+        async fn find_by_id_any_status(&self, _: PassportId) -> Result<Option<Passport>, DppError> {
+            Ok(None)
+        }
+        async fn find_by_identifier(
+            &self,
+            _: &ProductIdentifier,
+            _: Option<&str>,
+            _: Option<&str>,
+        ) -> Result<Vec<Passport>, DppError> {
+            self.saw("find_by_identifier");
+            Ok(Vec::new())
+        }
+        async fn find_by_carrier(
+            &self,
+            _: &ProductIdentifier,
+            _: &CarrierQualifier<'_>,
+        ) -> Result<Vec<Passport>, DppError> {
+            self.saw("find_by_carrier");
+            Ok(Vec::new())
+        }
+        async fn find_by_identity(
+            &self,
+            _: &ProductIdentity,
+        ) -> Result<Option<Passport>, DppError> {
+            self.saw("find_by_identity");
+            Ok(None)
+        }
+        async fn find_superseding(&self, _: PassportId) -> Result<Option<Passport>, DppError> {
+            self.saw("find_superseding");
+            Ok(None)
+        }
+        async fn update(&self, p: Passport) -> Result<Passport, DppError> {
+            Ok(p)
+        }
+        async fn update_status(
+            &self,
+            _: PassportId,
+            _: PassportStatus,
+        ) -> Result<Passport, DppError> {
+            Err(DppError::NotFound("unused".into()))
+        }
+        async fn list(
+            &self,
+            _: Option<PassportStatus>,
+            _: Option<&str>,
+            _: Option<&str>,
+            _: u32,
+            _: u32,
+        ) -> Result<Vec<Passport>, DppError> {
+            panic!("a defaulted read ran the port's full scan instead of the inner store's own");
+        }
+        async fn count(&self, _: Option<PassportStatus>, _: Option<&str>) -> Result<u64, DppError> {
+            Ok(0)
+        }
+    }
+
+    /// Every read the port gives a default body reaches the inner store.
+    ///
+    /// A missing forward compiles — the default satisfies the trait — and runs
+    /// an unindexed scan of every passport through `list`, which is how the
+    /// identity lookup behind this wrapper had been scanning while the store
+    /// under it carried an index for exactly that query.
+    #[tokio::test]
+    async fn every_defaulted_read_is_forwarded() {
+        let repo = ArchivingPassportRepo::new(
+            NoScan::default(),
+            std::sync::Arc::new(Recording::default()),
+        );
+        let gtin = ProductIdentifier::gs1(dpp_domain::Gtin::parse("09506000134352").expect("gtin"));
+
+        repo.find_by_identifier(&gtin, None, None)
+            .await
+            .expect("identifier");
+        repo.find_by_carrier(&gtin, &CarrierQualifier::Model)
+            .await
+            .expect("carrier");
+        repo.find_by_identity(&ProductIdentity {
+            product_group: dpp_domain::product_group::ProductGroup::Battery,
+            identifier: gtin.as_str().to_owned(),
+            batch_id: None,
+            serial_number: None,
+        })
+        .await
+        .expect("identity");
+        repo.find_superseding(PassportId::new())
+            .await
+            .expect("superseding");
+
+        assert_eq!(
+            *repo.inner.forwarded.lock().expect("lock"),
+            [
+                "find_by_identifier",
+                "find_by_carrier",
+                "find_by_identity",
+                "find_superseding"
+            ]
         );
     }
 }

@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Odal Node API",
-    "version": "0.13.0",
+    "version": "0.14.0",
     "description": "**Sovereign Digital Product Passport Infrastructure**\n\nThe Odal API is split across two deployable services:\n\n- **Node** (`http://localhost:8001`) — the MVP service that bundles vault,\n  identity, and integrator on a single port with sub-path routing:\n  `/vault/*`, `/identity/*`, `/integrator/*`.\n- **Resolver** (`http://localhost:8003`) — standalone public resolver for\n  QR code scans and supply-chain integrations. Unauthenticated.\n\nAll authenticated vault endpoints are versioned under `/vault/api/v1/`.\nPath parameters use OpenAPI 3.1 `{id}` brace syntax (aligned with\nAxum 0.8 routing).\n\nAuthentication uses `Authorization: Bearer odal_sk_...` API keys (SHA-256\nhashed, prefix-indexed) or HTTP Basic auth for local development.\n\nRegulation references:\n- EU Ecodesign for Sustainable Products Regulation (ESPR) 2024/1781\n- EU Battery Regulation 2023/1542\n- W3C DID Core Spec 1.0 / W3C VC Data Model 2.0\n",
     "contact": {
       "name": "Odal Support",
@@ -155,7 +155,10 @@
                 "batchId": "BATCH-2026-04-001",
                 "productGroupData": {
                   "productGroup": "battery",
-                  "gtin": "09506000134352",
+                  "productIdentifier": {
+                    "scheme": "gs1",
+                    "gtin": "09506000134352"
+                  },
                   "batteryChemistry": "LFP",
                   "nominalVoltageV": 48,
                   "nominalCapacityAh": 100,
@@ -322,7 +325,7 @@
       "get": {
         "operationId": "findDppByIdentity",
         "summary": "Find a DPP by exact compound identity",
-        "description": "Look up a passport by exact (product group, GTIN, batch) match, across\n`draft` and `active` statuses. Backs the import delta-matcher —\nnot intended as a general-purpose search (use `GET /dpps` for that).\n`batchId` omitted matches only passports with no batch set.\n",
+        "description": "Look up a passport by exact (product group, product identifier, batch)\nmatch, across `draft` and `active` statuses. Backs the import\ndelta-matcher — not intended as a general-purpose search (use `GET /dpps`\nfor that). `batchId` omitted matches only passports with no batch set.\n",
         "tags": [
           "DPP Management"
         ],
@@ -345,11 +348,13 @@
             }
           },
           {
-            "name": "gtin",
+            "name": "identifier",
             "in": "query",
             "required": true,
+            "description": "The product identifier's value under whichever EN 18219 clause 5\nscheme issued it: the 14-digit GTIN for scheme 1, the identification\nlink for scheme 2, the DID for scheme 3.\n",
             "schema": {
-              "type": "string"
+              "type": "string",
+              "example": "09506000134352"
             }
           },
           {
@@ -3302,7 +3307,7 @@
       "get": {
         "operationId": "publicGetDpp",
         "summary": "Public read of a published DPP",
-        "description": "Unauthenticated read of a published passport. Used by the resolver\nservice internally. Returns 404 for drafts, 410 for suspended.\n",
+        "description": "Unauthenticated read of a published passport. Used by the resolver\nservice internally. Returns 404 for drafts, 410 for suspended.\n\nA passport that has been superseded serves the record that replaced it,\nso the body's `id` is not always `dppId` — see the 200 below.\n",
         "tags": [
           "Public (Vault)"
         ],
@@ -3329,7 +3334,16 @@
         ],
         "responses": {
           "200": {
-            "description": "Published passport record. With `?schema_view`, the body is instead `{ passport, schemaView }`.",
+            "description": "Published passport record. With `?schema_view`, the body is instead `{ passport, schemaView }`.\n\n🚨 **The body's `id` is not always the `dppId` that was asked for.** A passport in the `superseded` status serves the published record that replaced it. ESPR Art. 9(1) has the data carrier link to *the* passport for the product, and a carrier is printed on a physical thing and cannot be recalled — so this door has to keep landing on whichever record is current, which is what `/01/{gtin}` beside it has always done.\n\nWhat is served is the successor's own signed public view, and its `supersedesId` names the passport that was asked for: the pointer is part of a document the reader can verify rather than a claim beside one. The chain is followed rather than stepped once, so `A → B → C` serves `C` when `A` is scanned.\n\nA superseded passport whose successor is **not published yet** keeps serving its own frozen view, as does one retired or deactivated with no replacement at all. In that view `status` reads as it did at publish, because the body is the payload `publicJwsSignature` was computed over.\n\nWhen — and only when — the body is a different record from the one asked for, the response carries `Content-Location` naming where that record lives (RFC 9110 §8.7). Its **presence** is the signal: a client can tell \"this is your record\" from \"this is the record that replaced it\" without comparing `id` against what it sent. It is a relative reference, so it resolves correctly wherever this API is mounted.",
+            "headers": {
+              "Content-Location": {
+                "description": "Present only on a superseded read, naming the record actually served, relative to the request URI (e.g. `./0b6b…`). Absent on an ordinary read.",
+                "required": false,
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -3377,8 +3391,8 @@
     "/vault/public/dpp/by-gtin/{gtin}": {
       "get": {
         "operationId": "publicGetDppByGtin",
-        "summary": "Public read of a published DPP by GTIN",
-        "description": "Unauthenticated read of the published passport for a GS1 GTIN-14 — the\nsame signed public view the by-id route serves, found by trade item\ninstead of by passport id.\n\n**A withdrawn passport answers `410`, not `404`.** That distinction is the\npoint of this route rather than a detail of it: `404` means no passport for\nthis GTIN was ever published here, while `410` means one was and has since\nbeen suspended. Only the second is a recall signal, and a consumer who\nscanned a product needs to be able to tell them apart. `422` is a\nstructurally invalid GTIN-14 — a bad check digit or wrong length — which is\na malformed request rather than an answer about any product.\n\nOnly the passport's `public` audience view is returned, carrying the\npublish-time `publicJwsSignature` that covers exactly those bytes.\nRestricted fields are not present at all.\n",
+        "summary": "Public read of a published DPP by its printed GS1 label",
+        "description": "Unauthenticated read of the published passport a GS1 label names — the\nsame signed public view the by-id route serves, found by the label printed\non the product instead of by passport id. The resolver's\n`/01/{gtin}[/10/{batch}][/21/{serial}]` routes forward the label here.\n\n**The label's qualifiers select the passport.** One GTIN can have a\npassport for the model, one per batch and one per unit, so the GTIN alone\ndoes not name one:\n\n- `serial` (AI 21) names the passport whose carrier serial it is, at any\n  level. `batch` is not consulted once a serial is given.\n- `batch` (AI 10) alone names the batch-level passport for that lot.\n- Neither names the model-level passport, or a passport with no batch and\n  no serial.\n\nA label keeps working after its passport is amended: the successor is\nserved, not the superseded record.\n\n**A withdrawn passport answers `410`, not `404`.** That distinction is the\npoint of this route rather than a detail of it: `404` means no passport for\nthis label was ever published here, while `410` means one was and has since\nbeen suspended. Only the second is a recall signal, and a consumer who\nscanned a product needs to be able to tell them apart. `422` is a\nstructurally invalid GTIN-14 — a bad check digit or wrong length — which is\na malformed request rather than an answer about any product.\n\nOnly the passport's `public` audience view is returned, carrying the\npublish-time `publicJwsSignature` that covers exactly those bytes.\nRestricted fields are not present at all.\n",
         "tags": [
           "Public (Vault)"
         ],
@@ -3393,6 +3407,26 @@
               "description": "GS1 GTIN-14 (14 digits, mod-10 check digit).",
               "example": "09506000134352"
             }
+          },
+          {
+            "name": "batch",
+            "in": "query",
+            "required": false,
+            "description": "The label's AI 10 value, the batch or lot.",
+            "schema": {
+              "type": "string"
+            },
+            "example": "LOT-2026-A"
+          },
+          {
+            "name": "serial",
+            "in": "query",
+            "required": false,
+            "description": "The label's AI 21 value, the serial.",
+            "schema": {
+              "type": "string"
+            },
+            "example": "3a9c1e0b7d2f4a6c8e10"
           },
           {
             "name": "schema_view",
@@ -3423,7 +3457,7 @@
             "$ref": "#/components/responses/Gone"
           },
           "422": {
-            "description": "The requested `schema_view` is unavailable.",
+            "description": "The GTIN is not a valid GTIN-14, or the requested `schema_view` is unavailable.",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -4181,7 +4215,7 @@
               "application/aas+json": {
                 "schema": {
                   "type": "object",
-                  "description": "An IDTA Asset Administration Shell `Environment` — shells\nand submodels in one self-contained document.\n\n`conceptDescriptions` is **absent**, not empty. This node\ncoins no concept descriptions, and the metamodel constrains\nthat member to `minItems: 1`, so an empty array would make\nthe whole document invalid.\n\n**Public tier only.** The passport is filtered through the\ndisclosure seam before any AAS mapper sees it, so this door\nnever carries a field the JSON-LD door would withhold.\nRestricted and conformity-tier data require a credentialed\nchannel and a different projection.\n\n**Schema-valid, not conformance-certified.** Every\nEnvironment is validated in `dpp-core`'s CI against IDTA's\npublished AAS JSON Schemas for metamodel **3.0, 3.1 and\n3.2**, and must satisfy all three — no single revision is\nthe strictest, so the intersection is the only target that\nmeans \"loadable whichever revision your toolchain\nimplements\".\n\nThat establishes metamodel validity only: it is not a claim\nof IDTA conformance, and it asserts nothing about whether a\nsubmodel matches a published submodel template. Note also\nthat no AAS JSON Schema sets `additionalProperties`, so\nschema validity alone cannot rule out a member the metamodel\ndoes not define; `dpp-core` gates that separately.\n\n**Unsigned, and it says so in a header.** This is a derived\nrepresentation of the signed canonical public view, which is\nwhat `application/ld+json` returns for this same URL. The\npublic proof covers that payload, not this serialisation of\nit, so attaching the signature here would hand a verifier a\nproof that fails against the bytes it arrived with.\n\nEvery `200` therefore carries:\n\n```\nLink: <{resolverBase}/dpp/{dppId}>; rel=\"alternate\"; type=\"application/ld+json\"\n```\n\n`alternate` rather than `canonical`: the two representations\nshare one URL and are separated only by `Accept`, so a\n`canonical` relation would point this resource at itself.\nFollow the link with that `Accept` to obtain the signed\npayload and its proof.\n\n`resolverBase` is per-deployment (`RESOLVER_BASE_URL`,\ndefault `https://id.odal-node.io`). Error responses carry no\n`Link` — an error is not a representation of the passport.\n"
+                  "description": "An IDTA Asset Administration Shell `Environment` — shells\nand submodels in one self-contained document.\n\n`conceptDescriptions` is **absent**, not empty. This node\ncoins no concept descriptions, and the metamodel constrains\nthat member to `minItems: 1`, so an empty array would make\nthe whole document invalid.\n\n**Public tier only.** The passport is filtered through the\ndisclosure seam before any AAS mapper sees it, so this door\nnever carries a field the JSON-LD door would withhold.\nRestricted and conformity-tier data require a credentialed\nchannel and a different projection.\n\n**Schema-valid, not conformance-certified.** Every\nEnvironment is validated in `dpp-core`'s CI against IDTA's\npublished AAS JSON Schemas for metamodel **3.0, 3.1 and\n3.2**, and must satisfy all three — no single revision is\nthe strictest, so the intersection is the only target that\nmeans \"loadable whichever revision your toolchain\nimplements\".\n\nThat establishes metamodel validity only: it is not a claim\nof IDTA conformance, and it asserts nothing about whether a\nsubmodel matches a published submodel template. Note also\nthat no AAS JSON Schema sets `additionalProperties`, so\nschema validity alone cannot rule out a member the metamodel\ndoes not define; `dpp-core` gates that separately.\n\n**Unsigned, and it says so in a header.** This is a derived\nrepresentation of the signed canonical public view, which is\nwhat `application/ld+json` returns for this same URL. The\npublic proof covers that payload, not this serialisation of\nit, so attaching the signature here would hand a verifier a\nproof that fails against the bytes it arrived with.\n\nEvery `200` therefore carries:\n\n```\nLink: <{resolverBase}/dpp/{dppId}>; rel=\"alternate\"; type=\"application/ld+json\"\n```\n\n`alternate` rather than `canonical`: the two representations\nshare one URL and are separated only by `Accept`, so a\n`canonical` relation would point this resource at itself.\nFollow the link with that `Accept` to obtain the signed\npayload and its proof.\n\n`resolverBase` is per-deployment (`RESOLVER_BASE_URL`,\nrequired, no default). Error responses carry no\n`Link` — an error is not a representation of the passport.\n"
                 }
               }
             }
@@ -4397,7 +4431,7 @@
       "get": {
         "operationId": "resolveByGtin",
         "summary": "GS1 Digital Link resolver",
-        "description": "GS1-conformant resolver (GS1-CRSV1) keyed by GTIN-14. Behaviour depends\non the `linkType` query / `Accept` header:\n- default → `307` redirect to the HTML DPP page\n- `?linkType=gs1:pip` / `gs1:dpp` (and related) → `307` redirect to the DPP\n- `?linkType=linkset` or `Accept: application/linkset+json` → `200`\n  RFC 9264 linkset\n",
+        "description": "GS1-conformant resolver (GS1-CRSV1) keyed by GTIN-14 — the carrier this node\nprints for a model-level passport. Behaviour depends\non the `linkType` query / `Accept` header:\n- default → `307` redirect to the HTML DPP page\n- `?linkType=gs1:pip` / `gs1:dpp` (and related) → `307` redirect to the DPP\n- `?linkType=linkset` or `Accept: application/linkset+json` → `200`\n  RFC 9264 linkset\n",
         "tags": [
           "Public Resolver"
         ],
@@ -4458,7 +4492,7 @@
       "get": {
         "operationId": "resolveByGtinSerial",
         "summary": "GS1 Digital Link resolver — GTIN + serial",
-        "description": "A printed carrier may encode more than the GTIN — this node's own\npublisher emits `/01/{gtin}/21/{serial}` for a serialised trade item.\n**Resolution is keyed on the GTIN alone**: `serial` is accepted so no\nconformant carrier 404s for carrying more precision than the resolver\nindexes, but it is not looked up. Same behaviour as `/01/{gtin}`\notherwise (`linkType` / `Accept` negotiation).\n",
+        "description": "The carrier this node prints for an item-level passport, and for one\nwhose level is not stated. **The serial is the resolution key**: it is the\npassport's carrier serial, and it names one passport whatever its level.\nAn amended passport's successor carries its predecessor's serial, so the\nlabel keeps resolving, to the current record. Same behaviour as\n`/01/{gtin}` otherwise (`linkType` / `Accept` negotiation).\n",
         "tags": [
           "Public Resolver"
         ],
@@ -4480,7 +4514,7 @@
             "schema": {
               "type": "string"
             },
-            "description": "Accepted and ignored — not a resolution key."
+            "description": "AI 21, the carrier serial. Selects the passport."
           },
           {
             "name": "linkType",
@@ -4528,7 +4562,7 @@
       "get": {
         "operationId": "resolveByGtinBatch",
         "summary": "GS1 Digital Link resolver — GTIN + batch/lot",
-        "description": "Accepts the batch/lot segment (AI 10) a carrier may include.\n**Resolution is keyed on the GTIN alone**: `batch` is accepted and\nignored, not looked up. Same behaviour as `/01/{gtin}` otherwise\n(`linkType` / `Accept` negotiation).\n",
+        "description": "The carrier this node prints for a batch-level passport. **The batch is a\nresolution key**: it resolves to the batch-level passport for that lot,\nwhich the GTIN alone cannot name once a product has a passport per batch.\nSame behaviour as `/01/{gtin}` otherwise (`linkType` / `Accept`\nnegotiation).\n",
         "tags": [
           "Public Resolver"
         ],
@@ -4550,7 +4584,7 @@
             "schema": {
               "type": "string"
             },
-            "description": "Accepted and ignored — not a resolution key."
+            "description": "AI 10, the batch or lot. Selects the batch-level passport."
           },
           {
             "name": "linkType",
@@ -4598,7 +4632,7 @@
       "get": {
         "operationId": "resolveByGtinBatchSerial",
         "summary": "GS1 Digital Link resolver — GTIN + batch/lot + serial",
-        "description": "The full shape this node's own carrier emits for a batched,\nserialised trade item. **Resolution is keyed on the GTIN alone**:\n`batch` and `serial` are accepted and ignored. Same behaviour as\n`/01/{gtin}` otherwise (`linkType` / `Accept` negotiation).\n",
+        "description": "The shape this node printed for a batched passport before its carrier\nfollowed the passport's stated level, and one any conformant label may\ncarry. **The serial is the resolution key**: it names one passport\nwhatever its level, so the batch is not consulted. Same behaviour as\n`/01/{gtin}` otherwise (`linkType` / `Accept` negotiation).\n",
         "tags": [
           "Public Resolver"
         ],
@@ -4620,7 +4654,7 @@
             "schema": {
               "type": "string"
             },
-            "description": "Accepted and ignored — not a resolution key."
+            "description": "AI 10. Not consulted once a serial is present."
           },
           {
             "name": "serial",
@@ -4629,7 +4663,7 @@
             "schema": {
               "type": "string"
             },
-            "description": "Accepted and ignored — not a resolution key."
+            "description": "AI 21, the carrier serial. Selects the passport."
           },
           {
             "name": "linkType",
@@ -4925,7 +4959,7 @@
               "string",
               "null"
             ],
-            "description": "The serial of the physical unit this passport covers, as the manufacturer stamps or records it. Meaningful where `granularity` is `item` — \"one passport per physical unit\".\n**Not the serial in the resolver URL.** A GS1 Digital Link carrier is `/01/{gtin}/21/{serial}` and AI 21 is a serial number, but the value there is derived from this passport's own UUID to fit GS1's length cap. That value identifies the *record*; this identifies the *product*, and nothing reconciles the two.\nAbsent means not stated.",
+            "description": "The serial of the physical unit this passport covers, as the manufacturer stamps or records it. Meaningful where `granularity` is `item` — \"one passport per physical unit\".\n**Not the serial in the resolver URL.** A GS1 Digital Link carrier is `/01/{gtin}/21/{serial}` and AI 21 is a serial number, but the value there is derived from this passport's own UUID to fit GS1's length cap. That value identifies the *record*; this identifies the *product*, and nothing reconciles the two.\nAbsent means not stated — and today it is always absent: no route accepts one until an adopted delegated act makes a passport cover a single unit.",
             "example": "NW-48V-000123"
           },
           "productName": {
@@ -4996,7 +5030,7 @@
             "description": "Advisory plausibility findings. Absent until a lint pass has run, and recomputable after publish — unlike `complianceResult`."
           },
           "productGroupData": {
-            "description": "Explicitly `null` — not omitted — for a passport whose product group data has not been supplied yet, which is every draft created without it. The field has no `skip_serializing_if`, so it is always present on the wire.",
+            "description": "On an **authenticated full read**, explicitly `null` rather than omitted for a passport whose product group data has not been supplied yet, which is every draft created without it: the field has no `skip_serializing_if`.\nOn a **redacted read** — the public routes, the resolver, and an audience-scoped credential read — the key is **absent** instead. A view should not carry a key whose value says \"there is nothing here\", so the redaction drops it. Read an absent key and a `null` as the same answer; neither is in `required`, and which one arrives depends on the route.",
             "anyOf": [
               {
                 "$ref": "#/components/schemas/ProductGroupData"
@@ -5015,7 +5049,11 @@
               "null"
             ],
             "format": "uri",
-            "description": "GS1 Digital Link the carrier (QR) encodes, set on publish: {resolverBase}/01/{gtin}/21/{serial} for a trade item, else {resolverBase}/dpp/{id}. resolverBase is per-deployment (RESOLVER_BASE_URL, default https://id.odal-node.io)."
+            "description": "The link the data carrier (QR) encodes, set on publish. For a GS1 identifier it is a GS1 Digital Link at the level the passport states: {resolverBase}/01/{gtin} for a model, {resolverBase}/01/{gtin}/10/{batch} for a batch, and {resolverBase}/01/{gtin}/21/{carrierSerial} for an item or an unstated level. Otherwise {resolverBase}/dpp/{id}. resolverBase is per-deployment (RESOLVER_BASE_URL, required, no default)."
+          },
+          "carrierSerial": {
+            "type": "string",
+            "description": "The serial printed in AI 21 of the passport's GS1 carrier, where one was attributed. Absent means the default, derived from the passport id. An amended passport carries its predecessor's, so the label on the object keeps resolving. Printed on the label, so public."
           },
           "jwsSignature": {
             "type": [
@@ -5120,7 +5158,7 @@
                 "$ref": "#/components/schemas/ResponsibleOperatorSnapshot"
               }
             ],
-            "description": "Who is answerable for this product and under which law (Regulation (EU) 2024/1781 Annex III(k)). Frozen at publish for the same reason as `operatorIdentifier`: published content is covered by the signature over it, so a later transfer mints a new version rather than rewriting this one."
+            "description": "Who is answerable for this product and under which law (Regulation (EU) 2024/1781 Annex III(k)). Frozen at publish for the same reason as `operatorIdentifier`: published content is covered by the signature over it, so a later transfer mints a new version rather than rewriting this one.\n**Nothing writes this yet**, so it is always absent: the snapshot needs the operator's role and the legal basis that makes them answerable, and neither is operator configuration today."
           },
           "facility": {
             "allOf": [
@@ -5281,7 +5319,7 @@
       },
       "ProductGroupData": {
         "type": "object",
-        "description": "Product group-specific data, **internally tagged** by a `productGroup`\ndiscriminator — e.g.\n`{ \"productGroup\": \"battery\", \"gtin\": \"…\", \"batteryChemistry\": \"LFP\", … }`.\nThe remaining fields are product group-specific and validated against the\nproduct group's versioned JSON schema. Product groups include `battery`, `textile`,\n`steel`, `aluminium`, `tyre`, `electronics`, and others.\n\nThe tag is **open**. A product group this build does not model round-trips its\ntag and payload verbatim instead of failing to parse, so a group added to the\ncatalog does not require a client release. That is why the server does not\nderive this shape with `#[serde(tag = …)]`, which would close the set at\ncompile time.\n",
+        "description": "Product group-specific data, **internally tagged** by a `productGroup`\ndiscriminator — e.g.\n`{ \"productGroup\": \"battery\", \"productIdentifier\": { \"scheme\": \"gs1\", \"gtin\": \"…\" }, \"batteryChemistry\": \"LFP\", … }`.\nThe remaining fields are product group-specific and validated against the\nproduct group's versioned JSON schema. Product groups include `battery`, `textile`,\n`steel`, `aluminium`, `tyre`, `electronics`, and others.\n\nThe tag is **open**. A product group this build does not model round-trips its\ntag and payload verbatim instead of failing to parse, so a group added to the\ncatalog does not require a client release. That is why the server does not\nderive this shape with `#[serde(tag = …)]`, which would close the set at\ncompile time.\n",
         "required": [
           "productGroup"
         ],
@@ -5297,7 +5335,10 @@
         "additionalProperties": true,
         "example": {
           "productGroup": "battery",
-          "gtin": "09506000134352",
+          "productIdentifier": {
+            "scheme": "gs1",
+            "gtin": "09506000134352"
+          },
           "batteryChemistry": "LFP",
           "nominalVoltageV": 48,
           "nominalCapacityAh": 100,
@@ -5839,6 +5880,14 @@
               "$ref": "#/components/schemas/DerivationRef"
             },
             "description": "Cross-operator predecessors this passport derives from (second-life successor linkage), each naming the operation that produced this unit from it. A list rather than the single `parentPassportRef` it replaces, because Regulation (EU) 2023/1542 Art. 77(7) permits several predecessors."
+          },
+          "lifeStatus": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/CreateLifeStatus"
+              }
+            ],
+            "description": "Where this unit sits in its **product** life — Annex XIII point 4(c) of Regulation (EU) 2023/1542.\n\nOrthogonal to `status`, which is the *publication* lifecycle: a `repurposed` unit's passport is `active` like any other. Omit it for any product group but battery — only Reg. (EU) 2023/1542 defines this vocabulary, and a textile passport asserting `original` would be borrowing a battery term for a question its own instrument does not ask. Sending it for another product group is refused.\n\n**This is the only way to set it.** `lifeStatus` is protected from patching, because it is part of a body that gets signed and rewriting it after publication would change what a proof covers.\n\n🚨 **`waste` is refused here.** The other four describe how a unit came to be, and Art. 77(7) makes each operation produce a *new* passport — so a repurposed unit is created as `repurposed`. `waste` is the one value that happens to a record which continues, and under that article's second subparagraph it moves responsibility as well, so it belongs to a versioning event on the passport becoming waste rather than to the creation of a new one.\n\nOmitting it is lawful everywhere. For a battery it reads as *not stated* rather than *not applicable*, and publish does not refuse it — the lint result says so instead, because a default would put a claim about a unit onto a record that is about to be signed."
           },
           "componentRefs": {
             "type": "array",
@@ -6565,6 +6614,17 @@
               }
             ],
             "description": "What **this seal's own certificate** says about who issued it: did a provider issue it, or did the node sign it itself?\n\nNull means **not read** — a placeholder seal, a format this node does not parse, unreadable bytes, or a deployment with no inspector wired. Never read null as \"not self-issued\": that is a finding, and it only comes from a certificate that was actually examined.\n\nFor what the *currently configured* backend produces, which is a different question, see `trustMode` on `GET /api/v1/seal`."
+          },
+          "qualification": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/SealQualification"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "What Regulation (EU) No 910/2014 Art. 32(1) says about this seal, read against the EU Trusted Lists this node holds. Art. 40 applies Art. 32 to seals *mutatis mutandis*.\n\n🚨 **Read `qualification.issuer.consulted` and `.unchecked` before acting on a `notListed` standing.** That verdict is the only one claiming an absence, and an absence is only as wide as what was looked at. `consulted: 0` means no list was loaded — the answer is about nothing, and it is what a node that loaded no trusted-list cache at boot reports for every provider seal, qualified or not.\n\nEven at its widest this is **not** \"not qualified in law\": a provider can be qualified and its Member State's list wrong, which is that state's problem and not something this node can see.\n\nNull means **not read** — a placeholder seal, a format this node does not parse, unreadable bytes, or a deployment with no inspector wired. Never read null as \"not qualified\": that is a finding, and it only comes from a certificate that was actually examined."
           },
           "verification": {
             "type": "string",
@@ -8350,12 +8410,7 @@
             "description": "True once the operator identity is complete enough to publish."
           },
           "profile": {
-            "type": "string",
-            "enum": [
-              "development",
-              "staging",
-              "production"
-            ],
+            "$ref": "#/components/schemas/NodeProfile",
             "description": "The node's deployment profile. Absent on a standalone vault, which has no\ncomposition root to resolve one.\n"
           },
           "trustMode": {
@@ -8380,6 +8435,15 @@
             "example": "baseline"
           }
         }
+      },
+      "NodeProfile": {
+        "type": "string",
+        "description": "The deployment profile a node was started under (`NODE_PROFILE`), which decides the trust tiers it will boot on. `development` boots on any tier, placeholders included, and is what an unset or unrecognised value means. `sandbox` is a real deployment against test authorities: it refuses a placeholder on a required trust port and accepts a sandbox tier. `production` accepts only live tiers on required ports.",
+        "enum": [
+          "development",
+          "sandbox",
+          "production"
+        ]
       },
       "WhoamiResponse": {
         "type": "object",
@@ -8994,6 +9058,16 @@
         "description": "Whether an act's obligations bind **a given product group** — a different\nquestion from whether the act exists, which is `InstrumentStatus`.\n\n`in_force` — the act creates binding obligations for this product group that\ncan be determined now. A future applicability date is *not* this status.\n\n`provisional` — the act exists or is anticipated, but nothing is bindingly\ndeterminable for this product group yet. Any obligation reported alongside\nthis status is a reading, not a determination.\n\n`watch` — tracked, but this act imposes nothing on this product group. A\nwatching brief rather than a duty, and never determinable.\n\n**Read this before acting on `passport.required`.** The obligation is a fold\nacross every act reaching the product group, so `required: true` says an act\nimposes a passport — not that the act binds this group today. Where every\nreaching act is `provisional` or `watch`, the requirement is a reading of\ninstruments that have not yet bound anything.\n",
         "example": "provisional"
       },
+      "CreateLifeStatus": {
+        "type": "string",
+        "description": "The subset of `LifeStatus` a passport may be **created** in — Regulation (EU) 2023/1542, Annex XIII point 4(c), less `waste`.\n\nA separate schema rather than a note on the full one, because a generated client must not be able to offer a value `POST /dpp` always refuses: `waste` is a transition of an existing record and is rejected here with `422`. The field's own description says why; the full vocabulary a passport can be *read* in is `LifeStatus`.",
+        "enum": [
+          "original",
+          "repurposed",
+          "re-used",
+          "remanufactured"
+        ]
+      },
       "PassportVersion": {
         "type": "object",
         "description": "One archived version of a passport: the record as it stood, and the moment it stopped standing.\n\n✅ EN 18221:2026 clause 4.2 (archiving), one of the six standards cited by Commission Implementing Decision (EU) 2026/1736.\n\n🚨 **Not the `retired` lifecycle status**, which is a terminal state reached after the ESPR retention period and says the record has stopped changing. This is the standard's sense of the word — historical versions of a passport that is still live — and the two are unrelated.",
@@ -9072,7 +9146,7 @@
       },
       "PublishReadiness": {
         "type": "object",
-        "description": "Whether the passport would clear the publish gates that can be answered\nwithout attempting the transition: the category **mandatory-content** gate and\nthe product-group data/schema gates.\n\nDeliberately not the whole of publish. The registry-identity requirement is\noperator state rather than passport state, and the binding-compliance gate\nneeds a determination this route does not run — so `ready: true` means \"these\ngates pass\", not \"publish will certainly succeed\".\n\nThe mandatory-content half is the reason this exists. It is the gate that most\noften refuses a battery — 46 data points for an electric-vehicle one, 45 for\nan LMT battery, 38 for an industrial one — and it could not previously be\npreviewed anywhere: it is reachable only from a stored passport, and the only\ndry-run the API offered takes an unsaved request body.\n",
+        "description": "Whether the passport would clear the publish gates that can be answered\nwithout attempting the transition: the category **mandatory-content** gate and\nthe product-group data/schema gates.\n\nDeliberately not the whole of publish. The registry-identity requirement is\noperator state rather than passport state, and the binding-compliance gate\nneeds a determination this route does not run — so `ready: true` means \"these\ngates pass\", not \"publish will certainly succeed\".\n\nThe mandatory-content half is the reason this exists. It is the gate that most\noften refuses a battery — 45 data points for an electric-vehicle one, 44 for\nan LMT battery, 37 for an industrial one — and it could not previously be\npreviewed anywhere: it is reachable only from a stored passport, and the only\ndry-run the API offered takes an unsaved request body.\n",
         "required": [
           "ready",
           "blockers",
@@ -9255,7 +9329,7 @@
       },
       "CertificateStanding": {
         "type": "object",
-        "description": "**Was the seal's signing certificate valid when the seal was made?**\n\nThe second limb of Regulation (EU) No 910/2014 Art. 32(1)(b), reached for seals by Art. 40. The first limb — whether a qualified trust service provider issued it — is a Trusted List question and is not answered here.\n\nTwo findings and the moment they were judged against, because the moment is what decides them: a certificate outside its window is a failure when a timestamp proves the seal was made outside it, and merely unproven otherwise. Certificates expire, sealed passports outlive them by years, and an expired certificate today says nothing about a seal made while it was good.",
+        "description": "**Was the seal's signing certificate valid when the seal was made?**\n\nThe second limb of Regulation (EU) No 910/2014 Art. 32(1)(b), reached for seals by Art. 40. The first limb — whether a qualified trust service provider issued it — is a Trusted List question, and is answered in `qualification.issuer` on the same response rather than here. Read the two together: a certificate can be well within its window and issued by nobody any list names.\n\nTwo findings and the moment they were judged against, because the moment is what decides them: a certificate outside its window is a failure when a timestamp proves the seal was made outside it, and merely unproven otherwise. Certificates expire, sealed passports outlive them by years, and an expired certificate today says nothing about a seal made while it was good.",
         "required": [
           "validity",
           "judgedAt",
@@ -9272,6 +9346,15 @@
             "$ref": "#/components/schemas/RevocationStanding"
           }
         }
+      },
+      "CreationDevice": {
+        "type": "string",
+        "enum": [
+          "declaresQualifiedDevice",
+          "noQualifiedDevice",
+          "notAQualifiedCertificate"
+        ],
+        "description": "What the certificate declares about the device holding its private key — a declaration, never a verification.\n\n`declaresQualifiedDevice`: the certificate carries the Annex III(j) indication that Regulation (EU) No 910/2014 Art. 32(1)(f), reached for seals through Art. 40, requires.\n\n`noQualifiedDevice`: it carries qualified-certificate statements but not that one. Lawful, and enough for Art. 40a — validation of an *advanced* seal based on a qualified certificate, which omits the device leg — but not for the Art. 32/40 pair.\n\n`notAQualifiedCertificate`: it carries no qualified-certificate statements at all, so it is not presenting itself as a qualified certificate in the first place. A self-signed development certificate lands here."
       },
       "SealOrigin": {
         "type": "object",
@@ -9296,13 +9379,148 @@
             "description": "Whether issuer and subject are the same name — the structural test for \"nobody issued this to us\", and a property of the certificate that no environment variable can change. True means the seal attests that a key this node holds signed a digest and **nothing else**: it carries no legal weight, and no Trusted List would give it any."
           },
           "creationDevice": {
+            "$ref": "#/components/schemas/CreationDevice"
+          }
+        }
+      },
+      "TrustServiceStatus": {
+        "oneOf": [
+          {
+            "type": "null"
+          },
+          {
             "type": "string",
             "enum": [
-              "declaresQualifiedDevice",
-              "noQualifiedDevice",
-              "notAQualifiedCertificate"
+              "granted",
+              "withdrawn"
+            ]
+          },
+          {
+            "type": "object",
+            "required": [
+              "other"
             ],
-            "description": "What the certificate declares about the device holding its private key — a declaration, never a verification.\n\n`declaresQualifiedDevice`: the certificate carries the Annex III(j) indication that Regulation (EU) No 910/2014 Art. 32(1)(f), reached for seals through Art. 40, requires.\n\n`noQualifiedDevice`: it carries qualified-certificate statements but not that one. Lawful, and enough for Art. 40a — validation of an *advanced* seal based on a qualified certificate, which omits the device leg — but not for the Art. 32/40 pair.\n\n`notAQualifiedCertificate`: it carries no qualified-certificate statements at all, so it is not presenting itself as a qualified certificate in the first place. A self-signed development certificate lands here."
+            "properties": {
+              "other": {
+                "type": "string",
+                "description": "The trusted-list status URI, verbatim."
+              }
+            }
+          }
+        ],
+        "description": "The status a trusted list records for a service — ETSI TS 119 612 Annex D.5.\n\n🚨 **Three shapes, not two.** `granted` and `withdrawn` are the pair that answers whether a service holds qualified status. Every other status a list can carry — `undersupervision`, `recognisedatnationallevel`, and whatever a Member State publishes next — arrives as an **object**, `{\"other\": \"<the status URI>\"}`.\n\nThey are kept apart deliberately. Folding them into the same string vocabulary as `granted` would invite the reading that `undersupervision` is a lesser kind of qualified, or `recognisedatnationallevel` a weaker `granted`. Neither is true: they answer a different question, asked of a different kind of service.\n\nA client that assumes a string here breaks on the first list entry it meets that is neither granted nor withdrawn. `granted` is the only value that means qualified.\n\n`null` where it appears on a verdict means the list's history does not reach back to the moment asked about — the list is *silent* about it rather than negative, which is a different finding from a recorded non-granted status."
+      },
+      "IssuerStanding": {
+        "type": "object",
+        "description": "What the EU Trusted Lists say about the certificate's issuer — Regulation (EU) No 910/2014 Art. 32(1)(a)–(b), reached for seals by Art. 40.\n\n**\"At sealing\" throughout, never \"now.\"** A provider granted qualified status in 2029 was not qualified in 2027, and a present-tense check would certify a seal that never was; a provider withdrawn last week did not retroactively unmake the seals it issued. Art. 32(1)(b) asks about the time of signing, and trusted lists carry the history to answer it.\n\nDiscriminated by `standing`. The shape of the rest depends on which one it is.",
+        "required": [
+          "standing"
+        ],
+        "properties": {
+          "standing": {
+            "type": "string",
+            "enum": [
+              "selfIssued",
+              "notListed",
+              "chainIncomplete",
+              "signatureNotFromListedCa",
+              "pathUnverifiable",
+              "notQualifiedAtSealing",
+              "qualifiedAtSealing"
+            ],
+            "description": "`selfIssued`: the certificate is its own issuer — nobody issued it to this node. What the local development backend produces. A seal here carries **no legal weight whatsoever**; it attests that a key this node holds signed a digest.\n\n`notListed`: some provider issued it, and no list consulted names that issuer as a qualified CA. 🚨 The only verdict claiming an **absence** — read `consulted` and `unchecked` before acting on it.\n\n`chainIncomplete`: the seal did not carry enough certificates to reach a root, and no list names any issuer it does refer to. **Weaker than `notListed` deliberately**: the walk ran out of links, so a listed CA may sit above the gap and reporting an unlisted provider would be an accusation drawn from a certificate nobody shipped.\n\n`signatureNotFromListedCa`: a listed CA carries this name and **did not sign this certificate**. The forgery finding. Every listed certificate under that name was tried — a CA mid-rotation publishes several — and none verifies the signature over this certificate's `tbsCertificate`.\n\n`pathUnverifiable`: a listed CA carries this name and the signature could not be checked — usually a key algorithm this build does not verify. **Not an accusation, and never to be read as one.**\n\n`notQualifiedAtSealing`: a listed CA issued it, and its status at the sealing moment was not granted.\n\n`qualifiedAtSealing`: a granted qualified CA issued this certificate and was granted when the seal was made, and its signature over the certificate verifies under a key the list publishes."
+          },
+          "issuer": {
+            "type": "string",
+            "description": "The issuer distinguished name the certificate carries."
+          },
+          "subject": {
+            "type": "string",
+            "description": "`selfIssued` only — the subject name, which is also the issuer name."
+          },
+          "consulted": {
+            "type": "integer",
+            "description": "`notListed` only. How many territories' verified lists were searched.\n\n🚨 `0` means **nothing was looked at**: the answer is about nothing, and it is what a node with no trusted lists loaded reports for every provider seal, qualified or not."
+          },
+          "unchecked": {
+            "type": "integer",
+            "description": "`notListed` only. How many territories the EU list of trusted lists names could not be verified, and so were not searched. Above zero, a provider listed *there* is indistinguishable from one listed nowhere — see the `unchecked` array on `SealQualification`, which names them."
+          },
+          "missingIssuer": {
+            "type": "string",
+            "description": "`chainIncomplete` only. The name the walk needed next and the seal did not carry. Equal to `issuer` when the seal carries only its signing certificate.\n\nETSI EN 319 122-1 clause 5.2.1 asks generators to include those intermediates where the signature is to be validated through a Trusted List, which is the remedy an operator seeing this should ask their provider for."
+          },
+          "provider": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The listed provider, where one was matched."
+          },
+          "territory": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The list carrying that name."
+          },
+          "status": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/TrustServiceStatus"
+              }
+            ],
+            "description": "`notQualifiedAtSealing` only — the status in force at the sealing time.\n\nNull means the list's history does not reach back that far, which is a **different finding** from a recorded non-granted status: the list is silent about that moment rather than negative about it.\n\n🚨 **Three shapes, not two.** `granted` and `withdrawn` are the two the supervisory body's vocabulary distinguishes for a qualified service; every other status a trusted list can carry — `undersupervision`, `recognisedatnationallevel` and the rest — arrives as an **object**, `{\"other\": \"<the status URI>\"}`. Core keeps them readable without making them comparable to `granted`, because they answer a different question asked of a different kind of service, and folding them in would invite the reading that one of them is a lesser kind of qualified.\n\nA client that assumes a string here will break on the first list entry it meets that is neither granted nor withdrawn."
+          },
+          "reason": {
+            "type": "string",
+            "description": "`pathUnverifiable` only — why the issuer's signature over this certificate could not be checked. Usually a key algorithm this build does not verify; a CA certificate that will not parse is the other.\n\n🚨 Read it as a limit of the reader, never as a finding about the seal. Reporting this as `signatureNotFromListedCa` would call a possibly-genuine seal a forgery on the strength of a check that never ran."
+          },
+          "remoteQscdManagement": {
+            "type": "boolean",
+            "description": "`qualifiedAtSealing` only. Whether the listed service declares the additional-information qualifier for a QSCD managed on the signer's behalf — Art. 39a's second grant."
+          }
+        }
+      },
+      "UncheckedTerritory": {
+        "type": "object",
+        "description": "A territory the EU list of trusted lists names and this node could not consult.\n\nCarried rather than dropped because the two states a caller must tell apart — *this issuer is on no list* and *the list it would be on could not be read* — are otherwise identical at the point of the verdict.",
+        "required": [
+          "territory",
+          "reason"
+        ],
+        "properties": {
+          "territory": {
+            "type": "string",
+            "description": "The `SchemeTerritory` the list of trusted lists names — the two-letter country code."
+          },
+          "reason": {
+            "type": "string",
+            "description": "Why this node could not consult it, in terms an operator can act on.\n\nFree text on purpose. What stops a list being consulted is not an enumerable set: a signature that does not verify, a document over a parser ceiling, a fetch that failed, a scheme operator mid-rotation whose entry has not caught up. An operator needs the sentence; a caller deciding what to do needs only that the territory is absent."
+          }
+        }
+      },
+      "SealQualification": {
+        "type": "object",
+        "description": "What Regulation (EU) No 910/2014 Art. 32(1) says about a seal, read off the seal and the EU Trusted Lists this node holds. Art. 40 applies Art. 32 to seals *mutatis mutandis*.\n\nTwo legs, and they are independent — a seal can hold either without the other, which is why they are two fields rather than one ladder:\n\n* **Art. 32(1)(a)–(b)** — the certificate was a qualified certificate issued by\n  a qualified trust service provider. A Trusted List question (Art. 22),\n  answered by `issuer`.\n* **Art. 32(1)(f)** — the seal was created by a qualified electronic seal\n  creation device, which Annex III(j) requires the certificate to declare in\n  machine-processable form. Answered by `creationDevice`.\n\n\n🚨 **This is not a qualified validation result.** Under Art. 33, reached for seals by Art. 40, a *qualified* validation service is itself a provider service whose result carries that provider's seal. Nothing here is signed and nothing here is qualified — this is a reading of published lists, and conditions (c), (d) and (h) of Art. 32(1) are not checked at all.",
+        "required": [
+          "issuer",
+          "creationDevice",
+          "unchecked"
+        ],
+        "properties": {
+          "issuer": {
+            "$ref": "#/components/schemas/IssuerStanding"
+          },
+          "creationDevice": {
+            "$ref": "#/components/schemas/CreationDevice"
+          },
+          "unchecked": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/UncheckedTerritory"
+            },
+            "description": "The territories the EU list of trusted lists names and this node could not consult, with the reason for each.\n\n🚨 **Read this before acting on a `notListed` issuer.** The two states a caller must tell apart — *this issuer is on no list* and *the list it would be on could not be read* — are otherwise identical at the point of the verdict. Empty means every territory the list of lists names was read."
           }
         }
       },
@@ -9407,7 +9625,10 @@
             "example": {
               "productName": "Model X Battery Pack (rev B)",
               "productGroupData": {
-                "gtin": "01234567890128",
+                "productIdentifier": {
+                  "scheme": "gs1",
+                  "gtin": "01234567890128"
+                },
                 "batteryType": "industrial"
               }
             }

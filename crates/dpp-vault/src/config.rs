@@ -30,6 +30,13 @@ pub struct Config {
     /// mint the first API key via the CLI before any key exists).
     pub admin_username: Option<String>,
     pub admin_password: Option<String>,
+
+    /// Base URL the public resolver serves on, stamped into each passport's
+    /// carrier (QR) URL at publish. Required, with no default — read through
+    /// [`dpp_common::config::resolver_base_url`], the reader the node and the
+    /// resolver use, so a standalone vault cannot sign a carrier under a
+    /// different rule than the node does.
+    pub resolver_base_url: String,
 }
 
 impl std::fmt::Debug for Config {
@@ -46,6 +53,7 @@ impl std::fmt::Debug for Config {
                 "admin_password",
                 &self.admin_password.as_ref().map(|_| REDACTED),
             )
+            .field("resolver_base_url", &self.resolver_base_url)
             .finish()
     }
 }
@@ -53,7 +61,7 @@ impl std::fmt::Debug for Config {
 impl Config {
     /// Load configuration from environment variables.
     ///
-    /// **Required**: `DATABASE_URL`, `IDENTITY_SERVICE_URL`.
+    /// **Required**: `DATABASE_URL`, `IDENTITY_SERVICE_URL`, `RESOLVER_BASE_URL`.
     /// **Optional**: `PORT` (default 8001), `LOG_LEVEL` (default `"info"`),
     /// `CORS_ALLOWED_ORIGINS` (default empty), `ADMIN_USERNAME`, `ADMIN_PASSWORD`.
     ///
@@ -83,6 +91,7 @@ impl Config {
             admin_password: std::env::var("ADMIN_PASSWORD")
                 .ok()
                 .filter(|s| !s.is_empty()),
+            resolver_base_url: dpp_common::config::resolver_base_url()?,
         })
     }
 }
@@ -105,6 +114,7 @@ mod tests {
                 "postgres://odal_app:test@localhost:5432/odal",
             );
             std::env::set_var("IDENTITY_SERVICE_URL", "http://identity:8002");
+            std::env::set_var("RESOLVER_BASE_URL", "https://resolver.example.com/");
         }
     }
 
@@ -113,6 +123,7 @@ mod tests {
             for v in &[
                 "DATABASE_URL",
                 "IDENTITY_SERVICE_URL",
+                "RESOLVER_BASE_URL",
                 "PORT",
                 "LOG_LEVEL",
                 "CORS_ALLOWED_ORIGINS",
@@ -138,9 +149,31 @@ mod tests {
             "postgres://odal_app:test@localhost:5432/odal"
         );
         assert_eq!(cfg.identity_service_url, "http://identity:8002");
+        // Through the shared reader, so the trailing `/` is gone exactly as it
+        // is for the node and the resolver.
+        assert_eq!(cfg.resolver_base_url, "https://resolver.example.com");
         assert_eq!(cfg.port, 8001);
         assert_eq!(cfg.log_level, "info");
         assert!(cfg.cors_allowed_origins.is_empty());
+        clear_all();
+    }
+
+    /// The standalone vault signs carriers exactly as the node does, so it must
+    /// refuse to start without the resolver's origin rather than fall back to
+    /// one. It used to: `PassportService::new` defaulted to a hosted address
+    /// that does not resolve, and this binary never overrode it.
+    #[test]
+    fn a_standalone_vault_refuses_to_start_without_a_resolver_base_url() {
+        let _g = ENV_LOCK.lock().unwrap();
+        set_required();
+        unsafe {
+            std::env::remove_var("RESOLVER_BASE_URL");
+        }
+        let err = Config::from_env().expect_err("no resolver origin, no vault");
+        assert!(
+            format!("{err:#}").contains("RESOLVER_BASE_URL"),
+            "the refusal must name the variable to set: {err:#}"
+        );
         clear_all();
     }
 
@@ -195,6 +228,7 @@ mod tests {
             cors_allowed_origins: Vec::new(),
             admin_username: Some("odal-admin".into()),
             admin_password: Some("admin-pass-must-not-leak".into()),
+            resolver_base_url: "https://resolver.example.com".into(),
         };
         let rendered = format!("{cfg:?}");
         assert!(

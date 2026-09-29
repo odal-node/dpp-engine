@@ -194,7 +194,7 @@ fn draft_passport() -> Passport {
         product_group_data: Some(
             serde_json::from_value(serde_json::json!({
                 "productGroup": "battery",
-                "gtin": "09506000134352",
+                "productIdentifier": { "scheme": "gs1", "gtin": "09506000134352" },
                 "batteryType": "portable",
                 "batteryChemistry": "LFP",
                 "nominalVoltageV": 3.7,
@@ -235,6 +235,7 @@ fn draft_passport() -> Passport {
             address: Some("Skopje, MK".into()),
         }),
         seal: None,
+        carrier_serial: None,
     }
 }
 
@@ -316,6 +317,7 @@ async fn publish_then_drain_seals_the_passport_end_to_end() {
             legal_name: "Test Operator GmbH".to_owned(),
             country: "MK".to_owned(),
         },
+        "https://resolver.example.com".to_owned(),
     )
     .with_seal_outbox(seal_outbox.clone());
 
@@ -483,6 +485,7 @@ async fn a_republish_needs_and_gets_its_own_seal() {
             legal_name: "Test Operator GmbH".to_owned(),
             country: "MK".to_owned(),
         },
+        "https://resolver.example.com".to_owned(),
     )
     .with_seal_outbox(seal_outbox.clone());
 
@@ -661,6 +664,7 @@ async fn a_locally_sealed_passport_reports_that_no_provider_issued_it() {
             legal_name: "Test Operator GmbH".to_owned(),
             country: "MK".to_owned(),
         },
+        "https://resolver.example.com".to_owned(),
     )
     .with_seal_outbox(seal_outbox.clone())
     // Wired exactly as the composition root wires it, and unconditionally for
@@ -1021,6 +1025,7 @@ async fn a_seal_corrupted_at_rest_is_found_and_repaired() {
             legal_name: "Test Operator GmbH".to_owned(),
             country: "MK".to_owned(),
         },
+        "https://resolver.example.com".to_owned(),
     )
     .with_seal_outbox(seal_outbox.clone())
     .with_seal_inspector(Arc::new(dpp_seal::CadesInspector::new()));
@@ -1525,6 +1530,7 @@ async fn a_seal_made_under_an_invalid_certificate_is_found_and_not_called_broken
             legal_name: "Test Operator GmbH".to_owned(),
             country: "MK".to_owned(),
         },
+        "https://resolver.example.com".to_owned(),
     )
     .with_seal_outbox(seal_outbox.clone())
     .with_seal_inspector(Arc::new(dpp_seal::CadesInspector::new()));

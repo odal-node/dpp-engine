@@ -87,7 +87,9 @@ pub fn validate_textile_row(
     }
 
     let textile_data = ProductGroupData::Textile(Box::new(TextileData {
-        gtin: gtin.expect("field verified present by errors.is_empty() guard above"),
+        product_identifier: dpp_domain::identifier::ProductIdentifier::gs1(
+            gtin.expect("field verified present by errors.is_empty() guard above"),
+        ),
         fibre_composition: fibres.expect("field verified present by errors.is_empty() guard above"),
         country_of_origin: country_of_origin
             .expect("field verified present by errors.is_empty() guard above"),
@@ -155,6 +157,11 @@ pub fn validate_textile_row(
         // by hand — an invented one produces a link that fails verification.
         // Absent because the format cannot carry them, not by oversight.
         derived_from: Vec::new(),
+        // Empty for the same reason `derived_from` above is. A CSV column
+        // cannot express a cross-operator predecessor, and core's lineage rule
+        // asks that a status be supported by a derivation edge — so an
+        // imported `repurposed` would be exactly the defect that rule catches.
+        life_status: None,
         component_refs: Vec::new(),
     })
 }
@@ -224,7 +231,7 @@ mod tests {
         assert_eq!(req.product_name, "Organic Cotton Tee");
         match req.product_group_data.unwrap() {
             ProductGroupData::Textile(t) => {
-                assert_eq!(t.gtin.as_str(), "09506000134352");
+                assert_eq!(t.product_identifier.as_str(), "09506000134352");
                 assert_eq!(t.fibre_composition.len(), 1);
                 assert_eq!(t.fibre_composition[0].fibre, "cotton");
             }

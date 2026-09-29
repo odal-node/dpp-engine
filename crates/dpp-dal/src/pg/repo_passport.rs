@@ -12,9 +12,11 @@ use sqlx::{Postgres, Row, Transaction};
 use uuid::Uuid;
 
 use dpp_domain::{
+    ProductGroupData,
     catalog::ProductGroupCatalog,
     error::DppError,
-    passport::{Passport, PassportId},
+    identifier::ProductIdentifier,
+    passport::{CarrierQualifier, Passport, PassportId},
     ports::passport_repo::PassportRepository,
     product::ProductIdentity,
     schemas::lens::LensRegistry,
@@ -22,6 +24,53 @@ use dpp_domain::{
 };
 
 use super::{PgDal, db_err};
+
+/// A passport's product identifier as one string — the SQL twin of
+/// `ProductIdentifier::as_str`.
+///
+/// Whichever of the three EN 18219 value keys is present, and the pre-identifier
+/// `productGroupData.gtin` of a document stored before the identifier existed:
+/// a signed record is never rewritten, so SQL has to read both shapes where Rust
+/// reads the old one through the lens chain. No scheme is needed beside it — a
+/// GTIN is digits, a link an absolute `http(s)` URL, a DID starts `did:`.
+///
+/// 🚨 Verbatim the expression `0042_passport_identifier_index.sql` indexes.
+/// Postgres uses an expression index only for a query that repeats it, so a
+/// query that paraphrases this falls back to a sequential scan, silently.
+/// `the_identifier_expression_is_the_one_the_index_covers` holds the two equal.
+///
+/// A macro rather than a `const` because sqlx takes only a literal statement,
+/// and `concat!` splices a macro into one where it cannot splice a `const` —
+/// the same arrangement as `repo_unsold_goods`'s column list.
+macro_rules! identifier_sql {
+    () => {
+        "(COALESCE(doc->'productGroupData'->'productIdentifier'->>'gtin', \
+         doc->'productGroupData'->'productIdentifier'->>'url', \
+         doc->'productGroupData'->'productIdentifier'->>'did', \
+         doc->'productGroupData'->>'gtin'))"
+    };
+}
+
+/// A passport's effective carrier serial — the SQL twin of
+/// `Passport::effective_carrier_serial`: the attributed `carrierSerial`, or else
+/// `PassportId::default_carrier_serial`, the last twenty hex digits of the id's
+/// lowercase canonical text. Verbatim what `idx_passport_carrier_serial`
+/// indexes, for the same reason as [`identifier_sql`].
+macro_rules! carrier_serial_sql {
+    () => {
+        "(COALESCE(doc->>'carrierSerial', right(replace(id::text, '-', ''), 20)))"
+    };
+}
+
+/// Whether `passport`'s product group data carries `identifier` — the port's
+/// own test, applied to the rows the SQL narrowed to.
+fn carries(passport: &Passport, identifier: &ProductIdentifier) -> bool {
+    passport
+        .product_group_data
+        .as_ref()
+        .and_then(ProductGroupData::product_identifier)
+        .is_some_and(|id| id == identifier)
+}
 
 /// Apply a passport update (scalar columns + `doc`) inside a caller-supplied
 /// transaction. Shared by [`PgPassportRepo::update`] and the transactional
@@ -128,6 +177,13 @@ impl PgPassportRepo {
         Passport::from_stored(doc, &self.lenses, &self.catalog)
     }
 
+    /// [`read_doc`](Self::read_doc) over every row's `doc`.
+    fn read_docs(&self, rows: Vec<sqlx::postgres::PgRow>) -> Result<Vec<Passport>, DppError> {
+        rows.into_iter()
+            .map(|r| self.read_doc(r.get::<serde_json::Value, _>("doc")))
+            .collect()
+    }
+
     fn uuid_of(id: PassportId) -> Uuid {
         id.0
     }
@@ -212,90 +268,128 @@ impl PassportRepository for PgPassportRepo {
             .transpose()
     }
 
-    /// Find an active passport by GTIN via LIKE scan on `qrCodeUrl`.
+    /// Every passport carrying `identifier`, at the level `batch_id` and
+    /// `serial_number` name — the port's contract, answered from
+    /// `idx_passport_identifier` rather than the default `list()` scan.
     ///
-    /// O(n) over active passports — acceptable for single-tenant MVP scale.
-    async fn find_published_by_gtin(&self, gtin: &str) -> Result<Option<Passport>, DppError> {
-        // A GTIN is purely numeric. Reject anything else so LIKE metacharacters
-        // (`%`/`_`) in an untrusted value can't widen the pattern to match — and
-        // return — an arbitrary passport. A non-numeric value can never match a
-        // real GS1 Digital Link URL anyway.
-        if gtin.is_empty() || !gtin.bytes().all(|b| b.is_ascii_digit()) {
-            return Ok(None);
-        }
-        // Battery GS1 DL URL: https://id.odal-node.io/01/{gtin}/21/{serialId}
-        let row = sqlx::query(
-            "SELECT doc FROM odal.passport \
-             WHERE status = 'active' \
-               AND doc->>'qrCodeUrl' LIKE '%/01/' || $1 || '/%' \
-             LIMIT 1",
-        )
-        .bind(gtin)
-        .fetch_optional(self.dal.pool())
+    /// The SQL narrows to candidates; the port's own rule then decides. So the
+    /// answer is the default implementation's exactly, including for a stored
+    /// identifier the SQL expression reads but the typed payload refuses — an
+    /// untyped group whose `productIdentifier` does not parse carries none.
+    async fn find_by_identifier(
+        &self,
+        identifier: &ProductIdentifier,
+        batch_id: Option<&str>,
+        serial_number: Option<&str>,
+    ) -> Result<Vec<Passport>, DppError> {
+        let rows = sqlx::query(concat!(
+            "SELECT doc FROM odal.passport WHERE ",
+            identifier_sql!(),
+            " = $1 \
+               AND CASE WHEN $3::text IS NOT NULL THEN doc->>'serialNumber' = $3 \
+                        ELSE doc->>'batchId' IS NOT DISTINCT FROM $2 \
+                         AND doc->>'serialNumber' IS NULL END \
+             ORDER BY created_at"
+        ))
+        .bind(identifier.as_str())
+        .bind(batch_id)
+        .bind(serial_number)
+        .fetch_all(self.dal.pool())
         .await
         .map_err(db_err)?;
-        row.map(|r| self.read_doc(r.get::<serde_json::Value, _>("doc")))
-            .transpose()
+        Ok(self
+            .read_docs(rows)?
+            .into_iter()
+            .filter(|p| {
+                carries(p, identifier)
+                    && match serial_number {
+                        Some(serial) => p.serial_number.as_deref() == Some(serial),
+                        None => p.batch_id.as_deref() == batch_id && p.serial_number.is_none(),
+                    }
+            })
+            .collect())
     }
 
-    /// Find a passport by the GTIN in its `qrCodeUrl`, regardless of status.
+    /// Every passport a printed carrier names — the port's contract, answered
+    /// from `idx_passport_carrier_serial` for a serial and from the identifier
+    /// index otherwise.
     ///
-    /// The by-GTIN counterpart of `find_by_id_any_status`, and it exists for the
-    /// same reason: a public route must be able to tell "no such GTIN" from
-    /// "that GTIN resolves to a suspended passport", because only the second is
-    /// a recall and only the second warrants `410 Gone`. Returning the passport
-    /// and leaving the lifecycle decision to the caller is what makes that
-    /// possible — storage says what is stored, not what is publicly visible.
-    ///
-    /// Same numeric-only guard as `find_published_by_gtin`: a `%` or `_` in an
-    /// untrusted value would otherwise widen the LIKE pattern and match an
-    /// arbitrary passport.
-    ///
-    /// # Why a superseded record is excluded, and why the order is fixed
-    ///
-    /// One GTIN matches one row only while a product has one passport. An
-    /// amendment ends that: the successor inherits the product group data the
-    /// GTIN comes from, so predecessor and successor both carry `/01/{gtin}/`
-    /// in `qrCodeUrl` and both match. With no `ORDER BY`, `LIMIT 1` then took
-    /// whichever row the scan reached first.
-    ///
-    /// That is not a tie worth breaking, because a superseded record is never
-    /// the answer to "what does this product's code resolve to" — its successor
-    /// is, which is the whole point of superseding it. Excluding it says so.
-    /// Left in, it answered for its successor: a product amended and then
-    /// recalled reported `404 "no published DPP for this GTIN"` to the scanner
-    /// instead of the `410` that is the recall signal, because the predecessor
-    /// won the scan and its status is neither published nor suspended.
-    ///
-    /// `created_at DESC` then makes the remainder deterministic rather than
-    /// heap-ordered. It does not encode a rule about which of two live records
-    /// wins — nothing should produce two — it only stops the answer from
-    /// depending on physical row order if something ever does.
-    async fn find_by_gtin_any_status(&self, gtin: &str) -> Result<Option<Passport>, DppError> {
-        if gtin.is_empty() || !gtin.bytes().all(|b| b.is_ascii_digit()) {
-            return Ok(None);
+    /// Filtered afterwards by the port's own rule, for the reason
+    /// [`find_by_identifier`](Self::find_by_identifier) gives.
+    async fn find_by_carrier(
+        &self,
+        identifier: &ProductIdentifier,
+        qualifier: &CarrierQualifier<'_>,
+    ) -> Result<Vec<Passport>, DppError> {
+        let rows = match qualifier {
+            CarrierQualifier::Serial(serial) => {
+                sqlx::query(concat!(
+                    "SELECT doc FROM odal.passport WHERE ",
+                    identifier_sql!(),
+                    " = $1 AND ",
+                    carrier_serial_sql!(),
+                    " = $2 ORDER BY created_at"
+                ))
+                .bind(identifier.as_str())
+                .bind(serial.as_ref())
+                .fetch_all(self.dal.pool())
+                .await
+            }
+            CarrierQualifier::Batch(batch) => {
+                sqlx::query(concat!(
+                    "SELECT doc FROM odal.passport WHERE ",
+                    identifier_sql!(),
+                    " = $1 AND doc->>'granularity' = 'batch' AND doc->>'batchId' = $2 \
+                     ORDER BY created_at"
+                ))
+                .bind(identifier.as_str())
+                .bind(batch.as_ref())
+                .fetch_all(self.dal.pool())
+                .await
+            }
+            CarrierQualifier::Model => {
+                sqlx::query(concat!(
+                    "SELECT doc FROM odal.passport WHERE ",
+                    identifier_sql!(),
+                    " = $1 AND doc->>'granularity' = 'model' ORDER BY created_at"
+                ))
+                .bind(identifier.as_str())
+                .fetch_all(self.dal.pool())
+                .await
+            }
+            // A level added to core after this build: every record carrying the
+            // identifier, left to the port's own rule below to decide.
+            _ => {
+                sqlx::query(concat!(
+                    "SELECT doc FROM odal.passport WHERE ",
+                    identifier_sql!(),
+                    " = $1 ORDER BY created_at"
+                ))
+                .bind(identifier.as_str())
+                .fetch_all(self.dal.pool())
+                .await
+            }
         }
-        let row = sqlx::query(
-            "SELECT doc FROM odal.passport \
-             WHERE doc->>'qrCodeUrl' LIKE '%/01/' || $1 || '/%' \
-               AND status <> 'superseded' \
-             ORDER BY created_at DESC \
-             LIMIT 1",
-        )
-        .bind(gtin)
-        .fetch_optional(self.dal.pool())
-        .await
         .map_err(db_err)?;
-        row.map(|r| self.read_doc(r.get::<serde_json::Value, _>("doc")))
-            .transpose()
+        Ok(self
+            .read_docs(rows)?
+            .into_iter()
+            .filter(|p| {
+                carries(p, identifier)
+                    && match qualifier {
+                        CarrierQualifier::Serial(serial) => p.effective_carrier_serial() == *serial,
+                        level => p.carrier_qualifier().as_ref() == Some(level),
+                    }
+            })
+            .collect())
     }
 
-    /// Find a passport by exact compound identity (product group, GTIN, batch),
-    /// across `Draft` and `Published` — backs the import delta-matcher.
-    /// Indexed by `0019_passport_identity_index.sql`. GTIN is read from
-    /// `doc->'productGroupData'->>'gtin'`: present for every product group except
-    /// `UnsoldGoods`/`Other`, which carry no GTIN field and so never match
-    /// here — a discard-event report and an untyped catch-all, not a query bug.
+    /// Find a passport by exact compound identity (product group, identifier,
+    /// batch, serial), across `Draft` and `Published` — backs the import
+    /// delta-matcher. Indexed by `0042_passport_identifier_index.sql`.
+    ///
+    /// `UnsoldGoods` carries no identifier, so a row for it never matches here:
+    /// a discard-event report identifies no single product, not a query bug.
     async fn find_by_identity(
         &self,
         identity: &ProductIdentity,
@@ -304,22 +398,50 @@ impl PassportRepository for PgPassportRepo {
             .ok()
             .and_then(|v| v.as_str().map(str::to_owned))
             .ok_or_else(|| DppError::Internal("failed to serialise product_group".into()))?;
-        let row = sqlx::query(
+        let rows = sqlx::query(concat!(
             "SELECT doc FROM odal.passport \
              WHERE status IN ('draft','active') \
                AND product_group = $1 \
-               AND doc->'productGroupData'->>'gtin' = $2 \
+               AND ",
+            identifier_sql!(),
+            " = $2 \
                AND doc->>'batchId' IS NOT DISTINCT FROM $3 \
-             LIMIT 1",
-        )
+               AND doc->>'serialNumber' IS NOT DISTINCT FROM $4 \
+             ORDER BY created_at"
+        ))
         .bind(&product_group_str)
-        .bind(&identity.gtin)
+        .bind(&identity.identifier)
         .bind(identity.batch_id.as_deref())
-        .fetch_optional(self.dal.pool())
+        .bind(identity.serial_number.as_deref())
+        .fetch_all(self.dal.pool())
         .await
         .map_err(db_err)?;
-        row.map(|r| self.read_doc(r.get::<serde_json::Value, _>("doc")))
-            .transpose()
+        Ok(self
+            .read_docs(rows)?
+            .into_iter()
+            .find(|p| ProductIdentity::from_passport(p).as_ref() == Some(identity)))
+    }
+
+    /// The record that supersedes `id`, from the indexed `supersedes_id` column
+    /// rather than the port's default `list()` scan.
+    ///
+    /// Two rows are fetched so a second claimant is seen: more than one record
+    /// naming `id` as its predecessor is refused, as the port requires, rather
+    /// than one being picked.
+    async fn find_superseding(&self, id: PassportId) -> Result<Option<Passport>, DppError> {
+        let rows = sqlx::query("SELECT doc FROM odal.passport WHERE supersedes_id = $1 LIMIT 2")
+            .bind(Self::uuid_of(id))
+            .fetch_all(self.dal.pool())
+            .await
+            .map_err(db_err)?;
+        let mut claimants = self.read_docs(rows)?;
+        match claimants.len() {
+            0 | 1 => Ok(claimants.pop()),
+            _ => Err(DppError::SuccessionUnresolvable {
+                id: id.to_string(),
+                reason: "more than one record claims it as their predecessor".into(),
+            }),
+        }
     }
 
     /// Fetch by id without a status filter; equivalent to `find_by_id`.
@@ -464,5 +586,39 @@ impl PassportRepository for PgPassportRepo {
         .map_err(db_err)?;
         tx.commit().await.map_err(db_err)?;
         Ok(total.max(0) as u64)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    /// Whitespace-insensitive, since Postgres compares parsed expressions and
+    /// the migration is laid out for reading.
+    fn squash(sql: &str) -> String {
+        sql.split_whitespace().collect::<Vec<_>>().join(" ")
+    }
+
+    /// The expressions the queries use are the ones the indexes cover.
+    ///
+    /// Postgres uses an expression index only for a query that repeats the
+    /// expression. A query that paraphrases it — reorders the `COALESCE`, adds
+    /// a cast — still returns the right rows, through a sequential scan, and
+    /// nothing reports the difference until the table is large.
+    #[test]
+    fn the_identifier_expression_is_the_one_the_index_covers() {
+        let migration = squash(include_str!(
+            "../../../../ops/pg/0042_passport_identifier_index.sql"
+        ));
+        for (name, expr) in [
+            ("identifier", identifier_sql!()),
+            ("carrier serial", carrier_serial_sql!()),
+        ] {
+            // The index wraps the expression in one more pair of parentheses,
+            // which is how `CREATE INDEX` takes an expression.
+            let indexed = format!("({})", squash(expr));
+            assert!(
+                migration.contains(&indexed),
+                "the {name} expression the queries use is not the one 0042 indexes:\n{indexed}"
+            );
+        }
     }
 }

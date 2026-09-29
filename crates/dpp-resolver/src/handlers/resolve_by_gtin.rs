@@ -1,15 +1,17 @@
 //! Handlers for the GS1 Digital Link routes, conforming to GS1-CRSV1.
 //!
-//! A printed carrier may carry more than the GTIN. This node's own publisher
-//! emits `/01/{gtin}[/10/{batch}]/21/{serial}`, and a scanner reading any
-//! conformant label may present the same shape, so every AI combination the
-//! carrier can produce is mounted here.
+//! A printed carrier may carry more than the GTIN. This node's publisher emits
+//! `/01/{gtin}` for a model-level passport, `/01/{gtin}/10/{batch}` for a
+//! batch-level one and `/01/{gtin}/21/{serial}` otherwise; labels printed before
+//! the carrier followed the passport's level carry `/10/{batch}/21/{serial}`.
+//! A scanner reading any conformant label may present any of these, so every
+//! AI combination is mounted here.
 //!
-//! **Resolution is keyed on the GTIN alone.** The batch (AI 10) and serial
-//! (AI 21) segments are accepted and ignored: the serial this node prints is
-//! derived from the passport id for uniqueness on the label, not a lookup key,
-//! and no route may 404 merely because a label carried more precision than the
-//! resolver indexes.
+//! **The label's qualifiers are the lookup key.** The batch (AI 10) and serial
+//! (AI 21) are forwarded to the vault, which resolves the passport the label
+//! was printed for. The GTIN alone cannot: one GTIN has a passport per batch or
+//! per unit once a product is recorded at that level, so dropping the qualifier
+//! would turn every such label into a `404`.
 
 use axum::{
     extract::{Path, Query, State},
@@ -45,38 +47,62 @@ pub async fn resolve_by_gtin_handler(
     query: Query<ByGtinQuery>,
     headers: HeaderMap,
 ) -> impl IntoResponse {
-    resolve_gtin(state, gtin, query, headers).await
+    resolve_gtin(state, Label::default(), gtin, query, headers).await
 }
 
-/// `GET /01/{gtin}/21/{serial}` — GTIN + serial. Resolves on the GTIN.
+/// `GET /01/{gtin}/21/{serial}` — GTIN + serial: one unit.
 pub async fn resolve_by_gtin_serial_handler(
     state: State<AppState>,
-    Path((gtin, _serial)): Path<(String, String)>,
+    Path((gtin, serial)): Path<(String, String)>,
     query: Query<ByGtinQuery>,
     headers: HeaderMap,
 ) -> impl IntoResponse {
-    resolve_gtin(state, gtin, query, headers).await
+    let label = Label {
+        batch: None,
+        serial: Some(serial),
+    };
+    resolve_gtin(state, label, gtin, query, headers).await
 }
 
-/// `GET /01/{gtin}/10/{batch}` — GTIN + batch/lot. Resolves on the GTIN.
+/// `GET /01/{gtin}/10/{batch}` — GTIN + batch/lot: one production run.
 pub async fn resolve_by_gtin_batch_handler(
     state: State<AppState>,
-    Path((gtin, _batch)): Path<(String, String)>,
+    Path((gtin, batch)): Path<(String, String)>,
     query: Query<ByGtinQuery>,
     headers: HeaderMap,
 ) -> impl IntoResponse {
-    resolve_gtin(state, gtin, query, headers).await
+    let label = Label {
+        batch: Some(batch),
+        serial: None,
+    };
+    resolve_gtin(state, label, gtin, query, headers).await
 }
 
-/// `GET /01/{gtin}/10/{batch}/21/{serial}` — the full shape this node's own
-/// carrier emits for a batched product. Resolves on the GTIN.
+/// `GET /01/{gtin}/10/{batch}/21/{serial}` — the shape this node printed for a
+/// batched product before the carrier followed the passport's level. The
+/// serial identifies the unit; the vault does not consult the batch once a
+/// serial is present.
 pub async fn resolve_by_gtin_batch_serial_handler(
     state: State<AppState>,
-    Path((gtin, _batch, _serial)): Path<(String, String, String)>,
+    Path((gtin, batch, serial)): Path<(String, String, String)>,
     query: Query<ByGtinQuery>,
     headers: HeaderMap,
 ) -> impl IntoResponse {
-    resolve_gtin(state, gtin, query, headers).await
+    let label = Label {
+        batch: Some(batch),
+        serial: Some(serial),
+    };
+    resolve_gtin(state, label, gtin, query, headers).await
+}
+
+/// The qualifiers a label printed after its GTIN, forwarded to the vault as
+/// the `batch` and `serial` query parameters of its by-GTIN route.
+#[derive(Default)]
+struct Label {
+    /// AI 10.
+    batch: Option<String>,
+    /// AI 21.
+    serial: Option<String>,
 }
 
 /// What the GS1 route says when no passport resolves for the GTIN.
@@ -123,20 +149,24 @@ fn gtin_problem(status: StatusCode, detail: &str) -> axum::response::Response {
         .into_response()
 }
 
-/// Shared implementation: every GS1 Digital Link route resolves on the GTIN.
+/// Shared implementation: every GS1 Digital Link route resolves on the GTIN and
+/// whatever qualifiers the label carried.
 async fn resolve_gtin(
     State(state): State<AppState>,
+    label: Label,
     gtin: String,
     Query(query): Query<ByGtinQuery>,
     headers: HeaderMap,
 ) -> axum::response::Response {
     // Validate the GTIN at the edge before it reaches the server-to-server vault
     // URL — a percent-decoded `../admin` must not path-traverse/SSRF the vault.
+    // The batch and serial travel as query parameters, which `reqwest` encodes,
+    // so they cannot reach the path.
     if !crate::domain::is_valid_gtin(&gtin) {
         return gtin_problem(StatusCode::NOT_FOUND, NO_DPP_FOR_GTIN);
     }
 
-    let passport = match fetch_by_gtin(&state, &gtin).await {
+    let passport = match fetch_by_gtin(&state, &gtin, &label).await {
         Ok(v) => v,
         Err(status) => return gtin_problem(status, detail_for(status)),
     };
@@ -316,11 +346,19 @@ fn ld_link(uri: &str) -> serde_json::Value {
     serde_json::json!({ "href": uri, "type": "application/ld+json" })
 }
 
-async fn fetch_by_gtin(state: &AppState, gtin: &str) -> Result<Value, StatusCode> {
+async fn fetch_by_gtin(state: &AppState, gtin: &str, label: &Label) -> Result<Value, StatusCode> {
     let url = format!("{}/public/dpp/by-gtin/{gtin}", state.vault_base_url);
+    let mut qualifiers: Vec<(&str, &str)> = Vec::with_capacity(2);
+    if let Some(batch) = &label.batch {
+        qualifiers.push(("batch", batch));
+    }
+    if let Some(serial) = &label.serial {
+        qualifiers.push(("serial", serial));
+    }
     let resp = state
         .http
         .get(&url)
+        .query(&qualifiers)
         .send()
         .await
         .map_err(|_| StatusCode::BAD_GATEWAY)?;

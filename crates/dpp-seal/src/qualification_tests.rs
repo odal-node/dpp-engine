@@ -4,6 +4,7 @@ use super::*;
 use crate::trustlist::{verify_lotl, verify_trusted_list};
 use cms::content_info::ContentInfo;
 use cms::signed_data::SignedData;
+use dpp_types::CreationDevice;
 
 const EU_LOTL: &str = include_str!("../tests/fixtures/eu-lotl.xml");
 const FI_LIST: &str = include_str!("../tests/fixtures/fi-trusted-list.xml");

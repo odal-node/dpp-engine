@@ -163,23 +163,25 @@ pub async fn run_tree(id: &str, json: bool) -> Result<()> {
 
 pub async fn run_find(
     product_group: &str,
-    gtin: &str,
+    identifier: &str,
     batch: Option<&str>,
     json: bool,
 ) -> Result<()> {
     let (client, cfg) = crate::http::load_client()?;
-    let found = action_find_by_identity(product_group, gtin, batch, &client, &cfg).await?;
+    let found = action_find_by_identity(product_group, identifier, batch, &client, &cfg).await?;
 
     match found {
         None => {
             match batch {
-                Some(b) => println!("No passport for {product_group} GTIN {gtin}, batch {b}."),
+                Some(b) => {
+                    println!("No passport for {product_group} {identifier}, batch {b}.");
+                }
                 // The batch is part of the identity, not a filter on it: a
                 // passport that carries one is not found by a query without
                 // one. Worth saying, because the bare "not found" reads as
-                // "no such GTIN".
+                // "no such product".
                 None => println!(
-                    "No passport for {product_group} GTIN {gtin} with no batch.\n\
+                    "No passport for {product_group} {identifier} with no batch.\n\
                      The batch is part of the identity — pass --batch if the passport carries one."
                 ),
             }

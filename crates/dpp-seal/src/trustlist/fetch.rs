@@ -149,9 +149,28 @@ pub fn national_pointers(pointers: &[TrustedListPointer]) -> Vec<&TrustedListPoi
 /// [`SealError::Backend`] when the fetch is refused, unreachable, over the cap,
 /// or the document does not parse.
 pub async fn fetch_trusted_list(url: &str) -> Result<UnverifiedTrustedList, SealError> {
+    parse_trusted_list(&fetch_trusted_list_xml(url).await?)
+}
+
+/// Fetch one national trusted list and return the document itself.
+///
+/// 🚨 **This is what a caller that intends to *verify* needs.**
+/// [`fetch_trusted_list`] parses and throws the bytes away, and
+/// [`verify_trusted_list`](super::verify_trusted_list) checks a XAdES signature
+/// **over the document** — so a caller holding only the parsed form cannot
+/// verify what it fetched, and would have to fetch twice to try.
+///
+/// The parsing one is kept for callers reading a list they have already decided
+/// to trust, or exploring one; its own doc is explicit that it establishes what
+/// a server answered rather than what a Member State published.
+///
+/// # Errors
+///
+/// [`SealError::Backend`] when the fetch is refused by the outbound guard, or
+/// the document is unreachable or over the cap.
+pub async fn fetch_trusted_list_xml(url: &str) -> Result<String, SealError> {
     let client = guarded_client();
-    let xml = fetch_text(&client, url, MAX_TRUSTED_LIST_BYTES)
+    fetch_text(&client, url, MAX_TRUSTED_LIST_BYTES)
         .await
-        .map_err(|e| fetch_failed(url, &e))?;
-    parse_trusted_list(&xml)
+        .map_err(|e| fetch_failed(url, &e))
 }

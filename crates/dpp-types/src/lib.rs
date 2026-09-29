@@ -30,12 +30,14 @@ pub mod auth;
 pub mod evidence;
 pub mod operator;
 pub mod passport_request;
+pub mod qualification;
 pub mod registry_identity;
 pub mod registry_sync;
 pub mod registry_transfer;
 pub mod scan;
 pub mod seal;
 pub mod snapshot;
+pub mod successor;
 pub mod transfer;
 pub mod trust;
 pub mod unsold_goods;
@@ -57,6 +59,7 @@ pub use operator::{
     OperatorConfig, OperatorConfigRepository, STANDALONE_OPERATOR_ID, UpdateOperatorConfig,
 };
 pub use passport_request::CreatePassportRequest;
+pub use qualification::{IssuerStanding, SealQualification, UncheckedTerritory};
 pub use registry_identity::{
     CreateFacilityRequest, CreateOperatorIdentifierRequest, Facility, OperatorIdentifier,
     RegistryIdentityRepository,
@@ -82,6 +85,7 @@ pub use snapshot::{
     SnapshotOutbox, SnapshotOutboxCounts, SnapshotReconcileRow, SnapshotReconcileStatus,
     SnapshotStore,
 };
+pub use successor::SuccessorLookup;
 pub use transfer::TransferStore;
 pub use trust::{NodeProfile, NodeTrustReport, TrustMode, TrustPort};
 pub use unsold_goods::{

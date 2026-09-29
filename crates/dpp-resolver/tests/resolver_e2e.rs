@@ -67,11 +67,17 @@ fn sample_passport() -> serde_json::Value {
     })
 }
 
-/// `sample_passport()` plus product group data carrying a GTIN — what a real
-/// carrier-bearing product passport looks like, for the QR tests.
+/// `sample_passport()` plus product group data carrying a GTIN, and the carrier
+/// publish signs beside it — what a real carrier-bearing product passport looks
+/// like, for the QR tests. The QR route prints the signed `qrCodeUrl`, so a
+/// passport without one has no carrier to print.
 fn sample_passport_with_gtin() -> serde_json::Value {
     let mut p = sample_passport();
-    p["productGroupData"] = json!({ "productGroup": "electronics", "gtin": "09506000134352" });
+    p["productGroupData"] = json!({
+        "productGroup": "electronics",
+        "productIdentifier": { "scheme": "gs1", "gtin": "09506000134352" }
+    });
+    p["qrCodeUrl"] = json!("https://id.odal-node.io/01/09506000134352/21/40009000000000000001");
     p
 }
 
@@ -495,10 +501,12 @@ async fn resolve_records_jws_verify_total() {
 
 // ── GS1 Digital Link: multi-AI carrier shapes ───────────────────────────────
 
-/// Every AI combination `dpp_digital_link::build_qr_url` can print must
-/// resolve. The publisher emits `/01/{gtin}[/10/{batch}]/21/{serial}`, so a
-/// GTIN-only route alone means this node's own printed QR codes 404. All four
-/// shapes resolve on the GTIN; batch and serial are accepted and ignored.
+/// Every AI combination a printed carrier can carry must reach a route. The
+/// publisher emits `/01/{gtin}`, `/01/{gtin}/10/{batch}` or
+/// `/01/{gtin}/21/{serial}` by the passport's level, and labels printed before
+/// that carry `/10/{batch}/21/{serial}`, so a GTIN-only route alone means this
+/// node's own printed QR codes 404. Which passport each reaches is the vault's
+/// answer — see `the_label_s_qualifiers_reach_the_vault`.
 #[tokio::test]
 async fn gs1_digital_link_resolves_every_carrier_ai_shape() {
     let gtin = "09506000134352";
@@ -529,6 +537,62 @@ async fn gs1_digital_link_resolves_every_carrier_ai_shape() {
             "{uri} resolved to {} instead of a redirect",
             resp.status()
         );
+    }
+}
+
+/// The label's AI 10 and AI 21 travel to the vault, which is what resolves the
+/// passport a label was printed for. Dropping them looked the GTIN up alone,
+/// and one GTIN has a passport per batch or per unit once a product is recorded
+/// at that level.
+#[tokio::test]
+async fn the_label_s_qualifiers_reach_the_vault() {
+    use std::collections::HashMap;
+    use std::sync::{Arc, Mutex};
+
+    use axum::extract::Query;
+
+    let gtin = "09506000134352";
+    let seen: Arc<Mutex<Vec<HashMap<String, String>>>> = Arc::default();
+    let vault = {
+        let seen = Arc::clone(&seen);
+        Router::new().route(
+            "/public/dpp/by-gtin/{gtin}",
+            get(move |Query(query): Query<HashMap<String, String>>| {
+                let seen = Arc::clone(&seen);
+                async move {
+                    seen.lock().unwrap().push(query);
+                    axum::Json(sample_passport_with_gtin())
+                }
+            }),
+        )
+    };
+    let port = start_mock_vault(vault).await;
+    let base = format!("http://127.0.0.1:{port}");
+
+    let cases: [(String, &[(&str, &str)]); 4] = [
+        (format!("/01/{gtin}"), &[]),
+        (
+            format!("/01/{gtin}/10/LOT-2026-07"),
+            &[("batch", "LOT-2026-07")],
+        ),
+        (format!("/01/{gtin}/21/SN%2F1"), &[("serial", "SN/1")]),
+        (
+            format!("/01/{gtin}/10/LOT-2026-07/21/SN-1"),
+            &[("batch", "LOT-2026-07"), ("serial", "SN-1")],
+        ),
+    ];
+    for (uri, expected) in cases {
+        let app = router::build(test_state(base.clone()));
+        let req = Request::builder().uri(&uri).body(Body::empty()).unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert!(resp.status().is_redirection(), "{uri}: {}", resp.status());
+
+        let query = seen.lock().unwrap().pop().expect("the vault was asked");
+        let expected: HashMap<String, String> = expected
+            .iter()
+            .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
+            .collect();
+        assert_eq!(query, expected, "{uri} forwarded the wrong qualifiers");
     }
 }
 
@@ -584,7 +648,7 @@ async fn gtin_resolution_verifies_a_valid_signature() {
     let passport = json!({
         "id": passport_id,
         "productName": "Signed GTIN Widget",
-        "productGroupData": { "productGroup": "electronics", "gtin": gtin },
+        "productGroupData": { "productGroup": "electronics", "productIdentifier": { "scheme": "gs1", "gtin": gtin } },
         "publicJwsSignature": valid_jws
     });
     let vault = Router::new().route(

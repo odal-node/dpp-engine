@@ -196,9 +196,9 @@ fn scan_xml_entry<R: BufRead>(reader: R, track_dimensions: bool) -> Result<(), P
         match xml.read_event_into(&mut buf) {
             Ok(Event::Eof) => break,
             Ok(Event::Start(e)) | Ok(Event::Empty(e)) => {
-                let is_cell = track_dimensions && e.name().as_ref() == b"c";
+                let is_cell = track_dimensions && e.name().as_ref() == "c";
                 let mut attr_count = 0usize;
-                let mut r_value: Option<Vec<u8>> = None;
+                let mut r_value: Option<String> = None;
                 for attr in e.attributes().with_checks(false) {
                     attr_count += 1;
                     if attr_count > MAX_ATTRS_PER_TAG {
@@ -209,13 +209,13 @@ fn scan_xml_entry<R: BufRead>(reader: R, track_dimensions: bool) -> Result<(), P
                     }
                     if is_cell
                         && let Ok(attr) = attr
-                        && attr.key.as_ref() == b"r"
+                        && attr.key.as_ref() == "r"
                     {
                         r_value = Some(attr.value.into_owned());
                     }
                 }
                 if let Some(r) = r_value
-                    && let Some((col, row)) = parse_cell_ref(&r)
+                    && let Some((col, row)) = parse_cell_ref(r.as_bytes())
                 {
                     max_col = max_col.max(col);
                     max_row = max_row.max(row);

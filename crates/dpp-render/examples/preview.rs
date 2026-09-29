@@ -25,7 +25,7 @@ fn main() {
         "status": "active",
         "productGroupData": {
             "productGroup": "textile",
-            "gtin": "09506000134352",
+            "productIdentifier": { "scheme": "gs1", "gtin": "09506000134352" },
             "countryOfOrigin": "Germany",
             "careInstructions": "Machine wash cold, tumble dry low",
             "chemicalComplianceStandard": "OEKO-TEX Standard 100",

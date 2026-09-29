@@ -88,9 +88,13 @@ mod verify;
 #[cfg(test)]
 mod verify_tests;
 
+mod cache;
+pub use cache::from_cache;
+
 pub use anchor::{EU_LOTL_ANCHOR, LotlAnchor};
 pub use fetch::{
-    EU_LOTL_URL, MAX_TRUSTED_LIST_BYTES, fetch_lotl_pointers, fetch_trusted_list, national_pointers,
+    EU_LOTL_URL, MAX_TRUSTED_LIST_BYTES, fetch_lotl_pointers, fetch_trusted_list,
+    fetch_trusted_list_xml, national_pointers,
 };
 pub use model::{ListedProvider, ListedService, TrustedListPointer, UnverifiedTrustedList};
 pub use parse::{parse_lotl, parse_trusted_list};

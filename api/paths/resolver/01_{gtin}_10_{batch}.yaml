@@ -2,10 +2,11 @@ get:
   operationId: resolveByGtinBatch
   summary: GS1 Digital Link resolver — GTIN + batch/lot
   description: |
-    Accepts the batch/lot segment (AI 10) a carrier may include.
-    **Resolution is keyed on the GTIN alone**: `batch` is accepted and
-    ignored, not looked up. Same behaviour as `/01/{gtin}` otherwise
-    (`linkType` / `Accept` negotiation).
+    The carrier this node prints for a batch-level passport. **The batch is a
+    resolution key**: it resolves to the batch-level passport for that lot,
+    which the GTIN alone cannot name once a product has a passport per batch.
+    Same behaviour as `/01/{gtin}` otherwise (`linkType` / `Accept`
+    negotiation).
   tags:
     - Public Resolver
   security: []
@@ -21,7 +22,7 @@ get:
       required: true
       schema:
         type: string
-      description: Accepted and ignored — not a resolution key.
+      description: AI 10, the batch or lot. Selects the batch-level passport.
     - name: linkType
       in: query
       required: false

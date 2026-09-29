@@ -7,6 +7,7 @@
 use std::collections::BTreeMap;
 
 use dpp_domain::{error::DppError, passport::PassportId, status::PassportStatus};
+use dpp_types::audit::PassportAuditEntry;
 use dpp_types::evidence::{
     DossierManifest, DossierV1, EvidenceDossierRecord, EvidenceDossierSummary, SignedLayer,
     VerificationReport, compute_content_hashes, content_hash,
@@ -95,17 +96,7 @@ impl PassportService {
 
         let audit_raw = self.audit.list_by_passport(&id.to_string()).await?;
 
-        // The exact bytes that were signed, recovered from the most recent
-        // "published" audit entry — never reconstructed from the current
-        // passport row, which may have since mutated (suspend/retire/eol
-        // change `status` without re-signing). See `publish.rs` for why this
-        // metadata is stamped there.
-        let (full_view_payload, public_view_payload) = audit_raw
-            .iter()
-            .rev()
-            .find(|e| e.action == "published")
-            .and_then(|e| e.metadata.as_ref())
-            .and_then(|m| Some((m.get("fullViewPayload")?.clone(), m.get("publicViewPayload")?.clone())))
+        let (full_view_payload, public_view_payload) = published_views(&audit_raw)
             .ok_or_else(|| {
                 DppError::Internal(format!(
                     "passport {id} is {:?} but has no \"published\" audit entry with a signed-payload snapshot",
@@ -124,14 +115,7 @@ impl PassportService {
             ))
         })?;
 
-        // The EOL record, if any, rides the same way — metadata on the
-        // "deactivated" audit entry (declare_eol in eol.rs); there is no
-        // separate EOL repository.
-        let eol_event = audit_raw
-            .iter()
-            .rev()
-            .find(|e| e.action == "deactivated")
-            .and_then(|e| e.metadata.clone());
+        let eol_event = declared_eol(&audit_raw);
 
         let transfer_chain = match &self.transfer_store {
             Some(store) => store.get_chain(id).await?,
@@ -337,6 +321,47 @@ impl PassportService {
 
         Ok(dossier)
     }
+}
+
+/// The two payloads a passport's signatures cover, `(full view, public view)`,
+/// as the most recent `"published"` audit entry recorded them.
+///
+/// The exact bytes that were signed, never reconstructed from the current
+/// passport row, which may have since mutated (suspend/retire/eol change
+/// `status` without re-signing). See `publish.rs` for why this metadata is
+/// stamped there. `None` when no publish has stamped a snapshot.
+///
+/// Public so a dossier built outside the node — the demo corpus in
+/// `ops/demo/dossiers/` — can be held to the same rule the assembler applies.
+#[must_use]
+pub fn published_views(
+    audit: &[PassportAuditEntry],
+) -> Option<(serde_json::Value, serde_json::Value)> {
+    let metadata = audit
+        .iter()
+        .rev()
+        .find(|e| e.action == "published")?
+        .metadata
+        .as_ref()?;
+    Some((
+        metadata.get("fullViewPayload")?.clone(),
+        metadata.get("publicViewPayload")?.clone(),
+    ))
+}
+
+/// The end-of-life record: the metadata of the `"deactivated"` audit entry
+/// `declare_eol` appends (`eol.rs`). There is no separate EOL repository, so a
+/// dossier's `eolEvent` is exactly this. `None` for a passport never declared
+/// end-of-life.
+///
+/// Public for the same reason as [`published_views`].
+#[must_use]
+pub fn declared_eol(audit: &[PassportAuditEntry]) -> Option<serde_json::Value> {
+    audit
+        .iter()
+        .rev()
+        .find(|e| e.action == "deactivated")
+        .and_then(|e| e.metadata.clone())
 }
 
 /// Fetch a transfer counterparty's `did:web` document.

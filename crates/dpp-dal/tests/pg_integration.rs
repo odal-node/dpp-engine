@@ -94,6 +94,7 @@ fn make_passport() -> Passport {
         responsible_operator: None,
         facility: None,
         seal: None,
+        carrier_serial: None,
     }
 }
 
@@ -106,7 +107,9 @@ fn battery_passport_with(gtin: &str, batch: Option<&str>, status: PassportStatus
     p.batch_id = batch.map(str::to_owned);
     p.status = status;
     p.product_group_data = Some(ProductGroupData::Battery(Box::new(BatteryData {
-        gtin: Gtin::parse(gtin).expect("valid test gtin"),
+        product_identifier: dpp_domain::ProductIdentifier::gs1(
+            Gtin::parse(gtin).expect("valid test gtin"),
+        ),
         battery_chemistry: BatteryChemistry::Lfp,
         nominal_voltage_v: 3.2,
         nominal_capacity_ah: 100.0,
@@ -507,22 +510,114 @@ async fn patch_fields_rejects_protected_fields() {
     assert!(!reread.retention_locked);
 }
 
-// A LIKE wildcard in the GTIN must not widen the match to arbitrary passports.
+/// Every label a passport's carrier prints resolves, through the indexed SQL,
+/// to that passport and no other sharing its GTIN.
+///
+/// The carrier is built from `Passport::carrier_qualifier` and the lookup
+/// compares against it; the in-memory default proves the two agree in Rust, and
+/// this proves the SQL expressions in `PgPassportRepo` agree with them. Four
+/// passports share one GTIN at four levels, which is the case a GTIN-only lookup
+/// could not answer.
 #[tokio::test]
-async fn find_published_by_gtin_rejects_like_metacharacters() {
+async fn every_printed_label_resolves_to_the_passport_it_was_printed_for() {
+    use dpp_domain::{catalog::Granularity, passport::CarrierQualifier};
+
     let pg = start_pg().await;
     let repo = PgPassportRepo::new(pg.dal.clone());
-    // Publish a passport so there's an active row a wildcard could otherwise hit.
-    let mut p = make_passport();
-    p.status = PassportStatus::Published;
-    repo.create(p).await.expect("create");
+    const GTIN: &str = "09506000134352";
 
-    for bad in ["%", "_", "not-a-gtin", ""] {
-        assert!(
-            repo.find_published_by_gtin(bad).await.unwrap().is_none(),
-            "non-numeric gtin {bad:?} must never match"
+    let mut model = battery_passport_with(GTIN, None, PassportStatus::Published);
+    model.granularity = Some(Granularity::Model);
+    let mut lot = battery_passport_with(GTIN, Some("LOT-A"), PassportStatus::Published);
+    lot.granularity = Some(Granularity::Batch);
+    // No level stated: prints the default serial derived from its id.
+    let unit = battery_passport_with(GTIN, Some("LOT-A"), PassportStatus::Published);
+    let mut attributed = battery_passport_with(GTIN, None, PassportStatus::Published);
+    attributed.granularity = Some(Granularity::Item);
+    attributed.carrier_serial = Some("SN-0001".into());
+
+    let passports = [model, lot, unit, attributed];
+    for p in &passports {
+        repo.create(p.clone()).await.expect("create");
+    }
+
+    let identifier = dpp_domain::ProductIdentifier::gs1(Gtin::parse(GTIN).unwrap());
+    for p in &passports {
+        let qualifier = p
+            .carrier_qualifier()
+            .expect("every passport here has a carrier");
+        let found: Vec<PassportId> = repo
+            .find_by_carrier(&identifier, &qualifier)
+            .await
+            .expect("query")
+            .into_iter()
+            .map(|f| f.id)
+            .collect();
+        assert_eq!(
+            found,
+            [p.id],
+            "the label {qualifier:?} must name exactly its passport"
         );
     }
+
+    // A value is compared, never pattern-matched: a LIKE wildcard in a scanned
+    // serial or lot must not widen the match.
+    for wildcard in ["%", "_", "SN-%"] {
+        for qualifier in [
+            CarrierQualifier::Serial(wildcard.into()),
+            CarrierQualifier::Batch(wildcard.into()),
+        ] {
+            assert!(
+                repo.find_by_carrier(&identifier, &qualifier)
+                    .await
+                    .expect("query")
+                    .is_empty(),
+                "{qualifier:?} must match nothing"
+            );
+        }
+    }
+
+    // The same labels under another GTIN name nothing.
+    let other = dpp_domain::ProductIdentifier::gs1(Gtin::parse("01234567890128").unwrap());
+    assert!(
+        repo.find_by_carrier(&other, &CarrierQualifier::Serial("SN-0001".into()))
+            .await
+            .expect("query")
+            .is_empty()
+    );
+}
+
+/// An amendment keeps the printed label naming the chain: the successor carries
+/// its predecessor's effective serial, so one label finds both records.
+#[tokio::test]
+async fn a_carried_serial_names_every_record_in_the_chain() {
+    use dpp_domain::passport::CarrierQualifier;
+
+    let pg = start_pg().await;
+    let repo = PgPassportRepo::new(pg.dal.clone());
+    const GTIN: &str = "09506000134352";
+
+    let predecessor = battery_passport_with(GTIN, None, PassportStatus::Superseded);
+    let label = predecessor.effective_carrier_serial().into_owned();
+    repo.create(predecessor.clone()).await.expect("create");
+
+    let mut successor = battery_passport_with(GTIN, None, PassportStatus::Published);
+    successor.supersedes_id = Some(predecessor.id);
+    successor.carrier_serial = Some(label.clone());
+    repo.create(successor.clone()).await.expect("create");
+
+    let identifier = dpp_domain::ProductIdentifier::gs1(Gtin::parse(GTIN).unwrap());
+    let mut found: Vec<PassportId> = repo
+        .find_by_carrier(&identifier, &CarrierQualifier::Serial(label.into()))
+        .await
+        .expect("query")
+        .into_iter()
+        .map(|p| p.id)
+        .collect();
+    found.sort_by_key(|id| id.0);
+    let mut expected = vec![predecessor.id, successor.id];
+    expected.sort_by_key(|id| id.0);
+    assert_eq!(found, expected);
 }
 
 // T8 — grant coverage: the app role can read every table a migration creates.
@@ -564,9 +659,10 @@ async fn t8_app_role_can_read_every_table() {
     }
 }
 
-// T9 — find_by_identity matches an exact (product group, gtin, batch) across both
+// T9 — find_by_identity matches an exact (product group, identifier, batch) across both
 // Draft and Published, ignores non-matching rows, and does so via
-// 0019_passport_identity_index.sql rather than a sequential scan.
+// the identity index (rebuilt by 0042_passport_identifier_index.sql) rather than a
+// sequential scan.
 #[tokio::test]
 async fn t9_find_by_identity_matches_draft_and_published_via_index() {
     let pg = start_pg().await;
@@ -596,8 +692,9 @@ async fn t9_find_by_identity_matches_draft_and_published_via_index() {
 
     let draft_identity = ProductIdentity {
         product_group: ProductGroup::Battery,
-        gtin: "09506000134352".into(),
+        identifier: "09506000134352".into(),
         batch_id: Some("BATCH-D".into()),
+        serial_number: None,
     };
     let found = repo
         .find_by_identity(&draft_identity)
@@ -609,8 +706,9 @@ async fn t9_find_by_identity_matches_draft_and_published_via_index() {
     // batch_id: None must match only passports with no batch set — not "any batch".
     let published_identity = ProductIdentity {
         product_group: ProductGroup::Battery,
-        gtin: "01234567890128".into(),
+        identifier: "01234567890128".into(),
         batch_id: None,
+        serial_number: None,
     };
     let found = repo
         .find_by_identity(&published_identity)
@@ -621,8 +719,9 @@ async fn t9_find_by_identity_matches_draft_and_published_via_index() {
 
     let no_match = ProductIdentity {
         product_group: ProductGroup::Battery,
-        gtin: "01234567890128".into(),
+        identifier: "01234567890128".into(),
         batch_id: Some("WRONG-BATCH".into()),
+        serial_number: None,
     };
     assert!(
         repo.find_by_identity(&no_match)
@@ -632,11 +731,16 @@ async fn t9_find_by_identity_matches_draft_and_published_via_index() {
         "a batch mismatch must not fall back to matching on gtin alone"
     );
 
+    // The identifier expression `0042` indexes, verbatim: Postgres uses an
+    // expression index only for a query that repeats the expression.
     let plan_rows = sqlx::query(
         "EXPLAIN SELECT doc FROM odal.passport \
          WHERE status IN ('draft','active') \
            AND product_group = 'battery' \
-           AND doc->'productGroupData'->>'gtin' = '09506000134352' \
+           AND (COALESCE(doc->'productGroupData'->'productIdentifier'->>'gtin', \
+                doc->'productGroupData'->'productIdentifier'->>'url', \
+                doc->'productGroupData'->'productIdentifier'->>'did', \
+                doc->'productGroupData'->>'gtin')) = '09506000134352' \
            AND doc->>'batchId' IS NOT DISTINCT FROM 'BATCH-D' \
          LIMIT 1",
     )

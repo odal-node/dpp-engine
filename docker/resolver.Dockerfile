@@ -14,13 +14,23 @@
 #
 # Builder is pinned to bookworm so the binary's glibc matches the bookworm-slim
 # runtime below (rust:1.96-slim tracks newer Debian and would link glibc 2.38+).
+#
+# 🚨 The tag's Rust version MUST equal `rust-toolchain.toml`'s channel — see
+# node.Dockerfile for why, and for why the toolchain file is kept out of the
+# build context. The images job fails when they differ.
 ARG BUILD_MODE=published
 
 # ── Build deps shared by both modes ─────────────────────────────────────────────
-FROM rust:1.98-slim-bookworm AS builder-base
+FROM rust:1.96.0-slim-bookworm AS builder-base
 RUN apt-get update && apt-get install -y --no-install-recommends \
     pkg-config libssl-dev \
     && rm -rf /var/lib/apt/lists/*
+
+# See node.Dockerfile for why: a plain Rust binary records nothing about its
+# own dependencies, so a filesystem scan of this image would report the Debian
+# base and none of the crates. `cargo auditable` embeds the Cargo.lock graph
+# into the binary so scanners and `cargo audit bin` can recover it.
+RUN cargo install cargo-auditable --locked
 WORKDIR /build
 ENV RUSTC_WRAPPER=""
 
@@ -31,7 +41,9 @@ FROM builder-base AS builder-published
 COPY dpp-engine/ dpp-engine/
 WORKDIR /build/dpp-engine
 RUN rm -f .cargo/config.toml
-RUN cargo build --release -p dpp-resolver
+# `--locked`: the graph this embeds is the SBOM's crate list, so it must be the
+# committed Cargo.lock — never one cargo quietly re-resolved in the builder.
+RUN cargo auditable build --locked --release -p dpp-resolver
 
 # ── local: patch dpp-* to the sibling ../dpp-core source ─────────────────────────
 FROM builder-base AS builder-local
@@ -43,7 +55,7 @@ COPY dpp-engine/ dpp-engine/
 # Cargo pick it up regardless of host dev state (host config.toml is .dockerignore'd).
 COPY dpp-engine/.cargo/config.toml.example /build/dpp-engine/.cargo/config.toml
 WORKDIR /build/dpp-engine
-RUN cargo build --release -p dpp-resolver
+RUN cargo auditable build --release -p dpp-resolver
 
 # Select the active builder from BUILD_MODE; only the chosen stage is built.
 FROM builder-${BUILD_MODE} AS builder

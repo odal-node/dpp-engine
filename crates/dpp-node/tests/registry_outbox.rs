@@ -41,7 +41,7 @@ use dpp_domain::{
         RegisteringOperator, RegistrationGranularity, RegistrationRequest, RegistryIdentifiers,
         RegistryRecord, RegistryStatus, RegistrySyncPort,
     },
-    product_group::ProductGroup,
+    product_group::{ProductGroup, ProductGroupData},
     status::PassportStatus,
 };
 use dpp_node::infra::registry_drain::drain_once;
@@ -81,9 +81,22 @@ fn draft_passport() -> Passport {
         repairability_score: None,
         compliance_result: None,
         lint_result: None,
-        product_group_data: None,
+        // What `RegistrationRequest::from_published_passport` refuses to build a
+        // registration without: a product identifier, a carrier and a facility.
+        product_group_data: Some(
+            serde_json::from_value(serde_json::json!({
+                "productIdentifier": { "scheme": "gs1", "gtin": "09506000134352" },
+                "batteryChemistry": "LFP",
+                "batteryType": "industrial",
+                "nominalVoltageV": 3.2,
+                "nominalCapacityAh": 100.0,
+                "co2ePerUnitKg": 85.4
+            }))
+            .map(|battery| ProductGroupData::Battery(Box::new(battery)))
+            .expect("a minimal battery deserialises"),
+        ),
         status: PassportStatus::Draft,
-        qr_code_url: None,
+        qr_code_url: Some("https://id.example.com/01/09506000134352".into()),
         jws_signature: None,
         public_jws_signature: None,
         disclosure_signatures: Default::default(),
@@ -103,8 +116,15 @@ fn draft_passport() -> Passport {
         commodity_code: None,
         operator_identifier: Some("did:web:test.example".into()),
         responsible_operator: None,
-        facility: None,
+        facility: Some(dpp_domain::FacilitySnapshot {
+            scheme: "gln".into(),
+            value: "4012345000009".into(),
+            name: "Outbox Plant".into(),
+            country: "DE".into(),
+            address: None,
+        }),
         seal: None,
+        carrier_serial: None,
     }
 }
 
@@ -116,11 +136,14 @@ async fn create_and_publish(dal: &PgDal, outbox: &Arc<dyn RegistrySyncOutbox>) -
     repo.create(p.clone()).await.expect("create draft");
     p.status = PassportStatus::Published;
     p.published_at = Some(Utc::now());
-    let payload = serde_json::to_value(RegistrationRequest::from_published_passport(
-        &p,
-        test_operator(),
-        RegistrationGranularity::Item,
-    ))
+    let payload = serde_json::to_value(
+        RegistrationRequest::from_published_passport(
+            &p,
+            test_operator(),
+            RegistrationGranularity::Item,
+        )
+        .expect("a complete passport builds a registration"),
+    )
     .unwrap();
     outbox
         .commit_publish(&p, payload)
@@ -263,11 +286,14 @@ async fn publish_is_atomic_idempotent_and_drains_exactly_once() {
     let mut again = draft_passport();
     again.id = id;
     again.status = PassportStatus::Published;
-    let payload = serde_json::to_value(RegistrationRequest::from_published_passport(
-        &again,
-        test_operator(),
-        RegistrationGranularity::Item,
-    ))
+    let payload = serde_json::to_value(
+        RegistrationRequest::from_published_passport(
+            &again,
+            test_operator(),
+            RegistrationGranularity::Item,
+        )
+        .expect("a complete passport builds a registration"),
+    )
     .unwrap();
     outbox.commit_publish(&again, payload).await.unwrap();
     assert_eq!(outbox_row_count(&dal, id).await, 1, "still exactly one row");
@@ -595,11 +621,14 @@ async fn republish_clears_a_stale_suspend_intent() {
     let mut again = draft_passport();
     again.id = id;
     again.status = PassportStatus::Published;
-    let payload = serde_json::to_value(RegistrationRequest::from_published_passport(
-        &again,
-        test_operator(),
-        RegistrationGranularity::Item,
-    ))
+    let payload = serde_json::to_value(
+        RegistrationRequest::from_published_passport(
+            &again,
+            test_operator(),
+            RegistrationGranularity::Item,
+        )
+        .expect("a complete passport builds a registration"),
+    )
     .unwrap();
     outbox.commit_publish(&again, payload).await.unwrap();
 

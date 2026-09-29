@@ -96,7 +96,7 @@ async fn archive_invalid_uuid_returns_400() {
     assert_eq!(
         client
             .post_json(
-                &format!("/api/v1/dpp/{INVALID_UUID}/archive"),
+                &format!("/api/v1/dpp/{INVALID_UUID}/retire"),
                 serde_json::json!({})
             )
             .await
@@ -205,7 +205,7 @@ async fn archive_nonexistent_returns_404() {
     assert_eq!(
         client
             .post_json(
-                &format!("/api/v1/dpp/{NONEXISTENT}/archive"),
+                &format!("/api/v1/dpp/{NONEXISTENT}/retire"),
                 serde_json::json!({})
             )
             .await
@@ -288,13 +288,13 @@ async fn archive_already_archived_returns_409() {
 
     // Draft → Archived: valid (draft is not retention-locked).
     let r = client
-        .post_json(&format!("/api/v1/dpp/{id}/archive"), serde_json::json!({}))
+        .post_json(&format!("/api/v1/dpp/{id}/retire"), serde_json::json!({}))
         .await;
     assert_eq!(r.status(), 200, "first archive of a draft should succeed");
 
     // Archived → Archived: invalid transition.
     let resp = client
-        .post_json(&format!("/api/v1/dpp/{id}/archive"), serde_json::json!({}))
+        .post_json(&format!("/api/v1/dpp/{id}/retire"), serde_json::json!({}))
         .await;
     assert_eq!(resp.status(), 409);
 }
@@ -310,7 +310,7 @@ async fn archive_recently_published_returns_422_retention_guard() {
     // Published → Archived is a valid state-machine transition, but the ESPR
     // retention guard blocks it because published_at was just set (10-year lock).
     let resp = client
-        .post_json(&format!("/api/v1/dpp/{id}/archive"), serde_json::json!({}))
+        .post_json(&format!("/api/v1/dpp/{id}/retire"), serde_json::json!({}))
         .await;
     assert_eq!(resp.status(), 422);
 }

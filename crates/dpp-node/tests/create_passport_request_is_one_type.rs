@@ -26,6 +26,7 @@ fn the_importer_builds_the_very_type_the_vault_accepts() {
         dpp_types::CreatePassportRequest {
             product_name: "Shared shape".to_owned(),
             product_group: None,
+            life_status: None,
             supersedes_id: None,
             manufacturer: dpp_domain::passport::ManufacturerInfo {
                 name: "Acme".to_owned(),

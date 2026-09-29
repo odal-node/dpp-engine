@@ -148,7 +148,7 @@ impl VaultHttpClient {
         }
     }
 
-    /// Look up a passport by exact compound identity (product group, GTIN, batch).
+    /// Look up a passport by exact compound identity (product group, identifier, batch).
     /// `Ok(None)` means no passport matches — not an error.
     pub async fn find_by_identity(
         &self,
@@ -161,7 +161,7 @@ impl VaultHttpClient {
             .unwrap_or_default();
         let mut params = vec![
             ("productGroup", product_group),
-            ("gtin", identity.gtin.clone()),
+            ("identifier", identity.identifier.clone()),
         ];
         if let Some(ref batch_id) = identity.batch_id {
             params.push(("batchId", batch_id.clone()));
@@ -267,6 +267,7 @@ mod tests {
         CreatePassportRequest {
             product_name: "Test Widget".into(),
             product_group: None,
+            life_status: None,
             supersedes_id: None,
             manufacturer: ManufacturerInfo {
                 name: "Acme".into(),

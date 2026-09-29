@@ -2152,8 +2152,26 @@ mod standing_tests {
     /// encoding rather than by insertion — so which intermediate the walk meets
     /// first is decided by bytes nobody chooses. Left to chance this test would
     /// pass roughly half the time against a broken walk, which is worse than no
-    /// test. Decoys are therefore generated until one sorts **before** the real
-    /// intermediate, making the adversarial order certain.
+    /// test, so the decoy has to sort **before** the real intermediate.
+    ///
+    /// 🚨 **The order is constructed, not drawn.** This generated decoys until
+    /// one happened to sort first, capped at 64 attempts, and that ran out — on
+    /// `main`, in a local `just check`, passing six reruns afterwards.
+    ///
+    /// Sixty-four tries is not as many as it looks. The comparison is
+    /// lexicographic over the whole DER, so the **outer length bytes come
+    /// first**, and a certificate's total length varies with two things that are
+    /// not fixed here: the randomly generated serial, whose integer encoding
+    /// varies in length, and the ECDSA signature, whose `r` and `s` each take 32
+    /// or 33 bytes depending on their high bit. When the real intermediate's
+    /// length lands at the short end of that spread, no decoy can be shorter and
+    /// only an exactly-equal-length one can win — on the bytes after the header.
+    /// The per-attempt probability is then a fraction of a small number rather
+    /// than the ~1/2 the retry count was chosen for.
+    ///
+    /// So: generate a small pool, sort it, and take the ends. The smallest is the
+    /// decoy and the largest signs the leaf, which cannot fail — two distinct
+    /// certificates always compare — and costs one extra key generation.
     fn rotating_chain() -> Rotation {
         fn key() -> rcgen::KeyPair {
             rcgen::KeyPair::generate_for(&rcgen::PKCS_ECDSA_P256_SHA256).expect("key")
@@ -2162,19 +2180,28 @@ mod standing_tests {
 
         let root = rcgen::CertifiedIssuer::self_signed(ca_params("Rotation Root CA"), key())
             .expect("a root");
-        let real = rcgen::CertifiedIssuer::signed_by(ca_params(INTERMEDIATE), key(), &root)
-            .expect("an intermediate");
-        let real_der = real.der().to_vec();
 
-        let decoy_der = (0..64)
+        // Four, so the ends are comfortably apart and the pool stays cheap.
+        let mut candidates: Vec<_> = (0..4)
             .map(|_| {
                 rcgen::CertifiedIssuer::signed_by(ca_params(INTERMEDIATE), key(), &root)
                     .expect("a rotation certificate")
-                    .der()
-                    .to_vec()
             })
-            .find(|d| d < &real_der)
-            .expect("a rotation certificate that sorts before the one that signed the leaf");
+            .collect();
+        candidates.sort_by(|a, b| a.der().as_ref().cmp(b.der().as_ref()));
+
+        let decoy_der = candidates
+            .first()
+            .expect("the pool is not empty")
+            .der()
+            .to_vec();
+        let real = candidates.pop().expect("the pool is not empty");
+        let real_der = real.der().to_vec();
+        assert!(
+            decoy_der < real_der,
+            "the decoy must sort first, which is what makes the walk meet the wrong \
+             certificate before the right one"
+        );
 
         let mut leaf_params =
             rcgen::CertificateParams::new(vec!["Rotating Sealing Certificate".to_owned()])

@@ -40,7 +40,7 @@ async fn test_battery_create_publish_resolve() {
         // both rules at once.
         "productGroupData": {
             "productGroup": "battery",
-            "gtin": "09506000134352",
+            "productIdentifier": { "scheme": "gs1", "gtin": "09506000134352" },
             "batteryType": "industrial",
             "batteryChemistry": "NMC",
             "batteryPassportNumber": "BP-2026-000042",
@@ -122,7 +122,7 @@ async fn test_battery_create_publish_resolve() {
 
     let public: serde_json::Value = resp.json().await.unwrap();
     assert_eq!(
-        public["productGroupData"]["gtin"], "09506000134352",
+        public["productGroupData"]["productIdentifier"]["gtin"], "09506000134352",
         "GTIN mismatch"
     );
 }
@@ -156,7 +156,7 @@ async fn an_incomplete_industrial_battery_cannot_be_published() {
                 "materials": [{"name": "Lithium", "weightKg": 0.8}],
                 "productGroupData": {
                     "productGroup": "battery",
-                    "gtin": "09506000134352",
+                    "productIdentifier": { "scheme": "gs1", "gtin": "09506000134352" },
                     "batteryType": "industrial",
                     "batteryChemistry": "NMC",
                     "nominalVoltageV": 48.0,
@@ -187,11 +187,7 @@ async fn an_incomplete_industrial_battery_cannot_be_published() {
     );
     // Reported together, not one per attempt: an operator fixing these one at a
     // time would need a publish round-trip per field.
-    for field in [
-        "batteryPassportNumber",
-        "manufacturingPlace",
-        "cathodeMaterial",
-    ] {
+    for field in ["batteryModelId", "manufacturingPlace", "cathodeMaterial"] {
         assert!(
             body.contains(field),
             "every missing field is named at once; `{field}` is absent from: {body}"
@@ -238,7 +234,7 @@ async fn a_portable_battery_is_outside_the_mandatory_content_scope() {
                 "materials": [{"name": "Lithium", "weightKg": 0.02}],
                 "productGroupData": {
                     "productGroup": "battery",
-                    "gtin": "09506000134352",
+                    "productIdentifier": { "scheme": "gs1", "gtin": "09506000134352" },
                     "batteryType": "portable",
                     "batteryChemistry": "LFP",
                     "nominalVoltageV": 3.7,

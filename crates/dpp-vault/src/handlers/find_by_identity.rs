@@ -1,5 +1,6 @@
 //! `GET /api/v1/dpp/by-identity` — exact compound identity lookup for the
-//! import delta-matcher (product group, GTIN, batch), across `Draft` and `Published`.
+//! import delta-matcher (product group, product identifier, batch), across
+//! `Draft` and `Published`.
 
 use axum::{
     extract::{Extension, State},
@@ -20,7 +21,9 @@ use crate::extract::{Json, Query};
 #[serde(rename_all = "camelCase")]
 pub struct IdentityQuery {
     pub product_group: ProductGroup,
-    pub gtin: String,
+    /// The EN 18219 identifier's value under whichever scheme issued it — the
+    /// 14-digit GTIN for scheme 1, the link or DID for 2 and 3.
+    pub identifier: String,
     /// Omit to match only passports with no batch set.
     pub batch_id: Option<String>,
 }
@@ -33,8 +36,12 @@ pub async fn find_by_identity_handler(
 ) -> impl IntoResponse {
     let identity = ProductIdentity {
         product_group: query.product_group,
-        gtin: query.gtin,
+        identifier: query.identifier,
         batch_id: query.batch_id,
+        // `CreatePassportRequest` carries no serial number, so no passport
+        // created through this API has one, and `None` is the exact identity
+        // of every record this route can be asked about.
+        serial_number: None,
     };
 
     match state.service.find_by_identity(&identity).await {

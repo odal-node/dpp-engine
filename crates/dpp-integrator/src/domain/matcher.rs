@@ -81,19 +81,33 @@ pub fn comparable_fingerprint(value: &serde_json::Value) -> String {
 }
 
 /// Derive the compound identity from a not-yet-created request, or `None` if
-/// its product group carries no GTIN (mirrors `ProductIdentity::from_passport`, but
-/// operates on the pre-create request shape).
+/// its product group carries no identifier (mirrors
+/// `ProductIdentity::from_passport`, but operates on the pre-create request
+/// shape).
+///
+/// Keyed on the identifier under any EN 18219 scheme, not only a GTIN. Reading
+/// `gtin()` here would answer `None` for a scheme 2 or 3 passport, and a row
+/// with no identity always classifies as `Create` — so re-importing it would
+/// write a duplicate instead of updating the passport it describes.
 pub fn identity_from_request(req: &CreatePassportRequest) -> Option<ProductIdentity> {
     let product_group = req.product_group.clone().or_else(|| {
         req.product_group_data
             .as_ref()
             .map(dpp_domain::product_group::ProductGroupData::product_group)
     })?;
-    let gtin = req.product_group_data.as_ref()?.gtin()?.to_owned();
+    let identifier = req
+        .product_group_data
+        .as_ref()?
+        .product_identifier()?
+        .as_str()
+        .to_owned();
     Some(ProductIdentity {
         product_group,
-        gtin,
+        identifier,
         batch_id: req.batch_id.clone(),
+        // The request carries no serial number, so neither does the passport
+        // it creates; see `find_by_identity_handler`.
+        serial_number: None,
     })
 }
 

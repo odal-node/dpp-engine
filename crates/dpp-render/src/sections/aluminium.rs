@@ -34,7 +34,7 @@ mod tests {
     fn full_data_populates_all_fields() {
         let p = crate::sections::typed_fixture(serde_json::json!({
             "productGroup": "aluminium",
-            "gtin": "09506000134352",
+            "productIdentifier": { "scheme": "gs1", "gtin": "09506000134352" },
             "alloyGrade": "6061-T6",
             "productionRoute": "primary",
             "countryOfOrigin": "DE",

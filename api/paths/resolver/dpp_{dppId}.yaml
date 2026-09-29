@@ -149,7 +149,7 @@ get:
 
               `resolverBase` is per-deployment (`RESOLVER_BASE_URL`,
 
-              default `https://id.odal-node.io`). Error responses carry no
+              required, no default). Error responses carry no
 
               `Link` — an error is not a representation of the passport.
     '404':

@@ -50,7 +50,7 @@ pub fn run_profile_show(name: Option<String>) -> Result<()> {
     let p = &entry.profile;
     // Prefer the credentials store; fall back to any legacy inline key still in
     // config.toml (pre-secret-split), so migration is visible rather than "(none)".
-    let api_key = credentials::load_key(&target).unwrap_or_else(|| entry.profile.api_key.clone());
+    let api_key = credentials::load_key(&target)?.unwrap_or_else(|| entry.profile.api_key.clone());
     println!(
         "profile      : {}{}",
         target,
