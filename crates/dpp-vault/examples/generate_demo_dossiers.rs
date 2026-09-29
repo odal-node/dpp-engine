@@ -39,7 +39,9 @@ use dpp_domain::eol::{DeactivationReason, EolEvent};
 use dpp_domain::passport::PassportId;
 use dpp_domain::transfer::{TransferChain, TransferRecord};
 use dpp_types::audit::PassportAuditEntry;
-use dpp_types::evidence::{DossierManifest, DossierV1, SignedLayer, compute_content_hashes};
+use dpp_types::evidence::{
+    DossierManifest, DossierV1, SignedKeyOrder, SignedLayer, compute_content_hashes,
+};
 use dpp_vault::domain::service::{declared_eol, published_views};
 use dpp_vault::domain::verify::{acceptance_payload, verify_dossier_json};
 use ed25519_dalek::{Signer, SigningKey};
@@ -359,8 +361,12 @@ fn flip_sig(jws: &str) -> String {
     format!("{head}.{}", c.into_iter().collect::<String>())
 }
 
+/// Written in signed key order, as a node's export writes a dossier. The files
+/// are built as a `Value` so the tampered variants can be edited in place, and
+/// a `Value` map keeps code point order; writing it plainly would put the
+/// readable payload copies back in the order the signatures do not use.
 fn pretty(v: &Value) -> String {
-    serde_json::to_string_pretty(v).expect("serialise dossier")
+    serde_json::to_string_pretty(&SignedKeyOrder(v)).expect("serialise dossier")
 }
 
 fn main() {

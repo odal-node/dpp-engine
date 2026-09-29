@@ -43,6 +43,23 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ### Fixed
 
+- **A dossier's readable payloads listed their keys in a different order from
+  the one they were signed in.** A dossier carries each signed view twice, as
+  the JWS and as a readable copy of its payload, and the audit trail's
+  `published` entry carries two more. The copies are `serde_json::Value`, whose
+  map sorts keys by code point, while the signatures cover RFC 8785 bytes,
+  sorted by UTF-16 code unit. They agree for almost every key, but not for
+  `"😀"` beside `"\u{FF21}"`, so a reader comparing the readable copy with the
+  signed bytes saw the very ordering mistake that pair is there to catch.
+  `DossierV1` now writes every JSON member through `SignedKeyOrder`, so the
+  export lists each object's keys in signed order, and the demo generator writes
+  its files the same way. The regenerated dossiers change only in the order of
+  that pair; every hash, signature and verdict is unchanged, since all of them
+  are taken over canonical bytes. `demo_dossiers_verify.rs` gains
+  `every_dossier_file_lists_its_keys_in_signed_order` and
+  `each_readable_view_is_its_signed_payload`, and `dpp-types` gains
+  `a_dossier_writes_each_payload_copy_in_the_order_it_was_signed`.
+
 - **The demo dossiers' canonicalisation keys could not tell UTF-16 order from
   code point order.** The signed payload carries keys meant to catch a verifier
   that sorts them wrongly, but every one of them sorts the same under both

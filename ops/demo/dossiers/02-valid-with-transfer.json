@@ -35,8 +35,8 @@
             "Émission": "0.5e-3 test",
             "é": 3,
             "€": 4,
-            "Ａ": 6,
-            "😀": 5
+            "😀": 5,
+            "Ａ": 6
           },
           "id": "0199a3c2-7b10-7e4a-9c3d-2f1e8b6a5d40",
           "issuer": "did:web:node.acme.example",
@@ -64,8 +64,8 @@
             "Émission": "0.5e-3 test",
             "é": 3,
             "€": 4,
-            "Ａ": 6,
-            "😀": 5
+            "😀": 5,
+            "Ａ": 6
           },
           "id": "0199a3c2-7b10-7e4a-9c3d-2f1e8b6a5d40",
           "issuer": "did:web:node.acme.example",
@@ -184,8 +184,8 @@
         "Émission": "0.5e-3 test",
         "é": 3,
         "€": 4,
-        "Ａ": 6,
-        "😀": 5
+        "😀": 5,
+        "Ａ": 6
       },
       "id": "0199a3c2-7b10-7e4a-9c3d-2f1e8b6a5d40",
       "issuer": "did:web:node.acme.example",
@@ -231,8 +231,8 @@
         "Émission": "0.5e-3 test",
         "é": 3,
         "€": 4,
-        "Ａ": 6,
-        "😀": 5
+        "😀": 5,
+        "Ａ": 6
       },
       "id": "0199a3c2-7b10-7e4a-9c3d-2f1e8b6a5d40",
       "issuer": "did:web:node.acme.example",
