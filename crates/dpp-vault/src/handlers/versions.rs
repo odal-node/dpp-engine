@@ -1,8 +1,7 @@
 //! `GET /api/v1/dpp/{dppId}/versions` — the passport's archived versions.
 //!
-//! ✅ COMPLIANCE-PIN: EN 18221:2026 clause 4.2 — *"the archived version
-//! corresponding to a given point in time shall be retrievable by authenticated
-//! and authorized actors"*.
+//! ✅ COMPLIANCE-PIN: EN 18221:2026 clause 4.2 — an authenticated, authorised
+//! reader can retrieve the passport as it stood at any given moment.
 //!
 //! 🚨 **Not `POST .../retire`**, which moves a passport to the terminal
 //! `retired` lifecycle state after its retention period. That route was called
@@ -57,11 +56,10 @@ pub struct AsOf {
 ///
 /// # Access
 ///
-/// Bearer, like every other operator route. The clause requires archived
-/// attributes to carry *"the same access restrictions as the corresponding
-/// attributes in the current digital product passport"*, and for the operator
-/// reading its own passport those restrictions are none — so the whole record is
-/// the correct answer here.
+/// Bearer, like every other operator route. The clause restricts an archived
+/// attribute exactly as the same attribute is restricted in the current
+/// passport, and for the operator reading its own passport those restrictions
+/// are none — so the whole record is the correct answer here.
 ///
 /// ⚠️ That equivalence is what makes this route simple, and it does **not**
 /// extend to a credential-scoped reader. Serving versions to an audience-scoped

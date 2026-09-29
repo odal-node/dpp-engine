@@ -2258,9 +2258,8 @@ async fn publish_layered_battery(base: &str, token: &str, client: &reqwest::Clie
 /// A change to a passport is retrievable afterwards, and the route tells its two
 /// empty-handed answers apart.
 ///
-/// ✅ COMPLIANCE-PIN: EN 18221:2026 clause 4.2 — *"the archived version
-/// corresponding to a given point in time shall be retrievable by authenticated
-/// and authorized actors"*.
+/// ✅ COMPLIANCE-PIN: EN 18221:2026 clause 4.2 — an authenticated, authorised
+/// reader can retrieve the passport as it stood at any given moment.
 ///
 /// 🚨 Nothing but an assembled node proves this. The decorator is wired in the
 /// composition root, so a suite that builds its own `PassportService` over a

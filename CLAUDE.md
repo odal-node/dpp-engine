@@ -105,6 +105,7 @@ write into this repo (or into a PR/issue on it):
 - **Commercial state**: pricing, quotes, contract terms, minimums, per-unit rates, negotiation status, vendor lead times.
 - **Named third parties in a non-public arrangement**: which sub-providers sit behind a vendor for *us*, who introduced whom, individual contact names at partners.
 - **Anything a private document marks as private**, including material merely quoted or summarised from it.
+- **The text of a licensed standard** — the CEN/CENELEC ENs (EN 18219, EN 18221, …) and ISO/IEC documents are sold per reader. Cite the clause number and say what it requires in your own words; never quote it, not even one sentence. EU legislation from the Official Journal is free to quote. `ops/pg/0040` still carries two sentences of EN 18221 only because an applied migration cannot be edited without breaking its sqlx checksum — do not copy from it.
 
 **Write the substance, drop the pointer.** The technical reasoning is usually public-safe and belongs in the code; the citation to where it was decided is not. "CAdES carries the same eIDAS Art. 35 presumption" is fine — "see ADR-0NN §N" is not. When a fact came from a vendor's *published* docs, cite those instead.
 

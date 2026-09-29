@@ -1051,9 +1051,9 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   time, which `GET /dpp/{dppId}` already serves, so this route does not return
   it and "which version is this" stays answerable.
 
-  ⚠️ **Operator-scoped only.** The clause requires archived attributes to carry
-  the same access restrictions as the corresponding attributes in the *current*
-  passport, which for an operator reading its own passport are none. Serving
+  ⚠️ **Operator-scoped only.** The clause restricts an archived attribute
+  exactly as the same attribute is restricted in the *current* passport, which
+  for an operator reading its own passport means not at all. Serving
   versions to a credential-scoped reader means running the **live** passport's
   disclosure policy over the archived document; no such route exists yet, and
   adding one without that step would disclose fields the current passport

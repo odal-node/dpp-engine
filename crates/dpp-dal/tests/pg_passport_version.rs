@@ -7,9 +7,9 @@
 //!
 //! What is here rather than in a unit test, and why each one has to be:
 //!
-//! 1. **The append-only trigger actually fires.** "All archived versions shall be
-//!    maintained during the digital product passport lifetime" is enforced by a
-//!    trigger, and a trigger that was never exercised is a comment. Both arms —
+//! 1. **The append-only trigger actually fires.** Keeping every archived version
+//!    for the passport's whole lifetime is enforced by a trigger, and a trigger
+//!    that was never exercised is a comment. Both arms —
 //!    `UPDATE` and `DELETE` — because the trigger names both and a `BEFORE
 //!    UPDATE OR DELETE` clause is one edit away from naming one.
 //! 2. **A version can outlive what it is a version of.** `passport_id` carries

@@ -1,7 +1,7 @@
 //! The shipped node archives every change, and serves what it archived.
 //!
-//! ✅ COMPLIANCE-PIN: EN 18221:2026 clause 4.2 — *"all changes to the digital
-//! product passport shall be archived"*.
+//! ✅ COMPLIANCE-PIN: EN 18221:2026 clause 4.2 — every change to a passport is
+//! archived.
 //!
 //! # Why this is a source check and not a behavioural one
 //!

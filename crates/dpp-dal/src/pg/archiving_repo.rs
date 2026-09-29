@@ -1,7 +1,7 @@
 //! A passport repository that archives every version it replaces.
 //!
-//! ✅ COMPLIANCE-PIN: EN 18221:2026 clause 4.2 — *"all changes to the digital
-//! product passport shall be archived"*.
+//! ✅ COMPLIANCE-PIN: EN 18221:2026 clause 4.2 — every change to a passport is
+//! archived.
 //!
 //! # Why this is a decorator and not a step in the service layer
 //!
@@ -37,8 +37,8 @@
 //! # Archiving begins at the first change
 //!
 //! [`PassportRepository::create`] is passed straight through. The clause starts
-//! archiving *"when the first change of the initial digital product passport
-//! occurs"*, and a version archived at create would be one that nothing had
+//! archiving at the first change made to the passport as first issued, and a
+//! version archived at create would be one that nothing had
 //! superseded — the live record already answers every question about the time
 //! before the first change.
 //!
@@ -87,9 +87,8 @@
 //! archive — trades that for losing a version outright whenever the archive
 //! write fails, and a lost version is not detectable afterwards by anything.
 //!
-//! An archive that is occasionally redundant satisfies *"all changes shall be
-//! archived"*. One that is occasionally short does not, and cannot be audited
-//! into telling you which.
+//! An archive that is occasionally redundant still holds every change. One that
+//! is occasionally short does not, and cannot be audited into telling you which.
 //!
 //! **What would actually fix it**, and why it is not here: one transaction
 //! spanning both writes. `PassportRepository` exposes none, so it would mean
@@ -342,8 +341,8 @@ mod tests {
 
     /// Creating is not a change, so it archives nothing.
     ///
-    /// EN 18221 clause 4.2 starts archiving *"when the first change of the
-    /// initial digital product passport occurs"*. A version taken at create
+    /// EN 18221 clause 4.2 starts archiving at the first change made to the
+    /// passport as first issued. A version taken at create
     /// would be one nothing had superseded, and the live record already answers
     /// every question about the time before the first change.
     #[tokio::test]

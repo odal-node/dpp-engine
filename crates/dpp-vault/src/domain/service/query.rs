@@ -147,8 +147,8 @@ impl PassportService {
 
     /// The version that was current at `at`.
     ///
-    /// ✅ COMPLIANCE-PIN: EN 18221:2026 clause 4.2 — *"the archived version
-    /// corresponding to a given point in time shall be retrievable"*.
+    /// ✅ COMPLIANCE-PIN: EN 18221:2026 clause 4.2 — the passport as it stood at
+    /// any given moment can be retrieved.
     ///
     /// # Errors
     ///

@@ -1,7 +1,7 @@
 //! Which code may write to `odal.passport`, and why the list is a gate.
 //!
-//! ✅ COMPLIANCE-PIN: EN 18221:2026 clause 4.2 — *"all changes to the digital
-//! product passport shall be archived"*.
+//! ✅ COMPLIANCE-PIN: EN 18221:2026 clause 4.2 — every change to a passport is
+//! archived.
 //!
 //! [`ArchivingPassportRepo`](dpp_dal::pg::ArchivingPassportRepo) makes archiving
 //! unavoidable by wrapping [`PassportRepository`], and that argument holds for

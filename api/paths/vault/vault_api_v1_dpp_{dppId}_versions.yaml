@@ -5,8 +5,8 @@ get:
     Returns every archived version of a passport, oldest first — or, with
     `asOf`, the single version that was current at that instant.
 
-    ✅ EN 18221:2026 clause 4.2: *"the archived version corresponding to a given
-    point in time shall be retrievable by authenticated and authorized actors"*.
+    ✅ EN 18221:2026 clause 4.2: an authenticated, authorised reader can
+    retrieve the passport as it stood at any given moment.
 
     🚨 **Not `POST /dpp/{dppId}/retire`.** That moves a passport to the terminal
     `retired` lifecycle status after its retention period has elapsed. This is
