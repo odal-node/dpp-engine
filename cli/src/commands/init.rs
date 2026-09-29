@@ -63,6 +63,9 @@ pub async fn run_init(
             }
         }
     }
+    if !cwd.join(".env").exists() {
+        println!("No .env yet: copy .env.example to .env and set its values before `odal up`");
+    }
 
     Ok(())
 }
