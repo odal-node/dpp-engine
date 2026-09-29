@@ -215,7 +215,7 @@ mod tests {
     fn aluminium_row() -> HashMap<String, String> {
         HashMap::from([
             ("productName".into(), "6xxx Extrusion".into()),
-            ("manufacturerName".into(), "Hydro ASA".into()),
+            ("manufacturerName".into(), "Sample Aluminium AS".into()),
             ("manufacturerCountry".into(), "NO".into()),
             ("gtin".into(), "09506000134352".into()),
             ("alloyGrade".into(), "6xxx".into()),
