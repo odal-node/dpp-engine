@@ -238,6 +238,67 @@ fn every_dossier_is_one_a_node_could_have_assembled() {
     );
 }
 
+/// The one dossier whose payload is not a passport: keys and numbers chosen to
+/// catch a verifier that canonicalises wrongly, kept out of the example
+/// passports so those show only what a real passport carries.
+const VECTORS: &str = "11-canonicalisation-vectors.json";
+
+/// Every example passport is one a node would publish: its product group data
+/// passes the same two checks publish runs (the typed validation and the strict
+/// JSON Schema at its own version), and core's mandatory-content gate for its
+/// battery category finds nothing missing.
+#[test]
+fn every_example_passport_is_one_a_node_would_publish() {
+    for file in dossier_files() {
+        let text = fs::read_to_string(dossier_dir().join(&file)).expect("read the dossier");
+        let Ok(doc) = serde_json::from_str::<Value>(&text) else {
+            continue;
+        };
+        if file == VECTORS {
+            continue;
+        }
+        let passport: dpp_domain::passport::Passport =
+            serde_json::from_value(doc["fullView"]["payload"].clone())
+                .unwrap_or_else(|e| panic!("{file}: the full view is not a passport: {e}"));
+        let data = passport
+            .product_group_data
+            .as_ref()
+            .unwrap_or_else(|| panic!("{file}: the passport carries no product group data"));
+        dpp_domain::validate_product_group_data(data)
+            .unwrap_or_else(|e| panic!("{file}: {e:?}; {REGENERATE}"));
+        let mut inner = serde_json::to_value(data).expect("serialise product group data");
+        inner.as_object_mut().expect("an object").remove("productGroup");
+        dpp_domain::schemas::VersionedSchemaRegistry::new()
+            .validate_strict("battery", &passport.schema_version, &inner)
+            .unwrap_or_else(|e| panic!("{file}: {e:?}; {REGENERATE}"));
+        passport
+            .check_mandatory_content()
+            .unwrap_or_else(|e| panic!("{file}: {e:?}; {REGENERATE}"));
+    }
+}
+
+/// Every public view is exactly what core's redaction makes of its passport, so
+/// what the examples show a public reader is what a node would show one.
+#[test]
+fn every_public_view_is_cores_redaction_of_its_passport() {
+    for file in dossier_files() {
+        let text = fs::read_to_string(dossier_dir().join(&file)).expect("read the dossier");
+        let Ok(doc) = serde_json::from_str::<Value>(&text) else {
+            continue;
+        };
+        if file == VECTORS {
+            continue;
+        }
+        let passport: dpp_domain::passport::Passport =
+            serde_json::from_value(doc["fullView"]["payload"].clone()).expect("a passport");
+        assert_eq!(
+            doc["publicView"]["payload"],
+            dpp_vault::public_view::public_view(&passport),
+            "{file}: the public view is not core's redaction of the passport; {REGENERATE}"
+        );
+    }
+}
+
 /// The corpus is only a canonicalisation vector while it holds a pair of keys
 /// that UTF-16 order and code point order put the other way round. `😀` is the
 /// surrogate pair `0xD83D 0xDE00`; `\u{FF21}` is the single unit `0xFF21`. The
@@ -247,7 +308,7 @@ fn every_dossier_is_one_a_node_could_have_assembled() {
 fn the_signed_full_view_orders_keys_by_utf16_code_unit() {
     use base64::Engine as _;
 
-    let path = dossier_dir().join("04-valid-full-lifecycle.json");
+    let path = dossier_dir().join(VECTORS);
     let doc: Value = serde_json::from_slice(&fs::read(&path).expect("read the dossier"))
         .expect("the dossier is JSON");
     let jws = doc["fullView"]["jws"].as_str().expect("fullView.jws");
@@ -267,10 +328,13 @@ fn the_signed_full_view_orders_keys_by_utf16_code_unit() {
 }
 
 /// The readable copy of each signed view holds exactly what its JWS signed:
-/// written compactly in signed key order, it is the signed bytes. This checks
-/// content, not the order the file lists it in; the next test holds the file to
-/// that order. Together they mean the payload a reader sees beside a signature
-/// is the one that was signed, key for key and in the same order.
+/// canonicalised, it is the signed bytes. Canonicalised, because the readable
+/// copy is written by `serde_json` and the signature covers RFC 8785 bytes, and
+/// the two spell some numbers differently (`48.0` against `48`) while meaning
+/// the same value. This checks content, not the order the file lists it in;
+/// the next test holds the file to that order. Together they mean the payload a
+/// reader sees beside a signature is the one that was signed, key for key and
+/// in the same order.
 #[test]
 fn each_readable_view_is_its_signed_payload() {
     use base64::Engine as _;
@@ -285,12 +349,11 @@ fn each_readable_view_is_its_signed_payload() {
             let signed = base64::engine::general_purpose::URL_SAFE_NO_PAD
                 .decode(jws.split('.').nth(1).expect("a JWS payload segment"))
                 .expect("the payload segment is base64url");
-            let signed = String::from_utf8(signed).expect("the signed payload is UTF-8");
-            let readable = serde_json::to_string(&SignedKeyOrder(&doc[view]["payload"]))
-                .expect("serialise the readable copy");
-            assert_eq!(
-                readable, signed,
-                "{file}: the readable {view} payload is not the bytes its JWS signed; {REGENERATE}"
+            let readable = dpp_crypto::jws::canonicalize(&doc[view]["payload"])
+                .expect("canonicalise the readable copy");
+            assert!(
+                readable == signed,
+                "{file}: the readable {view} payload is not what its JWS signed; {REGENERATE}"
             );
         }
     }

@@ -13,8 +13,10 @@
 //! action names, statuses and metadata of `create`, `publish`, the transfer legs
 //! and `declare_eol`. The dossier's views and `eolEvent` are then read back out
 //! of that history with [`published_views`] and [`declared_eol`], the lookups the
-//! assembler uses, so each file is one a node could have exported. The payloads
-//! themselves stay synthetic (see [`full_payload`]).
+//! assembler uses, so each file is one a node could have exported. The views are
+//! a real battery passport and the public view core's redaction makes of it (see
+//! [`demo_passport`]); only `11` carries a synthetic payload, built to test
+//! canonicalisation (see [`vectors_payload`]).
 //!
 //! Deterministic: fixed Ed25519 seeds (node `[7; 32]`, partner `[9; 32]`),
 //! fixed ids and timestamps, so a rerun on the same build is byte-identical.
@@ -30,19 +32,24 @@
 //!
 //! Run: cargo run -p dpp-vault --example generate_demo_dossiers -- ops/demo/dossiers
 
+// The demo passport is one `json!` literal holding every data point its
+// category requires, which is deeper than the macro's default recursion allows.
+#![recursion_limit = "256"]
+
 use std::collections::BTreeMap;
 use std::path::Path;
 
 use base64::Engine;
 use dpp_crypto::jws::algorithm::KeyAlgorithm;
 use dpp_domain::eol::{DeactivationReason, EolEvent};
-use dpp_domain::passport::PassportId;
+use dpp_domain::passport::{Passport, PassportId};
+use dpp_domain::status::PassportStatus;
 use dpp_domain::transfer::{TransferChain, TransferRecord};
 use dpp_types::audit::PassportAuditEntry;
 use dpp_types::evidence::{
     DossierManifest, DossierV1, SignedKeyOrder, SignedLayer, compute_content_hashes,
 };
-use dpp_vault::domain::service::{declared_eol, published_views};
+use dpp_vault::domain::service::{declared_eol, published_views, stamp_publish_obligations};
 use dpp_vault::domain::verify::{acceptance_payload, verify_dossier_json};
 use ed25519_dalek::{Signer, SigningKey};
 use serde_json::{Value, json};
@@ -162,7 +169,8 @@ fn eol_record() -> Value {
 }
 
 /// The passport's history, in the node's own vocabulary.
-fn history(node: &Party, partner: &Party, o: &Opts) -> Vec<PassportAuditEntry> {
+fn history(partner: &Party, o: &Opts) -> Vec<PassportAuditEntry> {
+    let (full, public) = views(&o.payload);
     let mut steps = vec![
         // `create.rs`: no previous status, lands in `draft`.
         Step {
@@ -182,8 +190,8 @@ fn history(node: &Party, partner: &Party, o: &Opts) -> Vec<PassportAuditEntry> {
             from: None,
             to: Some("active"),
             metadata: Some(json!({
-                "fullViewPayload": full_payload(node),
-                "publicViewPayload": public_payload(node),
+                "fullViewPayload": full,
+                "publicViewPayload": public,
             })),
             at: "2026-09-01T09:05:00.250Z",
         },
@@ -223,48 +231,196 @@ fn history(node: &Party, partner: &Party, o: &Opts) -> Vec<PassportAuditEntry> {
     chain(steps)
 }
 
-/// The last keys and numbers are there for canonicalisation, not realism: a
-/// verifier that sorts keys by anything but UTF-16 code units, or formats
-/// numbers other than as ECMAScript does, computes different JCS bytes and
-/// fails a signature these dossiers carry.
+/// The resolver the demo node prints on its products.
+const RESOLVER_BASE: &str = "https://dpp.acme.example";
+
+/// What a dossier's views are made of.
+enum Payload {
+    /// A battery passport, published the way the node publishes one.
+    Passport,
+    /// Keys and numbers that catch a verifier which canonicalises wrongly. No
+    /// node issues a passport like this; see [`vectors_payload`].
+    Vectors,
+}
+
+/// A light-means-of-transport battery passport at the schema version this
+/// build carries, holding only fields that schema declares, and published the
+/// way `publish` publishes one.
+///
+/// Core's own `transition_to` moves it to published, which also runs the
+/// mandatory-content gate for the battery's category; `publish`'s own
+/// [`stamp_publish_obligations`] then sets the retention horizon and the carrier
+/// URL. The one thing pinned here is time: `transition_to` stamps the wall
+/// clock, and the corpus has to be byte-identical on every run.
+///
+/// It carries every data point core's gate makes mandatory for its category, in
+/// all four tiers, so the public view shows the real redaction at work: the
+/// composition, part numbers, dismantling and safety content is restricted
+/// (Annex XIII point 2), the test report results are for authorities only
+/// (point 3), and the battery's own performance, state of health, status and
+/// use are for persons with a legitimate interest only (point 4).
+fn demo_passport() -> Passport {
+    let mut p: Passport = serde_json::from_value(json!({
+        "id": PID,
+        "batchId": "ACME-LMT-2026-09",
+        "productName": "Acme LMT 48V 20Ah battery pack",
+        "productGroup": "battery",
+        "manufacturer": {
+            "name": "Acme Zellen GmbH",
+            "address": "Musterstrasse 1, 80331 München, DE",
+            "didWebUrl": "https://node.acme.example/.well-known/did.json"
+        },
+        "materials": [
+            { "name": "NMC 811 cathode active material", "weightKg": 3.1, "recycledPct": 8.0, "countryOfOrigin": "DE" },
+            { "name": "Graphite anode active material", "weightKg": 1.9, "recycledPct": 4.0, "countryOfOrigin": "DE" },
+            { "name": "Aluminium pack housing", "weightKg": 2.2, "recycledPct": 60.0, "countryOfOrigin": "DE" }
+        ],
+        "repairabilityScore": null,
+        "productGroupData": {
+            "productGroup": "battery",
+            "gtin": "09506000134352",
+            "batteryType": "lmt",
+            "batteryChemistry": "NMC",
+            "batteryPassportNumber": "URN:ODL:BATT:09506000134352:ACME-LMT-2026-09",
+            "batteryModelId": "ACME-LMT-48V",
+            "batteryWeightKg": 12.4,
+            "manufacturingPlace": "München, DE",
+            "manufacturingDate": "2026-08-18T00:00:00Z",
+            "nominalVoltageV": 48.0,
+            "minimalVoltageV": 39.0,
+            "maximumVoltageV": 54.6,
+            "nominalCapacityAh": 20.0,
+            "originalPowerCapabilityW": 960.0,
+            "powerLimitMinW": 20.0,
+            "powerLimitMaxW": 1500.0,
+            "co2ePerUnitKg": 86.4,
+            "renewableContentPct": 14.0,
+            "recycledContentCobaltPct": 12.0,
+            "recycledContentLithiumPct": 6.0,
+            "recycledContentNickelPct": 8.0,
+            "recycledContentLeadPct": 0.0,
+            "expectedLifetimeCycles": 1200,
+            "expectedLifetimeReferenceTest": "EN 50604-1:2016, 25 degC, 100% DoD",
+            "initialRoundTripEfficiencyPct": 95.0,
+            "roundTripEfficiencyAtHalfCycleLifePct": 91.0,
+            "cycleLifeTestCRate": 1.0,
+            "internalCellResistanceMohm": 14.0,
+            "internalPackResistanceMohm": 110.0,
+            "notInUseTemperatureRange": { "minC": -10.0, "maxC": 45.0 },
+            "notInUseTemperatureReferenceTest": "EN 50604-1:2016 storage clause",
+            "hazardousSubstances": [
+                { "name": "Lithium hexafluorophosphate", "casNumber": "21324-40-3", "concentrationPct": 0.8 }
+            ],
+            "usableExtinguishingAgent": "Water; cool a burning pack with large volumes of water",
+            "criticalRawMaterials": [
+                { "name": "Cobalt", "casNumber": "7440-48-4", "weightGrams": 310.0 },
+                { "name": "Lithium", "casNumber": "7439-93-2", "weightGrams": 420.0 },
+                { "name": "Natural graphite", "casNumber": "7782-42-5", "weightGrams": 1800.0 }
+            ],
+            "markingInformation": "Separate-collection symbol per Art. 13(4); capacity 20 Ah / 960 Wh; 48 V LMT",
+            "euDeclarationOfConformity": "EU-DoC ACME-2026-LMT-0901, per Regulation (EU) 2023/1542 Art. 18",
+            "wasteBatteryInformation": "Return the battery to a bicycle retailer or a municipal collection point. Do not place it in household waste.",
+            "cathodeMaterial": [
+                { "name": "LiNi0.8Mn0.1Co0.1O2", "weightPct": 96.0, "casNumber": "346417-97-8" },
+                { "name": "PVDF binder", "weightPct": 2.0, "casNumber": "24937-79-9" },
+                { "name": "Conductive carbon black", "weightPct": 2.0, "casNumber": "1333-86-4" }
+            ],
+            "anodeMaterial": [
+                { "name": "Graphite", "weightPct": 96.0, "casNumber": "7782-42-5" },
+                { "name": "SBR/CMC binder", "weightPct": 4.0, "casNumber": "9003-55-8" }
+            ],
+            "electrolyteMaterial": [
+                { "name": "Ethylene carbonate", "weightPct": 38.0, "casNumber": "96-49-1" },
+                { "name": "Dimethyl carbonate", "weightPct": 49.0, "casNumber": "616-38-6" },
+                { "name": "Lithium hexafluorophosphate", "weightPct": 13.0, "casNumber": "21324-40-3" }
+            ],
+            "componentPartNumbers": ["ACME-CELL-21700-NMC", "ACME-BMS-13S-V1", "ACME-LMT-ENCL-48"],
+            "sparePartsContacts": "spares@acme.example",
+            "disassemblyInstructionsUrl": "https://acme.example/service/lmt-48/disassembly",
+            "safetyMeasures": "Do not open the pack. Replace it through an authorised dealer. Keep it away from heat above 60 degC.",
+            "testReportResults": "EN 50604-1:2016 pass; UN 38.3 pass; report ACME-TR-2026-0815",
+            "batteryStatus": "original",
+            "dynamicPerformance": {
+                "ratedCapacityAh": 19.9,
+                "capacityFadePct": 0.5,
+                "internalResistanceMohm": 110.4,
+                "roundTripEfficiencyPct": 94.8,
+                "expectedLifetimeCycles": 1195
+            },
+            "stateOfHealth": {
+                "parameterSet": "stationaryOrLmt",
+                "remainingCapacityPct": 99.5,
+                "remainingPowerCapabilityPct": 99.1,
+                "selfDischargeRatePctPerMonth": 2
+            },
+            "usageHistory": { "chargeDischargeCycles": 4 }
+        },
+        "status": "draft",
+        "qrCodeUrl": null,
+        "jwsSignature": null,
+        "createdAt": "2026-09-01T09:00:00Z",
+        "updatedAt": "2026-09-01T09:00:00Z",
+        "publishedAt": null,
+        "placedOnMarketDate": "2026-09-01",
+        "commodityCode": "85076000",
+        // The battery schema this build publishes against. `demo_dossiers_verify`
+        // validates the passport's product group data against it, strictly.
+        "schemaVersion": "2.6.0",
+    }))
+    .expect("demo passport");
+
+    p.transition_to(PassportStatus::Published)
+        .expect("the demo passport clears the publish gate");
+    let mut pinned = serde_json::to_value(&p).expect("serialise passport");
+    pinned["publishedAt"] = json!("2026-09-01T09:05:00Z");
+    pinned["updatedAt"] = json!("2026-09-01T09:05:00Z");
+    let mut p: Passport = serde_json::from_value(pinned).expect("pinned passport");
+    stamp_publish_obligations(&mut p, true, RESOLVER_BASE);
+    p
+}
+
+/// Keys and numbers there for canonicalisation, not realism: a verifier that
+/// sorts keys by anything but UTF-16 code units, or formats numbers other than
+/// as ECMAScript does, computes different JCS bytes and fails a signature this
+/// dossier carries. No battery schema declares any of them, so no node could
+/// issue a passport holding them; they live in a dossier of their own for that
+/// reason, never in one presented as a passport.
 ///
 /// `"\u{FF21}"` (fullwidth `Ａ`) and `"😀"` are the pair that tells the two
 /// orders apart: the first is the single UTF-16 unit `0xFF21`, the second the
 /// surrogate pair `0xD83D 0xDE00`. Sorted by UTF-16 code unit the emoji comes
 /// first; sorted by code point, or by UTF-8 bytes, it comes last. Every other
 /// key here sorts the same either way.
-fn full_payload(node: &Party) -> Value {
+fn vectors_payload() -> Value {
     json!({
         "id": PID,
-        "productGroup": "battery",
-        "schemaVersion": "2.7.0",
         "status": "active",
-        "issuer": node.did,
-        "operator": { "name": "Acme Zellen GmbH", "country": "DE", "city": "München" },
         "content": {
-            "batteryModelId": "ACME-LMT-48V",
-            "batteryChemistry": "NMC",
-            "batteryWeightKg": 12.4,
-            "ratedCapacityAh": 20,
-            "stateOfHealthPct": 100,
-            "cathodeMaterial": "NMC 811",
             "Émission": "0.5e-3 test",
             "tinyNumber": 0.0000005,
             "hugeNumber": 1e21,
             "negativeZeroSafe": -0.25,
             "b": 1, "B": 2, "é": 3, "€": 4, "😀": 5, "\u{FF21}": 6
-        },
-        "publishedAt": "2026-09-01T09:05:00Z"
+        }
     })
 }
 
-/// The full view less the two fields a public reader does not see.
-fn public_payload(node: &Party) -> Value {
-    let mut v = full_payload(node);
-    let c = v["content"].as_object_mut().expect("content object");
-    c.remove("stateOfHealthPct");
-    c.remove("cathodeMaterial");
-    v
+/// The pair of payloads publish signs: the whole passport as `serde_json`
+/// writes it, and the public view core's redaction makes of it.
+fn views(payload: &Payload) -> (Value, Value) {
+    match payload {
+        Payload::Passport => {
+            let p = demo_passport();
+            (
+                serde_json::to_value(&p).expect("serialise passport"),
+                dpp_vault::public_view::public_view(&p),
+            )
+        }
+        Payload::Vectors => {
+            let v = vectors_payload();
+            (v.clone(), v)
+        }
+    }
 }
 
 fn operator(p: &Party, name: &str, role: &str, country: &str) -> Value {
@@ -274,10 +430,11 @@ fn operator(p: &Party, name: &str, role: &str, country: &str) -> Value {
 struct Opts {
     transfer: bool,
     eol: bool,
+    payload: Payload,
 }
 
 fn dossier(node: &Party, partner: &Party, o: Opts) -> DossierV1 {
-    let audit_entries = history(node, partner, &o);
+    let audit_entries = history(partner, &o);
 
     // A completed transfer carries two signatures, both by the node here: it is
     // the outgoing operator too, so it signs the initiation terms, and it signs
@@ -380,7 +537,8 @@ fn main() {
     let partner = party("did:web:secondlife.example", 9);
 
     let valid = |transfer, eol| {
-        serde_json::to_value(dossier(&node, &partner, Opts { transfer, eol }))
+        let payload = Payload::Passport;
+        serde_json::to_value(dossier(&node, &partner, Opts { transfer, eol, payload }))
             .expect("serialise dossier")
     };
     let full = valid(true, true);
@@ -418,6 +576,17 @@ fn main() {
     files.push((
         "10-not-json.txt",
         "This is not an evidence dossier.\n".into(),
+    ));
+
+    // Verifies, and is no passport: see `vectors_payload`.
+    let vectors = Opts {
+        transfer: false,
+        eol: false,
+        payload: Payload::Vectors,
+    };
+    files.push((
+        "11-canonicalisation-vectors.json",
+        pretty(&serde_json::to_value(dossier(&node, &partner, vectors)).expect("serialise dossier")),
     ));
 
     let mut expected = serde_json::Map::new();

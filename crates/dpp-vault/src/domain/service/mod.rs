@@ -32,6 +32,9 @@ pub use evidence::{declared_eol, published_views};
 mod lifecycle;
 mod lint;
 mod publish;
+/// Public: the demo dossier generator stamps its passport's retention horizon
+/// and carrier URL with the function publish uses, rather than a copy of it.
+pub use publish::stamp_publish_obligations;
 mod query;
 /// Public: the versions route has to tell apart the two ways of having no
 /// archived version, because only one of them is answered by the live record.

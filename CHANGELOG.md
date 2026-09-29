@@ -43,6 +43,25 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ### Fixed
 
+- **The demo dossiers presented as passports a payload no node could issue.**
+  Their views were a hand-built object whose content mixed a few battery fields
+  with keys and numbers put there to test canonicalisation (`"b"`, `"B"`, `"é"`,
+  `"€"`, `"😀"`, `"\u{FF21}"`, `"hugeNumber"` and others). No battery schema
+  declares any of them, so a real node would refuse the passport at create, yet
+  01 to 09 showed them to a reader as a genuine passport's data. Those
+  dossiers now carry a real light-means-of-transport battery passport, holding
+  only schema-declared fields and every data point core's publish gate requires
+  for its category. The generator publishes it with core's own
+  `transition_to` and publish's own retention and carrier-URL stamping, which
+  moves to `stamp_publish_obligations` so publish and the generator share one
+  copy, and takes the public view from `public_view`, core's redaction. The
+  canonicalisation keys move to a new `11-canonicalisation-vectors.json`, which
+  verifies and says in its README row that it is no passport.
+  `demo_dossiers_verify.rs` gains `every_example_passport_is_one_a_node_would_publish`
+  (the typed validation, the strict schema and the mandatory-content gate) and
+  `every_public_view_is_cores_redaction_of_its_passport`; the UTF-16 ordering
+  test now reads 11. Every verdict is unchanged apart from 09's parse-error text.
+
 - **A dossier's readable payloads listed their keys in a different order from
   the one they were signed in.** A dossier carries each signed view twice, as
   the JWS and as a readable copy of its payload, and the audit trail's

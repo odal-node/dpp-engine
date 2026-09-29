@@ -16,68 +16,300 @@
     {
       "action": "published",
       "actor": "api-key",
-      "entryHash": "122cc906e4c0fd2172cfd97b1d6f5b0813c2db22f301b9e96f044c614fa84fdb",
+      "entryHash": "4e81bf531274f21aa02339144c34711eac79af7fb22ebf10a18982adc3f075a3",
       "id": "0199a3c2-7b10-7e4a-9c3d-000000000002",
       "metadata": {
         "fullViewPayload": {
-          "content": {
-            "B": 2,
-            "b": 1,
-            "batteryChemistry": "NMC",
-            "batteryModelId": "ACME-LMT-48V",
-            "batteryWeightKg": 12.4,
-            "cathodeMaterial": "NMC 811",
-            "hugeNumber": 1e+21,
-            "negativeZeroSafe": -0.25,
-            "ratedCapacityAh": 20,
-            "stateOfHealthPct": 100,
-            "tinyNumber": 5e-7,
-            "Émission": "0.5e-3 test",
-            "é": 3,
-            "€": 4,
-            "😀": 5,
-            "Ａ": 6
-          },
+          "batchId": "ACME-LMT-2026-09",
+          "co2ePerUnit": null,
+          "commodityCode": "85076000",
+          "createdAt": "2026-09-01T09:00:00Z",
           "id": "0199a3c2-7b10-7e4a-9c3d-2f1e8b6a5d40",
-          "issuer": "did:web:node.acme.example",
-          "operator": {
-            "city": "München",
-            "country": "DE",
+          "jwsSignature": null,
+          "manufacturer": {
+            "address": "Musterstrasse 1, 80331 München, DE",
+            "country": null,
+            "didWebUrl": "https://node.acme.example/.well-known/did.json",
             "name": "Acme Zellen GmbH"
           },
+          "materials": [
+            {
+              "countryOfOrigin": "DE",
+              "name": "NMC 811 cathode active material",
+              "recycledPct": 8.0,
+              "weightKg": 3.1
+            },
+            {
+              "countryOfOrigin": "DE",
+              "name": "Graphite anode active material",
+              "recycledPct": 4.0,
+              "weightKg": 1.9
+            },
+            {
+              "countryOfOrigin": "DE",
+              "name": "Aluminium pack housing",
+              "recycledPct": 60.0,
+              "weightKg": 2.2
+            }
+          ],
+          "placedOnMarketDate": "2026-09-01",
           "productGroup": "battery",
+          "productGroupData": {
+            "anodeMaterial": [
+              {
+                "casNumber": "7782-42-5",
+                "name": "Graphite",
+                "weightPct": 96.0
+              },
+              {
+                "casNumber": "9003-55-8",
+                "name": "SBR/CMC binder",
+                "weightPct": 4.0
+              }
+            ],
+            "batteryChemistry": "NMC",
+            "batteryModelId": "ACME-LMT-48V",
+            "batteryPassportNumber": "URN:ODL:BATT:09506000134352:ACME-LMT-2026-09",
+            "batteryStatus": "original",
+            "batteryType": "lmt",
+            "batteryWeightKg": 12.4,
+            "cathodeMaterial": [
+              {
+                "casNumber": "346417-97-8",
+                "name": "LiNi0.8Mn0.1Co0.1O2",
+                "weightPct": 96.0
+              },
+              {
+                "casNumber": "24937-79-9",
+                "name": "PVDF binder",
+                "weightPct": 2.0
+              },
+              {
+                "casNumber": "1333-86-4",
+                "name": "Conductive carbon black",
+                "weightPct": 2.0
+              }
+            ],
+            "co2ePerUnitKg": 86.4,
+            "componentPartNumbers": [
+              "ACME-CELL-21700-NMC",
+              "ACME-BMS-13S-V1",
+              "ACME-LMT-ENCL-48"
+            ],
+            "criticalRawMaterials": [
+              {
+                "casNumber": "7440-48-4",
+                "name": "Cobalt",
+                "weightGrams": 310.0
+              },
+              {
+                "casNumber": "7439-93-2",
+                "name": "Lithium",
+                "weightGrams": 420.0
+              },
+              {
+                "casNumber": "7782-42-5",
+                "name": "Natural graphite",
+                "weightGrams": 1800.0
+              }
+            ],
+            "cycleLifeTestCRate": 1.0,
+            "disassemblyInstructionsUrl": "https://acme.example/service/lmt-48/disassembly",
+            "dynamicPerformance": {
+              "capacityFadePct": 0.5,
+              "expectedLifetimeCycles": 1195,
+              "internalResistanceMohm": 110.4,
+              "ratedCapacityAh": 19.9,
+              "roundTripEfficiencyPct": 94.8
+            },
+            "electrolyteMaterial": [
+              {
+                "casNumber": "96-49-1",
+                "name": "Ethylene carbonate",
+                "weightPct": 38.0
+              },
+              {
+                "casNumber": "616-38-6",
+                "name": "Dimethyl carbonate",
+                "weightPct": 49.0
+              },
+              {
+                "casNumber": "21324-40-3",
+                "name": "Lithium hexafluorophosphate",
+                "weightPct": 13.0
+              }
+            ],
+            "euDeclarationOfConformity": "EU-DoC ACME-2026-LMT-0901, per Regulation (EU) 2023/1542 Art. 18",
+            "expectedLifetimeCycles": 1200,
+            "expectedLifetimeReferenceTest": "EN 50604-1:2016, 25 degC, 100% DoD",
+            "gtin": "09506000134352",
+            "hazardousSubstances": [
+              {
+                "casNumber": "21324-40-3",
+                "concentrationPct": 0.8,
+                "name": "Lithium hexafluorophosphate"
+              }
+            ],
+            "initialRoundTripEfficiencyPct": 95.0,
+            "internalCellResistanceMohm": 14.0,
+            "internalPackResistanceMohm": 110.0,
+            "manufacturingDate": "2026-08-18T00:00:00Z",
+            "manufacturingPlace": "München, DE",
+            "markingInformation": "Separate-collection symbol per Art. 13(4); capacity 20 Ah / 960 Wh; 48 V LMT",
+            "maximumVoltageV": 54.6,
+            "minimalVoltageV": 39.0,
+            "nominalCapacityAh": 20.0,
+            "nominalVoltageV": 48.0,
+            "notInUseTemperatureRange": {
+              "maxC": 45.0,
+              "minC": -10.0
+            },
+            "notInUseTemperatureReferenceTest": "EN 50604-1:2016 storage clause",
+            "originalPowerCapabilityW": 960.0,
+            "powerLimitMaxW": 1500.0,
+            "powerLimitMinW": 20.0,
+            "productGroup": "battery",
+            "ratedCapacityKwh": null,
+            "recycledContentCobaltPct": 12.0,
+            "recycledContentLeadPct": 0.0,
+            "recycledContentLithiumPct": 6.0,
+            "recycledContentNickelPct": 8.0,
+            "renewableContentPct": 14.0,
+            "roundTripEfficiencyAtHalfCycleLifePct": 91.0,
+            "safetyMeasures": "Do not open the pack. Replace it through an authorised dealer. Keep it away from heat above 60 degC.",
+            "sparePartsContacts": "spares@acme.example",
+            "stateOfHealth": {
+              "parameterSet": "stationaryOrLmt",
+              "remainingCapacityPct": 99.5,
+              "remainingPowerCapabilityPct": 99.1,
+              "selfDischargeRatePctPerMonth": 2.0
+            },
+            "stateOfHealthPct": null,
+            "testReportResults": "EN 50604-1:2016 pass; UN 38.3 pass; report ACME-TR-2026-0815",
+            "usableExtinguishingAgent": "Water; cool a burning pack with large volumes of water",
+            "usageHistory": {
+              "chargeDischargeCycles": 4
+            },
+            "wasteBatteryInformation": "Return the battery to a bicycle retailer or a municipal collection point. Do not place it in household waste."
+          },
+          "productName": "Acme LMT 48V 20Ah battery pack",
           "publishedAt": "2026-09-01T09:05:00Z",
-          "schemaVersion": "2.7.0",
-          "status": "active"
+          "qrCodeUrl": "https://dpp.acme.example/01/09506000134352/10/ACME-LMT-2026-09/21/7e4a9c3d2f1e8b6a5d40",
+          "repairabilityScore": null,
+          "retentionLocked": true,
+          "retentionUntil": "2036-08-29T09:05:00Z",
+          "schemaVersion": "2.6.0",
+          "status": "active",
+          "updatedAt": "2026-09-01T09:05:00Z",
+          "version": 1
         },
         "publicViewPayload": {
-          "content": {
-            "B": 2,
-            "b": 1,
-            "batteryChemistry": "NMC",
-            "batteryModelId": "ACME-LMT-48V",
-            "batteryWeightKg": 12.4,
-            "hugeNumber": 1e+21,
-            "negativeZeroSafe": -0.25,
-            "ratedCapacityAh": 20,
-            "tinyNumber": 5e-7,
-            "Émission": "0.5e-3 test",
-            "é": 3,
-            "€": 4,
-            "😀": 5,
-            "Ａ": 6
-          },
+          "co2ePerUnit": null,
+          "commodityCode": "85076000",
+          "createdAt": "2026-09-01T09:00:00Z",
           "id": "0199a3c2-7b10-7e4a-9c3d-2f1e8b6a5d40",
-          "issuer": "did:web:node.acme.example",
-          "operator": {
-            "city": "München",
-            "country": "DE",
+          "manufacturer": {
+            "address": "Musterstrasse 1, 80331 München, DE",
+            "country": null,
+            "didWebUrl": "https://node.acme.example/.well-known/did.json",
             "name": "Acme Zellen GmbH"
           },
+          "materials": [
+            {
+              "countryOfOrigin": "DE",
+              "name": "NMC 811 cathode active material",
+              "recycledPct": 8.0,
+              "weightKg": 3.1
+            },
+            {
+              "countryOfOrigin": "DE",
+              "name": "Graphite anode active material",
+              "recycledPct": 4.0,
+              "weightKg": 1.9
+            },
+            {
+              "countryOfOrigin": "DE",
+              "name": "Aluminium pack housing",
+              "recycledPct": 60.0,
+              "weightKg": 2.2
+            }
+          ],
+          "placedOnMarketDate": "2026-09-01",
           "productGroup": "battery",
+          "productGroupData": {
+            "batteryChemistry": "NMC",
+            "batteryModelId": "ACME-LMT-48V",
+            "batteryPassportNumber": "URN:ODL:BATT:09506000134352:ACME-LMT-2026-09",
+            "batteryType": "lmt",
+            "batteryWeightKg": 12.4,
+            "co2ePerUnitKg": 86.4,
+            "criticalRawMaterials": [
+              {
+                "casNumber": "7440-48-4",
+                "name": "Cobalt",
+                "weightGrams": 310.0
+              },
+              {
+                "casNumber": "7439-93-2",
+                "name": "Lithium",
+                "weightGrams": 420.0
+              },
+              {
+                "casNumber": "7782-42-5",
+                "name": "Natural graphite",
+                "weightGrams": 1800.0
+              }
+            ],
+            "cycleLifeTestCRate": 1.0,
+            "euDeclarationOfConformity": "EU-DoC ACME-2026-LMT-0901, per Regulation (EU) 2023/1542 Art. 18",
+            "expectedLifetimeCycles": 1200,
+            "expectedLifetimeReferenceTest": "EN 50604-1:2016, 25 degC, 100% DoD",
+            "gtin": "09506000134352",
+            "hazardousSubstances": [
+              {
+                "casNumber": "21324-40-3",
+                "concentrationPct": 0.8,
+                "name": "Lithium hexafluorophosphate"
+              }
+            ],
+            "initialRoundTripEfficiencyPct": 95.0,
+            "internalCellResistanceMohm": 14.0,
+            "internalPackResistanceMohm": 110.0,
+            "manufacturingDate": "2026-08-18T00:00:00Z",
+            "manufacturingPlace": "München, DE",
+            "markingInformation": "Separate-collection symbol per Art. 13(4); capacity 20 Ah / 960 Wh; 48 V LMT",
+            "maximumVoltageV": 54.6,
+            "minimalVoltageV": 39.0,
+            "nominalCapacityAh": 20.0,
+            "nominalVoltageV": 48.0,
+            "notInUseTemperatureRange": {
+              "maxC": 45.0,
+              "minC": -10.0
+            },
+            "notInUseTemperatureReferenceTest": "EN 50604-1:2016 storage clause",
+            "originalPowerCapabilityW": 960.0,
+            "powerLimitMaxW": 1500.0,
+            "powerLimitMinW": 20.0,
+            "productGroup": "battery",
+            "ratedCapacityKwh": null,
+            "recycledContentCobaltPct": 12.0,
+            "recycledContentLeadPct": 0.0,
+            "recycledContentLithiumPct": 6.0,
+            "recycledContentNickelPct": 8.0,
+            "renewableContentPct": 14.0,
+            "roundTripEfficiencyAtHalfCycleLifePct": 91.0,
+            "usableExtinguishingAgent": "Water; cool a burning pack with large volumes of water",
+            "wasteBatteryInformation": "Return the battery to a bicycle retailer or a municipal collection point. Do not place it in household waste."
+          },
+          "productName": "Acme LMT 48V 20Ah battery pack",
           "publishedAt": "2026-09-01T09:05:00Z",
-          "schemaVersion": "2.7.0",
-          "status": "active"
+          "qrCodeUrl": "https://dpp.acme.example/01/09506000134352/10/ACME-LMT-2026-09/21/7e4a9c3d2f1e8b6a5d40",
+          "repairabilityScore": null,
+          "retentionUntil": "2036-08-29T09:05:00Z",
+          "schemaVersion": "2.6.0",
+          "status": "active",
+          "updatedAt": "2026-09-01T09:05:00Z",
+          "version": 1
         }
       },
       "newStatus": "active",
@@ -112,44 +344,197 @@
     }
   },
   "fullView": {
-    "jws": "eyJhbGciOiJFZERTQSIsImtpZCI6ImZlODEyYzEyZjNhYjRjZTZhYzVkYjY5YWMzNTJmOTA2Y2IxYjExZWY0M2ZiMzNlMjUyZWY3ZmY1NTIyNjM4ODkifQ.eyJjb250ZW50Ijp7IkIiOjIsImIiOjEsImJhdHRlcnlDaGVtaXN0cnkiOiJOTUMiLCJiYXR0ZXJ5TW9kZWxJZCI6IkFDTUUtTE1ULTQ4ViIsImJhdHRlcnlXZWlnaHRLZyI6MTIuNCwiY2F0aG9kZU1hdGVyaWFsIjoiTk1DIDgxMSIsImh1Z2VOdW1iZXIiOjFlKzIxLCJuZWdhdGl2ZVplcm9TYWZlIjotMC4yNSwicmF0ZWRDYXBhY2l0eUFoIjoyMCwic3RhdGVPZkhlYWx0aFBjdCI6MTAwLCJ0aW55TnVtYmVyIjo1ZS03LCLDiW1pc3Npb24iOiIwLjVlLTMgdGVzdCIsIsOpIjozLCLigqwiOjQsIvCfmIAiOjUsIu-8oSI6Nn0sImlkIjoiMDE5OWEzYzItN2IxMC03ZTRhLTljM2QtMmYxZThiNmE1ZDQwIiwiaXNzdWVyIjoiZGlkOndlYjpub2RlLmFjbWUuZXhhbXBsZSIsIm9wZXJhdG9yIjp7ImNpdHkiOiJNw7xuY2hlbiIsImNvdW50cnkiOiJERSIsIm5hbWUiOiJBY21lIFplbGxlbiBHbWJIIn0sInByb2R1Y3RHcm91cCI6ImJhdHRlcnkiLCJwdWJsaXNoZWRBdCI6IjIwMjYtMDktMDFUMDk6MDU6MDBaIiwic2NoZW1hVmVyc2lvbiI6IjIuNy4wIiwic3RhdHVzIjoiYWN0aXZlIn0.bXoh9eU-rTvN-_heLcDWRfRe5hNQA_JmZnmSzNKr2t0f56qklAYFHb8xyevrfbb3phscXigOs8vbyAPMcOJ_Dg",
+    "jws": "eyJhbGciOiJFZERTQSIsImtpZCI6ImZlODEyYzEyZjNhYjRjZTZhYzVkYjY5YWMzNTJmOTA2Y2IxYjExZWY0M2ZiMzNlMjUyZWY3ZmY1NTIyNjM4ODkifQ.eyJiYXRjaElkIjoiQUNNRS1MTVQtMjAyNi0wOSIsImNvMmVQZXJVbml0IjpudWxsLCJjb21tb2RpdHlDb2RlIjoiODUwNzYwMDAiLCJjcmVhdGVkQXQiOiIyMDI2LTA5LTAxVDA5OjAwOjAwWiIsImlkIjoiMDE5OWEzYzItN2IxMC03ZTRhLTljM2QtMmYxZThiNmE1ZDQwIiwiandzU2lnbmF0dXJlIjpudWxsLCJtYW51ZmFjdHVyZXIiOnsiYWRkcmVzcyI6Ik11c3RlcnN0cmFzc2UgMSwgODAzMzEgTcO8bmNoZW4sIERFIiwiY291bnRyeSI6bnVsbCwiZGlkV2ViVXJsIjoiaHR0cHM6Ly9ub2RlLmFjbWUuZXhhbXBsZS8ud2VsbC1rbm93bi9kaWQuanNvbiIsIm5hbWUiOiJBY21lIFplbGxlbiBHbWJIIn0sIm1hdGVyaWFscyI6W3siY291bnRyeU9mT3JpZ2luIjoiREUiLCJuYW1lIjoiTk1DIDgxMSBjYXRob2RlIGFjdGl2ZSBtYXRlcmlhbCIsInJlY3ljbGVkUGN0Ijo4LCJ3ZWlnaHRLZyI6My4xfSx7ImNvdW50cnlPZk9yaWdpbiI6IkRFIiwibmFtZSI6IkdyYXBoaXRlIGFub2RlIGFjdGl2ZSBtYXRlcmlhbCIsInJlY3ljbGVkUGN0Ijo0LCJ3ZWlnaHRLZyI6MS45fSx7ImNvdW50cnlPZk9yaWdpbiI6IkRFIiwibmFtZSI6IkFsdW1pbml1bSBwYWNrIGhvdXNpbmciLCJyZWN5Y2xlZFBjdCI6NjAsIndlaWdodEtnIjoyLjJ9XSwicGxhY2VkT25NYXJrZXREYXRlIjoiMjAyNi0wOS0wMSIsInByb2R1Y3RHcm91cCI6ImJhdHRlcnkiLCJwcm9kdWN0R3JvdXBEYXRhIjp7ImFub2RlTWF0ZXJpYWwiOlt7ImNhc051bWJlciI6Ijc3ODItNDItNSIsIm5hbWUiOiJHcmFwaGl0ZSIsIndlaWdodFBjdCI6OTZ9LHsiY2FzTnVtYmVyIjoiOTAwMy01NS04IiwibmFtZSI6IlNCUi9DTUMgYmluZGVyIiwid2VpZ2h0UGN0Ijo0fV0sImJhdHRlcnlDaGVtaXN0cnkiOiJOTUMiLCJiYXR0ZXJ5TW9kZWxJZCI6IkFDTUUtTE1ULTQ4ViIsImJhdHRlcnlQYXNzcG9ydE51bWJlciI6IlVSTjpPREw6QkFUVDowOTUwNjAwMDEzNDM1MjpBQ01FLUxNVC0yMDI2LTA5IiwiYmF0dGVyeVN0YXR1cyI6Im9yaWdpbmFsIiwiYmF0dGVyeVR5cGUiOiJsbXQiLCJiYXR0ZXJ5V2VpZ2h0S2ciOjEyLjQsImNhdGhvZGVNYXRlcmlhbCI6W3siY2FzTnVtYmVyIjoiMzQ2NDE3LTk3LTgiLCJuYW1lIjoiTGlOaTAuOE1uMC4xQ28wLjFPMiIsIndlaWdodFBjdCI6OTZ9LHsiY2FzTnVtYmVyIjoiMjQ5MzctNzktOSIsIm5hbWUiOiJQVkRGIGJpbmRlciIsIndlaWdodFBjdCI6Mn0seyJjYXNOdW1iZXIiOiIxMzMzLTg2LTQiLCJuYW1lIjoiQ29uZHVjdGl2ZSBjYXJib24gYmxhY2siLCJ3ZWlnaHRQY3QiOjJ9XSwiY28yZVBlclVuaXRLZyI6ODYuNCwiY29tcG9uZW50UGFydE51bWJlcnMiOlsiQUNNRS1DRUxMLTIxNzAwLU5NQyIsIkFDTUUtQk1TLTEzUy1WMSIsIkFDTUUtTE1ULUVOQ0wtNDgiXSwiY3JpdGljYWxSYXdNYXRlcmlhbHMiOlt7ImNhc051bWJlciI6Ijc0NDAtNDgtNCIsIm5hbWUiOiJDb2JhbHQiLCJ3ZWlnaHRHcmFtcyI6MzEwfSx7ImNhc051bWJlciI6Ijc0MzktOTMtMiIsIm5hbWUiOiJMaXRoaXVtIiwid2VpZ2h0R3JhbXMiOjQyMH0seyJjYXNOdW1iZXIiOiI3NzgyLTQyLTUiLCJuYW1lIjoiTmF0dXJhbCBncmFwaGl0ZSIsIndlaWdodEdyYW1zIjoxODAwfV0sImN5Y2xlTGlmZVRlc3RDUmF0ZSI6MSwiZGlzYXNzZW1ibHlJbnN0cnVjdGlvbnNVcmwiOiJodHRwczovL2FjbWUuZXhhbXBsZS9zZXJ2aWNlL2xtdC00OC9kaXNhc3NlbWJseSIsImR5bmFtaWNQZXJmb3JtYW5jZSI6eyJjYXBhY2l0eUZhZGVQY3QiOjAuNSwiZXhwZWN0ZWRMaWZldGltZUN5Y2xlcyI6MTE5NSwiaW50ZXJuYWxSZXNpc3RhbmNlTW9obSI6MTEwLjQsInJhdGVkQ2FwYWNpdHlBaCI6MTkuOSwicm91bmRUcmlwRWZmaWNpZW5jeVBjdCI6OTQuOH0sImVsZWN0cm9seXRlTWF0ZXJpYWwiOlt7ImNhc051bWJlciI6Ijk2LTQ5LTEiLCJuYW1lIjoiRXRoeWxlbmUgY2FyYm9uYXRlIiwid2VpZ2h0UGN0IjozOH0seyJjYXNOdW1iZXIiOiI2MTYtMzgtNiIsIm5hbWUiOiJEaW1ldGh5bCBjYXJib25hdGUiLCJ3ZWlnaHRQY3QiOjQ5fSx7ImNhc051bWJlciI6IjIxMzI0LTQwLTMiLCJuYW1lIjoiTGl0aGl1bSBoZXhhZmx1b3JvcGhvc3BoYXRlIiwid2VpZ2h0UGN0IjoxM31dLCJldURlY2xhcmF0aW9uT2ZDb25mb3JtaXR5IjoiRVUtRG9DIEFDTUUtMjAyNi1MTVQtMDkwMSwgcGVyIFJlZ3VsYXRpb24gKEVVKSAyMDIzLzE1NDIgQXJ0LiAxOCIsImV4cGVjdGVkTGlmZXRpbWVDeWNsZXMiOjEyMDAsImV4cGVjdGVkTGlmZXRpbWVSZWZlcmVuY2VUZXN0IjoiRU4gNTA2MDQtMToyMDE2LCAyNSBkZWdDLCAxMDAlIERvRCIsImd0aW4iOiIwOTUwNjAwMDEzNDM1MiIsImhhemFyZG91c1N1YnN0YW5jZXMiOlt7ImNhc051bWJlciI6IjIxMzI0LTQwLTMiLCJjb25jZW50cmF0aW9uUGN0IjowLjgsIm5hbWUiOiJMaXRoaXVtIGhleGFmbHVvcm9waG9zcGhhdGUifV0sImluaXRpYWxSb3VuZFRyaXBFZmZpY2llbmN5UGN0Ijo5NSwiaW50ZXJuYWxDZWxsUmVzaXN0YW5jZU1vaG0iOjE0LCJpbnRlcm5hbFBhY2tSZXNpc3RhbmNlTW9obSI6MTEwLCJtYW51ZmFjdHVyaW5nRGF0ZSI6IjIwMjYtMDgtMThUMDA6MDA6MDBaIiwibWFudWZhY3R1cmluZ1BsYWNlIjoiTcO8bmNoZW4sIERFIiwibWFya2luZ0luZm9ybWF0aW9uIjoiU2VwYXJhdGUtY29sbGVjdGlvbiBzeW1ib2wgcGVyIEFydC4gMTMoNCk7IGNhcGFjaXR5IDIwIEFoIC8gOTYwIFdoOyA0OCBWIExNVCIsIm1heGltdW1Wb2x0YWdlViI6NTQuNiwibWluaW1hbFZvbHRhZ2VWIjozOSwibm9taW5hbENhcGFjaXR5QWgiOjIwLCJub21pbmFsVm9sdGFnZVYiOjQ4LCJub3RJblVzZVRlbXBlcmF0dXJlUmFuZ2UiOnsibWF4QyI6NDUsIm1pbkMiOi0xMH0sIm5vdEluVXNlVGVtcGVyYXR1cmVSZWZlcmVuY2VUZXN0IjoiRU4gNTA2MDQtMToyMDE2IHN0b3JhZ2UgY2xhdXNlIiwib3JpZ2luYWxQb3dlckNhcGFiaWxpdHlXIjo5NjAsInBvd2VyTGltaXRNYXhXIjoxNTAwLCJwb3dlckxpbWl0TWluVyI6MjAsInByb2R1Y3RHcm91cCI6ImJhdHRlcnkiLCJyYXRlZENhcGFjaXR5S3doIjpudWxsLCJyZWN5Y2xlZENvbnRlbnRDb2JhbHRQY3QiOjEyLCJyZWN5Y2xlZENvbnRlbnRMZWFkUGN0IjowLCJyZWN5Y2xlZENvbnRlbnRMaXRoaXVtUGN0Ijo2LCJyZWN5Y2xlZENvbnRlbnROaWNrZWxQY3QiOjgsInJlbmV3YWJsZUNvbnRlbnRQY3QiOjE0LCJyb3VuZFRyaXBFZmZpY2llbmN5QXRIYWxmQ3ljbGVMaWZlUGN0Ijo5MSwic2FmZXR5TWVhc3VyZXMiOiJEbyBub3Qgb3BlbiB0aGUgcGFjay4gUmVwbGFjZSBpdCB0aHJvdWdoIGFuIGF1dGhvcmlzZWQgZGVhbGVyLiBLZWVwIGl0IGF3YXkgZnJvbSBoZWF0IGFib3ZlIDYwIGRlZ0MuIiwic3BhcmVQYXJ0c0NvbnRhY3RzIjoic3BhcmVzQGFjbWUuZXhhbXBsZSIsInN0YXRlT2ZIZWFsdGgiOnsicGFyYW1ldGVyU2V0Ijoic3RhdGlvbmFyeU9yTG10IiwicmVtYWluaW5nQ2FwYWNpdHlQY3QiOjk5LjUsInJlbWFpbmluZ1Bvd2VyQ2FwYWJpbGl0eVBjdCI6OTkuMSwic2VsZkRpc2NoYXJnZVJhdGVQY3RQZXJNb250aCI6Mn0sInN0YXRlT2ZIZWFsdGhQY3QiOm51bGwsInRlc3RSZXBvcnRSZXN1bHRzIjoiRU4gNTA2MDQtMToyMDE2IHBhc3M7IFVOIDM4LjMgcGFzczsgcmVwb3J0IEFDTUUtVFItMjAyNi0wODE1IiwidXNhYmxlRXh0aW5ndWlzaGluZ0FnZW50IjoiV2F0ZXI7IGNvb2wgYSBidXJuaW5nIHBhY2sgd2l0aCBsYXJnZSB2b2x1bWVzIG9mIHdhdGVyIiwidXNhZ2VIaXN0b3J5Ijp7ImNoYXJnZURpc2NoYXJnZUN5Y2xlcyI6NH0sIndhc3RlQmF0dGVyeUluZm9ybWF0aW9uIjoiUmV0dXJuIHRoZSBiYXR0ZXJ5IHRvIGEgYmljeWNsZSByZXRhaWxlciBvciBhIG11bmljaXBhbCBjb2xsZWN0aW9uIHBvaW50LiBEbyBub3QgcGxhY2UgaXQgaW4gaG91c2Vob2xkIHdhc3RlLiJ9LCJwcm9kdWN0TmFtZSI6IkFjbWUgTE1UIDQ4ViAyMEFoIGJhdHRlcnkgcGFjayIsInB1Ymxpc2hlZEF0IjoiMjAyNi0wOS0wMVQwOTowNTowMFoiLCJxckNvZGVVcmwiOiJodHRwczovL2RwcC5hY21lLmV4YW1wbGUvMDEvMDk1MDYwMDAxMzQzNTIvMTAvQUNNRS1MTVQtMjAyNi0wOS8yMS83ZTRhOWMzZDJmMWU4YjZhNWQ0MCIsInJlcGFpcmFiaWxpdHlTY29yZSI6bnVsbCwicmV0ZW50aW9uTG9ja2VkIjp0cnVlLCJyZXRlbnRpb25VbnRpbCI6IjIwMzYtMDgtMjlUMDk6MDU6MDBaIiwic2NoZW1hVmVyc2lvbiI6IjIuNi4wIiwic3RhdHVzIjoiYWN0aXZlIiwidXBkYXRlZEF0IjoiMjAyNi0wOS0wMVQwOTowNTowMFoiLCJ2ZXJzaW9uIjoxfQ.WlMDfygpDjYk8xHRQjpQgppwhVkUgYhyj_9iiPH_IXvXb8IKcD0cA2lFJCznB1B6llfW5Q3qiZcfRAdB78nDBw",
     "payload": {
-      "content": {
-        "B": 2,
-        "b": 1,
-        "batteryChemistry": "NMC",
-        "batteryModelId": "ACME-LMT-48V",
-        "batteryWeightKg": 12.4,
-        "cathodeMaterial": "NMC 811",
-        "hugeNumber": 1e+21,
-        "negativeZeroSafe": -0.25,
-        "ratedCapacityAh": 20,
-        "stateOfHealthPct": 100,
-        "tinyNumber": 5e-7,
-        "Émission": "0.5e-3 test",
-        "é": 3,
-        "€": 4,
-        "😀": 5,
-        "Ａ": 6
-      },
+      "batchId": "ACME-LMT-2026-09",
+      "co2ePerUnit": null,
+      "commodityCode": "85076000",
+      "createdAt": "2026-09-01T09:00:00Z",
       "id": "0199a3c2-7b10-7e4a-9c3d-2f1e8b6a5d40",
-      "issuer": "did:web:node.acme.example",
-      "operator": {
-        "city": "München",
-        "country": "DE",
+      "jwsSignature": null,
+      "manufacturer": {
+        "address": "Musterstrasse 1, 80331 München, DE",
+        "country": null,
+        "didWebUrl": "https://node.acme.example/.well-known/did.json",
         "name": "Acme Zellen GmbH"
       },
+      "materials": [
+        {
+          "countryOfOrigin": "DE",
+          "name": "NMC 811 cathode active material",
+          "recycledPct": 8.0,
+          "weightKg": 3.1
+        },
+        {
+          "countryOfOrigin": "DE",
+          "name": "Graphite anode active material",
+          "recycledPct": 4.0,
+          "weightKg": 1.9
+        },
+        {
+          "countryOfOrigin": "DE",
+          "name": "Aluminium pack housing",
+          "recycledPct": 60.0,
+          "weightKg": 2.2
+        }
+      ],
+      "placedOnMarketDate": "2026-09-01",
       "productGroup": "battery",
+      "productGroupData": {
+        "anodeMaterial": [
+          {
+            "casNumber": "7782-42-5",
+            "name": "Graphite",
+            "weightPct": 96.0
+          },
+          {
+            "casNumber": "9003-55-8",
+            "name": "SBR/CMC binder",
+            "weightPct": 4.0
+          }
+        ],
+        "batteryChemistry": "NMC",
+        "batteryModelId": "ACME-LMT-48V",
+        "batteryPassportNumber": "URN:ODL:BATT:09506000134352:ACME-LMT-2026-09",
+        "batteryStatus": "original",
+        "batteryType": "lmt",
+        "batteryWeightKg": 12.4,
+        "cathodeMaterial": [
+          {
+            "casNumber": "346417-97-8",
+            "name": "LiNi0.8Mn0.1Co0.1O2",
+            "weightPct": 96.0
+          },
+          {
+            "casNumber": "24937-79-9",
+            "name": "PVDF binder",
+            "weightPct": 2.0
+          },
+          {
+            "casNumber": "1333-86-4",
+            "name": "Conductive carbon black",
+            "weightPct": 2.0
+          }
+        ],
+        "co2ePerUnitKg": 86.4,
+        "componentPartNumbers": [
+          "ACME-CELL-21700-NMC",
+          "ACME-BMS-13S-V1",
+          "ACME-LMT-ENCL-48"
+        ],
+        "criticalRawMaterials": [
+          {
+            "casNumber": "7440-48-4",
+            "name": "Cobalt",
+            "weightGrams": 310.0
+          },
+          {
+            "casNumber": "7439-93-2",
+            "name": "Lithium",
+            "weightGrams": 420.0
+          },
+          {
+            "casNumber": "7782-42-5",
+            "name": "Natural graphite",
+            "weightGrams": 1800.0
+          }
+        ],
+        "cycleLifeTestCRate": 1.0,
+        "disassemblyInstructionsUrl": "https://acme.example/service/lmt-48/disassembly",
+        "dynamicPerformance": {
+          "capacityFadePct": 0.5,
+          "expectedLifetimeCycles": 1195,
+          "internalResistanceMohm": 110.4,
+          "ratedCapacityAh": 19.9,
+          "roundTripEfficiencyPct": 94.8
+        },
+        "electrolyteMaterial": [
+          {
+            "casNumber": "96-49-1",
+            "name": "Ethylene carbonate",
+            "weightPct": 38.0
+          },
+          {
+            "casNumber": "616-38-6",
+            "name": "Dimethyl carbonate",
+            "weightPct": 49.0
+          },
+          {
+            "casNumber": "21324-40-3",
+            "name": "Lithium hexafluorophosphate",
+            "weightPct": 13.0
+          }
+        ],
+        "euDeclarationOfConformity": "EU-DoC ACME-2026-LMT-0901, per Regulation (EU) 2023/1542 Art. 18",
+        "expectedLifetimeCycles": 1200,
+        "expectedLifetimeReferenceTest": "EN 50604-1:2016, 25 degC, 100% DoD",
+        "gtin": "09506000134352",
+        "hazardousSubstances": [
+          {
+            "casNumber": "21324-40-3",
+            "concentrationPct": 0.8,
+            "name": "Lithium hexafluorophosphate"
+          }
+        ],
+        "initialRoundTripEfficiencyPct": 95.0,
+        "internalCellResistanceMohm": 14.0,
+        "internalPackResistanceMohm": 110.0,
+        "manufacturingDate": "2026-08-18T00:00:00Z",
+        "manufacturingPlace": "München, DE",
+        "markingInformation": "Separate-collection symbol per Art. 13(4); capacity 20 Ah / 960 Wh; 48 V LMT",
+        "maximumVoltageV": 54.6,
+        "minimalVoltageV": 39.0,
+        "nominalCapacityAh": 20.0,
+        "nominalVoltageV": 48.0,
+        "notInUseTemperatureRange": {
+          "maxC": 45.0,
+          "minC": -10.0
+        },
+        "notInUseTemperatureReferenceTest": "EN 50604-1:2016 storage clause",
+        "originalPowerCapabilityW": 960.0,
+        "powerLimitMaxW": 1500.0,
+        "powerLimitMinW": 20.0,
+        "productGroup": "battery",
+        "ratedCapacityKwh": null,
+        "recycledContentCobaltPct": 12.0,
+        "recycledContentLeadPct": 0.0,
+        "recycledContentLithiumPct": 6.0,
+        "recycledContentNickelPct": 8.0,
+        "renewableContentPct": 14.0,
+        "roundTripEfficiencyAtHalfCycleLifePct": 91.0,
+        "safetyMeasures": "Do not open the pack. Replace it through an authorised dealer. Keep it away from heat above 60 degC.",
+        "sparePartsContacts": "spares@acme.example",
+        "stateOfHealth": {
+          "parameterSet": "stationaryOrLmt",
+          "remainingCapacityPct": 99.5,
+          "remainingPowerCapabilityPct": 99.1,
+          "selfDischargeRatePctPerMonth": 2.0
+        },
+        "stateOfHealthPct": null,
+        "testReportResults": "EN 50604-1:2016 pass; UN 38.3 pass; report ACME-TR-2026-0815",
+        "usableExtinguishingAgent": "Water; cool a burning pack with large volumes of water",
+        "usageHistory": {
+          "chargeDischargeCycles": 4
+        },
+        "wasteBatteryInformation": "Return the battery to a bicycle retailer or a municipal collection point. Do not place it in household waste."
+      },
+      "productName": "Acme LMT 48V 20Ah battery pack",
       "publishedAt": "2026-09-01T09:05:00Z",
-      "schemaVersion": "2.7.0",
-      "status": "active"
+      "qrCodeUrl": "https://dpp.acme.example/01/09506000134352/10/ACME-LMT-2026-09/21/7e4a9c3d2f1e8b6a5d40",
+      "repairabilityScore": null,
+      "retentionLocked": true,
+      "retentionUntil": "2036-08-29T09:05:00Z",
+      "schemaVersion": "2.6.0",
+      "status": "active",
+      "updatedAt": "2026-09-01T09:05:00Z",
+      "version": 1
     }
   },
   "manifest": {
     "contentHashes": {
-      "auditEntries": "0ec08fb959a095356529e02031c72e3936c4767af9db6eb8b8b004390514d591",
-      "fullView": "b53ff594240922c190a6d957f4725b0e2353711426811b463f5e8916c3b39678",
-      "publicView": "53bdb718a8598f84b9a107774e05ad9495e1575237752a3d5cc2e12eeaa6d572"
+      "auditEntries": "f88a9f18e40918793c0888102ae898ac5ab35078a017fc1848ef4bde95ef67b7",
+      "fullView": "70f5a9779744ad58b77cebed129ecec4c24d7c5bbf3b65be4b3c61c4be5f0e80",
+      "publicView": "7ada532408d7c20c385804ca00d0a6a969f1448c796775c14657d7932ecf392a"
     },
     "coreVersion": "0.20.0",
     "createdAt": "2026-09-25T12:00:00Z",
@@ -158,37 +543,116 @@
     "nodeVersion": "0.14.0",
     "passportId": "0199a3c2-7b10-7e4a-9c3d-2f1e8b6a5d40"
   },
-  "manifestJws": "eyJhbGciOiJFZERTQSIsImtpZCI6ImZlODEyYzEyZjNhYjRjZTZhYzVkYjY5YWMzNTJmOTA2Y2IxYjExZWY0M2ZiMzNlMjUyZWY3ZmY1NTIyNjM4ODkifQ.eyJjb250ZW50SGFzaGVzIjp7ImF1ZGl0RW50cmllcyI6IjBlYzA4ZmI5NTlhMDk1MzU2NTI5ZTAyMDMxYzcyZTM5MzZjNDc2N2FmOWRiNmViOGI4YjAwNDM5MDUxNGQ1OTEiLCJmdWxsVmlldyI6ImI1M2ZmNTk0MjQwOTIyYzE5MGE2ZDk1N2Y0NzI1YjBlMjM1MzcxMTQyNjgxMWI0NjNmNWU4OTE2YzNiMzk2NzgiLCJwdWJsaWNWaWV3IjoiNTNiZGI3MThhODU5OGY4NGI5YTEwNzc3NGUwNWFkOTQ5NWUxNTc1MjM3NzUyYTNkNWNjMmUxMmVlYWE2ZDU3MiJ9LCJjb3JlVmVyc2lvbiI6IjAuMjAuMCIsImNyZWF0ZWRBdCI6IjIwMjYtMDktMjVUMTI6MDA6MDBaIiwiZm9ybWF0VmVyc2lvbiI6IjEiLCJpc3N1ZXJEaWQiOiJkaWQ6d2ViOm5vZGUuYWNtZS5leGFtcGxlIiwibm9kZVZlcnNpb24iOiIwLjE0LjAiLCJwYXNzcG9ydElkIjoiMDE5OWEzYzItN2IxMC03ZTRhLTljM2QtMmYxZThiNmE1ZDQwIn0.iy3u4scbBPA_qAcFIgZvUtXxuPQdKKQ8nzpDpqBBHoWb2kzH7aGK99jDc-rKuab1JsULKKob_LCKgK7Ed0WkCQ",
+  "manifestJws": "eyJhbGciOiJFZERTQSIsImtpZCI6ImZlODEyYzEyZjNhYjRjZTZhYzVkYjY5YWMzNTJmOTA2Y2IxYjExZWY0M2ZiMzNlMjUyZWY3ZmY1NTIyNjM4ODkifQ.eyJjb250ZW50SGFzaGVzIjp7ImF1ZGl0RW50cmllcyI6ImY4OGE5ZjE4ZTQwOTE4NzkzYzA4ODgxMDJhZTg5OGFjNWFiMzUwNzhhMDE3ZmMxODQ4ZWY0YmRlOTVlZjY3YjciLCJmdWxsVmlldyI6IjcwZjVhOTc3OTc0NGFkNThiNzdjZWJlZDEyOWVjZWM0YzI0ZDdjNWJiZjNiNjViZTRiM2M2MWM0YmU1ZjBlODAiLCJwdWJsaWNWaWV3IjoiN2FkYTUzMjQwOGQ3YzIwYzM4NTgwNGNhMDBkMGE2YTk2OWYxNDQ4Yzc5Njc3NWMxNDY1N2Q3OTMyZWNmMzkyYSJ9LCJjb3JlVmVyc2lvbiI6IjAuMjAuMCIsImNyZWF0ZWRBdCI6IjIwMjYtMDktMjVUMTI6MDA6MDBaIiwiZm9ybWF0VmVyc2lvbiI6IjEiLCJpc3N1ZXJEaWQiOiJkaWQ6d2ViOm5vZGUuYWNtZS5leGFtcGxlIiwibm9kZVZlcnNpb24iOiIwLjE0LjAiLCJwYXNzcG9ydElkIjoiMDE5OWEzYzItN2IxMC03ZTRhLTljM2QtMmYxZThiNmE1ZDQwIn0.LowiXEfwTwp_l3t1Leui0lyq8gUKTPy41xRpSKy0wWfdiRso6Iri26iU_zaEQSHSQNLJZrrEXUrnvQbPbIr_CQ",
   "publicView": {
-    "jws": "eyJhbGciOiJFZERTQSIsImtpZCI6ImZlODEyYzEyZjNhYjRjZTZhYzVkYjY5YWMzNTJmOTA2Y2IxYjExZWY0M2ZiMzNlMjUyZWY3ZmY1NTIyNjM4ODkifQ.eyJjb250ZW50Ijp7IkIiOjIsImIiOjEsImJhdHRlcnlDaGVtaXN0cnkiOiJOTUMiLCJiYXR0ZXJ5TW9kZWxJZCI6IkFDTUUtTE1ULTQ4ViIsImJhdHRlcnlXZWlnaHRLZyI6MTIuNCwiaHVnZU51bWJlciI6MWUrMjEsIm5lZ2F0aXZlWmVyb1NhZmUiOi0wLjI1LCJyYXRlZENhcGFjaXR5QWgiOjIwLCJ0aW55TnVtYmVyIjo1ZS03LCLDiW1pc3Npb24iOiIwLjVlLTMgdGVzdCIsIsOpIjozLCLigqwiOjQsIvCfmIAiOjUsIu-8oSI6Nn0sImlkIjoiMDE5OWEzYzItN2IxMC03ZTRhLTljM2QtMmYxZThiNmE1ZDQwIiwiaXNzdWVyIjoiZGlkOndlYjpub2RlLmFjbWUuZXhhbXBsZSIsIm9wZXJhdG9yIjp7ImNpdHkiOiJNw7xuY2hlbiIsImNvdW50cnkiOiJERSIsIm5hbWUiOiJBY21lIFplbGxlbiBHbWJIIn0sInByb2R1Y3RHcm91cCI6ImJhdHRlcnkiLCJwdWJsaXNoZWRBdCI6IjIwMjYtMDktMDFUMDk6MDU6MDBaIiwic2NoZW1hVmVyc2lvbiI6IjIuNy4wIiwic3RhdHVzIjoiYWN0aXZlIn0.TewhsuBa83tHnqMcTgSUZf7CtbzAVvHXVRVOJYFkjJEgzOvMa6O7NGiIWQdwDFtVh-wWvztRkUTprTGV6PqsAQ",
+    "jws": "eyJhbGciOiJFZERTQSIsImtpZCI6ImZlODEyYzEyZjNhYjRjZTZhYzVkYjY5YWMzNTJmOTA2Y2IxYjExZWY0M2ZiMzNlMjUyZWY3ZmY1NTIyNjM4ODkifQ.eyJjbzJlUGVyVW5pdCI6bnVsbCwiY29tbW9kaXR5Q29kZSI6Ijg1MDc2MDAwIiwiY3JlYXRlZEF0IjoiMjAyNi0wOS0wMVQwOTowMDowMFoiLCJpZCI6IjAxOTlhM2MyLTdiMTAtN2U0YS05YzNkLTJmMWU4YjZhNWQ0MCIsIm1hbnVmYWN0dXJlciI6eyJhZGRyZXNzIjoiTXVzdGVyc3RyYXNzZSAxLCA4MDMzMSBNw7xuY2hlbiwgREUiLCJjb3VudHJ5IjpudWxsLCJkaWRXZWJVcmwiOiJodHRwczovL25vZGUuYWNtZS5leGFtcGxlLy53ZWxsLWtub3duL2RpZC5qc29uIiwibmFtZSI6IkFjbWUgWmVsbGVuIEdtYkgifSwibWF0ZXJpYWxzIjpbeyJjb3VudHJ5T2ZPcmlnaW4iOiJERSIsIm5hbWUiOiJOTUMgODExIGNhdGhvZGUgYWN0aXZlIG1hdGVyaWFsIiwicmVjeWNsZWRQY3QiOjgsIndlaWdodEtnIjozLjF9LHsiY291bnRyeU9mT3JpZ2luIjoiREUiLCJuYW1lIjoiR3JhcGhpdGUgYW5vZGUgYWN0aXZlIG1hdGVyaWFsIiwicmVjeWNsZWRQY3QiOjQsIndlaWdodEtnIjoxLjl9LHsiY291bnRyeU9mT3JpZ2luIjoiREUiLCJuYW1lIjoiQWx1bWluaXVtIHBhY2sgaG91c2luZyIsInJlY3ljbGVkUGN0Ijo2MCwid2VpZ2h0S2ciOjIuMn1dLCJwbGFjZWRPbk1hcmtldERhdGUiOiIyMDI2LTA5LTAxIiwicHJvZHVjdEdyb3VwIjoiYmF0dGVyeSIsInByb2R1Y3RHcm91cERhdGEiOnsiYmF0dGVyeUNoZW1pc3RyeSI6Ik5NQyIsImJhdHRlcnlNb2RlbElkIjoiQUNNRS1MTVQtNDhWIiwiYmF0dGVyeVBhc3Nwb3J0TnVtYmVyIjoiVVJOOk9ETDpCQVRUOjA5NTA2MDAwMTM0MzUyOkFDTUUtTE1ULTIwMjYtMDkiLCJiYXR0ZXJ5VHlwZSI6ImxtdCIsImJhdHRlcnlXZWlnaHRLZyI6MTIuNCwiY28yZVBlclVuaXRLZyI6ODYuNCwiY3JpdGljYWxSYXdNYXRlcmlhbHMiOlt7ImNhc051bWJlciI6Ijc0NDAtNDgtNCIsIm5hbWUiOiJDb2JhbHQiLCJ3ZWlnaHRHcmFtcyI6MzEwfSx7ImNhc051bWJlciI6Ijc0MzktOTMtMiIsIm5hbWUiOiJMaXRoaXVtIiwid2VpZ2h0R3JhbXMiOjQyMH0seyJjYXNOdW1iZXIiOiI3NzgyLTQyLTUiLCJuYW1lIjoiTmF0dXJhbCBncmFwaGl0ZSIsIndlaWdodEdyYW1zIjoxODAwfV0sImN5Y2xlTGlmZVRlc3RDUmF0ZSI6MSwiZXVEZWNsYXJhdGlvbk9mQ29uZm9ybWl0eSI6IkVVLURvQyBBQ01FLTIwMjYtTE1ULTA5MDEsIHBlciBSZWd1bGF0aW9uIChFVSkgMjAyMy8xNTQyIEFydC4gMTgiLCJleHBlY3RlZExpZmV0aW1lQ3ljbGVzIjoxMjAwLCJleHBlY3RlZExpZmV0aW1lUmVmZXJlbmNlVGVzdCI6IkVOIDUwNjA0LTE6MjAxNiwgMjUgZGVnQywgMTAwJSBEb0QiLCJndGluIjoiMDk1MDYwMDAxMzQzNTIiLCJoYXphcmRvdXNTdWJzdGFuY2VzIjpbeyJjYXNOdW1iZXIiOiIyMTMyNC00MC0zIiwiY29uY2VudHJhdGlvblBjdCI6MC44LCJuYW1lIjoiTGl0aGl1bSBoZXhhZmx1b3JvcGhvc3BoYXRlIn1dLCJpbml0aWFsUm91bmRUcmlwRWZmaWNpZW5jeVBjdCI6OTUsImludGVybmFsQ2VsbFJlc2lzdGFuY2VNb2htIjoxNCwiaW50ZXJuYWxQYWNrUmVzaXN0YW5jZU1vaG0iOjExMCwibWFudWZhY3R1cmluZ0RhdGUiOiIyMDI2LTA4LTE4VDAwOjAwOjAwWiIsIm1hbnVmYWN0dXJpbmdQbGFjZSI6Ik3DvG5jaGVuLCBERSIsIm1hcmtpbmdJbmZvcm1hdGlvbiI6IlNlcGFyYXRlLWNvbGxlY3Rpb24gc3ltYm9sIHBlciBBcnQuIDEzKDQpOyBjYXBhY2l0eSAyMCBBaCAvIDk2MCBXaDsgNDggViBMTVQiLCJtYXhpbXVtVm9sdGFnZVYiOjU0LjYsIm1pbmltYWxWb2x0YWdlViI6MzksIm5vbWluYWxDYXBhY2l0eUFoIjoyMCwibm9taW5hbFZvbHRhZ2VWIjo0OCwibm90SW5Vc2VUZW1wZXJhdHVyZVJhbmdlIjp7Im1heEMiOjQ1LCJtaW5DIjotMTB9LCJub3RJblVzZVRlbXBlcmF0dXJlUmVmZXJlbmNlVGVzdCI6IkVOIDUwNjA0LTE6MjAxNiBzdG9yYWdlIGNsYXVzZSIsIm9yaWdpbmFsUG93ZXJDYXBhYmlsaXR5VyI6OTYwLCJwb3dlckxpbWl0TWF4VyI6MTUwMCwicG93ZXJMaW1pdE1pblciOjIwLCJwcm9kdWN0R3JvdXAiOiJiYXR0ZXJ5IiwicmF0ZWRDYXBhY2l0eUt3aCI6bnVsbCwicmVjeWNsZWRDb250ZW50Q29iYWx0UGN0IjoxMiwicmVjeWNsZWRDb250ZW50TGVhZFBjdCI6MCwicmVjeWNsZWRDb250ZW50TGl0aGl1bVBjdCI6NiwicmVjeWNsZWRDb250ZW50Tmlja2VsUGN0Ijo4LCJyZW5ld2FibGVDb250ZW50UGN0IjoxNCwicm91bmRUcmlwRWZmaWNpZW5jeUF0SGFsZkN5Y2xlTGlmZVBjdCI6OTEsInVzYWJsZUV4dGluZ3Vpc2hpbmdBZ2VudCI6IldhdGVyOyBjb29sIGEgYnVybmluZyBwYWNrIHdpdGggbGFyZ2Ugdm9sdW1lcyBvZiB3YXRlciIsIndhc3RlQmF0dGVyeUluZm9ybWF0aW9uIjoiUmV0dXJuIHRoZSBiYXR0ZXJ5IHRvIGEgYmljeWNsZSByZXRhaWxlciBvciBhIG11bmljaXBhbCBjb2xsZWN0aW9uIHBvaW50LiBEbyBub3QgcGxhY2UgaXQgaW4gaG91c2Vob2xkIHdhc3RlLiJ9LCJwcm9kdWN0TmFtZSI6IkFjbWUgTE1UIDQ4ViAyMEFoIGJhdHRlcnkgcGFjayIsInB1Ymxpc2hlZEF0IjoiMjAyNi0wOS0wMVQwOTowNTowMFoiLCJxckNvZGVVcmwiOiJodHRwczovL2RwcC5hY21lLmV4YW1wbGUvMDEvMDk1MDYwMDAxMzQzNTIvMTAvQUNNRS1MTVQtMjAyNi0wOS8yMS83ZTRhOWMzZDJmMWU4YjZhNWQ0MCIsInJlcGFpcmFiaWxpdHlTY29yZSI6bnVsbCwicmV0ZW50aW9uVW50aWwiOiIyMDM2LTA4LTI5VDA5OjA1OjAwWiIsInNjaGVtYVZlcnNpb24iOiIyLjYuMCIsInN0YXR1cyI6ImFjdGl2ZSIsInVwZGF0ZWRBdCI6IjIwMjYtMDktMDFUMDk6MDU6MDBaIiwidmVyc2lvbiI6MX0.OnjeF7qUrlZOKc-Xx8u-ThMayslJBs7HPAmpZBFKvyJpivIqOrN5lTCW15PsoyBeSOpjmRq3Mm_UC99B-Ya-Dg",
     "payload": {
-      "content": {
-        "B": 2,
-        "b": 1,
-        "batteryChemistry": "NMC",
-        "batteryModelId": "ACME-LMT-48V",
-        "batteryWeightKg": 12.4,
-        "hugeNumber": 1e+21,
-        "negativeZeroSafe": -0.25,
-        "ratedCapacityAh": 20,
-        "tinyNumber": 5e-7,
-        "Émission": "0.5e-3 test",
-        "é": 3,
-        "€": 4,
-        "😀": 5,
-        "Ａ": 6
-      },
+      "co2ePerUnit": null,
+      "commodityCode": "85076000",
+      "createdAt": "2026-09-01T09:00:00Z",
       "id": "0199a3c2-7b10-7e4a-9c3d-2f1e8b6a5d40",
-      "issuer": "did:web:node.acme.example",
-      "operator": {
-        "city": "München",
-        "country": "DE",
+      "manufacturer": {
+        "address": "Musterstrasse 1, 80331 München, DE",
+        "country": null,
+        "didWebUrl": "https://node.acme.example/.well-known/did.json",
         "name": "Acme Zellen GmbH"
       },
+      "materials": [
+        {
+          "countryOfOrigin": "DE",
+          "name": "NMC 811 cathode active material",
+          "recycledPct": 8.0,
+          "weightKg": 3.1
+        },
+        {
+          "countryOfOrigin": "DE",
+          "name": "Graphite anode active material",
+          "recycledPct": 4.0,
+          "weightKg": 1.9
+        },
+        {
+          "countryOfOrigin": "DE",
+          "name": "Aluminium pack housing",
+          "recycledPct": 60.0,
+          "weightKg": 2.2
+        }
+      ],
+      "placedOnMarketDate": "2026-09-01",
       "productGroup": "battery",
+      "productGroupData": {
+        "batteryChemistry": "NMC",
+        "batteryModelId": "ACME-LMT-48V",
+        "batteryPassportNumber": "URN:ODL:BATT:09506000134352:ACME-LMT-2026-09",
+        "batteryType": "lmt",
+        "batteryWeightKg": 12.4,
+        "co2ePerUnitKg": 86.4,
+        "criticalRawMaterials": [
+          {
+            "casNumber": "7440-48-4",
+            "name": "Cobalt",
+            "weightGrams": 310.0
+          },
+          {
+            "casNumber": "7439-93-2",
+            "name": "Lithium",
+            "weightGrams": 420.0
+          },
+          {
+            "casNumber": "7782-42-5",
+            "name": "Natural graphite",
+            "weightGrams": 1800.0
+          }
+        ],
+        "cycleLifeTestCRate": 1.0,
+        "euDeclarationOfConformity": "EU-DoC ACME-2026-LMT-0901, per Regulation (EU) 2023/1542 Art. 18",
+        "expectedLifetimeCycles": 1200,
+        "expectedLifetimeReferenceTest": "EN 50604-1:2016, 25 degC, 100% DoD",
+        "gtin": "09506000134352",
+        "hazardousSubstances": [
+          {
+            "casNumber": "21324-40-3",
+            "concentrationPct": 0.8,
+            "name": "Lithium hexafluorophosphate"
+          }
+        ],
+        "initialRoundTripEfficiencyPct": 95.0,
+        "internalCellResistanceMohm": 14.0,
+        "internalPackResistanceMohm": 110.0,
+        "manufacturingDate": "2026-08-18T00:00:00Z",
+        "manufacturingPlace": "München, DE",
+        "markingInformation": "Separate-collection symbol per Art. 13(4); capacity 20 Ah / 960 Wh; 48 V LMT",
+        "maximumVoltageV": 54.6,
+        "minimalVoltageV": 39.0,
+        "nominalCapacityAh": 20.0,
+        "nominalVoltageV": 48.0,
+        "notInUseTemperatureRange": {
+          "maxC": 45.0,
+          "minC": -10.0
+        },
+        "notInUseTemperatureReferenceTest": "EN 50604-1:2016 storage clause",
+        "originalPowerCapabilityW": 960.0,
+        "powerLimitMaxW": 1500.0,
+        "powerLimitMinW": 20.0,
+        "productGroup": "battery",
+        "ratedCapacityKwh": null,
+        "recycledContentCobaltPct": 12.0,
+        "recycledContentLeadPct": 0.0,
+        "recycledContentLithiumPct": 6.0,
+        "recycledContentNickelPct": 8.0,
+        "renewableContentPct": 14.0,
+        "roundTripEfficiencyAtHalfCycleLifePct": 91.0,
+        "usableExtinguishingAgent": "Water; cool a burning pack with large volumes of water",
+        "wasteBatteryInformation": "Return the battery to a bicycle retailer or a municipal collection point. Do not place it in household waste."
+      },
+      "productName": "Acme LMT 48V 20Ah battery pack",
       "publishedAt": "2026-09-01T09:05:00Z",
-      "schemaVersion": "2.7.0",
-      "status": "active"
+      "qrCodeUrl": "https://dpp.acme.example/01/09506000134352/10/ACME-LMT-2026-09/21/7e4a9c3d2f1e8b6a5d40",
+      "repairabilityScore": null,
+      "retentionUntil": "2036-08-29T09:05:00Z",
+      "schemaVersion": "2.6.0",
+      "status": "active",
+      "updatedAt": "2026-09-01T09:05:00Z",
+      "version": 1
     }
   }
 }
