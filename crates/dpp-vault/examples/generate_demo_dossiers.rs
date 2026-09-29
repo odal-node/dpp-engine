@@ -21,7 +21,9 @@
 //! The manifest records `nodeVersion` and `coreVersion` the way the real
 //! assembler does, so a version bump changes the manifest and its signature.
 //!
-//! Everything in it is fictional: the operators, DIDs and `.example` hosts.
+//! Everything in it is fictional: the operators, DIDs and `.example` hosts. The
+//! seeds are published on purpose, so the keys they make are demo keys and
+//! nothing they sign is trusted anywhere. Never load one into a real key store.
 //!
 //! `tests/demo_dossiers_verify.rs` holds the committed files to both the
 //! verdicts and the README's table.
