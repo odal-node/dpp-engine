@@ -290,7 +290,7 @@ pub async fn sign_disclosure_views(
 ///
 /// # Why every retired state still serves
 ///
-/// ESPR Art. 10(4)(i): the passport is to "remain available" for a period
+/// ESPR Art. 9(2)(i): the passport is to "remain available" for a period
 /// corresponding to "at least the expected lifetime of a specific product".
 /// Retiring a *record* does not retire the products already in the field, and it
 /// is those products that carry the data carrier a recycler or authority scans.

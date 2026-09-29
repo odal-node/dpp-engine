@@ -22,7 +22,7 @@
 //! rewriting it is precisely what `publicJwsSignature` exists to make
 //! detectable. What changed is the comparison. The alternative was never the
 //! redirect, which was never built; it was the `404`, which made a retained
-//! record indistinguishable from one that never existed. ESPR Art. 10(4)(i)
+//! record indistinguishable from one that never existed. ESPR Art. 9(2)(i)
 //! keeps the record available for the product's expected lifetime, and a reader
 //! who reaches a retired passport is better served by the signed document than
 //! by nothing. The live status stays on the authenticated route, which reads
