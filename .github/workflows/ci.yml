@@ -738,3 +738,30 @@ jobs:
             exit 1
           fi
           echo "${{ matrix.image }}: .dep-v0 carries ${bytes} bytes of compressed dependency graph."
+
+      # The licences the image must carry: the engine's own, and the notices of
+      # every third-party crate linked into the binary, which most of those
+      # licences require to travel with it. Lose either COPY line in the runtime
+      # stage and the image still builds, runs and pushes. This is what fails.
+      #
+      # The runtime check is a crate both binaries link and that cannot leave
+      # without the service going with it, so a notice generated for the wrong
+      # package, or from an empty graph, does not pass as one that is merely
+      # short.
+      - name: The image carries its licences
+        if: steps.scope.outputs.build == 'true'
+        run: |
+          set -euo pipefail
+          container="$(docker create "${{ matrix.image }}:ci")"
+          trap 'docker rm -f "$container" >/dev/null 2>&1 || true' EXIT
+          docker cp "$container:/usr/share/licenses/odal-node" ./licenses
+          if ! grep -q '^Business Source License 1.1' ./licenses/LICENSE; then
+            echo "::error::${{ matrix.image }} does not carry the engine's LICENSE at /usr/share/licenses/odal-node/LICENSE."
+            exit 1
+          fi
+          notices=./licenses/THIRD-PARTY-NOTICES
+          if [ ! -s "$notices" ] || ! grep -qE '^  tokio [0-9]' "$notices"; then
+            echo "::error::${{ matrix.image }} carries no third-party notice for the crates in its binary (expected tokio among them at /usr/share/licenses/odal-node/THIRD-PARTY-NOTICES)."
+            exit 1
+          fi
+          echo "${{ matrix.image }}: LICENSE and a $(grep -c '^Used by:' "$notices")-licence third-party notice are in the image."

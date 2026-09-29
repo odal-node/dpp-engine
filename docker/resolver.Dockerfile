@@ -31,6 +31,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # base and none of the crates. `cargo auditable` embeds the Cargo.lock graph
 # into the binary so scanners and `cargo audit bin` can recover it.
 RUN cargo install cargo-auditable --locked
+# See node.Dockerfile: the third-party notices shipped beside the binary.
+RUN cargo install cargo-about --locked --version 0.9.2 --features cli
 WORKDIR /build
 ENV RUSTC_WRAPPER=""
 
@@ -44,6 +46,10 @@ RUN rm -f .cargo/config.toml
 # `--locked`: the graph this embeds is the SBOM's crate list, so it must be the
 # committed Cargo.lock — never one cargo quietly re-resolved in the builder.
 RUN cargo auditable build --locked --release -p dpp-resolver
+# Same package and lockfile as the build above; see node.Dockerfile for the flags.
+RUN cargo about generate --frozen --fail -c docker/about.toml \
+    -m crates/dpp-resolver/Cargo.toml \
+    -o /build/THIRD-PARTY-NOTICES docker/third-party-notices.hbs
 
 # ── local: patch dpp-* to the sibling ../dpp-core source ─────────────────────────
 FROM builder-base AS builder-local
@@ -56,6 +62,9 @@ COPY dpp-engine/ dpp-engine/
 COPY dpp-engine/.cargo/config.toml.example /build/dpp-engine/.cargo/config.toml
 WORKDIR /build/dpp-engine
 RUN cargo auditable build --release -p dpp-resolver
+RUN cargo about generate --offline --fail -c docker/about.toml \
+    -m crates/dpp-resolver/Cargo.toml \
+    -o /build/THIRD-PARTY-NOTICES docker/third-party-notices.hbs
 
 # Select the active builder from BUILD_MODE; only the chosen stage is built.
 FROM builder-${BUILD_MODE} AS builder
@@ -83,6 +92,10 @@ RUN groupadd --system --gid 1000 odal \
     && useradd --system --uid 1000 --gid odal --no-create-home --shell /usr/sbin/nologin odal
 
 COPY --from=builder --chmod=755 /build/dpp-engine/target/release/dpp-resolver /usr/local/bin/dpp-resolver
+
+# See node.Dockerfile. CI's image job fails without either file.
+COPY dpp-engine/LICENSE /usr/share/licenses/odal-node/LICENSE
+COPY --from=builder /build/THIRD-PARTY-NOTICES /usr/share/licenses/odal-node/THIRD-PARTY-NOTICES
 
 USER odal
 

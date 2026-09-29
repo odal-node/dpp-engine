@@ -5,7 +5,7 @@
 
 ---
 
-## 0. What "production" means today — three tiers, two blockers (read first)
+## 0. What "production" means today — three tiers, one blocker (read first)
 
 | Tier | Profile | What it honestly claims | Available |
 |---|---|---|---|
@@ -13,11 +13,11 @@
 | **T2 Sealed-grade** | `NODE_PROFILE=production` | Everything above + real qualified seals from a hosted QTSP | After a QTSP credential exists — the adapter is wired, the account is not |
 | **T3 Registry-grade** | `NODE_PROFILE=production` | + real EU registry registration | After the Commission publishes its registry spec |
 
-**Blocker A — deliberate:** `NODE_PROFILE=production` **refuses to boot** while seal/registry resolve to Ghost (the honesty invariant working as designed). So every deployment today is **T1 by definition**: run the default profile, point monitoring at `/health`, and make no sealed/registered claims. Do not weaken the guard to "get to production" — the guard *is* the product's credibility.
+**The blocker — deliberate:** `NODE_PROFILE=production` **refuses to boot** while seal/registry resolve to Ghost (the honesty invariant working as designed). So every deployment today is **T1 by definition**: run the default profile, point monitoring at `/health`, and make no sealed/registered claims. Do not weaken the guard to "get to production" — the guard *is* the product's credibility.
 
 **`NODE_PROFILE=sandbox`** is the third profile, and it is a property of the *deployment*, not a tier a production node may quietly carry. It is a full node in every respect except that the authorities behind it are test ones: ghosts on required ports are a hard boot failure exactly as in production, but `Sandbox` tiers are accepted, so the environment can be exercised end to end without a production credential. Run it as its own environment — it is the closest rehearsal of production available, and keeping the two profiles apart is what stops a test certificate ever sealing a passport that claims to be real. A `production` node refuses a sandbox tier for that reason.
 
-**Blocker B — operational:** engine `main` now pins **core 0.4.0, which is unpublished** (0.3.0 is the latest on crates.io). The compose `pull` and plain `--build` modes resolve crates.io and **will fail**. Until 0.4.0 is published: build with the local-core overlay (`--build` + `-f docker/docker-compose.local.yml`, i.e. `just up-local`) and record the image digest you deployed. **Before the first external operator deploy: publish core 0.4.0** — your own release rule (CI/release = crates.io) exists precisely so a deploy is reproducible from public sources.
+**Images — how a deploy stays reproducible:** every dpp-core version the engine pins is published on crates.io, so both compose modes build from public sources. `docker compose up -d` runs the images `release.yml` publishes for each release tag (`ghcr.io/odal-node/dpp-node`, `ghcr.io/odal-node/dpp-resolver`); plain `--build` compiles the same `Dockerfile` from the checked-out source. Pin `ODAL_VERSION` to a release number **without** the git tag's leading `v` (tag `v0.14.0` is image `0.14.0`), never `latest`, and record the image digest you deployed. The local-core overlay (`--build` + `-f docker/docker-compose.local.yml`, i.e. `just up-local`) is for developing against an unreleased core only, never for an operator deploy.
 
 ---
 
@@ -82,7 +82,7 @@ Auto-HTTPS, zero certificate ops. (Traefik equivalent if preferred; Caddy is les
 
 `chmod 600 .env`; it is a secret.
 
-**2.5 First boot.** `docker compose up -d` (with the local-core overlay until Blocker B clears) → postgres init runs `bootstrap.sql` (creates `odal_app`) → node applies `ops/pg` migrations via `DATABASE_MIGRATE_URL` → healthchecks green.
+**2.5 First boot.** `docker compose up -d` (with `ODAL_VERSION` pinned; see §0) → postgres init runs `bootstrap.sql` (creates `odal_app`) → node applies `ops/pg` migrations via `DATABASE_MIGRATE_URL` → healthchecks green.
 
 **2.6 Go-live smoke (the gate — do not skip).** (1) `curl` the **authenticated** `/vault/api/v1/node/state` with an API key and confirm expected `profile`, `trustMode` per port, and `rulesetVersion` — the public `/health` answers `{"status":"ok"}` and nothing else, so a probe pointed there passes without checking anything; (2) create → publish a test passport via API key; (3) resolve it: JSON *and* HTML on `dpp.<operator-domain>`, signature verifies (fail-closed path); (4) scan the QR from a phone on mobile data (not the VM's network); (5) tamper test: flip a field in `psql` → resolver returns 409; (6) `verify_chain` on the audit trail returns intact; (7) kill the node mid-publish, restart → outbox row survives (the chaos case, once per deployment). Record all seven in the operator's onboarding record — this doubles as your SLA evidence baseline.
 
