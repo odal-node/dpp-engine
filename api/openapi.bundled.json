@@ -9120,7 +9120,7 @@
       },
       "PassportScopeReport": {
         "type": "object",
-        "description": "Whether Reg. (EU) 2023/1542 Art. 77(1) requires a battery passport for this\nrecord at all.\n\n> \"From 18 February 2027 each LMT battery, each industrial battery with a\n> capacity greater than 2 kWh and each electric vehicle battery placed on the\n> market or put into service shall have an electronic record ('battery\n> passport').\"\n\nThe Regulation defines five battery categories; this article reaches three.\nPortable and SLI batteries bear no passport obligation, so a passport for one\nis the operator's own artefact rather than a discharged duty.\n\nReported **beside** the gates, never instead of them. This node applies the\ncategory content gate whatever this says, and for a passport outside the\narticle that makes it stricter than the law requires — which the `note` admits\nrather than hides.\n\nTwo details the article turns on: the threshold is **energy** (kWh), not the\nampere-hour \"rated capacity\" defined for the purposes of an annex; and unlike\nArts. 7 and 8 it carries no `rechargeable` qualifier.\n",
+        "description": "Whether Reg. (EU) 2023/1542 Art. 77(1) requires a battery passport for this\nrecord at all.\n\n> \"From 18 February 2027 each LMT battery, each industrial battery with a\n> capacity greater than 2 kWh and each electric vehicle battery placed on the\n> market or put into service shall have an electronic record ('battery\n> passport').\"\n\nThe Regulation defines five battery categories; this article reaches three.\nPortable and SLI batteries bear no passport obligation, so a passport for one\nis the operator's own artefact rather than a discharged duty.\n\nReported **beside** the gates, never instead of them. The category content\ngate follows the same answer: a record the article does not reach\n(`notCovered`, `belowThreshold`, `notYetBinding`) is not held to it, and one\nit does or may reach (`required`, `capacityUnknown`) is.\n\nTwo details the article turns on: the threshold is **energy** (kWh), not the\nampere-hour \"rated capacity\" defined for the purposes of an annex; and unlike\nArts. 7 and 8 it carries no `rechargeable` qualifier.\n",
         "required": [
           "status"
         ],
@@ -9140,7 +9140,7 @@
           },
           "note": {
             "type": "string",
-            "description": "Present when the answer needs justifying — an industrial battery that\ndeclares no `ratedCapacityKwh`, a record the article does not reach, or a\npassport this node nonetheless gates.\n"
+            "description": "Present when the answer needs justifying — an industrial battery that\ndeclares no `ratedCapacityKwh`, or a record the article does not reach and\nthe content gate therefore does not apply to.\n"
           }
         }
       },
