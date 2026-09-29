@@ -300,10 +300,10 @@ pub async fn sign_disclosure_views(
 /// - `Deactivated` is end of life for the **product**, not the passport. Core's
 ///   status doc says the record "is retained (the DPP outlives the product,
 ///   EN 18221)", and this node enforces that on the write side by refusing to
-///   archive before `retention_until`.
+///   retire before `retention_until`.
 /// - `Superseded` replaces the record, not the goods. Products made under the
 ///   old specification are still out there with carriers resolving to it.
-/// - `Archived` is only reachable *after* `retention_until`, so it is the one
+/// - `Retired` is only reachable *after* `retention_until`, so it is the one
 ///   state where the obligation has genuinely lapsed. It serves anyway: nothing
 ///   requires a node to stop, the data is already public and already signed, and
 ///   withdrawing it buys nothing while breaking every carrier still in

@@ -2,7 +2,7 @@
 //!
 //! 1. `dpp-core` domain validation (schema version, product name, etc.)
 //! 2. `dpp-engine` persistence via `dpp-dal` (PostgreSQL create + read)
-//! 3. State machine transitions (Draft → Published → Suspended → Published → Archived)
+//! 3. State machine transitions (Draft → Published → Suspended → Published → Retired)
 //! 4. JWS signing via `IdentityPort` (mock)
 //! 5. NATS event bus (NoOp — verified indirectly by publish success)
 //! 6. Retention lock enforcement after first publish
@@ -24,11 +24,11 @@ mod helpers;
 
 use helpers::{TestClient, make_jwt, seed_complete_operator, start_postgres, start_vault};
 
-/// Full lifecycle: create → validate → publish → suspend → re-publish → archive.
+/// Full lifecycle: create → validate → publish → suspend → re-publish → retire.
 /// Verifies that dpp-core domain invariants (state machine, retention lock,
 /// validation) are enforced through the dpp-engine HTTP API.
 #[tokio::test(flavor = "multi_thread")]
-async fn full_lifecycle_draft_to_archived() {
+async fn full_lifecycle_draft_to_retired() {
     let pg = start_postgres().await;
     let base_url = start_vault(pg.dal.clone()).await;
     seed_complete_operator(&pg.dal).await;
@@ -147,8 +147,8 @@ async fn full_lifecycle_draft_to_archived() {
         "publishedAt must not change on re-publish"
     );
 
-    // ── 6. Archive is blocked by the ESPR retention guard ───────────
-    // A retention-locked, freshly-published passport cannot be archived until
+    // ── 6. Retiring is blocked by the ESPR retention guard ──────────
+    // A retention-locked, freshly-published passport cannot be retired until
     // its retention period elapses; the guard must reject with 422 (a client
     // error, not a 500).
     let resp = client
@@ -157,7 +157,7 @@ async fn full_lifecycle_draft_to_archived() {
     assert_eq!(
         resp.status(),
         422,
-        "archiving within the retention period must be rejected"
+        "retiring within the retention period must be rejected"
     );
     let err = resp.text().await.unwrap_or_default().to_lowercase();
     assert!(
@@ -165,7 +165,7 @@ async fn full_lifecycle_draft_to_archived() {
         "rejection should cite the retention policy: {err}"
     );
 
-    // ── 7. Passport remains active after the blocked archive ────────
+    // ── 7. Passport remains active after the blocked retirement ─────
     let resp = client.get(&format!("/api/v1/dpp/{id}")).await;
     assert_eq!(resp.status(), 200);
     let still_active: serde_json::Value = resp.json().await.unwrap();

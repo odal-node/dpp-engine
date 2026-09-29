@@ -77,7 +77,7 @@ async fn test_suspension_flow() {
 ///
 /// Deactivation ends the *product*, not the passport. Core's status doc says a
 /// `Deactivated` record "is retained (the DPP outlives the product, EN 18221)",
-/// and this node enforces that on the write side by refusing to archive before
+/// and this node enforces that on the write side by refusing to retire before
 /// `retention_until`. ESPR Art. 10(4)(i) is the basis: the passport is to
 /// "remain available" for a period corresponding to "at least the expected
 /// lifetime of a specific product".

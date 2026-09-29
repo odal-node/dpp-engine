@@ -17,7 +17,7 @@
 //!
 //!   (f) suspending before the drain runs leaves the registration due;
 //!   (g) re-publishing clears a now-obsolete suspend intent;
-//!   (h) archiving a never-published draft creates no row, so it raises no
+//!   (h) retiring a never-published draft creates no row, so it raises no
 //!       registration alarm;
 //!   plus: 0024 restores registrations already lost to the old write path.
 //!
@@ -560,13 +560,13 @@ async fn suspend_enqueues_status_intent_and_counts_reflect_state() {
 /// a passport that never owed a registration. The outbox row is created by the
 /// publish transaction and by nothing else.
 #[tokio::test(flavor = "multi_thread")]
-async fn archiving_an_unpublished_draft_creates_no_outbox_row() {
+async fn retiring_an_unpublished_draft_creates_no_outbox_row() {
     let _c = start_pg().await;
     let dal = _c.dal.clone();
     let outbox: Arc<dyn RegistrySyncOutbox> = Arc::new(PgRegistrySyncRepo::new(dal.clone()));
     let repo = PgPassportRepo::new(dal.clone());
 
-    // A draft that is archived without ever being published.
+    // A draft that is retired without ever being published.
     let draft = draft_passport();
     let id = draft.id;
     repo.create(draft).await.expect("create draft");

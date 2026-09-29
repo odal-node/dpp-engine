@@ -119,8 +119,8 @@ pub struct TrustPort {
     /// The tier the resolved adapter operates at.
     pub mode: TrustMode,
     /// If true, a production node must not boot while this port is `Ghost`.
-    /// (Archive is optional — NoOp is tolerated with a warning until EN 18221
-    /// backup work lands.)
+    /// (The back-up copy is optional — NoOp is tolerated with a warning until
+    /// the ESPR Art. 10(4) back-up work lands.)
     pub required: bool,
 }
 
@@ -278,7 +278,7 @@ mod tests {
         );
         assert!(
             report.enforce_profile().is_ok(),
-            "ghost archive is tolerated"
+            "a ghost back-up copy is tolerated"
         );
     }
 

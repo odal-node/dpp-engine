@@ -80,7 +80,7 @@ async fn main() -> anyhow::Result<()> {
     let registry_sync: Arc<dyn RegistrySyncPort> = Arc::new(GhostRegistrySync);
 
     // ── Ghost-honesty invariant ───────────────────────────────────────────────
-    // Standalone dpp-vault always resolves registry_sync and archive to their
+    // Standalone dpp-vault always resolves registry_sync and backup to their
     // Ghost adapters (unlike the fused dpp-node binary, which picks a real
     // adapter when configured) — so a production profile must refuse to boot
     // here too, or this binary would silently run with placeholder trust.

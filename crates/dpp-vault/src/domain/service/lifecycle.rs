@@ -269,8 +269,8 @@ impl PassportService {
         )
         .await;
 
-        // Reconcile the continuity tier — a retired passport leaves the
-        // public tier (non-fatal).
+        // Reconcile the continuity tier — a retired passport keeps serving,
+        // so its snapshot is refreshed rather than withdrawn (non-fatal).
         self.enqueue_snapshot_reconcile(updated.id).await;
 
         Ok(updated)

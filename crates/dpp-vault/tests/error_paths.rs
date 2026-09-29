@@ -89,7 +89,7 @@ async fn suspend_invalid_uuid_returns_400() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn archive_invalid_uuid_returns_400() {
+async fn retire_invalid_uuid_returns_400() {
     let pg = start_postgres().await;
     let base = start_vault(pg.dal.clone()).await;
     let client = TestClient::new(&base, make_jwt(&op()));
@@ -198,7 +198,7 @@ async fn suspend_nonexistent_returns_404() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn archive_nonexistent_returns_404() {
+async fn retire_nonexistent_returns_404() {
     let pg = start_postgres().await;
     let base = start_vault(pg.dal.clone()).await;
     let client = TestClient::new(&base, make_jwt(&op()));
@@ -275,7 +275,7 @@ async fn suspend_draft_returns_409() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn archive_already_archived_returns_409() {
+async fn retire_already_retired_returns_409() {
     let pg = start_postgres().await;
     let base = start_vault(pg.dal.clone()).await;
     let client = TestClient::new(&base, make_jwt(&op()));
@@ -286,13 +286,17 @@ async fn archive_already_archived_returns_409() {
         .unwrap()
         .to_owned();
 
-    // Draft → Archived: valid (draft is not retention-locked).
+    // Draft → Retired: valid (draft is not retention-locked).
     let r = client
         .post_json(&format!("/api/v1/dpp/{id}/retire"), serde_json::json!({}))
         .await;
-    assert_eq!(r.status(), 200, "first archive of a draft should succeed");
+    assert_eq!(
+        r.status(),
+        200,
+        "first retirement of a draft should succeed"
+    );
 
-    // Archived → Archived: invalid transition.
+    // Retired → Retired: invalid transition.
     let resp = client
         .post_json(&format!("/api/v1/dpp/{id}/retire"), serde_json::json!({}))
         .await;
@@ -300,14 +304,14 @@ async fn archive_already_archived_returns_409() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn archive_recently_published_returns_422_retention_guard() {
+async fn retire_recently_published_returns_422_retention_guard() {
     let pg = start_postgres().await;
     let base = start_vault(pg.dal.clone()).await;
     seed_complete_operator(&pg.dal).await;
     let client = TestClient::new(&base, make_jwt(&op()));
     let id = create_and_publish(&client).await;
 
-    // Published → Archived is a valid state-machine transition, but the ESPR
+    // Published → Retired is a valid state-machine transition, but the ESPR
     // retention guard blocks it because published_at was just set (10-year lock).
     let resp = client
         .post_json(&format!("/api/v1/dpp/{id}/retire"), serde_json::json!({}))

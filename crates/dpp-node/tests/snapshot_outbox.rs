@@ -621,7 +621,7 @@ fn the_two_halves_account_for_every_status() {
 
 /// Retiring the *record* does not retire the products in the field.
 ///
-/// `Archived`, `Superseded` and `Deactivated` all keep serving publicly — ESPR
+/// `Retired`, `Superseded` and `Deactivated` all keep serving publicly — ESPR
 /// Art. 10(4)(i) asks the passport to remain available for at least the
 /// product's expected lifetime, and the goods bearing the data carrier outlive
 /// the status change. So the snapshot has to be refreshed rather than removed:

@@ -86,7 +86,7 @@ async fn read_scoped_credential_cannot_mutate_passports() {
         .await;
     assert_eq!(update.status(), 403, "update must require write scope");
 
-    // publish / suspend / archive / transfer-accept take no request body of their
+    // publish / suspend / retire / transfer-accept take no request body of their
     // own; eol and transfer-initiate share the identical first-line gate.
     for path in [
         format!("/api/v1/dpp/{id}/publish"),

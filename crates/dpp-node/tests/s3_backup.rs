@@ -98,7 +98,7 @@ async fn start_s3() -> S3Server {
     // A bucket per test, so one shared server gives the same isolation a
     // container per test gave. `ensure_bucket` creates it, buckets are cheap,
     // and simple lowercase hex keeps the name inside S3's naming rules.
-    let bucket = format!("test-archive-{}", uuid::Uuid::new_v4().simple());
+    let bucket = format!("test-backup-{}", uuid::Uuid::new_v4().simple());
 
     if let Some(endpoint) = std::env::var(SHARED_ENDPOINT_ENV)
         .ok()
@@ -235,7 +235,7 @@ fn make_passport() -> Passport {
 }
 
 #[tokio::test]
-async fn archive_then_verify_integrity() {
+async fn store_then_verify_integrity() {
     let s3 = start_s3().await;
     let adapter = build_adapter(&s3);
     adapter.ensure_bucket().await.expect("create bucket");
