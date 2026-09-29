@@ -66,12 +66,20 @@ RUN rm -f .cargo/config.toml
 # changes the lock by design.)
 RUN cargo auditable build --locked --release -p dpp-node --features s3
 # The notice covers the same package, features and lockfile as the build above.
-# `--frozen` keeps it to the sources just compiled (no network, no
-# re-resolution); `--fail` stops the build on a licence it cannot read rather
-# than leaving that crate out.
-RUN cargo about generate --frozen --fail -c docker/about.toml \
-    -m crates/dpp-node/Cargo.toml --features s3 \
-    -o /build/THIRD-PARTY-NOTICES docker/third-party-notices.hbs
+#
+# `cargo about` reads `cargo metadata`, which resolves the graph for every
+# platform and so needs crates the build above never downloaded (Android- and
+# Windows-only ones). `cargo fetch --locked` downloads exactly what Cargo.lock
+# names, checksummed; after it, `--frozen` keeps the notice to those sources
+# with no further network and no re-resolution. `--target` is the builder's own
+# triple, so the notice lists the crates compiled into this image and not the
+# ones another platform would link. `--fail` stops the build on a licence it
+# cannot read rather than leaving that crate out.
+RUN cargo fetch --locked \
+    && cargo about generate --frozen --fail -c docker/about.toml \
+       --target "$(rustc -vV | sed -n 's/^host: //p')" \
+       -m crates/dpp-node/Cargo.toml --features s3 \
+       -o /build/THIRD-PARTY-NOTICES docker/third-party-notices.hbs
 
 # ── local: patch dpp-* to the sibling ../dpp-core source ─────────────────────────
 FROM builder-base AS builder-local
@@ -85,10 +93,12 @@ COPY dpp-engine/ dpp-engine/
 COPY dpp-engine/.cargo/config.toml.example /build/dpp-engine/.cargo/config.toml
 WORKDIR /build/dpp-engine
 RUN cargo auditable build --release -p dpp-node --features s3
-# `--offline` without `--locked`: the [patch] above changes the lock by design.
-RUN cargo about generate --offline --fail -c docker/about.toml \
-    -m crates/dpp-node/Cargo.toml --features s3 \
-    -o /build/THIRD-PARTY-NOTICES docker/third-party-notices.hbs
+# As above, without `--locked`: the [patch] changes the lock by design.
+RUN cargo fetch \
+    && cargo about generate --offline --fail -c docker/about.toml \
+       --target "$(rustc -vV | sed -n 's/^host: //p')" \
+       -m crates/dpp-node/Cargo.toml --features s3 \
+       -o /build/THIRD-PARTY-NOTICES docker/third-party-notices.hbs
 
 # Select the active builder from BUILD_MODE; only the chosen stage is built.
 FROM builder-${BUILD_MODE} AS builder
