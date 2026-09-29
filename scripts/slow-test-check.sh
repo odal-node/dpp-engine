@@ -59,6 +59,7 @@ allowlist=(
     "dpp-node::nats_event_bus::multiple_event_types_route_to_correct_subjects|as above — boots its own NATS container"
     "dpp-node::nats_event_bus::event_envelope_uses_camel_case_on_wire|as above — boots its own NATS container"
     "dpp-node::registry_outbox::migration_0024_restores_registrations_lost_before_the_fix|start_pg_before boots a server the migration has not been applied to, which is the point of the test and cannot use the shared template"
+    "dpp-dal::pg_retired_status_migration::migration_0041_rewrites_the_document_not_only_the_column|as above — start_pg_before boots a server without 0041, so an 'archived' row can be written before the migration runs"
 )
 
 violations=""
