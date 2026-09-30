@@ -39,6 +39,13 @@ ENV RUSTC_WRAPPER=""
 # in its own section and the program is byte-for-byte the same otherwise.
 RUN cargo install cargo-auditable --locked
 
+# The image ships statically linked crates under MIT, Apache-2.0, BSD and
+# similar licences, whose notices must travel with the binary. `cargo about`
+# writes them all into one file from the graph the binary is built from; see
+# docker/about.toml. Pinned, because its config format and install flags have
+# changed between releases, and a moved default would break every image build.
+RUN cargo install cargo-about --locked --version 0.9.2 --features cli
+
 # ── published: dpp-* from crates.io; strip any local [patch.crates-io] override ──
 # Never honour a developer's local dpp-core override — it points at a sibling
 # ../dpp-core that isn't in this context. (.dockerignore already strips it; the
@@ -58,6 +65,21 @@ RUN rm -f .cargo/config.toml
 # the builder. (Not in the local stage below: its [patch] onto ../dpp-core
 # changes the lock by design.)
 RUN cargo auditable build --locked --release -p dpp-node --features s3
+# The notice covers the same package, features and lockfile as the build above.
+#
+# `cargo about` reads `cargo metadata`, which resolves the graph for every
+# platform and so needs crates the build above never downloaded (Android- and
+# Windows-only ones). `cargo fetch --locked` downloads exactly what Cargo.lock
+# names, checksummed; after it, `--frozen` keeps the notice to those sources
+# with no further network and no re-resolution. `--target` is the builder's own
+# triple, so the notice lists the crates compiled into this image and not the
+# ones another platform would link. `--fail` stops the build on a licence it
+# cannot read rather than leaving that crate out.
+RUN cargo fetch --locked \
+    && cargo about generate --frozen --fail -c docker/about.toml \
+       --target "$(rustc -vV | sed -n 's/^host: //p')" \
+       -m crates/dpp-node/Cargo.toml --features s3 \
+       -o /build/THIRD-PARTY-NOTICES docker/third-party-notices.hbs
 
 # ── local: patch dpp-* to the sibling ../dpp-core source ─────────────────────────
 FROM builder-base AS builder-local
@@ -71,6 +93,12 @@ COPY dpp-engine/ dpp-engine/
 COPY dpp-engine/.cargo/config.toml.example /build/dpp-engine/.cargo/config.toml
 WORKDIR /build/dpp-engine
 RUN cargo auditable build --release -p dpp-node --features s3
+# As above, without `--locked`: the [patch] changes the lock by design.
+RUN cargo fetch \
+    && cargo about generate --offline --fail -c docker/about.toml \
+       --target "$(rustc -vV | sed -n 's/^host: //p')" \
+       -m crates/dpp-node/Cargo.toml --features s3 \
+       -o /build/THIRD-PARTY-NOTICES docker/third-party-notices.hbs
 
 # Select the active builder from BUILD_MODE; only the chosen stage is built.
 FROM builder-${BUILD_MODE} AS builder
@@ -93,6 +121,11 @@ RUN groupadd --system --gid 1000 odal \
     && useradd --system --uid 1000 --gid odal --no-create-home --shell /usr/sbin/nologin odal
 
 COPY --from=builder --chmod=755 /build/dpp-engine/target/release/dpp-node /usr/local/bin/dpp-node
+
+# The engine's own licence, Additional Use Grant included, and the notices of
+# every third-party crate in the binary. CI's image job fails without either.
+COPY dpp-engine/LICENSE /usr/share/licenses/odal-node/LICENSE
+COPY --from=builder /build/THIRD-PARTY-NOTICES /usr/share/licenses/odal-node/THIRD-PARTY-NOTICES
 
 # /data holds the encrypted signing key store (KEY_STORE_PATH is set relative,
 # so it resolves against WORKDIR below) on the `node-data` volume; /plugins
