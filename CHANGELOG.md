@@ -179,6 +179,53 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   or placing date still is. The readiness note on `POST /dpp/{dppId}/lint` says
   so instead of apologising for the difference.
 
+- **The demo dossiers presented as passports a payload no node could issue.**
+  Their views were a hand-built object whose content mixed a few battery fields
+  with keys and numbers put there to test canonicalisation (`"b"`, `"B"`, `"é"`,
+  `"€"`, `"😀"`, `"\u{FF21}"`, `"hugeNumber"` and others). No battery schema
+  declares any of them, so a real node would refuse the passport at create, yet
+  01 to 09 showed them to a reader as a genuine passport's data. Those
+  dossiers now carry a real light-means-of-transport battery passport, holding
+  only schema-declared fields and every data point core's publish gate requires
+  for its category. The generator publishes it with core's own
+  `transition_to` and publish's own retention and carrier-URL stamping, which
+  moves to `stamp_publish_obligations` so publish and the generator share one
+  copy, and takes the public view from `public_view`, core's redaction. The
+  canonicalisation keys move to a new `11-canonicalisation-vectors.json`, which
+  verifies and says in its README row that it is no passport.
+  `demo_dossiers_verify.rs` gains `every_example_passport_is_one_a_node_would_publish`
+  (the typed validation, the strict schema and the mandatory-content gate) and
+  `every_public_view_is_cores_redaction_of_its_passport`; the UTF-16 ordering
+  test now reads 11. Every verdict is unchanged apart from 09's parse-error text.
+
+- **A dossier's readable payloads listed their keys in a different order from
+  the one they were signed in.** A dossier carries each signed view twice, as
+  the JWS and as a readable copy of its payload, and the audit trail's
+  `published` entry carries two more. The copies are `serde_json::Value`, whose
+  map sorts keys by code point, while the signatures cover RFC 8785 bytes,
+  sorted by UTF-16 code unit. They agree for almost every key, but not for
+  `"😀"` beside `"\u{FF21}"`, so a reader comparing the readable copy with the
+  signed bytes saw the very ordering mistake that pair is there to catch.
+  `DossierV1` now writes every JSON member through `SignedKeyOrder`, so the
+  export lists each object's keys in signed order, and the demo generator writes
+  its files the same way. The regenerated dossiers change only in the order of
+  that pair; every hash, signature and verdict is unchanged, since all of them
+  are taken over canonical bytes. `demo_dossiers_verify.rs` gains
+  `every_dossier_file_lists_its_keys_in_signed_order` and
+  `each_readable_view_is_its_signed_payload`, and `dpp-types` gains
+  `a_dossier_writes_each_payload_copy_in_the_order_it_was_signed`.
+
+- **The demo dossiers' canonicalisation keys could not tell UTF-16 order from
+  code point order.** The signed payload carries keys meant to catch a verifier
+  that sorts them wrongly, but every one of them sorts the same under both
+  orders, so a verifier sorting by code point or by UTF-8 bytes would still have
+  verified all ten files. The payload gains `"\u{FF21}"` (fullwidth `Ａ`, the
+  single UTF-16 unit `0xFF21`) beside `"😀"` (the pair `0xD83D 0xDE00`): the
+  emoji sorts first by code unit and last by code point. The dossiers and
+  `expected.json` are regenerated, so every hash and signature in them changes;
+  no verdict does. `demo_dossiers_verify.rs` gains
+  `the_signed_full_view_orders_keys_by_utf16_code_unit`, which fails if the pair
+  leaves the corpus or the signed bytes stop putting the emoji first.
 
 - **The demo evidence dossiers were no longer dossiers.** Every file in
   `ops/demo/dossiers/` predated `manifest.coreVersion` becoming required, so the
