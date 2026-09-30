@@ -336,21 +336,7 @@ impl PassportService {
             .transition_to(PassportStatus::Published)
             .map_err(|e| reject(REASON_MANDATORY_CONTENT, e))?;
 
-        // Engine-side obligations, which core has no view of: the retention
-        // horizon comes from this deployment's product group catalog, and the carrier
-        // URL from its resolver. Both are derived from the timestamp core just
-        // set, so all three agree on when the publish happened.
-        if first_publish && passport.retention_until.is_none() {
-            // Compute and seal retention_until once at first publish, from the
-            // catalog — the single source of the obligation, held beside the
-            // act that imposes it. A stricter delegated-act period can be set
-            // by the operator before publishing.
-            let published_at = passport.published_at.unwrap_or_else(Utc::now);
-            let years = retention_years_for(&passport.product_group);
-            passport.retention_until =
-                Some(published_at + chrono::Duration::days(365 * i64::from(years)));
-        }
-        passport.qr_code_url = Some(build_carrier_url(&passport, &self.resolver_base_url));
+        stamp_publish_obligations(&mut passport, first_publish, &self.resolver_base_url);
 
         // `status` serialises to the API wire string ("active") via
         // `PassportStatus`'s own `Serialize` impl — already reflects the
@@ -627,6 +613,31 @@ fn snapshot_backup_url(base: &str, dpp_id: &str) -> String {
         base.trim_end_matches('/'),
         snapshot_json_key(dpp_id)
     )
+}
+
+/// Engine-side obligations at publish, which core has no view of: the
+/// retention horizon comes from this deployment's product group catalog, and
+/// the carrier URL from its resolver. Both are derived from the timestamp core
+/// set in `transition_to`, so all three agree on when the publish happened.
+///
+/// Public so the demo dossier generator stamps a passport exactly as publish
+/// does, rather than restating either rule.
+pub fn stamp_publish_obligations(
+    passport: &mut Passport,
+    first_publish: bool,
+    resolver_base: &str,
+) {
+    if first_publish && passport.retention_until.is_none() {
+        // Compute and seal retention_until once at first publish, from the
+        // catalog — the single source of the obligation, held beside the
+        // act that imposes it. A stricter delegated-act period can be set
+        // by the operator before publishing.
+        let published_at = passport.published_at.unwrap_or_else(Utc::now);
+        let years = retention_years_for(&passport.product_group);
+        passport.retention_until =
+            Some(published_at + chrono::Duration::days(365 * i64::from(years)));
+    }
+    passport.qr_code_url = Some(build_carrier_url(passport, resolver_base));
 }
 
 /// Build the carrier (QR / Data Matrix) URL a passport should encode, on the

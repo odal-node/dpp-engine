@@ -1,0 +1,138 @@
+{
+  "auditEntries": [
+    {
+      "action": "created",
+      "actor": "api-key",
+      "entryHash": "14ed4927896e84128e26e35d46e66cd3cf6ad1fc624766ae2f672c2447948f70",
+      "id": "0199a3c2-7b10-7e4a-9c3d-000000000001",
+      "metadata": null,
+      "newStatus": "draft",
+      "passportId": "0199a3c2-7b10-7e4a-9c3d-2f1e8b6a5d40",
+      "prevHash": "",
+      "previousStatus": null,
+      "requestId": "0199a3c2-7b10-7e4a-8d2e-000000000001",
+      "timestamp": "2026-09-01T09:00:00Z"
+    },
+    {
+      "action": "published",
+      "actor": "api-key",
+      "entryHash": "fa56550871276ac2375d82b6d14b0f4add0b7ce3e7d9f4b01a2d45f744c63ffa",
+      "id": "0199a3c2-7b10-7e4a-9c3d-000000000002",
+      "metadata": {
+        "fullViewPayload": {
+          "content": {
+            "B": 2,
+            "b": 1,
+            "hugeNumber": 1e+21,
+            "negativeZeroSafe": -0.25,
+            "tinyNumber": 5e-7,
+            "Émission": "0.5e-3 test",
+            "é": 3,
+            "€": 4,
+            "😀": 5,
+            "Ａ": 6
+          },
+          "id": "0199a3c2-7b10-7e4a-9c3d-2f1e8b6a5d40",
+          "status": "active"
+        },
+        "publicViewPayload": {
+          "content": {
+            "B": 2,
+            "b": 1,
+            "hugeNumber": 1e+21,
+            "negativeZeroSafe": -0.25,
+            "tinyNumber": 5e-7,
+            "Émission": "0.5e-3 test",
+            "é": 3,
+            "€": 4,
+            "😀": 5,
+            "Ａ": 6
+          },
+          "id": "0199a3c2-7b10-7e4a-9c3d-2f1e8b6a5d40",
+          "status": "active"
+        }
+      },
+      "newStatus": "active",
+      "passportId": "0199a3c2-7b10-7e4a-9c3d-2f1e8b6a5d40",
+      "prevHash": "14ed4927896e84128e26e35d46e66cd3cf6ad1fc624766ae2f672c2447948f70",
+      "previousStatus": null,
+      "requestId": "0199a3c2-7b10-7e4a-8d2e-000000000002",
+      "timestamp": "2026-09-01T09:05:00.250Z"
+    }
+  ],
+  "didDocuments": {
+    "did:web:node.acme.example": {
+      "@context": [
+        "https://www.w3.org/ns/did/v1"
+      ],
+      "assertionMethod": [
+        "did:web:node.acme.example#key-1"
+      ],
+      "id": "did:web:node.acme.example",
+      "verificationMethod": [
+        {
+          "controller": "did:web:node.acme.example",
+          "id": "did:web:node.acme.example#key-1",
+          "publicKeyJwk": {
+            "crv": "Ed25519",
+            "kty": "OKP",
+            "x": "6kpsY-KcUgq-9VB7Ey7F-ZVHdq6-vnuSQh7qaRRG0iw"
+          },
+          "type": "JsonWebKey2020"
+        }
+      ]
+    }
+  },
+  "fullView": {
+    "jws": "eyJhbGciOiJFZERTQSIsImtpZCI6ImZlODEyYzEyZjNhYjRjZTZhYzVkYjY5YWMzNTJmOTA2Y2IxYjExZWY0M2ZiMzNlMjUyZWY3ZmY1NTIyNjM4ODkifQ.eyJjb250ZW50Ijp7IkIiOjIsImIiOjEsImh1Z2VOdW1iZXIiOjFlKzIxLCJuZWdhdGl2ZVplcm9TYWZlIjotMC4yNSwidGlueU51bWJlciI6NWUtNywiw4ltaXNzaW9uIjoiMC41ZS0zIHRlc3QiLCLDqSI6Mywi4oKsIjo0LCLwn5iAIjo1LCLvvKEiOjZ9LCJpZCI6IjAxOTlhM2MyLTdiMTAtN2U0YS05YzNkLTJmMWU4YjZhNWQ0MCIsInN0YXR1cyI6ImFjdGl2ZSJ9.-0gGJO8CC_JeYka-60cDzkSdj1vqst_47SyafFl9yb4jA2GCc_grSLhYrCrx3kC8rZpT6sTwRFT3gUo5UfUdBg",
+    "payload": {
+      "content": {
+        "B": 2,
+        "b": 1,
+        "hugeNumber": 1e+21,
+        "negativeZeroSafe": -0.25,
+        "tinyNumber": 5e-7,
+        "Émission": "0.5e-3 test",
+        "é": 3,
+        "€": 4,
+        "😀": 5,
+        "Ａ": 6
+      },
+      "id": "0199a3c2-7b10-7e4a-9c3d-2f1e8b6a5d40",
+      "status": "active"
+    }
+  },
+  "manifest": {
+    "contentHashes": {
+      "auditEntries": "1f63a80b7efd79c1c2fb2ec2d2f8b6d7ef49aeb925701076a98059b14b8ab0f7",
+      "fullView": "aa2588691c23ed546ddafa4d32ca3a96fb905ec06980b76bf2e1562e8d3984a1",
+      "publicView": "aa2588691c23ed546ddafa4d32ca3a96fb905ec06980b76bf2e1562e8d3984a1"
+    },
+    "coreVersion": "0.20.0",
+    "createdAt": "2026-09-25T12:00:00Z",
+    "formatVersion": "1",
+    "issuerDid": "did:web:node.acme.example",
+    "nodeVersion": "0.14.0",
+    "passportId": "0199a3c2-7b10-7e4a-9c3d-2f1e8b6a5d40"
+  },
+  "manifestJws": "eyJhbGciOiJFZERTQSIsImtpZCI6ImZlODEyYzEyZjNhYjRjZTZhYzVkYjY5YWMzNTJmOTA2Y2IxYjExZWY0M2ZiMzNlMjUyZWY3ZmY1NTIyNjM4ODkifQ.eyJjb250ZW50SGFzaGVzIjp7ImF1ZGl0RW50cmllcyI6IjFmNjNhODBiN2VmZDc5YzFjMmZiMmVjMmQyZjhiNmQ3ZWY0OWFlYjkyNTcwMTA3NmE5ODA1OWIxNGI4YWIwZjciLCJmdWxsVmlldyI6ImFhMjU4ODY5MWMyM2VkNTQ2ZGRhZmE0ZDMyY2EzYTk2ZmI5MDVlYzA2OTgwYjc2YmYyZTE1NjJlOGQzOTg0YTEiLCJwdWJsaWNWaWV3IjoiYWEyNTg4NjkxYzIzZWQ1NDZkZGFmYTRkMzJjYTNhOTZmYjkwNWVjMDY5ODBiNzZiZjJlMTU2MmU4ZDM5ODRhMSJ9LCJjb3JlVmVyc2lvbiI6IjAuMjAuMCIsImNyZWF0ZWRBdCI6IjIwMjYtMDktMjVUMTI6MDA6MDBaIiwiZm9ybWF0VmVyc2lvbiI6IjEiLCJpc3N1ZXJEaWQiOiJkaWQ6d2ViOm5vZGUuYWNtZS5leGFtcGxlIiwibm9kZVZlcnNpb24iOiIwLjE0LjAiLCJwYXNzcG9ydElkIjoiMDE5OWEzYzItN2IxMC03ZTRhLTljM2QtMmYxZThiNmE1ZDQwIn0.IQ6HakefPjlcRC_KPc6GC6zQvb4DukdJf9v00kEgc1_wwo_vUhL9QloZhaSVQQlLcMz3X_oR_dO1ZdxKcEz4BQ",
+  "publicView": {
+    "jws": "eyJhbGciOiJFZERTQSIsImtpZCI6ImZlODEyYzEyZjNhYjRjZTZhYzVkYjY5YWMzNTJmOTA2Y2IxYjExZWY0M2ZiMzNlMjUyZWY3ZmY1NTIyNjM4ODkifQ.eyJjb250ZW50Ijp7IkIiOjIsImIiOjEsImh1Z2VOdW1iZXIiOjFlKzIxLCJuZWdhdGl2ZVplcm9TYWZlIjotMC4yNSwidGlueU51bWJlciI6NWUtNywiw4ltaXNzaW9uIjoiMC41ZS0zIHRlc3QiLCLDqSI6Mywi4oKsIjo0LCLwn5iAIjo1LCLvvKEiOjZ9LCJpZCI6IjAxOTlhM2MyLTdiMTAtN2U0YS05YzNkLTJmMWU4YjZhNWQ0MCIsInN0YXR1cyI6ImFjdGl2ZSJ9.-0gGJO8CC_JeYka-60cDzkSdj1vqst_47SyafFl9yb4jA2GCc_grSLhYrCrx3kC8rZpT6sTwRFT3gUo5UfUdBg",
+    "payload": {
+      "content": {
+        "B": 2,
+        "b": 1,
+        "hugeNumber": 1e+21,
+        "negativeZeroSafe": -0.25,
+        "tinyNumber": 5e-7,
+        "Émission": "0.5e-3 test",
+        "é": 3,
+        "€": 4,
+        "😀": 5,
+        "Ａ": 6
+      },
+      "id": "0199a3c2-7b10-7e4a-9c3d-2f1e8b6a5d40",
+      "status": "active"
+    }
+  }
+}
