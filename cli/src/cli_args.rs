@@ -320,7 +320,7 @@ pub enum PassportCommands {
         #[arg(long)]
         json: bool,
     },
-    /// Retire a published passport in favour of one that already exists.
+    /// Supersede a published passport with one that already exists.
     ///
     /// The successor must already be published and must already carry
     /// `supersedesId` pointing back at this passport — that link is declared

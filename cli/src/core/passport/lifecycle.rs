@@ -113,7 +113,7 @@ fn successor_id(response: &str) -> Result<String> {
         )
 }
 
-/// Retire a published passport in favour of one that already exists.
+/// Supersede a published passport with one that already exists.
 ///
 /// The link is **checked** here, not written: the successor must already carry
 /// `supersedesId` back to the passport being superseded, set when it was created.
