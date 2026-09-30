@@ -12,7 +12,7 @@ use crate::{
     core::{
         infra::{
             COMPOSE_FILE, action_up, deployment_env_var, find_install_root, infra_container_status,
-            preflight_prod_env, scaffold_install,
+            preflight_prod_env, scaffold_install, source_tree_present,
         },
         onboarding::{action_bootstrap, action_node_state},
     },
@@ -109,7 +109,8 @@ async fn step_infrastructure(cfg: &Config) -> Result<()> {
         );
     } else {
         println!(
-            "  Create a {} file in your deployment root with these variables:\n",
+            "  Copy {} to {} in your deployment root and set these variables:\n",
+            style(".env.example").cyan(),
             style(".env").cyan()
         );
         for var in &[
@@ -132,8 +133,9 @@ async fn step_infrastructure(cfg: &Config) -> Result<()> {
         println!();
     }
 
-    // Local self-host builds the node image from source the first time.
-    let build = matches!(cfg.kind, EnvKind::Dev);
+    // Build from source only when this install carries it; a scaffolded one
+    // runs the published images. The same test `odal up` makes.
+    let build = source_tree_present(&compose_path);
     let start_now = Confirm::new(if build {
         "Build and start services now?"
     } else {
