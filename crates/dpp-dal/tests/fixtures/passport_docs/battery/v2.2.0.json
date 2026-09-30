@@ -23,11 +23,11 @@
     }
   },
   "co2ePerUnit": { "valueKg": 44.9 },
-  "productName": "Voltex EV Pack 72kWh",
+  "productName": "Musterzelle EV Pack 72kWh",
   "publishedAt": "2026-06-02T15:10:00.000000000Z",
   "jwsSignature": null,
   "manufacturer": {
-    "name": "Voltex Battery GmbH",
+    "name": "Musterzelle GmbH",
     "address": "DE",
     "didWebUrl": null
   },
