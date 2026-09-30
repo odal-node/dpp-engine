@@ -615,10 +615,6 @@ fn snapshot_backup_url(base: &str, dpp_id: &str) -> String {
     )
 }
 
-/// Build the carrier (QR / Data Matrix) URL a passport should encode, on the
-/// node's configured resolver base.
-///
-/// When the product group data carries a GTIN — every trade-item product group — produces a
 /// Engine-side obligations at publish, which core has no view of: the
 /// retention horizon comes from this deployment's product group catalog, and
 /// the carrier URL from its resolver. Both are derived from the timestamp core
@@ -644,6 +640,10 @@ pub fn stamp_publish_obligations(
     passport.qr_code_url = Some(build_carrier_url(passport, resolver_base));
 }
 
+/// Build the carrier (QR / Data Matrix) URL a passport should encode, on the
+/// node's configured resolver base.
+///
+/// When the product group data carries a GTIN — every trade-item product group — produces a
 /// GS1 Digital Link (`{base}/01/{gtin}[/10/{batch}]/21/{serial}`) with a
 /// GS1-conformant 20-char serial derived from the passport id. When it does not
 /// (an unsold-goods report or untyped record, which identify no trade item),
