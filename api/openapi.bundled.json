@@ -36,7 +36,7 @@
     },
     {
       "name": "DPP Lifecycle",
-      "description": "Lifecycle transitions — publish, suspend, archive, end-of-life, and transfer of responsibility."
+      "description": "Lifecycle transitions — publish, suspend, retire, end-of-life, and transfer of responsibility."
     },
     {
       "name": "Evidence Dossiers",
@@ -155,7 +155,10 @@
                 "batchId": "BATCH-2026-04-001",
                 "productGroupData": {
                   "productGroup": "battery",
-                  "gtin": "09506000134352",
+                  "productIdentifier": {
+                    "scheme": "gs1",
+                    "gtin": "09506000134352"
+                  },
                   "batteryChemistry": "LFP",
                   "nominalVoltageV": 48,
                   "nominalCapacityAh": 100,
@@ -322,7 +325,7 @@
       "get": {
         "operationId": "findDppByIdentity",
         "summary": "Find a DPP by exact compound identity",
-        "description": "Look up a passport by exact (product group, GTIN, batch) match, across\n`draft` and `active` statuses. Backs the import delta-matcher —\nnot intended as a general-purpose search (use `GET /dpps` for that).\n`batchId` omitted matches only passports with no batch set.\n",
+        "description": "Look up a passport by exact (product group, product identifier, batch)\nmatch, across `draft` and `active` statuses. Backs the import\ndelta-matcher — not intended as a general-purpose search (use `GET /dpps`\nfor that). `batchId` omitted matches only passports with no batch set.\n",
         "tags": [
           "DPP Management"
         ],
@@ -345,11 +348,13 @@
             }
           },
           {
-            "name": "gtin",
+            "name": "identifier",
             "in": "query",
             "required": true,
+            "description": "The product identifier's value under whichever EN 18219 clause 5\nscheme issued it: the 14-digit GTIN for scheme 1, the identification\nlink for scheme 2, the DID for scheme 3.\n",
             "schema": {
-              "type": "string"
+              "type": "string",
+              "example": "09506000134352"
             }
           },
           {
@@ -432,7 +437,7 @@
       "put": {
         "operationId": "updateDpp",
         "summary": "Update a DPP",
-        "description": "JSON merge-patch on a `draft` or `active` DPP.\nThe request body is a free-form JSON object; only supplied\nfields are changed. Returns `409 Conflict` if the DPP is\n`suspended` or `archived`.\n",
+        "description": "JSON merge-patch on a `draft` or `active` DPP.\nThe request body is a free-form JSON object; only supplied\nfields are changed. Returns `409 Conflict` if the DPP is\n`suspended` or `retired`.\n",
         "tags": [
           "DPP Management"
         ],
@@ -553,7 +558,7 @@
       "get": {
         "operationId": "getDppVersions",
         "summary": "List a DPP's archived versions, or reconstitute one",
-        "description": "Returns every archived version of a passport, oldest first — or, with\n`asOf`, the single version that was current at that instant.\n\n✅ EN 18221:2026 clause 4.2: *\"the archived version corresponding to a given\npoint in time shall be retrievable by authenticated and authorized actors\"*.\n\n🚨 **Not `POST /dpp/{dppId}/archive`.** That moves a passport to the terminal\n`archived` lifecycle status after its retention period has elapsed. This is\nthe standard's sense of the word — historical versions of a passport that is\nstill live — and the two are unrelated.\n\nArchiving begins at the **first change** to a passport, as the clause\nrequires, so a passport that has never changed has no archived versions and\nreturns an empty list. That is not a gap: the live record is the state at\nevery moment before the first change.\n\nEach version is the complete record, so a reader reconstitutes rather than\nreplays. Versions are append-only and are kept for the passport's lifetime.\n",
+        "description": "Returns every archived version of a passport, oldest first — or, with\n`asOf`, the single version that was current at that instant.\n\n✅ EN 18221:2026 clause 4.2: an authenticated, authorised reader can\nretrieve the passport as it stood at any given moment.\n\n🚨 **Not `POST /dpp/{dppId}/retire`.** That moves a passport to the terminal\n`retired` lifecycle status after its retention period has elapsed. This is\nthe standard's sense of the word — historical versions of a passport that is\nstill live — and the two are unrelated.\n\nArchiving begins at the **first change** to a passport, as the clause\nrequires, so a passport that has never changed has no archived versions and\nreturns an empty list. That is not a gap: the live record is the state at\nevery moment before the first change.\n\nEach version is the complete record, so a reader reconstitutes rather than\nreplays. Versions are append-only and are kept for the passport's lifetime.\n",
         "tags": [
           "DPP Management"
         ],
@@ -950,7 +955,7 @@
       "post": {
         "operationId": "amendDpp",
         "summary": "Amend a published DPP by issuing a successor",
-        "description": "Correct a published DPP. A published passport cannot be edited in place —\nits signatures commit to its bytes and the retention guard refuses the\nwrite — so this issues a **new** passport instead.\n\nThe successor is a copy of `dppId` with the `patch` applied, carrying\n`supersedesId` back to `dppId` and `version` incremented. It goes through\nthe same gates as any first publish: schema validation, product-group\nvalidation, mandatory-content checks, signing, and registry sync. When it\npublishes successfully, `dppId` moves to the terminal `superseded` state.\n\n**The response body is a different passport from the one in the path.** It\nis the successor, with its own `id`. Clients holding the old id keep a valid\nreference: a superseded passport stays resolvable, keeps its signatures and\nits seal, and reports `superseded` as its status.\n\nOnly an `active` DPP can be amended. A draft is edited in place with\n`PUT /vault/api/v1/dpp/{dppId}`; a suspended, archived, superseded or\ndeactivated DPP cannot be superseded.\n\nThe schema version is **inherited**, not advanced to the product group's\ncurrent one. An amendment corrects content; migrating a passport to a newer\nschema is a separate act. This also keeps the successor's disclosure classes\nidentical to the predecessor's, since those are read from the schema\nversion's own annotations.\n\nEmits `dpp.passport.published` for the successor and\n`dpp.passport.superseded` for the predecessor.\n",
+        "description": "Correct a published DPP. A published passport cannot be edited in place —\nits signatures commit to its bytes and the retention guard refuses the\nwrite — so this issues a **new** passport instead.\n\nThe successor is a copy of `dppId` with the `patch` applied, carrying\n`supersedesId` back to `dppId` and `version` incremented. It goes through\nthe same gates as any first publish: schema validation, product-group\nvalidation, mandatory-content checks, signing, and registry sync. When it\npublishes successfully, `dppId` moves to the terminal `superseded` state.\n\n**The response body is a different passport from the one in the path.** It\nis the successor, with its own `id`. Clients holding the old id keep a valid\nreference: a superseded passport stays resolvable, keeps its signatures and\nits seal, and reports `superseded` as its status.\n\nOnly an `active` DPP can be amended. A draft is edited in place with\n`PUT /vault/api/v1/dpp/{dppId}`; a suspended, retired, superseded or\ndeactivated DPP cannot be superseded.\n\nThe schema version is **inherited**, not advanced to the product group's\ncurrent one. An amendment corrects content; migrating a passport to a newer\nschema is a separate act. This also keeps the successor's disclosure classes\nidentical to the predecessor's, since those are read from the schema\nversion's own annotations.\n\nEmits `dpp.passport.published` for the successor and\n`dpp.passport.superseded` for the predecessor.\n",
         "tags": [
           "DPP Lifecycle"
         ],
@@ -1018,7 +1023,7 @@
       "post": {
         "operationId": "supersedeDpp",
         "summary": "Retire a DPP in favour of a newer one",
-        "description": "Marks the DPP in the path `superseded`, retiring it in favour of the\nreplacement named in `supersededBy`.\n\n**The link is checked here, not written.** The successor must already carry\n`supersedesId` pointing back at this passport, set when it was created —\n`supersedesId` is a protected field and no field patch can add it later. A\nsuccessor that does not declare the link is refused with `422`.\n\nThat ordering is deliberate. Writing the link during this transition would\nleave, on a failure between the two writes, a retired passport with nothing\npointing at its replacement — the one state a reader cannot recover from.\nRequiring the link to exist first makes that unreachable.\n\n**Both must already be published.** A draft successor retiring a live\npassport would leave the product with no servable record, and a\nnot-yet-published successor may still fail its own gates. A predecessor that\nis not published has nothing to retire.\n\nTerminal and irreversible: a superseded passport accepts no further\ntransitions, and the successor is what a reader follows forward.\n\nIt keeps serving on the public tier. Superseding replaces the *record*, not\nthe goods: products made under the old specification are still in the field\ncarrying data carriers that resolve to it, and ESPR Art. 10(4)(i) asks the\npassport to remain available for at least the product's expected lifetime.\n",
+        "description": "Marks the DPP in the path `superseded`, retiring it in favour of the\nreplacement named in `supersededBy`.\n\n**The link is checked here, not written.** The successor must already carry\n`supersedesId` pointing back at this passport, set when it was created —\n`supersedesId` is a protected field and no field patch can add it later. A\nsuccessor that does not declare the link is refused with `422`.\n\nThat ordering is deliberate. Writing the link during this transition would\nleave, on a failure between the two writes, a retired passport with nothing\npointing at its replacement — the one state a reader cannot recover from.\nRequiring the link to exist first makes that unreachable.\n\n**Both must already be published.** A draft successor retiring a live\npassport would leave the product with no servable record, and a\nnot-yet-published successor may still fail its own gates. A predecessor that\nis not published has nothing to retire.\n\nTerminal and irreversible: a superseded passport accepts no further\ntransitions, and the successor is what a reader follows forward.\n\nIt keeps serving on the public tier. Superseding replaces the *record*, not\nthe goods: products made under the old specification are still in the field\ncarrying data carriers that resolve to it, and ESPR Art. 9(2)(i) asks the\npassport to remain available for at least the product's expected lifetime.\n",
         "tags": [
           "DPP Lifecycle"
         ],
@@ -1147,11 +1152,11 @@
         }
       }
     },
-    "/vault/api/v1/dpp/{dppId}/archive": {
+    "/vault/api/v1/dpp/{dppId}/retire": {
       "post": {
-        "operationId": "archiveDpp",
-        "summary": "Archive a DPP",
-        "description": "Transition a DPP to `archived`. This is irreversible.\nArchived DPPs are immutable and retained for regulatory record-keeping.\nNo request body is required.\n",
+        "operationId": "retireDpp",
+        "summary": "Retire a DPP",
+        "description": "Transition a DPP to `retired`. This is irreversible.\nRetired DPPs are immutable and retained for regulatory record-keeping.\nNo request body is required.\n\n🚨 **Not archiving.** EN 18221 clause 4.2 archiving is the retention of\nhistorical versions of a passport that is still live, and it is served by\n`GET /dpp/{dppId}/versions`. This route ends a record's publication life.\n",
         "tags": [
           "DPP Lifecycle"
         ],
@@ -1175,7 +1180,7 @@
         ],
         "responses": {
           "200": {
-            "description": "DPP archived. Returns the full passport record.",
+            "description": "DPP retired. Returns the full passport record.",
             "content": {
               "application/json": {
                 "schema": {
@@ -3386,8 +3391,8 @@
     "/vault/public/dpp/by-gtin/{gtin}": {
       "get": {
         "operationId": "publicGetDppByGtin",
-        "summary": "Public read of a published DPP by GTIN",
-        "description": "Unauthenticated read of the published passport for a GS1 GTIN-14 — the\nsame signed public view the by-id route serves, found by trade item\ninstead of by passport id.\n\n**A withdrawn passport answers `410`, not `404`.** That distinction is the\npoint of this route rather than a detail of it: `404` means no passport for\nthis GTIN was ever published here, while `410` means one was and has since\nbeen suspended. Only the second is a recall signal, and a consumer who\nscanned a product needs to be able to tell them apart. `422` is a\nstructurally invalid GTIN-14 — a bad check digit or wrong length — which is\na malformed request rather than an answer about any product.\n\nOnly the passport's `public` audience view is returned, carrying the\npublish-time `publicJwsSignature` that covers exactly those bytes.\nRestricted fields are not present at all.\n",
+        "summary": "Public read of a published DPP by its printed GS1 label",
+        "description": "Unauthenticated read of the published passport a GS1 label names — the\nsame signed public view the by-id route serves, found by the label printed\non the product instead of by passport id. The resolver's\n`/01/{gtin}[/10/{batch}][/21/{serial}]` routes forward the label here.\n\n**The label's qualifiers select the passport.** One GTIN can have a\npassport for the model, one per batch and one per unit, so the GTIN alone\ndoes not name one:\n\n- `serial` (AI 21) names the passport whose carrier serial it is, at any\n  level. `batch` is not consulted once a serial is given.\n- `batch` (AI 10) alone names the batch-level passport for that lot.\n- Neither names the model-level passport, or a passport with no batch and\n  no serial.\n\nA label keeps working after its passport is amended: the successor is\nserved, not the superseded record.\n\n**A withdrawn passport answers `410`, not `404`.** That distinction is the\npoint of this route rather than a detail of it: `404` means no passport for\nthis label was ever published here, while `410` means one was and has since\nbeen suspended. Only the second is a recall signal, and a consumer who\nscanned a product needs to be able to tell them apart. `422` is a\nstructurally invalid GTIN-14 — a bad check digit or wrong length — which is\na malformed request rather than an answer about any product.\n\nOnly the passport's `public` audience view is returned, carrying the\npublish-time `publicJwsSignature` that covers exactly those bytes.\nRestricted fields are not present at all.\n",
         "tags": [
           "Public (Vault)"
         ],
@@ -3402,6 +3407,26 @@
               "description": "GS1 GTIN-14 (14 digits, mod-10 check digit).",
               "example": "09506000134352"
             }
+          },
+          {
+            "name": "batch",
+            "in": "query",
+            "required": false,
+            "description": "The label's AI 10 value, the batch or lot.",
+            "schema": {
+              "type": "string"
+            },
+            "example": "LOT-2026-A"
+          },
+          {
+            "name": "serial",
+            "in": "query",
+            "required": false,
+            "description": "The label's AI 21 value, the serial.",
+            "schema": {
+              "type": "string"
+            },
+            "example": "3a9c1e0b7d2f4a6c8e10"
           },
           {
             "name": "schema_view",
@@ -3432,7 +3457,7 @@
             "$ref": "#/components/responses/Gone"
           },
           "422": {
-            "description": "The requested `schema_view` is unavailable.",
+            "description": "The GTIN is not a valid GTIN-14, or the requested `schema_view` is unavailable.",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -4406,7 +4431,7 @@
       "get": {
         "operationId": "resolveByGtin",
         "summary": "GS1 Digital Link resolver",
-        "description": "GS1-conformant resolver (GS1-CRSV1) keyed by GTIN-14. Behaviour depends\non the `linkType` query / `Accept` header:\n- default → `307` redirect to the HTML DPP page\n- `?linkType=gs1:pip` / `gs1:dpp` (and related) → `307` redirect to the DPP\n- `?linkType=linkset` or `Accept: application/linkset+json` → `200`\n  RFC 9264 linkset\n",
+        "description": "GS1-conformant resolver (GS1-CRSV1) keyed by GTIN-14 — the carrier this node\nprints for a model-level passport. Behaviour depends\non the `linkType` query / `Accept` header:\n- default → `307` redirect to the HTML DPP page\n- `?linkType=gs1:pip` / `gs1:dpp` (and related) → `307` redirect to the DPP\n- `?linkType=linkset` or `Accept: application/linkset+json` → `200`\n  RFC 9264 linkset\n",
         "tags": [
           "Public Resolver"
         ],
@@ -4467,7 +4492,7 @@
       "get": {
         "operationId": "resolveByGtinSerial",
         "summary": "GS1 Digital Link resolver — GTIN + serial",
-        "description": "A printed carrier may encode more than the GTIN — this node's own\npublisher emits `/01/{gtin}/21/{serial}` for a serialised trade item.\n**Resolution is keyed on the GTIN alone**: `serial` is accepted so no\nconformant carrier 404s for carrying more precision than the resolver\nindexes, but it is not looked up. Same behaviour as `/01/{gtin}`\notherwise (`linkType` / `Accept` negotiation).\n",
+        "description": "The carrier this node prints for an item-level passport, and for one\nwhose level is not stated. **The serial is the resolution key**: it is the\npassport's carrier serial, and it names one passport whatever its level.\nAn amended passport's successor carries its predecessor's serial, so the\nlabel keeps resolving, to the current record. Same behaviour as\n`/01/{gtin}` otherwise (`linkType` / `Accept` negotiation).\n",
         "tags": [
           "Public Resolver"
         ],
@@ -4489,7 +4514,7 @@
             "schema": {
               "type": "string"
             },
-            "description": "Accepted and ignored — not a resolution key."
+            "description": "AI 21, the carrier serial. Selects the passport."
           },
           {
             "name": "linkType",
@@ -4537,7 +4562,7 @@
       "get": {
         "operationId": "resolveByGtinBatch",
         "summary": "GS1 Digital Link resolver — GTIN + batch/lot",
-        "description": "Accepts the batch/lot segment (AI 10) a carrier may include.\n**Resolution is keyed on the GTIN alone**: `batch` is accepted and\nignored, not looked up. Same behaviour as `/01/{gtin}` otherwise\n(`linkType` / `Accept` negotiation).\n",
+        "description": "The carrier this node prints for a batch-level passport. **The batch is a\nresolution key**: it resolves to the batch-level passport for that lot,\nwhich the GTIN alone cannot name once a product has a passport per batch.\nSame behaviour as `/01/{gtin}` otherwise (`linkType` / `Accept`\nnegotiation).\n",
         "tags": [
           "Public Resolver"
         ],
@@ -4559,7 +4584,7 @@
             "schema": {
               "type": "string"
             },
-            "description": "Accepted and ignored — not a resolution key."
+            "description": "AI 10, the batch or lot. Selects the batch-level passport."
           },
           {
             "name": "linkType",
@@ -4607,7 +4632,7 @@
       "get": {
         "operationId": "resolveByGtinBatchSerial",
         "summary": "GS1 Digital Link resolver — GTIN + batch/lot + serial",
-        "description": "The full shape this node's own carrier emits for a batched,\nserialised trade item. **Resolution is keyed on the GTIN alone**:\n`batch` and `serial` are accepted and ignored. Same behaviour as\n`/01/{gtin}` otherwise (`linkType` / `Accept` negotiation).\n",
+        "description": "The shape this node printed for a batched passport before its carrier\nfollowed the passport's stated level, and one any conformant label may\ncarry. **The serial is the resolution key**: it names one passport\nwhatever its level, so the batch is not consulted. Same behaviour as\n`/01/{gtin}` otherwise (`linkType` / `Accept` negotiation).\n",
         "tags": [
           "Public Resolver"
         ],
@@ -4629,7 +4654,7 @@
             "schema": {
               "type": "string"
             },
-            "description": "Accepted and ignored — not a resolution key."
+            "description": "AI 10. Not consulted once a serial is present."
           },
           {
             "name": "serial",
@@ -4638,7 +4663,7 @@
             "schema": {
               "type": "string"
             },
-            "description": "Accepted and ignored — not a resolution key."
+            "description": "AI 21, the carrier serial. Selects the passport."
           },
           {
             "name": "linkType",
@@ -5024,7 +5049,11 @@
               "null"
             ],
             "format": "uri",
-            "description": "GS1 Digital Link the carrier (QR) encodes, set on publish: {resolverBase}/01/{gtin}/21/{serial} for a trade item, else {resolverBase}/dpp/{id}. resolverBase is per-deployment (RESOLVER_BASE_URL, required, no default)."
+            "description": "The link the data carrier (QR) encodes, set on publish. For a GS1 identifier it is a GS1 Digital Link at the level the passport states: {resolverBase}/01/{gtin} for a model, {resolverBase}/01/{gtin}/10/{batch} for a batch, and {resolverBase}/01/{gtin}/21/{carrierSerial} for an item or an unstated level. Otherwise {resolverBase}/dpp/{id}. resolverBase is per-deployment (RESOLVER_BASE_URL, required, no default)."
+          },
+          "carrierSerial": {
+            "type": "string",
+            "description": "The serial printed in AI 21 of the passport's GS1 carrier, where one was attributed. Absent means the default, derived from the passport id. An amended passport carries its predecessor's, so the label on the object keeps resolving. Printed on the label, so public."
           },
           "jwsSignature": {
             "type": [
@@ -5161,11 +5190,11 @@
           "draft",
           "active",
           "suspended",
-          "archived",
+          "retired",
           "superseded",
           "deactivated"
         ],
-        "description": "DPP lifecycle state. The domain model uses `Published` internally;\nthe wire format uses `active`. Deserialization accepts both.\n- `draft`: under construction; not publicly resolvable\n- `active`: published and signed; publicly resolvable via QR\n- `suspended`: temporarily hidden (recall, dispute); JWS preserved\n- `archived`: end-of-life; immutable; retained for regulatory record-keeping\n- `superseded`: replaced by a newer passport version; terminal\n- `deactivated`: end-of-life declared (recycled, destroyed under a\n  derogation, exported, or lost); terminal. The typed reason is carried by\n  the EOL event, not this field\n\nValid transitions:\ndraft → active, draft → archived,\nactive → suspended, active → archived, active → superseded,\nactive → deactivated,\nsuspended → active, suspended → archived, suspended → deactivated.\n\n`archived`, `superseded` and `deactivated` are terminal.\n"
+        "description": "DPP lifecycle state. The domain model uses `Published` internally;\nthe wire format uses `active`. Deserialization accepts both.\n- `draft`: under construction; not publicly resolvable\n- `active`: published and signed; publicly resolvable via QR\n- `suspended`: temporarily hidden (recall, dispute); JWS preserved\n- `retired`: post-retention; immutable; retained for regulatory record-keeping.\n  Not archiving — see `GET /dpp/{dppId}/versions` for EN 18221 clause 4.2\n- `superseded`: replaced by a newer passport version; terminal\n- `deactivated`: end-of-life declared (recycled, destroyed under a\n  derogation, exported, or lost); terminal. The typed reason is carried by\n  the EOL event, not this field\n\nValid transitions:\ndraft → active, draft → retired,\nactive → suspended, active → retired, active → superseded,\nactive → deactivated,\nsuspended → active, suspended → retired, suspended → deactivated.\n\n`retired`, `superseded` and `deactivated` are terminal.\n\n`archived` is refused on input. It was this status's wire value and now names\nonly what EN 18221 clause 4.2 means by it — the retention of historical\nversions of a passport that is still live.\n"
       },
       "Granularity": {
         "type": "string",
@@ -5290,7 +5319,7 @@
       },
       "ProductGroupData": {
         "type": "object",
-        "description": "Product group-specific data, **internally tagged** by a `productGroup`\ndiscriminator — e.g.\n`{ \"productGroup\": \"battery\", \"gtin\": \"…\", \"batteryChemistry\": \"LFP\", … }`.\nThe remaining fields are product group-specific and validated against the\nproduct group's versioned JSON schema. Product groups include `battery`, `textile`,\n`steel`, `aluminium`, `tyre`, `electronics`, and others.\n\nThe tag is **open**. A product group this build does not model round-trips its\ntag and payload verbatim instead of failing to parse, so a group added to the\ncatalog does not require a client release. That is why the server does not\nderive this shape with `#[serde(tag = …)]`, which would close the set at\ncompile time.\n",
+        "description": "Product group-specific data, **internally tagged** by a `productGroup`\ndiscriminator — e.g.\n`{ \"productGroup\": \"battery\", \"productIdentifier\": { \"scheme\": \"gs1\", \"gtin\": \"…\" }, \"batteryChemistry\": \"LFP\", … }`.\nThe remaining fields are product group-specific and validated against the\nproduct group's versioned JSON schema. Product groups include `battery`, `textile`,\n`steel`, `aluminium`, `tyre`, `electronics`, and others.\n\nThe tag is **open**. A product group this build does not model round-trips its\ntag and payload verbatim instead of failing to parse, so a group added to the\ncatalog does not require a client release. That is why the server does not\nderive this shape with `#[serde(tag = …)]`, which would close the set at\ncompile time.\n",
         "required": [
           "productGroup"
         ],
@@ -5306,7 +5335,10 @@
         "additionalProperties": true,
         "example": {
           "productGroup": "battery",
-          "gtin": "09506000134352",
+          "productIdentifier": {
+            "scheme": "gs1",
+            "gtin": "09506000134352"
+          },
           "batteryChemistry": "LFP",
           "nominalVoltageV": 48,
           "nominalCapacityAh": 100,
@@ -9038,7 +9070,7 @@
       },
       "PassportVersion": {
         "type": "object",
-        "description": "One archived version of a passport: the record as it stood, and the moment it stopped standing.\n\n✅ EN 18221:2026 clause 4.2 (archiving), one of the six standards cited by Commission Implementing Decision (EU) 2026/1736.\n\n🚨 **Not the `archived` lifecycle status**, which is a terminal state reached after the ESPR retention period and says the record has stopped changing. This is the standard's sense of the word — historical versions of a passport that is still live — and the two are unrelated.",
+        "description": "One archived version of a passport: the record as it stood, and the moment it stopped standing.\n\n✅ EN 18221:2026 clause 4.2 (archiving), one of the six standards cited by Commission Implementing Decision (EU) 2026/1736.\n\n🚨 **Not the `retired` lifecycle status**, which is a terminal state reached after the ESPR retention period and says the record has stopped changing. This is the standard's sense of the word — historical versions of a passport that is still live — and the two are unrelated.",
         "required": [
           "id",
           "passportId",
@@ -9088,7 +9120,7 @@
       },
       "PassportScopeReport": {
         "type": "object",
-        "description": "Whether Reg. (EU) 2023/1542 Art. 77(1) requires a battery passport for this\nrecord at all.\n\n> \"From 18 February 2027 each LMT battery, each industrial battery with a\n> capacity greater than 2 kWh and each electric vehicle battery placed on the\n> market or put into service shall have an electronic record ('battery\n> passport').\"\n\nThe Regulation defines five battery categories; this article reaches three.\nPortable and SLI batteries bear no passport obligation, so a passport for one\nis the operator's own artefact rather than a discharged duty.\n\nReported **beside** the gates, never instead of them. This node applies the\ncategory content gate whatever this says, and for a passport outside the\narticle that makes it stricter than the law requires — which the `note` admits\nrather than hides.\n\nTwo details the article turns on: the threshold is **energy** (kWh), not the\nampere-hour \"rated capacity\" defined for the purposes of an annex; and unlike\nArts. 7 and 8 it carries no `rechargeable` qualifier.\n",
+        "description": "Whether Reg. (EU) 2023/1542 Art. 77(1) requires a battery passport for this\nrecord at all.\n\n> \"From 18 February 2027 each LMT battery, each industrial battery with a\n> capacity greater than 2 kWh and each electric vehicle battery placed on the\n> market or put into service shall have an electronic record ('battery\n> passport').\"\n\nThe Regulation defines five battery categories; this article reaches three.\nPortable and SLI batteries bear no passport obligation, so a passport for one\nis the operator's own artefact rather than a discharged duty.\n\nReported **beside** the gates, never instead of them. The category content\ngate follows the same answer: a record the article does not reach\n(`notCovered`, `belowThreshold`, `notYetBinding`) is not held to it, and one\nit does or may reach (`required`, `capacityUnknown`) is.\n\nTwo details the article turns on: the threshold is **energy** (kWh), not the\nampere-hour \"rated capacity\" defined for the purposes of an annex; and unlike\nArts. 7 and 8 it carries no `rechargeable` qualifier.\n",
         "required": [
           "status"
         ],
@@ -9108,13 +9140,13 @@
           },
           "note": {
             "type": "string",
-            "description": "Present when the answer needs justifying — an industrial battery that\ndeclares no `ratedCapacityKwh`, a record the article does not reach, or a\npassport this node nonetheless gates.\n"
+            "description": "Present when the answer needs justifying — an industrial battery that\ndeclares no `ratedCapacityKwh`, or a record the article does not reach and\nthe content gate therefore does not apply to.\n"
           }
         }
       },
       "PublishReadiness": {
         "type": "object",
-        "description": "Whether the passport would clear the publish gates that can be answered\nwithout attempting the transition: the category **mandatory-content** gate and\nthe product-group data/schema gates.\n\nDeliberately not the whole of publish. The registry-identity requirement is\noperator state rather than passport state, and the binding-compliance gate\nneeds a determination this route does not run — so `ready: true` means \"these\ngates pass\", not \"publish will certainly succeed\".\n\nThe mandatory-content half is the reason this exists. It is the gate that most\noften refuses a battery — 46 data points for an electric-vehicle one, 45 for\nan LMT battery, 38 for an industrial one — and it could not previously be\npreviewed anywhere: it is reachable only from a stored passport, and the only\ndry-run the API offered takes an unsaved request body.\n",
+        "description": "Whether the passport would clear the publish gates that can be answered\nwithout attempting the transition: the category **mandatory-content** gate and\nthe product-group data/schema gates.\n\nDeliberately not the whole of publish. The registry-identity requirement is\noperator state rather than passport state, and the binding-compliance gate\nneeds a determination this route does not run — so `ready: true` means \"these\ngates pass\", not \"publish will certainly succeed\".\n\nThe mandatory-content half is the reason this exists. It is the gate that most\noften refuses a battery — 45 data points for an electric-vehicle one, 44 for\nan LMT battery, 37 for an industrial one — and it could not previously be\npreviewed anywhere: it is reachable only from a stored passport, and the only\ndry-run the API offered takes an unsaved request body.\n",
         "required": [
           "ready",
           "blockers",
@@ -9593,7 +9625,10 @@
             "example": {
               "productName": "Model X Battery Pack (rev B)",
               "productGroupData": {
-                "gtin": "01234567890128",
+                "productIdentifier": {
+                  "scheme": "gs1",
+                  "gtin": "01234567890128"
+                },
                 "batteryType": "industrial"
               }
             }
@@ -9769,7 +9804,7 @@
         }
       },
       "Conflict": {
-        "description": "State conflict — e.g. attempting to publish an already-published DPP\nor updating an archived DPP.\n",
+        "description": "State conflict — e.g. attempting to publish an already-published DPP\nor updating a retired DPP.\n",
         "content": {
           "application/problem+json": {
             "schema": {

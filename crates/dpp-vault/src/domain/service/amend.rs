@@ -7,10 +7,11 @@
 //! replaces, with the predecessor moved to the terminal `Superseded` state and
 //! kept, never deleted.
 //!
-//! The product's printed carrier keeps working, because it addresses the GTIN
-//! and the by-GTIN lookup resolves past a superseded record to the successor —
-//! that exclusion is in the query itself (`status <> 'superseded'`), not in the
-//! public handler, so it holds however the handler decides what to serve.
+//! The product's printed carrier keeps working. The successor carries its
+//! predecessor's carrier serial, level and lot, so the label names both records,
+//! and the label lookup (`PassportService::resolve_label`) serves the one that
+//! was not superseded. A successor issued before it carried the serial is
+//! reached by walking forward from the superseded record.
 //!
 //! The predecessor's own `/public/dpp/{id}` URL **serves**, and no longer
 //! `404`s — see `public_view::serves_publicly`. This module used to argue the
@@ -21,7 +22,7 @@
 //! rewriting it is precisely what `publicJwsSignature` exists to make
 //! detectable. What changed is the comparison. The alternative was never the
 //! redirect, which was never built; it was the `404`, which made a retained
-//! record indistinguishable from one that never existed. ESPR Art. 10(4)(i)
+//! record indistinguishable from one that never existed. ESPR Art. 9(2)(i)
 //! keeps the record available for the product's expected lifetime, and a reader
 //! who reaches a retired passport is better served by the signed document than
 //! by nothing. The live status stays on the authenticated route, which reads
@@ -82,7 +83,7 @@ impl PassportService {
         let predecessor = self.find_by_id(id).await?;
 
         // `Published` is the only state that can be superseded — a draft is
-        // edited in place, and `Suspended`, `Archived`, `Superseded` and
+        // edited in place, and `Suspended`, `Retired`, `Superseded` and
         // `Deactivated` are either reversible or terminal by another route.
         // Asking the state machine rather than matching on the variant keeps
         // this in step with `can_transition_to` if the table ever widens.
@@ -136,6 +137,16 @@ impl PassportService {
         successor.status = PassportStatus::Draft;
         successor.created_at = Utc::now();
         successor.updated_at = Utc::now();
+
+        // ── Label, kept ──────────────────────────────────────────────────
+        // The label on the object does not change when the record does. A
+        // passport that attributed no carrier serial prints one derived from its
+        // id, and the successor's new id would derive a different one, so its
+        // carrier would name nothing the object carries. Carrying the effective
+        // serial forward explicitly keeps the printed label naming every record
+        // in the chain, and `resolve_label` picks the current one. `carrierSerial`
+        // is a protected field, so the patch below cannot undo this.
+        successor.carrier_serial = Some(predecessor.effective_carrier_serial().into_owned());
 
         // ── Proof, cleared ───────────────────────────────────────────────
         // Every artefact below commits to the predecessor's bytes. Carrying any
@@ -244,12 +255,12 @@ impl PassportService {
         )
         .await;
 
-        // A superseded passport keeps serving publicly, like an archived or
+        // A superseded passport keeps serving publicly, like a retired or
         // deactivated one — products made under the old specification are still
         // in the field carrying carriers that resolve to it. The reconcile is
         // still needed, and for the opposite reason to a withdrawal: the stored
         // snapshot has to be refreshed to carry the new status rather than the
-        // old one, not removed. Same reconcile `suspend` and `archive` do, and
+        // old one, not removed. Same reconcile `suspend` and `retire` do, and
         // non-fatal for the same reason: the database is the source of truth.
         self.enqueue_snapshot_reconcile(superseded.id).await;
 

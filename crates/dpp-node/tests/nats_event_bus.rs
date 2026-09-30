@@ -166,11 +166,7 @@ async fn event_envelope_uses_camel_case_on_wire() {
         .await
         .expect("connect failed");
 
-    let event = DppEvent::v1(
-        subjects::PASSPORT_ARCHIVED,
-        "op-wire",
-        serde_json::json!({}),
-    );
+    let event = DppEvent::v1(subjects::PASSPORT_RETIRED, "op-wire", serde_json::json!({}));
     bus.publish(&event).await.unwrap();
 
     let client = async_nats::connect(&url).await.unwrap();
@@ -179,7 +175,7 @@ async fn event_envelope_uses_camel_case_on_wire() {
     let consumer = stream
         .create_consumer(consumer::pull::Config {
             durable_name: Some("test-wire-format".to_string()),
-            filter_subject: "dpp.passport.archived".to_string(),
+            filter_subject: "dpp.passport.retired".to_string(),
             ..Default::default()
         })
         .await

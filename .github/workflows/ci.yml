@@ -206,7 +206,7 @@ jobs:
         run: mkdir -p dpp-engine/results
       # One S3 server for the whole job, rather than one per S3 test — the same
       # arrangement as the Postgres service above, for the same reason. The four
-      # `s3_archive` tests booted their own and spent about ten seconds each
+      # `s3_backup` tests booted their own and spent about ten seconds each
       # doing it, which put them on the wrong side of the slow-test budget
       # whenever the runner was busy. `ODAL_TEST_S3_ENDPOINT` points them here;
       # unset, they still start their own container, so a bare `cargo test`
@@ -214,7 +214,7 @@ jobs:
       #
       # A step rather than a `services:` entry so the readiness wait and the
       # server's own log on failure sit in one place. The image and tag are the
-      # ones `s3_archive.rs` and `snapshot_static_tier.rs` pin for their own
+      # ones `s3_backup.rs` and `snapshot_static_tier.rs` pin for their own
       # containers; the three must move together.
       #
       # RustFS, not MinIO: `docker.io/minio/minio` was removed, and on 2026-09-24

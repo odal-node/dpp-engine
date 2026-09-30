@@ -21,7 +21,7 @@ async fn test_suspension_flow() {
         "materials": [{"name": "Nickel", "weightKg": 0.5}],
         "productGroupData": {
             "productGroup": "battery",
-            "gtin": "09506000134352",
+            "productIdentifier": { "scheme": "gs1", "gtin": "09506000134352" },
             "batteryChemistry": "NiMH",
             "batteryType": "portable",
             "nominalVoltageV": 12.0,
@@ -77,8 +77,8 @@ async fn test_suspension_flow() {
 ///
 /// Deactivation ends the *product*, not the passport. Core's status doc says a
 /// `Deactivated` record "is retained (the DPP outlives the product, EN 18221)",
-/// and this node enforces that on the write side by refusing to archive before
-/// `retention_until`. ESPR Art. 10(4)(i) is the basis: the passport is to
+/// and this node enforces that on the write side by refusing to retire before
+/// `retention_until`. ESPR Art. 9(2)(i) is the basis: the passport is to
 /// "remain available" for a period corresponding to "at least the expected
 /// lifetime of a specific product".
 ///
@@ -103,7 +103,7 @@ async fn a_deactivated_passport_is_still_served_publicly() {
         "materials": [{"name": "Nickel", "weightKg": 0.5}],
         "productGroupData": {
             "productGroup": "battery",
-            "gtin": "09506000134352",
+            "productIdentifier": { "scheme": "gs1", "gtin": "09506000134352" },
             "batteryChemistry": "NiMH",
             "batteryType": "portable",
             "nominalVoltageV": 12.0,
@@ -163,7 +163,7 @@ async fn a_deactivated_passport_is_still_served_publicly() {
     // sound for a *superseded* passport, which has a successor to redirect to.
     // It does not reach a deactivated one, which has none — the alternative
     // there is only the `404`, and a recycler scanning a scrapped battery is
-    // exactly the reader Art. 10(4)(i) keeps the record for.
+    // exactly the reader Art. 9(2)(i) keeps the record for.
     //
     // The live status stays available on the authenticated route, which reads
     // the row rather than the proof.

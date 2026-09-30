@@ -93,7 +93,9 @@ pub fn validate_mattress_row(
         co2e_per_unit: None,
         repairability_score: None,
         product_group_data: Some(ProductGroupData::Mattress(MattressData {
-            gtin: gtin.expect("field verified present by errors.is_empty() guard above"),
+            product_identifier: dpp_domain::identifier::ProductIdentifier::gs1(
+                gtin.expect("field verified present by errors.is_empty() guard above"),
+            ),
             primary_material: primary_material
                 .expect("field verified present by errors.is_empty() guard above"),
             country_of_origin: country_of_origin

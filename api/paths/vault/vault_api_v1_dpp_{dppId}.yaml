@@ -36,7 +36,7 @@ put:
     JSON merge-patch on a `draft` or `active` DPP.
     The request body is a free-form JSON object; only supplied
     fields are changed. Returns `409 Conflict` if the DPP is
-    `suspended` or `archived`.
+    `suspended` or `retired`.
   tags:
     - DPP Management
   security:

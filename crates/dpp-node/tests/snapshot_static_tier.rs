@@ -6,7 +6,7 @@
 //!
 //! `snapshot_outbox.rs` drives the drain against an in-memory store and leaves
 //! "does S3 work" to a real-server suite — but until this file, the only one
-//! covered `S3ArchiveAdapter`. The snapshot store's S3 path had no test against
+//! covered `S3BackupAdapter`. The snapshot store's S3 path had no test against
 //! a real object store at all, so nothing checked the property the continuity
 //! tier rests on: that an **unauthenticated** reader who fetches the stored object
 //! over plain HTTP gets bytes whose signed freshness bound still verifies.
@@ -39,18 +39,18 @@ use dpp_types::snapshot::{SnapshotMeta, SnapshotStore, snapshot_html_key, snapsh
 /// The S3 server build this file tests against.
 ///
 /// 🚨 RustFS, not MinIO — neither `docker.io/minio/minio` nor
-/// `quay.io/minio/minio` can be pulled any more; `s3_archive.rs` says how that
-/// was established. Pinned to the same pair `s3_archive.rs` and the CI workflow
+/// `quay.io/minio/minio` can be pulled any more; `s3_backup.rs` says how that
+/// was established. Pinned to the same pair `s3_backup.rs` and the CI workflow
 /// use; the three must move together.
 const S3_IMAGE: (&str, &str) = ("rustfs/rustfs", "1.0.0");
 
 /// Point this at a running S3 server and the suite uses it instead of starting a
-/// container. Same arrangement `s3_archive.rs` uses, for the same reason:
+/// container. Same arrangement `s3_backup.rs` uses, for the same reason:
 /// nextest gives each test its own process, so an in-process shared container
 /// is one container per test again.
 const SHARED_ENDPOINT_ENV: &str = "ODAL_TEST_S3_ENDPOINT";
 
-/// The shared server's key pair — same variables `s3_archive.rs` reads.
+/// The shared server's key pair — same variables `s3_backup.rs` reads.
 const SHARED_ACCESS_KEY_ENV: &str = "ODAL_TEST_S3_ACCESS_KEY";
 const SHARED_SECRET_KEY_ENV: &str = "ODAL_TEST_S3_SECRET_KEY";
 
@@ -93,7 +93,7 @@ async fn start_s3() -> S3Server {
         .with_exposed_port(ContainerPort::Tcp(9000))
         .with_env_var("RUSTFS_ACCESS_KEY", access_key.clone())
         .with_env_var("RUSTFS_SECRET_KEY", secret_key.clone())
-        // No update check reaches the network; `s3_archive.rs` says why this
+        // No update check reaches the network; `s3_backup.rs` says why this
         // is a host pin and not an environment variable.
         .with_host(
             "version.rustfs.com",
@@ -118,7 +118,7 @@ async fn start_s3() -> S3Server {
 }
 
 /// Poll the server's readiness route for at most 30 seconds, each probe under
-/// its own timeout. `s3_archive.rs` says why readiness and why the per-probe
+/// its own timeout. `s3_backup.rs` says why readiness and why the per-probe
 /// bound.
 async fn wait_until_ready(endpoint: &str) {
     let url = format!("{endpoint}/health/ready");

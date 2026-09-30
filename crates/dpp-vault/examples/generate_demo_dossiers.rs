@@ -278,7 +278,7 @@ fn demo_passport() -> Passport {
         "repairabilityScore": null,
         "productGroupData": {
             "productGroup": "battery",
-            "gtin": "09506000134352",
+            "productIdentifier": { "scheme": "gs1", "gtin": "09506000134352" },
             "batteryType": "lmt",
             "batteryChemistry": "NMC",
             "batteryPassportNumber": "URN:ODL:BATT:09506000134352:ACME-LMT-2026-09",
@@ -365,7 +365,7 @@ fn demo_passport() -> Passport {
         "commodityCode": "85076000",
         // The battery schema this build publishes against. `demo_dossiers_verify`
         // validates the passport's product group data against it, strictly.
-        "schemaVersion": "2.6.0",
+        "schemaVersion": "2.7.0",
     }))
     .expect("demo passport");
 
@@ -375,7 +375,8 @@ fn demo_passport() -> Passport {
     pinned["publishedAt"] = json!("2026-09-01T09:05:00Z");
     pinned["updatedAt"] = json!("2026-09-01T09:05:00Z");
     let mut p: Passport = serde_json::from_value(pinned).expect("pinned passport");
-    stamp_publish_obligations(&mut p, true, RESOLVER_BASE);
+    stamp_publish_obligations(&mut p, true, RESOLVER_BASE)
+        .expect("the demo passport carries a carrier URL publish can build");
     p
 }
 

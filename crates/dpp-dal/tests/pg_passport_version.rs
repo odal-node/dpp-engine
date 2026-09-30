@@ -2,14 +2,14 @@
 //!
 //! ✅ COMPLIANCE-PIN: EN 18221:2026 clause 4.2 (archiving).
 //!
-//! 🚨 Not `PassportStatus::Archived`, the terminal lifecycle state. The two wear
+//! 🚨 Not `PassportStatus::Retired`, the terminal lifecycle state. The two wear
 //! the same word and mean unrelated things — see the migration's header.
 //!
 //! What is here rather than in a unit test, and why each one has to be:
 //!
-//! 1. **The append-only trigger actually fires.** "All archived versions shall be
-//!    maintained during the digital product passport lifetime" is enforced by a
-//!    trigger, and a trigger that was never exercised is a comment. Both arms —
+//! 1. **The append-only trigger actually fires.** Keeping every archived version
+//!    for the passport's whole lifetime is enforced by a trigger, and a trigger
+//!    that was never exercised is a comment. Both arms —
 //!    `UPDATE` and `DELETE` — because the trigger names both and a `BEFORE
 //!    UPDATE OR DELETE` clause is one edit away from naming one.
 //! 2. **A version can outlive what it is a version of.** `passport_id` carries
@@ -82,6 +82,7 @@ fn a_passport() -> Passport {
         responsible_operator: None,
         facility: None,
         seal: None,
+        carrier_serial: None,
     }
 }
 

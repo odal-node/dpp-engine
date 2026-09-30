@@ -26,7 +26,7 @@ async fn test_textile_create_publish_resolve() {
         ],
         "productGroupData": {
             "productGroup": "textile",
-            "gtin": "09506000134352",
+            "productIdentifier": { "scheme": "gs1", "gtin": "09506000134352" },
             "fibreComposition": [
                 {"fibre": "cotton", "pct": 95.0},
                 {"fibre": "elastane", "pct": 5.0}

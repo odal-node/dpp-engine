@@ -82,7 +82,7 @@ pub mod subjects {
     /// A published passport was replaced by a corrected successor. The payload
     /// carries `successorId`; the superseded record stays resolvable.
     pub const PASSPORT_SUPERSEDED: &str = "dpp.passport.superseded";
-    pub const PASSPORT_ARCHIVED: &str = "dpp.passport.archived";
+    pub const PASSPORT_RETIRED: &str = "dpp.passport.retired";
     pub const PASSPORT_DEACTIVATED: &str = "dpp.passport.deactivated";
     pub const PASSPORT_TRANSFERRED: &str = "dpp.passport.transferred";
     pub const PASSPORT_FAILED: &str = "dpp.passport.failed";

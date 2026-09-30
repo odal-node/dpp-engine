@@ -24,7 +24,7 @@ use dpp_dal::pg::{
 };
 use dpp_dal::test_harness::{TestPg, start_pg};
 use dpp_domain::passport::PassportRef;
-use dpp_domain::{DppError, GhostArchive, GhostRegistrySync, PassthroughRegistry};
+use dpp_domain::{DppError, GhostBackup, GhostRegistrySync, PassthroughRegistry};
 use dpp_identity_service::state::AppState as IdentityState;
 use dpp_integrator::{infra::vault_client::VaultHttpClient, state::AppState as IntegratorState};
 use dpp_node::infra::credential_issuance::KeyStoreCredentialIssuer;
@@ -180,7 +180,7 @@ async fn start_node_with_ruleset(
             audit_repo,
             event_bus,
             registry_sync,
-            Arc::new(GhostArchive),
+            Arc::new(GhostBackup),
             OperatorIdentity {
                 legal_name: "Test Operator GmbH".to_owned(),
                 country: "DE".to_owned(),
@@ -607,7 +607,7 @@ async fn route_inventory_matches_assembled_router() {
             "materials": [],
             "productGroupData": {
                 "productGroup": "battery",
-                "gtin": "09506000134352",
+                "productIdentifier": { "scheme": "gs1", "gtin": "09506000134352" },
                 "batteryChemistry": "LFP",
                 "batteryType": "portable",
                 "nominalVoltageV": 48.0,
@@ -665,7 +665,7 @@ async fn route_inventory_matches_assembled_router() {
         ),
         (
             reqwest::Method::POST,
-            format!("/vault/api/v1/dpp/{FAKE_ID}/archive"),
+            format!("/vault/api/v1/dpp/{FAKE_ID}/retire"),
         ),
         (
             reqwest::Method::POST,
@@ -793,7 +793,7 @@ async fn publish_battery(
         "materials": [],
         "productGroupData": {
             "productGroup": "battery",
-            "gtin": gtin,
+            "productIdentifier": { "scheme": "gs1", "gtin": gtin },
             "batteryChemistry": "LFP",
             "batteryType": "portable",
             "nominalVoltageV": 48.0,
@@ -2222,7 +2222,7 @@ async fn publish_layered_battery(base: &str, token: &str, client: &reqwest::Clie
             "batchId": "LOT-2026-09",
             "productGroupData": {
                 "productGroup": "battery",
-                "gtin": "09506000134352",
+                "productIdentifier": { "scheme": "gs1", "gtin": "09506000134352" },
                 "batteryChemistry": "LFP",
                 "batteryType": "portable",
                 "nominalVoltageV": 48.0,
@@ -2258,9 +2258,8 @@ async fn publish_layered_battery(base: &str, token: &str, client: &reqwest::Clie
 /// A change to a passport is retrievable afterwards, and the route tells its two
 /// empty-handed answers apart.
 ///
-/// ✅ COMPLIANCE-PIN: EN 18221:2026 clause 4.2 — *"the archived version
-/// corresponding to a given point in time shall be retrievable by authenticated
-/// and authorized actors"*.
+/// ✅ COMPLIANCE-PIN: EN 18221:2026 clause 4.2 — an authenticated, authorised
+/// reader can retrieve the passport as it stood at any given moment.
 ///
 /// 🚨 Nothing but an assembled node proves this. The decorator is wired in the
 /// composition root, so a suite that builds its own `PassportService` over a

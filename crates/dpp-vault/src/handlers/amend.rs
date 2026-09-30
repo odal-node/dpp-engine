@@ -72,7 +72,7 @@ pub async fn amend_handler(
         Err(dpp_domain::DppError::NotFound(_)) => not_found_error("DPP not found."),
         Err(dpp_domain::DppError::InvalidTransition { .. }) => conflict_error(
             "Only a published DPP can be amended. A draft is edited in place; a suspended, \
-             archived, superseded or deactivated DPP cannot be superseded.",
+             retired, superseded or deactivated DPP cannot be superseded.",
         ),
         Err(dpp_domain::DppError::Validation(errs)) => field_validation_error(&errs),
         Err(e) => internal_error(e),

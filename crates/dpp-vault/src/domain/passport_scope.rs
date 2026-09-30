@@ -44,16 +44,19 @@
 //! the same two-names-one-concept mistake the `sector`/`productGroup` rename was
 //! paid for.
 //!
-//! # The node is stricter than the article, and says so
+//! # The gate follows the article
 //!
-//! A passport outside Art. 77(1) is still held to the category content gate:
 //! `check_mandatory_content` runs inside `Passport::transition_to` on first
-//! publish, and this node calls that and cannot skip it. So an industrial
-//! battery at or below 2 kWh is asked for content the article exempts.
+//! publish, and since dpp-core 0.21.0 it asks Art. 77(1) first: a record the
+//! article provably does not reach — `NotCovered`, `BelowThreshold`,
+//! `NotYetBinding` — is not held to the category content. That is the same
+//! list [`gate_applies`] exempts, so the readiness this node reports and the
+//! gate core applies agree. Until then the node asked an industrial battery at
+//! or below 2 kWh for content the article exempts, and [`scope_note`] said so.
 //!
-//! That is reported rather than hidden — [`scope_note`] admits it — and it is
-//! the half of engine issue #238 that stays open, because narrowing the gate to
-//! the article's scope is core's change to make.
+//! Core keeps the strict reading as `check_category_content`, for a node that
+//! chooses to hold a voluntary passport to its category anyway. This one does
+//! not call it.
 
 use chrono::Datelike as _;
 use dpp_domain::passport::Passport;
@@ -219,9 +222,9 @@ pub fn wire_status(scope: Option<PassportScope>) -> &'static str {
 /// A sentence for a caller who is about to be asked for mandatory content, or
 /// who is publishing something the law does not require.
 ///
-/// Returned alongside the readiness gates rather than instead of them: this node
-/// applies core's content gate whatever this says, and pretending otherwise
-/// would be the more confusing answer.
+/// Returned alongside the readiness gates rather than instead of them: the
+/// blockers are core's answer, and this sentence explains the scope that
+/// answer turned on.
 #[must_use]
 pub fn scope_note(scope: Option<PassportScope>, data: Option<&ProductGroupData>) -> Option<String> {
     let Some(ProductGroupData::Battery(battery)) = data else {
@@ -244,24 +247,21 @@ pub fn scope_note(scope: Option<PassportScope>, data: Option<&ProductGroupData>)
         PassportScope::NotCovered => Some(format!(
             "Art. 77(1) requires a battery passport for LMT, electric-vehicle and industrial \
              batteries above 2 kWh. A {kind} battery is outside it, so this passport is \
-             voluntary — publishing one is allowed and discharges no duty under that article. \
-             This node still applies the category content gate, which is the node's rule \
-             rather than the article's, so publishing may still be refused for missing \
-             content."
+             voluntary — publishing one is allowed and discharges no duty under that article, \
+             and the category content gate does not apply to it."
         )),
         PassportScope::BelowThreshold => Some(
             "Art. 77(1) reaches industrial batteries with a capacity greater than 2 kWh. This \
-             one declares 2 kWh or less, so its passport is voluntary. Note that this node \
-             still applies the category content gate, which is stricter than the article \
-             requires here."
+             one declares 2 kWh or less, so its passport is voluntary and the category content \
+             gate does not apply to it."
                 .to_owned(),
         ),
         PassportScope::NotYetBinding => Some(
             "Art. 77(1) applies to batteries placed on the market from 18 February 2027. This \
              record declares an earlier `placedOnMarketDate`, so the article does not reach it \
-             and its passport is voluntary. A record that states no date at all is treated as \
-             inside the period instead, because an unstated date is not evidence of an earlier \
-             one."
+             and its passport is voluntary and not held to the category content gate. A record \
+             that states no date at all is treated as inside the period instead, because an \
+             unstated date is not evidence of an earlier one."
                 .to_owned(),
         ),
         _ => None,
@@ -308,7 +308,7 @@ mod tests {
     fn minimal_battery() -> BatteryData {
         serde_json::from_value(serde_json::json!({
             "productGroup": "battery",
-            "gtin": "09506000134352",
+            "productIdentifier": { "scheme": "gs1", "gtin": "09506000134352" },
             "batteryChemistry": "LFP",
             "batteryType": "ev",
             "nominalVoltageV": 48.0,
@@ -474,22 +474,29 @@ mod tests {
         );
     }
 
-    /// The node still gates a voluntary passport, and the note admits it rather
-    /// than leaving an operator to wonder why they are asked for content they do
-    /// not owe.
+    /// A voluntary passport is named as one, and told the content gate does not
+    /// apply — which is what core's gate now does for every scope `gate_applies`
+    /// exempts, so the note and the blockers beside it agree.
     #[test]
-    fn a_voluntary_passport_is_named_and_the_stricter_gate_is_admitted() {
+    fn a_voluntary_passport_is_named_and_told_it_is_not_gated() {
         let portable = battery_data(BatteryType::Portable, None);
         let note = scope_note(Some(PassportScope::NotCovered), Some(&portable)).expect("note");
         assert!(note.contains("voluntary"), "{note}");
         assert!(note.contains("portable"), "{note}");
 
         let small = battery_data(BatteryType::Industrial, Some(1.0));
-        let note = scope_note(Some(PassportScope::BelowThreshold), Some(&small)).expect("note");
-        assert!(
-            note.contains("stricter"),
-            "the over-demand has to be admitted, not hidden: {note}"
-        );
+        for scope in [
+            PassportScope::NotCovered,
+            PassportScope::BelowThreshold,
+            PassportScope::NotYetBinding,
+        ] {
+            assert!(!gate_applies(Some(scope)), "{scope:?}");
+            let note = scope_note(Some(scope), Some(&small)).expect("note");
+            assert!(
+                note.contains("content gate") && !note.contains("still applies"),
+                "{scope:?} must say the gate does not apply: {note}"
+            );
+        }
     }
 
     /// The chemistry is irrelevant to the article, asserted so nobody adds it.

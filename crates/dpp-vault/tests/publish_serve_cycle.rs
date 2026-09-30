@@ -76,7 +76,7 @@ async fn published_passport_is_served_as_the_payload_its_proof_signed() {
                 "batchId": "LOT-2026-07",
                 "productGroupData": {
                     "productGroup": "battery",
-                    "gtin": "09506000134352",
+                    "productIdentifier": { "scheme": "gs1", "gtin": "09506000134352" },
                     "batteryChemistry": "LFP",
                     "batteryType": "portable",
                     "nominalVoltageV": 48.0,

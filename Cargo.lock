@@ -2227,9 +2227,9 @@ checksum = "75b325c5dbd37f80359721ad39aca5a29fb04c89279657cffdda8736d0c0b9d2"
 
 [[package]]
 name = "dpp-aas"
-version = "0.20.0"
+version = "0.21.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ae2393b4f213d299c778ca750d62f2833596e54d642c3cf73b1830c074982a3a"
+checksum = "43325f6a27f419e609b7b685bbd28e2720df492f2a2ce06af0d49bc5335ed061"
 dependencies = [
  "dpp-domain",
  "dpp-vocab",
@@ -2239,9 +2239,9 @@ dependencies = [
 
 [[package]]
 name = "dpp-calc"
-version = "0.20.0"
+version = "0.21.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7af6cecc59e7b86f4b76f5538b129645cb4d8f2241850332380cc56e447d25f8"
+checksum = "8c942b52b625c4c21d59b7345bb21d2cb29b8f94861af72bfeb8523802b5454c"
 dependencies = [
  "chrono",
  "dpp-rules",
@@ -2312,9 +2312,9 @@ dependencies = [
 
 [[package]]
 name = "dpp-crypto"
-version = "0.20.0"
+version = "0.21.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "aae3c51c9235b7c66db202fbefeb1910944fe3a16824a10e1f0d109177b96ff9"
+checksum = "d03baf48e4f3cfe278fa66a4255453d9cb37ba712625dd36066a674023e8d31d"
 dependencies = [
  "aes-gcm",
  "anyhow",
@@ -2331,6 +2331,7 @@ dependencies = [
  "serde_jcs",
  "serde_json",
  "sha2 0.11.0",
+ "thiserror 2.0.20",
  "tracing",
  "uuid",
  "zeroize",
@@ -2363,11 +2364,12 @@ dependencies = [
 
 [[package]]
 name = "dpp-digital-link"
-version = "0.20.0"
+version = "0.21.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f73ae3349351480a23c8f573b6690fd73bd0ae343f136e1ca24a5f9975fbe32e"
+checksum = "2711c198dc82c9e811faf62d6c10bbcb8a34ac7b28d1560f6de4ff8176413360"
 dependencies = [
  "dpp-domain",
+ "dpp-rules",
  "serde",
  "serde_json",
  "thiserror 2.0.20",
@@ -2375,9 +2377,9 @@ dependencies = [
 
 [[package]]
 name = "dpp-domain"
-version = "0.20.0"
+version = "0.21.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1e09df55de4d52676e079162fef9512d3f1999a66de351718c5f6563e5d8cbac"
+checksum = "1e734f800903d6c3c0c082417db1631804edbb98bef1e06aa82dba349af5afad"
 dependencies = [
  "async-trait",
  "chrono",
@@ -2551,9 +2553,9 @@ dependencies = [
 
 [[package]]
 name = "dpp-plugin-traits"
-version = "0.20.0"
+version = "0.21.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ee3e4753f8a8539c3e495850eeef2ea9542861df58dadecc67399e41f60fd225"
+checksum = "5daa6ef28838ecfe28947c421bf0179490a339bb04e6bee7f14968d2b41f43f5"
 dependencies = [
  "semver",
  "serde",
@@ -2563,9 +2565,9 @@ dependencies = [
 
 [[package]]
 name = "dpp-registry"
-version = "0.20.0"
+version = "0.21.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e09ccb0a3cf0fbb111c5131f13c9158db52e039465b9324e347d03f57fcc4b54"
+checksum = "9a7932bd8822666c9ac41835b8c25468d839d362f8af5c4812397128a6cb6579"
 dependencies = [
  "chrono",
  "dpp-domain",
@@ -2628,9 +2630,9 @@ dependencies = [
 
 [[package]]
 name = "dpp-rules"
-version = "0.20.0"
+version = "0.21.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1278032dbdf9f76c37e5259e6863c7b0d4a1f5f3820646943638c2043b726c19"
+checksum = "58b7b0e4ed097b1ada1bd2111edc1ef6efa5c955e1092a6982b4c2a7eaa458f7"
 dependencies = [
  "base64 0.23.1",
  "chrono",
@@ -2739,9 +2741,9 @@ dependencies = [
 
 [[package]]
 name = "dpp-vc"
-version = "0.20.0"
+version = "0.21.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "eb15b1cf412da4c951a793be6374e1fd313f7d60330cc54a89f28d60cf917d6d"
+checksum = "95a4633b0cdc7eaeb0bb0a18550b95f048c75e818a37e6cef5621c7d0e411560"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2756,14 +2758,15 @@ dependencies = [
  "serde_jcs",
  "serde_json",
  "sha2 0.11.0",
+ "thiserror 2.0.20",
  "uuid",
 ]
 
 [[package]]
 name = "dpp-vocab"
-version = "0.20.0"
+version = "0.21.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d4ccdeb025ff70eb8887f80a56e0930f3bc4b6e5c7ec01ba9c2677e11bdc960c"
+checksum = "615dc0cb2142d30c32fcc3a477c19960ce2be0d19b2f9afc169386b9039c2239"
 dependencies = [
  "serde",
  "serde_json",
@@ -4125,9 +4128,9 @@ dependencies = [
 
 [[package]]
 name = "jsonschema"
-version = "0.53.0"
+version = "0.56.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ca2ea2207f8ccb34b6d4d041fe9deb08fff3cbc43750012caa2c3d1e860188e4"
+checksum = "b6a806f80c1f5560431009ce5ec29b59d38f950e0cd7db5f1b8925e6d8104e21"
 dependencies = [
  "ahash",
  "bytecount",
@@ -4145,8 +4148,6 @@ dependencies = [
  "percent-encoding",
  "referencing",
  "regex",
- "reqwest",
- "rustls",
  "serde",
  "serde_json",
  "strum",
@@ -4156,18 +4157,18 @@ dependencies = [
 
 [[package]]
 name = "jsonschema-regex"
-version = "0.53.0"
+version = "0.56.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5426a01d944d044c9c5e459f603419d1b539358f5496b1041df45a7a86d2d38f"
+checksum = "cb862addfa7782108933abcf842fe25334523a9df5b89ea4d9620e3dd7b42181"
 dependencies = [
  "regex-syntax",
 ]
 
 [[package]]
 name = "jsonschema-value"
-version = "0.53.0"
+version = "0.56.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "65b6ec7deaeaab6320efc3084d8a9e91d5b4985ee36ffffef45dbff9516ff7a8"
+checksum = "a05cd404c5ff6e2731dbbf7e290a27417750acfb59e329560a1d0af384c93fb0"
 dependencies = [
  "ahash",
  "bytecount",
@@ -5710,9 +5711,9 @@ dependencies = [
 
 [[package]]
 name = "referencing"
-version = "0.53.0"
+version = "0.56.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fb406ba984c08d1b91781d7507d103296cf6dec3256c33c388b468957f4b43bb"
+checksum = "a3b4a92fac7e28c27de3ad26df2ecb9e652f227b258e845af034052e5b22c96c"
 dependencies = [
  "ahash",
  "fluent-uri",
@@ -5783,10 +5784,8 @@ checksum = "16a1cfa75cc186dd73d5818e510e042e40927bccc9c236b061cea97e1eb08029"
 dependencies = [
  "base64 0.23.1",
  "bytes",
- "futures-channel",
  "futures-core",
  "futures-util",
- "h2",
  "http 1.5.0",
  "http-body 1.1.0",
  "http-body-util",

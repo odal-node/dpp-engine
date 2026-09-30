@@ -26,7 +26,7 @@ async fn lint_findings_surface_and_never_block_publish() {
         "materials": [{"name": "Lithium", "weightKg": 1.2}],
         "productGroupData": {
             "productGroup": "battery",
-            "gtin": "09506000134352",
+            "productIdentifier": { "scheme": "gs1", "gtin": "09506000134352" },
             "batteryChemistry": "LFP",
             "batteryType": "portable",
             "nominalVoltageV": 3.7,
@@ -124,7 +124,7 @@ async fn clean_product_group_data_produces_no_findings() {
         "materials": [{"name": "Lithium", "weightKg": 1.2}],
         "productGroupData": {
             "productGroup": "battery",
-            "gtin": "09506000134352",
+            "productIdentifier": { "scheme": "gs1", "gtin": "09506000134352" },
             "batteryChemistry": "LFP",
             "batteryType": "portable",
             "nominalVoltageV": 3.7,

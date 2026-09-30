@@ -25,7 +25,9 @@ fn day(y: i32, m: u32, d: u32) -> NaiveDate {
 /// An EV battery whose declared shares clear Art. 8(2) and fail Art. 8(3).
 fn ev_battery() -> ProductGroupData {
     ProductGroupData::Battery(Box::new(BatteryData {
-        gtin: Gtin::parse("09506000134352").expect("valid gtin"),
+        product_identifier: dpp_domain::ProductIdentifier::gs1(
+            Gtin::parse("09506000134352").expect("valid gtin"),
+        ),
         battery_chemistry: BatteryChemistry::Nmc,
         battery_type: BatteryType::Ev,
         nominal_voltage_v: 400.0,
@@ -42,7 +44,7 @@ fn ev_battery() -> ProductGroupData {
 /// Everything else on `BatteryData`, which is `Default` for none of it.
 fn battery_defaults() -> BatteryData {
     serde_json::from_value(serde_json::json!({
-        "gtin": "09506000134352",
+        "productIdentifier": { "scheme": "gs1", "gtin": "09506000134352" },
         "batteryChemistry": "NMC",
         "batteryType": "ev",
         "nominalVoltageV": 400.0,
@@ -213,7 +215,7 @@ fn the_declared_metrics_are_still_lifted() {
 fn another_product_groups_data_is_refused() {
     let textile = ProductGroupData::Textile(Box::new(
         serde_json::from_value::<TextileData>(serde_json::json!({
-            "gtin": "09506000134352",
+            "productIdentifier": { "scheme": "gs1", "gtin": "09506000134352" },
             "fibreComposition": [{"fibre": "cotton", "pct": 100.0}],
             "countryOfOrigin": "PT",
             "careInstructions": "cold wash",

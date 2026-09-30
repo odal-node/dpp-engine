@@ -105,6 +105,7 @@ write into this repo (or into a PR/issue on it):
 - **Commercial state**: pricing, quotes, contract terms, minimums, per-unit rates, negotiation status, vendor lead times.
 - **Named third parties in a non-public arrangement**: which sub-providers sit behind a vendor for *us*, who introduced whom, individual contact names at partners.
 - **Anything a private document marks as private**, including material merely quoted or summarised from it.
+- **The text of a licensed standard** — the CEN/CENELEC ENs (EN 18219, EN 18221, …) and ISO/IEC documents are sold per reader. Cite the clause number and say what it requires in your own words; never quote it, not even one sentence. EU legislation from the Official Journal is free to quote. `ops/pg/0040` still carries two sentences of EN 18221 only because an applied migration cannot be edited without breaking its sqlx checksum — do not copy from it.
 
 **Write the substance, drop the pointer.** The technical reasoning is usually public-safe and belongs in the code; the citation to where it was decided is not. "CAdES carries the same eIDAS Art. 35 presumption" is fine — "see ADR-0NN §N" is not. When a fact came from a vendor's *published* docs, cite those instead.
 
@@ -379,7 +380,7 @@ Implementations:
 - `NoOpEventBus` (default when `NATS_URL` is absent) — discards silently
 - `NatsEventBus` (in `dpp-node/src/infra/`) — publishes to NATS JetStream stream `DPP_EVENTS` with subject pattern `dpp.>`, 7-day retention, file storage
 
-Subjects: `dpp.passport.{created,updated,published,suspended,superseded,archived,failed}`, `dpp.import.{completed,failed}`. The authoritative set is `event::subjects` in `dpp-common`; this line has been behind it before.
+Subjects: `dpp.passport.{created,updated,published,suspended,superseded,retired,failed}`, `dpp.import.{completed,failed}`. The authoritative set is `event::subjects` in `dpp-common`; this line has been behind it before.
 
 ### Job Store
 
@@ -425,7 +426,7 @@ unprotected one. Read the table in the code.
 | GET | `/vault/ready` | None | Pings the primary datastore (PostgreSQL) |
 | GET | `/vault/api/v1/info` | None | Build info |
 | GET | `/vault/public/dpp/{dppId}` | None | Public passport read |
-| GET | `/vault/public/dpp/by-gtin/{gtin}` | None | Public passport read by GTIN |
+| GET | `/vault/public/dpp/by-gtin/{gtin}` | None | Public read of the passport a printed GS1 label names; `?batch=` / `?serial=` carry the label's AI 10 / AI 21 |
 | GET | `/vault/credential/dpp/{dppId}` | **None** — `X-DPP-Credential` only | Audience-scoped read. Deliberately outside both `/public` (a public URL whose body varies by caller breaks caching and the meaning of `publicJwsSignature`) and `/api/v1` (a repairer or authority holds a credential and no API key). **Unauthenticated and network-touching**: it resolves the credential issuer's `did:web` over the guarded outbound path before anything is verified, and a verified read appends to the passport's audit trail. No credential ⇒ the public view, byte-identical to `/public/dpp/{dppId}` |
 | POST | `/vault/api/v1/dpp` | Bearer | Create passport |
 | POST | `/vault/api/v1/dpp/validate` | Bearer **(write)** | Dry-run a create body, persisting nothing. Runs the same `validate_create_request` the create route runs, so the preview cannot disagree with it, and returns the identical `422` on rejection. Reports `createValid` **and** `publishValid` separately — create is lenient about an unresolvable product group schema, publish fails closed on it |
@@ -433,22 +434,22 @@ unprotected one. Read the table in the code.
 | GET | `/vault/api/v1/dpp/{dppId}` | Bearer | Read passport |
 | PUT | `/vault/api/v1/dpp/{dppId}` | Bearer | Update passport (draft only) |
 | POST | `/vault/api/v1/dpp/{dppId}/publish` | Bearer | Publish (signs with Ed25519) |
-| POST | `/vault/api/v1/dpp/{dppId}/amend` | Bearer **(write)** | Correct a published passport by publishing a **successor** (`supersedesId` → this id, `version` + 1) and moving this one to the terminal `superseded` state. Returns `201` with the successor — **a different record from the one in the path**. The superseded passport keeps its signatures and stays readable here and in the audit trail; its **public** by-id URL keeps serving (the frozen signed view, so `status` reads as it did at publish), while the product's GTIN resolves on past it to the successor |
-| POST | `/vault/api/v1/dpp/{dppId}/supersede` | Bearer **(write)** | Retire this passport in favour of an **already-published** successor named in `supersededBy`, which must already carry `supersedesId` back to this id (declared on `POST /dpp`; this route only checks it). Returns `200` with **the retired passport** — the opposite subject from `amend`, which mints its successor and returns that. Use this when the replacement was created independently: a newer schema version, an imported record, a successor issued after a transfer |
+| POST | `/vault/api/v1/dpp/{dppId}/amend` | Bearer **(write)** | Correct a published passport by publishing a **successor** (`supersedesId` → this id, `version` + 1) and moving this one to the terminal `superseded` state. Returns `201` with the successor — **a different record from the one in the path**. The superseded passport keeps its signatures and stays readable here and in the audit trail; its **public** by-id URL keeps serving (the frozen signed view, so `status` reads as it did at publish), while the product's printed label resolves on past it to the successor |
+| POST | `/vault/api/v1/dpp/{dppId}/supersede` | Bearer **(write)** | Supersede this passport in favour of an **already-published** successor named in `supersededBy`, which must already carry `supersedesId` back to this id (declared on `POST /dpp`; this route only checks it). Returns `200` with **the superseded passport** — the opposite subject from `amend`, which mints its successor and returns that. Use this when the replacement was created independently: a newer schema version, an imported record, a successor issued after a transfer |
 | POST | `/vault/api/v1/dpp/{dppId}/suspend` | Bearer | Suspend |
-| POST | `/vault/api/v1/dpp/{dppId}/archive` | Bearer | Archive |
+| POST | `/vault/api/v1/dpp/{dppId}/retire` | Bearer | Retire (terminal; **not** EN 18221 archiving — see `/versions`) |
 | POST | `/vault/api/v1/dpp/{dppId}/lint` | Bearer (write) | Re-run the plausibility lint pack — **persists** `lintResult` |
 | POST | `/vault/api/v1/dpp/{dppId}/eol` | Bearer (write) | Declare end of life |
 | POST | `/vault/api/v1/dpp/{dppId}/transfer/initiate` | Bearer (write) | Sign a pending transfer of responsibility |
 | POST | `/vault/api/v1/dpp/{dppId}/transfer/accept` | Bearer (write) | Countersign and complete it |
 | POST | `/vault/api/v1/dpp/{dppId}/transfer/reject` | Bearer (write) | End the pending handover as refused — terminal, frees the chain |
 | POST | `/vault/api/v1/dpp/{dppId}/transfer/cancel` | Bearer (write) | End the pending handover as withdrawn — terminal, frees the chain |
-| GET | `/vault/api/v1/dpp/by-identity` | Bearer | Find by (product group, GTIN, batch) — backs the import delta-matcher |
+| GET | `/vault/api/v1/dpp/by-identity` | Bearer | Find by (product group, product identifier, batch) — backs the import delta-matcher |
 | GET | `/vault/api/v1/dpp/{dppId}/verify-tree` | Bearer | Walk and verify the component (BOM) graph |
 | GET | `/vault/api/v1/dpp/{dppId}/registry` | Bearer | EU-registry sync status for one passport |
 | GET | `/vault/api/v1/registry` | Bearer | EU-registry sync rollup |
 | GET | `/vault/api/v1/dpp/{dppId}/history` | Bearer | Audit trail |
-| GET | `/vault/api/v1/dpp/{dppId}/versions` | Bearer | Archived historical versions of the passport, oldest first; `?asOf=<RFC 3339>` returns the one current at that instant (as a one-element array), `404` when none covers it. **Not the `archived` lifecycle status** — this is EN 18221 clause 4.2's sense of the word, the history of a passport that is still live |
+| GET | `/vault/api/v1/dpp/{dppId}/versions` | Bearer | Archived historical versions of the passport, oldest first; `?asOf=<RFC 3339>` returns the one current at that instant (as a one-element array), `404` when none covers it. **Not the `retired` lifecycle status** — this is EN 18221 clause 4.2's sense of the word, the history of a passport that is still live |
 | GET | `/vault/api/v1/dpp/{dppId}/seal` | Bearer | eIDAS qualified seal + the JWS/digest it covers (`404` when unsealed) |
 | POST | `/vault/api/v1/dpp/{dppId}/seal/repair` | Bearer **(admin)** | Queue a replacement for a stored seal that does not verify. **Buys a second seal** for a digest already paid for, so it refuses unless the seal is demonstrably broken — checked at request time, never read from the audit's list |
 | GET | `/vault/api/v1/seal` | Bearer | Operator-wide sealing state — published passports carrying no seal, outbox totals, the configured backend's trust tier, and what the last **completed** pass over every stored seal found (`audit`, `null` when none has) |
@@ -522,7 +523,7 @@ The internal endpoints are mTLS-gated (`CN=odal-vault`).
 | GET | `/dpp/{dppId}` | None | Content-negotiated (HTML, JSON-LD, or AAS Environment); `406` for anything else |
 | GET | `/dpp/{dppId}/qr` | None | QR code PNG |
 | GET | `/01/{gtin}` | None | GS1 Digital Link resolver (redirect / linkset) |
-| GET | `/01/{gtin}/21/{serial}` | None | Same, with AI 21 — **the shape `publish` actually mints** |
+| GET | `/01/{gtin}/21/{serial}` | None | Same, with AI 21 — what `publish` mints for an item-level passport or one stating no level |
 | GET | `/01/{gtin}/10/{batch}` | None | Same, with AI 10 |
 | GET | `/01/{gtin}/10/{batch}/21/{serial}` | None | Same, with both |
 
@@ -615,6 +616,15 @@ Two things that bite:
 ## Standing Conventions
 
 Not debt — rules that hold, stated once so they are not re-derived.
+
+- **"Archive" means EN 18221 clause 4.2 and nothing else.** Three things once wore the word and the collision hid a real compliance gap for months, because the name looked already taken. They are told apart by **shape**:
+  - **archive / archiving** — a *history*: every past version of a passport that is still live. `ArchivingPassportRepo`, `passport_version`, `GET /dpp/{id}/versions?asOf=`.
+  - **retire** — a *state*: the terminal lifecycle status, the record has stopped changing. `PassportStatus::Retired`, `POST /dpp/{id}/retire`. No legal anchor; it is our own word.
+  - **back-up copy** — a *copy*, held by an independent third party so the passport survives its operator. ESPR **Art. 10(4)** + **Art. 2(32)** (*not* Art. 13, which is the registry). `BackupCopyPort`, `BACKUP_S3_*`.
+
+  🚨 **Shape, never actor.** Clause 4.2 expects archived versions to be held by the back-up provider *as well as* by this node, so a provider is **not** exempt from archiving and no back-up arrangement wires `passport_version` for us. What makes `BackupCopyPort` not-archiving is that it carries no series — one copy per passport, `retrieve` answering with one. Getting this backwards is a mistake already made and corrected once.
+
+  `scripts/vocabulary-check.sh` (in `just check`) refuses any route path, `api/paths/` file name, event subject or client-built URL containing `archiv`, and any `"archive"` / `"archived"` value in production source. Compound uses are fine and untouched: the keystore's *archived keys*, a seal's *archival timestamp*, *retiring* a facility or an operator identifier.
 
 - **Errors are RFC 7807.** `dpp-common::http_problem::Problem` is the error shape for every HTTP surface (vault, integrator, identity, resolver). A new error path uses `Problem`, not an ad-hoc body.
 - **IDs are UUID v7.** `PassportId`, audit, API-key, event and job IDs all use `now_v7()` so they are time-sortable. Use `now_v7()` for any new identifier; `new_v4()` is acceptable only for throwaway values that are not identifiers (a temp filename).

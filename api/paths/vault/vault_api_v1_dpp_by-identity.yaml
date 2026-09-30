@@ -2,10 +2,10 @@ get:
   operationId: findDppByIdentity
   summary: Find a DPP by exact compound identity
   description: |
-    Look up a passport by exact (product group, GTIN, batch) match, across
-    `draft` and `active` statuses. Backs the import delta-matcher —
-    not intended as a general-purpose search (use `GET /dpps` for that).
-    `batchId` omitted matches only passports with no batch set.
+    Look up a passport by exact (product group, product identifier, batch)
+    match, across `draft` and `active` statuses. Backs the import
+    delta-matcher — not intended as a general-purpose search (use `GET /dpps`
+    for that). `batchId` omitted matches only passports with no batch set.
   tags:
     - DPP Management
   security:
@@ -18,11 +18,16 @@ get:
       schema:
         type: string
         example: battery
-    - name: gtin
+    - name: identifier
       in: query
       required: true
+      description: |
+        The product identifier's value under whichever EN 18219 clause 5
+        scheme issued it: the 14-digit GTIN for scheme 1, the identification
+        link for scheme 2, the DID for scheme 3.
       schema:
         type: string
+        example: '09506000134352'
     - name: batchId
       in: query
       required: false

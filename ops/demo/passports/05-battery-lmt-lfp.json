@@ -16,7 +16,7 @@
   "repairabilityScore": 6.0,
   "productGroupData": {
     "productGroup": "battery",
-    "gtin": "09590000000052",
+    "productIdentifier": { "scheme": "gs1", "gtin": "09590000000052" },
     "batteryType": "lmt",
     "batteryChemistry": "LFP",
     "co2ePerUnitKg": 9.4,

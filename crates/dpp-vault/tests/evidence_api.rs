@@ -20,7 +20,7 @@ fn create_body() -> serde_json::Value {
         "materials": [{"name": "Nickel", "weightKg": 0.5}],
         "productGroupData": {
             "productGroup": "battery",
-            "gtin": "09506000134352",
+            "productIdentifier": { "scheme": "gs1", "gtin": "09506000134352" },
             "batteryChemistry": "NiMH",
             "batteryType": "portable",
             "nominalVoltageV": 12.0,

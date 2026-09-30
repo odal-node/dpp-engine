@@ -120,6 +120,7 @@ fn fully_populated(supersedes: Option<PassportId>) -> Passport {
         responsible_operator: None,
         facility: None,
         seal: None,
+        carrier_serial: None,
     }
 }
 

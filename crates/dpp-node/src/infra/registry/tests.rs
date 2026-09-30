@@ -17,8 +17,7 @@ use dpp_domain::transfer::{TransferReason, TransferRecord};
 use super::client::EuRegistrySync;
 use super::config::EuRegistrySyncConfig;
 use super::mapping::{
-    extract_gtin_from_gs1_dl, facility_identifier_for, item_id_for, level_for,
-    operator_identifier_for,
+    facility_identifier_for, item_id_for, level_for, operator_identifier_for, product_id_for,
 };
 use super::token::CachedToken;
 use dpp_registry::StatusResponse;
@@ -110,6 +109,10 @@ fn request_with_facility(facility: Option<dpp_domain::FacilitySnapshot>) -> Regi
         model_id: None,
         commodity_code: Some("85076000".into()),
         backup_url: None,
+        product_identifier: Some(dpp_domain::ProductIdentifier::gs1(
+            dpp_domain::Gtin::parse("09506000134352").unwrap(),
+        )),
+        service_provider: None,
     }
 }
 
@@ -160,24 +163,49 @@ fn facility_identifier_falls_back_to_bare_value() {
 }
 
 #[test]
-fn extract_gtin_from_valid_gs1_dl() {
-    let uri = "https://id.odal-node.io/01/09506000134352/21/abc123";
-    assert_eq!(
-        extract_gtin_from_gs1_dl(uri),
-        Some("09506000134352".to_owned())
-    );
+fn a_gs1_identifier_is_registered_as_its_gtin() {
+    let product_id = product_id_for(&valid_request()).expect("a GTIN registers");
+    assert_eq!(product_id.scheme, "gtin");
+    assert_eq!(product_id.value, "09506000134352");
 }
 
+/// A passport identified without GS1 has no GTIN anywhere, and its carrier is a
+/// `/dpp/{id}` link. It registers under its own identifier, not under a value
+/// scraped from the carrier or the internal passport id.
 #[test]
-fn extract_gtin_returns_none_for_non_gs1_uri() {
-    assert_eq!(
-        extract_gtin_from_gs1_dl("https://p.odal-node.io/some-uuid"),
-        None
-    );
-    assert_eq!(
-        extract_gtin_from_gs1_dl("https://id.example.com/01/short"),
-        None
-    );
+fn a_did_identifier_is_registered_as_itself_not_as_the_passport_id() {
+    let request = RegistrationRequest {
+        product_identifier: Some(
+            dpp_domain::ProductIdentifier::did("did:web:passports.example.com:item:0001").unwrap(),
+        ),
+        data_carrier_uri: "https://id.example.com/dpp/0190a1b2-0000-7000-8000-000000000001".into(),
+        ..valid_request()
+    };
+    let product_id = product_id_for(&request).expect("a DID registers");
+    assert_eq!(product_id.value, "did:web:passports.example.com:item:0001");
+    assert_ne!(product_id.scheme, "passport_id");
+    assert_ne!(product_id.value, request.passport_id.to_string());
+}
+
+/// A request queued before registrations carried an identifier is refused
+/// before anything is sent, rather than completed with an invented one.
+#[tokio::test]
+async fn a_registration_without_a_product_identifier_is_refused() {
+    let state = Arc::new(MockState::default());
+    let base_url = mock_server::spawn(state.clone()).await;
+    let sync = EuRegistrySync::new(mock_config(&base_url)).unwrap();
+
+    let request = RegistrationRequest {
+        product_identifier: None,
+        ..valid_request()
+    };
+    let err = sync
+        .register(request)
+        .await
+        .expect_err("a registration with no product identifier must be refused");
+
+    assert!(matches!(err, DppError::Validation(_)), "got: {err:?}");
+    assert_eq!(state.register_hits.load(Ordering::SeqCst), 0);
 }
 
 #[test]
@@ -832,7 +860,7 @@ async fn a_vat_operator_is_not_submitted_as_a_did() {
         .await
         .pop_front()
         .expect("the registry must have received a payload");
-    let operator = &sent["payload"]["operatorId"];
+    let operator = &sent["submission"][0]["operatorId"];
     assert_eq!(operator["scheme"], "vat");
     assert_eq!(operator["value"], "DE811234567");
     assert!(
@@ -858,7 +886,7 @@ async fn a_did_operator_keeps_its_did_field() {
         .expect("a did-scheme operator must register");
 
     let sent = state.register_bodies.lock().await.pop_front().unwrap();
-    let operator = &sent["payload"]["operatorId"];
+    let operator = &sent["submission"][0]["operatorId"];
     assert_eq!(operator["scheme"], "did");
     assert_eq!(operator["did"], "did:web:test.example");
 }

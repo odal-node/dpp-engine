@@ -19,7 +19,7 @@ fn draft(product_name: &str) -> serde_json::Value {
         "materials": [{"name": "Nickel", "weightKg": 0.5}],
         "productGroupData": {
             "productGroup": "battery",
-            "gtin": "09506000134352",
+            "productIdentifier": { "scheme": "gs1", "gtin": "09506000134352" },
             "batteryChemistry": "NiMH",
             "batteryType": "portable",
             "nominalVoltageV": 12.0,
@@ -219,7 +219,7 @@ async fn a_refused_amendment_leaves_the_predecessor_live() {
                 "patch": {
                     "productGroupData": {
                         "productGroup": "battery",
-                        "gtin": "09506000134352",
+                        "productIdentifier": { "scheme": "gs1", "gtin": "09506000134352" },
                         "batteryChemistry": "NiMH",
                         "batteryType": "not-a-battery-type",
                         "nominalVoltageV": 12.0,

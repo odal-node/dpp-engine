@@ -1,7 +1,7 @@
 # Signed Outbound Webhooks
 
 Your node can POST an event to your own systems (ERP, PLM, a no-code automation)
-every time a passport changes — created, updated, published, suspended, archived,
+every time a passport changes — created, updated, published, suspended, retired,
 deactivated, or transferred. Deliveries are **signed** so your receiver can prove
 the request really came from your node.
 
@@ -39,7 +39,7 @@ cannot be recovered later.
 ### Event subjects
 
 `dpp.passport.created`, `dpp.passport.updated`, `dpp.passport.published`,
-`dpp.passport.suspended`, `dpp.passport.archived`, `dpp.passport.deactivated`,
+`dpp.passport.suspended`, `dpp.passport.retired`, `dpp.passport.deactivated`,
 `dpp.passport.transferred`, and `dpp.webhook.test`. Use `*` to receive all.
 
 ---

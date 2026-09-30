@@ -12,6 +12,51 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ### Breaking
 
+- **`POST /dpp/{dppId}/archive` is now `POST /dpp/{dppId}/retire`, the status it
+  sets is `"retired"`, and the event it emits is `dpp.passport.retired`.**
+  *(Breaking across six surfaces: the route, the `retireDpp` operationId, the
+  `PassportStatus` wire value, the event subject, `trustMode.archive` →
+  `trustMode.backup` on `GET /node/state`, and `odal passport archive` →
+  `odal passport retire`. `"archived"` is **refused** on input, not aliased.)*
+
+  **Migration:** call `/retire` instead of `/archive`; expect `"retired"`
+  wherever you matched `"archived"`; resubscribe webhooks and NATS consumers
+  filtering `dpp.passport.archived`; rename `ARCHIVE_S3_*` to `BACKUP_S3_*`.
+  Migration `0041_retired_status.sql` rewrites stored statuses on upgrade.
+
+  **Why.** The word named three different things here. **EN 18221:2026 clause
+  4.2** — one of the six standards cited by Commission Implementing Decision (EU)
+  2026/1736 — uses "archiving" for the retention of historical versions of a
+  passport that is **still live**, which this node does in `passport_version`
+  and serves at `GET /dpp/{dppId}/versions`. A terminal lifecycle status is not
+  that, and neither is the **ESPR Art. 10(4)** back-up copy held by an
+  **Art. 2(32)** independent provider. While all three wore the word, anyone
+  mapping this system onto EN 18221 by name ticked a box that was not ticked —
+  which is how the clause 4.2 gap survived unnoticed: the name looked taken.
+
+  *Different*, not unrelated, and the difference matters when reading the
+  back-up: clause 4.2 expects archived versions to be held by the back-up
+  provider **as well as** by this node, so a provider is not exempt from the
+  clause. What separates the two here is shape — `BackupCopyPort` carries one
+  copy per passport and no series at all — so no arrangement with a provider
+  wires `passport_version` for us, and nothing here should be read as saying a
+  provider owes no history.
+
+  **Nothing was removed.** Archiving keeps the word and now means only what the
+  standard means by it. The status is `retired`; the Art. 10(4) copy is the
+  back-up copy. `scripts/vocabulary-check.sh`, in `just check`, refuses any new
+  route path, `api/paths/` file or event subject containing "archiv".
+
+  **The audit trail is not rewritten.** `action`, `prevStatus` and `newStatus`
+  are inside the hash chain, so `0041` only *widens* `passport_audit`'s CHECK —
+  `retired` is added and `archived` stays legal. An entry saying `archived`
+  records a transition performed while that was the word, and editing it would
+  make every later entry read as tampered.
+
+  Pins dpp-core **0.21.0**, which carries the status rename and renames the
+  back-up port with it (`ports::archive::ArchivePort` → `ports::backup::BackupCopyPort`,
+  plus `ArchiveReceipt`/`ArchiveStatus`/`ArchiveVerification`/`GhostArchive`).
+
 - **A production or sandbox node refuses `ALLOW_UNSIGNED_PLUGINS=true`.**
   *(Breaking: a node started with `NODE_PROFILE=production` or
   `NODE_PROFILE=sandbox` and that variable set to `true` no longer boots.
@@ -41,7 +86,98 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   `LoadedPlugin::signature_verified()` records the fact where the loader
   establishes it.
 
+- **Product group data carries a `productIdentifier`, not a `gtin`.**
+  *(Breaking for every request and response body carrying `productGroupData`:
+  `"gtin": "09506000134352"` is now
+  `"productIdentifier": { "scheme": "gs1", "gtin": "09506000134352" }`.)*
+  dpp-core 0.21.0 accepts any EN 18219 clause 5 scheme — a GS1 GTIN, an
+  identification link (`scheme: identificationLink`, `url`) or a DID
+  (`scheme: did`, `did`) — where it required a GTIN, and a GTIN needs GS1
+  membership that the self-issuing schemes do not. Stored documents are not
+  rewritten: a signed record cannot be, and a stored `productGroupData.gtin`
+  still reads. The demo passports in `ops/demo/passports/` and
+  `ops/demo/samples/` are migrated, and `odal passport validate` checks for
+  `productIdentifier`.
+
+  **`GET /vault/api/v1/dpp/by-identity` takes `identifier`, not `gtin`**, the
+  identifier's value under whichever scheme issued it. `batteryPassportNumber`
+  is no longer mandatory battery content (core 0.21.0): the mandatory set is
+  45 fields for an EV battery, 44 for an LMT one and 37 for an industrial one.
+
+- **The GS1 carrier follows the passport's stated level.** *(Breaking for
+  anything that parses `qrCodeUrl`.)* A model-level passport prints
+  `/01/{gtin}`, a batch-level one `/01/{gtin}/10/{batch}`, and an item-level one
+  or one that states no level `/01/{gtin}/21/{serial}`. The lot is no longer
+  printed beside a serial. A GTIN with AI 21 is a serialised GTIN, which GS1
+  defines as one individual item, so a serial on a carrier printed on every
+  unit of a model or batch gave all of them one "individual" identity. The
+  serial is the passport's **carrier serial**, now served as `carrierSerial`
+  where one was attributed; absent, it is derived from the passport id as
+  before. Publish refuses a serial or lot GS1 would reject
+  (`passport_publish_rejected_total{reason="carrier_invalid"}`) rather than
+  printing it. A passport identified by a link or a DID gets the
+  `{base}/dpp/{id}` carrier.
+
+- **A registration is never queued with values the passport lacks.**
+  *(Breaking: where the product group's passport obligation is live, publish
+  answers `422` with reason `missing_registry_identity` for a passport with no
+  product identifier, where it used to queue a registration the adapter then
+  completed with an invented one.)* Core's
+  `RegistrationRequest::from_published_passport` now names every missing field —
+  the operator identifier, the facility, the carrier and the product
+  identifier. Where the obligation is live the refusal comes before anything is
+  persisted and the passport stays a draft; where it is not, the passport
+  publishes with no registration and `GET /registry` counts it under
+  `unregisteredPublished`. The EU-registry adapter registers the passport's
+  own product identifier, where it used to scrape a GTIN out of the carrier URL
+  and fall back to the internal passport id under an invented `passport_id`
+  scheme; a queued registration without an identifier is refused rather than
+  completed with one. The envelope carries core's `submission` array in place of
+  a single `payload`.
+
+- **The AAS door serves any passport with a product identifier.** A passport
+  identified by a link or a DID used to answer `406` because it carried no
+  GTIN; it now gets an AAS environment keyed on its own identifier. A passport
+  with no identifier at all still answers `406`.
+
 ### Fixed
+
+- **A printed label resolves to the passport it was printed for.** Core 0.21.0
+  removed the by-GTIN lookups, and they had been wrong: they returned *a*
+  passport carrying the GTIN, with no ordering, so once a product had a passport
+  per batch or per unit, all but one of its labels resolved to another's
+  passport. The resolver dropped the label's batch and serial and looked up the
+  GTIN alone.
+  The resolver now forwards them to `GET /vault/public/dpp/by-gtin/{gtin}` as
+  `batch` and `serial`, and the vault resolves the passport the label names: by
+  its carrier serial when a serial is present, whatever its level; by its lot at
+  batch level; otherwise the model-level passport. Migration
+  `0042_passport_identifier_index.sql` indexes the identifier and the carrier
+  serial, so none of these is a table scan. A malformed GTIN answers `422`, as
+  the route's description already said.
+
+  **A label keeps working after an amendment.** The successor carries its
+  predecessor's carrier serial, so the object's label names both records and
+  the current one is served; a superseded passport whose successor predates
+  that is followed forward. A draft is never the answer — an amendment whose
+  publish was refused leaves one behind, and following it would turn a working
+  label into a `404`.
+
+- **The QR image printed an unverified carrier.** `GET /dpp/{dppId}/qr` checked
+  the passport's signature and then built the code from the served JSON beside
+  it. It now prints the `qrCodeUrl` inside the verified payload — the carrier
+  the node signed at publish — so a code cannot disagree with the signed
+  record. The passport page shows the same value.
+
+- **A battery Art. 77(1) does not reach is no longer asked for its category's
+  content.** The mandatory-content gate runs inside core's `transition_to`,
+  and until dpp-core 0.21.0 it fired regardless of scope, so an industrial
+  battery at or below 2 kWh was asked for everything a passport the article
+  requires must carry; the readiness note admitted it. Core now asks the
+  article first: a record it provably does not reach (`notCovered`,
+  `belowThreshold`, `notYetBinding`) is not gated, and an undeclared capacity
+  or placing date still is. The readiness note on `POST /dpp/{dppId}/lint` says
+  so instead of apologising for the difference.
 
 - **The demo dossiers presented as passports a payload no node could issue.**
   Their views were a hand-built object whose content mixed a few battery fields
@@ -962,9 +1098,9 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   time, which `GET /dpp/{dppId}` already serves, so this route does not return
   it and "which version is this" stays answerable.
 
-  ⚠️ **Operator-scoped only.** The clause requires archived attributes to carry
-  the same access restrictions as the corresponding attributes in the *current*
-  passport, which for an operator reading its own passport are none. Serving
+  ⚠️ **Operator-scoped only.** The clause restricts an archived attribute
+  exactly as the same attribute is restricted in the *current* passport, which
+  for an operator reading its own passport means not at all. Serving
   versions to a credential-scoped reader means running the **live** passport's
   disclosure policy over the archived document; no such route exists yet, and
   adding one without that step would disclose fields the current passport

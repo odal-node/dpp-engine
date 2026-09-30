@@ -107,7 +107,9 @@ fn empty_host_reports_no_product_group_plugin() {
 fn empty_host_compliance_returns_passthrough() {
     let host = WasmPluginHost::new();
     let data = ProductGroupData::Textile(Box::new(TextileData {
-        gtin: dpp_domain::Gtin::parse("09506000134352").unwrap(),
+        product_identifier: dpp_domain::ProductIdentifier::gs1(
+            dpp_domain::Gtin::parse("09506000134352").unwrap(),
+        ),
         fibre_composition: vec![FibreEntry {
             fibre: "Cotton".into(),
             pct: 100.0,
@@ -335,7 +337,9 @@ fn enrich_input_non_object_passes_through() {
 fn generate_passport_payload_no_plugin_returns_unknown_product_group() {
     let host = WasmPluginHost::new();
     let data = ProductGroupData::Textile(Box::new(TextileData {
-        gtin: dpp_domain::Gtin::parse("09506000134352").unwrap(),
+        product_identifier: dpp_domain::ProductIdentifier::gs1(
+            dpp_domain::Gtin::parse("09506000134352").unwrap(),
+        ),
         fibre_composition: vec![FibreEntry {
             fibre: "Cotton".into(),
             pct: 100.0,

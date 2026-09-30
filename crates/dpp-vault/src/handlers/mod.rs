@@ -2,7 +2,6 @@
 
 pub mod amend;
 pub mod api_keys;
-pub mod archive;
 pub mod audience_read;
 pub mod create;
 pub mod credentials;
@@ -24,6 +23,7 @@ pub mod publish;
 pub mod read;
 pub mod registry_identity;
 pub mod registry_status;
+pub mod retire;
 pub mod ruleset;
 pub mod scan_ingest;
 pub mod seal;

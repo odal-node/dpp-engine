@@ -50,7 +50,7 @@ JSON serialisation uses `#[serde(rename_all = "camelCase")]`:
 | `dpp.passport.updated` | Draft passport fields updated |
 | `dpp.passport.published` | Passport signed and published (draft -> active) |
 | `dpp.passport.suspended` | Active passport suspended |
-| `dpp.passport.archived` | Passport archived (irreversible) |
+| `dpp.passport.retired` | Passport retired (irreversible) |
 | `dpp.passport.failed` | Passport operation failed |
 | `dpp.import.completed` | Bulk import job completed |
 | `dpp.import.failed` | Bulk import job failed |

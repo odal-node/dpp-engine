@@ -16,7 +16,7 @@
   "repairabilityScore": 7.5,
   "productGroupData": {
     "productGroup": "battery",
-    "gtin": "09590000000014",
+    "productIdentifier": { "scheme": "gs1", "gtin": "09590000000014" },
     "batteryType": "industrial",
     "batteryChemistry": "NMC",
     "co2ePerUnitKg": 41.8,

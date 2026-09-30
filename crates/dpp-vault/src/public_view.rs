@@ -290,7 +290,7 @@ pub async fn sign_disclosure_views(
 ///
 /// # Why every retired state still serves
 ///
-/// ESPR Art. 10(4)(i): the passport is to "remain available" for a period
+/// ESPR Art. 9(2)(i): the passport is to "remain available" for a period
 /// corresponding to "at least the expected lifetime of a specific product".
 /// Retiring a *record* does not retire the products already in the field, and it
 /// is those products that carry the data carrier a recycler or authority scans.
@@ -300,10 +300,10 @@ pub async fn sign_disclosure_views(
 /// - `Deactivated` is end of life for the **product**, not the passport. Core's
 ///   status doc says the record "is retained (the DPP outlives the product,
 ///   EN 18221)", and this node enforces that on the write side by refusing to
-///   archive before `retention_until`.
+///   retire before `retention_until`.
 /// - `Superseded` replaces the record, not the goods. Products made under the
 ///   old specification are still out there with carriers resolving to it.
-/// - `Archived` is only reachable *after* `retention_until`, so it is the one
+/// - `Retired` is only reachable *after* `retention_until`, so it is the one
 ///   state where the obligation has genuinely lapsed. It serves anyway: nothing
 ///   requires a node to stop, the data is already public and already signed, and
 ///   withdrawing it buys nothing while breaking every carrier still in
@@ -321,7 +321,7 @@ pub fn serves_publicly(status: &PassportStatus) -> bool {
         PassportStatus::Published
         | PassportStatus::Deactivated
         | PassportStatus::Superseded
-        | PassportStatus::Archived => true,
+        | PassportStatus::Retired => true,
         PassportStatus::Suspended | PassportStatus::Draft => false,
         other => {
             tracing::warn!(
@@ -704,7 +704,7 @@ pub(crate) mod tests {
         passport.product_group_data = Some(
             serde_json::from_value(json!({
                 "productGroup": "battery",
-                "gtin": "09506000134352",
+                "productIdentifier": { "scheme": "gs1", "gtin": "09506000134352" },
                 "batteryChemistry": "LFP",
                 "batteryType": "ev",
                 "nominalVoltageV": 3.2,
@@ -727,12 +727,12 @@ pub(crate) mod tests {
         // 🚨 Both `stateOfHealth` assertions below index `["productGroupData"]`
         // and then `.get(..)`. If the whole object were absent the index yields
         // `Value::Null`, `.get` yields `None`, and both would pass while
-        // checking nothing. `gtin` is declared and public at both versions
+        // checking nothing. `batteryChemistry` is declared and public at both versions
         // tested here, so asserting it present is what makes the absence
         // assertions mean something.
         assert_eq!(
-            current["productGroupData"]["gtin"],
-            json!("09506000134352"),
+            current["productGroupData"]["batteryChemistry"],
+            json!("LFP"),
             "productGroupData is missing, so the assertions below would pass vacuously"
         );
         assert!(
@@ -759,8 +759,8 @@ pub(crate) mod tests {
         passport.schema_version = "1.0.0".into();
         let downgraded = public_view(&passport);
         assert_eq!(
-            downgraded["productGroupData"]["gtin"],
-            json!("09506000134352"),
+            downgraded["productGroupData"]["batteryChemistry"],
+            json!("LFP"),
             "productGroupData is missing, so the assertion below would pass vacuously"
         );
         assert!(
@@ -781,11 +781,11 @@ pub(crate) mod tests {
     /// `Passport` cannot reach it.
     fn battery_passport() -> Passport {
         let mut p = stub_passport();
-        p.schema_version = "2.6.0".into();
+        p.schema_version = "2.7.0".into();
         p.product_group_data = Some(
             serde_json::from_value(json!({
                 "productGroup": "battery",
-                "gtin": "09506000134352",
+                "productIdentifier": { "scheme": "gs1", "gtin": "09506000134352" },
                 "batteryChemistry": "LFP",
                 "batteryType": "ev",
                 "nominalVoltageV": 3.2,
@@ -852,6 +852,7 @@ pub(crate) mod tests {
             responsible_operator: None,
             facility: None,
             seal: None,
+            carrier_serial: None,
         }
     }
 
@@ -976,7 +977,10 @@ pub(crate) mod tests {
         passport.product_name = "EcoBattery".into();
         let view = public_view(&passport);
         // A known product group is filtered by its policy, not blanket-redacted.
-        assert_eq!(view["productGroupData"]["gtin"], json!("09506000134352"));
+        assert_eq!(
+            view["productGroupData"]["productIdentifier"]["gtin"],
+            json!("09506000134352")
+        );
         assert_eq!(view["productGroupData"]["productGroup"], json!("battery"));
     }
     /// 🚨 The one behaviour this swap changed, pinned so it is a decision rather

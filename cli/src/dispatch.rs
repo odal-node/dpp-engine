@@ -23,7 +23,7 @@ use crate::commands::{
     init::run_init,
     inspect::{run_eol, run_find, run_lint, run_tree},
     key::{run_key_create, run_key_list, run_key_revoke, run_key_use},
-    lifecycle::{run_amend, run_archive, run_history, run_supersede, run_suspend},
+    lifecycle::{run_amend, run_history, run_retire, run_supersede, run_suspend},
     list::run_passport_list,
     operator::{run_operator_set, run_operator_show},
     operator_id::{
@@ -328,8 +328,8 @@ pub async fn dispatch(cmd: Commands) -> anyhow::Result<()> {
             command: PassportCommands::Suspend { id },
         } => run_suspend(&id).await,
         Commands::Passport {
-            command: PassportCommands::Archive { id },
-        } => run_archive(&id).await,
+            command: PassportCommands::Retire { id },
+        } => run_retire(&id).await,
         Commands::Passport {
             command: PassportCommands::History { id },
         } => run_history(&id).await,
@@ -394,11 +394,11 @@ pub async fn dispatch(cmd: Commands) -> anyhow::Result<()> {
             command:
                 PassportCommands::Find {
                     product_group,
-                    gtin,
+                    identifier,
                     batch,
                     json,
                 },
-        } => run_find(&product_group, &gtin, batch.as_deref(), json).await,
+        } => run_find(&product_group, &identifier, batch.as_deref(), json).await,
         Commands::Passport {
             command: PassportCommands::Transfer { command },
         } => match command {

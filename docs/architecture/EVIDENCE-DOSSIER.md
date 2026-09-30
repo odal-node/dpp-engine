@@ -51,7 +51,7 @@ Each member is independently verifiable on its own — its own JWS, or its own h
 
 ## Why `SignedLayer` embeds the payload
 
-An earlier version of this format had the verifier reconstruct the full/public view payloads from the passport record itself. This was found to be unreliable: `jws_signature`/`public_jws_signature` are frozen at publish time, but a passport's `status` (and other fields) mutate afterward on suspend/archive/end-of-life — those transitions never re-sign. A verifier reconstructing "the current record" would produce a payload that no longer matches what was actually signed, and falsely report tamper on a perfectly legitimate, unmodified signature. Embedding the exact signed payload sidesteps this: verification only has to confirm the signature covers *this* payload, never derive what the payload should be.
+An earlier version of this format had the verifier reconstruct the full/public view payloads from the passport record itself. This was found to be unreliable: `jws_signature`/`public_jws_signature` are frozen at publish time, but a passport's `status` (and other fields) mutate afterward on suspend/retire/end-of-life — those transitions never re-sign. A verifier reconstructing "the current record" would produce a payload that no longer matches what was actually signed, and falsely report tamper on a perfectly legitimate, unmodified signature. Embedding the exact signed payload sidesteps this: verification only has to confirm the signature covers *this* payload, never derive what the payload should be.
 
 ## Trust model
 

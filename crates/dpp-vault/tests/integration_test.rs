@@ -32,7 +32,7 @@ fn sample_passport() -> serde_json::Value {
         // Publish-time validation (1.3) requires valid product group data.
         "productGroupData": {
             "productGroup": "battery",
-            "gtin": "09506000134352",
+            "productIdentifier": { "scheme": "gs1", "gtin": "09506000134352" },
             "batteryChemistry": "NiMH",
             "batteryType": "portable",
             "nominalVoltageV": 12.0,

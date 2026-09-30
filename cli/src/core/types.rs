@@ -109,7 +109,7 @@ pub struct SuspendParams {
     pub id: String,
 }
 
-pub struct ArchiveParams {
+pub struct RetireParams {
     pub id: String,
 }
 
@@ -485,7 +485,7 @@ mod tests {
         let node = posture(&[
             ("seal", "ghost"),
             ("compliance", "sandbox"),
-            ("archive", "live"),
+            ("backup", "live"),
         ]);
         assert_eq!(node.ghost_ports(), vec!["seal"]);
     }

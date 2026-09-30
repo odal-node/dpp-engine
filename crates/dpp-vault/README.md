@@ -10,7 +10,7 @@ component allowed to write to the `passport` table in PostgreSQL.
 
 ## When to use this crate
 
-- You are adding a new passport lifecycle operation (create, update, publish, suspend, archive).
+- You are adding a new passport lifecycle operation (create, update, publish, suspend, retire).
 - You need to extend the HTTP API surface for passport or operator management.
 - You are writing an integration test against the vault's Axum router.
 
@@ -32,7 +32,7 @@ All authenticated routes require `Authorization: Bearer odal_sk_…`.
 | `PUT` | `/api/v1/dpp/{dppId}` | Update a draft |
 | `POST` | `/api/v1/dpp/{dppId}/publish` | Sign + publish; mints GS1 Digital Link |
 | `POST` | `/api/v1/dpp/{dppId}/suspend` | Suspend an active passport |
-| `POST` | `/api/v1/dpp/{dppId}/archive` | Archive (retention-locked after publish) |
+| `POST` | `/api/v1/dpp/{dppId}/retire` | Retire (terminal; retention-locked after publish) |
 | `GET` | `/api/v1/dpp/{dppId}/history` | Audit trail |
 | `GET/PATCH` | `/api/v1/operator` | View / update operator config |
 | `GET/POST` | `/api/v1/api-keys` | List / create API keys |

@@ -1,6 +1,6 @@
 //! Handler for `GET /dpp/{dppId}/qr` — serves a PNG QR code encoding the
-//! passport's GS1 Digital Link URI, derived from verified passport fields,
-//! never from the stored `qrCodeUrl` field.
+//! passport's carrier URI, read from the verified signed payload and never from
+//! the JSON served beside it.
 
 use axum::{
     extract::{Path, State},
@@ -47,17 +47,19 @@ async fn fetch_passport(state: &AppState, dpp_id: &str) -> Result<Value, StatusC
         .map_err(|_| StatusCode::BAD_GATEWAY)
 }
 
-/// Generate and return a PNG QR code encoding the passport's GS1 Digital Link
-/// URI.
+/// Generate and return a PNG QR code encoding the passport's carrier URI.
 ///
-/// The URI is built from `gtin` (`productGroupData.gtin`) and `batchId`, read from
-/// the verified passport JSON — NOT from the stored `qrCodeUrl`, which is set
-/// *after* signing and is therefore content-binding-exempt and tamperable
-/// (red-team RT2-2). The passport's JWS is verified first, exactly as the
-/// HTML/JSON paths do, so the QR image fails closed on a tampered or
-/// unverifiable passport. A passport whose product group data carries no GTIN (e.g.
-/// an unsold-goods report) has no valid GS1 Digital Link carrier and fails
-/// closed with `422` rather than printing a broken or misleading code.
+/// The URI is the `qrCodeUrl` inside the **verified** public payload — the
+/// carrier the node signed at publish, which is what was printed on the product
+/// (see [`dpp_render::carrier_uri`] for why it is read rather than rebuilt). It
+/// is never taken from the served JSON beside that payload: red-team RT2-2 found
+/// `qrCodeUrl` once set *after* signing, and so tamperable there. Publish now
+/// sets it before either view is signed, and reading only the verified payload
+/// makes this route safe whichever order a stored passport was published in.
+///
+/// The JWS is verified first, exactly as the HTML/JSON paths do, so the image
+/// fails closed on a tampered or unverifiable passport. A payload carrying no
+/// carrier fails closed with `422` rather than printing a code for nothing.
 pub async fn resolve_qr_handler(
     State(state): State<AppState>,
     Path(dpp_id): Path<String>,
@@ -90,13 +92,16 @@ pub async fn resolve_qr_handler(
             return (status, [(header::CONTENT_TYPE, "image/png")], Vec::new()).into_response();
         }
     };
-    if let Err(status) =
-        did::verify_passport_jws(&state.http, &state.operator_did_url, &passport).await
-    {
-        return (status, [(header::CONTENT_TYPE, "image/png")], Vec::new()).into_response();
-    }
+    let verified =
+        match did::verify_passport_jws(&state.http, &state.operator_did_url, &passport).await {
+            Ok(view) => view,
+            Err(status) => {
+                return (status, [(header::CONTENT_TYPE, "image/png")], Vec::new()).into_response();
+            }
+        };
 
-    let Some(carrier_uri) = carrier_uri(&passport, &state.resolver_base_url, &dpp_id) else {
+    // From the verified payload, never the served JSON beside it.
+    let Some(carrier_uri) = carrier_uri(&verified) else {
         return (
             StatusCode::UNPROCESSABLE_ENTITY,
             [(header::CONTENT_TYPE, "image/png")],

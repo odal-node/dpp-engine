@@ -4,7 +4,7 @@
 
 use chrono::Utc;
 use dpp_common::{event, event_codes};
-use dpp_digital_link::{build_qr_url, short_serial};
+use dpp_digital_link::build_qr_url;
 use dpp_domain::{
     ComplianceError, ComplianceErrorKind, ComplianceResult,
     error::DppError,
@@ -49,9 +49,12 @@ mod reason {
     /// condition false. A passport carrying binding violations published
     /// because the thing that would have caught it had broken.
     pub const COMPLIANCE_UNAVAILABLE: &str = "compliance_unavailable";
+    /// The GS1 carrier would carry a serial or lot GS1 rejects.
+    pub const CARRIER_INVALID: &str = "carrier_invalid";
 }
 
 use reason::{
+    CARRIER_INVALID as REASON_CARRIER_INVALID,
     COMPLIANCE_UNAVAILABLE as REASON_COMPLIANCE_UNAVAILABLE,
     COMPLIANCE_VIOLATIONS as REASON_COMPLIANCE_VIOLATIONS,
     INVALID_TRANSITION as REASON_INVALID_TRANSITION, MANDATORY_CONTENT as REASON_MANDATORY_CONTENT,
@@ -336,7 +339,8 @@ impl PassportService {
             .transition_to(PassportStatus::Published)
             .map_err(|e| reject(REASON_MANDATORY_CONTENT, e))?;
 
-        stamp_publish_obligations(&mut passport, first_publish, &self.resolver_base_url);
+        stamp_publish_obligations(&mut passport, first_publish, &self.resolver_base_url)
+            .map_err(|e| reject(REASON_CARRIER_INVALID, e))?;
 
         // `status` serialises to the API wire string ("active") via
         // `PassportStatus`'s own `Serialize` impl — already reflects the
@@ -414,13 +418,27 @@ impl PassportService {
             DppError::Signing(e.to_string())
         })?;
 
-        // Persist the published passport. With the transactional outbox present,
-        // the passport write and the EU-registry registration enqueue commit
-        // atomically (ESPR Art. 13) — a Published passport can never exist
-        // without a queued registration, and the node's drain task performs the
-        // actual registration with backoff. Without an outbox (in-memory test
-        // doubles), fall back to a plain update.
-        let updated = match &self.registry_outbox {
+        // The EU-registry registration this publish owes, if one can be built.
+        //
+        // Core refuses to build one without the operator identifier, the
+        // facility, the carrier or the product identifier, and nothing here
+        // completes it with invented values: a registration is a statement to
+        // a public authority. What happens instead depends on whether the
+        // product group's passport obligation is live.
+        //
+        // - **Live:** refused, and nothing has been persisted, so the passport
+        //   stays a draft. The same gate as the facility and operator check at
+        //   the top of this function, which this reaches only for the product
+        //   identifier.
+        // - **Not live:** published without a registration. No delegated act
+        //   requires this passport, and so none requires it registered. It is
+        //   not hidden: `GET /registry` counts a published passport with no
+        //   registration as `unregisteredPublished`. Refusing here would make
+        //   product group data mandatory at publish for every group — a
+        //   decision deferred above, not one to take as a side effect of how
+        //   registrations are built.
+        let registration = match &self.registry_outbox {
+            None => None,
             Some(outbox) => {
                 // The scheme is only assertable for the value the passport
                 // actually carries. If that value did not come from the current
@@ -433,15 +451,7 @@ impl PassportService {
                     .filter(|(_, value)| Some(value) == passport.operator_identifier.as_ref())
                     .map(|(scheme, _)| scheme.as_str())
                     .unwrap_or_default();
-                // Declare the back-up only where this deployment actually
-                // publishes one. The snapshot tier writing to object storage is
-                // not enough — the registry has to be able to fetch it.
-                //
-                let backup_url = self
-                    .snapshot_public_base_url
-                    .as_ref()
-                    .map(|base| snapshot_backup_url(base, &passport.id.to_string()));
-                let mut reg_req = RegistrationRequest::from_published_passport(
+                match RegistrationRequest::from_published_passport(
                     &passport,
                     RegisteringOperator {
                         legal_name: &self.operator.legal_name,
@@ -452,23 +462,60 @@ impl PassportService {
                     // defined at, and the only one the registry accepts today.
                     // Set per product group once further delegated acts land.
                     RegistrationGranularity::Item,
-                );
-                reg_req.backup_url = backup_url;
-                let payload = serde_json::to_value(&reg_req)
-                    .map_err(|e| DppError::Serialisation(e.to_string()))?;
-                match outbox.commit_publish(&passport, payload).await {
-                    Ok(()) => {
-                        metrics::counter!("passport_publish_total", "outcome" => "success")
-                            .increment(1);
-                        passport
+                ) {
+                    Ok(mut reg_req) => {
+                        // Declare the back-up only where this deployment actually
+                        // publishes one. The snapshot tier writing to object
+                        // storage is not enough — the registry has to be able to
+                        // fetch it.
+                        reg_req.backup_url = self
+                            .snapshot_public_base_url
+                            .as_ref()
+                            .map(|base| snapshot_backup_url(base, &passport.id.to_string()));
+                        let payload = serde_json::to_value(&reg_req)
+                            .map_err(|e| DppError::Serialisation(e.to_string()))?;
+                        Some((outbox, payload))
                     }
-                    Err(e) => {
-                        metrics::counter!("passport_publish_total", "outcome" => "error")
-                            .increment(1);
-                        return Err(e);
+                    Err(missing)
+                        if super::passport_obligation_live(
+                            passport.product_group.catalog_key(),
+                        ) =>
+                    {
+                        return Err(reject(
+                            REASON_MISSING_REGISTRY_IDENTITY,
+                            DppError::Validation(missing),
+                        ));
+                    }
+                    Err(missing) => {
+                        tracing::warn!(
+                            passport_id = %id,
+                            missing = %missing,
+                            "publishing without an EU-registry registration: the passport \
+                             cannot be registered and its product group's obligation is not live"
+                        );
+                        None
                     }
                 }
             }
+        };
+
+        // Persist the published passport. With a registration, the passport
+        // write and its enqueue commit atomically (ESPR Art. 13), and the node's
+        // drain task performs the registration with backoff. Without one — no
+        // outbox (in-memory test doubles), or nothing registrable — a plain
+        // update.
+        let updated = match registration {
+            Some((outbox, payload)) => match outbox.commit_publish(&passport, payload).await {
+                Ok(()) => {
+                    metrics::counter!("passport_publish_total", "outcome" => "success")
+                        .increment(1);
+                    passport
+                }
+                Err(e) => {
+                    metrics::counter!("passport_publish_total", "outcome" => "error").increment(1);
+                    return Err(e);
+                }
+            },
             None => match self.repo.update(passport).await {
                 Ok(p) => {
                     metrics::counter!("passport_publish_total", "outcome" => "success")
@@ -485,7 +532,7 @@ impl PassportService {
         // Stamp the exact payloads that were signed (not the current row) as
         // metadata on this publish's audit entry. `jws_signature` and
         // `public_jws_signature` are frozen at this moment and never re-signed
-        // by later lifecycle transitions (suspend/archive/eol only touch
+        // by later lifecycle transitions (suspend/retire/eol only touch
         // `status`), so evidence dossier generation must recover *this*
         // snapshot rather than reconstruct one from the passport's current —
         // by then possibly mutated — row. A re-publish (Suspend -> Published)
@@ -504,16 +551,16 @@ impl PassportService {
         }));
         self.audit.append(entry).await?;
 
-        // ESPR Art. 13 third-party archive — fire-after-commit, non-blocking.
+        // ESPR Art. 10(4) third-party back-up copy — fire-after-commit, non-blocking.
         // Failures are logged but never propagated; the DB write is the source of truth.
-        // Same resolver as the seal above, so the archived copy and the sealed
+        // Same resolver as the seal above, so the backed-up copy and the sealed
         // deadline cannot disagree.
         let retention_years = retention_years_for(&updated.product_group);
-        if let Err(e) = self.archive.archive(&updated, retention_years).await {
+        if let Err(e) = self.backup.store(&updated, retention_years).await {
             tracing::warn!(
                 passport_id = %updated.id,
                 error = %e,
-                "ESPR archive failed (non-fatal)"
+                "ESPR back-up copy failed (non-fatal)"
             );
         }
 
@@ -622,11 +669,14 @@ fn snapshot_backup_url(base: &str, dpp_id: &str) -> String {
 ///
 /// Public so the demo dossier generator stamps a passport exactly as publish
 /// does, rather than restating either rule.
+///
+/// Fails when the carrier URL cannot be built from the passport; publish
+/// refuses the passport with that reason.
 pub fn stamp_publish_obligations(
     passport: &mut Passport,
     first_publish: bool,
     resolver_base: &str,
-) {
+) -> Result<(), DppError> {
     if first_publish && passport.retention_until.is_none() {
         // Compute and seal retention_until once at first publish, from the
         // catalog — the single source of the obligation, held beside the
@@ -637,7 +687,8 @@ pub fn stamp_publish_obligations(
         passport.retention_until =
             Some(published_at + chrono::Duration::days(365 * i64::from(years)));
     }
-    passport.qr_code_url = Some(build_carrier_url(passport, resolver_base));
+    passport.qr_code_url = Some(build_carrier_url(passport, resolver_base)?);
+    Ok(())
 }
 
 /// Build the carrier (QR / Data Matrix) URL a passport should encode, on the
@@ -649,20 +700,20 @@ pub fn stamp_publish_obligations(
 /// (an unsold-goods report or untyped record, which identify no trade item),
 /// points at the passport's own resolver page on the same configured base —
 /// never a hardcoded host.
-fn build_carrier_url(passport: &Passport, resolver_base: &str) -> String {
+///
+/// Since dpp-core 0.21.0 the GS1 carrier follows the passport's stated level and
+/// its effective carrier serial (`build_qr_url(base, &passport)`). `Ok(None)` is a
+/// passport with no GTIN — EN 18219 scheme 2 or 3, or a record identifying no
+/// trade item — and keeps the by-id fallback. An `Err` is a serial or lot GS1
+/// would reject: refused here rather than printed onto a label.
+fn build_carrier_url(passport: &Passport, resolver_base: &str) -> Result<String, DppError> {
     let base = resolver_base.trim_end_matches('/');
-    match passport
-        .product_group_data
-        .as_ref()
-        .and_then(ProductGroupData::gtin)
-    {
-        Some(gtin) => build_qr_url(
-            base,
-            gtin,
-            &short_serial(passport.id.0.as_bytes()),
-            passport.batch_id.as_deref(),
-        ),
-        None => format!("{base}/dpp/{}", passport.id),
+    match build_qr_url(base, passport) {
+        Ok(Some(url)) => Ok(url),
+        Ok(None) => Ok(format!("{base}/dpp/{}", passport.id)),
+        Err(e) => Err(DppError::Validation(
+            format!("the passport's data carrier cannot be built: {e}").into(),
+        )),
     }
 }
 
@@ -687,6 +738,8 @@ mod rejection_reasons {
             reason::COMPLIANCE_VIOLATIONS,
             reason::SIGNING_FAILED,
             reason::MANDATORY_CONTENT,
+            reason::COMPLIANCE_UNAVAILABLE,
+            reason::CARRIER_INVALID,
         ];
         let mut sorted = all.to_vec();
         sorted.sort_unstable();
@@ -708,6 +761,8 @@ mod rejection_reasons {
             reason::COMPLIANCE_VIOLATIONS,
             reason::SIGNING_FAILED,
             reason::MANDATORY_CONTENT,
+            reason::COMPLIANCE_UNAVAILABLE,
+            reason::CARRIER_INVALID,
         ] {
             assert!(
                 !r.is_empty() && r.bytes().all(|b| b.is_ascii_lowercase() || b == b'_'),
@@ -777,6 +832,7 @@ mod tests {
             responsible_operator: None,
             facility: None,
             seal: None,
+            carrier_serial: None,
         }
     }
 
@@ -788,7 +844,7 @@ mod tests {
         // the carrier points at the passport's own page on the configured base —
         // never the old hardcoded `p.odal-node.io` host.
         let p = stub(); // product_group_data is None → no GTIN
-        let url = build_carrier_url(&p, "https://id.example.com/");
+        let url = build_carrier_url(&p, "https://id.example.com/").expect("by-id carrier");
         assert_eq!(url, format!("https://id.example.com/dpp/{}", p.id));
         assert!(!url.contains("p.odal-node.io"));
     }
@@ -798,7 +854,9 @@ mod tests {
         use dpp_domain::product_group::ConstructionData;
         let mut p = stub();
         p.product_group_data = Some(ProductGroupData::Construction(ConstructionData {
-            gtin: dpp_domain::Gtin::parse("09506000134352").unwrap(),
+            product_identifier: dpp_domain::ProductIdentifier::gs1(
+                dpp_domain::Gtin::parse("09506000134352").unwrap(),
+            ),
             product_family: "cement".into(),
             country_of_origin: "DE".into(),
             co2e_per_functional_unit_kg: 100.0,
@@ -807,7 +865,7 @@ mod tests {
             epd_url: None,
             ce_marking: None,
         }));
-        let url = build_carrier_url(&p, "https://id.example.com");
+        let url = build_carrier_url(&p, "https://id.example.com").expect("GS1 carrier");
         // Must be a parseable GS1 Digital Link — parse enforces the AI 21 cap, so
         // a >20-char serial would make this fail.
         let parsed = dpp_digital_link::DigitalLink::parse(&url)
@@ -819,6 +877,32 @@ mod tests {
         );
         assert!(url.starts_with("https://id.example.com/01/09506000134352/21/"));
         assert!(!url.contains("p.odal-node.io"));
+        // The serial printed is the one a label is resolved by.
+        assert_eq!(serial, p.effective_carrier_serial());
+    }
+
+    /// A label is printed on physical products, so a serial GS1 would reject is
+    /// refused at publish rather than printed and found wanting by a scanner.
+    #[test]
+    fn an_attributed_serial_gs1_rejects_is_refused_not_printed() {
+        use dpp_domain::product_group::ConstructionData;
+        let mut p = stub();
+        p.product_group_data = Some(ProductGroupData::Construction(ConstructionData {
+            product_identifier: dpp_domain::ProductIdentifier::gs1(
+                dpp_domain::Gtin::parse("09506000134352").unwrap(),
+            ),
+            product_family: "cement".into(),
+            country_of_origin: "DE".into(),
+            co2e_per_functional_unit_kg: 100.0,
+            functional_unit: "per tonne".into(),
+            recycled_content_pct: None,
+            epd_url: None,
+            ce_marking: None,
+        }));
+        // `#` is outside CSET 82, the character set AI 21 allows.
+        p.carrier_serial = Some("SN#1".into());
+        let err = build_carrier_url(&p, "https://id.example.com").unwrap_err();
+        assert!(matches!(err, DppError::Validation(_)), "{err:?}");
     }
 
     // ── validate_schema_for_publish (Q-2) ────────────────────────────────────

@@ -110,7 +110,7 @@ impl RegistrySyncOutbox for PgRegistrySyncRepo {
         //
         // Annotates an existing row; it never creates one. Rows are created by
         // the publish transaction alone, so no row means the passport never
-        // published — and `Draft -> Archived` is legal, so `archive` reaches here
+        // published — and `Draft -> Retired` is legal, so `retire` reaches here
         // for exactly those. Inserting would fabricate a payload-less row that
         // the drain then marks `rejected`, raising an Art. 13 alarm for a
         // passport that never owed a registration.

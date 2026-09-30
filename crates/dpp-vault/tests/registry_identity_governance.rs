@@ -17,7 +17,7 @@ fn battery_body() -> serde_json::Value {
         "manufacturer": { "name": "GreenCell GmbH", "address": "Berlin, DE" },
         "productGroupData": {
             "productGroup": "battery",
-            "gtin": "09506000134352",
+            "productIdentifier": { "scheme": "gs1", "gtin": "09506000134352" },
             "batteryChemistry": "LFP",
             "batteryType": "portable",
             "nominalVoltageV": 48.0,

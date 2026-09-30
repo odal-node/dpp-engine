@@ -69,24 +69,10 @@ impl PassportRepository for InMemoryPassportRepo {
         self.find_by_id(id).await
     }
 
-    /// Always `None` — GTIN lookup is not modelled here.
-    ///
-    /// The real query matches a GS1 Digital Link path segment inside
-    /// `qrCodeUrl` and refuses non-numeric input so a `LIKE` metacharacter
-    /// cannot widen the match. Approximating that in a map would make a test
-    /// pass against behaviour the database does not have, so this answers
-    /// nothing rather than answering wrongly.
-    async fn find_published_by_gtin(&self, _gtin: &str) -> Result<Option<Passport>, DppError> {
-        Ok(None)
-    }
-
-    /// Answers nothing, for the same reason as `find_published_by_gtin` above:
-    /// the real lookup is a `LIKE` over `qrCodeUrl` with a numeric-only guard,
-    /// and approximating that here would make a test pass against behaviour the
-    /// database does not have.
-    async fn find_by_gtin_any_status(&self, _gtin: &str) -> Result<Option<Passport>, DppError> {
-        Ok(None)
-    }
+    // `find_by_identifier` and `find_by_carrier` are left to the port's default
+    // bodies, which scan `list` and apply the rule itself — the answer the
+    // Postgres repository is held to, so a double that uses it cannot drift
+    // from the contract.
 
     async fn find_by_id_any_status(&self, id: PassportId) -> Result<Option<Passport>, DppError> {
         self.find_by_id(id).await

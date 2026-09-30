@@ -9,13 +9,13 @@ use inquire::{Confirm, InquireError, Select, Text};
 use crate::{
     core::{
         passport::{
-            action_archive, action_export, action_get, action_history, action_import, action_list,
-            action_operator_stats, action_passport_stats, action_publish, action_suspend,
-            action_validate,
+            action_export, action_get, action_history, action_import, action_list,
+            action_operator_stats, action_passport_stats, action_publish, action_retire,
+            action_suspend, action_validate,
         },
         types::{
-            ArchiveParams, ExportParams, HistoryParams, ImportParams, ListParams, PassportSummary,
-            ProgressEvent, PublishParams, SuspendParams,
+            ExportParams, HistoryParams, ImportParams, ListParams, PassportSummary, ProgressEvent,
+            PublishParams, RetireParams, SuspendParams,
         },
     },
     http::OdalClient,
@@ -39,9 +39,9 @@ const PASSPORTS: &[MenuItem] = &[
     // Per-passport lifecycle is now done via Browse → select → act (no UUID
     // typing). These standalone, ID-prompt items are kept (commented) in case we
     // want a future bulk multi-select flow; the stateless `odal passport
-    // suspend|archive|history <id>` commands remain available for scripting.
+    // suspend|retire|history <id>` commands remain available for scripting.
     // MenuItem::new("Suspend", "serve 410 Gone for a passport"),
-    // MenuItem::new("Archive", "permanently archive a passport"),
+    // MenuItem::new("Retire", "permanently retire a passport"),
     // MenuItem::new("History", "show a passport's audit trail"),
     MenuItem::new("Scan telemetry", "resolution counts across your passports"),
     MenuItem::new("Export", "export passports to JSON or CSV"),
@@ -165,7 +165,7 @@ pub(super) async fn passports() -> Result<()> {
                 }
                 /* Per-passport lifecycle is handled by Browse → select → act (no UUID
                    typing). Kept here, commented, in case we want a future bulk
-                   multi-select flow; the stateless `odal passport suspend|archive|
+                   multi-select flow; the stateless `odal passport suspend|retire|
                    history <id>` commands remain available for scripting.
                 "Suspend" => {
                     let id = match ask(Text::new("Passport ID to suspend:")
@@ -206,8 +206,8 @@ pub(super) async fn passports() -> Result<()> {
                         Err(e) => print_err(e),
                     }
                 }
-                "Archive" => {
-                    let id = match ask(Text::new("Passport ID to archive:")
+                "Retire" => {
+                    let id = match ask(Text::new("Passport ID to retire:")
                         .with_help_message("Esc to cancel")
                         .with_validator(Required("Passport ID"))
                         .prompt())?
@@ -216,11 +216,11 @@ pub(super) async fn passports() -> Result<()> {
                         None => continue,
                     };
                     println!(
-                        "\n  {} Archiving is permanent and cannot be undone.\n  The passport will be permanently removed from public circulation.",
+                        "\n  {} Retiring is permanent and cannot be undone.\n  The passport stops changing for good; its public page keeps serving.",
                         style("⚠").red()
                     );
                     let confirmed =
-                        match ask(Confirm::new(&format!("Archive passport {id} permanently?"))
+                        match ask(Confirm::new(&format!("Retire passport {id} permanently?"))
                             .with_default(false)
                             .prompt())?
                         {
@@ -232,12 +232,12 @@ pub(super) async fn passports() -> Result<()> {
                     }
                     match client() {
                         Ok((client, cfg)) => {
-                            match action_archive(&ArchiveParams { id: id.clone() }, &client, &cfg)
+                            match action_retire(&RetireParams { id: id.clone() }, &client, &cfg)
                                 .await
                             {
                                 Ok(_) => {
-                                    println!("\n  {} Passport {id} archived.", style("✓").green());
-                                    hint(&format!("odal passport archive {id}"));
+                                    println!("\n  {} Passport {id} retired.", style("✓").green());
+                                    hint(&format!("odal passport retire {id}"));
                                     println!();
                                 }
                                 Err(e) => print_err(e),
@@ -411,7 +411,7 @@ fn status_dot(status: &str) -> String {
         "draft" => style("●").dim(),
         "active" => style("●").green(),
         "suspended" => style("●").yellow(),
-        "archived" => style("●").red(),
+        "retired" => style("●").red(),
         _ => style("●").white(),
     };
     dot.to_string()
@@ -451,7 +451,7 @@ async fn browse_passports() -> Result<()> {
 
     let status = match ask(Select::new(
         "Filter by status:",
-        vec!["All", "Draft", "Active", "Suspended", "Archived"],
+        vec!["All", "Draft", "Active", "Suspended", "Retired"],
     )
     .with_help_message("↑↓ · ⏎ select · Esc to go back")
     .prompt())?
@@ -538,10 +538,10 @@ async fn passport_actions(
             "draft" => items.push("Publish"),
             "active" => {
                 items.push("Suspend");
-                items.push("Archive");
+                items.push("Retire");
             }
-            "suspended" => items.push("Archive"),
-            _ => {} // archived: terminal
+            "suspended" => items.push("Retire"),
+            _ => {} // retired, superseded, deactivated: terminal
         }
         items.push("← Back");
 
@@ -634,23 +634,22 @@ async fn passport_actions(
                     return Ok(());
                 }
             }
-            "Archive" => {
+            "Retire" => {
                 println!(
-                    "\n  {} Archiving is permanent and removes the passport from public circulation.",
+                    "\n  {} Retiring is permanent. The passport stops changing for good; its public page keeps serving.",
                     style("⚠").red()
                 );
-                let ok = ask(Confirm::new(&format!(
-                    "Archive \"{}\" permanently?",
-                    p.product_name
-                ))
-                .with_default(false)
-                .prompt())?
+                let ok = ask(
+                    Confirm::new(&format!("Retire \"{}\" permanently?", p.product_name))
+                        .with_default(false)
+                        .prompt(),
+                )?
                 .unwrap_or(false);
                 if ok {
-                    match action_archive(&ArchiveParams { id: p.id.clone() }, client, cfg).await {
+                    match action_retire(&RetireParams { id: p.id.clone() }, client, cfg).await {
                         Ok(_) => {
-                            println!("\n  {} Archived.", style("✓").green());
-                            hint(&format!("odal passport archive {}", p.id));
+                            println!("\n  {} Retired.", style("✓").green());
+                            hint(&format!("odal passport retire {}", p.id));
                             println!();
                         }
                         Err(e) => print_err(e),

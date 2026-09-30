@@ -67,7 +67,7 @@ async fn a_published_passport_reports_its_registration() {
                 // the subject here is the registry surface, not battery content.
                 "productGroupData": {
                     "productGroup": "battery",
-                    "gtin": "09506000134352",
+                    "productIdentifier": { "scheme": "gs1", "gtin": "09506000134352" },
                     "batteryType": "portable",
                     "batteryChemistry": "LFP",
                     "nominalVoltageV": 3.7,

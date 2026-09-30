@@ -32,7 +32,7 @@ async fn lifecycle_actions_are_recorded_in_audit_history() {
         "materials": [{"name": "Nickel", "weightKg": 0.5}],
         "productGroupData": {
             "productGroup": "battery",
-            "gtin": "09506000134352",
+            "productIdentifier": { "scheme": "gs1", "gtin": "09506000134352" },
             "batteryChemistry": "NiMH",
             "batteryType": "portable",
             "nominalVoltageV": 12.0,
@@ -46,8 +46,8 @@ async fn lifecycle_actions_are_recorded_in_audit_history() {
     let passport: serde_json::Value = resp.json().await.unwrap();
     let id = passport["id"].as_str().unwrap().to_owned();
 
-    // 2. Publish → 3. Suspend. (Archive is intentionally *retention-locked* for a
-    // freshly published passport — the ESPR retention policy forbids archiving
+    // 2. Publish → 3. Suspend. (Retire is intentionally *retention-locked* for a
+    // freshly published passport — the ESPR retention policy forbids retiring
     // before the retention period — so it is correctly not part of this flow.)
     for action in ["publish", "suspend"] {
         let resp = client

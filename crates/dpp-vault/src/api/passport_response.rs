@@ -75,6 +75,8 @@ pub struct PassportResponse {
     pub product_group_data: Option<ProductGroupData>,
     pub status: PassportStatus,
     pub qr_code_url: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub carrier_serial: Option<String>,
     pub jws_signature: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub public_jws_signature: Option<String>,
@@ -146,6 +148,7 @@ impl From<&Passport> for PassportResponse {
             product_group_data: p.product_group_data.clone(),
             status: p.status.clone(),
             qr_code_url: p.qr_code_url.clone(),
+            carrier_serial: p.carrier_serial.clone(),
             jws_signature: p.jws_signature.clone(),
             public_jws_signature: p.public_jws_signature.clone(),
             disclosure_signatures: p.disclosure_signatures.clone(),
@@ -229,6 +232,7 @@ mod tests {
             responsible_operator: None,
             facility: None,
             seal: None,
+            carrier_serial: None,
         }
     }
 
@@ -259,6 +263,7 @@ mod tests {
         p.operator_identifier = Some("LEI:5493001KJTIIGC8Y1R12".into());
         p.retention_locked = true;
         p.version = 3;
+        p.carrier_serial = Some("SN-0001".into());
         p
     }
 
@@ -343,5 +348,6 @@ mod tests {
         "operatorIdentifier",
         "facility",
         "seal",
+        "carrierSerial",
     ];
 }

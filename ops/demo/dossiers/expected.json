@@ -432,7 +432,7 @@
     "exit": 1
   },
   "09-unknown-top-level-field.json": {
-    "error": "not a valid dossier — malformed JSON or an unrecognised field: unknown field `verifiedBy`, expected one of `manifest`, `manifestJws`, `fullView`, `publicView`, `didDocuments`, `auditEntries`, `transferChain`, `eolEvent`, `checkpoint`, `calcReceipts`, `componentGraph`, `qualifiedSeal` at line 781 column 14",
+    "error": "not a valid dossier — malformed JSON or an unrecognised field: unknown field `verifiedBy`, expected one of `manifest`, `manifestJws`, `fullView`, `publicView`, `didDocuments`, `auditEntries`, `transferChain`, `eolEvent`, `checkpoint`, `calcReceipts`, `componentGraph`, `qualifiedSeal` at line 795 column 14",
     "exit": 2
   },
   "10-not-json.txt": {

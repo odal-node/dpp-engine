@@ -182,6 +182,10 @@ pub async fn create_handler(
         operator_identifier: None,
         facility: None,
         seal: None,
+        // Not accepted on the create body yet, so every passport created here
+        // prints the default serial derived from its id. An amendment carries
+        // its predecessor's forward; see `amend`.
+        carrier_serial: None,
     };
 
     match state.service.create(passport, &auth).await {
@@ -320,7 +324,9 @@ mod schema_validation {
 
     fn valid_battery() -> ProductGroupData {
         ProductGroupData::Battery(Box::new(BatteryData {
-            gtin: Gtin::parse("09506000134352").unwrap(),
+            product_identifier: dpp_domain::ProductIdentifier::gs1(
+                Gtin::parse("09506000134352").unwrap(),
+            ),
             battery_chemistry: BatteryChemistry::Lfp,
             nominal_voltage_v: 3.2,
             nominal_capacity_ah: 100.0,
@@ -413,12 +419,22 @@ mod schema_validation {
     fn schema_rejects_pattern_violation_the_types_allow() {
         // A GTIN of the wrong length is rejected by the schema's `^[0-9]{14}$`
         // pattern — a constraint the Rust types don't carry on the wire shape.
+        let version = catalog()
+            .resolve_schema_version("battery", None)
+            .expect("battery has a current schema");
         let mut json = serde_json::to_value(valid_battery()).unwrap();
         json.as_object_mut().unwrap().remove("productGroup");
-        json["gtin"] = serde_json::json!("123"); // too short for ^[0-9]{14}$
+        // The unmodified body passes, so the refusal below is the pattern's.
         assert!(
             schema_registry()
-                .validate_if_present("battery", "2.0.0", &json)
+                .validate_if_present("battery", &version, &json)
+                .is_ok(),
+            "the valid battery must pass before one field is broken"
+        );
+        json["productIdentifier"]["gtin"] = serde_json::json!("123"); // too short for ^[0-9]{14}$
+        assert!(
+            schema_registry()
+                .validate_if_present("battery", &version, &json)
                 .is_err(),
             "schema must reject a GTIN that violates its pattern"
         );
@@ -494,7 +510,8 @@ mod manufacturer_fields {
 mod gtin_boundary {
     //! Where a malformed GTIN is actually refused.
     //!
-    //! Every typed payload declares `gtin: Gtin`, and `Gtin`'s `Deserialize`
+    //! Every typed payload declares `productIdentifier: ProductIdentifier`, whose GS1
+    //! arm holds a `Gtin`, and `Gtin`'s `Deserialize`
     //! calls `Gtin::parse`. So a bad check digit is rejected while the request
     //! body is being parsed, for every product group at once, before any handler
     //! validation runs. These tests pin that, because the handler's own GTIN
@@ -507,7 +524,7 @@ mod gtin_boundary {
             "manufacturer": { "name": "M", "address": "A" },
             "productGroupData": {
                 "productGroup": "tyre",
-                "gtin": gtin,
+                "productIdentifier": { "scheme": "gs1", "gtin": gtin },
                 "tyreClass": "C1",
                 "fuelEfficiencyClass": "A",
                 "wetGripClass": "A",
@@ -930,7 +947,7 @@ mod the_label_must_match_its_payload {
     fn textile_payload() -> serde_json::Value {
         serde_json::json!({
             "productGroup": "textile",
-            "gtin": "09506000134352",
+            "productIdentifier": { "scheme": "gs1", "gtin": "09506000134352" },
             "fibreComposition": [{ "fibre": "cotton", "pct": 100.0 }],
             "careInstructions": "wash cold",
             "countryOfOrigin": "PT",

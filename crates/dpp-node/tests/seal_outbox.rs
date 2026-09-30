@@ -55,7 +55,7 @@ use dpp_domain::ports::passport_repo::PassportRepository;
 use dpp_domain::product_group::ProductGroup;
 use dpp_domain::seal::SealMode;
 use dpp_domain::status::PassportStatus;
-use dpp_domain::{GhostArchive, GhostRegistrySync};
+use dpp_domain::{GhostBackup, GhostRegistrySync};
 use dpp_domain::{ports::seal::SealPort, seal::SealConformanceLevel};
 use dpp_node::infra::seal_drain::drain_once;
 use dpp_seal::QtspSealAdapter;
@@ -194,7 +194,7 @@ fn draft_passport() -> Passport {
         product_group_data: Some(
             serde_json::from_value(serde_json::json!({
                 "productGroup": "battery",
-                "gtin": "09506000134352",
+                "productIdentifier": { "scheme": "gs1", "gtin": "09506000134352" },
                 "batteryType": "portable",
                 "batteryChemistry": "LFP",
                 "nominalVoltageV": 3.7,
@@ -235,6 +235,7 @@ fn draft_passport() -> Passport {
             address: Some("Skopje, MK".into()),
         }),
         seal: None,
+        carrier_serial: None,
     }
 }
 
@@ -311,7 +312,7 @@ async fn publish_then_drain_seals_the_passport_end_to_end() {
         Arc::new(PgAuditRepo::new(dal.clone())),
         Arc::new(dpp_common::event::NoOpEventBus),
         Arc::new(GhostRegistrySync),
-        Arc::new(GhostArchive),
+        Arc::new(GhostBackup),
         OperatorIdentity {
             legal_name: "Test Operator GmbH".to_owned(),
             country: "MK".to_owned(),
@@ -479,7 +480,7 @@ async fn a_republish_needs_and_gets_its_own_seal() {
         Arc::new(PgAuditRepo::new(dal.clone())),
         Arc::new(dpp_common::event::NoOpEventBus),
         Arc::new(GhostRegistrySync),
-        Arc::new(GhostArchive),
+        Arc::new(GhostBackup),
         OperatorIdentity {
             legal_name: "Test Operator GmbH".to_owned(),
             country: "MK".to_owned(),
@@ -658,7 +659,7 @@ async fn a_locally_sealed_passport_reports_that_no_provider_issued_it() {
         Arc::new(PgAuditRepo::new(dal.clone())),
         Arc::new(dpp_common::event::NoOpEventBus),
         Arc::new(GhostRegistrySync),
-        Arc::new(GhostArchive),
+        Arc::new(GhostBackup),
         OperatorIdentity {
             legal_name: "Test Operator GmbH".to_owned(),
             country: "MK".to_owned(),
@@ -1019,7 +1020,7 @@ async fn a_seal_corrupted_at_rest_is_found_and_repaired() {
         Arc::new(PgAuditRepo::new(dal.clone())),
         Arc::new(dpp_common::event::NoOpEventBus),
         Arc::new(GhostRegistrySync),
-        Arc::new(GhostArchive),
+        Arc::new(GhostBackup),
         OperatorIdentity {
             legal_name: "Test Operator GmbH".to_owned(),
             country: "MK".to_owned(),
@@ -1524,7 +1525,7 @@ async fn a_seal_made_under_an_invalid_certificate_is_found_and_not_called_broken
         Arc::new(PgAuditRepo::new(dal.clone())),
         Arc::new(dpp_common::event::NoOpEventBus),
         Arc::new(GhostRegistrySync),
-        Arc::new(GhostArchive),
+        Arc::new(GhostBackup),
         OperatorIdentity {
             legal_name: "Test Operator GmbH".to_owned(),
             country: "MK".to_owned(),

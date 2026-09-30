@@ -2,12 +2,12 @@ get:
   operationId: resolveByGtinSerial
   summary: GS1 Digital Link resolver — GTIN + serial
   description: |
-    A printed carrier may encode more than the GTIN — this node's own
-    publisher emits `/01/{gtin}/21/{serial}` for a serialised trade item.
-    **Resolution is keyed on the GTIN alone**: `serial` is accepted so no
-    conformant carrier 404s for carrying more precision than the resolver
-    indexes, but it is not looked up. Same behaviour as `/01/{gtin}`
-    otherwise (`linkType` / `Accept` negotiation).
+    The carrier this node prints for an item-level passport, and for one
+    whose level is not stated. **The serial is the resolution key**: it is the
+    passport's carrier serial, and it names one passport whatever its level.
+    An amended passport's successor carries its predecessor's serial, so the
+    label keeps resolving, to the current record. Same behaviour as
+    `/01/{gtin}` otherwise (`linkType` / `Accept` negotiation).
   tags:
     - Public Resolver
   security: []
@@ -23,7 +23,7 @@ get:
       required: true
       schema:
         type: string
-      description: Accepted and ignored — not a resolution key.
+      description: AI 21, the carrier serial. Selects the passport.
     - name: linkType
       in: query
       required: false

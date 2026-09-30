@@ -130,10 +130,19 @@ properties:
       - 'null'
     format: uri
     description: >-
-      GS1 Digital Link the carrier (QR) encodes, set on publish:
-      {resolverBase}/01/{gtin}/21/{serial} for a trade item, else
-      {resolverBase}/dpp/{id}. resolverBase is per-deployment
-      (RESOLVER_BASE_URL, required, no default).
+      The link the data carrier (QR) encodes, set on publish. For a GS1
+      identifier it is a GS1 Digital Link at the level the passport states:
+      {resolverBase}/01/{gtin} for a model, {resolverBase}/01/{gtin}/10/{batch}
+      for a batch, and {resolverBase}/01/{gtin}/21/{carrierSerial} for an item
+      or an unstated level. Otherwise {resolverBase}/dpp/{id}. resolverBase is
+      per-deployment (RESOLVER_BASE_URL, required, no default).
+  carrierSerial:
+    type: string
+    description: >-
+      The serial printed in AI 21 of the passport's GS1 carrier, where one was
+      attributed. Absent means the default, derived from the passport id. An
+      amended passport carries its predecessor's, so the label on the object
+      keeps resolving. Printed on the label, so public.
   jwsSignature:
     type:
       - string

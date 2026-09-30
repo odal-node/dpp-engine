@@ -94,7 +94,9 @@ pub fn validate_aluminium_row(
         co2e_per_unit: None,
         repairability_score: None,
         product_group_data: Some(ProductGroupData::Aluminium(AluminiumData {
-            gtin: gtin.expect("field verified present by errors.is_empty() guard above"),
+            product_identifier: dpp_domain::identifier::ProductIdentifier::gs1(
+                gtin.expect("field verified present by errors.is_empty() guard above"),
+            ),
             alloy_grade: alloy_grade
                 .expect("field verified present by errors.is_empty() guard above"),
             production_route,

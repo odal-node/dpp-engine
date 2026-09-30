@@ -92,7 +92,9 @@ pub fn validate_construction_row(
         co2e_per_unit: None,
         repairability_score: None,
         product_group_data: Some(ProductGroupData::Construction(ConstructionData {
-            gtin: gtin.expect("field verified present by errors.is_empty() guard above"),
+            product_identifier: dpp_domain::identifier::ProductIdentifier::gs1(
+                gtin.expect("field verified present by errors.is_empty() guard above"),
+            ),
             product_family: product_family
                 .expect("field verified present by errors.is_empty() guard above"),
             country_of_origin: country_of_origin

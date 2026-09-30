@@ -77,7 +77,7 @@ Auto-HTTPS, zero certificate ops. (Traefik equivalent if preferred; Caddy is les
 | `RULESET_POLL_INTERVAL_SECS` | opt | Default `300`. `0` polls never, leaving `POST /vault/api/v1/ruleset/reload` as the only trigger |
 | `NODE_PROFILE` | opt | **Leave unset** (T1). Set `production` only at T2 — it will refuse ghosts, correctly |
 | `DATABASE_MIGRATE_URL` | opt | Keep for pilot (idempotent sqlx migrations at boot); the least-privilege upgrade (external `just migrate`, app role only at runtime) is a later hardening |
-| `EU_REGISTRY_CLIENT_ID/SECRET`, `ARCHIVE_S3_BUCKET`… | opt | T3 / archive tier — leave unset until real |
+| `EU_REGISTRY_CLIENT_ID/SECRET`, `BACKUP_S3_BUCKET`… | opt | T3 / back-up-copy tier — leave unset until real |
 | `ODAL_VERSION` | ✔ | **Pin a tag/digest. Never `latest` in production.** Same for the `postgres:17` image (pin digest — the compose header says so itself) |
 
 `chmod 600 .env`; it is a secret.

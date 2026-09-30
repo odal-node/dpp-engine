@@ -258,7 +258,7 @@ mod svhc_reaches_the_lint_result {
         let mut p = crate::public_view::tests::stub_passport();
         let data = serde_json::json!({
             "productGroup": "textile",
-            "gtin": "09506000134352",
+            "productIdentifier": { "scheme": "gs1", "gtin": "09506000134352" },
             "fibreComposition": [{ "fibre": "cotton", "pct": 100.0 }],
             "careInstructions": "wash cold",
             "countryOfOrigin": "PT",
