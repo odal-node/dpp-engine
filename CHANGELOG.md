@@ -176,6 +176,52 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   serves is still the plain `404`, and a wrong method on a served route is still
   `405`.
 
+- **The audit renews archive timestamps that are due.** A `B-LTA` seal stays
+  verifiable after its signing certificate expires because of its archive
+  timestamp, and that timestamp's own authority certificate expires too. The
+  audit already found the seals due; with `SEAL_TIMESTAMP_SOURCE` set it now
+  **renews** them in the same pass — a new `archive-time-stamp-v3` over everything
+  the seal carries, including the previous one, so the chain is unbroken. It costs
+  a timestamp and not a seal, needs no key, and changes nothing else: the
+  signature, its certificate, the covered digest and the signature timestamp are
+  untouched. Off unless asked, and a seal renewed in a pass is not counted as due.
+
+  Two sources, and no provider-specific code. `local` is this node's development
+  authority, for exercising the whole path (refused at boot under
+  `NODE_PROFILE=production`, since it can never be qualified). `rfc3161` is any
+  authority speaking RFC 3161 over HTTP at `SEAL_TIMESTAMP_URL` — `https` only,
+  no redirects, a capped answer, and the token's signature, imprint and **nonce**
+  are checked before it is used. Core's `SealPort` is not extended: a renewal is a
+  property of the stored bytes plus an authority, not of a sealing backend.
+
+  **What is checked before anything is stored.** The returned token is verified as
+  an archive timestamp *of this seal* by the same reader the audit uses, before the
+  seal is touched; a stamp whose authority's certificate ends no later than the one
+  it replaces is refused (a renewal that gains nothing would otherwise be bought
+  again on every pass); an authority whose clock is more than ten minutes from this
+  node's is refused; the renewed seal is read back and must say what was expected;
+  and under `NODE_PROFILE=production` the authority must be one the held Trusted
+  Lists name as a qualified timestamp authority when it stamped, so a node that
+  holds no lists renews nothing rather than storing protection that only looks like
+  protection.
+
+  **The due set arrives as a wall** — every seal stamped under one authority
+  certificate expires the same day — so at most 20 seals are renewed per audit
+  pass, and a failure every seal would share (unreachable, refused, no gain) pauses
+  renewals for an hour. The write is a compare-and-swap on the stored seal
+  (`SealOutbox::replace_seal`), so a renewal made from a seal that was re-published
+  or repaired in the meantime writes nothing. No outbox row is touched: a renewal
+  buys no seal, and `sealed_digest` stays what the original was bought over.
+  Counted on `seal_archival_renewal_total{outcome}`.
+
+  **Found on the way:** the timestamp reader could parse only tokens this crate's
+  own writer made. Its `TSTInfo` stopped at `genTime` on the stated reasoning that
+  trailing fields are ignored; DER decoding refuses them, and the serial was a
+  `u64`. A token from a real authority — a 160-bit serial, `accuracy`, the client's
+  `nonce`, a `genTime` with fractional seconds — was unreadable, so no seal stamped
+  by one could have had its time or its expiry read. `TSTInfo` now follows RFC 3161
+  §2.4.2 in full.
+
 ### Fixed
 
 - **A seal's timestamp is only believed when its authority is a qualified one.**

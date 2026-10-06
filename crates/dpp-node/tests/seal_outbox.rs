@@ -1114,10 +1114,16 @@ async fn a_seal_corrupted_at_rest_is_found_and_repaired() {
     );
 
     // ── The audit finds it ──────────────────────────────────────────────────
-    let (audit, _) =
-        dpp_node::infra::seal_drain::audit_seals_once(&outbox_dyn, &inspector, 100, None, None)
-            .await
-            .expect("the batch is readable");
+    let (audit, _) = dpp_node::infra::seal_drain::audit_seals_once(
+        &outbox_dyn,
+        &inspector,
+        100,
+        None,
+        None,
+        None,
+    )
+    .await
+    .expect("the batch is readable");
     assert_eq!(audit.broken, 1, "the audit must see what the counts cannot");
     assert_eq!(audit.broken_passports, vec![id], "and name it");
 
@@ -1171,10 +1177,16 @@ async fn a_seal_corrupted_at_rest_is_found_and_repaired() {
         "the corrupt bytes are gone, not merely re-marked"
     );
 
-    let (clean, _) =
-        dpp_node::infra::seal_drain::audit_seals_once(&outbox_dyn, &inspector, 100, None, None)
-            .await
-            .expect("the batch is readable");
+    let (clean, _) = dpp_node::infra::seal_drain::audit_seals_once(
+        &outbox_dyn,
+        &inspector,
+        100,
+        None,
+        None,
+        None,
+    )
+    .await
+    .expect("the batch is readable");
     assert_eq!(clean.broken, 0, "and the audit agrees it is fixed");
 }
 
@@ -1628,10 +1640,16 @@ async fn a_seal_made_under_an_invalid_certificate_is_found_and_not_called_broken
     // before it existed the time was believed whoever had made it.
     {
         let unlisted = dpp_seal::CadesInspector::new();
-        let (audit, _) =
-            dpp_node::infra::seal_drain::audit_seals_once(&outbox_dyn, &unlisted, 100, None, None)
-                .await
-                .expect("the batch is readable");
+        let (audit, _) = dpp_node::infra::seal_drain::audit_seals_once(
+            &outbox_dyn,
+            &unlisted,
+            100,
+            None,
+            None,
+            None,
+        )
+        .await
+        .expect("the batch is readable");
         assert_eq!(
             audit.certificate_failed, 0,
             "a time from an authority nobody lists settles nothing"
@@ -1700,10 +1718,16 @@ async fn a_seal_made_under_an_invalid_certificate_is_found_and_not_called_broken
     assert_eq!(seal_outbox.unsealed_published_count().await.unwrap(), 0);
 
     // ── The audit sees it, and files it apart from broken ───────────────────
-    let (audit, _) =
-        dpp_node::infra::seal_drain::audit_seals_once(&outbox_dyn, &inspector, 100, None, None)
-            .await
-            .expect("the batch is readable");
+    let (audit, _) = dpp_node::infra::seal_drain::audit_seals_once(
+        &outbox_dyn,
+        &inspector,
+        100,
+        None,
+        None,
+        None,
+    )
+    .await
+    .expect("the batch is readable");
     assert_eq!(
         audit.certificate_failed, 1,
         "the certificate was not valid at the attested moment"
@@ -1730,5 +1754,189 @@ async fn a_seal_made_under_an_invalid_certificate_is_found_and_not_called_broken
         status.sub_indication,
         Some(dpp_types::ValidationSubIndication::Expired),
         "an attested time proves the seal was made after the window closed"
+    );
+}
+
+/// **The audit renews a due archive timestamp through real Postgres.**
+///
+/// The whole path the unit tests cover in pieces: a passport is published and
+/// sealed at `B-LTA` by an authority whose certificate ends in thirty days, the
+/// audit finds the archive timestamp due and — given a renewer — stamps it again
+/// from an authority that outlasts it, and the stored seal now reads as protected
+/// for years while still covering the passport's current signature.
+///
+/// What the database has to get right is the part nothing else reaches: that the
+/// compare-and-swap matches the value `sealed_passports` read, so a renewal lands
+/// on the seal it was made from, and that the outbox does not move when it does.
+#[tokio::test]
+async fn the_audit_renews_a_due_archive_timestamp_in_the_database() {
+    use dpp_types::SealInspector as _;
+
+    let _pg = start_pg().await;
+    let dal = _pg.dal.clone();
+
+    let key_dir = tempfile::tempdir().expect("temp dir");
+    let store =
+        dpp_crypto::keystore::KeyStore::open(key_dir.path().join("keystore.json"), "test-pass")
+            .expect("keystore");
+    store.generate_key("root").expect("generate key");
+    let identity = Arc::new(dpp_vc::LocalIdentityService::new(
+        Arc::new(store),
+        "root".to_owned(),
+        "seal-sim.example.com".to_owned(),
+    ));
+
+    let passport_repo = Arc::new(PgPassportRepo::new(dal.clone()));
+    let seal_outbox = Arc::new(PgSealOutboxRepo::new(dal.clone()));
+    let service = PassportService::new(
+        passport_repo.clone(),
+        identity,
+        Arc::new(dpp_domain::PassthroughRegistry::new()) as Arc<dyn ComplianceRegistry>,
+        Arc::new(PgAuditRepo::new(dal.clone())),
+        Arc::new(dpp_common::event::NoOpEventBus),
+        Arc::new(GhostRegistrySync),
+        Arc::new(GhostBackup),
+        OperatorIdentity {
+            legal_name: "Test Operator GmbH".to_owned(),
+            country: "MK".to_owned(),
+        },
+        "https://resolver.example.com".to_owned(),
+    )
+    .with_seal_outbox(seal_outbox.clone())
+    .with_seal_inspector(Arc::new(dpp_seal::CadesInspector::new()));
+
+    let draft = draft_passport();
+    let id = draft.id;
+    passport_repo.create(draft).await.expect("create draft");
+    let published = service.publish(id, &auth()).await.expect("publish");
+    let expected_digest = hex::encode(Sha256::digest(
+        published.jws_signature.as_ref().expect("signed").as_bytes(),
+    ));
+
+    // A timestamping identity whose certificate ends in thirty days, written
+    // where the local sealer looks for it before the sealer is created — so the
+    // archive timestamp it makes is genuinely near its end.
+    let seal_dir = tempfile::tempdir().expect("temp dir");
+    {
+        let at = |days: i64| {
+            time::OffsetDateTime::from_unix_timestamp(Utc::now().timestamp() + days * 86_400)
+                .expect("a date")
+        };
+        let mut params =
+            rcgen::CertificateParams::new(vec!["expiring-tsa".to_owned()]).expect("params");
+        params
+            .distinguished_name
+            .push(rcgen::DnType::CommonName, "Expiring test authority");
+        params.extended_key_usages = vec![rcgen::ExtendedKeyUsagePurpose::TimeStamping];
+        params.not_before = at(-1);
+        params.not_after = at(30);
+        let key = rcgen::KeyPair::generate_for(&rcgen::PKCS_ECDSA_P256_SHA256).expect("key");
+        let cert = params.self_signed(&key).expect("a certificate");
+        std::fs::write(
+            seal_dir.path().join("tsa-key.pkcs8.der"),
+            key.serialize_der(),
+        )
+        .expect("key");
+        std::fs::write(seal_dir.path().join("tsa-cert.der"), cert.der()).expect("certificate");
+    }
+    let backend =
+        dpp_seal::local::LocalIdentity::load_or_create(seal_dir.path()).expect("identity");
+    let adapter: Arc<dyn SealPort> = Arc::new(QtspSealAdapter::new(backend));
+    let outbox_dyn: Arc<dyn SealOutbox> = seal_outbox.clone();
+    let key_ref = dpp_domain::seal::SealCredentialRef {
+        qtsp_id: dpp_seal::local::config::PROVIDER.to_owned(),
+        credential_id: "node".to_owned(),
+    };
+    assert_eq!(
+        drain_once(
+            &outbox_dyn,
+            &adapter,
+            &key_ref,
+            SealMode::OperatorSeal,
+            SealConformanceLevel::BaselineLta,
+            10,
+        )
+        .await
+        .sealed,
+        1
+    );
+
+    let inspector = dpp_seal::CadesInspector::new();
+    let before = passport_repo
+        .find_by_id(id)
+        .await
+        .unwrap()
+        .unwrap()
+        .seal
+        .expect("sealed");
+    assert!(
+        matches!(
+            inspector.archival_freshness(&before, Utc::now()),
+            dpp_types::ArchivalFreshness::Current { expires }
+                if expires < Utc::now() + chrono::Duration::days(40)
+        ),
+        "the fixture must start with the archive timestamp near its end"
+    );
+
+    // The renewing authority is the ordinary local one, valid to the year 4096.
+    let renewing_dir = tempfile::tempdir().expect("temp dir");
+    let renewer = dpp_node::infra::seal_renewal::ArchivalRenewer::new(
+        Arc::new(
+            dpp_seal::local::LocalTimestampSource::load_or_create(renewing_dir.path())
+                .expect("an authority"),
+        ),
+        Arc::new(dpp_seal::CadesInspector::new()),
+        false,
+    );
+
+    let (audit, _) = dpp_node::infra::seal_drain::audit_seals_once(
+        &outbox_dyn,
+        &inspector,
+        100,
+        None,
+        None,
+        Some(&renewer),
+    )
+    .await
+    .expect("the batch is readable");
+
+    assert_eq!(audit.sound, 1);
+    assert_eq!(
+        audit.archival_due, 0,
+        "a seal renewed in this pass is no longer due"
+    );
+
+    let after = passport_repo
+        .find_by_id(id)
+        .await
+        .unwrap()
+        .unwrap()
+        .seal
+        .expect("still sealed");
+    assert_ne!(
+        after.seal_value, before.seal_value,
+        "the stored seal was replaced"
+    );
+    assert_eq!(
+        after.sealed_at, before.sealed_at,
+        "a renewal is not a re-seal"
+    );
+    assert!(
+        matches!(
+            inspector.archival_freshness(&after, Utc::now()),
+            dpp_types::ArchivalFreshness::Current { expires }
+                if expires > Utc::now() + chrono::Duration::days(365)
+        ),
+        "protected for years"
+    );
+    assert_eq!(
+        inspector.binding(&after, &expected_digest),
+        dpp_types::SealBinding::CoversThisSignature,
+        "and it still covers the passport's current signature"
+    );
+    assert_eq!(
+        seal_outbox.sealed_digest(id).await.unwrap().as_deref(),
+        Some(expected_digest.as_str()),
+        "the outbox did not move: a renewal buys no seal"
     );
 }

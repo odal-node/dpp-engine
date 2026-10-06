@@ -8154,7 +8154,7 @@ components:
 
         `evidencedLevel` reports `baseline-lta` from the **presence** of the archival material, and is right to — the material is there. This reports whether it still means anything.
 
-        An archival timestamp is what keeps a `B-LTA` seal verifiable after its signing certificate expires, which is the whole point for a retention-locked passport that outlives every certificate involved. **It expires too**: its own timestamping authority's certificate has a validity period, and ETSI's long-term profiles expect re-timestamping before that. Without this field a seal whose archival protection lapsed years ago reads exactly as it did the day it was bought.
+        An archival timestamp is what keeps a `B-LTA` seal verifiable after its signing certificate expires, which is the whole point for a retention-locked passport that outlives every certificate involved. **It expires too**: its own timestamping authority's certificate has a validity period, and ETSI's long-term profiles expect re-timestamping before that. Without this field a seal whose archival protection lapsed years ago reads exactly as it did the day it was bought. A node with a timestamp source configured renews a due seal itself, and this field is what shows the result: `current` with a later date.
 
         **A signal, not a verdict.** A seal nearing its renewal date still verifies, and that window is the only chance to renew without an outage. No threshold is applied — how much notice is enough is a policy question for the reader.
       required:
@@ -8710,7 +8710,9 @@ components:
           description: |-
             `B-LTA` seals whose archival protection expires soon.
 
-            A reporting threshold rather than a purchase trigger: nothing on this node buys a renewal. The window between "due" and "gone" is the only one in which renewing is routine rather than an incident, which is why it is reported separately from `archivalLapsed`.
+            The window between "due" and "gone" is the only one in which renewing is routine rather than an incident, which is why it is reported separately from `archivalLapsed`.
+
+            On a node with a timestamp source configured, the pass that finds a seal due **renews** it, and a seal renewed there is not counted — what remains here is what still needs attention. On a node with none, this is simply what is due, and nothing is bought.
         archivalUnverifiable:
           type: integer
           description: |-

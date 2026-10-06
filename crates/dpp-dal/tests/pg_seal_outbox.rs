@@ -611,3 +611,150 @@ async fn a_failed_attempt_backs_off_and_stays_pending() {
         "backoff must actually delay the next attempt"
     );
 }
+
+/// Seal a freshly published passport with `seal_value`, the way the drain does.
+async fn sealed_passport(
+    repo: &PgPassportRepo,
+    outbox: &PgSealOutboxRepo,
+    jws: &str,
+    seal_value: &str,
+) -> PassportId {
+    let passport = published_passport(jws);
+    let id = passport.id;
+    repo.create(passport).await.expect("insert passport");
+    outbox.enqueue(id, &digest_of(jws)).await.expect("enqueue");
+    let row = outbox.due(10).await.expect("due").remove(0);
+    outbox
+        .mark_sealed(row.id, &envelope(seal_value))
+        .await
+        .expect("seal");
+    id
+}
+
+/// **A renewal replaces the seal it was made from, and touches nothing else.**
+///
+/// The seal is written onto a published, retention-locked passport, so this is the
+/// retention guard's question again — and it must answer yes for the renewal as it
+/// does for the first seal. And because a renewal buys no seal, the outbox must not
+/// move: the row that bought the original is still the answer to "what was this
+/// seal requested over".
+#[tokio::test]
+async fn a_renewed_seal_replaces_the_one_it_was_made_from_and_touches_nothing_else() {
+    let pg = start_pg().await;
+    let repo = PgPassportRepo::new(pg.dal.clone());
+    let outbox = PgSealOutboxRepo::new(pg.dal.clone());
+    let jws = "renew.me.please";
+    let id = sealed_passport(&repo, &outbox, jws, "SEAL-V1").await;
+    let before = repo.find_by_id(id).await.unwrap().unwrap();
+
+    let replaced = outbox
+        .replace_seal(id, &envelope("SEAL-V1"), &envelope("SEAL-V2"))
+        .await
+        .expect("the retention guard must permit a renewal as it permits a seal");
+
+    assert!(replaced, "the stored seal was the one that was read");
+    let after = repo.find_by_id(id).await.unwrap().unwrap();
+    assert_eq!(after.seal.expect("sealed").seal_value, "SEAL-V2");
+    assert_eq!(after.jws_signature, before.jws_signature);
+    assert_eq!(after.status, before.status);
+    assert_eq!(after.version, before.version);
+
+    // The outbox did not move: no row to close, and the digest is still the one
+    // the original seal was bought over.
+    let counts = outbox.status_counts().await.expect("counts");
+    assert_eq!((counts.sealed, counts.pending), (1, 0));
+    assert_eq!(
+        outbox.sealed_digest(id).await.unwrap(),
+        Some(digest_of(jws)),
+        "a renewal changes what a seal was requested over not at all"
+    );
+}
+
+/// **A renewal that lost a race writes nothing.**
+///
+/// The seal was replaced — a re-publish, a repair — while the authority was being
+/// asked. The renewed copy is of yesterday's seal, and writing it would put it
+/// over today's.
+#[tokio::test]
+async fn a_renewal_made_from_a_replaced_seal_is_refused() {
+    let pg = start_pg().await;
+    let repo = PgPassportRepo::new(pg.dal.clone());
+    let outbox = PgSealOutboxRepo::new(pg.dal.clone());
+    let id = sealed_passport(&repo, &outbox, "race.the.seal", "SEAL-V1").await;
+
+    // Something else replaced the seal after the renewal read it.
+    assert!(
+        outbox
+            .replace_seal(id, &envelope("SEAL-V1"), &envelope("SEAL-REPAIRED"))
+            .await
+            .unwrap()
+    );
+
+    let applied = outbox
+        .replace_seal(id, &envelope("SEAL-V1"), &envelope("SEAL-V1-RENEWED"))
+        .await
+        .expect("a lost race is not an error");
+
+    assert!(!applied);
+    assert_eq!(
+        repo.find_by_id(id)
+            .await
+            .unwrap()
+            .unwrap()
+            .seal
+            .expect("sealed")
+            .seal_value,
+        "SEAL-REPAIRED",
+        "the seal that landed in between is untouched"
+    );
+}
+
+/// A passport with no seal has nothing to replace, and a seal on another passport
+/// is never touched.
+#[tokio::test]
+async fn a_renewal_is_scoped_to_its_own_passport() {
+    let pg = start_pg().await;
+    let repo = PgPassportRepo::new(pg.dal.clone());
+    let outbox = PgSealOutboxRepo::new(pg.dal.clone());
+    let a = sealed_passport(&repo, &outbox, "passport.a.jws", "SEAL-V1").await;
+    // Same seal value on a different passport: only the id can tell them apart.
+    let b = sealed_passport(&repo, &outbox, "passport.b.jws", "SEAL-V1").await;
+
+    assert!(
+        outbox
+            .replace_seal(a, &envelope("SEAL-V1"), &envelope("SEAL-A-RENEWED"))
+            .await
+            .unwrap()
+    );
+    assert_eq!(
+        repo.find_by_id(b)
+            .await
+            .unwrap()
+            .unwrap()
+            .seal
+            .expect("sealed")
+            .seal_value,
+        "SEAL-V1",
+        "renewing one passport's seal must not reach another's"
+    );
+
+    // No seal at all: nothing to compare against, so nothing is written.
+    let unsealed = published_passport("never.sealed.jws");
+    let unsealed_id = unsealed.id;
+    repo.create(unsealed).await.expect("insert");
+    assert!(
+        !outbox
+            .replace_seal(unsealed_id, &envelope("SEAL-V1"), &envelope("SEAL-NEW"))
+            .await
+            .unwrap()
+    );
+    assert!(
+        repo.find_by_id(unsealed_id)
+            .await
+            .unwrap()
+            .unwrap()
+            .seal
+            .is_none(),
+        "a renewal must never create a seal where there is none"
+    );
+}

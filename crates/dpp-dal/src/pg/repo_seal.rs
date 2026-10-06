@@ -205,6 +205,36 @@ impl SealOutbox for PgSealOutboxRepo {
         Ok(())
     }
 
+    async fn replace_seal(
+        &self,
+        passport_id: PassportId,
+        current: &SealedEnvelope,
+        renewed: &SealedEnvelope,
+    ) -> Result<bool, DppError> {
+        let renewed = serde_json::to_value(renewed)
+            .map_err(|e| DppError::Serialisation(format!("seal envelope: {e}")))?;
+
+        // Compare-and-swap on the stored seal's own value, in one statement — a
+        // read followed by a write would leave exactly the window this exists to
+        // close. `jsonb_set` by key touches the `seal` member and nothing else, so
+        // a concurrent change to a mutable field of the passport is not clobbered.
+        //
+        // No outbox row is read or written: a renewal buys no seal. See
+        // `SealOutbox::replace_seal`.
+        let res = sqlx::query(
+            r#"UPDATE odal.passport SET
+                 doc = jsonb_set(doc, '{seal}', $3, true)
+               WHERE id = $1 AND doc->'seal'->>'sealValue' = $2"#,
+        )
+        .bind(passport_id.0)
+        .bind(&current.seal_value)
+        .bind(&renewed)
+        .execute(self.dal.pool())
+        .await
+        .map_err(db_err)?;
+        Ok(res.rows_affected() == 1)
+    }
+
     async fn sealed_digest(&self, passport_id: PassportId) -> Result<Option<String>, DppError> {
         // A re-published passport accumulates one `sealed` row per signature it
         // has carried, so "which seal is on the passport" is the newest of them.

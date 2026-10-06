@@ -405,3 +405,106 @@ fn an_unlisted_authoritys_time_cannot_settle_a_certificate_finding() {
         "and the standing says why it carries no weight"
     );
 }
+
+// ─── Who may renew ───────────────────────────────────────────────────────────
+
+/// A CA-issued timestamping unit whose certificate ends in `ends_in_days`.
+fn authority_ending_in(
+    ca: &rcgen::CertifiedIssuer<'static, rcgen::KeyPair>,
+    ends_in_days: i64,
+) -> Authority {
+    let key = authority_key();
+    let mut params = authority_params("Test Timestamp Unit", false);
+    params.extended_key_usages = vec![rcgen::ExtendedKeyUsagePurpose::TimeStamping];
+    params.not_before =
+        time::OffsetDateTime::from_unix_timestamp(Utc::now().timestamp() - 86_400).expect("a date");
+    params.not_after =
+        time::OffsetDateTime::from_unix_timestamp(Utc::now().timestamp() + ends_in_days * 86_400)
+            .expect("a date");
+    let cert = params.signed_by(&key, &**ca).expect("a unit certificate");
+    Authority {
+        key_der: key.serialize_der(),
+        cert_der: cert.der().to_vec(),
+    }
+}
+
+/// A source stamping as `authority`, at the moment `when`.
+fn source_for(
+    authority: &Authority,
+    when: chrono::DateTime<Utc>,
+) -> (crate::local::LocalTimestampSource, tempfile::TempDir) {
+    let dir = tempfile::tempdir().expect("tempdir");
+    std::fs::write(dir.path().join("tsa-key.pkcs8.der"), &authority.key_der).expect("key");
+    std::fs::write(dir.path().join("tsa-cert.der"), &authority.cert_der).expect("certificate");
+    let source = crate::local::LocalTimestampSource::load_or_create(dir.path())
+        .expect("an authority")
+        .with_clock(move || when);
+    (source, dir)
+}
+
+/// **Production renews only from an authority the lists name; development from
+/// any.**
+///
+/// An archive timestamp keeps a retention-locked seal verifiable for years. One
+/// from an authority nobody can vouch for protects nothing while *looking* like
+/// protection — a seal that reads as freshly renewed and is not — so a node that
+/// requires qualification must refuse it, and a node holding no lists, which can
+/// vouch for nobody, must therefore renew nothing. The same renewal from an
+/// authority a list names goes through, and a development node needs neither.
+#[tokio::test]
+async fn production_renews_only_from_an_authority_the_lists_name() {
+    use crate::renewal::RenewalError;
+
+    let now = Utc::now() + chrono::Duration::hours(1);
+    let ca = timestamp_ca("Test Timestamp CA");
+    let (seal, _dir) = seal_stamped_by(
+        &authority_ending_in(&ca, 30),
+        SealConformanceLevel::BaselineLta,
+    );
+    let mut envelope = stored(&seal);
+    envelope.conformance_level = Some(SealConformanceLevel::BaselineLta);
+
+    let renewing = authority_ending_in(&ca, 5 * 365);
+    let (source, _src) = source_for(&renewing, now);
+
+    // Production, no lists: nobody can be vouched for, so nothing is renewed.
+    let err = CadesInspector::new()
+        .renew_archive_timestamp(&envelope, &source, now, true)
+        .await
+        .expect_err("a node that can vouch for nobody must not renew");
+    assert!(
+        matches!(
+            err,
+            RenewalError::AuthorityRefused(TimestampStanding::ChainIncomplete { .. })
+        ),
+        "{err}"
+    );
+
+    // Production, and a list that names the renewing authority: renewed.
+    let list = list_naming_authority(
+        &renewing.cert_der,
+        vec![granted_since("2000-01-01T00:00:00Z")],
+    );
+    let listed = CadesInspector::new().with_trusted_lists(vec![list], vec![]);
+    let renewed = listed
+        .renew_archive_timestamp(&envelope, &source, now, true)
+        .await
+        .expect("a qualified authority may renew");
+    assert!(renewed.expires > renewed.previous_expires);
+    assert_ne!(
+        renewed.envelope.seal_value, envelope.seal_value,
+        "the stored seal carries the new archive timestamp"
+    );
+    assert_eq!(renewed.envelope.sealed_at, envelope.sealed_at);
+    assert_eq!(renewed.envelope.signing_cert_ref, envelope.signing_cert_ref);
+    assert_eq!(
+        renewed.envelope.conformance_level,
+        envelope.conformance_level
+    );
+
+    // Development: no lists and no qualification required.
+    CadesInspector::new()
+        .renew_archive_timestamp(&envelope, &source, now, false)
+        .await
+        .expect("a development node accepts an authority nobody lists");
+}

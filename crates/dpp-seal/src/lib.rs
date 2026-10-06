@@ -31,6 +31,8 @@
 //! - [`local`] — in-process signing for development
 //! - [`ghost`] — the placeholder, as a backend like any other
 //! - [`error`] — `SealError`, what is true of sealing regardless of backend
+//! - [`renewal`] — extending a stored seal's archive timestamp, from any
+//!   [`TimestampSource`]; [`rfc3161`] is the provider-independent one
 //!
 //! Each backend owns its own module: its configuration, its variables, its
 //! failure messages and its wire types, and it constructs itself. Nothing
@@ -49,10 +51,14 @@ pub mod ghost;
 pub mod inspect;
 pub mod local;
 pub mod qualification;
+pub mod renewal;
+pub mod rfc3161;
+pub mod timestamp_source;
 pub mod trustlist;
 
 pub use adapter::QtspSealAdapter;
 pub use backend::SealBackend;
 pub use config::{SEAL_PROVIDER, SealProvider};
 pub use error::SealError;
-pub use inspect::CadesInspector;
+pub use inspect::{CadesInspector, RenewedEnvelope};
+pub use timestamp_source::TimestampSource;

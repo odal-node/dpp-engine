@@ -523,24 +523,119 @@ pub(crate) struct MessageImprint {
     pub(crate) hashed_message: der::asn1::OctetString,
 }
 
-/// `TSTInfo` — RFC 3161 §2.4.2.
+/// `TSTInfo` — RFC 3161 §2.4.2, in full.
 ///
 /// Defined here, in the module that owns CMS and X.509 handling, and used by
 /// the local timestamping authority for writing. One definition: a reader and a
 /// writer with separate copies is the drift this module's header warns about,
 /// and it would show up as tokens this node emits and cannot read back.
 ///
-/// The optional tail — `accuracy`, `ordering`, `nonce`, `tsa`, `extensions` — is
-/// omitted. Reading stops at `genTime` because that is the only field anything
-/// here asks about; a token carrying more still parses, since DER decoding of a
-/// SEQUENCE ignores what it was not asked for.
+/// # 🚨 The whole structure, because decoding refuses what it was not asked for
+///
+/// This once stopped at `genTime` on the reasoning that "DER decoding of a
+/// SEQUENCE ignores what it was not asked for". It does not: a trailing field is
+/// an error. So the reader parsed every token this crate's own writer made and
+/// **none of the tokens a real authority sends**, which carry a client's `nonce`
+/// and usually an `accuracy`, and whose `serialNumber` is a 160-bit value that no
+/// `u64` holds. `a_token_carrying_what_real_authorities_send_is_readable` pins it.
+///
+/// `accuracy`, `tsa` and `extensions` are carried rather than interpreted:
+/// nothing here asks what an authority claims its clock error is, or names itself,
+/// and reading them is only what lets the rest of the structure be reached.
 #[derive(der::Sequence)]
 pub(crate) struct TstInfo {
     pub(crate) version: u8,
     pub(crate) policy: const_oid::ObjectIdentifier,
     pub(crate) message_imprint: MessageImprint,
-    pub(crate) serial_number: u64,
-    pub(crate) gen_time: der::asn1::GeneralizedTime,
+    pub(crate) serial_number: der::asn1::Uint,
+    pub(crate) gen_time: GenTime,
+    #[asn1(optional = "true")]
+    pub(crate) accuracy: Option<Accuracy>,
+    #[asn1(default = "no_ordering")]
+    pub(crate) ordering: bool,
+    #[asn1(optional = "true")]
+    pub(crate) nonce: Option<der::asn1::Uint>,
+    #[asn1(context_specific = "0", tag_mode = "EXPLICIT", optional = "true")]
+    pub(crate) tsa: Option<der::Any>,
+    #[asn1(context_specific = "1", tag_mode = "IMPLICIT", optional = "true")]
+    pub(crate) extensions: Option<Vec<der::Any>>,
+}
+
+fn no_ordering() -> bool {
+    false
+}
+
+/// `Accuracy` — RFC 3161 §2.4.2. Carried, not interpreted.
+#[derive(der::Sequence)]
+pub(crate) struct Accuracy {
+    #[asn1(optional = "true")]
+    pub(crate) seconds: Option<der::asn1::Uint>,
+    #[asn1(context_specific = "0", tag_mode = "IMPLICIT", optional = "true")]
+    pub(crate) millis: Option<u16>,
+    #[asn1(context_specific = "1", tag_mode = "IMPLICIT", optional = "true")]
+    pub(crate) micros: Option<u16>,
+}
+
+/// A token's `genTime`: an ASN.1 `GeneralizedTime`, **with** the fractional
+/// seconds RFC 3161 allows.
+///
+/// `der`'s own `GeneralizedTime` accepts exactly `YYYYMMDDHHMMSSZ`, so a token
+/// stamped `20261006123456.789Z` — which RFC 3161 §2.4.2 permits and an authority
+/// reporting a sub-second `accuracy` sends — would be refused outright. Read here
+/// by hand and held as an instant.
+///
+/// Written whole-second, which is what DER's canonical form asks of a value with
+/// no fractional part to carry.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct GenTime(pub(crate) DateTime<Utc>);
+
+impl<'a> der::DecodeValue<'a> for GenTime {
+    fn decode_value<R: der::Reader<'a>>(reader: &mut R, header: der::Header) -> der::Result<Self> {
+        let bad = || der::Tag::GeneralizedTime.value_error();
+        let bytes = reader.read_slice(header.length)?;
+        let text = std::str::from_utf8(bytes).map_err(|_| bad())?;
+        let text = text.strip_suffix('Z').ok_or_else(bad)?;
+        let (whole, fraction) = match text.split_once('.') {
+            Some((whole, fraction)) => (whole, Some(fraction)),
+            None => (text, None),
+        };
+        let seconds = chrono::NaiveDateTime::parse_from_str(whole, "%Y%m%d%H%M%S")
+            .map_err(|_| bad())?
+            .and_utc();
+        let nanos = match fraction {
+            None => 0,
+            // One to nine digits, scaled to nanoseconds; more precision than a
+            // nanosecond is not representable and not meaningful.
+            Some(f) if (1..=9).contains(&f.len()) && f.bytes().all(|b| b.is_ascii_digit()) => {
+                f.parse::<u32>().map_err(|_| bad())? * 10u32.pow(9 - f.len() as u32)
+            }
+            Some(_) => return Err(bad()),
+        };
+        Ok(Self(
+            seconds + chrono::Duration::nanoseconds(i64::from(nanos)),
+        ))
+    }
+}
+
+impl der::EncodeValue for GenTime {
+    fn value_len(&self) -> der::Result<der::Length> {
+        der::Length::try_from(self.encoded().len())
+    }
+
+    fn encode_value(&self, writer: &mut impl der::Writer) -> der::Result<()> {
+        writer.write(self.encoded().as_bytes())
+    }
+}
+
+impl der::FixedTag for GenTime {
+    const TAG: der::Tag = der::Tag::GeneralizedTime;
+}
+
+impl GenTime {
+    /// The DER form: `YYYYMMDDHHMMSSZ`.
+    fn encoded(&self) -> String {
+        self.0.format("%Y%m%d%H%M%SZ").to_string()
+    }
 }
 
 /// The time a timestamp authority attests the seal was made.
@@ -621,6 +716,25 @@ impl TimestampToken {
     #[must_use]
     pub fn gen_time(&self) -> DateTime<Utc> {
         self.gen_time
+    }
+
+    /// When the authority's certificate ends — the date after which this token
+    /// can no longer be validated on its own terms, and so the date a renewal
+    /// has to beat.
+    ///
+    /// `None` only for a window that cannot be represented; a token with no
+    /// readable expiry is not one anything can be renewed against.
+    #[must_use]
+    pub fn authority_expires(&self) -> Option<DateTime<Utc>> {
+        to_utc(
+            self.token
+                .certificate
+                .tbs_certificate
+                .validity
+                .not_after
+                .to_unix_duration()
+                .as_secs(),
+        )
     }
 
     /// The authority's subject name, RFC 4514, for reading.
@@ -718,7 +832,7 @@ fn signature_timestamp(signed: &Signed) -> Option<TimestampToken> {
     // one built by whoever edited the seal — carries the same weight as a real
     // one, and this time is what decides whether a certificate finding is a
     // failure or an open question.
-    let gen_time = to_utc(info.gen_time.to_unix_duration().as_secs())?;
+    let gen_time = info.gen_time.0;
     if !stamped_within_its_certificate(&token, gen_time) {
         return None;
     }
@@ -823,10 +937,10 @@ fn digest_matches(signed: &Signed, content: &[u8]) -> bool {
 /// certificate has a validity period, and once that passes the token can no
 /// longer be validated on its own terms. ETSI's long-term profiles handle this
 /// by **re-timestamping** before it happens, a new archive timestamp over the
-/// old one. Nothing here does that, and nothing would notice: `evidenced_level`
-/// reports `BaselineLta` from the *presence* of the attribute, so a seal whose
-/// archival timestamp lapsed years ago reports exactly as it did on the day it
-/// was bought.
+/// old one — which [`crate::renewal`] does, where a node has an authority to ask.
+/// Where it does not, nothing would notice: `evidenced_level` reports
+/// `BaselineLta` from the *presence* of the attribute, so a seal whose archival
+/// timestamp lapsed years ago reports exactly as it did on the day it was bought.
 ///
 /// # A signal, never a verdict
 ///
@@ -915,25 +1029,10 @@ pub fn archival_freshness(
 
     // The newest readable token wins. An unreadable one among several is not
     // fatal — but if *none* reads, the answer is unknown rather than absent.
-    let mut newest: Option<(DateTime<Utc>, DateTime<Utc>)> = None;
-    for attr in archival {
-        for value in attr.values.as_slice() {
-            let Some((made_at, expires)) = archival_token(
-                value,
-                crate::ats::Enclosing::of(&signed.data),
-                &signed.signer,
-            ) else {
-                continue;
-            };
-            if newest.is_none_or(|(seen, _)| made_at > seen) {
-                newest = Some((made_at, expires));
-            }
-        }
-    }
-
-    let Some((_, expires)) = newest else {
+    let Some(newest) = newest_of(archival_tokens(&signed, archival)) else {
         return Ok(ArchivalFreshness::Unknown);
     };
+    let expires = newest.expires;
     Ok(if expires > now {
         ArchivalFreshness::Current { expires }
     } else {
@@ -941,7 +1040,336 @@ pub fn archival_freshness(
     })
 }
 
-/// One archive timestamp's `(genTime, authority certificate expiry)`.
+/// Every archive timestamp among `attrs` that survives its checks, as tokens.
+fn archival_tokens(signed: &Signed, attrs: Vec<&x509_cert::attr::Attribute>) -> Vec<ArchiveToken> {
+    let mut found = Vec::new();
+    for attr in attrs {
+        for value in attr.values.as_slice() {
+            if let Some(token) = archival_token(
+                value,
+                crate::ats::Enclosing::of(&signed.data),
+                &signed.signer,
+            ) {
+                found.push(token);
+            }
+        }
+    }
+    found
+}
+
+/// The newest of several archive timestamps.
+///
+/// By `genTime`, with the authority certificate's expiry as the tie-break: a
+/// renewal chain is a sequence of stamps each covering the one before, so the
+/// newest carries the protection forward, and two stamped in the same second —
+/// the old authority's and its replacement's, in a deployment that rotated — are
+/// ordered by which outlasts the other rather than by whichever the `SET`
+/// happened to encode first.
+fn newest_of(tokens: Vec<ArchiveToken>) -> Option<ArchiveToken> {
+    tokens
+        .into_iter()
+        .max_by_key(|t| (t.stamp.gen_time, t.expires))
+}
+
+/// A verified archive timestamp, and when its authority's certificate ends.
+struct ArchiveToken {
+    stamp: TimestampToken,
+    expires: DateTime<Utc>,
+}
+
+/// The newest archive timestamp this seal carries that is **verifiably of this
+/// seal** — the one a renewal would extend, and the one whose authority is
+/// answerable for the protection `B-LTA` promises.
+///
+/// `Ok(None)` for a seal with no archive timestamp, and for one whose every
+/// archive timestamp fails its checks: neither has anything to renew from, and
+/// the distinction is [`archival_freshness`]'s to draw.
+///
+/// # Errors
+///
+/// [`SealError::Backend`] when the seal itself cannot be read.
+pub fn newest_archive_timestamp(seal_der: &[u8]) -> Result<Option<TimestampToken>, SealError> {
+    let signed = parse(seal_der)?;
+    let Some(attrs) = signed.signer.unsigned_attrs.as_ref() else {
+        return Ok(None);
+    };
+    let archival: Vec<_> = attrs
+        .iter()
+        .filter(|a| {
+            a.oid == ID_AA_ETS_ARCHIVE_TIMESTAMP_V3 || a.oid == ID_AA_ETS_ARCHIVE_TIMESTAMP_V2
+        })
+        .collect();
+    Ok(newest_of(archival_tokens(&signed, archival)).map(|t| t.stamp))
+}
+
+// ─── Renewing the archive timestamp ──────────────────────────────────────────
+
+/// What an authority has to be asked to stamp, to renew a seal's archive
+/// timestamp — and what that renewal has to beat.
+///
+/// Built by [`prepare_archive_renewal`]. Opaque outside this module for the same
+/// reason [`TimestampToken`] is: the imprint and the index belong together, and a
+/// caller that held them separately could stamp one and attach the other.
+pub(crate) struct RenewalRequest {
+    /// SHA-256, EN 319 122-1 clause 5.5.3, over the seal **as it stands now** —
+    /// which is what makes the new stamp cover the old one.
+    pub(crate) imprint: [u8; 32],
+    index: crate::ats::AtsHashIndexV3,
+    /// When the newest archive timestamp's authority certificate ends — the date
+    /// to beat.
+    pub(crate) previous_expires: DateTime<Utc>,
+}
+
+fn not_renewable(why: impl std::fmt::Display) -> SealError {
+    SealError::Backend(format!("this seal cannot be renewed: {why}"))
+}
+
+/// The unsigned attributes of `signed`'s signer that are archive timestamps.
+fn archival_attrs(signed: &Signed) -> Vec<&x509_cert::attr::Attribute> {
+    signed
+        .signer
+        .unsigned_attrs
+        .as_ref()
+        .map(|attrs| {
+            attrs
+                .iter()
+                .filter(|a| {
+                    a.oid == ID_AA_ETS_ARCHIVE_TIMESTAMP_V3
+                        || a.oid == ID_AA_ETS_ARCHIVE_TIMESTAMP_V2
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Work out what to ask an authority to stamp so as to renew this seal.
+///
+/// # What a renewal is
+///
+/// ETSI's long-term profiles handle an expiring archive timestamp by
+/// **re-timestamping**: a new `archive-time-stamp-v3` whose `ats-hash-index-v3`
+/// names everything the seal carries *including the previous archive timestamp*,
+/// so the new stamp covers the old one and the chain is unbroken. Nothing about
+/// the signature changes and nothing is re-signed — this is why a renewal costs a
+/// timestamp and not a seal, and why it needs no sealing key.
+///
+/// The index is built over the seal as it stands, which is the whole contract:
+/// the clause asks for a hash of every instance present when the timestamp is
+/// requested, and no others — so it must run after every other attribute is in
+/// and before the new stamp is.
+///
+/// # What is refused
+///
+/// A seal with **no archive timestamp that verifies as this seal's** has nothing
+/// to renew from. That is `B-LT` and below, which never promised long-term
+/// protection, and it is also a seal whose only archive timestamp is a token lifted
+/// from elsewhere — renewing that would carry forward protection that was never
+/// there. And a seal signed under any digest but SHA-256: the clause ties the
+/// imprint's algorithm to the signature's, and building one under a digest this
+/// node does not hash with would be asking an authority to stamp a value nobody
+/// here can recompute.
+///
+/// # Errors
+///
+/// [`SealError::Backend`] when the seal cannot be read or is not renewable.
+pub(crate) fn prepare_archive_renewal(seal_der: &[u8]) -> Result<RenewalRequest, SealError> {
+    let signed = parse(seal_der)?;
+    if signed.signer.digest_alg.oid != const_oid::db::rfc5912::ID_SHA_256 {
+        return Err(not_renewable(
+            "it was signed under a digest other than SHA-256, and a renewal's imprint is built \
+             under the signature's own digest",
+        ));
+    }
+    let Some(newest) = newest_of(archival_tokens(&signed, archival_attrs(&signed))) else {
+        return Err(not_renewable(
+            "it carries no archive timestamp that verifies as a timestamp of this seal, so \
+             there is no protection to carry forward",
+        ));
+    };
+
+    let enclosing = crate::ats::Enclosing::of(&signed.data);
+    let index = crate::ats::hash_index(enclosing, &signed.signer)?;
+    let signed_data_hash = crate::ats::signed_data_hash(&signed.signer, &index.hash_ind_algorithm)
+        .ok_or_else(|| not_renewable("its signed-data hash cannot be recovered"))?;
+    let imprint: [u8; 32] =
+        crate::ats::imprint(enclosing, &signed.signer, &signed_data_hash, &index)?
+            .try_into()
+            .map_err(|_| not_renewable("the imprint it asks for is not a SHA-256 value"))?;
+
+    Ok(RenewalRequest {
+        imprint,
+        index,
+        previous_expires: newest.expires,
+    })
+}
+
+/// A renewed seal, with the archive timestamp that renewed it.
+pub(crate) struct Attached {
+    pub(crate) seal_der: Vec<u8>,
+    pub(crate) stamp: TimestampToken,
+    /// When the new stamp's authority certificate ends.
+    pub(crate) expires: DateTime<Utc>,
+}
+
+/// Attach an authority's token to the seal as its newest archive timestamp.
+///
+/// # The token is checked as an archive timestamp **of this seal** first
+///
+/// Before the seal is touched, the token — with the index added as its unsigned
+/// attribute, which is where the clause puts it — is put through the very check
+/// the audit applies to every stored seal: its own signature, its authority's
+/// window, and that its imprint is the one clause 5.5.3 produces for *this*
+/// signature. A token that fails any of them is an error and the seal is returned
+/// unchanged, so a bad answer from an authority can never become what is stored.
+///
+/// It is the same function that reads a stored seal's archival state, not a copy
+/// of it: a renewal and the audit that finds it due cannot come to disagree about
+/// what a valid archive timestamp is.
+///
+/// # Errors
+///
+/// [`SealError::Backend`] when either structure cannot be read or the token does
+/// not verify as an archive timestamp of this seal.
+pub(crate) fn attach_archive_timestamp(
+    seal_der: &[u8],
+    request: &RenewalRequest,
+    token_der: &[u8],
+) -> Result<Attached, SealError> {
+    use der::asn1::SetOfVec;
+
+    let unusable = |what: &str, e: &dyn std::fmt::Display| {
+        SealError::Backend(format!("cannot attach the archive timestamp: {what}: {e}"))
+    };
+
+    // The token, carrying the index the authority was not asked to stamp.
+    let token_info =
+        ContentInfo::from_der(token_der).map_err(|e| unusable("the token is not CMS", &e))?;
+    let mut token_sd: SignedData = token_info
+        .content
+        .decode_as()
+        .map_err(|e| unusable("the token is not SignedData", &e))?;
+    let [token_signer] = token_sd.signer_infos.0.as_slice() else {
+        return Err(unusable("the token has", &"other than one signer"));
+    };
+    let mut token_signer = token_signer.clone();
+    let mut token_attrs = token_signer.unsigned_attrs.take().unwrap_or_default();
+    let mut index_values = SetOfVec::new();
+    index_values
+        .insert(
+            der::Any::encode_from(&request.index)
+                .map_err(|e| unusable("the hash index does not encode", &e))?,
+        )
+        .map_err(|e| unusable("the hash index cannot be carried", &e))?;
+    token_attrs
+        .insert(x509_cert::attr::Attribute {
+            oid: crate::ats::ID_AA_ATS_HASH_INDEX_V3,
+            values: index_values,
+        })
+        .map_err(|e| unusable("the hash index cannot be attached", &e))?;
+    token_signer.unsigned_attrs = Some(token_attrs);
+    let mut token_signers = SetOfVec::new();
+    token_signers
+        .insert(token_signer)
+        .map_err(|e| unusable("the token's signer cannot be re-attached", &e))?;
+    token_sd.signer_infos = cms::signed_data::SignerInfos::from(token_signers);
+    let token = der::Any::encode_from(&ContentInfo {
+        content_type: token_info.content_type,
+        content: der::Any::encode_from(&token_sd)
+            .map_err(|e| unusable("the token does not re-encode", &e))?,
+    })
+    .map_err(|e| unusable("the token does not re-encode", &e))?;
+
+    // Checked against the seal exactly as it was stamped, before any change.
+    let signed = parse(seal_der)?;
+    let Some(verified) = archival_token(
+        &token,
+        crate::ats::Enclosing::of(&signed.data),
+        &signed.signer,
+    ) else {
+        return Err(SealError::Backend(
+            "the authority's token does not verify as an archive timestamp of this seal — its \
+             signature, its authority's validity window, or its imprint did not hold"
+                .to_owned(),
+        ));
+    };
+
+    // Now the seal: one more attribute, and nothing else touched. Every earlier
+    // unsigned attribute stays exactly as it was, which is what the new index
+    // vouches for.
+    let info = ContentInfo::from_der(seal_der).map_err(|e| unusable("the seal is not CMS", &e))?;
+    let mut sd: SignedData = info
+        .content
+        .decode_as()
+        .map_err(|e| unusable("the seal is not SignedData", &e))?;
+    let mut signer = signed.signer.clone();
+    let mut attrs = signer.unsigned_attrs.take().unwrap_or_default();
+    let mut values = SetOfVec::new();
+    values
+        .insert(token)
+        .map_err(|e| unusable("the token cannot be carried", &e))?;
+    attrs
+        .insert(x509_cert::attr::Attribute {
+            oid: ID_AA_ETS_ARCHIVE_TIMESTAMP_V3,
+            values,
+        })
+        .map_err(|e| unusable("the archive timestamp cannot be attached", &e))?;
+    signer.unsigned_attrs = Some(attrs);
+    let mut signers = SetOfVec::new();
+    signers
+        .insert(signer)
+        .map_err(|e| unusable("the seal's signer cannot be re-attached", &e))?;
+    sd.signer_infos = cms::signed_data::SignerInfos::from(signers);
+
+    let renewed = ContentInfo {
+        content_type: info.content_type,
+        content: der::Any::encode_from(&sd)
+            .map_err(|e| unusable("the seal does not re-encode", &e))?,
+    }
+    .to_der()
+    .map_err(|e| unusable("the seal does not re-encode", &e))?;
+
+    Ok(Attached {
+        seal_der: renewed,
+        stamp: verified.stamp,
+        expires: verified.expires,
+    })
+}
+
+/// What a time-stamp token says about itself, once its own signature holds.
+pub(crate) struct TokenFacts {
+    pub(crate) hash_algorithm: const_oid::ObjectIdentifier,
+    pub(crate) imprint: Vec<u8>,
+    /// The `nonce`, as minimal unsigned big-endian bytes.
+    pub(crate) nonce: Option<Vec<u8>>,
+}
+
+/// Read a bare RFC 3161 token — checking only that it is what it says it is.
+///
+/// For the layer that talks to an authority and has to confirm it was answered:
+/// the token's own signature, and the digest binding that signature to its
+/// `TSTInfo`, are verified before anything is read out of it. What this does
+/// **not** check is whether the token is a timestamp of anything in particular, or
+/// when, or by whom — those belong to whoever knows what was asked.
+///
+/// `None` for anything that is not a well-formed, self-consistent token.
+pub(crate) fn token_facts(token_der: &[u8]) -> Option<TokenFacts> {
+    let token = parse(token_der).ok()?;
+    if !signature_holds(&token).unwrap_or(false) {
+        return None;
+    }
+    let content = token.econtent.as_ref()?;
+    if !digest_matches(&token, content) {
+        return None;
+    }
+    let info = TstInfo::from_der(content).ok()?;
+    Some(TokenFacts {
+        hash_algorithm: info.message_imprint.hash_algorithm.oid,
+        imprint: info.message_imprint.hashed_message.as_bytes().to_vec(),
+        nonce: info.nonce.map(|n| n.as_bytes().to_vec()),
+    })
+}
+
+/// One archive timestamp that survived its checks.
 ///
 /// `None` when the token cannot be read or its signature does not hold — a
 /// token that failed its check must not contribute a date.
@@ -949,7 +1377,7 @@ fn archival_token(
     value: &der::Any,
     enclosing: crate::ats::Enclosing<'_>,
     archived: &cms::signed_data::SignerInfo,
-) -> Option<(DateTime<Utc>, DateTime<Utc>)> {
+) -> Option<ArchiveToken> {
     let token_der = value.to_der().ok()?;
     let token = parse(&token_der).ok()?;
     if !signature_holds(&token).unwrap_or(false) {
@@ -964,7 +1392,7 @@ fn archival_token(
     }
     let info = TstInfo::from_der(content).ok()?;
 
-    let made_at = to_utc(info.gen_time.to_unix_duration().as_secs())?;
+    let made_at = info.gen_time.0;
     // The same rule the signature timestamp uses. Here it also keeps the two
     // halves of this answer consistent: `expires` below is read off the very
     // certificate being checked, so a token stamped outside that window would
@@ -982,7 +1410,13 @@ fn archival_token(
             .to_unix_duration()
             .as_secs(),
     )?;
-    Some((made_at, expires))
+    Some(ArchiveToken {
+        stamp: TimestampToken {
+            token,
+            gen_time: made_at,
+        },
+        expires,
+    })
 }
 
 /// Whether this token is an archive timestamp **of this signature**.
@@ -1740,6 +2174,10 @@ fn revocation_from(signed: &Signed) -> RevocationStanding {
 /// Real certificates and a real CRL signature, because every assertion below is
 /// about whether a signature checks out. A fixture that faked one would be
 /// testing the fixture.
+#[cfg(test)]
+#[path = "tst_info_tests.rs"]
+mod tst_info;
+
 #[cfg(test)]
 mod standing_tests {
     use super::*;

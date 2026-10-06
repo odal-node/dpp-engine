@@ -117,10 +117,15 @@ properties:
       `B-LTA` seals whose archival protection expires soon.
 
 
-      A reporting threshold rather than a purchase trigger: nothing on this node
-      buys a renewal. The window between "due" and "gone" is the only one in
-      which renewing is routine rather than an incident, which is why it is
-      reported separately from `archivalLapsed`.
+      The window between "due" and "gone" is the only one in which renewing is
+      routine rather than an incident, which is why it is reported separately
+      from `archivalLapsed`.
+
+
+      On a node with a timestamp source configured, the pass that finds a seal due
+      **renews** it, and a seal renewed there is not counted — what remains here
+      is what still needs attention. On a node with none, this is simply what is
+      due, and nothing is bought.
   archivalUnverifiable:
     type: integer
     description: >-

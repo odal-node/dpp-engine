@@ -106,6 +106,10 @@ der            = "0.7"
 # cheapest way to produce a seal that verifies and whose certificate did not.
 # Already in the graph via `dpp-seal`.
 x509-cert      = "0.2"
+# A short-lived timestamping identity, so a seal can be made whose archive
+# timestamp is genuinely near its end. Already in the graph via `dpp-seal`.
+rcgen          = "0.14"
+time           = { version = "0.3", default-features = false }
 criterion      = { workspace = true }
 uuid           = { workspace = true }
 testcontainers = { workspace = true }

@@ -162,9 +162,9 @@ pub struct SealResponse {
     /// archival material, and is right to — the material is there. This reports
     /// whether it still means anything: an archival timestamp's own authority
     /// certificate expires, and ETSI's long-term profiles expect re-timestamping
-    /// before it does. Nothing here renews, so without this a seal whose
-    /// archival protection lapsed years ago reads exactly as it did the day it
-    /// was bought.
+    /// before it does. A node renews them only when it has a timestamp source
+    /// configured, so without this a seal whose archival protection lapsed years
+    /// ago reads exactly as it did the day it was bought.
     ///
     /// **A signal, not a verdict.** `current` carries the renewal date and
     /// applies no threshold: a seal nearing that date still verifies, and that

@@ -37,6 +37,8 @@ use dpp_domain::{
 };
 use dpp_types::SealOutbox;
 
+use super::seal_renewal::{ArchivalRenewer, MAX_RENEWALS_PER_BATCH, RenewalOutcome};
+
 /// Max sealing attempts before a row is terminally `exhausted`.
 pub const MAX_ATTEMPTS: i32 = 8;
 
@@ -201,17 +203,23 @@ pub const MAX_NAMED_BROKEN: usize = 100;
 ///
 /// A `B-LTA` seal's archival protection ends when its timestamping authority's
 /// certificate does, and ETSI's long-term profiles handle that by re-stamping
-/// before it happens. Nothing here re-stamps — this is the **noticing** half,
-/// and the window it reports in is the only one where renewing is routine rather
-/// than an incident.
+/// before it happens. This is the window the audit reports in — and, where a
+/// timestamp source is configured, the window in which it **renews**: see
+/// [`super::seal_renewal`]. It is the only window in which renewing is routine
+/// rather than an incident.
 ///
 /// Ninety days is chosen to be comfortably longer than any plausible
-/// procurement: a renewal needs a timestamp from a provider, and an operator who
-/// learns about it the week it expires has a problem rather than a task. It is
-/// deliberately **not** configurable yet. A threshold becomes a policy the moment
-/// something acts on it, and the drain that will act on it does not exist — so
-/// picking the knob now would be guessing at the shape of a decision nobody has
-/// taken.
+/// procurement: a renewal needs a timestamp from an authority, and an operator
+/// who learns about it the week it expires has a problem rather than a task. It
+/// is also what makes the per-batch ceiling on renewals affordable — the due set
+/// arrives all at once, so a node renewing at a measured rate needs the slack.
+///
+/// Still **not configurable**, though something now acts on it. A threshold is a
+/// policy once it is acted on, and the one thing the renewal does that makes the
+/// number matter — buying a stamp early on seals that had years left — is bounded
+/// by the same constant: too short and a wall of renewals does not finish, too
+/// long and stamps are bought long before they are needed. Ninety days has been
+/// enough for both, and a knob nobody has needed is a knob to get wrong.
 pub const RENEWAL_LEAD: chrono::Duration = chrono::Duration::days(90);
 
 /// What one audit pass found.
@@ -496,12 +504,33 @@ fn name_for_renewal(audit: &mut SealAudit, passport_id: dpp_domain::passport::Pa
     }
 }
 
+/// Read one batch of stored seals, report what it finds, and — where a `renewer`
+/// is given — renew the archive timestamps that are due.
+///
+/// # Renewal is the one thing here that writes
+///
+/// The audit was report-only on purpose, and for the seals it still reports on —
+/// a broken signature, a failed certificate — it still is: re-buying one of those
+/// is a decision for an operator, not a background loop. A due archive timestamp
+/// is the opposite case. Renewing is what it is *for*, it costs a timestamp and
+/// not a seal, it needs no key, and it is only ever additive — so it is done where
+/// the seal has just been opened, rather than by a second walk over the same
+/// estate that would parse and verify every CMS again to find the same ones.
+///
+/// What a renewal does to the report: a seal renewed here is **not** counted as
+/// due or named for renewal, because it no longer is. What remains in
+/// `archival_due`, `archival_lapsed` and `renewal_passports` is what still needs
+/// attention — seals the renewer could not renew, and every due seal on a node
+/// with no renewer.
+///
+/// `renewer: None` is exactly the behaviour before renewal existed.
 pub async fn audit_seals_once(
     outbox: &Arc<dyn SealOutbox>,
     inspector: &dyn dpp_types::SealInspector,
     limit: i64,
     after: Option<dpp_domain::passport::PassportId>,
     sealed_before: Option<chrono::DateTime<chrono::Utc>>,
+    renewer: Option<&ArchivalRenewer>,
 ) -> Option<(SealAudit, Option<dpp_domain::passport::PassportId>)> {
     let batch = match outbox.sealed_passports(limit, after, sealed_before).await {
         Ok(b) => b,
@@ -522,6 +551,9 @@ pub async fn audit_seals_once(
     // An empty batch means the walk reached the end; the caller restarts it.
     let cursor = batch.last().map(|p| p.passport_id);
     let mut audit = SealAudit::default();
+    // How many stamps this batch may still buy. The audit opens a batch of seals
+    // far faster than an authority should be asked for stamps.
+    let mut renewals_left = MAX_RENEWALS_PER_BATCH;
 
     for row in &batch {
         audit.checked += 1;
@@ -568,6 +600,38 @@ pub async fn audit_seals_once(
                         audit.sound += 1;
                         (finding, expires)
                     }
+                };
+
+                // Act on it where an authority is configured. A seal renewed here
+                // (or whose stored value changed under the renewal, which the next
+                // pass reads afresh) stops being a finding; one that could not be
+                // renewed stays exactly the finding it was.
+                let finding = match (finding, renewer) {
+                    (RenewalFinding::Due | RenewalFinding::Lapsed, Some(renewer)) => {
+                        match renewer.renew(outbox, row, now, &mut renewals_left).await {
+                            RenewalOutcome::Renewed { .. } | RenewalOutcome::Raced => {
+                                RenewalFinding::Nothing
+                            }
+                            RenewalOutcome::Deferred(why) => {
+                                tracing::debug!(
+                                    passport_id = %row.passport_id,
+                                    why,
+                                    "archive timestamp renewal deferred"
+                                );
+                                finding
+                            }
+                            RenewalOutcome::Failed(why) => {
+                                tracing::warn!(
+                                    passport_id = %row.passport_id,
+                                    %why,
+                                    "archive timestamp renewal failed — the seal stays reported as \
+                                     due"
+                                );
+                                finding
+                            }
+                        }
+                    }
+                    (finding, _) => finding,
                 };
 
                 match finding {
@@ -817,6 +881,14 @@ mod tests {
         async fn rearm_sealed(&self, _p: PassportId, _h: &str, _r: &str) -> Result<bool, DppError> {
             unreachable!("the drain never repairs")
         }
+        async fn replace_seal(
+            &self,
+            _p: PassportId,
+            _c: &SealedEnvelope,
+            _r: &SealedEnvelope,
+        ) -> Result<bool, DppError> {
+            unreachable!("the drain never renews")
+        }
         async fn unsealed_published_count(&self) -> Result<i64, DppError> {
             // These tests drive the drain, which never asks. A passport-level
             // count has no meaning against a fake holding only rows.
@@ -1053,6 +1125,14 @@ mod tests {
             ) -> Result<bool, DppError> {
                 unreachable!("the audit must not repair")
             }
+            async fn replace_seal(
+                &self,
+                _p: PassportId,
+                _c: &SealedEnvelope,
+                _r: &SealedEnvelope,
+            ) -> Result<bool, DppError> {
+                unreachable!("the audit must not write without a renewer")
+            }
             async fn enqueue(&self, _p: PassportId, _h: &str) -> Result<(), DppError> {
                 unreachable!("the audit must not queue anything")
             }
@@ -1152,10 +1232,16 @@ mod tests {
             row(envelope("Z2hvc3Q=".to_owned(), true), &hex_digest),
         ]));
 
-        let (audit, cursor) =
-            audit_seals_once(&outbox, &dpp_seal::CadesInspector::new(), 100, None, None)
-                .await
-                .expect("the batch is readable");
+        let (audit, cursor) = audit_seals_once(
+            &outbox,
+            &dpp_seal::CadesInspector::new(),
+            100,
+            None,
+            None,
+            None,
+        )
+        .await
+        .expect("the batch is readable");
 
         assert_eq!(audit.checked, 4);
         assert_eq!(audit.sound, 1);
