@@ -24,7 +24,10 @@ use crate::{
         resolve_aas::{AAS_MEDIA_TYPE, resolve_aas_handler},
         resolve_by_gtin::{
             resolve_by_gtin_batch_handler, resolve_by_gtin_batch_serial_handler,
-            resolve_by_gtin_handler, resolve_by_gtin_serial_handler,
+            resolve_by_gtin_extension_handler, resolve_by_gtin_handler,
+            resolve_by_gtin_serial_handler, resolve_by_gtin_variant_batch_handler,
+            resolve_by_gtin_variant_batch_serial_handler, resolve_by_gtin_variant_handler,
+            resolve_by_gtin_variant_serial_handler, unserved_path_handler,
         },
         resolve_html::resolve_html_handler,
         resolve_json::resolve_json_handler,
@@ -56,6 +59,30 @@ pub fn build(state: AppState) -> Router {
             "/01/{gtin}/10/{batch}/21/{serial}",
             get(resolve_by_gtin_batch_serial_handler),
         )
+        // A consumer product variant (AI 22) and a third-party extension (AI 235)
+        // are valid qualifiers of a GTIN that this node never prints. They are
+        // accepted and take no part in the lookup; see the handlers.
+        .route(
+            "/01/{gtin}/22/{variant}",
+            get(resolve_by_gtin_variant_handler),
+        )
+        .route(
+            "/01/{gtin}/22/{variant}/21/{serial}",
+            get(resolve_by_gtin_variant_serial_handler),
+        )
+        .route(
+            "/01/{gtin}/22/{variant}/10/{batch}",
+            get(resolve_by_gtin_variant_batch_handler),
+        )
+        .route(
+            "/01/{gtin}/22/{variant}/10/{batch}/21/{serial}",
+            get(resolve_by_gtin_variant_batch_serial_handler),
+        )
+        .route(
+            "/01/{gtin}/235/{extension}",
+            get(resolve_by_gtin_extension_handler),
+        )
+        .fallback(unserved_path_handler)
         .layer(TraceLayer::new_for_http())
         .layer(middleware::from_fn(http_metrics_middleware))
         .layer(middleware::from_fn(inject_request_id))

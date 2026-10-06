@@ -526,6 +526,8 @@ The internal endpoints are mTLS-gated (`CN=odal-vault`).
 | GET | `/01/{gtin}/21/{serial}` | None | Same, with AI 21 — what `publish` mints for an item-level passport or one stating no level |
 | GET | `/01/{gtin}/10/{batch}` | None | Same, with AI 10 |
 | GET | `/01/{gtin}/10/{batch}/21/{serial}` | None | Same, with both |
+| GET | `/01/{gtin}/22/{variant}[/10/{batch}][/21/{serial}]` | None | Four routes: a consumer product variant (AI 22), accepted and not looked up. The node never prints one |
+| GET | `/01/{gtin}/235/{extension}` | None | A third-party extension (AI 235), accepted and not looked up. Any other path under `/01/` is a `400` |
 
 > **Scan telemetry (privacy-safe aggregates).** When `SCAN_INGEST_URL` is set,
 > the resolver counts *terminal-view* resolutions (`/dpp/{dppId}` html + json)

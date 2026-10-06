@@ -145,6 +145,8 @@ Full command reference: **[cli/README.md](cli/README.md)**.
 | GET | `/01/{gtin}/21/{serial}` | None — the carrier of an item-level passport, or one stating no level; the serial selects the passport |
 | GET | `/01/{gtin}/10/{batch}` | None — the carrier of a batch-level passport; the lot selects it |
 | GET | `/01/{gtin}/10/{batch}/21/{serial}` | None — the shape carriers printed before they followed the passport's level; the serial selects the passport |
+| GET | `/01/{gtin}/22/{variant}[/10/{batch}][/21/{serial}]` | None — a label printed elsewhere that carries a consumer product variant (AI 22); the variant is accepted and takes no part in the lookup |
+| GET | `/01/{gtin}/235/{extension}` | None — a label printed elsewhere that carries a third-party extension (AI 235); accepted, and resolves as the bare GTIN does |
 
 ---
 

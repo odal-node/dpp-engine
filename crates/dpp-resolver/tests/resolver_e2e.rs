@@ -596,6 +596,144 @@ async fn the_label_s_qualifiers_reach_the_vault() {
     }
 }
 
+/// A consumer product variant (AI 22) or a third-party extension (AI 235) is a
+/// valid part of a GS1 Digital Link, and a label printed elsewhere may carry
+/// either. This node holds no record at either level, so the qualifier takes no
+/// part in the lookup and the label resolves through the levels it does model:
+/// the vault is asked exactly what it would be asked without it.
+#[tokio::test]
+async fn a_variant_or_extension_qualifier_takes_no_part_in_the_lookup() {
+    use std::collections::HashMap;
+    use std::sync::{Arc, Mutex};
+
+    use axum::extract::Query;
+
+    let gtin = "09506000134352";
+    let seen: Arc<Mutex<Vec<HashMap<String, String>>>> = Arc::default();
+    let vault = {
+        let seen = Arc::clone(&seen);
+        Router::new().route(
+            "/public/dpp/by-gtin/{gtin}",
+            get(move |Query(query): Query<HashMap<String, String>>| {
+                let seen = Arc::clone(&seen);
+                async move {
+                    seen.lock().unwrap().push(query);
+                    axum::Json(sample_passport_with_gtin())
+                }
+            }),
+        )
+    };
+    let port = start_mock_vault(vault).await;
+    let base = format!("http://127.0.0.1:{port}");
+
+    let cases: [(String, &[(&str, &str)]); 5] = [
+        (format!("/01/{gtin}/22/2A"), &[]),
+        (format!("/01/{gtin}/22/2A/21/SN-1"), &[("serial", "SN-1")]),
+        (
+            format!("/01/{gtin}/22/2A/10/LOT-2026-07"),
+            &[("batch", "LOT-2026-07")],
+        ),
+        (
+            format!("/01/{gtin}/22/2A/10/LOT-2026-07/21/SN%2F1"),
+            &[("batch", "LOT-2026-07"), ("serial", "SN/1")],
+        ),
+        (format!("/01/{gtin}/235/TPX-9"), &[]),
+    ];
+    for (uri, expected) in cases {
+        let app = router::build(test_state(base.clone()));
+        let req = Request::builder().uri(&uri).body(Body::empty()).unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert!(resp.status().is_redirection(), "{uri}: {}", resp.status());
+
+        let query = seen.lock().unwrap().pop().expect("the vault was asked");
+        let expected: HashMap<String, String> = expected
+            .iter()
+            .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
+            .collect();
+        assert_eq!(query, expected, "{uri} forwarded the wrong qualifiers");
+    }
+}
+
+/// A path under `/01/` that is not a valid GS1 Digital Link is a bad request,
+/// not a missing product. The qualifiers come in one order, each at most once,
+/// and a third-party extension stands alone; anything else fails the resolver
+/// standard's validity tests, which it answers `400` (2.4.1). It is not looked
+/// up, so the vault must never be asked.
+#[tokio::test]
+async fn a_path_under_01_that_is_not_a_digital_link_is_a_bad_request() {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    let gtin = "09506000134352";
+    let asked = Arc::new(AtomicUsize::new(0));
+    let vault = {
+        let asked = Arc::clone(&asked);
+        Router::new().route(
+            "/public/dpp/by-gtin/{gtin}",
+            get(move || {
+                let asked = Arc::clone(&asked);
+                async move {
+                    asked.fetch_add(1, Ordering::SeqCst);
+                    axum::Json(sample_passport_with_gtin())
+                }
+            }),
+        )
+    };
+    let port = start_mock_vault(vault).await;
+    let base = format!("http://127.0.0.1:{port}");
+
+    for uri in [
+        // Out of order.
+        format!("/01/{gtin}/21/SN-1/10/LOT-1"),
+        format!("/01/{gtin}/21/SN-1/22/2A"),
+        format!("/01/{gtin}/10/LOT-1/22/2A"),
+        // Repeated.
+        format!("/01/{gtin}/21/SN-1/21/SN-2"),
+        // A third-party extension stands alone.
+        format!("/01/{gtin}/235/TPX-9/21/SN-1"),
+        format!("/01/{gtin}/22/2A/235/TPX-9"),
+        // Not a qualifier of a GTIN, or a qualifier with no value.
+        format!("/01/{gtin}/99/x"),
+        format!("/01/{gtin}/21/"),
+    ] {
+        let app = router::build(test_state(base.clone()));
+        let req = Request::builder().uri(&uri).body(Body::empty()).unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST, "{uri}");
+
+        let body = axum::body::to_bytes(resp.into_body(), 64 * 1024)
+            .await
+            .expect("read body");
+        let problem: serde_json::Value = serde_json::from_slice(&body).expect("problem json");
+        assert_eq!(
+            problem["detail"], "The path is not a valid GS1 Digital Link.",
+            "{uri}: {problem}"
+        );
+    }
+    assert_eq!(asked.load(Ordering::SeqCst), 0, "nothing was looked up");
+
+    // The rule is about `/01/` only: a path no route serves elsewhere is still
+    // the router's own `404`.
+    let app = router::build(test_state(base.clone()));
+    let req = Request::builder()
+        .uri("/not-a-route")
+        .body(Body::empty())
+        .unwrap();
+    let resp = app.oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+
+    // And it is about paths no route serves. A wrong method on a mounted route is
+    // the `405` it always was, not a fallback answer.
+    let app = router::build(test_state(base));
+    let req = Request::builder()
+        .method("POST")
+        .uri(format!("/01/{gtin}"))
+        .body(Body::empty())
+        .unwrap();
+    let resp = app.oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::METHOD_NOT_ALLOWED);
+}
+
 // ── GS1 Digital Link: signature verification ────────────────────────────────
 
 /// GTIN resolution is a second way to reach the same passport data as the

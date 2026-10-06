@@ -4431,7 +4431,7 @@
       "get": {
         "operationId": "resolveByGtin",
         "summary": "GS1 Digital Link resolver",
-        "description": "GS1-conformant resolver (GS1-CRSV1) keyed by GTIN-14 — the carrier this node\nprints for a model-level passport. Behaviour depends\non the `linkType` query / `Accept` header:\n- default → `307` redirect to the HTML DPP page\n- `?linkType=gs1:pip` / `gs1:dpp` (and related) → `307` redirect to the DPP\n- `?linkType=linkset` or `Accept: application/linkset+json` → `200`\n  RFC 9264 linkset\n",
+        "description": "GS1-conformant resolver (GS1-CRSV1) keyed by GTIN-14 — the carrier this node\nprints for a model-level passport. Behaviour depends\non the `linkType` query / `Accept` header:\n- default → `307` redirect to the HTML DPP page\n- `?linkType=gs1:pip` / `gs1:dpp` (and related) → `307` redirect to the DPP\n- `?linkType=linkset` or `Accept: application/linkset+json` → `200`\n  RFC 9264 linkset\n\nA GTIN takes a consumer product variant (AI 22), a batch (AI 10) and a\nserial (AI 21), in that order and each optional, or a third-party\nextension (AI 235) on its own; each of those shapes is its own path below.\nAny other path under `/01/` cannot be a GS1 Digital Link, because its\nqualifiers are out of order, repeated, not ones a GTIN takes, or empty, and\nanswers `400` without a lookup.\n",
         "tags": [
           "Public Resolver"
         ],
@@ -4673,6 +4673,407 @@
               "type": "string"
             },
             "description": "AI 21, the carrier serial. Selects the passport."
+          },
+          {
+            "name": "linkType",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "e.g. linkset, gs1:pip, gs1:dpp"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "RFC 9264 linkset (when a linkset is requested).",
+            "content": {
+              "application/linkset+json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "307": {
+            "description": "Redirect to the DPP page (`Location` header)."
+          },
+          "400": {
+            "description": "The GTIN in the path is not valid: not digits, the wrong length, or a wrong check digit."
+          },
+          "404": {
+            "description": "No published DPP at any level the label names, or unknown link type."
+          },
+          "409": {
+            "$ref": "#/components/responses/PassportSignatureUnverified"
+          },
+          "410": {
+            "$ref": "#/components/responses/Gone"
+          },
+          "502": {
+            "$ref": "#/components/responses/ResolverUpstreamFailure"
+          },
+          "503": {
+            "$ref": "#/components/responses/PassportVerificationUnavailable"
+          }
+        }
+      }
+    },
+    "/01/{gtin}/22/{variant}": {
+      "get": {
+        "operationId": "resolveByGtinVariant",
+        "summary": "GS1 Digital Link resolver — GTIN + consumer product variant",
+        "description": "A label that carries a consumer product variant (AI 22) after its GTIN.\nThis node never prints one, but a label printed elsewhere may. **The\nvariant takes no part in the lookup**: the node holds no record at that\nlevel, so the label resolves exactly as `/01/{gtin}` does. Same behaviour\nas `/01/{gtin}` otherwise (`linkType` / `Accept` negotiation).\n",
+        "tags": [
+          "Public Resolver"
+        ],
+        "security": [],
+        "parameters": [
+          {
+            "name": "gtin",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "example": "09506000134352"
+            }
+          },
+          {
+            "name": "variant",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "AI 22, the consumer product variant. Accepted and not looked up."
+          },
+          {
+            "name": "linkType",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "e.g. linkset, gs1:pip, gs1:dpp"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "RFC 9264 linkset (when a linkset is requested).",
+            "content": {
+              "application/linkset+json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "307": {
+            "description": "Redirect to the DPP page (`Location` header)."
+          },
+          "400": {
+            "description": "The GTIN in the path is not valid: not digits, the wrong length, or a wrong check digit."
+          },
+          "404": {
+            "description": "No published DPP at any level the label names, or unknown link type."
+          },
+          "409": {
+            "$ref": "#/components/responses/PassportSignatureUnverified"
+          },
+          "410": {
+            "$ref": "#/components/responses/Gone"
+          },
+          "502": {
+            "$ref": "#/components/responses/ResolverUpstreamFailure"
+          },
+          "503": {
+            "$ref": "#/components/responses/PassportVerificationUnavailable"
+          }
+        }
+      }
+    },
+    "/01/{gtin}/22/{variant}/21/{serial}": {
+      "get": {
+        "operationId": "resolveByGtinVariantSerial",
+        "summary": "GS1 Digital Link resolver — GTIN + consumer product variant + serial",
+        "description": "A label that carries a consumer product variant (AI 22) and a serial\n(AI 21). **The variant takes no part in the lookup**: the node holds no\nrecord at that level, so the label resolves exactly as\n`/01/{gtin}/21/{serial}` does, serial first and then the model if the serial\nhas no passport of its own. Same behaviour as `/01/{gtin}` otherwise\n(`linkType` / `Accept` negotiation).\n",
+        "tags": [
+          "Public Resolver"
+        ],
+        "security": [],
+        "parameters": [
+          {
+            "name": "gtin",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "example": "09506000134352"
+            }
+          },
+          {
+            "name": "variant",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "AI 22, the consumer product variant. Accepted and not looked up."
+          },
+          {
+            "name": "serial",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "AI 21, the carrier serial. Selects the passport."
+          },
+          {
+            "name": "linkType",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "e.g. linkset, gs1:pip, gs1:dpp"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "RFC 9264 linkset (when a linkset is requested).",
+            "content": {
+              "application/linkset+json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "307": {
+            "description": "Redirect to the DPP page (`Location` header)."
+          },
+          "400": {
+            "description": "The GTIN in the path is not valid: not digits, the wrong length, or a wrong check digit."
+          },
+          "404": {
+            "description": "No published DPP at any level the label names, or unknown link type."
+          },
+          "409": {
+            "$ref": "#/components/responses/PassportSignatureUnverified"
+          },
+          "410": {
+            "$ref": "#/components/responses/Gone"
+          },
+          "502": {
+            "$ref": "#/components/responses/ResolverUpstreamFailure"
+          },
+          "503": {
+            "$ref": "#/components/responses/PassportVerificationUnavailable"
+          }
+        }
+      }
+    },
+    "/01/{gtin}/22/{variant}/10/{batch}": {
+      "get": {
+        "operationId": "resolveByGtinVariantBatch",
+        "summary": "GS1 Digital Link resolver — GTIN + consumer product variant + batch/lot",
+        "description": "A label that carries a consumer product variant (AI 22) and a batch or lot\n(AI 10). **The variant takes no part in the lookup**: the node holds no\nrecord at that level, so the label resolves exactly as\n`/01/{gtin}/10/{batch}` does, the lot's passport first and then the model's.\nSame behaviour as `/01/{gtin}` otherwise (`linkType` / `Accept`\nnegotiation).\n",
+        "tags": [
+          "Public Resolver"
+        ],
+        "security": [],
+        "parameters": [
+          {
+            "name": "gtin",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "example": "09506000134352"
+            }
+          },
+          {
+            "name": "variant",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "AI 22, the consumer product variant. Accepted and not looked up."
+          },
+          {
+            "name": "batch",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "AI 10, the batch or lot. Selects the batch-level passport."
+          },
+          {
+            "name": "linkType",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "e.g. linkset, gs1:pip, gs1:dpp"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "RFC 9264 linkset (when a linkset is requested).",
+            "content": {
+              "application/linkset+json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "307": {
+            "description": "Redirect to the DPP page (`Location` header)."
+          },
+          "400": {
+            "description": "The GTIN in the path is not valid: not digits, the wrong length, or a wrong check digit."
+          },
+          "404": {
+            "description": "No published DPP at any level the label names, or unknown link type."
+          },
+          "409": {
+            "$ref": "#/components/responses/PassportSignatureUnverified"
+          },
+          "410": {
+            "$ref": "#/components/responses/Gone"
+          },
+          "502": {
+            "$ref": "#/components/responses/ResolverUpstreamFailure"
+          },
+          "503": {
+            "$ref": "#/components/responses/PassportVerificationUnavailable"
+          }
+        }
+      }
+    },
+    "/01/{gtin}/22/{variant}/10/{batch}/21/{serial}": {
+      "get": {
+        "operationId": "resolveByGtinVariantBatchSerial",
+        "summary": "GS1 Digital Link resolver — GTIN + consumer product variant + batch/lot + serial",
+        "description": "A label that carries every qualifier a GTIN takes: a consumer product\nvariant (AI 22), a batch or lot (AI 10) and a serial (AI 21). **The variant\ntakes no part in the lookup**: the node holds no record at that level, so the\nlabel resolves exactly as `/01/{gtin}/10/{batch}/21/{serial}` does, serial\nfirst, then the lot's passport, then the model's. Same behaviour as\n`/01/{gtin}` otherwise (`linkType` / `Accept` negotiation).\n",
+        "tags": [
+          "Public Resolver"
+        ],
+        "security": [],
+        "parameters": [
+          {
+            "name": "gtin",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "example": "09506000134352"
+            }
+          },
+          {
+            "name": "variant",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "AI 22, the consumer product variant. Accepted and not looked up."
+          },
+          {
+            "name": "batch",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "AI 10. Consulted only if the serial finds nothing."
+          },
+          {
+            "name": "serial",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "AI 21, the carrier serial. Selects the passport."
+          },
+          {
+            "name": "linkType",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "e.g. linkset, gs1:pip, gs1:dpp"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "RFC 9264 linkset (when a linkset is requested).",
+            "content": {
+              "application/linkset+json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "307": {
+            "description": "Redirect to the DPP page (`Location` header)."
+          },
+          "400": {
+            "description": "The GTIN in the path is not valid: not digits, the wrong length, or a wrong check digit."
+          },
+          "404": {
+            "description": "No published DPP at any level the label names, or unknown link type."
+          },
+          "409": {
+            "$ref": "#/components/responses/PassportSignatureUnverified"
+          },
+          "410": {
+            "$ref": "#/components/responses/Gone"
+          },
+          "502": {
+            "$ref": "#/components/responses/ResolverUpstreamFailure"
+          },
+          "503": {
+            "$ref": "#/components/responses/PassportVerificationUnavailable"
+          }
+        }
+      }
+    },
+    "/01/{gtin}/235/{extension}": {
+      "get": {
+        "operationId": "resolveByGtinExtension",
+        "summary": "GS1 Digital Link resolver — GTIN + third-party serialised extension",
+        "description": "A label that carries a third-party serialised extension (AI 235) after its\nGTIN. This node issues none, but a label printed elsewhere may carry one.\nThe extension stands alone: GS1 allows no further qualifier after it, so\nonly this shape is served. **It takes no part in the lookup**: the node\nholds no record at that level, so the label resolves exactly as\n`/01/{gtin}` does. Same behaviour as `/01/{gtin}` otherwise (`linkType` /\n`Accept` negotiation).\n",
+        "tags": [
+          "Public Resolver"
+        ],
+        "security": [],
+        "parameters": [
+          {
+            "name": "gtin",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "example": "09506000134352"
+            }
+          },
+          {
+            "name": "extension",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "AI 235, the third-party serialised extension. Accepted and not looked up."
           },
           {
             "name": "linkType",

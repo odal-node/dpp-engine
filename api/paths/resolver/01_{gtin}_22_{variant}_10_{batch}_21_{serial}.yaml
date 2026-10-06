@@ -1,0 +1,68 @@
+get:
+  operationId: resolveByGtinVariantBatchSerial
+  summary: GS1 Digital Link resolver — GTIN + consumer product variant + batch/lot + serial
+  description: |
+    A label that carries every qualifier a GTIN takes: a consumer product
+    variant (AI 22), a batch or lot (AI 10) and a serial (AI 21). **The variant
+    takes no part in the lookup**: the node holds no record at that level, so the
+    label resolves exactly as `/01/{gtin}/10/{batch}/21/{serial}` does, serial
+    first, then the lot's passport, then the model's. Same behaviour as
+    `/01/{gtin}` otherwise (`linkType` / `Accept` negotiation).
+  tags:
+    - Public Resolver
+  security: []
+  parameters:
+    - name: gtin
+      in: path
+      required: true
+      schema:
+        type: string
+        example: '09506000134352'
+    - name: variant
+      in: path
+      required: true
+      schema:
+        type: string
+      description: AI 22, the consumer product variant. Accepted and not looked up.
+    - name: batch
+      in: path
+      required: true
+      schema:
+        type: string
+      description: AI 10. Consulted only if the serial finds nothing.
+    - name: serial
+      in: path
+      required: true
+      schema:
+        type: string
+      description: AI 21, the carrier serial. Selects the passport.
+    - name: linkType
+      in: query
+      required: false
+      schema:
+        type: string
+      description: e.g. linkset, gs1:pip, gs1:dpp
+  responses:
+    '200':
+      description: RFC 9264 linkset (when a linkset is requested).
+      content:
+        application/linkset+json:
+          schema:
+            type: object
+    '307':
+      description: Redirect to the DPP page (`Location` header).
+    '400':
+      description: >-
+        The GTIN in the path is not valid: not digits, the wrong length, or a
+        wrong check digit.
+    '404':
+      description: >-
+        No published DPP at any level the label names, or unknown link type.
+    '410':
+      $ref: ../../components/responses/Gone.yaml
+    '409':
+      $ref: ../../components/responses/PassportSignatureUnverified.yaml
+    '502':
+      $ref: ../../components/responses/ResolverUpstreamFailure.yaml
+    '503':
+      $ref: ../../components/responses/PassportVerificationUnavailable.yaml

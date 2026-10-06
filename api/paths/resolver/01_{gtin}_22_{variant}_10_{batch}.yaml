@@ -1,21 +1,13 @@
 get:
-  operationId: resolveByGtin
-  summary: GS1 Digital Link resolver
+  operationId: resolveByGtinVariantBatch
+  summary: GS1 Digital Link resolver — GTIN + consumer product variant + batch/lot
   description: |
-    GS1-conformant resolver (GS1-CRSV1) keyed by GTIN-14 — the carrier this node
-    prints for a model-level passport. Behaviour depends
-    on the `linkType` query / `Accept` header:
-    - default → `307` redirect to the HTML DPP page
-    - `?linkType=gs1:pip` / `gs1:dpp` (and related) → `307` redirect to the DPP
-    - `?linkType=linkset` or `Accept: application/linkset+json` → `200`
-      RFC 9264 linkset
-
-    A GTIN takes a consumer product variant (AI 22), a batch (AI 10) and a
-    serial (AI 21), in that order and each optional, or a third-party
-    extension (AI 235) on its own; each of those shapes is its own path below.
-    Any other path under `/01/` cannot be a GS1 Digital Link, because its
-    qualifiers are out of order, repeated, not ones a GTIN takes, or empty, and
-    answers `400` without a lookup.
+    A label that carries a consumer product variant (AI 22) and a batch or lot
+    (AI 10). **The variant takes no part in the lookup**: the node holds no
+    record at that level, so the label resolves exactly as
+    `/01/{gtin}/10/{batch}` does, the lot's passport first and then the model's.
+    Same behaviour as `/01/{gtin}` otherwise (`linkType` / `Accept`
+    negotiation).
   tags:
     - Public Resolver
   security: []
@@ -26,6 +18,18 @@ get:
       schema:
         type: string
         example: '09506000134352'
+    - name: variant
+      in: path
+      required: true
+      schema:
+        type: string
+      description: AI 22, the consumer product variant. Accepted and not looked up.
+    - name: batch
+      in: path
+      required: true
+      schema:
+        type: string
+      description: AI 10, the batch or lot. Selects the batch-level passport.
     - name: linkType
       in: query
       required: false
@@ -46,7 +50,8 @@ get:
         The GTIN in the path is not valid: not digits, the wrong length, or a
         wrong check digit.
     '404':
-      description: No published DPP for this GTIN, or unknown link type.
+      description: >-
+        No published DPP at any level the label names, or unknown link type.
     '410':
       $ref: ../../components/responses/Gone.yaml
     '409':
