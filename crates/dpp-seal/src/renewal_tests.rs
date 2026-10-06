@@ -334,6 +334,29 @@ async fn a_token_over_another_seals_imprint_cannot_renew_this_one() {
     assert!(matches!(err, RenewalError::Unusable(_)), "{err}");
 }
 
+/// **A renewal that goes backwards in time is refused, and says why.**
+///
+/// Met for real: a public authority's clock read about a second behind the machine
+/// that had just made the seal, so its "renewal" stamped *before* the stamp it
+/// renewed, and the only symptom was that the result did not read back as renewed.
+/// A renewal chain is a sequence in time; the cause is named instead.
+#[tokio::test]
+async fn a_stamp_earlier_than_the_one_it_renews_is_refused() {
+    let (old, _old_dir) = seal_ending_in(30);
+    let previous = cades::newest_archive_timestamp(&old)
+        .expect("readable")
+        .expect("an archive timestamp")
+        .gen_time();
+    let (source, _src) = source_ending_in(5 * 365, previous - Duration::seconds(2));
+
+    let err = renew_archive_timestamp(&old, &source, previous, accept_anyone)
+        .await
+        .expect_err("it stamps before the stamp it renews");
+
+    assert!(matches!(err, RenewalError::Unusable(_)), "{err}");
+    assert!(err.to_string().contains("backwards"), "{err}");
+}
+
 /// A renewal stamped in the **same second** as the stamp it renews is still the
 /// newest.
 ///

@@ -844,11 +844,15 @@ fn signature_timestamp(signed: &Signed) -> Option<TimestampToken> {
     // lifted from another seal — internally sound, signed by a real authority,
     // saying a different time — would be accepted, and an unsigned attribute is
     // exactly where such a swap is free to make.
+    //
+    // Under the algorithm the imprint itself names: a seal's signature timestamp
+    // is requested by whoever made the seal, and nothing fixes that to SHA-256.
     {
-        use sha2::{Digest as _, Sha256};
-        if info.message_imprint.hashed_message.as_bytes()
-            != Sha256::digest(signed.signer.signature.as_bytes()).as_slice()
-        {
+        let expected = hash_under(
+            &info.message_imprint.hash_algorithm.oid,
+            signed.signer.signature.as_bytes(),
+        )?;
+        if info.message_imprint.hashed_message.as_bytes() != expected.as_slice() {
             return None;
         }
     }
@@ -890,10 +894,8 @@ fn signature_holds(signed: &Signed) -> Result<bool, SealError> {
     let to_verify = signed_attrs
         .to_der()
         .map_err(|e| malformed(format!("cannot re-encode the signed attributes: {e}")))?;
-    let signature = x509_verify::SignatureRef::new(
-        &signed.signer.signature_algorithm,
-        signed.signer.signature.as_bytes(),
-    );
+    let algorithm = verification_algorithm(&signed.signer);
+    let signature = x509_verify::SignatureRef::new(&algorithm, signed.signer.signature.as_bytes());
     match key.verify(x509_verify::VerifyInfo::new(
         x509_verify::MessageOwned::from(to_verify),
         signature,
@@ -906,10 +908,80 @@ fn signature_holds(signed: &Signed) -> Result<bool, SealError> {
     }
 }
 
-/// Whether the signed `messageDigest` matches `content`.
-fn digest_matches(signed: &Signed, content: &[u8]) -> bool {
-    use sha2::{Digest as _, Sha256};
+/// The algorithm a `SignerInfo`'s signature is to be verified under.
+///
+/// # 🚨 A signer may name only `rsaEncryption`, and a real authority does
+///
+/// RFC 3370 §3.2 lets a CMS signer give `rsaEncryption` (1.2.840.113549.1.1.1) as
+/// its `signatureAlgorithm` and leave the hash to the separate `digestAlgorithm`
+/// — whereas the verifier here is told the **combined** identifier, such as
+/// `sha384WithRSAEncryption`, and answers `Unknown OID` for the bare one.
+/// Sectigo's public authority signs exactly that way, so before this its tokens
+/// could not be verified, and a seal carrying one could not have had its time read.
+///
+/// Only that pairing is rewritten, and only with the digest the signer itself
+/// names. Anything else — including every identifier that is already combined — is
+/// passed through untouched, so this cannot turn a signature that would not verify
+/// into one that does. A digest not listed leaves the bare identifier, which the
+/// verifier refuses.
+fn verification_algorithm(signer: &SignerInfo) -> x509_cert::spki::AlgorithmIdentifierOwned {
+    use const_oid::db::rfc5912::{
+        ID_SHA_256, ID_SHA_384, ID_SHA_512, RSA_ENCRYPTION, SHA_256_WITH_RSA_ENCRYPTION,
+        SHA_384_WITH_RSA_ENCRYPTION, SHA_512_WITH_RSA_ENCRYPTION,
+    };
 
+    let named = &signer.signature_algorithm;
+    if named.oid != RSA_ENCRYPTION {
+        return named.clone();
+    }
+    let combined = if signer.digest_alg.oid == ID_SHA_256 {
+        SHA_256_WITH_RSA_ENCRYPTION
+    } else if signer.digest_alg.oid == ID_SHA_384 {
+        SHA_384_WITH_RSA_ENCRYPTION
+    } else if signer.digest_alg.oid == ID_SHA_512 {
+        SHA_512_WITH_RSA_ENCRYPTION
+    } else {
+        return named.clone();
+    };
+    x509_cert::spki::AlgorithmIdentifierOwned {
+        oid: combined,
+        // The RSA signature algorithms carry an explicit NULL (RFC 4055 §5).
+        parameters: Some(der::Any::new(der::Tag::Null, [].as_slice()).expect("an empty NULL")),
+    }
+}
+
+/// `bytes` hashed under the algorithm `oid` names — for the SHA-2 family a
+/// signature or a timestamp can be built on, and `None` for anything else.
+///
+/// 🚨 **Dispatched on the algorithm the structure itself names**, never assumed to
+/// be SHA-256. A `messageDigest` is computed with the signer's own
+/// `digestAlgorithm`, and an imprint with the algorithm in its `MessageImprint`;
+/// both were checked against SHA-256 alone, which is the one algorithm this
+/// crate's own writer uses and **not** what real timestamp authorities sign with.
+/// Two of them were asked: one digests with SHA-512 over an ECDSA P-384 key, the
+/// other with SHA-384 over RSA, and neither token verified until this dispatched.
+///
+/// `None` for an algorithm not listed is a refusal, not a guess: an unknown hash
+/// cannot be compared, and treating "cannot compare" as "matches" is the failure
+/// this exists to avoid.
+fn hash_under(oid: &const_oid::ObjectIdentifier, bytes: &[u8]) -> Option<Vec<u8>> {
+    use const_oid::db::rfc5912::{ID_SHA_256, ID_SHA_384, ID_SHA_512};
+    use sha2::{Digest as _, Sha256, Sha384, Sha512};
+
+    if *oid == ID_SHA_256 {
+        Some(Sha256::digest(bytes).to_vec())
+    } else if *oid == ID_SHA_384 {
+        Some(Sha384::digest(bytes).to_vec())
+    } else if *oid == ID_SHA_512 {
+        Some(Sha512::digest(bytes).to_vec())
+    } else {
+        None
+    }
+}
+
+/// Whether the signed `messageDigest` matches `content`, under the digest
+/// algorithm the signer names.
+fn digest_matches(signed: &Signed, content: &[u8]) -> bool {
     signed
         .signer
         .signed_attrs
@@ -920,7 +992,8 @@ fn digest_matches(signed: &Signed, content: &[u8]) -> bool {
         })
         .and_then(|a| a.values.as_slice().first())
         .and_then(|v| v.decode_as::<der::asn1::OctetString>().ok())
-        .is_some_and(|d| d.as_bytes() == Sha256::digest(content).as_slice())
+        .zip(hash_under(&signed.signer.digest_alg.oid, content))
+        .is_some_and(|(claimed, actual)| claimed.as_bytes() == actual.as_slice())
 }
 
 // ─── Whether the archival protection is still live ───────────────────────────
@@ -1118,6 +1191,9 @@ pub(crate) struct RenewalRequest {
     /// When the newest archive timestamp's authority certificate ends — the date
     /// to beat.
     pub(crate) previous_expires: DateTime<Utc>,
+    /// When that stamp says it was made. A renewal that claims an earlier moment
+    /// has gone backwards in time.
+    pub(crate) previous_gen_time: DateTime<Utc>,
 }
 
 fn not_renewable(why: impl std::fmt::Display) -> SealError {
@@ -1200,6 +1276,7 @@ pub(crate) fn prepare_archive_renewal(seal_der: &[u8]) -> Result<RenewalRequest,
         imprint,
         index,
         previous_expires: newest.expires,
+        previous_gen_time: newest.stamp.gen_time(),
     })
 }
 

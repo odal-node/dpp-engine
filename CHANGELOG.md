@@ -214,13 +214,30 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   buys no seal, and `sealed_digest` stays what the original was bought over.
   Counted on `seal_archival_renewal_total{outcome}`.
 
-  **Found on the way:** the timestamp reader could parse only tokens this crate's
-  own writer made. Its `TSTInfo` stopped at `genTime` on the stated reasoning that
-  trailing fields are ignored; DER decoding refuses them, and the serial was a
-  `u64`. A token from a real authority — a 160-bit serial, `accuracy`, the client's
-  `nonce`, a `genTime` with fractional seconds — was unreadable, so no seal stamped
-  by one could have had its time or its expiry read. `TSTInfo` now follows RFC 3161
-  §2.4.2 in full.
+  **Found on the way: the timestamp reader could parse only what this crate's own
+  writer made.** Three separate defects, none findable with a test double. `TSTInfo`
+  stopped at `genTime` on the stated reasoning that trailing fields are ignored —
+  DER decoding refuses them — and the serial was a `u64`, so a real token's 160-bit
+  serial, `accuracy`, `nonce`, `tsa` name or fractional-second `genTime` made it
+  unreadable; it now follows RFC 3161 §2.4.2 in full. A token's `messageDigest` and
+  a signature timestamp's imprint were checked against SHA-256 alone, where real
+  authorities sign with SHA-384 and SHA-512; both now hash under the algorithm the
+  structure names. And a CMS signer may name only `rsaEncryption` and leave the hash
+  to its `digestAlgorithm` (RFC 3370 §3.2), which the verifier answered with
+  `Unknown OID` — so no RSA token from such a signer could verify. A real authority's
+  clock can also read a second behind the machine that made the seal, so a renewal
+  that stamps *before* the stamp it renews is now an explicit refusal.
+
+  **Exercised against two real public authorities**, by hand: Sectigo (RSA,
+  SHA-384) and FreeTSA (ECDSA P-384, SHA-512) both answer, their tokens verify, and
+  each renews a due seal end to end. A real Sectigo token is kept as an offline
+  fixture, asserted stage by stage. Neither authority is qualified, so what this
+  establishes is the reader, the source and the renewal path, not the qualification
+  match against a real qualified token. A survey of the published Trusted Lists
+  found Italy listing only self-signed root CAs for qualified timestamps and France
+  listing the timestamping units themselves (three with no extended key usage), so
+  both legs of the authority matcher are exercised by real entries; every listed key
+  is one this build verifies.
 
 ### Fixed
 

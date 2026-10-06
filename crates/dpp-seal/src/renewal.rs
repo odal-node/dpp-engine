@@ -144,6 +144,23 @@ pub async fn renew_archive_timestamp(
         )));
     }
 
+    // Strictly earlier, not "no later": two stamps in the same second are ordered
+    // by which outlasts the other, and a renewal in the same second as the stamp it
+    // renews is legitimate. One that claims an *earlier* moment is the authority's
+    // clock disagreeing with whoever made the stamp before it — a renewal chain is
+    // a sequence in time, and one that runs backwards is not one. This was met for
+    // real: a public authority's clock read about a second behind the machine that
+    // had just made the seal, and the failure said only that the result "does not
+    // read back as renewed".
+    if attached.stamp.gen_time() < request.previous_gen_time {
+        return Err(RenewalError::Unusable(format!(
+            "it says it stamped at {}, before the archive timestamp it renews ({}) — the two \
+             clocks disagree, and a renewal that goes backwards in time is not a renewal",
+            attached.stamp.gen_time(),
+            request.previous_gen_time
+        )));
+    }
+
     if attached.expires <= request.previous_expires {
         return Err(RenewalError::NoGain {
             current: request.previous_expires,

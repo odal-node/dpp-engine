@@ -61,6 +61,73 @@ fn real_world_tst_info() -> Vec<u8> {
     .expect("encode")
 }
 
+/// A token a **real** timestamp authority made, kept as bytes.
+///
+/// Sectigo's public authority, asked on 2026-10-06 to stamp a hash of 64 random
+/// bytes — so it stamps nothing of ours, and its certificates are public. It
+/// signs with **SHA-384 over RSA**, carries a 160-bit serial, echoes a nonce, names
+/// itself in `tsa`, and ships a four-certificate chain. None of that is what this
+/// crate's own writer produces, which is why a fixture made by that writer could
+/// never have found what this one did.
+///
+/// A second authority — FreeTSA, SHA-512 over ECDSA P-384 — is exercised by the
+/// `#[ignore]`d live tests rather than kept here: its certificate embeds a
+/// person's email address, which has no business in this repository.
+const REAL_TOKEN: &[u8] = include_bytes!("../tests/fixtures/real-timestamp-token-sectigo.der");
+
+/// The imprint that token stamps: SHA-256 of the 64 random bytes it was asked for.
+const REAL_TOKEN_IMPRINT: &str = "f48fb2955f8bdc8a32a38fd592bd89630e83d83c98c642f11647cd7feb115f05";
+
+/// **A real authority's token is parsed and verified, stage by stage.**
+///
+/// Staged rather than one `expect`, because the first time this ran the reader
+/// refused the token with a single message that said nothing about *where* — and
+/// the answer was not the one anybody expected.
+#[test]
+fn a_real_authoritys_token_parses_and_verifies() {
+    let token = parse(REAL_TOKEN).expect("1. the CMS structure parses");
+
+    assert!(
+        signature_holds(&token).expect("2. the signature can be checked"),
+        "2. the token's own signature does not verify"
+    );
+
+    let content = token.econtent.as_ref().expect("3. an attached TSTInfo");
+    assert!(
+        digest_matches(&token, content),
+        "3. the signed messageDigest does not match the TSTInfo under the signer's digest"
+    );
+
+    let info = TstInfo::from_der(content).expect("4. the TSTInfo parses");
+    assert_eq!(
+        hex::encode(info.message_imprint.hashed_message.as_bytes()),
+        REAL_TOKEN_IMPRINT
+    );
+    assert!(
+        info.nonce.is_some(),
+        "5. the authority echoed the request's nonce"
+    );
+    assert!(
+        info.serial_number.as_bytes().len() > 8,
+        "6. a real serial is wider than a u64: {} bytes",
+        info.serial_number.as_bytes().len()
+    );
+    assert!(
+        stamped_within_its_certificate(&token, info.gen_time.0),
+        "7. the stamp falls inside its authority's certificate window"
+    );
+}
+
+/// **A real authority's token reads as a timestamp, end to end.**
+#[test]
+fn a_real_authoritys_token_yields_its_facts() {
+    let facts = token_facts(REAL_TOKEN).expect("a real token is self-consistent");
+
+    assert_eq!(facts.hash_algorithm, const_oid::db::rfc5912::ID_SHA_256);
+    assert_eq!(hex::encode(&facts.imprint), REAL_TOKEN_IMPRINT);
+    assert!(facts.nonce.is_some());
+}
+
 /// **A token carrying what real authorities send is readable.**
 ///
 /// Pinned because the reader's own documentation claimed the opposite — that
