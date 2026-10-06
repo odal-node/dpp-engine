@@ -608,20 +608,29 @@ fn projected_wrap(sealed: i64, batch: i64, interval: std::time::Duration) -> std
 /// `store` is optional so a node without one still audits; it simply forgets
 /// across restarts, which is the old behaviour and still honest.
 ///
+/// # 🚨 The inspector is the one the read path holds, and is passed in
+///
+/// A seal's certificate finding turns on whether its timestamp's authority is a
+/// qualified one, and that is a Trusted List question — answered only by an
+/// inspector that has been handed the lists. This task used to build its own with
+/// [`dpp_seal::CadesInspector::new`], which holds none, so every time it read would
+/// have been unbelieved and no seal could ever have been found to have failed.
+/// Taking the inspector as a parameter makes the wrong thing unrepresentable: the
+/// handle given here is the one the background refresh publishes into, so a
+/// completed refresh reaches this walk exactly as it reaches the seal route.
+///
 /// # Errors
 ///
 /// An unusable `SEAL_AUDIT_BATCH` / `SEAL_AUDIT_INTERVAL_SECS` — see
 /// [`seal_audit_cadence`].
 pub fn spawn_seal_audit(
     outbox: Arc<dyn SealOutbox>,
+    inspector: Arc<dpp_seal::CadesInspector>,
     log: Arc<dpp_types::SealAuditLog>,
     store: Option<Arc<dyn dpp_types::SealAuditStore>>,
 ) -> anyhow::Result<()> {
     let (batch_size, interval) = seal_audit_cadence()?;
     tokio::spawn(async move {
-        // The same reader the drain uses to accept a seal, so the audit and the
-        // acceptance cannot come to disagree about what a sound seal is.
-        let inspector = dpp_seal::CadesInspector::new();
         let mut cursor = None;
         // Accumulated across the whole walk, not per batch. The gauge has to
         // answer "how many broken seals does this node hold", and a value set
@@ -706,7 +715,7 @@ pub fn spawn_seal_audit(
             tokio::time::sleep(interval).await;
             let Some((audit, next)) = dpp_node::infra::seal_drain::audit_seals_once(
                 &outbox,
-                &inspector,
+                inspector.as_ref(),
                 batch_size,
                 cursor,
                 Some(started_at),

@@ -636,3 +636,6 @@ fn a_not_listed_verdict_says_how_much_was_consulted() {
         "and must not hedge when there is nothing to hedge about: {whole}"
     );
 }
+
+#[path = "timestamp_authority_tests.rs"]
+mod timestamp_authority;

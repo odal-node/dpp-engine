@@ -74,9 +74,12 @@ properties:
 
       **Attested is not trusted.** A qualified electronic time stamp is a QTSP's
       service (Art. 42) and the presumption of accuracy attaches to that
-      (Art. 41(2)); establishing it is a Trusted List question about the
-      `TSA/QTST` service type, which this node cannot yet ask. A self-signed
-      authority's token verifies perfectly and means nothing.
+      (Art. 41(2)); whether the authority is one is a Trusted List question about
+      the `TSA/QTST` service type, answered by `timestampAuthority`. A
+      self-signed authority's token verifies perfectly and means nothing, so this
+      time is **shown** whatever that says, but counts as a proof of existence —
+      `certificate.judgedAt.attested` — only when `timestampAuthority` is
+      `qualifiedAtStamping`.
   conformanceLevel:
     oneOf:
       - $ref: ../passport/SealConformanceLevel.yaml
@@ -176,6 +179,30 @@ properties:
       parse, unreadable bytes, or a deployment with no inspector wired. Never
       read null as "not qualified": that is a finding, and it only comes from a
       certificate that was actually examined.
+  timestampAuthority:
+    oneOf:
+      - $ref: ./TimestampStanding.yaml
+      - type: 'null'
+    description: >-
+      Who stamped `attestedSealedAt`, and what the EU Trusted Lists say of them —
+      Regulation (EU) No 910/2014 Art. 42 and Art. 41(2), via the `TSA/QTST`
+      service type.
+
+
+      **This decides whether the time is believed.** `certificate.judgedAt.attested`
+      is `true` only when this is `qualifiedAtStamping`. Otherwise the time is
+      still shown and the certificate is judged against this node's own clock and
+      reported as unproven — `outOfBoundsNoPoe`, not `expired` — so a token minted
+      by an authority nobody lists cannot turn an out-of-window certificate into
+      anything but an open question.
+
+
+      🚨 **Read `consulted` and `unchecked` before acting on a `notListed`
+      standing**, for the reason given on `qualification`.
+
+
+      Null means **not read**. A seal that was read and carries no usable
+      timestamp answers `noAttestedTime`, which is a finding.
   verification:
     type: string
     description: >-

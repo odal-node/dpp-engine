@@ -259,6 +259,29 @@ impl SealInspector for CadesInspector {
             }
         }
     }
+    /// # What the lists are questioned about
+    ///
+    /// The token's own `genTime`, which [`cades::signature_timestamp_token`] has
+    /// already checked — never [`SealedEnvelope::sealed_at`], this node's clock.
+    /// Like [`Self::qualification`], this answers from the held snapshot and
+    /// fetches nothing.
+    fn timestamp_authority(
+        &self,
+        envelope: &SealedEnvelope,
+    ) -> Option<dpp_types::qualification::TimestampStanding> {
+        let der = self.readable(envelope)?;
+        let held = self.snapshot();
+        match crate::qualification::qualify_timestamp(&der, &held.lists, &held.unchecked) {
+            Ok(standing) => Some(standing),
+            // Not read, rather than a standing drawn from bytes nobody could
+            // parse — see `qualification` for the same reasoning.
+            Err(e) => {
+                tracing::warn!(error = %e, "stored seal could not be read; timestamp authority unknown");
+                None
+            }
+        }
+    }
+
     fn archival_freshness(
         &self,
         envelope: &SealedEnvelope,
@@ -283,13 +306,44 @@ impl SealInspector for CadesInspector {
         }
     }
 
+    /// # 🚨 The attested time is passed only when its authority qualifies
+    ///
+    /// The token's moment decides whether an out-of-window certificate is a
+    /// failure (proven) or an open question (not), so a token whose authority
+    /// nobody lists must not be allowed to settle it — a self-made token is a
+    /// perfectly well-formed time. The moment reaches
+    /// [`cades::certificate_standing`] only when the Trusted Lists say the
+    /// authority was a qualified one **when it stamped**; in every other case,
+    /// including *this node could not tell*, the certificate is judged against
+    /// the node's own clock and reported as unproven.
+    ///
+    /// The time itself stays visible on the seal route either way — this gates
+    /// what the time is *worth*, not whether it is shown.
     fn certificate_standing(
         &self,
         envelope: &SealedEnvelope,
         now: chrono::DateTime<chrono::Utc>,
     ) -> Option<dpp_types::CertificateStanding> {
         let der = self.readable(envelope)?;
-        match cades::certificate_standing(&der, now) {
+        let held = self.snapshot();
+        let trusted_time = match cades::signature_timestamp_token(&der) {
+            Ok(Some(token))
+                if crate::qualification::timestamp_standing(
+                    &token,
+                    &held.lists,
+                    held.unchecked.len(),
+                )
+                .counts_as_proof_of_existence() =>
+            {
+                Some(token.gen_time())
+            }
+            Ok(_) => None,
+            Err(e) => {
+                tracing::warn!(error = %e, "stored seal could not be read; certificate standing unknown");
+                return None;
+            }
+        };
+        match cades::certificate_standing(&der, now, trusted_time) {
             Ok(standing) => Some(standing),
             // Nothing is reported rather than a standing built on a guess. A
             // seal that will not parse has no certificate to speak about, and

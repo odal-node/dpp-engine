@@ -131,10 +131,12 @@ pub struct SealResponse {
     ///
     /// **Attested is not trusted.** Art. 42 makes a qualified time stamp a
     /// QTSP's service and Art. 41(2) attaches the presumption of accuracy to
-    /// that; establishing it is a Trusted List question about the `TSA/QTST`
-    /// service type, which this node cannot yet ask. A self-signed authority's
-    /// token verifies perfectly and means nothing — which is exactly what the
-    /// local development backend produces.
+    /// that; whether the authority is one is a Trusted List question about the
+    /// `TSA/QTST` service type, answered by `timestampAuthority` below. A
+    /// self-signed authority's token verifies perfectly and means nothing —
+    /// which is exactly what the local development backend produces — so this
+    /// time is **shown** whatever the answer, but counts as a proof of
+    /// existence only when `timestampAuthority` is `qualifiedAtStamping`.
     pub attested_sealed_at: Option<chrono::DateTime<chrono::Utc>>,
     /// The baseline level this node **asked** for, recorded on the envelope.
     ///
@@ -297,6 +299,25 @@ pub struct SealResponse {
     /// qualified", which is a finding and comes only from a certificate that was
     /// examined.
     pub qualification: Option<dpp_types::qualification::SealQualification>,
+    /// Who stamped `attestedSealedAt`, and what the EU Trusted Lists say of them.
+    ///
+    /// ✅ Reg. (EU) No 910/2014 Art. 42 and Art. 41(2), via the `TSA/QTST`
+    /// service type.
+    ///
+    /// **This decides whether the time is believed.** A token's own signature
+    /// holding says it is genuine, not that anybody should trust whoever signed
+    /// it, and the signer is whoever the seal's holder chose. So
+    /// `certificate.judgedAt.attested` is `true` only when this is
+    /// `qualifiedAtStamping`; otherwise the time is still shown above and the
+    /// certificate is judged against this node's own clock and reported as
+    /// unproven rather than failed.
+    ///
+    /// 🚨 Read `consulted` and `unchecked` before acting on a `notListed`
+    /// standing, for the reason given on `qualification`.
+    ///
+    /// `null` means **not read**. A seal that was read and carries no usable
+    /// timestamp answers `noAttestedTime`, which is a finding.
+    pub timestamp_authority: Option<dpp_types::qualification::TimestampStanding>,
     /// Stated, not implied: this node did not cryptographically validate the
     /// CAdES, and says so rather than letting the response read as a verdict.
     pub verification: &'static str,
@@ -482,6 +503,11 @@ pub async fn seal_handler(
                 .seal_inspector
                 .as_ref()
                 .and_then(|i| i.qualification(seal)),
+            timestamp_authority: state
+                .service
+                .seal_inspector
+                .as_ref()
+                .and_then(|i| i.timestamp_authority(seal)),
             binding: binding.clone(),
             validation: dpp_types::SealValidationStatus::of(&binding, certificate.as_ref()),
             certificate,

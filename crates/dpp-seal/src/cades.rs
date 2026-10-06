@@ -567,8 +567,13 @@ pub(crate) struct TstInfo {
 /// No 910/2014 Art. 42 makes a qualified electronic time stamp a service of a
 /// QTSP, and Art. 41(2) attaches the presumption of accuracy to that — which is
 /// a Trusted List question about the `TSA/QTST` service type, and is not asked
-/// here. A self-signed authority's token verifies perfectly and means nothing,
-/// which is exactly what this crate's own development sealer produces.
+/// here: [`signature_timestamp_token`] hands the token over so that
+/// [`crate::qualification::qualify_timestamp`] can ask it. A self-signed
+/// authority's token verifies perfectly and means nothing, which is exactly what
+/// this crate's own development sealer produces — so **this time must not be
+/// treated as a proof of existence on its own**, and
+/// [`certificate_standing`] takes the moment it is willing to trust as an
+/// argument rather than reading this one itself.
 ///
 /// `Ok(None)` when there is no timestamp at all (a `B-B` seal), when the token
 /// cannot be read, or when its signature does not hold. A time that failed its
@@ -578,53 +583,144 @@ pub(crate) struct TstInfo {
 ///
 /// [`SealError::Backend`] when the seal itself cannot be read.
 pub fn attested_sealing_time(seal_der: &[u8]) -> Result<Option<DateTime<Utc>>, SealError> {
+    Ok(signature_timestamp_token(seal_der)?.map(|token| token.gen_time))
+}
+
+/// The seal's signature timestamp, **once it has survived every check**.
+///
+/// What [`attested_sealing_time`] reads its time from, handed back whole so the
+/// authority behind it can be asked about: a time and the party that vouches for
+/// it are two answers, and returning only the first is how the second never got
+/// asked. `Ok(None)` for exactly the cases that function returns `Ok(None)` —
+/// there is no token, or it failed a check — so holding a [`TimestampToken`] is
+/// itself the statement that these checks held.
+///
+/// # Errors
+///
+/// [`SealError::Backend`] when the seal itself cannot be read.
+pub fn signature_timestamp_token(seal_der: &[u8]) -> Result<Option<TimestampToken>, SealError> {
     let signed = parse(seal_der)?;
-    let Some(attrs) = signed.signer.unsigned_attrs.as_ref() else {
-        return Ok(None);
-    };
-    let Some(attr) = attrs
+    Ok(signature_timestamp(&signed))
+}
+
+/// A time-stamp token whose own signature, authority-certificate window and
+/// imprint all held — see [`signature_timestamp_token`].
+///
+/// Deliberately opaque. The only things worth doing with one are asking when it
+/// says, and asking who stands behind that; handing out the parsed structure would
+/// invite a caller to read a field off a token on the strength of a check this
+/// type cannot show was run.
+pub struct TimestampToken {
+    token: Signed,
+    gen_time: DateTime<Utc>,
+}
+
+impl TimestampToken {
+    /// The moment the authority says it stamped. Attested, not trusted: see
+    /// [`attested_sealing_time`].
+    #[must_use]
+    pub fn gen_time(&self) -> DateTime<Utc> {
+        self.gen_time
+    }
+
+    /// The authority's subject name, RFC 4514, for reading.
+    #[must_use]
+    pub fn subject(&self) -> String {
+        self.token.certificate.tbs_certificate.subject.to_string()
+    }
+
+    /// The issuer name its certificate claims, RFC 4514, for reading.
+    #[must_use]
+    pub fn issuer(&self) -> String {
+        self.token.certificate.tbs_certificate.issuer.to_string()
+    }
+
+    /// Whether the authority's certificate is its own issuer — a self-signed one.
+    ///
+    /// The structural test for "nobody issued this to the authority", read from
+    /// the certificate, so it cannot be configured into being false.
+    #[must_use]
+    pub fn is_self_issued(&self) -> bool {
+        let tbs = &self.token.certificate.tbs_certificate;
+        tbs.issuer == tbs.subject
+    }
+
+    /// The authority's signing certificate, DER — for comparing against a
+    /// certificate a Trusted List publishes **directly**.
+    ///
+    /// A `TSA/QTST` entry's service identity is usually the timestamping unit's
+    /// own certificate, so unlike a seal's issuer it can be matched by equality
+    /// with no path at all.
+    ///
+    /// # Errors
+    ///
+    /// [`SealError::Backend`] when the certificate cannot be re-encoded.
+    pub fn signer_der(&self) -> Result<Vec<u8>, SealError> {
+        self.token
+            .certificate
+            .to_der()
+            .map_err(|e| malformed(format!("cannot re-encode the authority's certificate: {e}")))
+    }
+
+    /// The DER of every issuer name the token's embedded certificates refer to.
+    ///
+    /// The same question [`chain_issuer_names`] answers for a seal, for the same
+    /// reason: which listed certificates are worth trying.
+    #[must_use]
+    pub fn chain_issuer_names(&self) -> Vec<Vec<u8>> {
+        issuer_names_of(&self.token)
+    }
+
+    /// Where the token's own certificate chain comes to an end.
+    #[must_use]
+    pub fn chain_terminus(&self) -> ChainTerminus {
+        terminus_of(&self.token)
+    }
+
+    /// Whether the authority's certificate chains to `anchor_certificate_der`.
+    ///
+    /// The same walk [`check_path_to`] makes for a seal — intermediates only from
+    /// what the token carries, every link verified — because it is the same
+    /// function. Two copies of a certificate-path check are two places for a
+    /// forgery to be accepted in only one.
+    #[must_use]
+    pub fn check_path_to(&self, anchor_certificate_der: &[u8]) -> IssuerCheck {
+        path_to(&self.token, anchor_certificate_der)
+    }
+}
+
+fn signature_timestamp(signed: &Signed) -> Option<TimestampToken> {
+    let attrs = signed.signer.unsigned_attrs.as_ref()?;
+    let attr = attrs
         .iter()
-        .find(|a| a.oid == ID_AA_SIGNATURE_TIME_STAMP_TOKEN)
-    else {
-        return Ok(None);
-    };
+        .find(|a| a.oid == ID_AA_SIGNATURE_TIME_STAMP_TOKEN)?;
     let [value] = attr.values.as_slice() else {
-        return Ok(None);
+        return None;
     };
-    let Ok(token_der) = value.to_der() else {
-        return Ok(None);
-    };
-    let Ok(token) = parse(&token_der) else {
-        return Ok(None);
-    };
+    let token_der = value.to_der().ok()?;
+    let token = parse(&token_der).ok()?;
 
     // The token signs its own payload, so both legs have to hold: the signature
     // over the signed attributes, and the digest inside them over the content.
     // Checking only the first would let the TSTInfo be swapped for another.
     if !signature_holds(&token).unwrap_or(false) {
-        return Ok(None);
+        return None;
     }
-    let Some(content) = token.econtent.as_ref() else {
-        return Ok(None);
-    };
+    let content = token.econtent.as_ref()?;
     if !digest_matches(&token, content) {
-        return Ok(None);
+        return None;
     }
 
-    let Ok(info) = TstInfo::from_der(content) else {
-        return Ok(None);
-    };
+    let info = TstInfo::from_der(content).ok()?;
 
     // And that the authority's own certificate was valid when it says it
     // stamped. Without this, a token minted under an expired certificate — or
     // one built by whoever edited the seal — carries the same weight as a real
     // one, and this time is what decides whether a certificate finding is a
     // failure or an open question.
-    let Some(gen_time) = to_utc(info.gen_time.to_unix_duration().as_secs()) else {
-        return Ok(None);
-    };
+    let gen_time = to_utc(info.gen_time.to_unix_duration().as_secs())?;
     if !stamped_within_its_certificate(&token, gen_time) {
-        return Ok(None);
+        return None;
     }
 
     // And that it is a timestamp **of this signature**, not merely a valid one.
@@ -639,10 +735,10 @@ pub fn attested_sealing_time(seal_der: &[u8]) -> Result<Option<DateTime<Utc>>, S
         if info.message_imprint.hashed_message.as_bytes()
             != Sha256::digest(signed.signer.signature.as_bytes()).as_slice()
         {
-            return Ok(None);
+            return None;
         }
     }
-    Ok(Some(gen_time))
+    Some(TimestampToken { token, gen_time })
 }
 
 /// Whether a parsed structure's signature holds under its own certificate.
@@ -1126,7 +1222,10 @@ pub enum IssuerCheck {
 ///
 /// [`SealError::Backend`] when the seal cannot be read.
 pub fn chain_issuer_names(seal_der: &[u8]) -> Result<Vec<Vec<u8>>, SealError> {
-    let signed = parse(seal_der)?;
+    Ok(issuer_names_of(&parse(seal_der)?))
+}
+
+fn issuer_names_of(signed: &Signed) -> Vec<Vec<u8>> {
     let mut names: Vec<Vec<u8>> = Vec::new();
     for certificate in &signed.chain {
         if let Ok(der) = certificate.tbs_certificate.issuer.to_der()
@@ -1135,7 +1234,7 @@ pub fn chain_issuer_names(seal_der: &[u8]) -> Result<Vec<Vec<u8>>, SealError> {
             names.push(der);
         }
     }
-    Ok(names)
+    names
 }
 
 /// How far a certificate path may be walked before it is treated as a loop.
@@ -1180,22 +1279,24 @@ pub fn check_path_to(
     seal_der: &[u8],
     anchor_certificate_der: &[u8],
 ) -> Result<IssuerCheck, SealError> {
-    let signed = parse(seal_der)?;
+    Ok(path_to(&parse(seal_der)?, anchor_certificate_der))
+}
 
+/// The path walk itself, over any parsed `SignedData` — a seal, or the time-stamp
+/// token inside one. See [`check_path_to`] for what it does and does not establish.
+fn path_to(signed: &Signed, anchor_certificate_der: &[u8]) -> IssuerCheck {
     let anchor = match Certificate::from_der(anchor_certificate_der) {
         Ok(c) => c,
         Err(e) => {
-            return Ok(IssuerCheck::Unverifiable(format!(
+            return IssuerCheck::Unverifiable(format!(
                 "the anchor certificate does not parse: {e}"
-            )));
+            ));
         }
     };
     let anchor_key = match verifying_key(&anchor) {
         Ok(k) => k,
         Err(e) => {
-            return Ok(IssuerCheck::Unverifiable(format!(
-                "no verifier for the anchor's key: {e}"
-            )));
+            return IssuerCheck::Unverifiable(format!("no verifier for the anchor's key: {e}"));
         }
     };
 
@@ -1205,7 +1306,7 @@ pub fn check_path_to(
         // The anchor first, so a chain that also embeds a copy of it cannot
         // lengthen the walk.
         if current.tbs_certificate.issuer == anchor.tbs_certificate.subject {
-            return Ok(verified_under(&anchor, &anchor_key, current));
+            return verified_under(&anchor, &anchor_key, current);
         }
 
         // Otherwise climb one link, using only what the seal carries. A
@@ -1231,7 +1332,7 @@ pub fn check_path_to(
             })
             .collect();
         if candidates.is_empty() {
-            return Ok(IssuerCheck::NotSignedByThisIssuer);
+            return IssuerCheck::NotSignedByThisIssuer;
         }
 
         // The first candidate whose key verifies this link, and — kept
@@ -1264,24 +1365,22 @@ pub fn check_path_to(
             }
         }
         let Some(next) = verified_next else {
-            return Ok(match unverifiable {
+            return match unverifiable {
                 Some(why) => IssuerCheck::Unverifiable(why),
                 None => IssuerCheck::NotSignedByThisIssuer,
-            });
+            };
         };
 
         if seen.contains(&&next.tbs_certificate.subject) {
-            return Ok(IssuerCheck::Unverifiable(
-                "the embedded certificates form a loop".to_owned(),
-            ));
+            return IssuerCheck::Unverifiable("the embedded certificates form a loop".to_owned());
         }
         seen.push(&current.tbs_certificate.subject);
         current = next;
     }
 
-    Ok(IssuerCheck::Unverifiable(format!(
+    IssuerCheck::Unverifiable(format!(
         "the certificate path is longer than {MAX_PATH_LENGTH} links"
-    )))
+    ))
 }
 
 /// The signature-algorithm family an OID belongs to, where it is one this
@@ -1409,14 +1508,17 @@ pub enum ChainTerminus {
 ///
 /// Propagates a seal that will not parse.
 pub fn chain_terminus(seal_der: &[u8]) -> Result<ChainTerminus, SealError> {
-    let signed = parse(seal_der)?;
+    Ok(terminus_of(&parse(seal_der)?))
+}
+
+fn terminus_of(signed: &Signed) -> ChainTerminus {
     let mut current = &signed.certificate;
 
     for _ in 0..MAX_PATH_LENGTH {
         if current.tbs_certificate.issuer == current.tbs_certificate.subject {
-            return Ok(ChainTerminus::SelfIssuedRoot {
+            return ChainTerminus::SelfIssuedRoot {
                 subject: current.tbs_certificate.subject.to_string(),
-            });
+            };
         }
         // The same climb `check_path_to` makes, and it must stay the same: a
         // walk that found a link the other could not would report a complete
@@ -1425,9 +1527,9 @@ pub fn chain_terminus(seal_der: &[u8]) -> Result<ChainTerminus, SealError> {
             c.tbs_certificate.subject == current.tbs_certificate.issuer
                 && c.tbs_certificate.subject != current.tbs_certificate.subject
         }) else {
-            return Ok(ChainTerminus::Truncated {
+            return ChainTerminus::Truncated {
                 missing_issuer: current.tbs_certificate.issuer.to_string(),
-            });
+            };
         };
         current = next;
     }
@@ -1435,9 +1537,9 @@ pub fn chain_terminus(seal_der: &[u8]) -> Result<ChainTerminus, SealError> {
     // A loop, or a chain longer than the walk allows. Reported as truncated
     // rather than as a root: what is certain is that this walk did not reach
     // one.
-    Ok(ChainTerminus::Truncated {
+    ChainTerminus::Truncated {
         missing_issuer: current.tbs_certificate.issuer.to_string(),
-    })
+    }
 }
 
 /// What this node can establish about the seal certificate's own standing:
@@ -1464,6 +1566,22 @@ pub fn chain_terminus(seal_der: &[u8]) -> Result<ChainTerminus, SealError> {
 /// certificate that has expired *since* the seal was made says nothing bad about
 /// the seal: certificates expire, and sealed passports outlive them by years.
 ///
+/// # 🚨 The moment is an argument, not something read here
+///
+/// `attested` is the time the **caller** is willing to treat as a proof of
+/// existence, and this function deliberately cannot work it out for itself. A
+/// token's own checks (see [`attested_sealing_time`]) establish that the time is
+/// genuinely what the token says, not that anybody should believe the authority
+/// that said it — and a time from an authority nobody lists would settle the very
+/// finding it is the evidence for. Whether the authority is a qualified one is a
+/// Trusted List question, and this module holds no lists.
+///
+/// So the caller that does hold them passes the token's time only when the
+/// authority qualifies, and `None` otherwise; this function reads the seal the
+/// same way either way. Reading the token here would have left a way to ask the
+/// question without the gate, and a way nobody is meant to use is one somebody
+/// eventually does.
+///
 /// # Revocation is read from the seal, never fetched
 ///
 /// The CRL distribution point in a certificate is a URL chosen by whoever issued
@@ -1485,10 +1603,11 @@ pub fn chain_terminus(seal_der: &[u8]) -> Result<ChainTerminus, SealError> {
 pub fn certificate_standing(
     seal_der: &[u8],
     now: DateTime<Utc>,
+    attested: Option<DateTime<Utc>>,
 ) -> Result<CertificateStanding, SealError> {
     let signed = parse(seal_der)?;
 
-    let judged_at = match attested_sealing_time(seal_der)? {
+    let judged_at = match attested {
         Some(at) => JudgedTime { at, attested: true },
         None => JudgedTime {
             at: now,
@@ -1781,7 +1900,12 @@ mod standing_tests {
         let issued = issue(-400, -30);
         let (seal, _dir) = seal_with(&[issued.leaf_der.clone(), issued.ca.der().to_vec()], &[]);
 
-        let standing = certificate_standing(&seal, Utc::now()).expect("readable");
+        let standing = certificate_standing(
+            &seal,
+            Utc::now(),
+            attested_sealing_time(&seal).expect("readable"),
+        )
+        .expect("readable");
         assert_eq!(standing.validity.standing, WindowStanding::Expired);
         assert!(standing.validity.not_after < Utc::now());
         assert!(
@@ -1832,7 +1956,12 @@ mod standing_tests {
         // attested moment the certificate is judged against this clock and every
         // finding drawn from it is reported as unproven rather than as a
         // failure.
-        let standing = certificate_standing(&tampered, Utc::now()).expect("readable");
+        let standing = certificate_standing(
+            &tampered,
+            Utc::now(),
+            attested_sealing_time(&tampered).expect("readable"),
+        )
+        .expect("readable");
         assert!(!standing.judged_at.attested);
     }
 
@@ -1939,7 +2068,12 @@ mod standing_tests {
             "an LTA seal carries a timestamp whose signature and imprint both check out"
         );
 
-        let standing = certificate_standing(&seal, Utc::now()).expect("readable");
+        let standing = certificate_standing(
+            &seal,
+            Utc::now(),
+            attested_sealing_time(&seal).expect("readable"),
+        )
+        .expect("readable");
         assert!(
             standing.judged_at.attested,
             "the standing must be judged against that time, not against this clock"
@@ -1954,7 +2088,12 @@ mod standing_tests {
         let issued = issue(-30, 400);
         let (seal, _dir) = seal_with(&[issued.leaf_der.clone(), issued.ca.der().to_vec()], &[]);
 
-        let standing = certificate_standing(&seal, Utc::now()).expect("readable");
+        let standing = certificate_standing(
+            &seal,
+            Utc::now(),
+            attested_sealing_time(&seal).expect("readable"),
+        )
+        .expect("readable");
         assert_eq!(standing.validity.standing, WindowStanding::Inside);
         assert!(standing.validity.not_before < standing.validity.not_after);
     }
@@ -1972,7 +2111,12 @@ mod standing_tests {
             &[revocation],
         );
 
-        let standing = certificate_standing(&seal, Utc::now()).expect("readable");
+        let standing = certificate_standing(
+            &seal,
+            Utc::now(),
+            attested_sealing_time(&seal).expect("readable"),
+        )
+        .expect("readable");
         match standing.revocation {
             RevocationStanding::Revoked { at } => assert!(at < Utc::now()),
             other => panic!("expected a revocation, got {other:?}"),
@@ -1995,7 +2139,12 @@ mod standing_tests {
             &[crl(&issued, None), crl(&issued, Some(-1))],
         );
 
-        let standing = certificate_standing(&seal, Utc::now()).expect("readable");
+        let standing = certificate_standing(
+            &seal,
+            Utc::now(),
+            attested_sealing_time(&seal).expect("readable"),
+        )
+        .expect("readable");
         match standing.revocation {
             RevocationStanding::Revoked { .. } => {}
             other => panic!("a revocation anywhere ends the search, got {other:?}"),
@@ -2014,7 +2163,12 @@ mod standing_tests {
             &[crl(&issued, None)],
         );
 
-        let standing = certificate_standing(&seal, Utc::now()).expect("readable");
+        let standing = certificate_standing(
+            &seal,
+            Utc::now(),
+            attested_sealing_time(&seal).expect("readable"),
+        )
+        .expect("readable");
         match standing.revocation {
             RevocationStanding::NotRevoked { as_of } => {
                 assert!((Utc::now() - as_of).num_minutes().abs() < 5);
@@ -2041,7 +2195,12 @@ mod standing_tests {
             &[tampered],
         );
 
-        let standing = certificate_standing(&seal, Utc::now()).expect("readable");
+        let standing = certificate_standing(
+            &seal,
+            Utc::now(),
+            attested_sealing_time(&seal).expect("readable"),
+        )
+        .expect("readable");
         match standing.revocation {
             RevocationStanding::Unusable { reason } => {
                 assert!(
@@ -2060,7 +2219,12 @@ mod standing_tests {
         let issued = issue(-30, 400);
         let (seal, _dir) = seal_with(&[issued.leaf_der.clone(), issued.ca.der().to_vec()], &[]);
 
-        let standing = certificate_standing(&seal, Utc::now()).expect("readable");
+        let standing = certificate_standing(
+            &seal,
+            Utc::now(),
+            attested_sealing_time(&seal).expect("readable"),
+        )
+        .expect("readable");
         assert_eq!(standing.revocation, RevocationStanding::NotAvailable);
     }
 
@@ -2076,7 +2240,12 @@ mod standing_tests {
             &[crl(&other, Some(-1))],
         );
 
-        let standing = certificate_standing(&seal, Utc::now()).expect("readable");
+        let standing = certificate_standing(
+            &seal,
+            Utc::now(),
+            attested_sealing_time(&seal).expect("readable"),
+        )
+        .expect("readable");
         assert_eq!(
             standing.revocation,
             RevocationStanding::NotAvailable,
@@ -2106,7 +2275,12 @@ mod standing_tests {
             &[crl(&impostor, Some(-1))],
         );
 
-        let standing = certificate_standing(&seal, Utc::now()).expect("readable");
+        let standing = certificate_standing(
+            &seal,
+            Utc::now(),
+            attested_sealing_time(&seal).expect("readable"),
+        )
+        .expect("readable");
         match standing.revocation {
             RevocationStanding::Unusable { reason } => assert!(
                 reason.contains("signature"),

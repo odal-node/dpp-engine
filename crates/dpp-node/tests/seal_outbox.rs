@@ -53,7 +53,7 @@ use dpp_domain::passport::{ManufacturerInfo, Passport, PassportId};
 use dpp_domain::ports::compliance::ComplianceRegistry;
 use dpp_domain::ports::passport_repo::PassportRepository;
 use dpp_domain::product_group::ProductGroup;
-use dpp_domain::seal::SealMode;
+use dpp_domain::seal::{SealMode, SealedEnvelope};
 use dpp_domain::status::PassportStatus;
 use dpp_domain::{GhostBackup, GhostRegistrySync};
 use dpp_domain::{ports::seal::SealPort, seal::SealConformanceLevel};
@@ -1618,8 +1618,73 @@ async fn a_seal_made_under_an_invalid_certificate_is_found_and_not_called_broken
         .await
         .expect("backdate the stored certificate");
 
+    // ── What this node believes depends on the lists it holds ───────────────
+    //
+    // The local backend's timestamp authority is self-signed and named by no
+    // list, so a node holding none must not treat its time as a proof of
+    // existence: the same expired certificate is an open question there, not a
+    // failure. This is the gate working through the real walk over the stored
+    // row, and it is the half of the story the rest of this test used to skip —
+    // before it existed the time was believed whoever had made it.
+    {
+        let unlisted = dpp_seal::CadesInspector::new();
+        let (audit, _) =
+            dpp_node::infra::seal_drain::audit_seals_once(&outbox_dyn, &unlisted, 100, None, None)
+                .await
+                .expect("the batch is readable");
+        assert_eq!(
+            audit.certificate_failed, 0,
+            "a time from an authority nobody lists settles nothing"
+        );
+        assert_eq!(
+            audit.sound, 1,
+            "so the seal is still sound — unproven is not failed"
+        );
+    }
+
+    // And an inspector whose lists *do* name that authority as qualified, which
+    // is what the rest of this test is about: a time that is believed. The
+    // verdict arithmetic is the same code the real inspector runs
+    // (`cades::certificate_standing`); only the question of whether the authority
+    // is listed is answered by the test, because a verified list cannot be built
+    // from outside `dpp-seal` and a hand-rolled one would bypass the very
+    // verification that makes it worth consulting.
+    struct BelievesTheLocalAuthority(dpp_seal::CadesInspector);
+    impl dpp_types::SealInspector for BelievesTheLocalAuthority {
+        fn origin(&self, e: &SealedEnvelope) -> Option<dpp_types::SealOrigin> {
+            self.0.origin(e)
+        }
+        fn binding(&self, e: &SealedEnvelope, payload_hash: &str) -> dpp_types::SealBinding {
+            self.0.binding(e, payload_hash)
+        }
+        fn evidenced_level(&self, e: &SealedEnvelope) -> Option<SealConformanceLevel> {
+            self.0.evidenced_level(e)
+        }
+        fn attested_sealing_time(&self, e: &SealedEnvelope) -> Option<chrono::DateTime<Utc>> {
+            self.0.attested_sealing_time(e)
+        }
+        fn archival_freshness(
+            &self,
+            e: &SealedEnvelope,
+            now: chrono::DateTime<Utc>,
+        ) -> dpp_types::ArchivalFreshness {
+            self.0.archival_freshness(e, now)
+        }
+        fn certificate_standing(
+            &self,
+            e: &SealedEnvelope,
+            now: chrono::DateTime<Utc>,
+        ) -> Option<dpp_types::CertificateStanding> {
+            // The time is passed because this inspector's "lists" say the
+            // authority qualifies — the one thing the real one decides from them.
+            let der = BASE64.decode(&e.seal_value).ok()?;
+            let attested = dpp_seal::cades::attested_sealing_time(&der).ok().flatten();
+            dpp_seal::cades::certificate_standing(&der, now, attested).ok()
+        }
+    }
+
     // ── Every existing signal still says healthy ────────────────────────────
-    let inspector = dpp_seal::CadesInspector::new();
+    let inspector = BelievesTheLocalAuthority(dpp_seal::CadesInspector::new());
     let stored = passport_repo
         .find_by_id(id)
         .await

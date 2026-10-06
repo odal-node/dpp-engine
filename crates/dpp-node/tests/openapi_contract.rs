@@ -312,6 +312,17 @@ const UNCHECKED: &[(&str, &str)] = &[
          emit",
     ),
     (
+        "TimestampStanding",
+        "an internally-tagged enum whose eight variants carry eight different \
+         payload shapes, so no single fixture can emit the union of documented \
+         properties and the key-set comparison reports the rest as \
+         undocumented — the same shape as `IssuerStanding` above. The wire form \
+         of every variant is pinned instead by \
+         `every_timestamp_standing_serialises_as_documented`, which also checks \
+         the documented property list against what the variants can actually \
+         emit",
+    ),
+    (
         "RevocationStanding",
         "an internally-tagged enum whose four variants carry three different \
          payload fields (`asOf`, `at`, `reason`), so no single fixture can emit \
@@ -3845,6 +3856,13 @@ mod fixtures {
             // client has to read before acting, and the one most worth pinning
             // against the schema.
             qualification: Some(seal_qualification()),
+            // Populated with the counted variant, for the same reason as
+            // `qualification` above.
+            timestamp_authority: Some(dpp_types::qualification::TimestampStanding::NotListed {
+                authority: "CN=Some Timestamp Unit, O=Some Provider, C=DE".into(),
+                consulted: 26,
+                unchecked: 1,
+            }),
             binding: seal_binding(),
             validation: dpp_types::SealValidationStatus::of(
                 &seal_binding(),
@@ -4483,6 +4501,160 @@ fn the_published_dossier_schema_lists_every_member_the_dossier_emits() {
         unemitted.is_empty(),
         "the published schema lists members the dossier never emits, so a reader would expect \
          fields that cannot appear: {unemitted:?}"
+    );
+}
+
+/// `TimestampStanding` is `UNCHECKED` above for the reason `IssuerStanding` is:
+/// eight variants carry different payload fields, so no one fixture emits the
+/// union. This pins the tag every variant serialises to, the fields it carries,
+/// and that the documented property list is exactly what the variants emit.
+///
+/// ✅ Reg. (EU) No 910/2014 Art. 42 and Art. 41(2). The tag is what a reader
+/// switches on to decide whether the seal's attested time is believed — and the
+/// verdict's `judgedAt.attested` follows it — so it is as load-bearing as
+/// `IssuerStanding`'s.
+#[test]
+fn every_timestamp_standing_serialises_as_documented() {
+    use dpp_types::qualification::TimestampStanding as T;
+
+    let spec = spec();
+    let schema = &schemas(&spec)["TimestampStanding"];
+    let documented: BTreeSet<String> = schema["properties"]
+        .as_object()
+        .expect("TimestampStanding documents properties")
+        .keys()
+        .cloned()
+        .collect();
+
+    let cases: Vec<(T, &str, &[&str])> = vec![
+        (T::NoAttestedTime, "noAttestedTime", &[]),
+        (
+            T::SelfIssued {
+                subject: "CN=Self".to_owned(),
+            },
+            "selfIssued",
+            &["subject"],
+        ),
+        (
+            T::NotListed {
+                authority: "CN=A".to_owned(),
+                consulted: 26,
+                unchecked: 1,
+            },
+            "notListed",
+            &["authority", "consulted", "unchecked"],
+        ),
+        (
+            T::ChainIncomplete {
+                authority: "CN=A".to_owned(),
+                missing_issuer: "CN=B".to_owned(),
+            },
+            "chainIncomplete",
+            &["authority", "missingIssuer"],
+        ),
+        (
+            T::SignatureNotFromListedAuthority {
+                authority: "CN=A".to_owned(),
+                claimed_issuer: "CN=B".to_owned(),
+                provider: Some("P".to_owned()),
+                territory: Some("FI".to_owned()),
+            },
+            "signatureNotFromListedAuthority",
+            &["authority", "claimedIssuer", "provider", "territory"],
+        ),
+        (
+            T::PathUnverifiable {
+                authority: "CN=A".to_owned(),
+                claimed_issuer: "CN=B".to_owned(),
+                provider: Some("P".to_owned()),
+                territory: Some("FI".to_owned()),
+                reason: "a key algorithm this build does not verify".to_owned(),
+            },
+            "pathUnverifiable",
+            &[
+                "authority",
+                "claimedIssuer",
+                "provider",
+                "territory",
+                "reason",
+            ],
+        ),
+        (
+            T::NotQualifiedAtStamping {
+                authority: "CN=A".to_owned(),
+                provider: Some("P".to_owned()),
+                territory: Some("FI".to_owned()),
+                // `Other`, not `Withdrawn`, for the reason `IssuerStanding`'s
+                // fixture gives: it serialises as an object, and a schema saying
+                // `string | null` is violated by the first such entry a real
+                // list produces.
+                status: Some(dpp_domain::trusted_list::TrustServiceStatus::Other(
+                    "http://uri.etsi.org/TrstSvc/TrustedList/Svcstatus/undersupervision".to_owned(),
+                )),
+            },
+            "notQualifiedAtStamping",
+            &["authority", "provider", "territory", "status"],
+        ),
+        (
+            T::QualifiedAtStamping {
+                authority: "CN=A".to_owned(),
+                provider: Some("P".to_owned()),
+                territory: Some("FI".to_owned()),
+            },
+            "qualifiedAtStamping",
+            &["authority", "provider", "territory"],
+        ),
+    ];
+
+    // An exhaustive `match` with no `_` arm, purely so the compiler counts the
+    // variants: a ninth stops this compiling until it is added to `cases` **and**
+    // to the schema.
+    for (value, _, _) in &cases {
+        match value {
+            T::NoAttestedTime
+            | T::SelfIssued { .. }
+            | T::NotListed { .. }
+            | T::ChainIncomplete { .. }
+            | T::SignatureNotFromListedAuthority { .. }
+            | T::PathUnverifiable { .. }
+            | T::NotQualifiedAtStamping { .. }
+            | T::QualifiedAtStamping { .. } => {}
+        }
+    }
+    assert_eq!(
+        cases.len(),
+        8,
+        "every variant the match above names must have a case here"
+    );
+
+    let mut emitted: BTreeSet<String> = BTreeSet::new();
+    for (value, standing, payload) in &cases {
+        let json = serde_json::to_value(value).expect("serialises");
+        let object = json
+            .as_object()
+            .expect("an internally-tagged enum is an object");
+
+        assert_eq!(
+            object["standing"], *standing,
+            "the tag is what a reader switches on: {json}"
+        );
+        for field in *payload {
+            assert!(
+                object.contains_key(*field),
+                "`{standing}` must carry `{field}`: {json}"
+            );
+        }
+        assert_eq!(
+            object.len(),
+            payload.len() + 1,
+            "`{standing}` must carry the tag and exactly those fields: {json}"
+        );
+        emitted.extend(object.keys().cloned());
+    }
+
+    assert_eq!(
+        documented, emitted,
+        "the schema must document exactly the fields these variants emit"
     );
 }
 
