@@ -248,6 +248,10 @@ pub trait RegistrySyncOutbox: Send + Sync {
     /// The registry accepted the submission for validation but has not ruled on
     /// it: record the identifier it returned and move the row to `submitted`, so
     /// the next drain polls for the verdict instead of registering again.
+    ///
+    /// An **empty** `registry_id` means the registry returned none, which is the
+    /// case for a replayed submission: it is acknowledged, not re-described. The
+    /// row keeps whatever id it already held and never records `''` as one.
     async fn mark_submitted(
         &self,
         passport_id: PassportId,
