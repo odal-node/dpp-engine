@@ -1325,7 +1325,7 @@ async fn a_backup_link_with_its_provider_is_sent_with_both() {
     let request = RegistrationRequest {
         backup_url: Some("https://backup.example.com/dpp/x/public.json".into()),
         service_provider: Some(dpp_domain::ports::registry_sync::ServiceProviderRef::named(
-            "Backup Host B.V.",
+            "Example Backup Provider",
         )),
         ..valid_request()
     };
@@ -1337,7 +1337,10 @@ async fn a_backup_link_with_its_provider_is_sent_with_both() {
         passport["backupUrl"],
         "https://backup.example.com/dpp/x/public.json"
     );
-    assert_eq!(passport["serviceProvider"]["name"], "Backup Host B.V.");
+    assert_eq!(
+        passport["serviceProvider"]["name"],
+        "Example Backup Provider"
+    );
 }
 
 /// The registry caps the unique product identifier, and the identifier it

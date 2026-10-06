@@ -1003,7 +1003,7 @@ mod tests {
     }
 
     fn provider() -> dpp_domain::ports::registry_sync::ServiceProviderRef {
-        dpp_domain::ports::registry_sync::ServiceProviderRef::named("Backup Host B.V.")
+        dpp_domain::ports::registry_sync::ServiceProviderRef::named("Example Backup Provider")
     }
 
     /// The registry refuses a declared back-up link with nobody named beside it,

@@ -183,14 +183,7 @@ impl NodeConfig {
             &key_store_passphrase,
             allow_dev_credentials,
         )?;
-        let snapshot_public_base_url = optional_var("SNAPSHOT_PUBLIC_BASE_URL");
-        let snapshot_provider = snapshot_provider(
-            snapshot_public_base_url.as_deref(),
-            optional_var("SNAPSHOT_PROVIDER_NAME"),
-            optional_var("SNAPSHOT_PROVIDER_SCHEME"),
-            optional_var("SNAPSHOT_PROVIDER_VALUE"),
-            optional_var("SNAPSHOT_PROVIDER_COUNTRY"),
-        )?;
+        let (snapshot_public_base_url, snapshot_provider) = snapshot_settings(optional_var)?;
 
         Ok(Self {
             database_url,
@@ -247,6 +240,26 @@ fn optional_var(name: &str) -> Option<String> {
         .ok()
         .map(|s| s.trim().to_owned())
         .filter(|s| !s.is_empty())
+}
+
+/// The snapshot back-up settings: the public base URL, and who hosts what it
+/// serves.
+///
+/// Reads through `lookup` rather than the process environment, so a test names
+/// the variables it sets without mutating a process-global — which Rust makes
+/// `unsafe`, and which every test that did it had to serialise around.
+fn snapshot_settings(
+    lookup: impl Fn(&str) -> Option<String>,
+) -> Result<(Option<String>, Option<ServiceProviderRef>)> {
+    let public_base_url = lookup("SNAPSHOT_PUBLIC_BASE_URL");
+    let provider = snapshot_provider(
+        public_base_url.as_deref(),
+        lookup("SNAPSHOT_PROVIDER_NAME"),
+        lookup("SNAPSHOT_PROVIDER_SCHEME"),
+        lookup("SNAPSHOT_PROVIDER_VALUE"),
+        lookup("SNAPSHOT_PROVIDER_COUNTRY"),
+    )?;
+    Ok((public_base_url, provider))
 }
 
 /// The party hosting the back-up behind `SNAPSHOT_PUBLIC_BASE_URL`.
@@ -617,7 +630,7 @@ mod bootstrap_credentials {
 #[cfg(test)]
 mod snapshot_provider_rules {
     //! Pure, like the guard above, so none of these touches the environment.
-    use super::{ServiceProviderRef, snapshot_provider};
+    use super::{ServiceProviderRef, snapshot_provider, snapshot_settings};
 
     const URL: Option<&str> = Some("https://backup.example.com/dpp");
 
@@ -648,18 +661,21 @@ mod snapshot_provider_rules {
     #[test]
     fn a_provider_without_a_link_is_accepted() {
         assert_eq!(
-            snapshot_provider(None, s("Backup Host B.V."), None, None, None).unwrap(),
-            Some(ServiceProviderRef::named("Backup Host B.V."))
+            snapshot_provider(None, s("Example Backup Provider"), None, None, None).unwrap(),
+            Some(ServiceProviderRef::named("Example Backup Provider"))
         );
     }
 
     /// Only the name is required. No scheme is invented for the provider.
     #[test]
     fn a_name_alone_is_enough() {
-        let provider = snapshot_provider(URL, s("Backup Host B.V."), None, None, None)
+        let provider = snapshot_provider(URL, s("Example Backup Provider"), None, None, None)
             .unwrap()
             .expect("a provider");
-        assert_eq!(provider, ServiceProviderRef::named("Backup Host B.V."));
+        assert_eq!(
+            provider,
+            ServiceProviderRef::named("Example Backup Provider")
+        );
         assert_eq!((provider.scheme, provider.value), (None, None));
     }
 
@@ -667,29 +683,38 @@ mod snapshot_provider_rules {
     fn every_stated_field_is_carried() {
         let provider = snapshot_provider(
             URL,
-            s("Backup Host B.V."),
+            s("Example Backup Provider"),
             s("vat"),
-            s("NL853371178B01"),
-            s("NL"),
+            s("DE811234567"),
+            s("DE"),
         )
         .unwrap()
         .expect("a provider");
         assert_eq!(provider.scheme.as_deref(), Some("vat"));
-        assert_eq!(provider.value.as_deref(), Some("NL853371178B01"));
-        assert_eq!(provider.country.as_deref(), Some("NL"));
+        assert_eq!(provider.value.as_deref(), Some("DE811234567"));
+        assert_eq!(provider.country.as_deref(), Some("DE"));
     }
 
     /// Settled with the registry's own rules, so a half pair or a malformed
     /// country fails here and not on the first registration.
     #[test]
     fn a_scheme_without_its_value_is_refused() {
-        assert!(snapshot_provider(URL, s("Backup Host B.V."), s("vat"), None, None).is_err());
+        assert!(
+            snapshot_provider(URL, s("Example Backup Provider"), s("vat"), None, None).is_err()
+        );
     }
 
     #[test]
     fn a_country_that_is_not_alpha_2_is_refused() {
         assert!(
-            snapshot_provider(URL, s("Backup Host B.V."), None, None, s("Netherlands")).is_err()
+            snapshot_provider(
+                URL,
+                s("Example Backup Provider"),
+                None,
+                None,
+                s("Netherlands")
+            )
+            .is_err()
         );
     }
 
@@ -697,10 +722,66 @@ mod snapshot_provider_rules {
     /// silently ignoring them would hide a mistyped `SNAPSHOT_PROVIDER_NAME`.
     #[test]
     fn details_without_a_name_are_refused() {
-        let err = snapshot_provider(None, None, s("vat"), s("NL853371178B01"), None)
+        let err = snapshot_provider(None, None, s("vat"), s("DE811234567"), None)
             .expect_err("details with no name must not boot")
             .to_string();
         assert!(err.contains("SNAPSHOT_PROVIDER_NAME"), "{err}");
+    }
+
+    // ── the variables, by name ───────────────────────────────────────────────
+    //
+    // The rules above take values. These pin which *variables* feed them, which
+    // is what the operator actually types and what a typo would silently break.
+
+    /// A stand-in environment: a lookup over a fixed list of pairs.
+    fn env<'a>(pairs: &'a [(&'a str, &'a str)]) -> impl Fn(&str) -> Option<String> + 'a {
+        move |name| {
+            pairs
+                .iter()
+                .find(|(key, _)| *key == name)
+                .map(|(_, value)| (*value).to_owned())
+        }
+    }
+
+    /// The boot refusal, by the variables an operator sets: a node that serves
+    /// its snapshots and names nobody hosting them must not start.
+    #[test]
+    fn a_snapshot_url_without_a_provider_name_does_not_boot() {
+        let err = snapshot_settings(env(&[(
+            "SNAPSHOT_PUBLIC_BASE_URL",
+            "https://backup.example.com/dpp",
+        )]))
+        .expect_err("a link with no provider must not boot")
+        .to_string();
+        assert!(err.contains("SNAPSHOT_PROVIDER_NAME"), "{err}");
+    }
+
+    #[test]
+    fn each_variable_feeds_its_own_field() {
+        let (url, provider) = snapshot_settings(env(&[
+            ("SNAPSHOT_PUBLIC_BASE_URL", "https://backup.example.com/dpp"),
+            ("SNAPSHOT_PROVIDER_NAME", "Example Backup Provider"),
+            ("SNAPSHOT_PROVIDER_SCHEME", "vat"),
+            ("SNAPSHOT_PROVIDER_VALUE", "DE811234567"),
+            ("SNAPSHOT_PROVIDER_COUNTRY", "DE"),
+        ]))
+        .expect("settings load");
+
+        assert_eq!(url.as_deref(), Some("https://backup.example.com/dpp"));
+        assert_eq!(
+            provider,
+            Some(ServiceProviderRef {
+                name: "Example Backup Provider".into(),
+                scheme: Some("vat".into()),
+                value: Some("DE811234567".into()),
+                country: Some("DE".into()),
+            })
+        );
+    }
+
+    #[test]
+    fn no_variables_is_no_back_up_declared() {
+        assert_eq!(snapshot_settings(env(&[])).unwrap(), (None, None));
     }
 }
 
@@ -759,36 +840,6 @@ mod tests {
         ] {
             unsafe { std::env::remove_var(key) };
         }
-    }
-
-    /// The boot refusal, through the real loader: a node that serves its
-    /// snapshots and names nobody hosting them must not start.
-    #[test]
-    #[serial]
-    fn a_snapshot_url_without_a_provider_does_not_boot() {
-        set_required_env();
-        unsafe { std::env::set_var("SNAPSHOT_PUBLIC_BASE_URL", "https://backup.example.com/dpp") };
-        let err = NodeConfig::from_env().expect_err("must refuse");
-        clear_env();
-        assert!(err.to_string().contains("SNAPSHOT_PROVIDER_NAME"), "{err}");
-    }
-
-    #[test]
-    #[serial]
-    fn a_snapshot_url_with_its_provider_boots_carrying_both() {
-        set_required_env();
-        unsafe { std::env::set_var("SNAPSHOT_PUBLIC_BASE_URL", "https://backup.example.com/dpp") };
-        unsafe { std::env::set_var("SNAPSHOT_PROVIDER_NAME", "Backup Host B.V.") };
-        let cfg = NodeConfig::from_env().expect("loads");
-        clear_env();
-        assert_eq!(
-            cfg.snapshot_public_base_url.as_deref(),
-            Some("https://backup.example.com/dpp")
-        );
-        assert_eq!(
-            cfg.snapshot_provider,
-            Some(ServiceProviderRef::named("Backup Host B.V."))
-        );
     }
 
     #[test]
