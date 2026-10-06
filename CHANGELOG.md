@@ -363,6 +363,23 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   both halves: `sandbox` emitted and undocumented, `staging` documented and
   never emitted.
 
+- **`wasmtime` and `wasmtime-wasi` 48.0.3 → 48.0.4**, clearing RUSTSEC-2026-0321
+  to RUSTSEC-2026-0327. All seven concern the sandbox sector plugins run inside:
+  the WASI preview 0 `poll_oneoff` circumvents fuel consumption (-0321), a guest
+  with no stdio makes the host allocate excess memory (-0322), `fd_readdir`
+  copies uninitialised struct padding into guest memory (-0323), a pre-epoch
+  filesystem timestamp panics the host on wasip3 (-0324), and three
+  memory-corruption faults in `wasmtime` itself — mis-typed tag imports (-0325),
+  missing GC rooting across `try_call` (-0326), and an unvalidated
+  async-lifted callback result count (-0327). Which of them a plugin can reach
+  here has not been established, and the sandbox is what they are about, so the
+  bump is not left waiting on that. The existing `wasmtime = "48"` requirement
+  already permitted the patch, so no manifest changed.
+
+  Recorded here because the security audit was already failing on `main` and the
+  registry-contract change could not pass it otherwise. It is its own commit,
+  and the only lockfile change in that branch.
+
 ## [0.14.0] - 2026-09-24
 
 ### Breaking
