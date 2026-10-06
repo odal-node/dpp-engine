@@ -275,6 +275,9 @@ async fn main() -> anyhow::Result<()> {
     if let Some(base) = cfg.snapshot_public_base_url.clone() {
         passport_service = passport_service.with_snapshot_public_base_url(base);
     }
+    if let Some(provider) = cfg.snapshot_provider.clone() {
+        passport_service = passport_service.with_service_provider(provider);
+    }
     // Only arm the reconcile outbox when there is somewhere to reconcile *to*.
     // Enqueuing rows no drain will ever consume would grow an unbounded backlog
     // of `pending` and make the gauge lie about the tier's health.

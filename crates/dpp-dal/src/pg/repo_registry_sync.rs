@@ -152,10 +152,14 @@ impl RegistrySyncOutbox for PgRegistrySyncRepo {
         // does not run hot against the registry. `attempts` deliberately keeps
         // counting: a submission that never resolves is exactly the kind of
         // stall a human needs to see.
+        //
+        // An empty id is the registry having returned none — a replayed
+        // submission is acknowledged without one — so the column keeps what it
+        // held (NULL, the first time) rather than recording `''` as an id.
         let res = sqlx::query(
             r#"UPDATE odal.registry_sync SET
                  status = 'submitted',
-                 registry_id = $2,
+                 registry_id = COALESCE(NULLIF($2, ''), registry_id),
                  submitted_at = COALESCE(submitted_at, now()),
                  attempts = attempts + 1,
                  last_attempt_at = now(),

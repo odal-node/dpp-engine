@@ -169,6 +169,8 @@ enum Outcome {
     Rejected,
     /// Accepted for asynchronous validation — the registry's normal first answer.
     Pending,
+    /// A replayed submission: the registry holds it and returned no id for it.
+    Held,
     /// Withdrawn from service.
     Deactivated,
 }
@@ -229,6 +231,7 @@ fn answer(outcome: Outcome) -> Result<RegistryRecord, DppError> {
         Outcome::Transient => Err(DppError::Internal("EU registry transient failure".into())),
         Outcome::Rejected => Ok(record(RegistryStatus::Rejected, "")),
         Outcome::Pending => Ok(record(RegistryStatus::Pending, "EU-REG-TEST-0001")),
+        Outcome::Held => Ok(record(RegistryStatus::Pending, "")),
         Outcome::Deactivated => Ok(record(RegistryStatus::Deactivated, "EU-REG-TEST-0001")),
     }
 }
@@ -670,6 +673,31 @@ async fn an_accepted_submission_is_not_yet_a_registration() {
         row.registry_id.as_deref(),
         Some("EU-REG-TEST-0001"),
         "the registry's record id is kept so the verdict can be polled for"
+    );
+}
+
+/// A replayed idempotency key is answered without an id: the registry holds the
+/// submission and says nothing more about it. The row must still move to
+/// `submitted` — that is what stops the drain posting it again — but it must not
+/// record an empty string as the registry's id, which the status route would
+/// then report as one.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_submission_the_registry_already_holds_is_submitted_without_an_id() {
+    let _c = start_pg().await;
+    let dal = _c.dal.clone();
+    let outbox: Arc<dyn RegistrySyncOutbox> = Arc::new(PgRegistrySyncRepo::new(dal.clone()));
+    let id = create_and_publish(&dal, &outbox).await;
+
+    let (port, calls) = mock(Outcome::Held);
+    let stats = drain_once(&outbox, &port, None, 10).await;
+
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    assert_eq!(stats.submitted, 1);
+    let row = outbox.pending_for(id).await.unwrap().unwrap();
+    assert_eq!(row.status, RegistrySyncStatus::Submitted);
+    assert_eq!(
+        row.registry_id, None,
+        "no id was returned, so none may be recorded"
     );
 }
 

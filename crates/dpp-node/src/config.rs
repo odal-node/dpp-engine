@@ -1,6 +1,7 @@
 //! Unified runtime configuration for the `dpp-node` single binary.
 
 use anyhow::{Context, Result};
+use dpp_domain::ports::registry_sync::ServiceProviderRef;
 
 /// Unified runtime config for the `dpp-node` single binary.
 ///
@@ -90,6 +91,13 @@ pub struct NodeConfig {
     /// separate, explicit statement that they *are* served — and no back-up is
     /// declared until an operator makes it.
     pub snapshot_public_base_url: Option<String>,
+    /// Who hosts that back-up — ESPR Annex III point (l), declared to the EU
+    /// registry beside the link.
+    ///
+    /// Always `Some` when `snapshot_public_base_url` is: the registry refuses a
+    /// link that names no provider, so [`snapshot_provider`] refuses to boot
+    /// without one rather than letting every registration fail later.
+    pub snapshot_provider: Option<ServiceProviderRef>,
 }
 
 impl std::fmt::Debug for NodeConfig {
@@ -175,6 +183,14 @@ impl NodeConfig {
             &key_store_passphrase,
             allow_dev_credentials,
         )?;
+        let snapshot_public_base_url = optional_var("SNAPSHOT_PUBLIC_BASE_URL");
+        let snapshot_provider = snapshot_provider(
+            snapshot_public_base_url.as_deref(),
+            optional_var("SNAPSHOT_PROVIDER_NAME"),
+            optional_var("SNAPSHOT_PROVIDER_SCHEME"),
+            optional_var("SNAPSHOT_PROVIDER_VALUE"),
+            optional_var("SNAPSHOT_PROVIDER_COUNTRY"),
+        )?;
 
         Ok(Self {
             database_url,
@@ -214,16 +230,87 @@ impl NodeConfig {
                 .map(|s| matches!(s.trim().to_ascii_lowercase().as_str(), "1" | "true" | "yes"))
                 .unwrap_or(false),
             resolver_base_url,
-            snapshot_public_base_url: std::env::var("SNAPSHOT_PUBLIC_BASE_URL")
-                .ok()
-                .map(|s| s.trim().to_owned())
-                .filter(|s| !s.is_empty()),
+            snapshot_public_base_url,
+            snapshot_provider,
         })
     }
 }
 
 fn var(name: &str) -> Result<String> {
     std::env::var(name).with_context(|| format!("missing required env var: {name}"))
+}
+
+/// An optional variable, trimmed — a blank one reads as unset, which is what
+/// `FOO=` in a copied `.env.example` means.
+fn optional_var(name: &str) -> Option<String> {
+    std::env::var(name)
+        .ok()
+        .map(|s| s.trim().to_owned())
+        .filter(|s| !s.is_empty())
+}
+
+/// The party hosting the back-up behind `SNAPSHOT_PUBLIC_BASE_URL`.
+///
+/// A pure function of what was read, so it needs no environment in a test.
+///
+/// The registry refuses a back-up link that names no digital product passport
+/// service provider — ESPR Art. 10(4) makes the copy available *through* one —
+/// and the refusal is not at boot but at registration: every registration of a
+/// node that set the link and not the provider is refused and retried for as
+/// long as the node runs, which reads as a registry outage. So the pair is
+/// settled here, once, where the operator is looking.
+///
+/// A provider with no link is accepted: naming one is never wrong.
+///
+/// Only the name is required — Annex III(l) mandates no identifier scheme, and
+/// inventing a default would be a claim about who the provider is. The
+/// optional scheme, value and country are checked with the registry's own rules
+/// so a pair missing half, or a country that is not ISO 3166-1 alpha-2, fails
+/// here too.
+///
+/// # Errors
+/// A message naming the variables involved and how to fix them.
+fn snapshot_provider(
+    public_base_url: Option<&str>,
+    name: Option<String>,
+    scheme: Option<String>,
+    value: Option<String>,
+    country: Option<String>,
+) -> Result<Option<ServiceProviderRef>> {
+    let Some(name) = name else {
+        if public_base_url.is_some() {
+            anyhow::bail!(
+                "SNAPSHOT_PUBLIC_BASE_URL is set but SNAPSHOT_PROVIDER_NAME is not — refusing \
+                 to boot. The EU registry refuses a back-up link that names no digital product \
+                 passport service provider (ESPR Art. 10(4)), so every registration would be \
+                 refused. Set SNAPSHOT_PROVIDER_NAME to the legal name of whoever hosts the \
+                 back-up, or unset SNAPSHOT_PUBLIC_BASE_URL to declare no back-up link."
+            );
+        }
+        if scheme.is_some() || value.is_some() || country.is_some() {
+            anyhow::bail!(
+                "SNAPSHOT_PROVIDER_SCHEME, SNAPSHOT_PROVIDER_VALUE or SNAPSHOT_PROVIDER_COUNTRY \
+                 is set without SNAPSHOT_PROVIDER_NAME — refusing to boot. They describe the \
+                 provider the name identifies; alone they identify nobody."
+            );
+        }
+        return Ok(None);
+    };
+    let provider = ServiceProviderRef {
+        name,
+        scheme,
+        value,
+        country,
+    };
+    crate::infra::registry::service_provider_reference(&provider)
+        .validate()
+        .map_err(|e| {
+            anyhow::anyhow!(
+                "SNAPSHOT_PROVIDER_NAME / _SCHEME / _VALUE / _COUNTRY do not describe a service \
+                 provider the registry would accept: {e}"
+            )
+        })?;
+    Ok(Some(provider))
 }
 
 /// Credential values that shipped as live assignments in `.env.example`, so a
@@ -528,6 +615,96 @@ mod bootstrap_credentials {
 }
 
 #[cfg(test)]
+mod snapshot_provider_rules {
+    //! Pure, like the guard above, so none of these touches the environment.
+    use super::{ServiceProviderRef, snapshot_provider};
+
+    const URL: Option<&str> = Some("https://backup.example.com/dpp");
+
+    fn s(v: &str) -> Option<String> {
+        Some(v.to_owned())
+    }
+
+    /// The failure this exists to move: a link with nobody named beside it is
+    /// refused by the registry on every registration, which reads as an outage.
+    #[test]
+    fn a_link_with_no_provider_is_refused_naming_both_variables() {
+        let err = snapshot_provider(URL, None, None, None, None)
+            .expect_err("a link with no provider must not boot")
+            .to_string();
+        assert!(err.contains("SNAPSHOT_PUBLIC_BASE_URL"), "{err}");
+        assert!(err.contains("SNAPSHOT_PROVIDER_NAME"), "{err}");
+    }
+
+    #[test]
+    fn nothing_configured_is_nothing_declared() {
+        assert_eq!(
+            snapshot_provider(None, None, None, None, None).unwrap(),
+            None
+        );
+    }
+
+    /// Naming a provider is never wrong, so a provider needs no link.
+    #[test]
+    fn a_provider_without_a_link_is_accepted() {
+        assert_eq!(
+            snapshot_provider(None, s("Backup Host B.V."), None, None, None).unwrap(),
+            Some(ServiceProviderRef::named("Backup Host B.V."))
+        );
+    }
+
+    /// Only the name is required. No scheme is invented for the provider.
+    #[test]
+    fn a_name_alone_is_enough() {
+        let provider = snapshot_provider(URL, s("Backup Host B.V."), None, None, None)
+            .unwrap()
+            .expect("a provider");
+        assert_eq!(provider, ServiceProviderRef::named("Backup Host B.V."));
+        assert_eq!((provider.scheme, provider.value), (None, None));
+    }
+
+    #[test]
+    fn every_stated_field_is_carried() {
+        let provider = snapshot_provider(
+            URL,
+            s("Backup Host B.V."),
+            s("vat"),
+            s("NL853371178B01"),
+            s("NL"),
+        )
+        .unwrap()
+        .expect("a provider");
+        assert_eq!(provider.scheme.as_deref(), Some("vat"));
+        assert_eq!(provider.value.as_deref(), Some("NL853371178B01"));
+        assert_eq!(provider.country.as_deref(), Some("NL"));
+    }
+
+    /// Settled with the registry's own rules, so a half pair or a malformed
+    /// country fails here and not on the first registration.
+    #[test]
+    fn a_scheme_without_its_value_is_refused() {
+        assert!(snapshot_provider(URL, s("Backup Host B.V."), s("vat"), None, None).is_err());
+    }
+
+    #[test]
+    fn a_country_that_is_not_alpha_2_is_refused() {
+        assert!(
+            snapshot_provider(URL, s("Backup Host B.V."), None, None, s("Netherlands")).is_err()
+        );
+    }
+
+    /// Fields that describe a provider nobody named identify nobody, and
+    /// silently ignoring them would hide a mistyped `SNAPSHOT_PROVIDER_NAME`.
+    #[test]
+    fn details_without_a_name_are_refused() {
+        let err = snapshot_provider(None, None, s("vat"), s("NL853371178B01"), None)
+            .expect_err("details with no name must not boot")
+            .to_string();
+        assert!(err.contains("SNAPSHOT_PROVIDER_NAME"), "{err}");
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use serial_test::serial;
@@ -574,9 +751,44 @@ mod tests {
             "METRICS_ADDR",
             "WEBHOOK_ALLOW_PRIVATE_TARGETS",
             "RESOLVER_BASE_URL",
+            "SNAPSHOT_PUBLIC_BASE_URL",
+            "SNAPSHOT_PROVIDER_NAME",
+            "SNAPSHOT_PROVIDER_SCHEME",
+            "SNAPSHOT_PROVIDER_VALUE",
+            "SNAPSHOT_PROVIDER_COUNTRY",
         ] {
             unsafe { std::env::remove_var(key) };
         }
+    }
+
+    /// The boot refusal, through the real loader: a node that serves its
+    /// snapshots and names nobody hosting them must not start.
+    #[test]
+    #[serial]
+    fn a_snapshot_url_without_a_provider_does_not_boot() {
+        set_required_env();
+        unsafe { std::env::set_var("SNAPSHOT_PUBLIC_BASE_URL", "https://backup.example.com/dpp") };
+        let err = NodeConfig::from_env().expect_err("must refuse");
+        clear_env();
+        assert!(err.to_string().contains("SNAPSHOT_PROVIDER_NAME"), "{err}");
+    }
+
+    #[test]
+    #[serial]
+    fn a_snapshot_url_with_its_provider_boots_carrying_both() {
+        set_required_env();
+        unsafe { std::env::set_var("SNAPSHOT_PUBLIC_BASE_URL", "https://backup.example.com/dpp") };
+        unsafe { std::env::set_var("SNAPSHOT_PROVIDER_NAME", "Backup Host B.V.") };
+        let cfg = NodeConfig::from_env().expect("loads");
+        clear_env();
+        assert_eq!(
+            cfg.snapshot_public_base_url.as_deref(),
+            Some("https://backup.example.com/dpp")
+        );
+        assert_eq!(
+            cfg.snapshot_provider,
+            Some(ServiceProviderRef::named("Backup Host B.V."))
+        );
     }
 
     #[test]

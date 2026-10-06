@@ -182,6 +182,15 @@ pub struct PassportService {
     /// snapshots to object storage is not the same as publishing them, and a
     /// URL the registry cannot fetch is worse than none.
     pub snapshot_public_base_url: Option<String>,
+    /// Who hosts that back-up — ESPR Annex III point (l), declared to the EU
+    /// registry beside the back-up URL.
+    ///
+    /// The registry refuses a declared back-up link with no provider named
+    /// (Art. 10(4): the copy is made available *through* one), so a node that
+    /// sets [`snapshot_public_base_url`](Self::snapshot_public_base_url) must set
+    /// this too. The binary enforces that at boot; this type does not, so a
+    /// service built without it queues registrations the adapter will refuse.
+    pub service_provider: Option<dpp_domain::ports::registry_sync::ServiceProviderRef>,
     /// Base URL the resolver serves on, used to build each passport's carrier
     /// (QR) URL at publish. A constructor argument with no default: it is
     /// signed into every carrier, so a fallback here would be a guess about
@@ -226,6 +235,7 @@ impl PassportService {
             seal_outbox: None,
             seal_inspector: None,
             snapshot_public_base_url: None,
+            service_provider: None,
             resolver_base_url,
         }
     }
@@ -283,6 +293,17 @@ impl PassportService {
     #[must_use]
     pub fn with_snapshot_public_base_url(mut self, base_url: String) -> Self {
         self.snapshot_public_base_url = Some(base_url.trim_end_matches('/').to_owned());
+        self
+    }
+
+    /// Name the service provider hosting this deployment's back-up copy, so
+    /// registrations declare it beside the back-up link.
+    #[must_use]
+    pub fn with_service_provider(
+        mut self,
+        provider: dpp_domain::ports::registry_sync::ServiceProviderRef,
+    ) -> Self {
+        self.service_provider = Some(provider);
         self
     }
 
