@@ -12,6 +12,12 @@
 //! was printed for. The GTIN alone cannot: one GTIN has a passport per batch or
 //! per unit once a product is recorded at that level, so dropping the qualifier
 //! would turn every such label into a `404`.
+//!
+//! A qualifier with no passport of its own resolves, in the vault, to the level
+//! above it, as a GS1 resolver answers a granular identifier (GS1-CRSV1, 2.5.9
+//! and 2.5.10). So a `404` here means nothing is on record at any level the label
+//! names, and a GTIN that cannot be one is a `400`: the standard keeps those two
+//! apart (2.4.1) and so does this route.
 
 use axum::{
     extract::{Path, Query, State},
@@ -119,15 +125,24 @@ const NO_DPP_FOR_GTIN: &str = "No published DPP resolves for this GTIN.";
 /// the person holding the product is precisely who must not be told "bad label".
 const DPP_WITHDRAWN: &str = "The DPP for this GTIN has been withdrawn.";
 
+/// What the GS1 route says when the GTIN itself cannot be one.
+///
+/// Kept apart from [`NO_DPP_FOR_GTIN`]: the GS1 resolver standard answers a
+/// request that fails its validity tests with `400` and a valid one it knows
+/// nothing about with `404` (2.4.1), and the person scanning needs to know which
+/// of the two it was.
+const INVALID_GTIN: &str = "The GTIN in the request is not valid.";
+
 /// The detail to serve alongside `status`.
 ///
-/// A `410` from the vault is a recall and has its own sentence; everything else
-/// this route turns into a client error is the not-found case.
+/// A `410` from the vault is a recall and has its own sentence, a `400` is a
+/// GTIN that cannot be one; everything else this route turns into a client
+/// error is the not-found case.
 fn detail_for(status: StatusCode) -> &'static str {
-    if status == StatusCode::GONE {
-        DPP_WITHDRAWN
-    } else {
-        NO_DPP_FOR_GTIN
+    match status {
+        StatusCode::GONE => DPP_WITHDRAWN,
+        StatusCode::BAD_REQUEST => INVALID_GTIN,
+        _ => NO_DPP_FOR_GTIN,
     }
 }
 
@@ -163,7 +178,7 @@ async fn resolve_gtin(
     // The batch and serial travel as query parameters, which `reqwest` encodes,
     // so they cannot reach the path.
     if !crate::domain::is_valid_gtin(&gtin) {
-        return gtin_problem(StatusCode::NOT_FOUND, NO_DPP_FOR_GTIN);
+        return gtin_problem(StatusCode::BAD_REQUEST, INVALID_GTIN);
     }
 
     let passport = match fetch_by_gtin(&state, &gtin, &label).await {
@@ -370,6 +385,13 @@ async fn fetch_by_gtin(state: &AppState, gtin: &str, label: &Label) -> Result<Va
     // about our infrastructure, addressed to someone holding the product.
     if resp.status() == reqwest::StatusCode::GONE {
         return Err(StatusCode::GONE);
+    }
+    // The vault checks what this edge cannot: the GTIN's check digit. Its `422`
+    // is the caller's malformed request, so it is a `400` here. Left to the
+    // catch-all below it became a `502`, a fault in this node's infrastructure
+    // reported to someone who had only mistyped a code.
+    if resp.status() == reqwest::StatusCode::UNPROCESSABLE_ENTITY {
+        return Err(StatusCode::BAD_REQUEST);
     }
     if matches!(
         resp.status(),

@@ -192,10 +192,19 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   The resolver now forwards them to `GET /vault/public/dpp/by-gtin/{gtin}` as
   `batch` and `serial`, and the vault resolves the passport the label names: by
   its carrier serial when a serial is present, whatever its level; by its lot at
-  batch level; otherwise the model-level passport. Migration
+  batch level; otherwise the model-level passport. A serial or lot with no
+  passport of its own resolves to the level above it, ending at the model, as a
+  GS1 resolver answers a granular identifier, so a unit whose serial the
+  manufacturer's own system stamped still reaches the passport of its model.
+  `404` now means nothing is on record at any level the label names, and a
+  recalled unit is still `410`, never its model's passport. Each inherited
+  answer is counted in `label_inherited_total{requested,resolved}`, the only
+  trace a forged or mistyped serial leaves. Migration
   `0042_passport_identifier_index.sql` indexes the identifier and the carrier
-  serial, so none of these is a table scan. A malformed GTIN answers `422`, as
-  the route's description already said.
+  serial, so none of these is a table scan. A malformed GTIN answers `422` from
+  the vault, as the route's description already said, and `400` from the
+  resolver, which keeps it apart from a valid GTIN it knows nothing about
+  (`404`). A check digit the vault refused used to surface there as a `502`.
 
   **A label keeps working after an amendment.** The successor carries its
   predecessor's carrier serial, so the object's label names both records and

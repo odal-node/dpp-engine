@@ -2680,10 +2680,20 @@ paths:
         does not name one:
 
         - `serial` (AI 21) names the passport whose carrier serial it is, at any
-          level. `batch` is not consulted once a serial is given.
+          level. `batch` is consulted only if the serial finds nothing.
         - `batch` (AI 10) alone names the batch-level passport for that lot.
         - Neither names the model-level passport, or a passport with no batch and
           no serial.
+
+        **A level with no passport answers with the one above it.** An unknown
+        serial resolves to the batch-level passport for the label's `batch`, if it
+        carries one and one exists, and otherwise to the model-level passport; an
+        unknown batch resolves to the model-level passport. That is how a GS1
+        resolver answers a granular identifier, and it keeps a unit whose serial
+        was stamped by the manufacturer's own system, and never attributed here,
+        reaching the passport of its model. `404` means nothing is on record at any
+        level the label names. A level that does have a passport always answers: a
+        suspended unit is `410`, never its model's passport.
 
         A label keeps working after its passport is amended: the successor is
         served, not the superseded record.
@@ -3651,6 +3661,8 @@ paths:
                 type: object
         '307':
           description: Redirect to the DPP page (`Location` header).
+        '400':
+          description: 'The GTIN in the path is not valid: not digits, the wrong length, or a wrong check digit.'
         '404':
           description: No published DPP for this GTIN, or unknown link type.
         '409':
@@ -3670,8 +3682,10 @@ paths:
         whose level is not stated. **The serial is the resolution key**: it is the
         passport's carrier serial, and it names one passport whatever its level.
         An amended passport's successor carries its predecessor's serial, so the
-        label keeps resolving, to the current record. Same behaviour as
-        `/01/{gtin}` otherwise (`linkType` / `Accept` negotiation).
+        label keeps resolving, to the current record. A serial with no passport of
+        its own resolves to the model-level passport, as a GS1 resolver answers a
+        granular identifier; `404` means nothing is on record at any level. Same
+        behaviour as `/01/{gtin}` otherwise (`linkType` / `Accept` negotiation).
       tags:
         - Public Resolver
       security: []
@@ -3703,8 +3717,10 @@ paths:
                 type: object
         '307':
           description: Redirect to the DPP page (`Location` header).
+        '400':
+          description: 'The GTIN in the path is not valid: not digits, the wrong length, or a wrong check digit.'
         '404':
-          description: No published DPP for this GTIN, or unknown link type.
+          description: No published DPP at any level the label names, or unknown link type.
         '409':
           $ref: '#/components/responses/PassportSignatureUnverified'
         '410':
@@ -3721,8 +3737,10 @@ paths:
         The carrier this node prints for a batch-level passport. **The batch is a
         resolution key**: it resolves to the batch-level passport for that lot,
         which the GTIN alone cannot name once a product has a passport per batch.
-        Same behaviour as `/01/{gtin}` otherwise (`linkType` / `Accept`
-        negotiation).
+        A lot with no passport of its own resolves to the model-level passport, as
+        a GS1 resolver answers a granular identifier; `404` means nothing is on
+        record at any level. Same behaviour as `/01/{gtin}` otherwise (`linkType` /
+        `Accept` negotiation).
       tags:
         - Public Resolver
       security: []
@@ -3754,8 +3772,10 @@ paths:
                 type: object
         '307':
           description: Redirect to the DPP page (`Location` header).
+        '400':
+          description: 'The GTIN in the path is not valid: not digits, the wrong length, or a wrong check digit.'
         '404':
-          description: No published DPP for this GTIN, or unknown link type.
+          description: No published DPP at any level the label names, or unknown link type.
         '409':
           $ref: '#/components/responses/PassportSignatureUnverified'
         '410':
@@ -3772,8 +3792,11 @@ paths:
         The shape this node printed for a batched passport before its carrier
         followed the passport's stated level, and one any conformant label may
         carry. **The serial is the resolution key**: it names one passport
-        whatever its level, so the batch is not consulted. Same behaviour as
-        `/01/{gtin}` otherwise (`linkType` / `Accept` negotiation).
+        whatever its level, so the batch is consulted only if the serial finds
+        nothing. Then the lot's passport answers, and failing that the model's, as
+        a GS1 resolver answers a granular identifier; `404` means nothing is on
+        record at any level. Same behaviour as `/01/{gtin}` otherwise (`linkType` /
+        `Accept` negotiation).
       tags:
         - Public Resolver
       security: []
@@ -3789,7 +3812,7 @@ paths:
           required: true
           schema:
             type: string
-          description: AI 10. Not consulted once a serial is present.
+          description: AI 10. Consulted only if the serial finds nothing.
         - name: serial
           in: path
           required: true
@@ -3811,8 +3834,10 @@ paths:
                 type: object
         '307':
           description: Redirect to the DPP page (`Location` header).
+        '400':
+          description: 'The GTIN in the path is not valid: not digits, the wrong length, or a wrong check digit.'
         '404':
-          description: No published DPP for this GTIN, or unknown link type.
+          description: No published DPP at any level the label names, or unknown link type.
         '409':
           $ref: '#/components/responses/PassportSignatureUnverified'
         '410':
@@ -4145,7 +4170,7 @@ components:
             - 'null'
           description: |-
             The serial of the physical unit this passport covers, as the manufacturer stamps or records it. Meaningful where `granularity` is `item` — "one passport per physical unit".
-            **Not the serial in the resolver URL.** A GS1 Digital Link carrier is `/01/{gtin}/21/{serial}` and AI 21 is a serial number, but the value there is derived from this passport's own UUID to fit GS1's length cap. That value identifies the *record*; this identifies the *product*, and nothing reconciles the two.
+            **Not the serial in the resolver URL.** A GS1 Digital Link carrier is `/01/{gtin}/21/{serial}` and AI 21 is a serial number, but the value there is `carrierSerial`: the one the operator attributed, or else a default derived from this passport's own id. A printed label resolves by that value, not by this field. This field identifies the *product* as the manufacturer records it; `carrierSerial` identifies what the *label* names.
             Absent means not stated — and today it is always absent: no route accepts one until an adopted delegated act makes a passport cover a single unit.
           example: NW-48V-000123
         productName:

@@ -5,8 +5,10 @@ get:
     The carrier this node prints for a batch-level passport. **The batch is a
     resolution key**: it resolves to the batch-level passport for that lot,
     which the GTIN alone cannot name once a product has a passport per batch.
-    Same behaviour as `/01/{gtin}` otherwise (`linkType` / `Accept`
-    negotiation).
+    A lot with no passport of its own resolves to the model-level passport, as
+    a GS1 resolver answers a granular identifier; `404` means nothing is on
+    record at any level. Same behaviour as `/01/{gtin}` otherwise (`linkType` /
+    `Accept` negotiation).
   tags:
     - Public Resolver
   security: []
@@ -38,8 +40,13 @@ get:
             type: object
     '307':
       description: Redirect to the DPP page (`Location` header).
+    '400':
+      description: >-
+        The GTIN in the path is not valid: not digits, the wrong length, or a
+        wrong check digit.
     '404':
-      description: No published DPP for this GTIN, or unknown link type.
+      description: >-
+        No published DPP at any level the label names, or unknown link type.
     '410':
       $ref: ../../components/responses/Gone.yaml
     '409':

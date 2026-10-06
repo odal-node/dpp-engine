@@ -944,6 +944,70 @@ async fn an_unknown_gtin_still_reports_not_found() {
     );
 }
 
+/// A GTIN that cannot be one is a bad request, not a missing product. The two
+/// are different answers, and the person scanning needs to know which: a typo in
+/// the code is theirs to retry, an unknown product is not.
+#[tokio::test]
+async fn a_malformed_gtin_is_a_bad_request_not_a_missing_product() {
+    // The vault would say `404` to anything. Getting `400` back therefore shows
+    // the resolver refused the value itself.
+    let vault = Router::new().route(
+        "/public/dpp/by-gtin/{gtin}",
+        get(|| async { StatusCode::NOT_FOUND }),
+    );
+    let port = start_mock_vault(vault).await;
+    let base = format!("http://127.0.0.1:{port}");
+
+    for uri in [
+        "/01/not-digits",
+        "/01/1234567",
+        "/01/123456789012345",
+        "/01/not-digits/21/SN-1",
+        "/01/not-digits/10/LOT-1",
+    ] {
+        let app = router::build(test_state(base.clone()));
+        let req = Request::builder().uri(uri).body(Body::empty()).unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST, "{uri}");
+
+        let body = axum::body::to_bytes(resp.into_body(), 64 * 1024)
+            .await
+            .expect("read body");
+        let problem: serde_json::Value = serde_json::from_slice(&body).expect("problem json");
+        assert_eq!(
+            problem["detail"], "The GTIN in the request is not valid.",
+            "{uri}: {problem}"
+        );
+    }
+}
+
+/// A GTIN of the right length with a wrong check digit passes the resolver's
+/// own shape test and is refused by the vault with `422`. That is still the
+/// caller's malformed request. Reported as a gateway error it read as a fault in
+/// this node's infrastructure, sent to the person holding the product.
+#[tokio::test]
+async fn a_gtin_the_vault_refuses_is_a_bad_request_not_a_bad_gateway() {
+    let vault = Router::new().route(
+        "/public/dpp/by-gtin/{gtin}",
+        get(|| async { StatusCode::UNPROCESSABLE_ENTITY }),
+    );
+    let port = start_mock_vault(vault).await;
+    let base = format!("http://127.0.0.1:{port}");
+
+    // Fourteen digits, so it clears the shape test; the last one is wrong.
+    for uri in [
+        "/01/09506000134353",
+        "/01/09506000134353/21/SN-1",
+        "/01/09506000134353/10/LOT-1",
+        "/01/09506000134353/10/LOT-1/21/SN-1",
+    ] {
+        let app = router::build(test_state(base.clone()));
+        let req = Request::builder().uri(uri).body(Body::empty()).unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST, "{uri}");
+    }
+}
+
 /// An upstream that is genuinely broken must still say so, rather than being
 /// swept into the withdrawal path by the change above.
 #[tokio::test]

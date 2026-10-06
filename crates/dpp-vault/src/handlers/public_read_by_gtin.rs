@@ -31,6 +31,10 @@ pub struct LabelQuery {
 /// [`PassportService::resolve_label`](crate::domain::service::PassportService::resolve_label)
 /// for which record each label shape resolves to.
 ///
+/// An unknown serial or lot answers with the passport of the level above it, so a
+/// `404` means nothing is on record at any level the label carries. The level a
+/// label was found at is counted by the service and is not part of the response.
+///
 /// # Why the lookup ignores status
 ///
 /// Looks up regardless of status and branches here, exactly as the by-id route
@@ -58,6 +62,7 @@ pub async fn public_read_by_gtin_handler(
         .service
         .resolve_label(gtin, label.batch.as_deref(), label.serial.as_deref())
         .await
+        .map(|found| found.map(|resolution| resolution.passport))
     {
         // Which states serve is `public_read`'s one rule, applied here too so the
         // two public routes cannot disagree about whether a passport exists.
