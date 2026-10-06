@@ -137,7 +137,31 @@ paths:
         '403':
           $ref: '#/components/responses/Forbidden'
         '409':
-          $ref: '#/components/responses/IdempotentRequestInFlight'
+          description: |
+            One of two conflicts, told apart by the problem document.
+
+            **An earlier attempt carrying this `Idempotency-Key` is still running.**
+            Returned instead of letting a duplicate execute alongside it. Retry
+            shortly with the same key and the same body; `Retry-After` carries the
+            suggested delay. A claim left behind by a process that died mid-request
+            is reclaimed automatically after 60 seconds, so this can never wedge a
+            key permanently.
+
+            **`carrierSerial` is already attributed to another passport under the
+            same GTIN.** `errors[0].field` is `/carrierSerial`. A label that names
+            two passports resolves to neither: choose another serial, or declare
+            this passport as the successor of the one that holds it with
+            `supersedesId`.
+          headers:
+            Retry-After:
+              description: Seconds to wait before retrying. Sent for the idempotency conflict only.
+              schema:
+                type: integer
+                minimum: 1
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
         '422':
           $ref: '#/components/responses/ValidationError'
   /vault/api/v1/dpp/validate:
@@ -156,8 +180,9 @@ paths:
         creatable but not yet clear the publish-time schema gate, and that gap is
         reported rather than hidden until publish is attempted.
 
-        A body that create **would reject** gets back the identical `422` create
-        would have returned, not a paraphrase of it. A body create would accept
+        A body that create **would reject** gets back the identical rejection create
+        would have returned, not a paraphrase of it: a `422`, or a `409` for a
+        `carrierSerial` another passport already holds. A body create would accept
         returns `200` with the two verdicts.
 
         **`productGroupDataValid` is not a publish verdict.** It reports one of publish's
@@ -198,6 +223,15 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
+        '409':
+          description: |
+            `carrierSerial` is already attributed to another passport under the same
+            GTIN. The identical `409` create would have returned. `errors[0].field`
+            is `/carrierSerial`.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
         '422':
           $ref: '#/components/responses/ValidationError'
   /vault/api/v1/dpps:
@@ -5298,6 +5332,35 @@ components:
             Only for a successor created independently. `POST /dpp/{dppId}/amend`
             mints its own successor and sets this field itself; it is not settable
             through that route and does not need to be.
+        carrierSerial:
+          type: string
+          minLength: 1
+          maxLength: 20
+          description: |
+            The serial the passport's GS1 data carrier prints in AI 21, attributed by
+            the operator. Omitted, the carrier prints a default derived from the
+            passport id. An operator that already serialises its units states that
+            serial here, so the printed label names the passport under the serial the
+            unit already carries. Art. 77(3) of Regulation (EU) 2023/1542 puts the
+            choice of this identifier on the economic operator.
+
+            One to twenty characters of GS1's CSET 82 set, which is how AI 21 is
+            defined: letters, digits and a few punctuation marks, but no space.
+            Refused with `422` otherwise, and refused on a passport that is not
+            identified by a GTIN, because only a GTIN has a GS1 carrier.
+
+            **Unique under its GTIN.** A label that names two passports resolves to
+            neither, so a serial another passport already holds is refused with `409`.
+            The passport named in `supersedesId` is the exception: a successor shares
+            its predecessor's serial, because one label names the whole amendment
+            chain.
+
+            Not the manufacturer's `serialNumber`, though an operator may state the
+            same value for both. Nothing copies one into the other.
+
+            **Create-time only.** It is protected from patching, and the carrier is
+            stamped at publish. An amendment carries it forward.
+          example: SN-2026-0001
     SuspendRequest:
       type: object
       description: |
@@ -8899,31 +8962,6 @@ components:
             title: Forbidden
             status: 403
             detail: This operation requires an admin-scoped credential.
-    IdempotentRequestInFlight:
-      description: |
-        An earlier attempt carrying this `Idempotency-Key` is still running.
-
-        Returned instead of letting a duplicate execute alongside it. Retry shortly
-        with the same key and the same body; `Retry-After` carries the suggested
-        delay.
-
-        A claim left behind by a process that died mid-request is reclaimed
-        automatically after 60 seconds, so this can never wedge a key permanently.
-      headers:
-        Retry-After:
-          description: Seconds to wait before retrying.
-          schema:
-            type: integer
-            minimum: 1
-      content:
-        application/problem+json:
-          schema:
-            $ref: '#/components/schemas/Problem'
-          example:
-            type: https://problems.odal-node.io/idempotent-request-in-flight
-            title: Idempotent Request In Flight
-            status: 409
-            detail: An earlier attempt with this `Idempotency-Key` is still running. Retry shortly; do not change the body.
     ValidationError:
       description: One or more fields failed validation.
       content:
@@ -8973,6 +9011,31 @@ components:
             title: Conflict
             status: 409
             detail: DPP is already published.
+    IdempotentRequestInFlight:
+      description: |
+        An earlier attempt carrying this `Idempotency-Key` is still running.
+
+        Returned instead of letting a duplicate execute alongside it. Retry shortly
+        with the same key and the same body; `Retry-After` carries the suggested
+        delay.
+
+        A claim left behind by a process that died mid-request is reclaimed
+        automatically after 60 seconds, so this can never wedge a key permanently.
+      headers:
+        Retry-After:
+          description: Seconds to wait before retrying.
+          schema:
+            type: integer
+            minimum: 1
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+          example:
+            type: https://problems.odal-node.io/idempotent-request-in-flight
+            title: Idempotent Request In Flight
+            status: 409
+            detail: An earlier attempt with this `Idempotency-Key` is still running. Retry shortly; do not change the body.
     Gone:
       description: |
         The passport exists but has been withdrawn from public view — it is suspended.

@@ -248,6 +248,39 @@ pub(super) fn optional_commodity_code(
     }
 }
 
+/// An optional carrier serial column: the serial the operator wants printed in
+/// AI 21 of the passport's GS1 carrier.
+///
+/// Validated here, by the rule the vault applies when it writes the passport,
+/// for the reason [`optional_commodity_code`] gives: only this check can say
+/// *which row*. The cell is trimmed first, because a spreadsheet cell commonly
+/// carries stray whitespace and the set GS1 admits has no space in it.
+///
+/// A blank cell attributes nothing, and the carrier prints the default derived
+/// from the passport id. Refused rather than dropped when malformed: dropping it
+/// would import a passport whose label is not the one the operator meant to
+/// print, which is indistinguishable from a blank.
+pub(super) fn optional_carrier_serial(
+    row: &HashMap<String, String>,
+    field: &str,
+    row_num: usize,
+    errors: &mut Vec<RowError>,
+) -> Option<String> {
+    let raw = get_field(row, field).filter(|v| !v.trim().is_empty())?;
+    let trimmed = raw.trim();
+    match dpp_types::carrier_serial_problem(trimmed) {
+        None => Some(trimmed.to_owned()),
+        Some(problem) => {
+            errors.push(RowError {
+                row: row_num,
+                field: field.to_owned(),
+                message: format!("Invalid carrier serial '{raw}': {problem}"),
+            });
+            None
+        }
+    }
+}
+
 /// An optional ISO-8601 (`YYYY-MM-DD`) date column.
 ///
 /// Rejects rather than ignores a malformed value. An unparseable date here is

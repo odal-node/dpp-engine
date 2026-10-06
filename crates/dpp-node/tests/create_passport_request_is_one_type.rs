@@ -46,6 +46,7 @@ fn the_importer_builds_the_very_type_the_vault_accepts() {
             commodity_code: None,
             derived_from: Vec::new(),
             component_refs: Vec::new(),
+            carrier_serial: None,
         };
 
     assert_eq!(vault_side(from_importer), "Shared shape");

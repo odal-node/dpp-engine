@@ -99,6 +99,31 @@ impl PassportService {
         resolve_label(&*self.repo, gtin, batch, serial).await
     }
 
+    /// Whether another passport already prints `serial` under `identifier`, so
+    /// that a new passport attributing it would make one label name two unrelated
+    /// records.
+    ///
+    /// `replaces` is the passport the new one declares it supersedes. A successor
+    /// carries its predecessor's serial by design, and one label names the whole
+    /// amendment chain, so the passport being replaced does not hold the serial
+    /// against its successor, and neither does any superseded record behind it.
+    ///
+    /// A check, not a constraint. Two requests that arrive together can both pass
+    /// it. The collision is not silent when it happens: the label lookup refuses
+    /// to choose between two unrelated current records and answers with an error.
+    ///
+    /// # Errors
+    ///
+    /// The store's own failure.
+    pub async fn carrier_serial_is_taken(
+        &self,
+        identifier: &ProductIdentifier,
+        serial: &str,
+        replaces: Option<PassportId>,
+    ) -> Result<bool, DppError> {
+        carrier_serial_is_taken(&*self.repo, identifier, serial, replaces).await
+    }
+
     /// Fetch a passport by exact compound identity (product group, GTIN, batch),
     /// across `Draft` and `Published` — the import delta-matcher's lookup.
     pub async fn find_by_identity(
@@ -301,6 +326,28 @@ async fn current_for(
     }
 }
 
+/// [`PassportService::carrier_serial_is_taken`], over the port alone.
+///
+/// Read through the same lookup a printed label goes through, so it answers for
+/// the serial the label would print: an attributed one, or the default a passport
+/// derives from its id.
+async fn carrier_serial_is_taken(
+    repo: &dyn PassportRepository,
+    identifier: &ProductIdentifier,
+    serial: &str,
+    replaces: Option<PassportId>,
+) -> Result<bool, DppError> {
+    let holders = repo
+        .find_by_carrier(identifier, &CarrierQualifier::Serial(serial.into()))
+        .await?;
+    // Superseded records are never a chain's head, and the head is either the
+    // passport being replaced or a passport that holds the serial in its own
+    // right. So ignoring them cannot hide a real holder.
+    Ok(holders
+        .iter()
+        .any(|p| Some(p.id) != replaces && p.status != PassportStatus::Superseded))
+}
+
 /// The record a reader holding `record`'s label should reach: `record` itself,
 /// unless it was superseded, in which case the record that superseded it,
 /// followed forward until one was not.
@@ -443,7 +490,7 @@ mod label_resolution {
         status::PassportStatus,
     };
 
-    use super::{LabelLevel, LabelResolution, resolve_label};
+    use super::{LabelLevel, LabelResolution, carrier_serial_is_taken, resolve_label};
 
     const GTIN: &str = "09506000134352";
 
@@ -850,5 +897,106 @@ mod label_resolution {
             .expect("inherits the model");
         assert_eq!(found.passport.id, model.id);
         assert_eq!(found.resolved, LabelLevel::Model);
+    }
+
+    /// A passport that attributes `serial` to its carrier.
+    fn attributing(serial: &str, status: PassportStatus) -> Passport {
+        let mut p = passport(status);
+        p.carrier_serial = Some(serial.into());
+        p
+    }
+
+    async fn taken(
+        repo: &InMemoryPassportRepo,
+        gtin: Gtin,
+        serial: &str,
+        replaces: Option<PassportId>,
+    ) -> bool {
+        carrier_serial_is_taken(
+            repo,
+            &dpp_domain::ProductIdentifier::gs1(gtin),
+            serial,
+            replaces,
+        )
+        .await
+        .expect("checks")
+    }
+
+    /// Two unrelated passports under one GTIN that attribute one serial make a
+    /// label that names both, and a label that names two resolves to neither. So
+    /// the second is refused rather than stored.
+    #[tokio::test]
+    async fn a_serial_another_passport_holds_is_taken() {
+        let repo = InMemoryPassportRepo::default();
+        store(&repo, &[&attributing("SN-1", PassportStatus::Published)]).await;
+
+        assert!(taken(&repo, gtin(), "SN-1", None).await);
+        assert!(!taken(&repo, gtin(), "SN-2", None).await);
+    }
+
+    /// The same serial under another GTIN names another product, as a label under
+    /// another GTIN always does.
+    #[tokio::test]
+    async fn a_serial_held_under_another_gtin_is_free() {
+        let repo = InMemoryPassportRepo::default();
+        store(&repo, &[&attributing("SN-1", PassportStatus::Published)]).await;
+
+        let other = Gtin::parse("01234567890128").expect("valid GTIN");
+        assert!(!taken(&repo, other, "SN-1", None).await);
+    }
+
+    /// A draft holds its serial. Otherwise two drafts could attribute one and
+    /// collide when the first is published.
+    #[tokio::test]
+    async fn a_draft_holds_its_serial() {
+        let repo = InMemoryPassportRepo::default();
+        store(&repo, &[&attributing("SN-1", PassportStatus::Draft)]).await;
+
+        assert!(taken(&repo, gtin(), "SN-1", None).await);
+    }
+
+    /// The passport a new one replaces shares its serial by design: one label
+    /// names the whole amendment chain, and the current record answers it.
+    #[tokio::test]
+    async fn the_passport_being_replaced_does_not_hold_the_serial_against_its_successor() {
+        let repo = InMemoryPassportRepo::default();
+        let predecessor = attributing("SN-1", PassportStatus::Published);
+        store(&repo, &[&predecessor]).await;
+
+        assert!(
+            !taken(&repo, gtin(), "SN-1", Some(predecessor.id)).await,
+            "a successor may carry its predecessor's serial"
+        );
+        // Naming a different passport as the one replaced does not excuse it.
+        assert!(taken(&repo, gtin(), "SN-1", Some(PassportId::new())).await);
+    }
+
+    /// Behind the head of a chain every record is superseded and shares the
+    /// serial, so none of them holds it against a further successor.
+    #[tokio::test]
+    async fn a_superseded_chain_does_not_hold_the_serial_against_its_successor() {
+        let repo = InMemoryPassportRepo::default();
+        let first = attributing("SN-1", PassportStatus::Superseded);
+        let mut second = attributing("SN-1", PassportStatus::Superseded);
+        second.supersedes_id = Some(first.id);
+        let mut head = attributing("SN-1", PassportStatus::Published);
+        head.supersedes_id = Some(second.id);
+        store(&repo, &[&first, &second, &head]).await;
+
+        assert!(!taken(&repo, gtin(), "SN-1", Some(head.id)).await);
+        // Without naming the head, the head holds it.
+        assert!(taken(&repo, gtin(), "SN-1", None).await);
+    }
+
+    /// The label prints the *effective* serial, so a value another passport
+    /// prints by default is as taken as one it attributed.
+    #[tokio::test]
+    async fn a_serial_another_passport_prints_by_default_is_taken() {
+        let repo = InMemoryPassportRepo::default();
+        let defaulted = passport(PassportStatus::Published);
+        let printed = defaulted.effective_carrier_serial().into_owned();
+        store(&repo, &[&defaulted]).await;
+
+        assert!(taken(&repo, gtin(), &printed, None).await);
     }
 }

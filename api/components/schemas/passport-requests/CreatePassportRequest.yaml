@@ -162,3 +162,32 @@ properties:
       Only for a successor created independently. `POST /dpp/{dppId}/amend`
       mints its own successor and sets this field itself; it is not settable
       through that route and does not need to be.
+  carrierSerial:
+    type: string
+    minLength: 1
+    maxLength: 20
+    description: |
+      The serial the passport's GS1 data carrier prints in AI 21, attributed by
+      the operator. Omitted, the carrier prints a default derived from the
+      passport id. An operator that already serialises its units states that
+      serial here, so the printed label names the passport under the serial the
+      unit already carries. Art. 77(3) of Regulation (EU) 2023/1542 puts the
+      choice of this identifier on the economic operator.
+
+      One to twenty characters of GS1's CSET 82 set, which is how AI 21 is
+      defined: letters, digits and a few punctuation marks, but no space.
+      Refused with `422` otherwise, and refused on a passport that is not
+      identified by a GTIN, because only a GTIN has a GS1 carrier.
+
+      **Unique under its GTIN.** A label that names two passports resolves to
+      neither, so a serial another passport already holds is refused with `409`.
+      The passport named in `supersedesId` is the exception: a successor shares
+      its predecessor's serial, because one label names the whole amendment
+      chain.
+
+      Not the manufacturer's `serialNumber`, though an operator may state the
+      same value for both. Nothing copies one into the other.
+
+      **Create-time only.** It is protected from patching, and the carrier is
+      stamped at publish. An amendment carries it forward.
+    example: SN-2026-0001

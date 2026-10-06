@@ -287,6 +287,7 @@ mod tests {
             commodity_code: None,
             derived_from: Vec::new(),
             component_refs: Vec::new(),
+            carrier_serial: None,
         }
     }
 

@@ -17,7 +17,7 @@ use uuid::Uuid;
 
 use crate::{middleware::scope::RequireWrite, state::AppState};
 
-use super::error::{api_error, internal_error};
+use super::error::{api_error, field_conflict_error, internal_error};
 use crate::extract::Json;
 
 /// Request body for passport creation.
@@ -48,6 +48,9 @@ pub async fn create_handler(
     // it without persisting. One implementation, so a dry-run verdict and the
     // real create can never disagree.
     if let Some(resp) = validate_create_request(&body) {
+        return resp;
+    }
+    if let Some(resp) = carrier_serial_conflict(&state, &body).await {
         return resp;
     }
 
@@ -182,10 +185,11 @@ pub async fn create_handler(
         operator_identifier: None,
         facility: None,
         seal: None,
-        // Not accepted on the create body yet, so every passport created here
-        // prints the default serial derived from its id. An amendment carries
-        // its predecessor's forward; see `amend`.
-        carrier_serial: None,
+        // The serial the operator attributed, if any; otherwise the carrier
+        // prints the default derived from the passport id. Settled here and
+        // never again: it is protected from a patch, and an amendment carries
+        // it forward (see `amend`).
+        carrier_serial: body.carrier_serial,
     };
 
     match state.service.create(passport, &auth).await {
@@ -195,6 +199,48 @@ pub async fn create_handler(
         )
             .into_response(),
         Err(e) => internal_error(e),
+    }
+}
+
+/// `409` when the serial `body` attributes is already held by another passport
+/// under its GTIN, and `None` when it is free or none is attributed.
+///
+/// Apart from [`validate_create_request`] because it reads the store, which that
+/// function, a pure check of the body, does not. The dry-run route calls both, so
+/// a preview cannot pass what create refuses.
+///
+/// A `409` and not a `422`: nothing is wrong with the serial. The record it would
+/// create conflicts with one that exists, and the caller's remedy is a different
+/// serial or a declared successor. The passport it replaces is named by
+/// `supersedesId`, and that one never counts against it.
+pub async fn carrier_serial_conflict(
+    state: &AppState,
+    body: &CreatePassportRequest,
+) -> Option<axum::response::Response> {
+    let serial = body.carrier_serial.as_deref()?;
+    // `validate_create_request` has already refused a serial on a passport with
+    // no GTIN, so what is read here is the GS1 identifier.
+    let identifier = body
+        .product_group_data
+        .as_ref()
+        .and_then(ProductGroupData::product_identifier)?;
+    match state
+        .service
+        .carrier_serial_is_taken(identifier, serial, body.supersedes_id)
+        .await
+    {
+        Ok(false) => None,
+        Ok(true) => Some(field_conflict_error(&dpp_domain::ValidationErrors {
+            errors: vec![dpp_domain::FieldError {
+                field: "/carrierSerial".to_owned(),
+                message: format!(
+                    "{serial:?} is already attributed to another passport under this GTIN. A \
+                     label that names two passports resolves to neither; choose another serial, \
+                     or declare this passport as the successor of the one that holds it."
+                ),
+            }],
+        })),
+        Err(e) => Some(internal_error(e)),
     }
 }
 
@@ -507,6 +553,116 @@ mod manufacturer_fields {
 }
 
 #[cfg(test)]
+mod carrier_serial {
+    //! What the create route does with the serial an operator attributes to a
+    //! passport's GS1 carrier. Optional on the wire, and "optional" is not
+    //! "unchecked": a value GS1 would reject must not become a label.
+
+    use super::*;
+
+    fn body(identifier: serde_json::Value, serial: Option<&str>) -> CreatePassportRequest {
+        let mut body = serde_json::json!({
+            "productName": "All-season 205/55R16",
+            "manufacturer": { "name": "M", "address": "A" },
+            "productGroupData": {
+                "productGroup": "tyre",
+                "productIdentifier": identifier,
+                "tyreClass": "C1",
+                "fuelEfficiencyClass": "A",
+                "wetGripClass": "A",
+                "externalRollingNoiseDb": 70.0
+            }
+        });
+        if let Some(serial) = serial {
+            body["carrierSerial"] = serde_json::json!(serial);
+        }
+        serde_json::from_value(body).expect("body must deserialize")
+    }
+
+    fn gs1() -> serde_json::Value {
+        serde_json::json!({ "scheme": "gs1", "gtin": "09506000134352" })
+    }
+
+    /// The refusal's status and sentence.
+    async fn refusal(body: &CreatePassportRequest) -> (StatusCode, String) {
+        let response = validate_create_request(body).expect("the body must be refused");
+        let status = response.status();
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("read body");
+        let problem: serde_json::Value = serde_json::from_slice(&bytes).expect("problem json");
+        (
+            status,
+            problem["detail"].as_str().unwrap_or_default().to_owned(),
+        )
+    }
+
+    #[test]
+    fn a_serial_gs1_would_print_is_accepted() {
+        assert!(
+            validate_create_request(&body(gs1(), Some("SN-2026-0001"))).is_none(),
+            "a serial AI 21 admits must pass every create validation"
+        );
+        assert!(
+            validate_create_request(&body(gs1(), None)).is_none(),
+            "no serial is the default, not an invalid one"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_serial_gs1_would_reject_is_refused_with_the_rule_named() {
+        for (serial, named) in [
+            ("", "must not be empty"),
+            (&"X".repeat(21), "at most 20"),
+            ("SN 1", "outside GS1 CSET 82"),
+        ] {
+            let (status, detail) = refusal(&body(gs1(), Some(serial))).await;
+            assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{serial:?}");
+            assert!(
+                detail.contains("carrierSerial") && detail.contains(named),
+                "{serial:?} must be refused naming the field and the rule, got: {detail}"
+            );
+        }
+    }
+
+    /// Only a passport identified by a GTIN has a GS1 carrier. A serial on any
+    /// other can never be printed, and accepting it would read as an attribution
+    /// that does nothing: a field that exists and is never used.
+    #[tokio::test]
+    async fn a_serial_on_a_passport_with_no_gtin_is_refused() {
+        let did = serde_json::json!({ "scheme": "did", "did": "did:web:example.com:item:0001" });
+        let link = serde_json::json!({
+            "scheme": "identificationLink",
+            "url": "https://example.com/p/abc"
+        });
+        for identifier in [did, link] {
+            // Without the serial the same body is fine, so what is refused below
+            // is the serial and nothing else about it.
+            assert!(
+                validate_create_request(&body(identifier.clone(), None)).is_none(),
+                "{identifier} must be an acceptable identifier on its own"
+            );
+            let (status, detail) = refusal(&body(identifier.clone(), Some("SN-1"))).await;
+            assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{identifier}");
+            assert!(
+                detail.contains("carrierSerial") && detail.contains("GTIN"),
+                "{identifier}: {detail}"
+            );
+        }
+
+        // Nor on a passport with no product group data at all.
+        let bare: CreatePassportRequest = serde_json::from_value(serde_json::json!({
+            "productName": "Widget",
+            "manufacturer": { "name": "M", "address": "A" },
+            "carrierSerial": "SN-1"
+        }))
+        .expect("body must deserialize");
+        let (status, _) = refusal(&bare).await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    }
+}
+
+#[cfg(test)]
 mod gtin_boundary {
     //! Where a malformed GTIN is actually refused.
     //!
@@ -621,6 +777,36 @@ pub fn validate_create_request(body: &CreatePassportRequest) -> Option<axum::res
             "VALIDATION_ERROR",
             "text fields must not contain control or bidirectional characters",
         );
+    }
+
+    // The serial an operator attributes to the passport's GS1 carrier. Core's
+    // `Passport::validate` refuses a value GS1 would reject, but only once the
+    // service holds the assembled record, and this route names the field and says
+    // why a round-trip earlier. A dry run therefore says the same thing.
+    if let Some(serial) = body.carrier_serial.as_deref() {
+        if let Some(problem) = dpp_types::carrier_serial_problem(serial) {
+            return api_error(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "VALIDATION_ERROR",
+                &format!("carrierSerial {problem}"),
+            );
+        }
+        // Only a GTIN has a GS1 carrier. A serial on any other passport could
+        // never be printed, and accepting it would be an attribution that does
+        // nothing.
+        let has_gtin = body
+            .product_group_data
+            .as_ref()
+            .and_then(ProductGroupData::product_identifier)
+            .is_some_and(|id| id.gtin().is_some());
+        if !has_gtin {
+            return api_error(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "VALIDATION_ERROR",
+                "carrierSerial is the serial a GS1 carrier prints, and only a passport \
+                 identified by a GTIN has one",
+            );
+        }
     }
 
     // Numeric sanity: footprints/scores must be finite and in range.

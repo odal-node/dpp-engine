@@ -17,15 +17,15 @@ use crate::domain::battery_fields::{
     parse_state_of_health, parse_temperature_range,
 };
 use crate::domain::fields::{
-    aliased, optional_commodity_code, optional_date, optional_f64, optional_str, parse_materials,
-    require_aliased, require_f64, require_str, require_u32,
+    aliased, optional_carrier_serial, optional_commodity_code, optional_date, optional_f64,
+    optional_str, parse_materials, require_aliased, require_f64, require_str, require_u32,
 };
 use crate::domain::request::{CreatePassportRequest, RowError};
 
 use super::Column;
 
 /// The columns this validator reads, in template order. Envelope columns
-/// (`placedOnMarketDate`, `commodityCode`) are appended by `columns_for`.
+/// (`placedOnMarketDate`, `commodityCode`, `carrierSerial`) are appended by `columns_for`.
 pub(super) const COLUMNS: &[Column] = &[
     Column::required("productName"),
     Column::required("gtin"),
@@ -173,6 +173,7 @@ pub fn validate_battery_row(
     // Envelope-level, so every product group reads them from the same columns.
     let placed_on_market_date = optional_date(row, "placedOnMarketDate", row_num, &mut errors);
     let commodity_code = optional_commodity_code(row, "commodityCode", row_num, &mut errors);
+    let carrier_serial = optional_carrier_serial(row, "carrierSerial", row_num, &mut errors);
 
     // The Annex VI Part A / Annex XIII columns the per-category templates carry.
     //
@@ -374,6 +375,7 @@ pub fn validate_battery_row(
         schema_version: None,
         placed_on_market_date,
         commodity_code,
+        carrier_serial,
         // An import creates originals, never replacements: a successor is
         // declared deliberately by whoever knows what it replaces.
         supersedes_id: None,

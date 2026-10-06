@@ -187,7 +187,23 @@
             "$ref": "#/components/responses/Forbidden"
           },
           "409": {
-            "$ref": "#/components/responses/IdempotentRequestInFlight"
+            "description": "One of two conflicts, told apart by the problem document.\n\n**An earlier attempt carrying this `Idempotency-Key` is still running.**\nReturned instead of letting a duplicate execute alongside it. Retry\nshortly with the same key and the same body; `Retry-After` carries the\nsuggested delay. A claim left behind by a process that died mid-request\nis reclaimed automatically after 60 seconds, so this can never wedge a\nkey permanently.\n\n**`carrierSerial` is already attributed to another passport under the\nsame GTIN.** `errors[0].field` is `/carrierSerial`. A label that names\ntwo passports resolves to neither: choose another serial, or declare\nthis passport as the successor of the one that holds it with\n`supersedesId`.\n",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds to wait before retrying. Sent for the idempotency conflict only.",
+                "schema": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              }
+            },
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
           },
           "422": {
             "$ref": "#/components/responses/ValidationError"
@@ -199,7 +215,7 @@
       "post": {
         "operationId": "validateDpp",
         "summary": "Dry-run a passport body without creating it",
-        "description": "Runs exactly the validation `POST /vault/api/v1/dpp` runs, and persists\nnothing. The same code path serves both, so a preview and the real create\ncannot disagree.\n\n**Two verdicts, because create and publish deliberately differ.** Create is\nlenient about a product group with no resolvable JSON Schema — a draft is allowed\nto be incomplete — while publish fails closed on it, since a signed\npassport must have passed a real schema check. A body can therefore be\ncreatable but not yet clear the publish-time schema gate, and that gap is\nreported rather than hidden until publish is attempted.\n\nA body that create **would reject** gets back the identical `422` create\nwould have returned, not a paraphrase of it. A body create would accept\nreturns `200` with the two verdicts.\n\n**`productGroupDataValid` is not a publish verdict.** It reports one of publish's\npreconditions — the product group-data gates — and publish applies others this\nroute does not run:\n\n- the **registry identity** requirement (a default facility and a primary\n  operator identifier), which needs operator state this route never reads;\n- the **category-mandatory content** gate, which is reachable only by\n  attempting the lifecycle transition, so it cannot be previewed;\n- the **compliance** gate, which needs a `placedOnMarketDate` and a stored\n  passport.\n\nA `productGroupDataValid: true` therefore means \"this body clears the schema\ngate\", never \"publish will succeed\". The field was called `publishValid`\nand was renamed because that name promised the latter.\n",
+        "description": "Runs exactly the validation `POST /vault/api/v1/dpp` runs, and persists\nnothing. The same code path serves both, so a preview and the real create\ncannot disagree.\n\n**Two verdicts, because create and publish deliberately differ.** Create is\nlenient about a product group with no resolvable JSON Schema — a draft is allowed\nto be incomplete — while publish fails closed on it, since a signed\npassport must have passed a real schema check. A body can therefore be\ncreatable but not yet clear the publish-time schema gate, and that gap is\nreported rather than hidden until publish is attempted.\n\nA body that create **would reject** gets back the identical rejection create\nwould have returned, not a paraphrase of it: a `422`, or a `409` for a\n`carrierSerial` another passport already holds. A body create would accept\nreturns `200` with the two verdicts.\n\n**`productGroupDataValid` is not a publish verdict.** It reports one of publish's\npreconditions — the product group-data gates — and publish applies others this\nroute does not run:\n\n- the **registry identity** requirement (a default facility and a primary\n  operator identifier), which needs operator state this route never reads;\n- the **category-mandatory content** gate, which is reachable only by\n  attempting the lifecycle transition, so it cannot be previewed;\n- the **compliance** gate, which needs a `placedOnMarketDate` and a stored\n  passport.\n\nA `productGroupDataValid: true` therefore means \"this body clears the schema\ngate\", never \"publish will succeed\". The field was called `publishValid`\nand was renamed because that name promised the latter.\n",
         "tags": [
           "DPP Management"
         ],
@@ -237,6 +253,16 @@
           },
           "403": {
             "$ref": "#/components/responses/Forbidden"
+          },
+          "409": {
+            "description": "`carrierSerial` is already attributed to another passport under the same\nGTIN. The identical `409` create would have returned. `errors[0].field`\nis `/carrierSerial`.\n",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
           },
           "422": {
             "$ref": "#/components/responses/ValidationError"
@@ -6321,6 +6347,13 @@
               }
             ],
             "description": "The passport this one replaces, if it is a new version of an existing\nrecord.\n\nDeclared here because `supersedesId` is protected: it is set by the write\nthat creates the whole record, never by a field patch. Recording the link\nretires nothing — the predecessor is retired by\n`POST /dpp/{dppId}/supersede` once this successor is published, and that\nroute checks the two agree.\n\nOnly for a successor created independently. `POST /dpp/{dppId}/amend`\nmints its own successor and sets this field itself; it is not settable\nthrough that route and does not need to be.\n"
+          },
+          "carrierSerial": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 20,
+            "description": "The serial the passport's GS1 data carrier prints in AI 21, attributed by\nthe operator. Omitted, the carrier prints a default derived from the\npassport id. An operator that already serialises its units states that\nserial here, so the printed label names the passport under the serial the\nunit already carries. Art. 77(3) of Regulation (EU) 2023/1542 puts the\nchoice of this identifier on the economic operator.\n\nOne to twenty characters of GS1's CSET 82 set, which is how AI 21 is\ndefined: letters, digits and a few punctuation marks, but no space.\nRefused with `422` otherwise, and refused on a passport that is not\nidentified by a GTIN, because only a GTIN has a GS1 carrier.\n\n**Unique under its GTIN.** A label that names two passports resolves to\nneither, so a serial another passport already holds is refused with `409`.\nThe passport named in `supersedesId` is the exception: a successor shares\nits predecessor's serial, because one label names the whole amendment\nchain.\n\nNot the manufacturer's `serialNumber`, though an operator may state the\nsame value for both. Nothing copies one into the other.\n\n**Create-time only.** It is protected from patching, and the carrier is\nstamped at publish. An amendment carries it forward.\n",
+            "example": "SN-2026-0001"
           }
         }
       },
@@ -10227,31 +10260,6 @@
           }
         }
       },
-      "IdempotentRequestInFlight": {
-        "description": "An earlier attempt carrying this `Idempotency-Key` is still running.\n\nReturned instead of letting a duplicate execute alongside it. Retry shortly\nwith the same key and the same body; `Retry-After` carries the suggested\ndelay.\n\nA claim left behind by a process that died mid-request is reclaimed\nautomatically after 60 seconds, so this can never wedge a key permanently.\n",
-        "headers": {
-          "Retry-After": {
-            "description": "Seconds to wait before retrying.",
-            "schema": {
-              "type": "integer",
-              "minimum": 1
-            }
-          }
-        },
-        "content": {
-          "application/problem+json": {
-            "schema": {
-              "$ref": "#/components/schemas/Problem"
-            },
-            "example": {
-              "type": "https://problems.odal-node.io/idempotent-request-in-flight",
-              "title": "Idempotent Request In Flight",
-              "status": 409,
-              "detail": "An earlier attempt with this `Idempotency-Key` is still running. Retry shortly; do not change the body."
-            }
-          }
-        }
-      },
       "ValidationError": {
         "description": "One or more fields failed validation.",
         "content": {
@@ -10312,6 +10320,31 @@
               "title": "Conflict",
               "status": 409,
               "detail": "DPP is already published."
+            }
+          }
+        }
+      },
+      "IdempotentRequestInFlight": {
+        "description": "An earlier attempt carrying this `Idempotency-Key` is still running.\n\nReturned instead of letting a duplicate execute alongside it. Retry shortly\nwith the same key and the same body; `Retry-After` carries the suggested\ndelay.\n\nA claim left behind by a process that died mid-request is reclaimed\nautomatically after 60 seconds, so this can never wedge a key permanently.\n",
+        "headers": {
+          "Retry-After": {
+            "description": "Seconds to wait before retrying.",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        },
+        "content": {
+          "application/problem+json": {
+            "schema": {
+              "$ref": "#/components/schemas/Problem"
+            },
+            "example": {
+              "type": "https://problems.odal-node.io/idempotent-request-in-flight",
+              "title": "Idempotent Request In Flight",
+              "status": 409,
+              "detail": "An earlier attempt with this `Idempotency-Key` is still running. Retry shortly; do not change the body."
             }
           }
         }

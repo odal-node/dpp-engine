@@ -242,6 +242,33 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   both legs of the authority matcher are exercised by real entries; every listed key
   is one this build verifies.
 
+- **An operator can state the serial a passport's GS1 carrier prints.**
+  `carrierSerial` on `POST /dpp`, and a `carrierSerial` column in every import
+  template, name the AI 21 value the label carries. Omitted, the carrier prints
+  the default derived from the passport id, as before. Art. 77(3) of Reg. (EU)
+  2023/1542 puts the choice of this identifier on the economic operator, and
+  until now nothing here could carry it: every carrier printed the default, so
+  an operator that already serialises its units could not make the label match
+  the serial the unit carries.
+
+  One to twenty characters of GS1's CSET 82 set, `422` otherwise, and `422` on
+  a passport with no GTIN, since only a GTIN has a GS1 carrier. It is
+  create-time only: a patch cannot reach it, the carrier is stamped at publish,
+  and an amendment carries it forward.
+
+  **A serial is unique under its GTIN.** A label that names two passports
+  resolves to neither, so a serial another passport already holds is refused
+  with `409` naming `/carrierSerial`, and `POST /dpp/validate` says the same. The
+  passport named in `supersedesId` is the exception, because one label names a
+  whole amendment chain. It is a check and not a constraint: two requests that
+  arrive together can both pass it, and the label lookup then refuses to choose
+  between the two records and answers with an error.
+
+  **In an import,** the column is blank by default and attributes nothing. A
+  serial GS1 would reject is a row error naming the row. The committed templates
+  and the generated battery templates carry the column last; an older file
+  without it still imports.
+
 ### Fixed
 
 - **A seal's timestamp is only believed when its authority is a qualified one.**
