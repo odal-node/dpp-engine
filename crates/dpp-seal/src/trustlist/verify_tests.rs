@@ -2,6 +2,7 @@
 
 use super::verify::{
     AnchorFreshness, LotlRejected, TrustedListRejected, anchor_freshness, verify_lotl,
+    verify_signature_with,
 };
 use chrono::TimeZone as _;
 
@@ -656,4 +657,44 @@ fn a_verified_list_survives_the_store_round_trip() {
         "a round trip that kept only the current status answers today correctly and \
          every past question wrongly — which is the question Art. 32(1)(b) asks"
     );
+}
+
+/// The certificate inside a document's own `ds:KeyInfo`, as DER.
+///
+/// Scoped to `KeyInfo` because the LOTL carries hundreds of other certificates
+/// in its pointers, none of which signed it.
+fn key_info_certificate(xml: &str) -> Vec<u8> {
+    use base64::Engine as _;
+    let doc = roxmltree::Document::parse(xml).expect("parses");
+    let text = doc
+        .descendants()
+        .find(|n| {
+            n.is_element()
+                && n.tag_name().name() == "X509Certificate"
+                && n.ancestors().any(|a| a.tag_name().name() == "KeyInfo")
+        })
+        .and_then(|n| n.text())
+        .expect("a certificate in KeyInfo");
+    base64::engine::general_purpose::STANDARD
+        .decode(text.split_whitespace().collect::<String>())
+        .expect("base64")
+}
+
+/// **The signature is checked against the pinned certificate and no other.**
+///
+/// A genuine, correctly signed document verifies with its own certificate
+/// pinned, and is refused with any other: here the LOTL's, a real Commission
+/// certificate that simply did not sign Finland's list. That is what the pin is
+/// for. The key `xml-sec` checks with is the one the anchor or the LOTL
+/// authorised, never whichever one the document offers.
+#[test]
+fn the_signature_is_checked_only_against_the_pinned_certificate() {
+    let fi = include_str!("../../tests/fixtures/fi-trusted-list.xml");
+
+    verify_signature_with(fi, key_info_certificate(fi))
+        .expect("Finland's list verifies with its own certificate pinned");
+
+    let refused = verify_signature_with(fi, key_info_certificate(EU_LOTL))
+        .expect_err("a certificate that did not sign the document is not its key");
+    assert!(refused.contains("authorized key"), "{refused}");
 }

@@ -1,4 +1,10 @@
-//! What the vendored `xml-sec` fork is for, demonstrated on real documents.
+//! The largest published trusted lists verify, demonstrated on real documents.
+//!
+//! `xml-sec` releases before 0.1.17 stopped canonicalising at 65 536 node-set
+//! entries, and several published lists are over it. This workspace carried a
+//! fork with that constant raised until upstream shipped the fix
+//! (`structured-world/xml-sec#158`); this file is what showed the fork worked,
+//! and now shows the released crate does.
 //!
 //! An integration test rather than a unit one, for two reasons that both point
 //! the same way: it reads its documents from disk at run time rather than
@@ -12,12 +18,12 @@
 //! they live under `tests/fixtures/local/`, which is git-ignored.
 //! `tests/fixtures/local/README.md` says how to fetch them.
 //!
-//! **The regression guard does not depend on them.** The failure that actually
-//! bites is `[patch.crates-io]` silently ceasing to apply — Cargo reports that
-//! as a warning, not an error — and
-//! `the_patched_xml_sec_is_the_one_that_resolved` catches it by reading
-//! `Cargo.lock`, with no documents involved. What is here is a one-time
-//! demonstration that the fork does what it claims on a real published list.
+//! **The regression guard does not depend on them.** The failure that would
+//! bite is a manifest or lock edit taking `xml-sec` below 0.1.17, and
+//! `xml_sec_is_a_release_with_the_raised_node_set_ceiling` catches it by reading
+//! `Cargo.lock`, with no documents involved, so CI runs it. What is here is the
+//! end-to-end demonstration on real published lists, to re-run on every
+//! `xml-sec` bump.
 
 use dpp_seal::trustlist::{TrustedListPointer, verify_lotl, verify_trusted_list};
 
@@ -51,7 +57,8 @@ fn local_list(name: &str) -> Option<String> {
         .join(name);
     std::fs::read_to_string(&path).ok().or_else(|| {
         eprintln!(
-            "SKIPPED: {} is not present, so the xml-sec fork is not demonstrated on this run. \
+            "SKIPPED: {} is not present, so verifying an over-ceiling list is not demonstrated \
+             on this run. \
              It is deliberately not committed — see tests/fixtures/local/README.md.",
             path.display()
         );
@@ -59,21 +66,24 @@ fn local_list(name: &str) -> Option<String> {
     })
 }
 
-/// A real published list that exceeds the unpatched node-set ceiling verifies.
+/// A real published list that exceeds the old node-set ceiling verifies.
 ///
-/// The published `xml-sec` caps XML node-sets at 65 536 entries. Italy carries
-/// 65 540 and France 65 541, so without the fork both fail as a canonicaliser
-/// that stops before the end of the document — not as a bad signature. Confirmed
-/// by removing the `[patch.crates-io]` stanza and watching this fail with
-/// `node-set entries exceeds policy maximum 65536: got 65540`.
+/// `xml-sec` before 0.1.17 capped XML node-sets at 65 536 entries. Italy and
+/// France are over it, so on those releases both fail as a canonicaliser that
+/// stops before the end of the document, not as a bad signature. That failure
+/// was confirmed with the fork's patch removed:
+/// `node-set entries exceeds policy maximum 65536: got 65540`. On 0.1.20, with
+/// no fork, this passes.
 ///
-/// **These are not the only two affected**, despite being the two the fork was
-/// vendored for. Measured across every list the LOTL points at on 2026-09-15,
-/// four are over the ceiling — France 65 541, Czechia 65 543, Italy 65 540,
-/// Spain 65 543 — and byte size does not predict the count. The set grows; this
-/// test demonstrates the mechanism rather than enumerating its members.
+/// **These are not the only two affected.** Measured across every list the
+/// LOTL points at on 2026-09-15, four were over the old ceiling (France,
+/// Czechia, Italy, Spain), and byte size does not predict the count. The set
+/// grows; this test demonstrates the mechanism rather than enumerating its
+/// members. Upstream counted roughly 149k (IT) and 144k (FR) entries before
+/// text nodes; the default policy limit since 0.1.17 is 262 144, and both pass
+/// under it.
 #[test]
-fn a_list_over_the_unpatched_ceiling_verifies_with_the_fork() {
+fn a_list_over_the_old_node_set_ceiling_verifies() {
     for (territory, file) in [("IT", "it-trusted-list.xml"), ("FR", "fr-trusted-list.xml")] {
         let Some(xml) = local_list(file) else {
             continue;
