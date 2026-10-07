@@ -19,7 +19,7 @@
 //! - [`crate::local::LocalTimestampSource`] — the development authority, so the
 //!   whole renewal path can be exercised without one. Not qualified, and says so
 //!   in its certificate.
-//! - [`crate::rfc3161::Rfc3161Source`] — any authority that speaks RFC 3161 over
+//! - [`crate::timestamp::rfc3161::Rfc3161Source`] — any authority that speaks RFC 3161 over
 //!   HTTP, configured by address. Provider-independent on purpose: a qualified
 //!   timestamp is a service of a qualified trust service provider (Reg. (EU)
 //!   No 910/2014 Art. 42), and which one an operator buys it from is theirs to

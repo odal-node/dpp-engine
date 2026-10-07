@@ -2,7 +2,7 @@
 //!
 //! It holds one [`SealBackend`] and does nothing else: forward the port's three
 //! calls, and collapse [`SealError`] into `DppError` at the boundary. Which
-//! backend it holds is decided by [`crate::config`] and constructed by that
+//! backend it holds is decided by [`crate::backend::provider`] and constructed by that
 //! backend's own module, so nothing in this file names one — adding or removing
 //! a backend leaves it untouched.
 

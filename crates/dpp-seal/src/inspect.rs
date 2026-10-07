@@ -435,17 +435,17 @@ impl CadesInspector {
     ///
     /// # Errors
     ///
-    /// See [`RenewalError`](crate::renewal::RenewalError). On every error the
+    /// See [`RenewalError`](crate::timestamp::renewal::RenewalError). On every error the
     /// stored envelope is untouched: the result is a new value.
     pub async fn renew_archive_timestamp(
         &self,
         envelope: &SealedEnvelope,
-        source: &dyn crate::timestamp_source::TimestampSource,
+        source: &dyn crate::timestamp::TimestampSource,
         now: chrono::DateTime<chrono::Utc>,
         require_qualified: bool,
-    ) -> Result<RenewedEnvelope, crate::renewal::RenewalError> {
+    ) -> Result<RenewedEnvelope, crate::timestamp::renewal::RenewalError> {
         let Some(der) = self.readable(envelope) else {
-            return Err(crate::renewal::RenewalError::NotRenewable(
+            return Err(crate::timestamp::renewal::RenewalError::NotRenewable(
                 "the stored seal is not a CAdES this node can read".to_owned(),
             ));
         };
@@ -453,16 +453,20 @@ impl CadesInspector {
         // network and signature work, so a refresh publishing mid-renewal never
         // blocks and never changes the set underneath one.
         let held = self.snapshot();
-        let renewed = crate::renewal::renew_archive_timestamp(&der, source, now, |token| {
-            let standing =
-                crate::qualification::timestamp_standing(token, &held.lists, held.unchecked.len());
-            if require_qualified && !standing.counts_as_proof_of_existence() {
-                Err(standing)
-            } else {
-                Ok(())
-            }
-        })
-        .await?;
+        let renewed =
+            crate::timestamp::renewal::renew_archive_timestamp(&der, source, now, |token| {
+                let standing = crate::qualification::timestamp_standing(
+                    token,
+                    &held.lists,
+                    held.unchecked.len(),
+                );
+                if require_qualified && !standing.counts_as_proof_of_existence() {
+                    Err(standing)
+                } else {
+                    Ok(())
+                }
+            })
+            .await?;
 
         let mut next = envelope.clone();
         next.seal_value = base64::engine::general_purpose::STANDARD.encode(&renewed.seal_der);

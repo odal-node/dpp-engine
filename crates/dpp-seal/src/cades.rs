@@ -1010,7 +1010,7 @@ fn digest_matches(signed: &Signed, content: &[u8]) -> bool {
 /// certificate has a validity period, and once that passes the token can no
 /// longer be validated on its own terms. ETSI's long-term profiles handle this
 /// by **re-timestamping** before it happens, a new archive timestamp over the
-/// old one — which [`crate::renewal`] does, where a node has an authority to ask.
+/// old one — which [`crate::timestamp::renewal`] does, where a node has an authority to ask.
 /// Where it does not, nothing would notice: `evidenced_level` reports
 /// `BaselineLta` from the *presence* of the attribute, so a seal whose archival
 /// timestamp lapsed years ago reports exactly as it did on the day it was bought.

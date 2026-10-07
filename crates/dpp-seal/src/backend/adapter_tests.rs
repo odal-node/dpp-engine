@@ -1,7 +1,7 @@
 //! Unit tests for `adapter.rs`.
 
 use super::*;
-use crate::ghost::GhostSeal;
+use crate::backend::ghost::GhostSeal;
 use dpp_domain::seal::{
     SealConformanceLevel, SealCredentialRef, SealEnvelope, SealFormat, SealMode,
 };
