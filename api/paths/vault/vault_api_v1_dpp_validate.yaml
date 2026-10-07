@@ -13,8 +13,9 @@ post:
     creatable but not yet clear the publish-time schema gate, and that gap is
     reported rather than hidden until publish is attempted.
 
-    A body that create **would reject** gets back the identical `422` create
-    would have returned, not a paraphrase of it. A body create would accept
+    A body that create **would reject** gets back the identical rejection create
+    would have returned, not a paraphrase of it: a `422`, or a `409` for a
+    `carrierSerial` another passport already holds. A body create would accept
     returns `200` with the two verdicts.
 
     **`productGroupDataValid` is not a publish verdict.** It reports one of publish's
@@ -55,5 +56,14 @@ post:
       $ref: ../../components/responses/Unauthorized.yaml
     '403':
       $ref: ../../components/responses/Forbidden.yaml
+    '409':
+      description: |
+        `carrierSerial` is already attributed to another passport under the same
+        GTIN. The identical `409` create would have returned. `errors[0].field`
+        is `/carrierSerial`.
+      content:
+        application/problem+json:
+          schema:
+            $ref: ../../components/schemas/errors/Problem.yaml
     '422':
       $ref: ../../components/responses/ValidationError.yaml

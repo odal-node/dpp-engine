@@ -289,6 +289,15 @@ pub async fn import_file(
         }
     }
 
+    // A serial repeated within the file would let two concurrent creates both
+    // pass the vault's uniqueness check. Refused here, before anything is sent.
+    let (valid_rows, repeated) = matcher::refuse_repeated_carrier_serials(valid_rows);
+    row_errors.extend(repeated.into_iter().map(|e| ErrorEntry {
+        row: e.row,
+        field: e.field,
+        message: e.message,
+    }));
+
     // Every import — dry-run or apply, sync or async — mints a job id and
     // persists a row-addressed report, so it's retrievable via
     // GET /api/v1/imports/{jobId} even when the response below is synchronous.
@@ -1477,6 +1486,45 @@ mod tests {
         assert_eq!(json["errorCount"], 1);
         assert_eq!(json["errors"][0]["field"], "gtin");
         assert_eq!(mock.create_hits.load(Ordering::SeqCst), 1);
+    }
+
+    /// Rows are created concurrently, so two that state one serial under one GTIN
+    /// could both pass the vault's uniqueness check and print one label for two
+    /// passports. The repeat is refused as a row error naming the column and the
+    /// first row, and only the first row reaches the vault.
+    #[tokio::test]
+    async fn a_carrier_serial_repeated_in_one_file_is_a_row_error() {
+        let (state, mock) = live_vault_state().await;
+        let app = build_router(state);
+
+        let mut csv = format!("{BATTERY_CSV_HEADER},carrierSerial\n");
+        for batch in ["BATCH-1", "BATCH-2"] {
+            csv.push_str(&format!(
+                "EV Battery 48V,{VALID_GTIN},{batch},Acme Energy,DE,LFP,48.0,100.0,3000,85.4,\
+                 industrial,SN-1\n"
+            ));
+        }
+        // The same serial under another GTIN is another product's label.
+        csv.push_str(
+            "EV Battery 48V,01234567890128,BATCH-1,Acme Energy,DE,LFP,48.0,100.0,3000,85.4,\
+             industrial,SN-1\n",
+        );
+
+        let body = multipart_body("X", "battery.csv", &csv, None);
+        let resp = app.oneshot(import_request("battery", body)).await.unwrap();
+        assert_eq!(resp.status(), axum::http::StatusCode::OK);
+
+        let json = response_json(resp).await;
+        assert_eq!(json["errorCount"], 1, "{json}");
+        assert_eq!(json["errors"][0]["row"], 2, "{json}");
+        assert_eq!(json["errors"][0]["field"], "carrierSerial", "{json}");
+        assert!(
+            json["errors"][0]["message"]
+                .as_str()
+                .is_some_and(|m| m.contains("row 1")),
+            "the refusal names the row that stated it first: {json}"
+        );
+        assert_eq!(mock.create_hits.load(Ordering::SeqCst), 2);
     }
 
     /// A row can fail more than one check, and every existing fixture fails at

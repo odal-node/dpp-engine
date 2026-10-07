@@ -53,4 +53,28 @@ post:
     '403':
       $ref: ../../components/responses/Forbidden.yaml
     '409':
-      $ref: ../../components/responses/IdempotentRequestInFlight.yaml
+      description: |
+        One of two conflicts, told apart by the problem document.
+
+        **An earlier attempt carrying this `Idempotency-Key` is still running.**
+        Returned instead of letting a duplicate execute alongside it. Retry
+        shortly with the same key and the same body; `Retry-After` carries the
+        suggested delay. A claim left behind by a process that died mid-request
+        is reclaimed automatically after 60 seconds, so this can never wedge a
+        key permanently.
+
+        **`carrierSerial` is already attributed to another passport under the
+        same GTIN.** `errors[0].field` is `/carrierSerial`. A label that names
+        two passports resolves to neither: choose another serial, or declare
+        this passport as the successor of the one that holds it with
+        `supersedesId`.
+      headers:
+        Retry-After:
+          description: Seconds to wait before retrying. Sent for the idempotency conflict only.
+          schema:
+            type: integer
+            minimum: 1
+      content:
+        application/problem+json:
+          schema:
+            $ref: ../../components/schemas/errors/Problem.yaml

@@ -210,6 +210,7 @@ const ENVELOPE_COLUMNS: &[Column] = &[
     req(ENVELOPE, "manufacturerName", "Acme Energy GmbH"),
     req(ENVELOPE, "manufacturerCountry", "DE"),
     opt(ENVELOPE, "commodityCode", "85076000"),
+    opt(ENVELOPE, "carrierSerial", "SN-2026-0001"),
 ];
 
 /// The capacity the industrial template's example row declares, in kWh.

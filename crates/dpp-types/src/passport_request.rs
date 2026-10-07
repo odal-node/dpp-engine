@@ -128,4 +128,88 @@ pub struct CreatePassportRequest {
     /// cycles and over-depth are refused by the service.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub component_refs: Vec<ComponentRef>,
+    /// The serial this passport's GS1 data carrier prints in AI 21, attributed by
+    /// the operator.
+    ///
+    /// Omitted, the carrier prints a default derived from the passport id. An
+    /// operator that already serialises its units states that serial here, so the
+    /// printed label names the passport under the serial the unit already
+    /// carries. Art. 77(3) of Reg. (EU) 2023/1542 puts the choice of this
+    /// identifier on the economic operator.
+    ///
+    /// One to twenty characters of the GS1 CSET 82 set, which is how AI 21 is
+    /// defined. Only a passport identified by a GTIN has a GS1 carrier, so the
+    /// field is refused on any other.
+    ///
+    /// Not the manufacturer's `serialNumber`, though an operator may state the
+    /// same value for both. Nothing copies one into the other.
+    ///
+    /// Create-time only. `carrierSerial` is in core's `PROTECTED_PATCH_FIELDS`, so
+    /// no update reaches it, and the carrier is stamped at publish. An amendment
+    /// carries it forward. An update or amendment that names a different one is
+    /// refused rather than ignored, because it is what the label prints.
+    ///
+    /// Unique under its GTIN: a label that names two unrelated passports resolves
+    /// to neither, so a serial another passport already holds is refused unless
+    /// that passport is the one this replaces. That one keeps the label until it
+    /// is superseded.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub carrier_serial: Option<String>,
+}
+
+/// Why `serial` cannot be printed in AI 21 of a GS1 carrier, or `None` when it can.
+///
+/// The rule is core's (`dpp_rules::common::identifier::check_gs1_serial`), which
+/// `Passport::validate` applies when the passport is written. This is the same
+/// rule with a sentence attached, so the create route and the bulk importer say
+/// the same thing about the same value, and the importer can name the row. Core
+/// words it too, but privately; two copies of the wording are two things that can
+/// drift, so there is one here.
+#[must_use]
+pub fn carrier_serial_problem(serial: &str) -> Option<String> {
+    use dpp_rules::common::identifier::{
+        Gs1ValueRejection, MAX_GS1_SERIAL_CHARS, check_gs1_serial,
+    };
+
+    check_gs1_serial(serial)
+        .err()
+        .map(|rejection| match rejection {
+            Gs1ValueRejection::Empty => "must not be empty".to_owned(),
+            Gs1ValueRejection::TooLong { chars } => {
+                format!("has {chars} characters; GS1 AI 21 allows at most {MAX_GS1_SERIAL_CHARS}")
+            }
+            Gs1ValueRejection::OutsideCset82(c) => {
+                format!("contains {c:?}, which is outside GS1 CSET 82")
+            }
+        })
+}
+
+#[cfg(test)]
+mod carrier_serial_tests {
+    use super::carrier_serial_problem;
+
+    /// What GS1 admits in AI 21: one to twenty characters of CSET 82. Letters,
+    /// digits and a handful of punctuation marks, but no space.
+    #[test]
+    fn what_ai_21_admits_is_accepted() {
+        for ok in ["1", "SN-2026-0001", "a/b.c_d", &"X".repeat(20)] {
+            assert_eq!(carrier_serial_problem(ok), None, "{ok}");
+        }
+    }
+
+    #[test]
+    fn what_ai_21_refuses_is_named() {
+        assert_eq!(
+            carrier_serial_problem("").as_deref(),
+            Some("must not be empty")
+        );
+        assert!(
+            carrier_serial_problem(&"X".repeat(21))
+                .is_some_and(|p| p.contains("21 characters") && p.contains("at most 20"))
+        );
+        // The first character outside the set is the one named, and a space is
+        // outside it.
+        assert!(carrier_serial_problem("SN 1").is_some_and(|p| p.contains("' '")));
+        assert!(carrier_serial_problem("SN#1").is_some_and(|p| p.contains("'#'")));
+    }
 }

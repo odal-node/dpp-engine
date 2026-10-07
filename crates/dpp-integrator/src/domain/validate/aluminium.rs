@@ -8,15 +8,15 @@ use dpp_domain::{
 };
 
 use crate::domain::fields::{
-    optional_commodity_code, optional_date, optional_f64, optional_str, parse_gtin, require_f64,
-    require_str,
+    optional_carrier_serial, optional_commodity_code, optional_date, optional_f64, optional_str,
+    parse_gtin, require_f64, require_str,
 };
 use crate::domain::request::{CreatePassportRequest, RowError};
 
 use super::Column;
 
 /// The columns this validator reads, in template order. Envelope columns
-/// (`placedOnMarketDate`, `commodityCode`) are appended by `columns_for`.
+/// (`placedOnMarketDate`, `commodityCode`, `carrierSerial`) are appended by `columns_for`.
 pub(super) const COLUMNS: &[Column] = &[
     Column::required("productName"),
     Column::required("gtin"),
@@ -59,6 +59,7 @@ pub fn validate_aluminium_row(
     // Envelope-level, so every product group reads them from the same columns.
     let placed_on_market_date = optional_date(row, "placedOnMarketDate", row_num, &mut errors);
     let commodity_code = optional_commodity_code(row, "commodityCode", row_num, &mut errors);
+    let carrier_serial = optional_carrier_serial(row, "carrierSerial", row_num, &mut errors);
 
     if !errors.is_empty() {
         return Err(errors);
@@ -112,6 +113,7 @@ pub fn validate_aluminium_row(
         schema_version: None,
         placed_on_market_date,
         commodity_code,
+        carrier_serial,
         // An import creates originals, never replacements: a successor is
         // declared deliberately by whoever knows what it replaces.
         supersedes_id: None,
@@ -212,6 +214,37 @@ mod tests {
         // An absent column stays absent, with no error.
         let req = validate_aluminium_row(&aluminium_row(), 1).expect("valid row");
         assert_eq!(req.placed_on_market_date, None);
+    }
+
+    /// A carrier serial reaches the request, and a bad one names its row.
+    ///
+    /// The vault refuses a serial GS1 would reject too, but its answer cannot say
+    /// which row of a long spreadsheet carried it. A blank cell attributes
+    /// nothing, so the carrier prints the default derived from the passport id.
+    #[test]
+    fn carrier_serial_is_validated_here_so_the_error_names_a_row() {
+        let mut row = aluminium_row();
+        row.insert("carrierSerial".into(), "  SN-2026-0001 ".into());
+        let req = validate_aluminium_row(&row, 1).expect("valid aluminium row");
+        assert_eq!(
+            req.carrier_serial.as_deref(),
+            Some("SN-2026-0001"),
+            "stray whitespace around a cell is trimmed, not refused"
+        );
+
+        row.insert("carrierSerial".into(), "SN 2026".into());
+        let errors =
+            validate_aluminium_row(&row, 9).expect_err("a serial GS1 would reject is refused");
+        assert!(
+            errors.iter().any(|e| e.field == "carrierSerial"
+                && e.row == 9
+                && e.message.contains("outside GS1 CSET 82")),
+            "expected a carrierSerial error naming row 9 and the rule, got {errors:?}"
+        );
+
+        row.insert("carrierSerial".into(), "   ".into());
+        let req = validate_aluminium_row(&row, 1).expect("a blank cell is not an error");
+        assert_eq!(req.carrier_serial, None, "blank attributes nothing");
     }
 
     fn aluminium_row() -> HashMap<String, String> {

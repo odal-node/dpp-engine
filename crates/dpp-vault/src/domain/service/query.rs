@@ -7,6 +7,7 @@ use dpp_domain::{
     passport::{CarrierQualifier, Passport, PassportId},
     ports::passport_repo::{MAX_SUCCESSION_HOPS, PassportRepository},
     product::ProductIdentity,
+    product_group::ProductGroupData,
     status::PassportStatus,
 };
 use dpp_types::audit::PassportAuditEntry;
@@ -83,6 +84,10 @@ impl PassportService {
     /// before publishing it, and one whose publish was refused stays behind as a
     /// draft; neither is the record the label names.
     ///
+    /// A published successor whose predecessor is not yet superseded is not an
+    /// answer either: the label is the predecessor's until the supersede, and
+    /// then it walks forward. See [`without_pending_successors`].
+    ///
     /// # Errors
     ///
     /// [`DppError::Internal`] when the label names more than one current record
@@ -97,6 +102,31 @@ impl PassportService {
         serial: Option<&str>,
     ) -> Result<Option<LabelResolution>, DppError> {
         resolve_label(&*self.repo, gtin, batch, serial).await
+    }
+
+    /// Whether another passport already prints `serial` under `identifier`, so
+    /// that a new passport attributing it would make one label name two unrelated
+    /// records.
+    ///
+    /// `replaces` is the passport the new one declares it supersedes. A successor
+    /// carries its predecessor's serial by design, and one label names the whole
+    /// amendment chain, so the passport being replaced does not hold the serial
+    /// against its successor, and neither does any superseded record behind it.
+    ///
+    /// A check, not a constraint. Two requests that arrive together can both pass
+    /// it. The collision is not silent when it happens: the label lookup refuses
+    /// to choose between two unrelated current records and answers with an error.
+    ///
+    /// # Errors
+    ///
+    /// The store's own failure.
+    pub async fn carrier_serial_is_taken(
+        &self,
+        identifier: &ProductIdentifier,
+        serial: &str,
+        replaces: Option<PassportId>,
+    ) -> Result<bool, DppError> {
+        carrier_serial_is_taken(&*self.repo, identifier, serial, replaces).await
     }
 
     /// Fetch a passport by exact compound identity (product group, GTIN, batch),
@@ -285,6 +315,7 @@ async fn current_for(
             current.push(record);
         }
     }
+    let mut current = without_pending_successors(current);
 
     match current.len() {
         0 | 1 => Ok(current.pop()),
@@ -299,6 +330,95 @@ async fn current_for(
                 .join(", ")
         ))),
     }
+}
+
+/// `current` without each record whose declared predecessor is also in it.
+///
+/// A successor takes over its predecessor's label when the predecessor is
+/// superseded, not when the successor is published. Until then both are current,
+/// and the one the label names is the predecessor, which the state machine still
+/// holds live. Two moments put a pair here: an amendment publishes its successor
+/// a step before it supersedes the predecessor, and a successor declared with
+/// `supersedesId` at create waits for a separate `supersede` call. Without this
+/// the label is an error for the whole of that wait, which for a declared
+/// successor has no bound.
+///
+/// Left unfiltered when every record would go, which only records that each
+/// declare another of them can do. That is an inconsistent store, and the
+/// caller's refusal of an ambiguous label is the answer to it.
+fn without_pending_successors(current: Vec<Passport>) -> Vec<Passport> {
+    let ids: Vec<PassportId> = current.iter().map(|p| p.id).collect();
+    let pending = |p: &Passport| p.supersedes_id.is_some_and(|prev| ids.contains(&prev));
+    if current.iter().all(pending) {
+        return current;
+    }
+    current.into_iter().filter(|p| !pending(p)).collect()
+}
+
+/// [`PassportService::carrier_serial_is_taken`], over the port alone.
+///
+/// Read through the same lookup a printed label goes through, so it answers for
+/// the serial the label would print: an attributed one, or the default a passport
+/// derives from its id.
+async fn carrier_serial_is_taken(
+    repo: &dyn PassportRepository,
+    identifier: &ProductIdentifier,
+    serial: &str,
+    replaces: Option<PassportId>,
+) -> Result<bool, DppError> {
+    let holders = repo
+        .find_by_carrier(identifier, &CarrierQualifier::Serial(serial.into()))
+        .await?;
+    // Superseded records are never a chain's head, and the head is either the
+    // passport being replaced or a passport that holds the serial in its own
+    // right. So ignoring them cannot hide a real holder.
+    Ok(holders
+        .iter()
+        .any(|p| Some(p.id) != replaces && p.status != PassportStatus::Superseded))
+}
+
+/// Whether a live passport outside `passport`'s chain already prints its carrier
+/// serial under its GTIN.
+///
+/// Publish asks this at the moment the label goes live. Create asks
+/// [`carrier_serial_is_taken`] first, but two creates that arrive together can
+/// both pass it, and two published holders of one label cannot be repaired:
+/// neither declares the other, and `supersedesId` is fixed at create. Drafts do
+/// not count here because a draft answers no label, so whichever of two drafts
+/// publishes first keeps the serial and the other stays a draft.
+///
+/// Asking is not enough on its own: two publishes could both ask before either
+/// writes. Publish asks while holding the label (`label_lock`), so the second
+/// asks after the first has written.
+///
+/// "Outside the chain" is the rule [`without_pending_successors`] resolves by:
+/// a passport and one that declares it in `supersedesId`, in either direction,
+/// are one chain, and superseded records are behind its head.
+pub(super) async fn carrier_serial_is_live_elsewhere(
+    repo: &dyn PassportRepository,
+    passport: &Passport,
+) -> Result<bool, DppError> {
+    let Some(identifier) = passport
+        .product_group_data
+        .as_ref()
+        .and_then(ProductGroupData::product_identifier)
+        .filter(|id| id.gtin().is_some())
+    else {
+        return Ok(false);
+    };
+    let serial = passport.effective_carrier_serial();
+    let holders = repo
+        .find_by_carrier(
+            identifier,
+            &CarrierQualifier::Serial(serial.as_ref().into()),
+        )
+        .await?;
+    Ok(holders.iter().any(|p| {
+        p.id != passport.id
+            && Some(p.id) != passport.supersedes_id
+            && p.supersedes_id != Some(passport.id)
+            && !matches!(p.status, PassportStatus::Draft | PassportStatus::Superseded)
+    }))
 }
 
 /// The record a reader holding `record`'s label should reach: `record` itself,
@@ -443,7 +563,10 @@ mod label_resolution {
         status::PassportStatus,
     };
 
-    use super::{LabelLevel, LabelResolution, resolve_label};
+    use super::{
+        LabelLevel, LabelResolution, carrier_serial_is_live_elsewhere, carrier_serial_is_taken,
+        resolve_label,
+    };
 
     const GTIN: &str = "09506000134352";
 
@@ -636,6 +759,54 @@ mod label_resolution {
         a.carrier_serial = Some("SN-0001".into());
         let mut b = passport(PassportStatus::Published);
         b.carrier_serial = Some("SN-0001".into());
+        store(&repo, &[&a, &b]).await;
+
+        let err = resolve_label(&repo, gtin(), None, Some("SN-0001"))
+            .await
+            .expect_err("an ambiguous label must not resolve");
+        assert!(matches!(err, DppError::Internal(_)), "{err:?}");
+    }
+
+    /// A successor published before its predecessor is superseded has not taken
+    /// the label over yet. An amendment is in that state for one step, and a
+    /// successor declared with `supersedesId` until someone calls `supersede`;
+    /// the label answers the predecessor throughout, and never an error.
+    #[tokio::test]
+    async fn a_published_successor_takes_the_label_only_once_its_predecessor_is_superseded() {
+        let repo = InMemoryPassportRepo::default();
+        let mut predecessor = passport(PassportStatus::Published);
+        predecessor.carrier_serial = Some("SN-0001".into());
+        let mut successor = passport(PassportStatus::Published);
+        successor.carrier_serial = Some("SN-0001".into());
+        successor.supersedes_id = Some(predecessor.id);
+        store(&repo, &[&predecessor, &successor]).await;
+
+        assert_eq!(
+            resolved(&repo, None, Some("SN-0001")).await,
+            Some(predecessor.id),
+            "before the supersede the predecessor is still the live record"
+        );
+
+        repo.update_status(predecessor.id, PassportStatus::Superseded)
+            .await
+            .expect("supersede");
+        assert_eq!(
+            resolved(&repo, None, Some("SN-0001")).await,
+            Some(successor.id)
+        );
+    }
+
+    /// Records that each declare another of them are not one chain in any order,
+    /// so the label stays refused rather than resolving to nothing.
+    #[tokio::test]
+    async fn records_that_declare_each_other_are_still_refused() {
+        let repo = InMemoryPassportRepo::default();
+        let mut a = passport(PassportStatus::Published);
+        a.carrier_serial = Some("SN-0001".into());
+        let mut b = passport(PassportStatus::Published);
+        b.carrier_serial = Some("SN-0001".into());
+        a.supersedes_id = Some(b.id);
+        b.supersedes_id = Some(a.id);
         store(&repo, &[&a, &b]).await;
 
         let err = resolve_label(&repo, gtin(), None, Some("SN-0001"))
@@ -850,5 +1021,159 @@ mod label_resolution {
             .expect("inherits the model");
         assert_eq!(found.passport.id, model.id);
         assert_eq!(found.resolved, LabelLevel::Model);
+    }
+
+    /// A passport that attributes `serial` to its carrier.
+    fn attributing(serial: &str, status: PassportStatus) -> Passport {
+        let mut p = passport(status);
+        p.carrier_serial = Some(serial.into());
+        p
+    }
+
+    async fn taken(
+        repo: &InMemoryPassportRepo,
+        gtin: Gtin,
+        serial: &str,
+        replaces: Option<PassportId>,
+    ) -> bool {
+        carrier_serial_is_taken(
+            repo,
+            &dpp_domain::ProductIdentifier::gs1(gtin),
+            serial,
+            replaces,
+        )
+        .await
+        .expect("checks")
+    }
+
+    /// Two unrelated passports under one GTIN that attribute one serial make a
+    /// label that names both, and a label that names two resolves to neither. So
+    /// the second is refused rather than stored.
+    #[tokio::test]
+    async fn a_serial_another_passport_holds_is_taken() {
+        let repo = InMemoryPassportRepo::default();
+        store(&repo, &[&attributing("SN-1", PassportStatus::Published)]).await;
+
+        assert!(taken(&repo, gtin(), "SN-1", None).await);
+        assert!(!taken(&repo, gtin(), "SN-2", None).await);
+    }
+
+    /// The same serial under another GTIN names another product, as a label under
+    /// another GTIN always does.
+    #[tokio::test]
+    async fn a_serial_held_under_another_gtin_is_free() {
+        let repo = InMemoryPassportRepo::default();
+        store(&repo, &[&attributing("SN-1", PassportStatus::Published)]).await;
+
+        let other = Gtin::parse("01234567890128").expect("valid GTIN");
+        assert!(!taken(&repo, other, "SN-1", None).await);
+    }
+
+    /// A draft holds its serial. Otherwise two drafts could attribute one and
+    /// collide when the first is published.
+    #[tokio::test]
+    async fn a_draft_holds_its_serial() {
+        let repo = InMemoryPassportRepo::default();
+        store(&repo, &[&attributing("SN-1", PassportStatus::Draft)]).await;
+
+        assert!(taken(&repo, gtin(), "SN-1", None).await);
+    }
+
+    /// The passport a new one replaces shares its serial by design: one label
+    /// names the whole amendment chain, and the current record answers it.
+    #[tokio::test]
+    async fn the_passport_being_replaced_does_not_hold_the_serial_against_its_successor() {
+        let repo = InMemoryPassportRepo::default();
+        let predecessor = attributing("SN-1", PassportStatus::Published);
+        store(&repo, &[&predecessor]).await;
+
+        assert!(
+            !taken(&repo, gtin(), "SN-1", Some(predecessor.id)).await,
+            "a successor may carry its predecessor's serial"
+        );
+        // Naming a different passport as the one replaced does not excuse it.
+        assert!(taken(&repo, gtin(), "SN-1", Some(PassportId::new())).await);
+    }
+
+    /// Behind the head of a chain every record is superseded and shares the
+    /// serial, so none of them holds it against a further successor.
+    #[tokio::test]
+    async fn a_superseded_chain_does_not_hold_the_serial_against_its_successor() {
+        let repo = InMemoryPassportRepo::default();
+        let first = attributing("SN-1", PassportStatus::Superseded);
+        let mut second = attributing("SN-1", PassportStatus::Superseded);
+        second.supersedes_id = Some(first.id);
+        let mut head = attributing("SN-1", PassportStatus::Published);
+        head.supersedes_id = Some(second.id);
+        store(&repo, &[&first, &second, &head]).await;
+
+        assert!(!taken(&repo, gtin(), "SN-1", Some(head.id)).await);
+        // Without naming the head, the head holds it.
+        assert!(taken(&repo, gtin(), "SN-1", None).await);
+    }
+
+    async fn live_elsewhere(repo: &InMemoryPassportRepo, passport: &Passport) -> bool {
+        carrier_serial_is_live_elsewhere(repo, passport)
+            .await
+            .expect("checks")
+    }
+
+    /// Two drafts that both passed create's check, because their creates arrived
+    /// together: whichever publishes first keeps the serial, and the other is
+    /// refused at publish rather than making the label name two passports.
+    #[tokio::test]
+    async fn the_second_of_two_drafts_sharing_a_serial_cannot_go_live() {
+        let repo = InMemoryPassportRepo::default();
+        let mut first = attributing("SN-1", PassportStatus::Draft);
+        let second = attributing("SN-1", PassportStatus::Draft);
+        store(&repo, &[&first, &second]).await;
+
+        assert!(
+            !live_elsewhere(&repo, &first).await,
+            "a draft answers no label, so it does not hold the serial against a publish"
+        );
+        repo.update_status(first.id, PassportStatus::Published)
+            .await
+            .expect("publish");
+        first.status = PassportStatus::Published;
+
+        assert!(live_elsewhere(&repo, &second).await);
+        assert!(
+            !live_elsewhere(&repo, &first).await,
+            "a passport does not hold its own serial against itself"
+        );
+    }
+
+    /// A passport and one that names it in `supersedesId` are one chain in
+    /// either direction, and a superseded record is behind its head. None of
+    /// them blocks the other from going live.
+    #[tokio::test]
+    async fn a_chain_does_not_hold_its_serial_against_itself_at_publish() {
+        let repo = InMemoryPassportRepo::default();
+        let predecessor = attributing("SN-1", PassportStatus::Published);
+        let mut successor = attributing("SN-1", PassportStatus::Draft);
+        successor.supersedes_id = Some(predecessor.id);
+        let behind = attributing("SN-1", PassportStatus::Superseded);
+        store(&repo, &[&predecessor, &successor, &behind]).await;
+
+        assert!(!live_elsewhere(&repo, &successor).await);
+        repo.update_status(successor.id, PassportStatus::Published)
+            .await
+            .expect("publish");
+        // The predecessor coming back from a suspension while its declared
+        // successor is live is the same chain, not a collision.
+        assert!(!live_elsewhere(&repo, &predecessor).await);
+    }
+
+    /// The label prints the *effective* serial, so a value another passport
+    /// prints by default is as taken as one it attributed.
+    #[tokio::test]
+    async fn a_serial_another_passport_prints_by_default_is_taken() {
+        let repo = InMemoryPassportRepo::default();
+        let defaulted = passport(PassportStatus::Published);
+        let printed = defaulted.effective_carrier_serial().into_owned();
+        store(&repo, &[&defaulted]).await;
+
+        assert!(taken(&repo, gtin(), &printed, None).await);
     }
 }

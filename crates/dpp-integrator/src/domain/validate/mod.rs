@@ -91,6 +91,7 @@ impl Column {
 pub const ENVELOPE_COLUMNS: &[Column] = &[
     Column::optional("placedOnMarketDate"),
     Column::optional("commodityCode"),
+    Column::optional("carrierSerial"),
 ];
 
 /// Render a template header row from a product group's column list.
@@ -485,6 +486,64 @@ mod tests {
             wrong.is_empty(),
             "an importer does not route its country column to `manufacturer.country`, so the \
              value lands only in `address` where nothing can check it:\n{}",
+            wrong.join("\n")
+        );
+    }
+
+    /// Every importer must route its `carrierSerial` column to the request.
+    ///
+    /// Each validator reads the column on its own, so one that forgot would drop
+    /// the cell without a word, and the passport would print a serial the operator
+    /// did not choose. Driven from the templates like the test above, which
+    /// reaches every importer, the battery categories included, whether or not it
+    /// has a test module of its own.
+    #[test]
+    fn every_template_row_routes_its_carrier_serial_column_to_the_request() {
+        let mut stated = 0usize;
+        let mut wrong = Vec::new();
+
+        for group in crate::handlers::templates::template_keys() {
+            let group = &group;
+            let template = crate::handlers::templates::template_for(group)
+                .expect("a served template key renders");
+            let rows = crate::domain::csv_parser::parse_csv(template.as_bytes())
+                .unwrap_or_else(|e| panic!("{group} template is not parseable CSV: {e:?}"));
+
+            for (offset, row) in rows.iter().enumerate() {
+                let cell = row
+                    .get("carrierSerial")
+                    .map(|c| c.trim())
+                    .filter(|c| !c.is_empty());
+                let req = super::validate_row(group, row, offset + 1).unwrap_or_else(|_| {
+                    panic!(
+                        "{group} row {} must validate — a test above asserts it",
+                        offset + 1
+                    )
+                });
+                stated += usize::from(cell.is_some());
+
+                if req.carrier_serial.as_deref() != cell {
+                    wrong.push(format!(
+                        "  {group} row {}: carrier serial is {:?}, the column says {cell:?}",
+                        offset + 1,
+                        req.carrier_serial
+                    ));
+                }
+            }
+        }
+
+        // Without this the test passes vacuously if the column is renamed out from
+        // under the lookup above: every cell would read as blank and nothing would
+        // be compared.
+        assert!(
+            stated >= SUPPORTED_PRODUCT_GROUPS.len(),
+            "only {stated} rows stated a carrier serial, fewer than one per product group, so \
+             the column lookup above has probably stopped matching"
+        );
+        assert!(
+            wrong.is_empty(),
+            "an importer does not route its `carrierSerial` column to the request, so an \
+             operator's serial is dropped and the carrier prints one they did not choose:\n{}",
             wrong.join("\n")
         );
     }

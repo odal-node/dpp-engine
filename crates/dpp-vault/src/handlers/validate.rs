@@ -59,6 +59,11 @@ pub async fn validate_handler(
     if let Some(rejection) = super::create::validate_create_request(&body) {
         return rejection;
     }
+    // The one rule create applies that needs the store. Without it the preview
+    // would pass a body create refuses.
+    if let Some(rejection) = super::create::carrier_serial_conflict(&state, &body).await {
+        return rejection;
+    }
 
     // Create would accept it. Now the stricter publish gate, so the caller
     // learns now rather than at publish time.

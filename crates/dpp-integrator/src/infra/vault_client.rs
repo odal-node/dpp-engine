@@ -90,6 +90,27 @@ impl VaultHttpClient {
                     .to_owned();
                 Err(VaultClientError::Validation(msg))
             }
+            // The passport would collide with one that exists: a `carrierSerial`
+            // another passport already holds under the same GTIN. The problem
+            // names the field, so the row error can name the column.
+            s if s == reqwest::StatusCode::CONFLICT => {
+                let body = resp.json::<serde_json::Value>().await.unwrap_or_default();
+                let first = body.get("errors").and_then(|e| e.get(0));
+                let field = first
+                    .and_then(|e| e.get("field"))
+                    .and_then(|v| v.as_str())
+                    .map(|f| f.trim_start_matches('/'))
+                    .filter(|f| !f.is_empty())
+                    .unwrap_or("request")
+                    .to_owned();
+                let message = first
+                    .and_then(|e| e.get("message"))
+                    .or_else(|| body.get("detail"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("conflicts with an existing passport")
+                    .to_owned();
+                Err(VaultClientError::Conflict { field, message })
+            }
             s if s == reqwest::StatusCode::TOO_MANY_REQUESTS => Err(VaultClientError::RateLimit),
             s if s.is_server_error() => Err(VaultClientError::ServerError(s.as_u16())),
             s => Err(VaultClientError::Unexpected(s.as_u16())),
@@ -203,6 +224,12 @@ pub enum VaultClientError {
     Network(String),
     Parse(String),
     Validation(String),
+    /// A `409`: the row conflicts with a passport that already exists. `field`
+    /// is the column the vault named, without its leading `/`.
+    Conflict {
+        field: String,
+        message: String,
+    },
     Unauthorised,
     RateLimit,
     ServerError(u16),
@@ -215,6 +242,7 @@ impl fmt::Display for VaultClientError {
             Self::Network(e) => write!(f, "network error: {e}"),
             Self::Parse(e) => write!(f, "response parse error: {e}"),
             Self::Validation(e) => write!(f, "vault validation error: {e}"),
+            Self::Conflict { field, message } => write!(f, "vault conflict on {field}: {message}"),
             Self::Unauthorised => write!(f, "vault returned 401/403 — check auth token"),
             Self::RateLimit => write!(f, "vault rate limit (429) — all retries exhausted"),
             Self::ServerError(c) => write!(f, "vault server error: HTTP {c}"),
@@ -287,6 +315,7 @@ mod tests {
             commodity_code: None,
             derived_from: Vec::new(),
             component_refs: Vec::new(),
+            carrier_serial: None,
         }
     }
 
@@ -386,6 +415,32 @@ mod tests {
         match err {
             VaultClientError::Validation(msg) => assert_eq!(msg, "Unprocessable Entity"),
             other => panic!("expected Validation, got {other:?}"),
+        }
+    }
+
+    /// The vault's `409` names the field it refused, so the row error can name
+    /// the column rather than reporting an unexpected status.
+    #[tokio::test]
+    async fn create_passport_409_names_the_field_the_vault_refused() {
+        let base_url = spawn_mock(
+            StatusCode::CONFLICT,
+            serde_json::json!({
+                "detail": "/carrierSerial: taken",
+                "errors": [{ "field": "/carrierSerial", "message": "taken" }]
+            }),
+        )
+        .await;
+        let client = VaultHttpClient::new(&base_url);
+        let err = client
+            .create_passport(&sample_request(), "tok")
+            .await
+            .unwrap_err();
+        match err {
+            VaultClientError::Conflict { field, message } => {
+                assert_eq!(field, "carrierSerial");
+                assert_eq!(message, "taken");
+            }
+            other => panic!("expected Conflict, got {other:?}"),
         }
     }
 

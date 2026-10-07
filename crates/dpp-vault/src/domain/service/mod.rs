@@ -29,6 +29,7 @@ mod evidence;
 /// Public: the demo dossier corpus is generated and tested outside the node,
 /// and must derive its views and EOL record the way the assembler does.
 pub use evidence::{declared_eol, published_views};
+mod label_lock;
 mod lifecycle;
 mod lint;
 mod publish;

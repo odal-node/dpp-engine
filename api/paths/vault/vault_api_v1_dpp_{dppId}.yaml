@@ -54,7 +54,13 @@ put:
       application/json:
         schema:
           type: object
-          description: Free-form merge-patch. Supply only the fields being changed.
+          description: |
+            Free-form merge-patch. Supply only the fields being changed.
+
+            `carrierSerial` is fixed when the passport is created. A value other
+            than the serial the passport prints is refused with `422` naming
+            `/carrierSerial`, not ignored, because it is what the label carries.
+            The same value is accepted.
   responses:
     '200':
       description: Updated DPP record.

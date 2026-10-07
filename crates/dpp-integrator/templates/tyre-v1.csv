@@ -1,3 +1,3 @@
-productName [REQUIRED],gtin [REQUIRED],batchId [OPTIONAL],manufacturerName [REQUIRED],manufacturerCountry [REQUIRED],tyreClass [REQUIRED],fuelEfficiencyClass [REQUIRED],wetGripClass [REQUIRED],externalRollingNoiseDb [REQUIRED],noisePerformanceClass [OPTIONAL],rollingResistanceNPerKn [OPTIONAL],recycledRubberPct [OPTIONAL],co2ePerTyreKg [OPTIONAL],placedOnMarketDate [OPTIONAL],commodityCode [OPTIONAL]
-Summer Tyre 205/55R16,12345678901231,BATCH-2026-001,Sample Reifen GmbH,DE,C1,B,A,68.0,B,6.5,12.0,9.4,2026-03-01,40111000
-Winter Tyre 205/55R16,98765432109879,,Sample Reifen GmbH,DE,C1,C,B,71.0,,,,,2026-03-01,40111000
+productName [REQUIRED],gtin [REQUIRED],batchId [OPTIONAL],manufacturerName [REQUIRED],manufacturerCountry [REQUIRED],tyreClass [REQUIRED],fuelEfficiencyClass [REQUIRED],wetGripClass [REQUIRED],externalRollingNoiseDb [REQUIRED],noisePerformanceClass [OPTIONAL],rollingResistanceNPerKn [OPTIONAL],recycledRubberPct [OPTIONAL],co2ePerTyreKg [OPTIONAL],placedOnMarketDate [OPTIONAL],commodityCode [OPTIONAL],carrierSerial [OPTIONAL]
+Summer Tyre 205/55R16,12345678901231,BATCH-2026-001,Sample Reifen GmbH,DE,C1,B,A,68.0,B,6.5,12.0,9.4,2026-03-01,40111000,SN-2026-0001
+Winter Tyre 205/55R16,98765432109879,,Sample Reifen GmbH,DE,C1,C,B,71.0,,,,,2026-03-01,40111000,

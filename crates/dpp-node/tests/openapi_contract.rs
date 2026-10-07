@@ -3551,6 +3551,9 @@ mod fixtures {
             // value against `LifeStatus.yaml`. `Repurposed` also matches the
             // derivation edge beside it, so the fixture is internally coherent.
             life_status: Some(dpp_domain::passport::LifeStatus::Repurposed),
+            // Populated, for the same rule: `None` emits no key, and the schema
+            // check would pass without ever comparing the field.
+            carrier_serial: Some("SN-2026-0001".into()),
         }
     }
 
@@ -3750,6 +3753,8 @@ mod fixtures {
             commodity_code: None,
             derived_from: Vec::new(),
             component_refs: Vec::new(),
+            // Absent on purpose, like every optional field here.
+            carrier_serial: None,
         }
     }
 
