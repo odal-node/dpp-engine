@@ -387,6 +387,10 @@ async fn carrier_serial_is_taken(
 /// not count here because a draft answers no label, so whichever of two drafts
 /// publishes first keeps the serial and the other stays a draft.
 ///
+/// Asking is not enough on its own: two publishes could both ask before either
+/// writes. Publish asks while holding the label (`label_lock`), so the second
+/// asks after the first has written.
+///
 /// "Outside the chain" is the rule [`without_pending_successors`] resolves by:
 /// a passport and one that declares it in `supersedesId`, in either direction,
 /// are one chain, and superseded records are behind its head.

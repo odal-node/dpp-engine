@@ -212,6 +212,36 @@ impl IdentityPort for MockIdentity {
     }
 }
 
+/// [`MockIdentity`], taking its time over each signature.
+///
+/// Signing sits between publish's last check and its write, so a slow signer
+/// holds that gap open long enough for a second request to arrive inside it.
+pub struct SlowIdentity(pub std::time::Duration);
+
+#[async_trait]
+impl IdentityPort for SlowIdentity {
+    async fn sign_passport(
+        &self,
+        passport_id: PassportId,
+        payload: &serde_json::Value,
+    ) -> Result<SignedCredential, DppError> {
+        tokio::time::sleep(self.0).await;
+        MockIdentity.sign_passport(passport_id, payload).await
+    }
+
+    async fn verify_signature(
+        &self,
+        jws: &str,
+        payload: &serde_json::Value,
+    ) -> Result<bool, DppError> {
+        MockIdentity.verify_signature(jws, payload).await
+    }
+
+    async fn own_did_document(&self) -> Result<serde_json::Value, DppError> {
+        MockIdentity.own_did_document().await
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Vault Axum app factory
 // ---------------------------------------------------------------------------
@@ -248,6 +278,18 @@ pub async fn start_vault(dal: PgDal) -> String {
 
 pub async fn start_vault_failing_signer(dal: PgDal) -> String {
     start_vault_with_identity(dal, Arc::new(FailingIdentity), None, SealWiring::default()).await
+}
+
+/// A vault whose signer takes `delay` per signature — for requests that must
+/// overlap inside a publish.
+pub async fn start_vault_slow_signer(dal: PgDal, delay: std::time::Duration) -> String {
+    start_vault_with_identity(
+        dal,
+        Arc::new(SlowIdentity(delay)),
+        None,
+        SealWiring::default(),
+    )
+    .await
 }
 
 /// A vault whose seal ports are wired to order — for the routes whose answers

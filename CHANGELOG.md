@@ -269,11 +269,14 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   an amendment between publishing the successor and superseding the original.
 
   Create's check is not a constraint: two requests that arrive together can
-  both pass it. So publish checks again, where the label goes live. Whichever of
-  the two drafts publishes first keeps the serial; the other is a `422` naming
-  `/carrierSerial` and stays a draft, which answers no label. Without that, both
-  could publish, and the pair could not be repaired, since neither declares the
-  other and `supersedesId` is fixed at create.
+  both pass it. So publish checks again, where the label goes live, and holds
+  the label from that check to its write, so two publishes of one label cannot
+  both check before either has written. Whichever of the two drafts publishes
+  first keeps the serial; the other is a `422` naming `/carrierSerial` and stays
+  a draft, which answers no label. Without that, both could publish, and the
+  pair could not be repaired, since neither declares the other and
+  `supersedesId` is fixed at create. The hold is per node process, which is how
+  the node runs: one process per operator.
 
   **In an import,** the column is blank by default and attributes nothing. A
   serial GS1 would reject is a row error naming the row. So is a serial repeated

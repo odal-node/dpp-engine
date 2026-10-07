@@ -259,6 +259,59 @@ async fn of_two_drafts_that_raced_past_create_only_the_first_published_goes_live
     assert_eq!(label_reaches(&client, "SN-1").await, first_id);
 }
 
+/// The same two drafts, published **at the same moment**: exactly one goes live.
+///
+/// The publish-time check reads the label's holders and the write comes after
+/// signing, so without the label lock both requests read "free" while the other
+/// was still signing, and both were published. The slow signer holds that gap
+/// open so the second request is certain to arrive inside it.
+#[tokio::test(flavor = "multi_thread")]
+async fn of_two_drafts_published_together_exactly_one_goes_live() {
+    use dpp_dal::pg::PgPassportRepo;
+    use dpp_domain::{passport::PassportId, ports::passport_repo::PassportRepository};
+
+    let pg = start_postgres().await;
+    let vault_url =
+        helpers::start_vault_slow_signer(pg.dal.clone(), std::time::Duration::from_millis(300))
+            .await;
+    seed_complete_operator(&pg.dal).await;
+    let client = TestClient::new(
+        &vault_url,
+        &make_jwt("00000000-0000-0000-0000-000000000003"),
+    );
+
+    let first = create(&client, draft("First", gs1(GTIN), Some("SN-1"))).await;
+    let first_id = first["id"].as_str().unwrap().to_owned();
+    let repo = PgPassportRepo::new(pg.dal.clone());
+    let mut raced = repo
+        .find_by_id(PassportId(first_id.parse().unwrap()))
+        .await
+        .unwrap()
+        .expect("the first draft is stored");
+    raced.id = PassportId::new();
+    let raced_id = raced.id.to_string();
+    repo.create(raced).await.expect("seed the raced draft");
+
+    let (first_path, raced_path) = (
+        format!("/api/v1/dpp/{first_id}/publish"),
+        format!("/api/v1/dpp/{raced_id}/publish"),
+    );
+    let (a, b) = tokio::join!(
+        client.post_json(&first_path, serde_json::json!({})),
+        client.post_json(&raced_path, serde_json::json!({})),
+    );
+
+    let mut statuses = [a.status().as_u16(), b.status().as_u16()];
+    statuses.sort_unstable();
+    assert_eq!(statuses, [200, 422], "one publish, one refusal");
+    let live = if a.status() == 200 {
+        &first_id
+    } else {
+        &raced_id
+    };
+    assert_eq!(&label_reaches(&client, "SN-1").await, live);
+}
+
 /// A draft's update ignores the create-time fields it is sent, but not this
 /// one: a different serial is a `422` naming it, because ignoring it would answer
 /// a caller whose label will not say what they sent. The serial it already

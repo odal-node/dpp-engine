@@ -161,6 +161,10 @@ impl PassportService {
         // creates that arrive together can both pass create's check, and two
         // published holders of one label cannot be repaired afterwards. Refused,
         // this one stays a draft, which answers no label.
+        //
+        // Held until the write below, so two publishes of one label cannot both
+        // ask before either has written. See `label_lock`.
+        let label = super::label_lock::hold(&passport).await;
         if super::query::carrier_serial_is_live_elsewhere(&*self.repo, &passport).await? {
             let serial = passport.effective_carrier_serial();
             return Err(reject(
@@ -552,6 +556,9 @@ impl PassportService {
                 }
             },
         };
+        // Written, so a publish waiting on this label now finds it live. Nothing
+        // below decides who holds it, and the back-up copy can be slow.
+        drop(label);
 
         // Stamp the exact payloads that were signed (not the current row) as
         // metadata on this publish's audit entry. `jws_signature` and
