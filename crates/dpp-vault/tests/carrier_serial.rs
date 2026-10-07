@@ -275,10 +275,7 @@ async fn of_two_drafts_published_together_exactly_one_goes_live() {
         helpers::start_vault_slow_signer(pg.dal.clone(), std::time::Duration::from_millis(300))
             .await;
     seed_complete_operator(&pg.dal).await;
-    let client = TestClient::new(
-        &vault_url,
-        &make_jwt("00000000-0000-0000-0000-000000000003"),
-    );
+    let client = TestClient::new(&vault_url, make_jwt("00000000-0000-0000-0000-000000000003"));
 
     let first = create(&client, draft("First", gs1(GTIN), Some("SN-1"))).await;
     let first_id = first["id"].as_str().unwrap().to_owned();
