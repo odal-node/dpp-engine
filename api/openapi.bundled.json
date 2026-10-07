@@ -491,7 +491,7 @@
             "application/json": {
               "schema": {
                 "type": "object",
-                "description": "Free-form merge-patch. Supply only the fields being changed."
+                "description": "Free-form merge-patch. Supply only the fields being changed.\n\n`carrierSerial` is fixed when the passport is created. A value other\nthan the serial the passport prints is refused with `422` naming\n`/carrierSerial`, not ignored, because it is what the label carries.\nThe same value is accepted.\n"
               }
             }
           }
@@ -6352,7 +6352,7 @@
             "type": "string",
             "minLength": 1,
             "maxLength": 20,
-            "description": "The serial the passport's GS1 data carrier prints in AI 21, attributed by\nthe operator. Omitted, the carrier prints a default derived from the\npassport id. An operator that already serialises its units states that\nserial here, so the printed label names the passport under the serial the\nunit already carries. Art. 77(3) of Regulation (EU) 2023/1542 puts the\nchoice of this identifier on the economic operator.\n\nOne to twenty characters of GS1's CSET 82 set, which is how AI 21 is\ndefined: letters, digits and a few punctuation marks, but no space.\nRefused with `422` otherwise, and refused on a passport that is not\nidentified by a GTIN, because only a GTIN has a GS1 carrier.\n\n**Unique under its GTIN.** A label that names two passports resolves to\nneither, so a serial another passport already holds is refused with `409`.\nThe passport named in `supersedesId` is the exception: a successor shares\nits predecessor's serial, because one label names the whole amendment\nchain.\n\nNot the manufacturer's `serialNumber`, though an operator may state the\nsame value for both. Nothing copies one into the other.\n\n**Create-time only.** It is protected from patching, and the carrier is\nstamped at publish. An amendment carries it forward.\n",
+            "description": "The serial the passport's GS1 data carrier prints in AI 21, attributed by\nthe operator. Omitted, the carrier prints a default derived from the\npassport id. An operator that already serialises its units states that\nserial here, so the printed label names the passport under the serial the\nunit already carries. Art. 77(3) of Regulation (EU) 2023/1542 puts the\nchoice of this identifier on the economic operator.\n\nOne to twenty characters of GS1's CSET 82 set, which is how AI 21 is\ndefined: letters, digits and a few punctuation marks, but no space.\nRefused with `422` otherwise, and refused on a passport that is not\nidentified by a GTIN, because only a GTIN has a GS1 carrier.\n\n**Unique under its GTIN.** A label that names two passports resolves to\nneither, so a serial another passport already holds is refused with `409`.\nThe passport named in `supersedesId` is the exception: a successor shares\nits predecessor's serial, because one label names the whole amendment\nchain. The label keeps answering with the predecessor until it is\nsuperseded, and with the successor from then on.\n\nNot the manufacturer's `serialNumber`, though an operator may state the\nsame value for both. Nothing copies one into the other.\n\n**Create-time only.** The carrier is stamped at publish, and an amendment\ncarries it forward. A `PUT` or an amendment naming a different serial is\nrefused with `422`.\n",
             "example": "SN-2026-0001"
           }
         }
@@ -10150,7 +10150,7 @@
         "properties": {
           "patch": {
             "type": "object",
-            "description": "The correction, in the same shape the draft-update body takes: only the\npatchable content fields (`productName`, `co2ePerUnit`,\n`repairabilityScore`, `productGroupData`, `componentRefs`) take effect.\n\nOther keys are ignored rather than refused, so a client that sends a full\ncreate-shaped body still works and still cannot make a create-time field\ntake effect. Fields fixed at issuance — the product group, the schema\nversion, the manufacturer, the lineage edges — are not amendable; a\npassport whose product group is wrong is not the same product.\n",
+            "description": "The correction, in the same shape the draft-update body takes: only the\npatchable content fields (`productName`, `co2ePerUnit`,\n`repairabilityScore`, `productGroupData`, `componentRefs`) take effect.\n\nOther keys are ignored rather than refused, so a client that sends a full\ncreate-shaped body still works and still cannot make a create-time field\ntake effect. Fields fixed at issuance — the product group, the schema\nversion, the manufacturer, the lineage edges — are not amendable; a\npassport whose product group is wrong is not the same product.\n\n`carrierSerial` is fixed at issuance too, and is the one such key that is\nrefused rather than ignored when it differs from the serial the passport\nprints, with `422` naming `/carrierSerial`. It is what the label carries,\nand the successor keeps the predecessor's so that the label stays the\nsame. The same value is accepted.\n",
             "additionalProperties": true,
             "example": {
               "productName": "Model X Battery Pack (rev B)",

@@ -253,21 +253,34 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
   One to twenty characters of GS1's CSET 82 set, `422` otherwise, and `422` on
   a passport with no GTIN, since only a GTIN has a GS1 carrier. It is
-  create-time only: a patch cannot reach it, the carrier is stamped at publish,
-  and an amendment carries it forward.
+  create-time only: the carrier is stamped at publish, and an amendment carries
+  it forward. A `PUT` or an amendment that names a different serial is a `422`
+  naming `/carrierSerial`. Other create-time fields are ignored there, but this
+  one is what the label prints, so ignoring it would answer `200` to a caller
+  whose label will not change. The same value is accepted.
 
   **A serial is unique under its GTIN.** A label that names two passports
   resolves to neither, so a serial another passport already holds is refused
   with `409` naming `/carrierSerial`, and `POST /dpp/validate` says the same. The
   passport named in `supersedesId` is the exception, because one label names a
-  whole amendment chain. It is a check and not a constraint: two requests that
-  arrive together can both pass it, and the label lookup then refuses to choose
-  between the two records and answers with an error.
+  whole amendment chain. That passport keeps the label until it is superseded,
+  and the successor takes it over then. A successor that is published first does
+  not make the label ambiguous in between, which also holds for the step inside
+  an amendment between publishing the successor and superseding the original. It
+  is a check and not a constraint: two requests that arrive together can both
+  pass it, and the label lookup then refuses to choose between the two records
+  and answers with an error.
 
   **In an import,** the column is blank by default and attributes nothing. A
-  serial GS1 would reject is a row error naming the row. The committed templates
-  and the generated battery templates carry the column last; an older file
-  without it still imports.
+  serial GS1 would reject is a row error naming the row. So is a serial repeated
+  within one file under one GTIN, naming the row that stated it first, because
+  rows are created concurrently and both could pass the check. A serial the vault
+  refuses as taken is a row error naming the column. A re-imported row that
+  states a serial its matched passport does not carry is not reported unchanged:
+  for a draft the update is refused, since the serial is fixed at create, and
+  for a published passport it is a conflict. The committed templates and the
+  generated battery templates carry the column last; an older file without it
+  still imports.
 
 ### Fixed
 

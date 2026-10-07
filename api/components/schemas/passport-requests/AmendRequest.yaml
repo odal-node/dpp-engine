@@ -22,6 +22,12 @@ properties:
       take effect. Fields fixed at issuance — the product group, the schema
       version, the manufacturer, the lineage edges — are not amendable; a
       passport whose product group is wrong is not the same product.
+
+      `carrierSerial` is fixed at issuance too, and is the one such key that is
+      refused rather than ignored when it differs from the serial the passport
+      prints, with `422` naming `/carrierSerial`. It is what the label carries,
+      and the successor keeps the predecessor's so that the label stays the
+      same. The same value is accepted.
     additionalProperties: true
     example:
       productName: Model X Battery Pack (rev B)

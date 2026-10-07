@@ -390,7 +390,13 @@ paths:
           application/json:
             schema:
               type: object
-              description: Free-form merge-patch. Supply only the fields being changed.
+              description: |
+                Free-form merge-patch. Supply only the fields being changed.
+
+                `carrierSerial` is fixed when the passport is created. A value other
+                than the serial the passport prints is refused with `422` naming
+                `/carrierSerial`, not ignored, because it is what the label carries.
+                The same value is accepted.
       responses:
         '200':
           description: Updated DPP record.
@@ -5353,13 +5359,15 @@ components:
             neither, so a serial another passport already holds is refused with `409`.
             The passport named in `supersedesId` is the exception: a successor shares
             its predecessor's serial, because one label names the whole amendment
-            chain.
+            chain. The label keeps answering with the predecessor until it is
+            superseded, and with the successor from then on.
 
             Not the manufacturer's `serialNumber`, though an operator may state the
             same value for both. Nothing copies one into the other.
 
-            **Create-time only.** It is protected from patching, and the carrier is
-            stamped at publish. An amendment carries it forward.
+            **Create-time only.** The carrier is stamped at publish, and an amendment
+            carries it forward. A `PUT` or an amendment naming a different serial is
+            refused with `422`.
           example: SN-2026-0001
     SuspendRequest:
       type: object
@@ -8831,6 +8839,12 @@ components:
             take effect. Fields fixed at issuance — the product group, the schema
             version, the manufacturer, the lineage edges — are not amendable; a
             passport whose product group is wrong is not the same product.
+
+            `carrierSerial` is fixed at issuance too, and is the one such key that is
+            refused rather than ignored when it differs from the serial the passport
+            prints, with `422` naming `/carrierSerial`. It is what the label carries,
+            and the successor keeps the predecessor's so that the label stays the
+            same. The same value is accepted.
           additionalProperties: true
           example:
             productName: Model X Battery Pack (rev B)

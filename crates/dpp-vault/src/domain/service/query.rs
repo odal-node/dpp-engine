@@ -83,6 +83,10 @@ impl PassportService {
     /// before publishing it, and one whose publish was refused stays behind as a
     /// draft; neither is the record the label names.
     ///
+    /// A published successor whose predecessor is not yet superseded is not an
+    /// answer either: the label is the predecessor's until the supersede, and
+    /// then it walks forward. See [`without_pending_successors`].
+    ///
     /// # Errors
     ///
     /// [`DppError::Internal`] when the label names more than one current record
@@ -310,6 +314,7 @@ async fn current_for(
             current.push(record);
         }
     }
+    let mut current = without_pending_successors(current);
 
     match current.len() {
         0 | 1 => Ok(current.pop()),
@@ -324,6 +329,29 @@ async fn current_for(
                 .join(", ")
         ))),
     }
+}
+
+/// `current` without each record whose declared predecessor is also in it.
+///
+/// A successor takes over its predecessor's label when the predecessor is
+/// superseded, not when the successor is published. Until then both are current,
+/// and the one the label names is the predecessor, which the state machine still
+/// holds live. Two moments put a pair here: an amendment publishes its successor
+/// a step before it supersedes the predecessor, and a successor declared with
+/// `supersedesId` at create waits for a separate `supersede` call. Without this
+/// the label is an error for the whole of that wait, which for a declared
+/// successor has no bound.
+///
+/// Left unfiltered when every record would go, which only records that each
+/// declare another of them can do. That is an inconsistent store, and the
+/// caller's refusal of an ambiguous label is the answer to it.
+fn without_pending_successors(current: Vec<Passport>) -> Vec<Passport> {
+    let ids: Vec<PassportId> = current.iter().map(|p| p.id).collect();
+    let pending = |p: &Passport| p.supersedes_id.is_some_and(|prev| ids.contains(&prev));
+    if current.iter().all(pending) {
+        return current;
+    }
+    current.into_iter().filter(|p| !pending(p)).collect()
 }
 
 /// [`PassportService::carrier_serial_is_taken`], over the port alone.
@@ -683,6 +711,54 @@ mod label_resolution {
         a.carrier_serial = Some("SN-0001".into());
         let mut b = passport(PassportStatus::Published);
         b.carrier_serial = Some("SN-0001".into());
+        store(&repo, &[&a, &b]).await;
+
+        let err = resolve_label(&repo, gtin(), None, Some("SN-0001"))
+            .await
+            .expect_err("an ambiguous label must not resolve");
+        assert!(matches!(err, DppError::Internal(_)), "{err:?}");
+    }
+
+    /// A successor published before its predecessor is superseded has not taken
+    /// the label over yet. An amendment is in that state for one step, and a
+    /// successor declared with `supersedesId` until someone calls `supersede`;
+    /// the label answers the predecessor throughout, and never an error.
+    #[tokio::test]
+    async fn a_published_successor_takes_the_label_only_once_its_predecessor_is_superseded() {
+        let repo = InMemoryPassportRepo::default();
+        let mut predecessor = passport(PassportStatus::Published);
+        predecessor.carrier_serial = Some("SN-0001".into());
+        let mut successor = passport(PassportStatus::Published);
+        successor.carrier_serial = Some("SN-0001".into());
+        successor.supersedes_id = Some(predecessor.id);
+        store(&repo, &[&predecessor, &successor]).await;
+
+        assert_eq!(
+            resolved(&repo, None, Some("SN-0001")).await,
+            Some(predecessor.id),
+            "before the supersede the predecessor is still the live record"
+        );
+
+        repo.update_status(predecessor.id, PassportStatus::Superseded)
+            .await
+            .expect("supersede");
+        assert_eq!(
+            resolved(&repo, None, Some("SN-0001")).await,
+            Some(successor.id)
+        );
+    }
+
+    /// Records that each declare another of them are not one chain in any order,
+    /// so the label stays refused rather than resolving to nothing.
+    #[tokio::test]
+    async fn records_that_declare_each_other_are_still_refused() {
+        let repo = InMemoryPassportRepo::default();
+        let mut a = passport(PassportStatus::Published);
+        a.carrier_serial = Some("SN-0001".into());
+        let mut b = passport(PassportStatus::Published);
+        b.carrier_serial = Some("SN-0001".into());
+        a.supersedes_id = Some(b.id);
+        b.supersedes_id = Some(a.id);
         store(&repo, &[&a, &b]).await;
 
         let err = resolve_label(&repo, gtin(), None, Some("SN-0001"))

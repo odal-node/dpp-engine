@@ -161,6 +161,98 @@ async fn an_amendment_chain_shares_one_serial_without_being_refused() {
     assert_eq!(resp.status(), 409);
 }
 
+/// Publish `id`, expecting `200`.
+async fn publish(client: &TestClient, id: &str) {
+    let resp = client
+        .post_json(&format!("/api/v1/dpp/{id}/publish"), serde_json::json!({}))
+        .await;
+    let status = resp.status();
+    assert_eq!(
+        status,
+        200,
+        "publish should succeed: {}",
+        resp.text().await.unwrap()
+    );
+}
+
+/// The id of the passport the label `/01/{GTIN}/21/{serial}` reaches.
+async fn label_reaches(client: &TestClient, serial: &str) -> String {
+    let resp = client
+        .get(&format!("/public/dpp/by-gtin/{GTIN}?serial={serial}"))
+        .await;
+    let status = resp.status();
+    let text = resp.text().await.unwrap();
+    assert_eq!(status, 200, "the label must resolve: {text}");
+    let served: serde_json::Value = serde_json::from_str(&text).unwrap();
+    served["id"].as_str().unwrap().to_owned()
+}
+
+/// A successor declared at create is published and then named by a separate
+/// `supersede` call, so for a while both it and the passport it replaces are
+/// live under one label. The label answers the predecessor until the supersede,
+/// and the successor after it. Never an error.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_declared_successor_takes_the_label_when_its_predecessor_is_superseded() {
+    let (client, _pg) = client().await;
+    let first = create(&client, draft("Original", gs1(GTIN), Some("SN-1"))).await;
+    let first_id = first["id"].as_str().unwrap().to_owned();
+    publish(&client, &first_id).await;
+
+    let mut declared = draft("Replacement", gs1(GTIN), Some("SN-1"));
+    declared["supersedesId"] = serde_json::json!(first_id);
+    let second = create(&client, declared).await;
+    let second_id = second["id"].as_str().unwrap().to_owned();
+    publish(&client, &second_id).await;
+
+    assert_eq!(
+        label_reaches(&client, "SN-1").await,
+        first_id,
+        "until it is superseded, the predecessor is the live record"
+    );
+
+    let resp = client
+        .post_json(
+            &format!("/api/v1/dpp/{first_id}/supersede"),
+            serde_json::json!({ "supersededBy": second_id }),
+        )
+        .await;
+    assert_eq!(resp.status(), 200);
+
+    assert_eq!(label_reaches(&client, "SN-1").await, second_id);
+}
+
+/// A draft's update ignores the create-time fields it is sent, but not this
+/// one: a different serial is a `422` naming it, because ignoring it would answer
+/// a caller whose label will not say what they sent. The serial it already
+/// prints is accepted, so a body read back and sent again still applies.
+#[tokio::test(flavor = "multi_thread")]
+async fn an_update_naming_a_different_serial_is_refused_not_ignored() {
+    let (client, _pg) = client().await;
+    let created = create(&client, draft("Fixed", gs1(GTIN), Some("SN-1"))).await;
+    let id = created["id"].as_str().unwrap().to_owned();
+
+    let resp = client
+        .put_json(
+            &format!("/api/v1/dpp/{id}"),
+            serde_json::json!({ "productName": "Renamed", "carrierSerial": "SN-2" }),
+        )
+        .await;
+    assert_eq!(resp.status(), 422);
+    let problem: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(problem["errors"][0]["field"], "/carrierSerial", "{problem}");
+
+    let resp = client
+        .put_json(
+            &format!("/api/v1/dpp/{id}"),
+            serde_json::json!({ "productName": "Renamed", "carrierSerial": "SN-1" }),
+        )
+        .await;
+    assert_eq!(resp.status(), 200);
+    let updated: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(updated["productName"], "Renamed");
+    assert_eq!(updated["carrierSerial"], "SN-1");
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn a_serial_gs1_would_reject_or_that_cannot_be_printed_is_a_422_naming_the_field() {
     let (client, _pg) = client().await;

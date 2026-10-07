@@ -179,6 +179,13 @@ pub async fn run_batch(
                     message: msg,
                 });
             }
+            Err(VaultClientError::Conflict { field, message }) => {
+                errors.push(RowError {
+                    row: row_num,
+                    field,
+                    message,
+                });
+            }
             Err(VaultClientError::Unauthorised) => {
                 errors.push(RowError {
                     row: row_num,

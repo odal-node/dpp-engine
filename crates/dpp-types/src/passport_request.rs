@@ -146,11 +146,13 @@ pub struct CreatePassportRequest {
     ///
     /// Create-time only. `carrierSerial` is in core's `PROTECTED_PATCH_FIELDS`, so
     /// no update reaches it, and the carrier is stamped at publish. An amendment
-    /// carries it forward.
+    /// carries it forward. An update or amendment that names a different one is
+    /// refused rather than ignored, because it is what the label prints.
     ///
     /// Unique under its GTIN: a label that names two unrelated passports resolves
     /// to neither, so a serial another passport already holds is refused unless
-    /// that passport is the one this replaces.
+    /// that passport is the one this replaces. That one keeps the label until it
+    /// is superseded.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub carrier_serial: Option<String>,
 }

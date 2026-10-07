@@ -403,6 +403,13 @@ fn delta_for(passport: &Passport, applied: &[&'static str]) -> serde_json::Map<S
 /// create by design. Refusing the request would break a real caller for sending
 /// a shape it has always sent. What must not happen is those fields *taking
 /// effect*, and building the delta from the allow-list is what prevents that.
+///
+/// `carrierSerial` is the one exception. It is fixed at create as well, but it
+/// is what the label prints, so ignoring a different value would answer `200`
+/// to a caller whose label will not say what they sent, and the integrator
+/// would report the row updated. A different value is refused. The value the
+/// passport already prints is accepted, so a body read back and sent again
+/// still applies.
 pub(super) fn apply_patch(
     passport: &mut Passport,
     patch: &serde_json::Value,
@@ -415,6 +422,21 @@ pub(super) fn apply_patch(
             ));
         }
     };
+
+    if let Some(v) = obj.get("carrierSerial") {
+        let printed = passport.effective_carrier_serial();
+        if v.as_str() != Some(printed.as_ref()) {
+            return Err(DppError::Validation(dpp_domain::ValidationErrors {
+                errors: vec![dpp_domain::FieldError {
+                    field: "/carrierSerial".to_owned(),
+                    message: format!(
+                        "carrierSerial is fixed when the passport is created, and this one \
+                         prints {printed:?}. A different serial needs a new passport."
+                    ),
+                }],
+            }));
+        }
+    }
 
     let mut applied = Vec::new();
     if let Some(v) = obj.get("productName").and_then(|v| v.as_str()) {
@@ -606,6 +628,36 @@ mod tests {
         let mut p = stub();
         let err = apply_patch(&mut p, &serde_json::json!("not-an-object")).unwrap_err();
         assert!(matches!(err, DppError::Validation(_)));
+    }
+
+    /// A different `carrierSerial` is refused, not ignored. It is what the label
+    /// prints, so ignoring it would report a change that never happened. The
+    /// serial the passport already prints passes, whether it was attributed or
+    /// derived from the id, so a body read back and sent again still applies.
+    #[test]
+    fn a_different_carrier_serial_is_refused_and_the_printed_one_passes() {
+        let mut p = stub();
+        let derived = p.effective_carrier_serial().into_owned();
+        let applied = apply_patch(
+            &mut p,
+            &serde_json::json!({ "productName": "Renamed", "carrierSerial": derived }),
+        )
+        .expect("the serial it already prints is not a change");
+        assert_eq!(applied, vec!["productName"]);
+
+        p.carrier_serial = Some("SN-1".into());
+        apply_patch(&mut p, &serde_json::json!({ "carrierSerial": "SN-1" }))
+            .expect("an attributed serial sent back unchanged passes");
+
+        for different in [serde_json::json!("SN-2"), serde_json::Value::Null] {
+            let err = apply_patch(&mut p, &serde_json::json!({ "carrierSerial": different }))
+                .expect_err("a different serial must be refused");
+            let DppError::Validation(v) = err else {
+                panic!("expected a validation error, got {err:?}");
+            };
+            assert_eq!(v.errors[0].field, "/carrierSerial");
+        }
+        assert_eq!(p.carrier_serial.as_deref(), Some("SN-1"));
     }
 
     // ── the allow-list ───────────────────────────────────────────────────────
