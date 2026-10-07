@@ -211,13 +211,29 @@ pub fn refuse_repeated_carrier_serials(
 /// an existing passport is not reported unchanged. The vault refuses to change
 /// it, and the row reports that refusal rather than the label printing another
 /// serial without a word.
+///
+/// Compared with the serial the label **prints**, which is the one the vault
+/// compares too: a passport that attributed none prints the default its id
+/// derives, and the response leaves `carrierSerial` out for it. A row stating
+/// that printed value states no change.
 fn states_another_carrier_serial(
     req: &CreatePassportRequest,
     existing: &serde_json::Value,
 ) -> bool {
-    req.carrier_serial.as_deref().is_some_and(|stated| {
-        existing.get("carrierSerial").and_then(|v| v.as_str()) != Some(stated)
-    })
+    req.carrier_serial
+        .as_deref()
+        .is_some_and(|stated| printed_carrier_serial(existing).as_deref() != Some(stated))
+}
+
+/// The serial `existing`'s carrier prints: the attributed one, or the default
+/// derived from its id. `None` only when the response carries neither, which a
+/// vault response never does.
+fn printed_carrier_serial(existing: &serde_json::Value) -> Option<String> {
+    if let Some(attributed) = existing.get("carrierSerial").and_then(|v| v.as_str()) {
+        return Some(attributed.to_owned());
+    }
+    let id = existing.get("id")?.as_str()?.parse::<uuid::Uuid>().ok()?;
+    Some(dpp_domain::passport::PassportId(id).default_carrier_serial())
 }
 
 /// Classify a batch of valid rows concurrently (same bounded-concurrency
@@ -282,13 +298,14 @@ mod tests {
         serde_json::from_value(body).expect("a minimal request deserialises")
     }
 
-    /// A stated serial is a change against a passport that carries another or
-    /// none, so the row is not reported unchanged while its label prints
+    /// A stated serial is a change against a passport whose label prints
+    /// another, so the row is not reported unchanged while its label prints
     /// something else. A blank cell states nothing, so it is never a change.
     #[test]
-    fn only_a_stated_serial_the_passport_does_not_carry_is_a_change() {
-        let attributed = serde_json::json!({ "carrierSerial": "SN-1" });
-        let defaulted = serde_json::json!({});
+    fn only_a_stated_serial_the_passport_does_not_print_is_a_change() {
+        let id = dpp_domain::passport::PassportId::new();
+        let attributed = serde_json::json!({ "id": id.to_string(), "carrierSerial": "SN-1" });
+        let defaulted = serde_json::json!({ "id": id.to_string() });
 
         assert!(!states_another_carrier_serial(
             &row(Some("SN-1")),
@@ -304,5 +321,25 @@ mod tests {
         ));
         assert!(!states_another_carrier_serial(&row(None), &attributed));
         assert!(!states_another_carrier_serial(&row(None), &defaulted));
+    }
+
+    /// A passport that attributed no serial prints the default its id derives,
+    /// and the response leaves `carrierSerial` out for it. A row stating that
+    /// printed value states what the label already says, as the vault agrees.
+    #[test]
+    fn stating_the_serial_a_passport_prints_by_default_is_no_change() {
+        let id = dpp_domain::passport::PassportId::new();
+        let defaulted = serde_json::json!({ "id": id.to_string() });
+
+        assert!(!states_another_carrier_serial(
+            &row(Some(&id.default_carrier_serial())),
+            &defaulted
+        ));
+        // An attributed serial wins over the default, so the default is then a change.
+        let attributed = serde_json::json!({ "id": id.to_string(), "carrierSerial": "SN-1" });
+        assert!(states_another_carrier_serial(
+            &row(Some(&id.default_carrier_serial())),
+            &attributed
+        ));
     }
 }
