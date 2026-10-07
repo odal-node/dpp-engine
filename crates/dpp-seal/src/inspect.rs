@@ -398,7 +398,81 @@ impl SealInspector for CadesInspector {
     }
 }
 
+/// A stored seal, renewed.
+#[derive(Debug, Clone)]
+pub struct RenewedEnvelope {
+    /// The envelope to store: the same seal with one more archive timestamp, and
+    /// everything the envelope records about it — `sealed_at`, the signing
+    /// certificate reference, the level — exactly as it was. A renewal is not a
+    /// re-seal.
+    pub envelope: SealedEnvelope,
+    /// When the protection it replaces would have ended.
+    pub previous_expires: chrono::DateTime<chrono::Utc>,
+    /// When the new protection ends.
+    pub expires: chrono::DateTime<chrono::Utc>,
+}
+
 impl CadesInspector {
+    /// Renew a stored seal's archive timestamp from `source`.
+    ///
+    /// # Who may stamp, and why this lives on the inspector
+    ///
+    /// Whether to accept an authority is a Trusted List question, and the
+    /// inspector is what holds the lists — the same snapshot every verdict is read
+    /// against, so a renewal and the seal route cannot disagree about who counts as
+    /// qualified.
+    ///
+    /// With `require_qualified`, a stamp is kept only from an authority the lists
+    /// name as a qualified timestamp authority **when it stamped**
+    /// ([`TimestampStanding::QualifiedAtStamping`](dpp_types::qualification::TimestampStanding)).
+    /// That is the production posture, and it is deliberately strict: an archive
+    /// timestamp is the thing that keeps a retention-locked seal verifiable for
+    /// years, and a stamp nobody can vouch for protects nothing while *looking*
+    /// like protection — a seal that reads as freshly renewed and is not. A node
+    /// that holds no lists therefore renews nothing under it, which is the safe
+    /// direction. Without it, any authority whose token verifies is accepted, which
+    /// is what a development node stamping with its own authority needs.
+    ///
+    /// # Errors
+    ///
+    /// See [`RenewalError`](crate::renewal::RenewalError). On every error the
+    /// stored envelope is untouched: the result is a new value.
+    pub async fn renew_archive_timestamp(
+        &self,
+        envelope: &SealedEnvelope,
+        source: &dyn crate::timestamp_source::TimestampSource,
+        now: chrono::DateTime<chrono::Utc>,
+        require_qualified: bool,
+    ) -> Result<RenewedEnvelope, crate::renewal::RenewalError> {
+        let Some(der) = self.readable(envelope) else {
+            return Err(crate::renewal::RenewalError::NotRenewable(
+                "the stored seal is not a CAdES this node can read".to_owned(),
+            ));
+        };
+        // Snapshot first, then work: the guard is released before any of the
+        // network and signature work, so a refresh publishing mid-renewal never
+        // blocks and never changes the set underneath one.
+        let held = self.snapshot();
+        let renewed = crate::renewal::renew_archive_timestamp(&der, source, now, |token| {
+            let standing =
+                crate::qualification::timestamp_standing(token, &held.lists, held.unchecked.len());
+            if require_qualified && !standing.counts_as_proof_of_existence() {
+                Err(standing)
+            } else {
+                Ok(())
+            }
+        })
+        .await?;
+
+        let mut next = envelope.clone();
+        next.seal_value = base64::engine::general_purpose::STANDARD.encode(&renewed.seal_der);
+        Ok(RenewedEnvelope {
+            envelope: next,
+            previous_expires: renewed.previous_expires,
+            expires: renewed.expires,
+        })
+    }
+
     /// The seal's DER, when there is something readable to work with.
     ///
     /// Shared by both questions so they cannot disagree about which envelopes

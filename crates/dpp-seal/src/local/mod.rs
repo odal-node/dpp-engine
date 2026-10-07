@@ -13,8 +13,10 @@
 pub mod config;
 pub mod sealer;
 
+mod source;
 mod timestamp;
 
 pub use config::LocalConfig;
 pub use sealer::LocalIdentity;
+pub use source::LocalTimestampSource;
 pub use timestamp::DEVELOPMENT_TSA_POLICY;

@@ -459,9 +459,16 @@ async fn main() -> anyhow::Result<()> {
     // Read-only, and deliberately outside the `sealing_live` guard above: a node
     // that has stopped sealing still holds the seals it bought, and those are
     // exactly the ones nobody is watching any more.
+    // Off unless `SEAL_TIMESTAMP_SOURCE` asks: a renewal is a request to a third
+    // party. Built from the same profile the plugin gate and the trust report read,
+    // so a production node cannot be configured to renew from an authority that can
+    // never be qualified.
+    let archival_renewer =
+        dpp_node::infra::seal_renewal::from_env(profile, seal_inspector.clone())?.map(Arc::new);
     boot::tasks::spawn_seal_audit(
         db.seal_outbox.clone(),
         seal_inspector.clone(),
+        archival_renewer,
         seal_audit.clone(),
         Some(db.seal_audit.clone()),
     )?;

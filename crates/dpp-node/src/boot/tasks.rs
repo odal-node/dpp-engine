@@ -595,6 +595,14 @@ fn projected_wrap(sealed: i64, batch: i64, interval: std::time::Duration) -> std
 /// So a finding is logged at `error` and gauged on `seal_broken`. Repair is its
 /// own route, driven by an operator.
 ///
+/// # The one thing it does write: a due archive timestamp
+///
+/// With a `renewer`, a `B-LTA` seal whose archive timestamp is due is renewed in
+/// the pass that finds it — a timestamp rather than a seal, no key involved, and
+/// only ever additive, so none of the reasoning above about double-billing
+/// applies. See [`dpp_node::infra::seal_renewal`] for what bounds it. `None` is the
+/// old report-only behaviour.
+///
 /// # The walk survives a restart
 ///
 /// A pass publishes only when it reaches the end, so both the position and the
@@ -626,6 +634,7 @@ fn projected_wrap(sealed: i64, batch: i64, interval: std::time::Duration) -> std
 pub fn spawn_seal_audit(
     outbox: Arc<dyn SealOutbox>,
     inspector: Arc<dpp_seal::CadesInspector>,
+    renewer: Option<Arc<dpp_node::infra::seal_renewal::ArchivalRenewer>>,
     log: Arc<dpp_types::SealAuditLog>,
     store: Option<Arc<dyn dpp_types::SealAuditStore>>,
 ) -> anyhow::Result<()> {
@@ -719,6 +728,7 @@ pub fn spawn_seal_audit(
                 batch_size,
                 cursor,
                 Some(started_at),
+                renewer.as_deref(),
             )
             .await
             else {

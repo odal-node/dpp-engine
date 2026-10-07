@@ -120,6 +120,25 @@ impl LocalTsa {
         serial: u64,
         index: Option<&crate::ats::AtsHashIndexV3>,
     ) -> Result<Any, SealError> {
+        self.token_at(imprint, serial, index, chrono::Utc::now(), None)
+    }
+
+    /// [`Self::token`], stamping the moment it is told rather than the clock's.
+    ///
+    /// For a source that has to be driven deterministically: a renewal is made
+    /// months after the seal it renews, and a test that cannot say when the
+    /// authority "stamped" cannot show that the new token is the newer one.
+    ///
+    /// `nonce` is echoed into the `TSTInfo` when given, as RFC 3161 §2.4.2
+    /// requires of an authority answering a request that carried one.
+    pub(super) fn token_at(
+        &self,
+        imprint: &[u8],
+        serial: u64,
+        index: Option<&crate::ats::AtsHashIndexV3>,
+        at: chrono::DateTime<chrono::Utc>,
+        nonce: Option<der::asn1::Uint>,
+    ) -> Result<Any, SealError> {
         use der::asn1::{OctetString, SetOfVec};
         use p256::ecdsa::signature::Signer as _;
 
@@ -137,13 +156,14 @@ impl LocalTsa {
                 hashed_message: OctetString::new(imprint)
                     .map_err(|e| SealError::Config(format!("cannot encode the imprint: {e}")))?,
             },
-            serial_number: serial,
-            gen_time: der::asn1::GeneralizedTime::from_unix_duration(
-                std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .map_err(|e| SealError::Config(format!("the clock is before 1970: {e}")))?,
-            )
-            .map_err(|e| SealError::Config(format!("cannot encode the timestamp: {e}")))?,
+            serial_number: der::asn1::Uint::new(&serial.to_be_bytes())
+                .map_err(|e| SealError::Config(format!("cannot encode the serial: {e}")))?,
+            gen_time: crate::cades::GenTime(at),
+            accuracy: None,
+            ordering: false,
+            nonce,
+            tsa: None,
+            extensions: None,
         };
         let tst_der = info
             .to_der()

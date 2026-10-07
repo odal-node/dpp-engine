@@ -14,7 +14,8 @@ description: >-
   timestamping authority's certificate has a validity period, and ETSI's
   long-term profiles expect re-timestamping before that. Without this field a
   seal whose archival protection lapsed years ago reads exactly as it did the day
-  it was bought.
+  it was bought. A node with a timestamp source configured renews a due seal
+  itself, and this field is what shows the result: `current` with a later date.
 
 
   **A signal, not a verdict.** A seal nearing its renewal date still verifies,

@@ -176,6 +176,72 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   serves is still the plain `404`, and a wrong method on a served route is still
   `405`.
 
+- **The audit renews archive timestamps that are due.** A `B-LTA` seal stays
+  verifiable after its signing certificate expires because of its archive
+  timestamp, and that timestamp's own authority certificate expires too. The
+  audit already found the seals due; with `SEAL_TIMESTAMP_SOURCE` set it now
+  **renews** them in the same pass — a new `archive-time-stamp-v3` over everything
+  the seal carries, including the previous one, so the chain is unbroken. It costs
+  a timestamp and not a seal, needs no key, and changes nothing else: the
+  signature, its certificate, the covered digest and the signature timestamp are
+  untouched. Off unless asked, and a seal renewed in a pass is not counted as due.
+
+  Two sources, and no provider-specific code. `local` is this node's development
+  authority, for exercising the whole path (refused at boot under
+  `NODE_PROFILE=production`, since it can never be qualified). `rfc3161` is any
+  authority speaking RFC 3161 over HTTP at `SEAL_TIMESTAMP_URL` — `https` only,
+  no redirects, a capped answer, and the token's signature, imprint and **nonce**
+  are checked before it is used. Core's `SealPort` is not extended: a renewal is a
+  property of the stored bytes plus an authority, not of a sealing backend.
+
+  **What is checked before anything is stored.** The returned token is verified as
+  an archive timestamp *of this seal* by the same reader the audit uses, before the
+  seal is touched; a stamp whose authority's certificate ends no later than the one
+  it replaces is refused (a renewal that gains nothing would otherwise be bought
+  again on every pass); an authority whose clock is more than ten minutes from this
+  node's is refused; the renewed seal is read back and must say what was expected,
+  with its signature covering the same digest and verifying exactly as before;
+  and under `NODE_PROFILE=production` the authority must be one the held Trusted
+  Lists name as a qualified timestamp authority when it stamped, so a node that
+  holds no lists renews nothing rather than storing protection that only looks like
+  protection.
+
+  **The due set arrives as a wall** — every seal stamped under one authority
+  certificate expires the same day — so at most 20 stamps are bought per audit
+  pass, and a failure every seal would share (unreachable, refused, no gain, or a
+  stamp that cannot be used, such as one from a clock that disagrees with the
+  node's) pauses renewals for an hour. A seal that cannot be renewed at all is
+  refused before any stamp is asked for, and does not count against the 20. The write is a compare-and-swap on the stored seal
+  (`SealOutbox::replace_seal`), so a renewal made from a seal that was re-published
+  or repaired in the meantime writes nothing. No outbox row is touched: a renewal
+  buys no seal, and `sealed_digest` stays what the original was bought over.
+  Counted on `seal_archival_renewal_total{outcome}`.
+
+  **Found on the way: the timestamp reader could parse only what this crate's own
+  writer made.** Three separate defects, none findable with a test double. `TSTInfo`
+  stopped at `genTime` on the stated reasoning that trailing fields are ignored —
+  DER decoding refuses them — and the serial was a `u64`, so a real token's 160-bit
+  serial, `accuracy`, `nonce`, `tsa` name or fractional-second `genTime` made it
+  unreadable; it now follows RFC 3161 §2.4.2 in full. A token's `messageDigest` and
+  a signature timestamp's imprint were checked against SHA-256 alone, where real
+  authorities sign with SHA-384 and SHA-512; both now hash under the algorithm the
+  structure names. And a CMS signer may name only `rsaEncryption` and leave the hash
+  to its `digestAlgorithm` (RFC 3370 §3.2), which the verifier answered with
+  `Unknown OID` — so no RSA token from such a signer could verify. A real authority's
+  clock can also read a second behind the machine that made the seal, so a renewal
+  that stamps *before* the stamp it renews is now an explicit refusal.
+
+  **Exercised against two real public authorities**, by hand: Sectigo (RSA,
+  SHA-384) and FreeTSA (ECDSA P-384, SHA-512) both answer, their tokens verify, and
+  each renews a due seal end to end. A real Sectigo token is kept as an offline
+  fixture, asserted stage by stage. Neither authority is qualified, so what this
+  establishes is the reader, the source and the renewal path, not the qualification
+  match against a real qualified token. A survey of the published Trusted Lists
+  found Italy listing only self-signed root CAs for qualified timestamps and France
+  listing the timestamping units themselves (three with no extended key usage), so
+  both legs of the authority matcher are exercised by real entries; every listed key
+  is one this build verifies.
+
 ### Fixed
 
 - **A seal's timestamp is only believed when its authority is a qualified one.**

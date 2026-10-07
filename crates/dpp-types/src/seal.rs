@@ -151,10 +151,14 @@ pub struct SealAuditReport {
     pub archival_lapsed: u64,
     /// `B-LTA` seals whose archival protection expires soon.
     ///
-    /// "Soon" is a reporting threshold, not a purchase trigger — nothing here
-    /// buys anything. It exists because the window between *"a renewal is due"*
-    /// and *"the protection is gone"* is the only one in which renewing is
-    /// routine rather than an incident.
+    /// "Soon" is the window between *"a renewal is due"* and *"the protection is
+    /// gone"*, which is the only one in which renewing is routine rather than an
+    /// incident.
+    ///
+    /// On a node with a timestamp source configured, the pass that finds a seal
+    /// due **renews** it, and a seal renewed there is not counted: what remains
+    /// here is what still needs attention. On a node with none this is simply
+    /// what is due, and nothing is bought.
     #[serde(default)]
     pub archival_due: u64,
     /// `B-LTA` seals carrying an archive timestamp this node cannot use.
@@ -436,6 +440,44 @@ pub trait SealOutbox: Send + Sync {
     /// `pending` row for a seal already produced and already billed — and the
     /// next drain pass would buy it again.
     async fn mark_sealed(&self, id: uuid::Uuid, envelope: &SealedEnvelope) -> Result<(), DppError>;
+
+    /// Replace the passport's stored seal with a **renewed form of itself** — and
+    /// only if it is still the seal the caller read.
+    ///
+    /// # A renewal is not a seal, so this touches no outbox row
+    ///
+    /// [`Self::mark_sealed`] writes an envelope that was bought and closes the row
+    /// that bought it, atomically, because a crash between the two would buy it
+    /// twice. A renewal buys no seal: the signature, its certificate and the
+    /// digest it covers are untouched, and what is added is one archive timestamp.
+    /// So there is no row to close, and writing nothing to the outbox is what keeps
+    /// [`Self::sealed_digest`] true — it answers "what was this seal requested
+    /// over", and a renewal changes that answer not at all.
+    ///
+    /// # Compare-and-swap, because the audit walks while the node runs
+    ///
+    /// A renewal reads a seal, waits on an authority, and writes. In that time the
+    /// passport can be re-published and re-sealed, or a broken seal repaired. A
+    /// blind write would put a renewed copy of **yesterday's** seal over today's.
+    /// So the write applies only where the stored seal's value is still `current`'s,
+    /// and says whether it did.
+    ///
+    /// Returns `false` when the stored seal is no longer `current` — which is not an
+    /// error. The renewal read what it renewed, and what it renewed is gone; the
+    /// next pass reads whatever is there now.
+    ///
+    /// Only the `seal` member is written, by key, so a concurrent change to any
+    /// mutable field of the passport is not clobbered.
+    ///
+    /// # Errors
+    ///
+    /// Propagates the store's own failure.
+    async fn replace_seal(
+        &self,
+        passport_id: PassportId,
+        current: &SealedEnvelope,
+        renewed: &SealedEnvelope,
+    ) -> Result<bool, DppError>;
 
     /// The digest the passport's stored seal was requested over.
     ///
@@ -1045,9 +1087,9 @@ impl SealValidationStatus {
 /// signing certificate expires — the whole point for a retention-locked
 /// passport, which outlives every certificate involved. **It expires too**: its
 /// own timestamping authority's certificate has a validity period, and ETSI's
-/// long-term profiles expect re-timestamping before that. Nothing here does
-/// that, and the level says `baseline-lta` either way, so a lapse is otherwise
-/// invisible.
+/// long-term profiles expect re-timestamping before that. A node with a
+/// timestamp source configured does so; one without does not, and the level says
+/// `baseline-lta` either way, so a lapse is otherwise invisible.
 ///
 /// **A signal, never a verdict.** A seal nearing its renewal date still
 /// verifies, and that window is the only chance to renew without an outage.

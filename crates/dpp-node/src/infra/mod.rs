@@ -13,6 +13,7 @@ pub mod s3_backup;
 pub mod s3_snapshot;
 pub mod seal;
 pub mod seal_drain;
+pub mod seal_renewal;
 pub mod snapshot_drain;
 pub mod snapshot_store;
 pub mod transfer_drain;
