@@ -241,13 +241,20 @@ struct Fixture {
 }
 
 fn fixture(down: bool) -> Fixture {
+    fixture_with(down, chrono::Duration::zero())
+}
+
+/// A fixture whose authority's clock is `skew` away from this node's.
+fn fixture_with(down: bool, skew: chrono::Duration) -> Fixture {
     let dir = tempfile::tempdir().expect("tempdir");
     Fixture {
         identity: LocalIdentity::load_or_create(dir.path()).expect("identity"),
         // The same directory, so the same development authority — valid to the
         // year 4096, and so always an authority that outlasts a seal due in a month.
         source: Arc::new(Counting {
-            inner: LocalTimestampSource::load_or_create(dir.path()).expect("an authority"),
+            inner: LocalTimestampSource::load_or_create(dir.path())
+                .expect("an authority")
+                .with_clock(move || Utc::now() + skew),
             calls: AtomicUsize::new(0),
             down,
         }),
@@ -401,6 +408,71 @@ async fn a_failing_authority_pauses_renewals_instead_of_trying_every_seal() {
     );
     assert_eq!(report.archival_due, 3, "all three are still reported");
     assert_eq!(seals.writes.load(Ordering::SeqCst), 0);
+}
+
+/// **An authority whose clock is wrong pauses renewals too.**
+///
+/// Its stamp is refused after it was bought, and every seal would be refused the
+/// same way, so trying the rest would buy a stamp per row per pass and store
+/// none of them.
+#[tokio::test]
+async fn an_authority_whose_clock_is_off_pauses_renewals() {
+    let f = fixture_with(false, chrono::Duration::days(1));
+    let seals = Arc::new(Seals::holding(
+        (0..3)
+            .map(|i| due_passport(&f.identity, 0x40 + i))
+            .collect(),
+    ));
+
+    let renewer = renewer(&f, false);
+    let report = audit(&seals, Some(&renewer)).await;
+
+    assert_eq!(
+        f.source.calls.load(Ordering::SeqCst),
+        1,
+        "one stamp, then a pause"
+    );
+    assert_eq!(report.archival_due, 3, "all three are still reported");
+    assert_eq!(seals.writes.load(Ordering::SeqCst), 0);
+}
+
+/// **A seal that cannot be renewed spends nothing.**
+///
+/// It is refused before the authority is asked, so it buys no stamp, takes no
+/// place under the ceiling and pauses nothing. The walk reads in a fixed order,
+/// so a batch that opened with a ceiling's worth of these would otherwise spend
+/// every pass on them, and the renewable seals behind them would never renew.
+#[tokio::test]
+async fn a_seal_that_cannot_be_renewed_spends_no_budget() {
+    let f = fixture(false);
+    let seals = Arc::new(Seals::holding(vec![due_passport(&f.identity, 0x61)]));
+    let outbox: Arc<dyn SealOutbox> = seals.clone();
+    let renewer = renewer(&f, false);
+    let mut budget = 1;
+
+    // Long-term but not archival: no archive timestamp to carry forward.
+    let mut unrenewable = due_passport(&f.identity, 0x62);
+    unrenewable.seal.seal_value = B64.encode(
+        f.identity
+            .sign_detached_at(&[0x62; 32], SealConformanceLevel::BaselineLt)
+            .expect("sign"),
+    );
+    let outcome = renewer
+        .renew(&outbox, &unrenewable, Utc::now(), &mut budget)
+        .await;
+
+    assert!(matches!(outcome, RenewalOutcome::Failed(_)), "{outcome:?}");
+    assert_eq!(budget, 1, "nothing was bought");
+    assert_eq!(f.source.calls.load(Ordering::SeqCst), 0);
+
+    let due = seals.rows.lock().unwrap()[0].clone();
+    let outcome = renewer.renew(&outbox, &due, Utc::now(), &mut budget).await;
+
+    assert!(
+        matches!(outcome, RenewalOutcome::Renewed { .. }),
+        "not paused, and the slot is still there: {outcome:?}"
+    );
+    assert_eq!(budget, 0);
 }
 
 /// **A batch buys at most its ceiling of stamps.**

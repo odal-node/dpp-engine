@@ -153,6 +153,16 @@ fn is_loopback(url: &Url) -> bool {
     }
 }
 
+/// A transport failure, without the address.
+///
+/// `reqwest` prints the request URL inside its error, and this error ends up in
+/// the renewal's log line and outcome. The address's path or query can carry a
+/// token even though userinfo is refused, so it is dropped here, the same reason
+/// the boot line names only the host.
+fn transport(e: reqwest::Error) -> SealError {
+    SealError::Transport(format!("the timestamp authority: {}", e.without_url()))
+}
+
 /// Strip control characters from text an authority sent, for a log line.
 ///
 /// The text is the authority's own and arrives over a network; one carrying a
@@ -212,7 +222,7 @@ impl TimestampSource for Rfc3161Source {
             .body(request)
             .send()
             .await
-            .map_err(|e| SealError::Transport(format!("the timestamp authority: {e}")))?;
+            .map_err(transport)?;
         if !response.status().is_success() {
             return Err(SealError::Backend(format!(
                 "the timestamp authority answered HTTP {}",
@@ -223,11 +233,7 @@ impl TimestampSource for Rfc3161Source {
         // Streamed against the cap, so a hostile authority cannot make this
         // process buffer without bound by sending a long body.
         let mut body = Vec::new();
-        while let Some(chunk) = response
-            .chunk()
-            .await
-            .map_err(|e| SealError::Transport(format!("the timestamp authority: {e}")))?
-        {
+        while let Some(chunk) = response.chunk().await.map_err(transport)? {
             if body.len() + chunk.len() > MAX_RESPONSE_BYTES {
                 return Err(SealError::Backend(format!(
                     "the timestamp authority's answer is over {MAX_RESPONSE_BYTES} bytes"

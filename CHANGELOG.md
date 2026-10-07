@@ -206,9 +206,11 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   protection.
 
   **The due set arrives as a wall** — every seal stamped under one authority
-  certificate expires the same day — so at most 20 seals are renewed per audit
-  pass, and a failure every seal would share (unreachable, refused, no gain) pauses
-  renewals for an hour. The write is a compare-and-swap on the stored seal
+  certificate expires the same day — so at most 20 stamps are bought per audit
+  pass, and a failure every seal would share (unreachable, refused, no gain, or a
+  stamp that cannot be used, such as one from a clock that disagrees with the
+  node's) pauses renewals for an hour. A seal that cannot be renewed at all is
+  refused before any stamp is asked for, and does not count against the 20. The write is a compare-and-swap on the stored seal
   (`SealOutbox::replace_seal`), so a renewal made from a seal that was re-published
   or repaired in the meantime writes nothing. No outbox row is touched: a renewal
   buys no seal, and `sealed_digest` stays what the original was bought over.

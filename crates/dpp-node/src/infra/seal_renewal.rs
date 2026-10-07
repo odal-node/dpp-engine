@@ -30,10 +30,12 @@
 //!   thousand seals renews over hours rather than in a burst, which the 90-day
 //!   lead time can afford.
 //! - **A pause when the failure is shared** ([`PAUSE_AFTER_SHARED_FAILURE`]). If
-//!   the authority is down, refuses, or its certificate outlasts nothing, *every*
+//!   the authority is down, refuses, its certificate outlasts nothing, or what it
+//!   sends cannot be used (its clock is off, its token will not attach), *every*
 //!   seal fails the same way, and trying each one on every pass is a loop that
 //!   spends a stamp per row per pass for nothing. Those failures stop renewals for
-//!   an hour; a failure particular to one seal does not.
+//!   an hour; a seal that cannot be renewed at all does not, and does not count
+//!   against the ceiling either, since no stamp was asked for.
 
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -128,7 +130,7 @@ impl ArchivalRenewer {
     /// Try to renew one stored seal, and write the result if it succeeds.
     ///
     /// `budget` is how many more stamps this batch may buy; one is spent per
-    /// attempt, and none once it reaches zero.
+    /// attempt that asks the authority, and none once it reaches zero.
     pub async fn renew(
         &self,
         outbox: &Arc<dyn SealOutbox>,
@@ -153,14 +155,26 @@ impl ArchivalRenewer {
             Err(e) => {
                 metrics::counter!("seal_archival_renewal_total", "outcome" => e.outcome())
                     .increment(1);
-                // The three that every seal would share: the authority is
-                // unreachable, the policy refuses it, or its certificate outlasts
-                // nothing. The others are about this seal alone.
+                // Refused before the authority was asked, so nothing was bought.
+                // Kept off the budget because the walk reads in a fixed order: a
+                // batch that opens with a ceiling's worth of seals that can never
+                // renew would otherwise spend every pass on them, and the
+                // renewable seals behind them would drift from due to lapsed.
+                if matches!(e, RenewalError::NotRenewable(_)) {
+                    *budget += 1;
+                }
+                // The ones every seal would share: the authority is unreachable,
+                // the policy refuses it, its certificate outlasts nothing, or what
+                // it sent cannot be used — a clock that disagrees with this node's,
+                // a token that will not attach, a result that will not read back.
+                // All but the first are found after the stamp was bought. Only
+                // `NotRenewable` is about this seal alone.
                 if matches!(
                     e,
                     RenewalError::Source(_)
                         | RenewalError::AuthorityRefused(_)
                         | RenewalError::NoGain { .. }
+                        | RenewalError::Unusable(_)
                 ) {
                     self.pause(now);
                     tracing::warn!(

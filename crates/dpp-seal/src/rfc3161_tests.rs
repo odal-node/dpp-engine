@@ -278,6 +278,34 @@ async fn a_redirect_is_not_followed() {
     );
 }
 
+/// **A failure to reach the authority does not print its address.**
+///
+/// The error reaches the renewal's log line and outcome. A path or query can
+/// carry a token even though userinfo is refused, so the address stays out.
+#[tokio::test]
+async fn an_unreachable_authority_is_reported_without_its_address() {
+    // A port that was just free, so nothing answers it.
+    let port = {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+        listener.local_addr().expect("addr").port()
+    };
+    let source = Rfc3161Source::new(
+        &format!("http://127.0.0.1:{port}/tsa?access=s3cret"),
+        Duration::from_secs(5),
+    )
+    .expect("a loopback address is accepted");
+
+    let err = source
+        .stamp(&IMPRINT)
+        .await
+        .expect_err("nothing is listening");
+
+    assert!(matches!(err, SealError::Transport(_)), "{err:?}");
+    let why = err.to_string();
+    assert!(!why.contains("s3cret"), "{why}");
+    assert!(!why.contains("/tsa"), "{why}");
+}
+
 /// Which addresses are accepted.
 #[test]
 fn only_https_and_loopback_http_addresses_are_accepted() {
