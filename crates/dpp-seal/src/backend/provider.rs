@@ -97,5 +97,5 @@ fn stray_backend_vars(get: &impl Fn(&str) -> Option<String>) -> Option<&'static 
 }
 
 #[cfg(test)]
-#[path = "config_tests.rs"]
+#[path = "provider_tests.rs"]
 mod tests;

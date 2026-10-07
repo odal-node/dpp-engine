@@ -1,4 +1,4 @@
-//! Unit tests for `config.rs`.
+//! Unit tests for `provider.rs`.
 
 use super::*;
 

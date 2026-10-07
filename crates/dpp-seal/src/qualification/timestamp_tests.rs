@@ -1,9 +1,17 @@
 //! Who stamped a seal's time, and what that makes the time worth.
 //!
-//! A child of `qualification_tests`, so it reaches that file's private helpers —
-//! the real Finnish list, `name_signer`, `reencode` — rather than copying them.
+//! It shares the real Finnish list, `name_signer` and `reencode` with the
+//! issuer tests through `test_support`, rather than copying them.
 
 use super::*;
+use base64::Engine as _;
+use der::Decode as _;
+
+use chrono::Utc;
+use cms::content_info::ContentInfo;
+use cms::signed_data::SignedData;
+
+use crate::qualification::test_support::{finnish_list, local_seal, name_signer, reencode};
 
 use dpp_domain::seal::{SealConformanceLevel, SealFormat, SealedEnvelope};
 use dpp_domain::trusted_list::{TrustServiceHistory, TrustServiceStatusPeriod};
@@ -453,7 +461,7 @@ fn source_for(
 /// authority a list names goes through, and a development node needs neither.
 #[tokio::test]
 async fn production_renews_only_from_an_authority_the_lists_name() {
-    use crate::renewal::RenewalError;
+    use crate::timestamp::renewal::RenewalError;
 
     let now = Utc::now() + chrono::Duration::hours(1);
     let ca = timestamp_ca("Test Timestamp CA");

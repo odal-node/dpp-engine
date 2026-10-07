@@ -504,7 +504,7 @@ fn seal_audit_cadence() -> anyhow::Result<(i64, std::time::Duration)> {
 /// The whole of [`seal_audit_cadence`]'s rule over an arbitrary lookup.
 ///
 /// Split out so it is testable as a pure function, the same arrangement
-/// `dpp_seal::config::SealProvider::resolve` uses and for the same reasons:
+/// `dpp_seal::SealProvider::resolve` uses and for the same reasons:
 /// exercising it through the real environment means mutating process-global
 /// state from a test, which is `unsafe` under Rust 2024, forces the tests to
 /// serialise against one another, and lets a stray variable in a developer's

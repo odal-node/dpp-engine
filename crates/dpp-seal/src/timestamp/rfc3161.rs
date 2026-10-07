@@ -37,7 +37,7 @@ use url::Url;
 
 use crate::cades::MessageImprint;
 use crate::error::SealError;
-use crate::timestamp_source::TimestampSource;
+use crate::timestamp::TimestampSource;
 
 /// The most a response may be before it is refused, in bytes.
 ///

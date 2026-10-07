@@ -1,4 +1,4 @@
-//! End-to-end tests for [`crate::adapter::QtspSealAdapter`] against a local mock
+//! End-to-end tests for [`crate::backend::QtspSealAdapter`] against a local mock
 //! of the eID Easy e-seal endpoint.
 //!
 //! The mock is not a stub that always says yes: it **re-derives the HMAC from the
@@ -21,7 +21,7 @@ use dpp_domain::{
 use hmac::{Hmac, KeyInit, Mac};
 use sha2::{Digest, Sha256};
 
-use crate::adapter::QtspSealAdapter;
+use crate::backend::QtspSealAdapter;
 use crate::eideasy::client::{ESEAL_PATH, hmac_message};
 use crate::eideasy::config::{SANDBOX_BASE_URL, test_config};
 
@@ -143,7 +143,7 @@ fn adapter_for(base_url: &str, hmac_key: &str) -> QtspSealAdapter {
 
 #[tokio::test]
 async fn unconfigured_adapter_delegates_to_ghost() {
-    let env = QtspSealAdapter::new(crate::ghost::GhostSeal)
+    let env = QtspSealAdapter::new(crate::backend::ghost::GhostSeal)
         .seal(seal_request(fixture_digest()))
         .await
         .unwrap();

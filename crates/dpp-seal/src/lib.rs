@@ -7,7 +7,7 @@
 //! never assembles the signature in-process; the provider's response *is* the
 //! seal. The local backend does assemble a CMS structure in-process, which is
 //! precisely why it is not qualified. Until a provider is configured,
-//! [`adapter::QtspSealAdapter`] delegates to `GhostSeal` — a placeholder with
+//! [`backend::QtspSealAdapter`] delegates to `GhostSeal` — a placeholder with
 //! no legal validity, which is why a production node's trust report refuses
 //! to boot while the seal port resolves to a ghost.
 //!
@@ -22,17 +22,21 @@
 //!
 //! # Structure
 //!
-//! - [`backend`] — `SealBackend`, the seam every backend implements
-//! - [`cades`] — reading what a detached CAdES reports about itself, shared by
-//!   the backends and never claiming a check it did not perform
-//! - [`adapter`] — `QtspSealAdapter`, the `SealPort` impl over one of them
-//! - [`config`] — which backend this node runs, and nothing about any of them
+//! - [`backend`] — `SealBackend`, the seam every backend implements;
+//!   `QtspSealAdapter`, the `SealPort` impl over one of them; which backend this
+//!   node runs; and the placeholder, as a backend like any other
 //! - [`eideasy`] — a hosted QTSP backend: its config, wire types, client and errors
 //! - [`local`] — in-process signing for development
-//! - [`ghost`] — the placeholder, as a backend like any other
+//! - [`cades`] — reading what a detached CAdES reports about itself, shared by
+//!   the backends and never claiming a check it did not perform
+//! - [`inspect`] — `CadesInspector`, the one place a stored seal is opened and
+//!   judged, holding the Trusted Lists every verdict is read against
+//! - [`qualification`] — what the Trusted Lists say about a seal's issuer and
+//!   about whoever stamped its time
+//! - [`trustlist`] — fetching and verifying the EU's Trusted Lists
+//! - [`timestamp`] — extending a stored seal's archive timestamp, from any
+//!   [`TimestampSource`]; RFC 3161 over HTTP is the provider-independent one
 //! - [`error`] — `SealError`, what is true of sealing regardless of backend
-//! - [`renewal`] — extending a stored seal's archive timestamp, from any
-//!   [`TimestampSource`]; [`rfc3161`] is the provider-independent one
 //!
 //! Each backend owns its own module: its configuration, its variables, its
 //! failure messages and its wire types, and it constructs itself. Nothing
@@ -40,25 +44,18 @@
 //! and the selector maps one environment value to one module — so a backend can
 //! be added or dropped without touching the others.
 
-pub mod adapter;
 pub(crate) mod ats;
 pub mod backend;
 pub mod cades;
-pub mod config;
 pub mod eideasy;
 pub mod error;
-pub mod ghost;
 pub mod inspect;
 pub mod local;
 pub mod qualification;
-pub mod renewal;
-pub mod rfc3161;
-pub mod timestamp_source;
+pub mod timestamp;
 pub mod trustlist;
 
-pub use adapter::QtspSealAdapter;
-pub use backend::SealBackend;
-pub use config::{SEAL_PROVIDER, SealProvider};
+pub use backend::{QtspSealAdapter, SEAL_PROVIDER, SealBackend, SealProvider};
 pub use error::SealError;
 pub use inspect::{CadesInspector, RenewedEnvelope};
-pub use timestamp_source::TimestampSource;
+pub use timestamp::TimestampSource;
