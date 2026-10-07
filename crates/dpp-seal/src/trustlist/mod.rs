@@ -59,11 +59,13 @@
 //! Java validator, each of which would put a native library or a JVM into every
 //! operator's deployment.
 //!
-//! The published crate hard-caps XML node-sets at 65 536 and the Italian and
-//! French lists carry 65 540 and 65 541, so neither verifies. The workspace
-//! therefore pins a fork carrying that one constant, and the exit condition is
-//! in the manifest beside it: remove the `[patch.crates-io]` stanza once
-//! `structured-world/xml-sec#158` ships.
+//! Releases before 0.1.17 hard-capped XML node-sets at 65 536, which the French,
+//! Czech, Italian and Spanish lists exceed, and this workspace carried a fork with
+//! that one constant raised until `structured-world/xml-sec#158` shipped. The
+//! signature is checked against the certificate the anchor or the LOTL
+//! authorised, pinned, never against whichever key the document offers (see
+//! `verify`). Germany's list is still refused, on a separate 100 000-node
+//! document ceiling; `tests/fixtures/local/README.md` has the measurement.
 //!
 //! # Time, not the present
 //!

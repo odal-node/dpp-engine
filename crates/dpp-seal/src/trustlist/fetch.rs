@@ -24,10 +24,10 @@ pub const EU_LOTL_URL: &str = "https://ec.europa.eu/tools/lotl/eu-lotl.xml";
 /// Sized against every list the LOTL points at, measured 2026-09-15 — which is
 /// the part that went wrong the first time. The earlier figure, one mebibyte,
 /// came from a survey running "roughly 140 KiB to over 600 KiB": a sample that
-/// excluded the largest lists in the set, including the two the vendored
-/// `xml-sec` fork exists for. So this function refused the only documents that
-/// fork was vendored to handle, and nothing noticed, because no test reached
-/// here.
+/// excluded the largest lists in the set, including the two that an `xml-sec`
+/// fork was then carried for (its node-set ceiling, since raised upstream). So
+/// this function refused the only documents that fork existed to handle, and
+/// nothing noticed, because no test reached here.
 ///
 /// ```text
 /// Germany   5 355 449 bytes   (5.11 MiB)   <- the cap has to clear this
@@ -69,8 +69,8 @@ const LARGEST_PUBLISHED_LIST_BYTES: usize = 5_355_449;
 /// between two constants and a build that violates it should not produce a
 /// binary. This is the defect that shipped once already: the cap was sized from
 /// a sample — "roughly 140 KiB to over 600 KiB" — that excluded the largest
-/// lists, so the fetcher refused the very documents the vendored `xml-sec` fork
-/// was vendored to handle.
+/// lists, so the fetcher refused the very documents `xml-sec`'s raised node-set
+/// ceiling exists for.
 const _: () = assert!(
     MAX_TRUSTED_LIST_BYTES >= LARGEST_PUBLISHED_LIST_BYTES,
     "the trusted-list fetch cap is below the largest published list, so that list is \
