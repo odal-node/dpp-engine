@@ -59,6 +59,7 @@ space. Keep that discipline (see [Label policy](#3-label--cardinality-policy)).
 | `passport_publish_total` | counter | `outcome` = `success` \| `error` | Publish attempts |
 | `signing_failures_total` | counter | — | In-process JWS signing failures |
 | `auth_failures_total` | counter | `reason` = `missing` \| `suspended` \| `invalid` | Rejected auth — **attack signal** |
+| `label_inherited_total` | counter | `requested` = `serial` \| `batch`, `resolved` = `batch` \| `model` | A printed label resolved to a level above the one it named. Exact answers are not counted. A forged or mistyped serial lands here, resolving to the genuine model record |
 | `db_ping_total` | counter | `result` = `ok` \| `error` | Readiness DB pings |
 | `db_ping_duration_seconds` | histogram | — | DB ping latency |
 
@@ -228,6 +229,7 @@ Integration-level **metric-presence** guards (so an emission can't be silently r
 | `auth_failures_total` | `unauthenticated_request_increments_auth_failures_total` | same |
 | `import_rejections_total` | `unknown_product_group_import_increments_import_rejections_total` | same |
 | `jws_verify_total` | `resolve_records_jws_verify_total` | `dpp-resolver/tests/resolver_e2e.rs` (no Docker) |
+| `label_inherited_total` | `an_inherited_answer_is_counted_and_an_exact_one_is_not` | `dpp-vault/src/domain/service/query.rs` (no Docker) |
 
 **Known limitation:** these prove the counter *fires on the handler path*. They do **not** prove a
 binary's `main()` actually installs a recorder (RT2-6) — that wiring lives outside the router and

@@ -307,6 +307,78 @@ async fn an_amended_then_recalled_product_still_signals_the_recall() {
     );
 }
 
+/// An amendment keeps the identifier the product was marked with.
+///
+/// A passport that attributed no carrier serial prints one derived from its id,
+/// and the successor has a new id. Without carrying the serial forward the
+/// successor would print a different carrier from the one on the object, so the
+/// identifier would change under an amendment even though the old label still
+/// resolves. That resolving is by walking forward from the superseded record,
+/// so a lookup alone cannot tell the two cases apart; the carrier can.
+#[tokio::test(flavor = "multi_thread")]
+async fn an_amended_passport_prints_the_carrier_of_the_one_it_replaced() {
+    let pg = start_postgres().await;
+    let vault_url = start_vault(pg.dal.clone()).await;
+    seed_complete_operator(&pg.dal).await;
+    let token = make_jwt("00000000-0000-0000-0000-000000000003");
+    let client = TestClient::new(&vault_url, &token);
+
+    let resp = client
+        .post_json("/api/v1/dpp", draft("Marked Battery"))
+        .await;
+    assert_eq!(resp.status(), 201);
+    let created: serde_json::Value = resp.json().await.unwrap();
+    let original_id = created["id"].as_str().unwrap().to_owned();
+
+    let resp = client
+        .post_json(
+            &format!("/api/v1/dpp/{original_id}/publish"),
+            serde_json::json!({}),
+        )
+        .await;
+    assert_eq!(resp.status(), 200);
+    let published: serde_json::Value = resp.json().await.unwrap();
+    let carrier = published["qrCodeUrl"].as_str().unwrap().to_owned();
+
+    // The default serial is the last twenty hex digits of the canonical id. It is
+    // computed here, not asked of the code under test, so that a change to the
+    // derivation fails this test rather than moving it along.
+    let default_serial = &original_id.replace('-', "")[12..];
+    assert!(
+        carrier.ends_with(&format!("/21/{default_serial}")),
+        "the predecessor prints its derived serial: {carrier}"
+    );
+
+    let resp = client
+        .post_json(
+            &format!("/api/v1/dpp/{original_id}/amend"),
+            serde_json::json!({ "patch": { "productName": "Corrected Marked Battery" } }),
+        )
+        .await;
+    assert_eq!(resp.status(), 201);
+    let successor: serde_json::Value = resp.json().await.unwrap();
+
+    assert_eq!(
+        successor["carrierSerial"], default_serial,
+        "the successor states the serial its predecessor printed"
+    );
+    assert_eq!(
+        successor["qrCodeUrl"].as_str(),
+        Some(carrier.as_str()),
+        "an amended passport prints the same carrier as the one it replaced"
+    );
+
+    // And the label on the object reaches the live record.
+    let resp = client
+        .get(&format!(
+            "/public/dpp/by-gtin/09506000134352?serial={default_serial}"
+        ))
+        .await;
+    assert_eq!(resp.status(), 200);
+    let served: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(served["id"], successor["id"]);
+}
+
 /// Publish a passport and amend it, returning the successor's id.
 async fn publish_then_amend(client: &TestClient, product_name: &str) -> String {
     let resp = client.post_json("/api/v1/dpp", draft(product_name)).await;

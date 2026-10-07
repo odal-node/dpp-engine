@@ -33,9 +33,11 @@ properties:
 
       **Not the serial in the resolver URL.** A GS1 Digital Link carrier is
       `/01/{gtin}/21/{serial}` and AI 21 is a serial number, but the value there
-      is derived from this passport's own UUID to fit GS1's length cap. That
-      value identifies the *record*; this identifies the *product*, and nothing
-      reconciles the two.
+      is `carrierSerial`: the one the operator attributed, or else a default
+      derived from this passport's own id. A printed label resolves by that
+      value, not by this field. This field identifies the *product* as the
+      manufacturer records it; `carrierSerial` identifies what the *label*
+      names.
 
       Absent means not stated — and today it is always absent: no route accepts
       one until an adopted delegated act makes a passport cover a single unit.

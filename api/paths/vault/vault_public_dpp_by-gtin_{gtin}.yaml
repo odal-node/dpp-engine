@@ -12,10 +12,20 @@ get:
     does not name one:
 
     - `serial` (AI 21) names the passport whose carrier serial it is, at any
-      level. `batch` is not consulted once a serial is given.
+      level. `batch` is consulted only if the serial finds nothing.
     - `batch` (AI 10) alone names the batch-level passport for that lot.
     - Neither names the model-level passport, or a passport with no batch and
       no serial.
+
+    **A level with no passport answers with the one above it.** An unknown
+    serial resolves to the batch-level passport for the label's `batch`, if it
+    carries one and one exists, and otherwise to the model-level passport; an
+    unknown batch resolves to the model-level passport. That is how a GS1
+    resolver answers a granular identifier, and it keeps a unit whose serial
+    was stamped by the manufacturer's own system, and never attributed here,
+    reaching the passport of its model. `404` means nothing is on record at any
+    level the label names. A level that does have a passport always answers: a
+    suspended unit is `410`, never its model's passport.
 
     A label keeps working after its passport is amended: the successor is
     served, not the superseded record.

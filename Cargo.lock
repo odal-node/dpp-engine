@@ -2711,6 +2711,7 @@ dependencies = [
  "flate2",
  "hex",
  "metrics",
+ "metrics-exporter-prometheus",
  "proptest",
  "rand 0.10.3",
  "reqwest",

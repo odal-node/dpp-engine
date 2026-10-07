@@ -34,6 +34,10 @@ get:
             type: object
     '307':
       description: Redirect to the DPP page (`Location` header).
+    '400':
+      description: >-
+        The GTIN in the path is not valid: not digits, the wrong length, or a
+        wrong check digit.
     '404':
       description: No published DPP for this GTIN, or unknown link type.
     '410':

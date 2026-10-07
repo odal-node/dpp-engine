@@ -32,17 +32,44 @@ impl PassportService {
     }
 
     /// The one passport a printed GS1 label resolves to, in any status, so the
-    /// caller can tell a missing product from a recalled one.
+    /// caller can tell a missing product from a recalled one, and the level it
+    /// was found at.
     ///
-    /// `batch` and `serial` are the label's AI 10 and AI 21. A serial names one
-    /// passport at any level, so once it is present the batch is not consulted:
-    /// labels printed before the carrier followed `granularity` carry both, and
-    /// the serial is the part that identifies. A batch alone names a batch-level
-    /// passport. A bare GTIN names a model-level carrier, or is what someone
-    /// holding only the GTIN typed, so it reads both
+    /// `batch` and `serial` are the label's AI 10 and AI 21. The label is read at
+    /// the most specific level it names, and where nothing is on record there, at
+    /// each less specific level it carries, ending at the model:
+    ///
+    /// | Label | Levels tried, in order |
+    /// |---|---|
+    /// | serial, with or without a lot | serial, then the lot if the label has one, then the model |
+    /// | lot only | lot, then the model |
+    /// | GTIN only | the model |
+    ///
+    /// A serial names one passport at any level, so labels printed before the
+    /// carrier followed `granularity` — which carry both — resolve by the serial,
+    /// and the lot beside it is consulted only if the serial finds nothing. The
+    /// model level is what a bare GTIN names, or is what someone holding only the
+    /// GTIN typed, so it reads both
     /// [`find_by_carrier`](PassportRepository::find_by_carrier) with `Model` and
     /// [`find_by_identifier`](PassportRepository::find_by_identifier) with no
     /// batch and no serial.
+    ///
+    /// # Why it falls back
+    ///
+    /// An item or a lot inherits what is recorded for the product above it; that
+    /// is how a GS1 resolver answers a granular identifier (GS1-CRSV1, 2.5.9 and
+    /// 2.5.10). A unit whose serial the manufacturer's own system stamped, and
+    /// that was never attributed here, is still a unit of the model, and the
+    /// model's passport is its answer. Without the fallback every such unit is a
+    /// `404`, which is what a label that resolves to nothing was.
+    ///
+    /// A level with a record answers, whatever the record's status. The fallback
+    /// is for a level with **no** record, never a way past one: a recalled unit
+    /// shows the recall, not its model's passport.
+    ///
+    /// The answer says which level it came from, so a caller can tell an exact
+    /// match from an inherited one. A forged or mistyped serial resolves to the
+    /// genuine model record; the count of those is the only trace of it.
     ///
     /// # Why it follows amendments
     ///
@@ -68,7 +95,7 @@ impl PassportService {
         gtin: Gtin,
         batch: Option<&str>,
         serial: Option<&str>,
-    ) -> Result<Option<Passport>, DppError> {
+    ) -> Result<Option<LabelResolution>, DppError> {
         resolve_label(&*self.repo, gtin, batch, serial).await
     }
 
@@ -192,26 +219,62 @@ async fn resolve_label(
     gtin: Gtin,
     batch: Option<&str>,
     serial: Option<&str>,
-) -> Result<Option<Passport>, DppError> {
+) -> Result<Option<LabelResolution>, DppError> {
     let identifier = ProductIdentifier::gs1(gtin);
-    let named = match (serial, batch) {
-        (Some(serial), _) => {
-            repo.find_by_carrier(&identifier, &CarrierQualifier::Serial(serial.into()))
-                .await?
-        }
-        (None, Some(batch)) => {
-            repo.find_by_carrier(&identifier, &CarrierQualifier::Batch(batch.into()))
-                .await?
-        }
-        (None, None) => {
-            let mut named = repo
-                .find_by_carrier(&identifier, &CarrierQualifier::Model)
-                .await?;
-            named.extend(repo.find_by_identifier(&identifier, None, None).await?);
-            named
-        }
-    };
 
+    // Most specific first. Built from the three levels this module names rather
+    // than by matching on `CarrierQualifier`, which is `#[non_exhaustive]`: a
+    // match from here needs a wildcard, and a wildcard would file a level core
+    // adds later under one of these three without anyone deciding that it should.
+    let mut ladder: Vec<(LabelLevel, CarrierQualifier<'_>)> = Vec::with_capacity(3);
+    if let Some(serial) = serial {
+        ladder.push((LabelLevel::Serial, CarrierQualifier::Serial(serial.into())));
+    }
+    if let Some(batch) = batch {
+        ladder.push((LabelLevel::Batch, CarrierQualifier::Batch(batch.into())));
+    }
+    ladder.push((LabelLevel::Model, CarrierQualifier::Model));
+    let requested = ladder[0].0;
+
+    for (level, qualifier) in &ladder {
+        let mut named = repo.find_by_carrier(&identifier, qualifier).await?;
+        if *level == LabelLevel::Model {
+            // A bare GTIN names a model-level carrier, or is what someone holding
+            // only the GTIN typed: both are the model.
+            named.extend(repo.find_by_identifier(&identifier, None, None).await?);
+        }
+        if let Some(passport) = current_for(repo, &identifier, named).await? {
+            let resolution = LabelResolution {
+                passport,
+                requested,
+                resolved: *level,
+            };
+            if resolution.inherited() {
+                // The only trace a forged or mistyped serial leaves: the answer
+                // is the genuine model record, and nothing in it says the label
+                // did not match.
+                metrics::counter!(
+                    "label_inherited_total",
+                    "requested" => requested.as_str(),
+                    "resolved" => level.as_str()
+                )
+                .increment(1);
+            }
+            return Ok(Some(resolution));
+        }
+    }
+    Ok(None)
+}
+
+/// The one current passport among `named`, or `None` when none is current.
+///
+/// Drafts never answer, amendments are followed, and two current records that are
+/// not one chain are refused.
+async fn current_for(
+    repo: &dyn PassportRepository,
+    identifier: &ProductIdentifier,
+    named: Vec<Passport>,
+) -> Result<Option<Passport>, DppError> {
     let mut current: Vec<Passport> = Vec::new();
     for record in named {
         if record.status == PassportStatus::Draft {
@@ -294,6 +357,49 @@ async fn current_record(
     })
 }
 
+/// The level a printed label identifies: what follows its GTIN.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LabelLevel {
+    /// The GTIN alone: every unit of a model.
+    Model,
+    /// AI 10: one production run.
+    Batch,
+    /// AI 21: one unit.
+    Serial,
+}
+
+impl LabelLevel {
+    /// The value this level takes as a metric label.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Model => "model",
+            Self::Batch => "batch",
+            Self::Serial => "serial",
+        }
+    }
+}
+
+/// The passport a printed label reached, and how it got there.
+#[derive(Debug, Clone)]
+pub struct LabelResolution {
+    /// The passport the label resolves to.
+    pub passport: Passport,
+    /// The most specific level the label named.
+    pub requested: LabelLevel,
+    /// The level the passport was found at. Equal to `requested` for an exact
+    /// match, less specific when the label's own level had no record.
+    pub resolved: LabelLevel,
+}
+
+impl LabelResolution {
+    /// Whether a less specific level answered than the label named.
+    #[must_use]
+    pub fn inherited(&self) -> bool {
+        self.requested != self.resolved
+    }
+}
+
 /// What [`PassportService::version_at`] found.
 ///
 /// Three answers rather than two, because the two ways of having no archived
@@ -337,7 +443,7 @@ mod label_resolution {
         status::PassportStatus,
     };
 
-    use super::resolve_label;
+    use super::{LabelLevel, LabelResolution, resolve_label};
 
     const GTIN: &str = "09506000134352";
 
@@ -410,15 +516,22 @@ mod label_resolution {
         }
     }
 
+    async fn resolution(
+        repo: &InMemoryPassportRepo,
+        batch: Option<&str>,
+        serial: Option<&str>,
+    ) -> Option<LabelResolution> {
+        resolve_label(repo, gtin(), batch, serial)
+            .await
+            .expect("resolves")
+    }
+
     async fn resolved(
         repo: &InMemoryPassportRepo,
         batch: Option<&str>,
         serial: Option<&str>,
     ) -> Option<PassportId> {
-        resolve_label(repo, gtin(), batch, serial)
-            .await
-            .expect("resolves")
-            .map(|p| p.id)
+        resolution(repo, batch, serial).await.map(|r| r.passport.id)
     }
 
     /// One GTIN, three passports at three levels: each label names its own.
@@ -445,7 +558,6 @@ mod label_resolution {
             resolved(&repo, Some("LOT-A"), Some(&serial)).await,
             Some(unit.id)
         );
-        assert_eq!(resolved(&repo, None, Some("NOT-A-SERIAL")).await, None);
     }
 
     /// The label on the object outlives the record: after an amendment it
@@ -511,7 +623,7 @@ mod label_resolution {
             .await
             .expect("resolves")
             .expect("found");
-        assert_eq!(found.status, PassportStatus::Suspended);
+        assert_eq!(found.passport.status, PassportStatus::Suspended);
     }
 
     /// Two current records under one label that are not one chain are a data
@@ -547,5 +659,196 @@ mod label_resolution {
                 .expect("resolves")
                 .is_none()
         );
+    }
+
+    /// The model passport of the test GTIN.
+    fn model() -> Passport {
+        let mut p = passport(PassportStatus::Published);
+        p.granularity = Some(Granularity::Model);
+        p
+    }
+
+    /// A lot-level passport for `LOT-A`.
+    fn lot() -> Passport {
+        let mut p = passport(PassportStatus::Published);
+        p.granularity = Some(Granularity::Batch);
+        p.batch_id = Some("LOT-A".into());
+        p
+    }
+
+    /// A unit of lot `LOT-A` that states no level, so its carrier prints a
+    /// serial. It carries a lot, which keeps a bare-GTIN lookup from taking it
+    /// for the model.
+    fn unit(status: PassportStatus) -> Passport {
+        let mut p = passport(status);
+        p.batch_id = Some("LOT-A".into());
+        p
+    }
+
+    /// A serial stamped by the manufacturer's own system and never attributed
+    /// here still belongs to a model whose passport is on record. Without the
+    /// fallback every such unit is a `404`.
+    #[tokio::test]
+    async fn an_unknown_serial_inherits_the_model_passport() {
+        let repo = InMemoryPassportRepo::default();
+        let model = model();
+        store(&repo, &[&model]).await;
+
+        let found = resolution(&repo, None, Some("ERP-000042"))
+            .await
+            .expect("inherits the model");
+        assert_eq!(found.passport.id, model.id);
+        assert_eq!(found.requested, LabelLevel::Serial);
+        assert_eq!(found.resolved, LabelLevel::Model);
+        assert!(found.inherited());
+    }
+
+    /// A label carrying both a lot and a serial reads the lot before the model:
+    /// the unit's lot has a passport and the model's is further up.
+    #[tokio::test]
+    async fn an_unknown_serial_inherits_its_lot_before_the_model() {
+        let repo = InMemoryPassportRepo::default();
+        let (model, lot) = (model(), lot());
+        store(&repo, &[&model, &lot]).await;
+
+        let found = resolution(&repo, Some("LOT-A"), Some("ERP-000042"))
+            .await
+            .expect("inherits the lot");
+        assert_eq!(found.passport.id, lot.id);
+        assert_eq!(found.requested, LabelLevel::Serial);
+        assert_eq!(found.resolved, LabelLevel::Batch);
+    }
+
+    /// A lot with no passport of its own is passed over on the way up, not a
+    /// reason to stop.
+    #[tokio::test]
+    async fn a_lot_without_a_passport_is_passed_over_on_the_way_to_the_model() {
+        let repo = InMemoryPassportRepo::default();
+        let model = model();
+        store(&repo, &[&model]).await;
+
+        let found = resolution(&repo, Some("LOT-X"), Some("ERP-000042"))
+            .await
+            .expect("inherits the model");
+        assert_eq!(found.passport.id, model.id);
+        assert_eq!(found.requested, LabelLevel::Serial);
+        assert_eq!(found.resolved, LabelLevel::Model);
+    }
+
+    /// A lot-only label with no passport for that lot inherits the model.
+    #[tokio::test]
+    async fn an_unknown_lot_inherits_the_model_passport() {
+        let repo = InMemoryPassportRepo::default();
+        let (model, lot) = (model(), lot());
+        store(&repo, &[&model, &lot]).await;
+
+        let found = resolution(&repo, Some("LOT-B"), None)
+            .await
+            .expect("inherits the model");
+        assert_eq!(found.passport.id, model.id);
+        assert_eq!(found.requested, LabelLevel::Batch);
+        assert_eq!(found.resolved, LabelLevel::Model);
+    }
+
+    /// Inheritance needs something to inherit from. A product with a unit on
+    /// record and no model passport has nothing at the level above, so another
+    /// unit's serial names nothing.
+    #[tokio::test]
+    async fn an_unknown_serial_with_no_model_on_record_names_nothing() {
+        let repo = InMemoryPassportRepo::default();
+        let unit = unit(PassportStatus::Published);
+        store(&repo, &[&unit]).await;
+
+        assert!(resolution(&repo, None, Some("ERP-000042")).await.is_none());
+    }
+
+    /// A label that has its own record is answered by it. The model is the
+    /// answer for a level with no record, never a replacement for one.
+    #[tokio::test]
+    async fn a_known_serial_is_answered_by_its_own_passport_not_the_models() {
+        let repo = InMemoryPassportRepo::default();
+        let (model, unit) = (model(), unit(PassportStatus::Published));
+        store(&repo, &[&model, &unit]).await;
+        let serial = unit.effective_carrier_serial().into_owned();
+
+        let found = resolution(&repo, None, Some(&serial)).await.expect("found");
+        assert_eq!(found.passport.id, unit.id);
+        assert_eq!(found.resolved, LabelLevel::Serial);
+        assert!(!found.inherited());
+    }
+
+    /// A GTIN-only label is the model itself, and nothing was inherited.
+    #[tokio::test]
+    async fn a_model_label_is_not_an_inherited_answer() {
+        let repo = InMemoryPassportRepo::default();
+        let model = model();
+        store(&repo, &[&model]).await;
+
+        let found = resolution(&repo, None, None).await.expect("found");
+        assert_eq!(found.passport.id, model.id);
+        assert!(!found.inherited());
+    }
+
+    /// A recall on one unit must reach the person holding that unit. If the
+    /// model's passport answered instead, the recalled unit would read as a
+    /// healthy one.
+    #[tokio::test]
+    async fn a_recalled_unit_is_not_hidden_by_its_models_passport() {
+        let repo = InMemoryPassportRepo::default();
+        let (model, unit) = (model(), unit(PassportStatus::Suspended));
+        store(&repo, &[&model, &unit]).await;
+        let serial = unit.effective_carrier_serial().into_owned();
+
+        let found = resolution(&repo, None, Some(&serial)).await.expect("found");
+        assert_eq!(found.passport.id, unit.id);
+        assert_eq!(found.passport.status, PassportStatus::Suspended);
+        assert!(!found.inherited());
+    }
+
+    /// The count of inherited answers is the only trace a forged or mistyped
+    /// serial leaves, so it is pinned: removing or renaming it fails here.
+    /// An exact answer is not counted, or the series would be every scan.
+    #[tokio::test]
+    async fn an_inherited_answer_is_counted_and_an_exact_one_is_not() {
+        let recorder = metrics_exporter_prometheus::PrometheusBuilder::new().build_recorder();
+        let handle = recorder.handle();
+        // Thread-local, and a `#[tokio::test]` runs on one thread, so every await
+        // below is recorded here and no other test sees it.
+        let _guard = metrics::set_default_local_recorder(&recorder);
+
+        let repo = InMemoryPassportRepo::default();
+        let model = model();
+        store(&repo, &[&model]).await;
+
+        resolution(&repo, None, None).await.expect("exact");
+        assert!(
+            !handle.render().contains("label_inherited_total"),
+            "an exact answer must not be counted"
+        );
+
+        resolution(&repo, None, Some("ERP-000042"))
+            .await
+            .expect("inherited");
+        let rendered = handle.render();
+        assert!(
+            rendered.contains(r#"label_inherited_total{requested="serial",resolved="model"} 1"#),
+            "an inherited answer is counted by the level asked and the level answered:\n{rendered}"
+        );
+    }
+
+    /// A draft is nobody's answer, so a unit that has not been published yet
+    /// leaves its label to the model.
+    #[tokio::test]
+    async fn a_draft_unit_does_not_answer_its_label() {
+        let repo = InMemoryPassportRepo::default();
+        let (model, unit) = (model(), unit(PassportStatus::Draft));
+        store(&repo, &[&model, &unit]).await;
+        let serial = unit.effective_carrier_serial().into_owned();
+
+        let found = resolution(&repo, None, Some(&serial))
+            .await
+            .expect("inherits the model");
+        assert_eq!(found.passport.id, model.id);
+        assert_eq!(found.resolved, LabelLevel::Model);
     }
 }

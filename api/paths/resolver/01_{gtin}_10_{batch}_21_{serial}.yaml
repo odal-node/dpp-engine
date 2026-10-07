@@ -5,8 +5,11 @@ get:
     The shape this node printed for a batched passport before its carrier
     followed the passport's stated level, and one any conformant label may
     carry. **The serial is the resolution key**: it names one passport
-    whatever its level, so the batch is not consulted. Same behaviour as
-    `/01/{gtin}` otherwise (`linkType` / `Accept` negotiation).
+    whatever its level, so the batch is consulted only if the serial finds
+    nothing. Then the lot's passport answers, and failing that the model's, as
+    a GS1 resolver answers a granular identifier; `404` means nothing is on
+    record at any level. Same behaviour as `/01/{gtin}` otherwise (`linkType` /
+    `Accept` negotiation).
   tags:
     - Public Resolver
   security: []
@@ -22,7 +25,7 @@ get:
       required: true
       schema:
         type: string
-      description: AI 10. Not consulted once a serial is present.
+      description: AI 10. Consulted only if the serial finds nothing.
     - name: serial
       in: path
       required: true
@@ -44,8 +47,13 @@ get:
             type: object
     '307':
       description: Redirect to the DPP page (`Location` header).
+    '400':
+      description: >-
+        The GTIN in the path is not valid: not digits, the wrong length, or a
+        wrong check digit.
     '404':
-      description: No published DPP for this GTIN, or unknown link type.
+      description: >-
+        No published DPP at any level the label names, or unknown link type.
     '410':
       $ref: ../../components/responses/Gone.yaml
     '409':
