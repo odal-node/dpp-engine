@@ -380,6 +380,286 @@ impl std::fmt::Display for SealQualification {
     }
 }
 
+/// What the Trusted Lists say about the authority that stamped a seal's time.
+///
+/// ✅ Regulation (EU) No 910/2014 Art. 42 and Art. 41(2): a qualified electronic
+/// time stamp is a service of a qualified trust service provider, and the
+/// presumption of the accuracy of the date and time it indicates attaches to
+/// that. The list entry that says so is the **`TSA/QTST`** service type.
+///
+/// # Why a seal's timestamp needs this at all
+///
+/// A timestamp token's own signature holding says the token is genuine. It says
+/// nothing about **who signed it**, and the signer is whoever the seal's holder
+/// chose: a seal can be handed a token minted under a key made that afternoon,
+/// stamping any moment inside that key's own certificate window. Before this, such
+/// a token was a perfectly good *proof of existence*, and a proof of existence
+/// decides whether a certificate finding is a failure or an open question — so an
+/// out-of-window certificate could be turned from unproven into unremarkable by
+/// attaching a time nobody had reason to believe.
+///
+/// So the moment a seal's certificate is judged against is **only treated as
+/// attested when the authority is [`Self::QualifiedAtStamping`]**. Every other
+/// standing leaves the time visible — `attestedSealedAt` still reports what the
+/// token says — and judges the certificate against this node's clock instead,
+/// which is reported as unproven rather than as a failure.
+///
+/// "At stamping" throughout, never "now", for the reason [`IssuerStanding`] gives:
+/// the list carries the history, and a service withdrawn last week did not
+/// retroactively unmake the stamps it made while granted.
+///
+/// # Matched two ways, unlike a seal's issuer
+///
+/// A `TSA/QTST` entry's service digital identity is usually the timestamping
+/// unit's **own** certificate, and sometimes the CA above it. A seal's issuer is
+/// only ever a CA, so only a path to a listed CA is looked for there. Here a token
+/// whose signing certificate *is* the listed one needs no path at all, and one
+/// issued by a listed CA needs the path verified, link by link.
+///
+/// 🚨 **Serialised, and the spelling is a published contract** — the same rule
+/// [`IssuerStanding`] carries.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(
+    tag = "standing",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+pub enum TimestampStanding {
+    /// The seal carries no timestamp that survived its own checks.
+    ///
+    /// A `B-B` seal has none, and so does a seal whose token failed its
+    /// signature, its imprint or its authority's validity window. In every case
+    /// there is no time to ask a list about, and nothing is known about any
+    /// authority.
+    NoAttestedTime,
+    /// The authority's certificate is its own issuer, and no list names it.
+    ///
+    /// Decided before any list is consulted and from the certificate alone, so a
+    /// node with no network still knows its seals' times are worth nothing to
+    /// anybody else. What the local development backend produces.
+    SelfIssued {
+        /// The subject name, which is also the issuer name.
+        subject: String,
+    },
+    /// Some provider issued the authority's certificate, and no list consulted
+    /// names that authority or its CA under `TSA/QTST`.
+    ///
+    /// **Read the two counts before reading the verdict** — the same rule, for
+    /// the same reason, as [`IssuerStanding::NotListed`]: this is the one variant
+    /// that claims an absence, so what it means depends on what was looked at.
+    NotListed {
+        /// The authority's subject name.
+        authority: String,
+        /// How many territories' verified lists were searched.
+        consulted: usize,
+        /// How many territories the list of trusted lists names could not be
+        /// verified, and so were not searched.
+        unchecked: usize,
+    },
+    /// The token did not carry enough certificates to reach a root, and no list
+    /// names any issuer it does refer to.
+    ///
+    /// Weaker than [`Self::NotListed`], deliberately: the walk ran out of links,
+    /// so a listed CA may sit above the gap.
+    ChainIncomplete {
+        /// The authority's subject name.
+        authority: String,
+        /// The name the walk needed next and the token did not carry.
+        missing_issuer: String,
+    },
+    /// A listed `TSA/QTST` CA carries the name the authority's certificate
+    /// claims, and **did not sign it**.
+    ///
+    /// The forgery finding — a certificate relabelled with a listed CA's name.
+    SignatureNotFromListedAuthority {
+        /// The authority's subject name.
+        authority: String,
+        /// The issuer name the certificate claims.
+        claimed_issuer: String,
+        /// The provider whose name was claimed.
+        provider: Option<String>,
+        /// The list carrying that name.
+        territory: Option<String>,
+    },
+    /// A listed `TSA/QTST` CA carries the claimed name and the signature could
+    /// not be checked.
+    ///
+    /// **Not an accusation.** The usual cause is a key algorithm this build does
+    /// not verify, and reporting it as a forgery would call a possibly-genuine
+    /// token one on the strength of a check that never ran.
+    PathUnverifiable {
+        /// The authority's subject name.
+        authority: String,
+        /// The issuer name the certificate claims.
+        claimed_issuer: String,
+        /// The provider whose name was claimed.
+        provider: Option<String>,
+        /// The list carrying that name.
+        territory: Option<String>,
+        /// Why no candidate could be checked.
+        reason: String,
+    },
+    /// The authority is a listed `TSA/QTST` service that was not granted when it
+    /// stamped.
+    NotQualifiedAtStamping {
+        /// The authority's subject name.
+        authority: String,
+        /// The provider the list files that service under.
+        provider: Option<String>,
+        /// The list's `SchemeTerritory`.
+        territory: Option<String>,
+        /// The status in force at the stamping time. `None` means the list's
+        /// history does not reach back that far — silence about that moment,
+        /// which is a different finding from a recorded non-granted status.
+        status: Option<TrustServiceStatus>,
+    },
+    /// The authority is a listed `TSA/QTST` service, granted when it stamped.
+    ///
+    /// The only standing that makes the seal's attested time count as a proof of
+    /// existence.
+    QualifiedAtStamping {
+        /// The authority's subject name.
+        authority: String,
+        /// The provider the list files that service under.
+        provider: Option<String>,
+        /// The list's `SchemeTerritory`.
+        territory: Option<String>,
+    },
+}
+
+impl TimestampStanding {
+    /// Whether the seal's attested time may be treated as a proof of existence.
+    ///
+    /// The gate: `true` only for [`Self::QualifiedAtStamping`]. Every other
+    /// standing — including the ones that mean *this node could not tell* —
+    /// returns `false`, because the direction an unanswered question fails in
+    /// has to be the one that leaves a finding unproven rather than settled.
+    #[must_use]
+    pub fn counts_as_proof_of_existence(&self) -> bool {
+        matches!(self, Self::QualifiedAtStamping { .. })
+    }
+}
+
+impl std::fmt::Display for TimestampStanding {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::NoAttestedTime => {
+                write!(f, "the seal carries no timestamp that survived its checks")
+            }
+            Self::SelfIssued { subject } => write!(
+                f,
+                "stamped by {subject} — self-issued, on no Trusted List, so the time is the \
+                 signer's own word"
+            ),
+            Self::NotListed {
+                authority,
+                consulted: 0,
+                unchecked: 0,
+            } => write!(
+                f,
+                "stamped by {authority} — no Trusted List was consulted, so nothing is known \
+                 about whether it is a qualified timestamp authority"
+            ),
+            Self::NotListed {
+                authority,
+                consulted: 0,
+                unchecked,
+            } => write!(
+                f,
+                "stamped by {authority} — no Trusted List could be consulted: {unchecked} \
+                 territory(ies) were named and none could be read"
+            ),
+            Self::NotListed {
+                authority,
+                consulted,
+                unchecked: 0,
+            } => write!(
+                f,
+                "stamped by {authority}, which none of the {consulted} Trusted Lists consulted \
+                 names as a qualified timestamp authority"
+            ),
+            Self::NotListed {
+                authority,
+                consulted,
+                unchecked,
+            } => write!(
+                f,
+                "stamped by {authority}, which none of the {consulted} Trusted Lists consulted \
+                 names as a qualified timestamp authority — but {unchecked} territory(ies) could \
+                 not be consulted, so one listed in those would look exactly like this"
+            ),
+            Self::ChainIncomplete {
+                authority,
+                missing_issuer,
+            } => write!(
+                f,
+                "stamped by {authority}; the token does not carry a certificate for \
+                 {missing_issuer}, so no path to a listed authority could be followed"
+            ),
+            Self::SignatureNotFromListedAuthority {
+                authority,
+                claimed_issuer,
+                territory,
+                ..
+            } => {
+                write!(
+                    f,
+                    "stamped by {authority}, which claims {claimed_issuer}, listed"
+                )?;
+                if let Some(t) = territory {
+                    write!(f, " in {t}")?;
+                }
+                write!(
+                    f,
+                    " — but no certificate that list publishes for that name signed it"
+                )
+            }
+            Self::PathUnverifiable {
+                authority,
+                claimed_issuer,
+                territory,
+                reason,
+                ..
+            } => {
+                write!(
+                    f,
+                    "stamped by {authority}, which claims {claimed_issuer}, listed"
+                )?;
+                if let Some(t) = territory {
+                    write!(f, " in {t}")?;
+                }
+                write!(f, " — the signature could not be checked: {reason}")
+            }
+            Self::NotQualifiedAtStamping {
+                authority,
+                territory,
+                status,
+                ..
+            } => {
+                write!(f, "stamped by {authority}, listed")?;
+                if let Some(t) = territory {
+                    write!(f, " in {t}")?;
+                }
+                match status {
+                    Some(s) => write!(f, " but {} when it stamped", s.as_uri()),
+                    None => write!(f, " but with no recorded status when it stamped"),
+                }
+            }
+            Self::QualifiedAtStamping {
+                authority,
+                territory,
+                ..
+            } => {
+                write!(f, "stamped by {authority}, a qualified timestamp authority")?;
+                if let Some(t) = territory {
+                    write!(f, " in {t}")?;
+                }
+                write!(f, " when it stamped")
+            }
+        }
+    }
+}
+
 /// A territory the list of trusted lists names and this node could not consult.
 ///
 /// Carried rather than dropped because the two states a caller must tell apart —
@@ -520,6 +800,139 @@ mod wire_shape {
                 );
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod timestamp_standing_shape {
+    use super::*;
+    use dpp_domain::trusted_list::TrustServiceStatus;
+
+    /// 🚨 The spelling is a contract, pinned as literals.
+    ///
+    /// `claimedIssuer` and `missingIssuer` are the two multi-word keys, and the
+    /// ones `rename_all_fields` exists to keep camelCase.
+    #[test]
+    fn every_timestamp_standing_serialises_to_the_documented_tag() {
+        let cases: Vec<(TimestampStanding, &str)> = vec![
+            (
+                TimestampStanding::NoAttestedTime,
+                r#"{"standing":"noAttestedTime"}"#,
+            ),
+            (
+                TimestampStanding::SelfIssued {
+                    subject: "CN=Self".into(),
+                },
+                r#"{"standing":"selfIssued","subject":"CN=Self"}"#,
+            ),
+            (
+                TimestampStanding::NotListed {
+                    authority: "CN=A".into(),
+                    consulted: 26,
+                    unchecked: 1,
+                },
+                r#"{"standing":"notListed","authority":"CN=A","consulted":26,"unchecked":1}"#,
+            ),
+            (
+                TimestampStanding::ChainIncomplete {
+                    authority: "CN=A".into(),
+                    missing_issuer: "CN=B".into(),
+                },
+                r#"{"standing":"chainIncomplete","authority":"CN=A","missingIssuer":"CN=B"}"#,
+            ),
+            (
+                TimestampStanding::SignatureNotFromListedAuthority {
+                    authority: "CN=A".into(),
+                    claimed_issuer: "CN=B".into(),
+                    provider: Some("P".into()),
+                    territory: Some("FI".into()),
+                },
+                r#"{"standing":"signatureNotFromListedAuthority","authority":"CN=A","claimedIssuer":"CN=B","provider":"P","territory":"FI"}"#,
+            ),
+            (
+                TimestampStanding::NotQualifiedAtStamping {
+                    authority: "CN=A".into(),
+                    provider: None,
+                    territory: None,
+                    status: Some(TrustServiceStatus::Withdrawn),
+                },
+                r#"{"standing":"notQualifiedAtStamping","authority":"CN=A","provider":null,"territory":null,"status":"withdrawn"}"#,
+            ),
+            (
+                TimestampStanding::QualifiedAtStamping {
+                    authority: "CN=A".into(),
+                    provider: Some("P".into()),
+                    territory: Some("FI".into()),
+                },
+                r#"{"standing":"qualifiedAtStamping","authority":"CN=A","provider":"P","territory":"FI"}"#,
+            ),
+        ];
+
+        for (standing, expected) in cases {
+            assert_eq!(
+                serde_json::to_string(&standing).expect("serialise"),
+                expected,
+                "the wire spelling of {standing:?} is a contract"
+            );
+        }
+    }
+
+    /// **Only a qualified authority turns a time into a proof of existence.**
+    ///
+    /// The gate the verdict hangs on, so every other variant is listed rather than
+    /// sampled: a variant added later that quietly returned `true` would reopen
+    /// the escalation this exists to close, and the exhaustive list is what makes
+    /// the compiler ask.
+    #[test]
+    fn only_a_qualified_authority_counts_as_a_proof_of_existence() {
+        let refused = [
+            TimestampStanding::NoAttestedTime,
+            TimestampStanding::SelfIssued {
+                subject: String::new(),
+            },
+            TimestampStanding::NotListed {
+                authority: String::new(),
+                consulted: 0,
+                unchecked: 0,
+            },
+            TimestampStanding::ChainIncomplete {
+                authority: String::new(),
+                missing_issuer: String::new(),
+            },
+            TimestampStanding::SignatureNotFromListedAuthority {
+                authority: String::new(),
+                claimed_issuer: String::new(),
+                provider: None,
+                territory: None,
+            },
+            TimestampStanding::PathUnverifiable {
+                authority: String::new(),
+                claimed_issuer: String::new(),
+                provider: None,
+                territory: None,
+                reason: String::new(),
+            },
+            TimestampStanding::NotQualifiedAtStamping {
+                authority: String::new(),
+                provider: None,
+                territory: None,
+                status: None,
+            },
+        ];
+        for standing in refused {
+            assert!(
+                !standing.counts_as_proof_of_existence(),
+                "{standing:?} must not settle a certificate finding"
+            );
+        }
+        assert!(
+            TimestampStanding::QualifiedAtStamping {
+                authority: String::new(),
+                provider: None,
+                territory: None,
+            }
+            .counts_as_proof_of_existence()
+        );
     }
 }
 

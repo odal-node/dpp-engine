@@ -461,6 +461,7 @@ async fn main() -> anyhow::Result<()> {
     // exactly the ones nobody is watching any more.
     boot::tasks::spawn_seal_audit(
         db.seal_outbox.clone(),
+        seal_inspector.clone(),
         seal_audit.clone(),
         Some(db.seal_audit.clone()),
     )?;

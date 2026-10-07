@@ -59,7 +59,7 @@ pub use operator::{
     OperatorConfig, OperatorConfigRepository, STANDALONE_OPERATOR_ID, UpdateOperatorConfig,
 };
 pub use passport_request::CreatePassportRequest;
-pub use qualification::{IssuerStanding, SealQualification, UncheckedTerritory};
+pub use qualification::{IssuerStanding, SealQualification, TimestampStanding, UncheckedTerritory};
 pub use registry_identity::{
     CreateFacilityRequest, CreateOperatorIdentifierRequest, Facility, OperatorIdentifier,
     RegistryIdentityRepository,
