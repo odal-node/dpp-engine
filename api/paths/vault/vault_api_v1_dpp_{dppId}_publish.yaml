@@ -15,6 +15,13 @@ post:
     5. A `dpp.published` NATS event is emitted (fire-after-commit)
 
     No request body is required.
+
+    Refused with `422` naming `/carrierSerial` when another published passport
+    already prints the same carrier serial under the same GTIN and is not in
+    this one's amendment chain. Create refuses that too, but two creates that
+    arrive together can both pass it; this is where the label goes live, so
+    the second to publish stays a draft rather than making one label name two
+    passports.
   tags:
     - DPP Lifecycle
   security:

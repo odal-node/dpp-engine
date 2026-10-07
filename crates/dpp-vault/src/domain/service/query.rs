@@ -7,6 +7,7 @@ use dpp_domain::{
     passport::{CarrierQualifier, Passport, PassportId},
     ports::passport_repo::{MAX_SUCCESSION_HOPS, PassportRepository},
     product::ProductIdentity,
+    product_group::ProductGroupData,
     status::PassportStatus,
 };
 use dpp_types::audit::PassportAuditEntry;
@@ -376,6 +377,46 @@ async fn carrier_serial_is_taken(
         .any(|p| Some(p.id) != replaces && p.status != PassportStatus::Superseded))
 }
 
+/// Whether a live passport outside `passport`'s chain already prints its carrier
+/// serial under its GTIN.
+///
+/// Publish asks this at the moment the label goes live. Create asks
+/// [`carrier_serial_is_taken`] first, but two creates that arrive together can
+/// both pass it, and two published holders of one label cannot be repaired:
+/// neither declares the other, and `supersedesId` is fixed at create. Drafts do
+/// not count here because a draft answers no label, so whichever of two drafts
+/// publishes first keeps the serial and the other stays a draft.
+///
+/// "Outside the chain" is the rule [`without_pending_successors`] resolves by:
+/// a passport and one that declares it in `supersedesId`, in either direction,
+/// are one chain, and superseded records are behind its head.
+pub(super) async fn carrier_serial_is_live_elsewhere(
+    repo: &dyn PassportRepository,
+    passport: &Passport,
+) -> Result<bool, DppError> {
+    let Some(identifier) = passport
+        .product_group_data
+        .as_ref()
+        .and_then(ProductGroupData::product_identifier)
+        .filter(|id| id.gtin().is_some())
+    else {
+        return Ok(false);
+    };
+    let serial = passport.effective_carrier_serial();
+    let holders = repo
+        .find_by_carrier(
+            identifier,
+            &CarrierQualifier::Serial(serial.as_ref().into()),
+        )
+        .await?;
+    Ok(holders.iter().any(|p| {
+        p.id != passport.id
+            && Some(p.id) != passport.supersedes_id
+            && p.supersedes_id != Some(passport.id)
+            && !matches!(p.status, PassportStatus::Draft | PassportStatus::Superseded)
+    }))
+}
+
 /// The record a reader holding `record`'s label should reach: `record` itself,
 /// unless it was superseded, in which case the record that superseded it,
 /// followed forward until one was not.
@@ -518,7 +559,10 @@ mod label_resolution {
         status::PassportStatus,
     };
 
-    use super::{LabelLevel, LabelResolution, carrier_serial_is_taken, resolve_label};
+    use super::{
+        LabelLevel, LabelResolution, carrier_serial_is_live_elsewhere, carrier_serial_is_taken,
+        resolve_label,
+    };
 
     const GTIN: &str = "09506000134352";
 
@@ -1062,6 +1106,59 @@ mod label_resolution {
         assert!(!taken(&repo, gtin(), "SN-1", Some(head.id)).await);
         // Without naming the head, the head holds it.
         assert!(taken(&repo, gtin(), "SN-1", None).await);
+    }
+
+    async fn live_elsewhere(repo: &InMemoryPassportRepo, passport: &Passport) -> bool {
+        carrier_serial_is_live_elsewhere(repo, passport)
+            .await
+            .expect("checks")
+    }
+
+    /// Two drafts that both passed create's check, because their creates arrived
+    /// together: whichever publishes first keeps the serial, and the other is
+    /// refused at publish rather than making the label name two passports.
+    #[tokio::test]
+    async fn the_second_of_two_drafts_sharing_a_serial_cannot_go_live() {
+        let repo = InMemoryPassportRepo::default();
+        let mut first = attributing("SN-1", PassportStatus::Draft);
+        let second = attributing("SN-1", PassportStatus::Draft);
+        store(&repo, &[&first, &second]).await;
+
+        assert!(
+            !live_elsewhere(&repo, &first).await,
+            "a draft answers no label, so it does not hold the serial against a publish"
+        );
+        repo.update_status(first.id, PassportStatus::Published)
+            .await
+            .expect("publish");
+        first.status = PassportStatus::Published;
+
+        assert!(live_elsewhere(&repo, &second).await);
+        assert!(
+            !live_elsewhere(&repo, &first).await,
+            "a passport does not hold its own serial against itself"
+        );
+    }
+
+    /// A passport and one that names it in `supersedesId` are one chain in
+    /// either direction, and a superseded record is behind its head. None of
+    /// them blocks the other from going live.
+    #[tokio::test]
+    async fn a_chain_does_not_hold_its_serial_against_itself_at_publish() {
+        let repo = InMemoryPassportRepo::default();
+        let predecessor = attributing("SN-1", PassportStatus::Published);
+        let mut successor = attributing("SN-1", PassportStatus::Draft);
+        successor.supersedes_id = Some(predecessor.id);
+        let behind = attributing("SN-1", PassportStatus::Superseded);
+        store(&repo, &[&predecessor, &successor, &behind]).await;
+
+        assert!(!live_elsewhere(&repo, &successor).await);
+        repo.update_status(successor.id, PassportStatus::Published)
+            .await
+            .expect("publish");
+        // The predecessor coming back from a suspension while its declared
+        // successor is live is the same chain, not a collision.
+        assert!(!live_elsewhere(&repo, &predecessor).await);
     }
 
     /// The label prints the *effective* serial, so a value another passport

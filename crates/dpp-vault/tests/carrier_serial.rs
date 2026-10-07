@@ -221,6 +221,44 @@ async fn a_declared_successor_takes_the_label_when_its_predecessor_is_superseded
     assert_eq!(label_reaches(&client, "SN-1").await, second_id);
 }
 
+/// Two creates that arrive together can both pass create's check, simulated by
+/// writing the second draft straight to the store. Publish checks again as the
+/// label goes live: the first to publish keeps the serial, and the other is a
+/// `422` naming the field and stays a draft, so the label never names both.
+#[tokio::test(flavor = "multi_thread")]
+async fn of_two_drafts_that_raced_past_create_only_the_first_published_goes_live() {
+    use dpp_dal::pg::PgPassportRepo;
+    use dpp_domain::{passport::PassportId, ports::passport_repo::PassportRepository};
+
+    let (client, pg) = client().await;
+    let first = create(&client, draft("First", gs1(GTIN), Some("SN-1"))).await;
+    let first_id = first["id"].as_str().unwrap().to_owned();
+
+    let repo = PgPassportRepo::new(pg.dal.clone());
+    let mut raced = repo
+        .find_by_id(PassportId(first_id.parse().unwrap()))
+        .await
+        .unwrap()
+        .expect("the first draft is stored");
+    raced.id = PassportId::new();
+    let raced_id = raced.id.to_string();
+    repo.create(raced).await.expect("seed the raced draft");
+
+    publish(&client, &first_id).await;
+
+    let resp = client
+        .post_json(
+            &format!("/api/v1/dpp/{raced_id}/publish"),
+            serde_json::json!({}),
+        )
+        .await;
+    assert_eq!(resp.status(), 422);
+    let problem: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(problem["errors"][0]["field"], "/carrierSerial", "{problem}");
+
+    assert_eq!(label_reaches(&client, "SN-1").await, first_id);
+}
+
 /// A draft's update ignores the create-time fields it is sent, but not this
 /// one: a different serial is a `422` naming it, because ignoring it would answer
 /// a caller whose label will not say what they sent. The serial it already

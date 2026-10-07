@@ -53,10 +53,13 @@ mod reason {
     pub const COMPLIANCE_UNAVAILABLE: &str = "compliance_unavailable";
     /// The GS1 carrier would carry a serial or lot GS1 rejects.
     pub const CARRIER_INVALID: &str = "carrier_invalid";
+    /// Another live passport, outside this one's chain, already prints this
+    /// carrier serial under the same GTIN.
+    pub const CARRIER_TAKEN: &str = "carrier_taken";
 }
 
 use reason::{
-    CARRIER_INVALID as REASON_CARRIER_INVALID,
+    CARRIER_INVALID as REASON_CARRIER_INVALID, CARRIER_TAKEN as REASON_CARRIER_TAKEN,
     COMPLIANCE_UNAVAILABLE as REASON_COMPLIANCE_UNAVAILABLE,
     COMPLIANCE_VIOLATIONS as REASON_COMPLIANCE_VIOLATIONS,
     INVALID_TRANSITION as REASON_INVALID_TRANSITION, MANDATORY_CONTENT as REASON_MANDATORY_CONTENT,
@@ -151,6 +154,28 @@ impl PassportService {
                     current: passport.status.to_string(),
                     required: PassportStatus::Published.to_string(),
                 },
+            ));
+        }
+
+        // The label goes live here, so its serial is checked again here. Two
+        // creates that arrive together can both pass create's check, and two
+        // published holders of one label cannot be repaired afterwards. Refused,
+        // this one stays a draft, which answers no label.
+        if super::query::carrier_serial_is_live_elsewhere(&*self.repo, &passport).await? {
+            let serial = passport.effective_carrier_serial();
+            return Err(reject(
+                REASON_CARRIER_TAKEN,
+                DppError::Validation(dpp_domain::ValidationErrors {
+                    errors: vec![dpp_domain::FieldError {
+                        field: "/carrierSerial".to_owned(),
+                        message: format!(
+                            "{serial:?} is already printed by another published passport under \
+                             this GTIN, and a label that names two passports resolves to \
+                             neither. This passport stays a draft; create one with another \
+                             serial, or one that names the holder in supersedesId."
+                        ),
+                    }],
+                }),
             ));
         }
 
