@@ -142,8 +142,8 @@ mod tests {
 
     fn tyre_row() -> HashMap<String, String> {
         HashMap::from([
-            ("productName".into(), "EcoContact 6".into()),
-            ("manufacturerName".into(), "Continental AG".into()),
+            ("productName".into(), "Summer Tyre 205/55R16".into()),
+            ("manufacturerName".into(), "Sample Reifen GmbH".into()),
             ("manufacturerCountry".into(), "DE".into()),
             ("gtin".into(), "09506000134352".into()),
             ("tyreClass".into(), "C1".into()),
