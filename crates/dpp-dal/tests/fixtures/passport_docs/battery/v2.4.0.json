@@ -38,11 +38,11 @@
     }
   },
   "co2ePerUnit": { "valueKg": 39.1 },
-  "productName": "Voltex Stationary Cell 4.8kWh",
+  "productName": "Musterzelle Stationary Cell 4.8kWh",
   "publishedAt": "2026-07-30T17:00:00.000000000Z",
   "jwsSignature": null,
   "manufacturer": {
-    "name": "Voltex Battery GmbH",
+    "name": "Musterzelle GmbH",
     "address": "DE",
     "didWebUrl": null
   },

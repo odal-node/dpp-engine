@@ -24,11 +24,11 @@
     "recycledContentLithiumPct": null
   },
   "co2ePerUnit": { "valueKg": 47.2 },
-  "productName": "Voltex Forklift Module 25kWh",
+  "productName": "Musterzelle Forklift Module 25kWh",
   "publishedAt": null,
   "jwsSignature": null,
   "manufacturer": {
-    "name": "Voltex Battery GmbH",
+    "name": "Musterzelle GmbH",
     "address": "DE",
     "didWebUrl": null
   },
