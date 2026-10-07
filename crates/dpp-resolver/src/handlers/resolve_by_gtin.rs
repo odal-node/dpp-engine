@@ -5,7 +5,11 @@
 //! batch-level one and `/01/{gtin}/21/{serial}` otherwise; labels printed before
 //! the carrier followed the passport's level carry `/10/{batch}/21/{serial}`.
 //! A scanner reading any conformant label may present any of these, so every
-//! AI combination is mounted here.
+//! AI combination is mounted here. A label printed elsewhere may also carry a
+//! consumer product variant (AI 22) or a third-party extension (AI 235); both are
+//! accepted and take no part in the lookup, because this node holds no record at
+//! those levels. Any other path under `/01/` cannot be a Digital Link and is a
+//! `400`.
 //!
 //! **The label's qualifiers are the lookup key.** The batch (AI 10) and serial
 //! (AI 21) are forwarded to the vault, which resolves the passport the label
@@ -21,7 +25,7 @@
 
 use axum::{
     extract::{Path, Query, State},
-    http::{HeaderMap, StatusCode, header},
+    http::{HeaderMap, StatusCode, Uri, header},
     response::IntoResponse,
 };
 use dpp_common::http_problem;
@@ -101,6 +105,96 @@ pub async fn resolve_by_gtin_batch_serial_handler(
     resolve_gtin(state, label, gtin, query, headers).await
 }
 
+/// `GET /01/{gtin}/22/{variant}` — GTIN + consumer product variant.
+///
+/// A variant (AI 22) is a valid part of a Digital Link, and a label printed
+/// elsewhere may carry one. This node holds no record at that level, so the value
+/// takes no part in the lookup and the label resolves as it would without it. The
+/// resolver standard answers a granular identifier with what is registered at
+/// each level it names and above (2.5.10); a level with nothing registered adds
+/// nothing.
+pub async fn resolve_by_gtin_variant_handler(
+    state: State<AppState>,
+    Path((gtin, _variant)): Path<(String, String)>,
+    query: Query<ByGtinQuery>,
+    headers: HeaderMap,
+) -> impl IntoResponse {
+    resolve_gtin(state, Label::default(), gtin, query, headers).await
+}
+
+/// `GET /01/{gtin}/22/{variant}/21/{serial}` — a variant's unit. The variant is
+/// not looked up; see [`resolve_by_gtin_variant_handler`].
+pub async fn resolve_by_gtin_variant_serial_handler(
+    state: State<AppState>,
+    Path((gtin, _variant, serial)): Path<(String, String, String)>,
+    query: Query<ByGtinQuery>,
+    headers: HeaderMap,
+) -> impl IntoResponse {
+    let label = Label {
+        batch: None,
+        serial: Some(serial),
+    };
+    resolve_gtin(state, label, gtin, query, headers).await
+}
+
+/// `GET /01/{gtin}/22/{variant}/10/{batch}` — a variant's production run. The
+/// variant is not looked up; see [`resolve_by_gtin_variant_handler`].
+pub async fn resolve_by_gtin_variant_batch_handler(
+    state: State<AppState>,
+    Path((gtin, _variant, batch)): Path<(String, String, String)>,
+    query: Query<ByGtinQuery>,
+    headers: HeaderMap,
+) -> impl IntoResponse {
+    let label = Label {
+        batch: Some(batch),
+        serial: None,
+    };
+    resolve_gtin(state, label, gtin, query, headers).await
+}
+
+/// `GET /01/{gtin}/22/{variant}/10/{batch}/21/{serial}` — every qualifier a GTIN
+/// takes. The variant is not looked up; see [`resolve_by_gtin_variant_handler`].
+pub async fn resolve_by_gtin_variant_batch_serial_handler(
+    state: State<AppState>,
+    Path((gtin, _variant, batch, serial)): Path<(String, String, String, String)>,
+    query: Query<ByGtinQuery>,
+    headers: HeaderMap,
+) -> impl IntoResponse {
+    let label = Label {
+        batch: Some(batch),
+        serial: Some(serial),
+    };
+    resolve_gtin(state, label, gtin, query, headers).await
+}
+
+/// `GET /01/{gtin}/235/{extension}` — GTIN + third-party serialised extension.
+///
+/// An extension (AI 235) stands alone: the standard allows no further qualifier
+/// after it. This node issues no such extension, so the value takes no part in
+/// the lookup and the label resolves as the bare GTIN does.
+pub async fn resolve_by_gtin_extension_handler(
+    state: State<AppState>,
+    Path((gtin, _extension)): Path<(String, String)>,
+    query: Query<ByGtinQuery>,
+    headers: HeaderMap,
+) -> impl IntoResponse {
+    resolve_gtin(state, Label::default(), gtin, query, headers).await
+}
+
+/// What the router answers for a path no route serves.
+///
+/// Under `/01/` that is a request whose qualifiers are out of order, repeated,
+/// not ones a GTIN takes, or empty. It fails the resolver standard's validity
+/// tests, which it answers `400` (2.4.1), and it is not looked up. Anywhere else
+/// it is the plain `404` the router always gave.
+pub async fn unserved_path_handler(uri: Uri) -> axum::response::Response {
+    if uri.path().starts_with("/01/") {
+        gtin_problem(StatusCode::BAD_REQUEST, INVALID_LABEL)
+    } else {
+        StatusCode::NOT_FOUND.into_response()
+    }
+}
+
 /// The qualifiers a label printed after its GTIN, forwarded to the vault as
 /// the `batch` and `serial` query parameters of its by-GTIN route.
 #[derive(Default)]
@@ -132,6 +226,10 @@ const DPP_WITHDRAWN: &str = "The DPP for this GTIN has been withdrawn.";
 /// nothing about with `404` (2.4.1), and the person scanning needs to know which
 /// of the two it was.
 const INVALID_GTIN: &str = "The GTIN in the request is not valid.";
+
+/// What the GS1 route says when the path under `/01/` cannot be a Digital Link
+/// at all, whatever its GTIN. See [`unserved_path_handler`].
+const INVALID_LABEL: &str = "The path is not a valid GS1 Digital Link.";
 
 /// The detail to serve alongside `status`.
 ///

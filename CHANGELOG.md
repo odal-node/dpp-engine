@@ -157,6 +157,25 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   neither) and `SNAPSHOT_PROVIDER_COUNTRY` are optional, and are checked at boot
   with the registry's own rules rather than on the first registration.
 
+### Added
+
+- **The GS1 resolver accepts a consumer product variant (AI 22) and a
+  third-party extension (AI 235).** A label printed elsewhere may carry either
+  after its GTIN, and the resolver answered it with the router's own `404`
+  before any lookup. The value takes no part in the lookup, because this node
+  holds no record at either level, so the label resolves as it would without it.
+  The node still never prints one. Five routes serve them:
+  `/01/{gtin}/22/{variant}` with an optional lot and serial, and
+  `/01/{gtin}/235/{extension}`, which stands alone because GS1 allows no
+  qualifier after it.
+
+  **Any other path under `/01/` is a `400`.** Qualifiers out of order, repeated,
+  not ones a GTIN takes, or empty cannot be a Digital Link, and the resolver
+  standard answers that with `400`, keeping `404` for a valid label it knows
+  nothing about. Nothing is looked up. A path outside `/01/` that no route
+  serves is still the plain `404`, and a wrong method on a served route is still
+  `405`.
+
 ### Fixed
 
 - **A seal's timestamp is only believed when its authority is a qualified one.**

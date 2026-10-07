@@ -473,6 +473,16 @@ paths:
     $ref: paths/resolver/01_{gtin}_10_{batch}.yaml
   /01/{gtin}/10/{batch}/21/{serial}:
     $ref: paths/resolver/01_{gtin}_10_{batch}_21_{serial}.yaml
+  /01/{gtin}/22/{variant}:
+    $ref: paths/resolver/01_{gtin}_22_{variant}.yaml
+  /01/{gtin}/22/{variant}/21/{serial}:
+    $ref: paths/resolver/01_{gtin}_22_{variant}_21_{serial}.yaml
+  /01/{gtin}/22/{variant}/10/{batch}:
+    $ref: paths/resolver/01_{gtin}_22_{variant}_10_{batch}.yaml
+  /01/{gtin}/22/{variant}/10/{batch}/21/{serial}:
+    $ref: paths/resolver/01_{gtin}_22_{variant}_10_{batch}_21_{serial}.yaml
+  /01/{gtin}/235/{extension}:
+    $ref: paths/resolver/01_{gtin}_235_{extension}.yaml
   /vault/health:
     $ref: paths/health/vault_health.yaml
   /vault/ready:

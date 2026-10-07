@@ -802,6 +802,27 @@ fn query_cases() -> Vec<QueryCase> {
         "/01/{gtin}/10/{batch}/21/{serial}",
         fixtures::by_gtin_query()
     );
+    case!("get", "/01/{gtin}/22/{variant}", fixtures::by_gtin_query());
+    case!(
+        "get",
+        "/01/{gtin}/22/{variant}/21/{serial}",
+        fixtures::by_gtin_query()
+    );
+    case!(
+        "get",
+        "/01/{gtin}/22/{variant}/10/{batch}",
+        fixtures::by_gtin_query()
+    );
+    case!(
+        "get",
+        "/01/{gtin}/22/{variant}/10/{batch}/21/{serial}",
+        fixtures::by_gtin_query()
+    );
+    case!(
+        "get",
+        "/01/{gtin}/235/{extension}",
+        fixtures::by_gtin_query()
+    );
 
     cases
 }
