@@ -869,7 +869,13 @@ pub struct ValidityWindow {
 pub struct JudgedTime {
     /// The moment used.
     pub at: DateTime<Utc>,
-    /// True when it came from a timestamp token inside the seal, checked.
+    /// True when it came from a timestamp token inside the seal, checked, **and
+    /// stamped by an authority the Trusted Lists name as qualified** — see
+    /// [`TimestampStanding`](crate::qualification::TimestampStanding).
+    ///
+    /// A token that is genuine but whose authority nobody lists is *not* a proof
+    /// of existence, so a seal carrying only such a token reads `false` here even
+    /// though `attestedSealedAt` still shows the time it states.
     ///
     /// False means it is this node's clock — the validation time, not the
     /// signing time. Every verdict resting on an unattested moment is reported
@@ -1160,8 +1166,35 @@ pub trait SealInspector: Send + Sync {
     ///
     /// Says nothing about whether the authority is **trusted** or **qualified**:
     /// Art. 42 makes a qualified time stamp a QTSP service, which is a Trusted
-    /// List question about the `TSA/QTST` service type and is not asked here.
+    /// List question about the `TSA/QTST` service type. That is asked by
+    /// [`Self::timestamp_authority`], and **a time is only treated as a proof of
+    /// existence** — the thing that lets [`Self::certificate_standing`] call an
+    /// out-of-window certificate a failure — when that answer is a qualified one.
+    /// This method reports what the token says; it is never the gate.
     fn attested_sealing_time(&self, envelope: &SealedEnvelope) -> Option<DateTime<Utc>>;
+
+    /// Who stamped the seal's time, and what the Trusted Lists say of them.
+    ///
+    /// ✅ Reg. (EU) No 910/2014 Art. 42 and Art. 41(2), via the `TSA/QTST`
+    /// service type — see [`TimestampStanding`](crate::qualification::TimestampStanding).
+    ///
+    /// The other half of [`Self::attested_sealing_time`]: that says *when*, this
+    /// says whether anybody should believe it. They are separate calls so the
+    /// time stays visible when the authority is not one a list names.
+    ///
+    /// `None` means **not read** — a placeholder envelope, a format this adapter
+    /// does not parse, bytes that will not decode. Never read it as "no
+    /// authority": a seal that was read and carries no usable timestamp answers
+    /// `NoAttestedTime`, which is a finding.
+    ///
+    /// Defaulted to `None`, like [`Self::qualification`], so an adapter that
+    /// cannot reach a trusted list does not have to pretend.
+    fn timestamp_authority(
+        &self,
+        _envelope: &SealedEnvelope,
+    ) -> Option<crate::qualification::TimestampStanding> {
+        None
+    }
 
     /// How much life is left in the envelope's archival timestamp, as of `now`.
     ///
@@ -1184,9 +1217,15 @@ pub trait SealInspector: Send + Sync {
     /// `now` is a parameter for the same reason it is on
     /// [`Self::archival_freshness`] — so the answer is a function of its inputs.
     /// It is used only as the fallback moment, and only when the seal carries no
-    /// attested time; [`JudgedTime::attested`] says which happened, and that
-    /// distinction decides whether an out-of-window certificate is a failure or
-    /// merely unproven.
+    /// **trusted** attested time; [`JudgedTime::attested`] says which happened,
+    /// and that distinction decides whether an out-of-window certificate is a
+    /// failure or merely unproven.
+    ///
+    /// 🚨 *Trusted*, not merely attested: a token's moment counts only when its
+    /// authority is a qualified timestamp authority per
+    /// [`Self::timestamp_authority`]. Otherwise the seal's own say-so would settle
+    /// the very finding it is the evidence for — a token minted under a key made
+    /// that afternoon is a perfectly well-formed time.
     ///
     /// `None` when the bytes cannot be read — never a verdict of valid or
     /// invalid, for the reason every other question here returns an option.

@@ -159,6 +159,37 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ### Fixed
 
+- **A seal's timestamp is only believed when its authority is a qualified one.**
+  `attestedSealedAt` was checked for its own signature, its imprint and its
+  authority's validity window, and never for *who* the authority was — so a seal
+  could carry a genuine token from a key made that afternoon, and that token
+  decided whether an out-of-window certificate was a failure or an open question.
+  A certificate that had expired when the seal was made, stamped by an authority
+  nobody lists, reported `totalFailed` / `expired` with a proven moment behind it
+  that nobody had reason to believe.
+
+  `GET /dpp/{dppId}/seal` now serves **`timestampAuthority`**, the Trusted Lists'
+  answer for the `TSA/QTST` service type (Reg. (EU) No 910/2014 Art. 42 and
+  Art. 41(2)): `qualifiedAtStamping`, `notQualifiedAtStamping`, `selfIssued`,
+  `notListed` (with the `consulted` / `unchecked` counts that say how wide an
+  absence is), `chainIncomplete`, `signatureNotFromListedAuthority`,
+  `pathUnverifiable` and `noAttestedTime`. A unit's own certificate may be the
+  listed one, so it is matched directly as well as through a verified path to a
+  listed CA, and the status is read **at the stamp's own `genTime`**.
+
+  **Behaviour change:** `certificate.judgedAt.attested` is `true` only for
+  `qualifiedAtStamping`. Any other standing — including a node that holds no
+  lists — judges the certificate against this node's clock and reports it as
+  unproven (`indeterminate` / `outOfBoundsNoPoe`) where it used to report
+  `totalFailed` / `expired`. The time itself is still served, and the CLI shows
+  both. `certificate_standing` in `dpp-seal` now takes the moment the caller is
+  willing to trust as an argument, so there is no entry point that reads the token
+  without asking the lists. The stored-seal audit now reads through the same
+  inspector the seal route holds and the trusted-list refresh publishes into,
+  where it used to build its own with no lists, which would have left it unable
+  to find a proven certificate failure once the gate existed. Archive-timestamp
+  authorities are not asked here.
+
 - **Registrations are posted where the registry listens, under the key it
   reads.** The adapter posted to `/registrations`, a path that was invented and
   that core now records as wrong; it posts to `/dpp-registration-requests`, taken

@@ -5462,7 +5462,7 @@ components:
 
             `null` for a `B-B` seal, which carries no token, and for a token that failed either check.
 
-            **Attested is not trusted.** A qualified electronic time stamp is a QTSP's service (Art. 42) and the presumption of accuracy attaches to that (Art. 41(2)); establishing it is a Trusted List question about the `TSA/QTST` service type, which this node cannot yet ask. A self-signed authority's token verifies perfectly and means nothing.
+            **Attested is not trusted.** A qualified electronic time stamp is a QTSP's service (Art. 42) and the presumption of accuracy attaches to that (Art. 41(2)); whether the authority is one is a Trusted List question about the `TSA/QTST` service type, answered by `timestampAuthority`. A self-signed authority's token verifies perfectly and means nothing, so this time is **shown** whatever that says, but counts as a proof of existence — `certificate.judgedAt.attested` — only when `timestampAuthority` is `qualifiedAtStamping`.
         conformanceLevel:
           oneOf:
             - $ref: '#/components/schemas/SealConformanceLevel'
@@ -5526,6 +5526,18 @@ components:
             Even at its widest this is **not** "not qualified in law": a provider can be qualified and its Member State's list wrong, which is that state's problem and not something this node can see.
 
             Null means **not read** — a placeholder seal, a format this node does not parse, unreadable bytes, or a deployment with no inspector wired. Never read null as "not qualified": that is a finding, and it only comes from a certificate that was actually examined.
+        timestampAuthority:
+          oneOf:
+            - $ref: '#/components/schemas/TimestampStanding'
+            - type: 'null'
+          description: |-
+            Who stamped `attestedSealedAt`, and what the EU Trusted Lists say of them — Regulation (EU) No 910/2014 Art. 42 and Art. 41(2), via the `TSA/QTST` service type.
+
+            **This decides whether the time is believed.** `certificate.judgedAt.attested` is `true` only when this is `qualifiedAtStamping`. Otherwise the time is still shown and the certificate is judged against this node's own clock and reported as unproven — `outOfBoundsNoPoe`, not `expired` — so a token minted by an authority nobody lists cannot turn an out-of-window certificate into anything but an open question.
+
+            🚨 **Read `consulted` and `unchecked` before acting on a `notListed` standing**, for the reason given on `qualification`.
+
+            Null means **not read**. A seal that was read and carries no usable timestamp answers `noAttestedTime`, which is a finding.
         verification:
           type: string
           description: 'Stated, not implied: this node did not cryptographically validate the CAdES. A detached CAdES must be checked by an independent AdES validator against the EU Trusted List.'
@@ -8210,6 +8222,94 @@ components:
             The territories the EU list of trusted lists names and this node could not consult, with the reason for each.
 
             🚨 **Read this before acting on a `notListed` issuer.** The two states a caller must tell apart — *this issuer is on no list* and *the list it would be on could not be read* — are otherwise identical at the point of the verdict. Empty means every territory the list of lists names was read.
+    TimestampStanding:
+      type: object
+      description: |-
+        What the EU Trusted Lists say about the authority that stamped the seal's time — Regulation (EU) No 910/2014 Art. 42 and Art. 41(2), via the `TSA/QTST` service type.
+
+        **This is what decides whether `attestedSealedAt` is believed.** A token's own signature holding says it is genuine; it says nothing about who signed it, and the signer is whoever the seal's holder chose. So the moment a seal's certificate is judged against (`certificate.judgedAt`) is treated as attested **only** when this is `qualifiedAtStamping`. In every other case the time is still reported, and the certificate is judged against this node's own clock and reported as unproven rather than as a failure.
+
+        **"At stamping" throughout, never "now."** The list carries the history, and a service withdrawn last week did not retroactively unmake the stamps it made while granted.
+
+        Matched two ways, unlike a seal's issuer. A `TSA/QTST` entry's service identity is usually the timestamping unit's own certificate and sometimes the CA above it, so a token whose signing certificate *is* the listed one needs no path, and one issued by a listed CA needs the path verified link by link.
+
+        Discriminated by `standing`. The shape of the rest depends on which one it is.
+      required:
+        - standing
+      properties:
+        standing:
+          type: string
+          enum:
+            - noAttestedTime
+            - selfIssued
+            - notListed
+            - chainIncomplete
+            - signatureNotFromListedAuthority
+            - pathUnverifiable
+            - notQualifiedAtStamping
+            - qualifiedAtStamping
+          description: |-
+            `noAttestedTime`: the seal carries no timestamp that survived its own checks — a `B-B` seal has none, and so does one whose token failed its signature, its imprint or its authority's validity window. A finding, not a failure to read.
+
+            `selfIssued`: the authority's certificate is its own issuer and no list names it. Decided from the certificate alone, so a node with no network still knows. What the local development backend produces; the time is the signer's own word.
+
+            `notListed`: some provider issued the authority's certificate, and no list consulted names that authority or its CA under `TSA/QTST`. 🚨 The only standing claiming an **absence** — read `consulted` and `unchecked` before acting on it.
+
+            `chainIncomplete`: the token did not carry enough certificates to reach a root, and no list names any issuer it does refer to. **Weaker than `notListed` deliberately**: a listed CA may sit above the gap.
+
+            `signatureNotFromListedAuthority`: a listed `TSA/QTST` CA carries the name the authority's certificate claims, and **did not sign it**. The forgery finding.
+
+            `pathUnverifiable`: a listed CA carries the claimed name and the signature could not be checked — usually a key algorithm this build does not verify. **Not an accusation, and never to be read as one.**
+
+            `notQualifiedAtStamping`: the authority is a listed `TSA/QTST` service that was not granted when it stamped.
+
+            `qualifiedAtStamping`: the authority is a listed `TSA/QTST` service, granted when it stamped. The only standing that makes the attested time count as a proof of existence.
+        subject:
+          type: string
+          description: '`selfIssued` only — the authority''s subject name, which is also its issuer name.'
+        authority:
+          type: string
+          description: The authority's subject distinguished name.
+        claimedIssuer:
+          type: string
+          description: '`signatureNotFromListedAuthority` and `pathUnverifiable` only — the issuer name the authority''s certificate claims.'
+        consulted:
+          type: integer
+          description: |-
+            `notListed` only. How many territories' verified lists were searched.
+
+            🚨 `0` means **nothing was looked at**: the answer is about nothing, and it is what a node with no trusted lists loaded reports for every provider's timestamps, qualified or not.
+        unchecked:
+          type: integer
+          description: '`notListed` only. How many territories the EU list of trusted lists names could not be verified, and so were not searched. Above zero, an authority listed *there* is indistinguishable from one listed nowhere.'
+        missingIssuer:
+          type: string
+          description: '`chainIncomplete` only. The name the walk needed next and the token did not carry.'
+        provider:
+          type:
+            - string
+            - 'null'
+          description: The listed provider, where one was matched.
+        territory:
+          type:
+            - string
+            - 'null'
+          description: The list carrying that service.
+        status:
+          allOf:
+            - $ref: '#/components/schemas/TrustServiceStatus'
+          description: |-
+            `notQualifiedAtStamping` only — the status in force when the authority stamped.
+
+            Null means the list's history does not reach back that far, which is a **different finding** from a recorded non-granted status: the list is silent about that moment rather than negative about it.
+
+            🚨 **Three shapes, not two** — see `IssuerStanding.status`. A client that assumes a string here will break on the first list entry that is neither granted nor withdrawn.
+        reason:
+          type: string
+          description: |-
+            `pathUnverifiable` only — why the signature could not be checked.
+
+            🚨 Read it as a limit of the reader, never as a finding about the seal.
     SealAuditReport:
       type: object
       description: |-

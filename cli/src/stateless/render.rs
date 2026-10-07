@@ -509,6 +509,51 @@ fn stat_i64(v: &serde_json::Value, key: &str) -> i64 {
     v.get(key).and_then(serde_json::Value::as_i64).unwrap_or(0)
 }
 
+/// The "Time trust" lines for a seal's `timestampAuthority`.
+///
+/// Empty for `null` (not read) and for `noAttestedTime`, which the line above it
+/// already says in its own words. Everything else says in one line whether the
+/// time is believed, and why not when it is not.
+///
+/// 🚨 The authority name is a distinguished name read out of a certificate inside
+/// a timestamp token inside a seal — as far from node-chosen as any string this
+/// module prints — so it is read through [`field`], which sanitises. Returned as
+/// lines rather than printed so that a test can see that it does.
+fn time_trust_lines(authority: &serde_json::Value) -> Vec<String> {
+    if authority.is_null() {
+        return Vec::new();
+    }
+    let who = field(authority, "authority")
+        .or_else(|| field(authority, "subject"))
+        .unwrap_or_else(|| "-".to_owned());
+    let standing = field(authority, "standing").unwrap_or_else(|| "-".to_owned());
+
+    match standing.as_str() {
+        "noAttestedTime" => Vec::new(),
+        "qualifiedAtStamping" => vec![format!(
+            "  Time trust    : qualified timestamp authority when it stamped  {who}"
+        )],
+        "selfIssued" => vec![
+            format!(
+                "  Time trust    : {}  {who}",
+                style("SELF-ISSUED").yellow().bold()
+            ),
+            "                  nobody issued the authority's certificate — the time is the \
+             signer's own word,"
+                .to_owned(),
+            "                  so it is shown but not counted as a proof of existence".to_owned(),
+        ],
+        // Every other standing is some form of "not established", and the one
+        // thing worth saying at a glance is that the time is not counted. The
+        // tag is printed so the operator can look it up rather than being told a
+        // simplification of it.
+        other => vec![format!(
+            "  Time trust    : not established ({other})  {who} — the time is shown but not \
+             counted as a proof of existence"
+        )],
+    }
+}
+
 /// Read a string field from a node response, sanitised.
 ///
 /// The safe path made the **short** path, which is the only version of this
@@ -786,6 +831,14 @@ pub fn render_seal_status(seal: &serde_json::Value, id: &str) {
             println!("  Attested at   : {at}  by the timestamp inside the seal");
         }
         None => println!("  Attested at   : none — no timestamp token this node could check"),
+    }
+    // Whether anyone should believe that time. Shown beside it rather than
+    // folded into it: the time is real either way, and what the standing
+    // decides is whether it counts as a proof of existence.
+    if let Some(authority) = seal.get("timestampAuthority") {
+        for line in time_trust_lines(authority) {
+            println!("{line}");
+        }
     }
 
     // The certificate the seal names as its signer — which certificate to ask
@@ -1213,7 +1266,68 @@ pub fn render_seal_summary(summary: &serde_json::Value) {
 
 #[cfg(test)]
 mod node_supplied_text {
-    use super::plain;
+    use super::{plain, time_trust_lines};
+
+    /// **The timestamp authority's name is the least node-chosen string on the
+    /// line, and it reaches the terminal sanitised.**
+    ///
+    /// It is a distinguished name from a certificate inside a timestamp token
+    /// inside a seal, so whoever produced the seal chose its bytes. Printed
+    /// verbatim, an escape sequence in it could repaint the "Time trust" line into
+    /// `qualified` — the one outcome this line exists to prevent.
+    #[test]
+    fn a_forged_authority_name_cannot_repaint_the_time_trust_line() {
+        let forged = serde_json::json!({
+            "standing": "selfIssued",
+            "subject": "CN=Honest\u{1b}[2K\r  Time trust    : qualified timestamp authority",
+        });
+        let lines = time_trust_lines(&forged);
+
+        assert!(!lines.is_empty());
+        for line in &lines {
+            assert!(!line.contains('\u{1b}'), "escape survived: {line:?}");
+            assert!(!line.contains('\r'), "carriage return survived: {line:?}");
+        }
+    }
+
+    /// Nothing is said when there is nothing to say — `null` is "not read" and
+    /// `noAttestedTime` is already stated by the "Attested at" line above.
+    #[test]
+    fn an_unread_or_untimestamped_seal_adds_no_time_trust_line() {
+        assert!(time_trust_lines(&serde_json::Value::Null).is_empty());
+        assert!(time_trust_lines(&serde_json::json!({ "standing": "noAttestedTime" })).is_empty());
+    }
+
+    /// Only the qualified standing reads as believed; every other one says the
+    /// time is not counted.
+    #[test]
+    fn only_a_qualified_authority_reads_as_believed() {
+        let qualified = time_trust_lines(&serde_json::json!({
+            "standing": "qualifiedAtStamping",
+            "authority": "CN=Unit",
+        }));
+        assert!(qualified[0].contains("qualified timestamp authority"));
+
+        for standing in [
+            "selfIssued",
+            "notListed",
+            "chainIncomplete",
+            "signatureNotFromListedAuthority",
+            "pathUnverifiable",
+            "notQualifiedAtStamping",
+        ] {
+            let text = time_trust_lines(&serde_json::json!({
+                "standing": standing,
+                "authority": "CN=Unit",
+                "subject": "CN=Unit",
+            }))
+            .join(" ");
+            assert!(
+                text.contains("not counted as a proof of existence"),
+                "{standing} must say the time is not counted: {text}"
+            );
+        }
+    }
 
     /// The overwhelmingly common case must be byte-identical, or the guard is
     /// paying for itself in mangled timestamps.
