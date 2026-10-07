@@ -83,7 +83,7 @@ Sub-services communicate via localhost HTTP (e.g., vault calls identity for sign
       transaction; a background drain retries with backoff — the HTTP adapter
       stays Ghost until the Commission publishes the Art. 13 registry API, so
       nothing is lost while waiting and publish never blocks on the registry
-7. Later lifecycle: suspend / archive / end-of-life (typed reason) /
+7. Later lifecycle: suspend / retire / end-of-life (typed reason) /
    transfer-of-responsibility (dual-signed handshake) — each appends to the
    hash-chained audit trail; a signed evidence dossier of the whole history
    is exportable at any time (GET /vault/api/v1/dpp/{id}/evidence)

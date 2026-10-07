@@ -94,7 +94,9 @@ pub fn validate_tyre_row(
         co2e_per_unit: co2e,
         repairability_score: None,
         product_group_data: Some(ProductGroupData::Tyre(TyreData {
-            gtin: gtin.expect("field verified present by errors.is_empty() guard above"),
+            product_identifier: dpp_domain::identifier::ProductIdentifier::gs1(
+                gtin.expect("field verified present by errors.is_empty() guard above"),
+            ),
             tyre_class: tyre_class
                 .expect("field verified present by errors.is_empty() guard above"),
             fuel_efficiency_class: fuel_class

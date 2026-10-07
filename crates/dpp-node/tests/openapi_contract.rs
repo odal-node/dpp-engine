@@ -776,7 +776,7 @@ fn query_cases() -> Vec<QueryCase> {
     case!(
         "get",
         "/vault/public/dpp/by-gtin/{gtin}",
-        fixtures::public_read_query()
+        fixtures::vault_by_gtin_query()
     );
     case!(
         "get",
@@ -817,7 +817,7 @@ fn deactivation_reason_kinds() -> Vec<String> {
 /// Bump only after re-checking the enums listed below against the released
 /// crate. Bumping it to make a red build green is the one thing that breaks
 /// this gate.
-const CORE_VERSION_VERIFIED: &str = "0.20.0";
+const CORE_VERSION_VERIFIED: &str = "0.21.0";
 
 /// Enums whose variants this test cannot enumerate, and so cannot gate.
 ///
@@ -2087,7 +2087,7 @@ fn every_keyed_route_is_a_route_the_node_serves() {
 ///
 /// A number in prose is a claim about code that nothing normally checks, and
 /// this one was wrong on arrival: the description said "38 fields for an
-/// electric-vehicle one", which is the **industrial** figure. An EV battery owes
+/// electric-vehicle one", which is the **industrial** figure. An EV battery owed
 /// 46. The sentence had been written beside the industrial number and kept the
 /// wrong half — the failure mode a restated set invites.
 ///
@@ -2233,7 +2233,6 @@ mod handler_sources {
     pub const VAULT: &[&str] = &[
         include_str!("../../dpp-vault/src/handlers/amend.rs"),
         include_str!("../../dpp-vault/src/handlers/api_keys.rs"),
-        include_str!("../../dpp-vault/src/handlers/archive.rs"),
         include_str!("../../dpp-vault/src/handlers/audience_read.rs"),
         include_str!("../../dpp-vault/src/handlers/create.rs"),
         include_str!("../../dpp-vault/src/handlers/credentials.rs"),
@@ -2254,6 +2253,7 @@ mod handler_sources {
         include_str!("../../dpp-vault/src/handlers/read.rs"),
         include_str!("../../dpp-vault/src/handlers/registry_identity.rs"),
         include_str!("../../dpp-vault/src/handlers/registry_status.rs"),
+        include_str!("../../dpp-vault/src/handlers/retire.rs"),
         include_str!("../../dpp-vault/src/handlers/ruleset.rs"),
         include_str!("../../dpp-vault/src/handlers/scan_ingest.rs"),
         include_str!("../../dpp-vault/src/handlers/seal.rs"),
@@ -2882,7 +2882,7 @@ mod fixtures {
             PassportStatus::Draft,
             PassportStatus::Published,
             PassportStatus::Suspended,
-            PassportStatus::Archived,
+            PassportStatus::Retired,
             PassportStatus::Superseded,
             PassportStatus::Deactivated,
         ]
@@ -3094,6 +3094,7 @@ mod fixtures {
             responsible_operator: Some(responsible_operator_snapshot()),
             facility: Some(facility_snapshot()),
             seal: Some(sealed_envelope()),
+            carrier_serial: Some("SN-0001".into()),
         }
     }
 
@@ -4045,7 +4046,7 @@ mod fixtures {
         use dpp_domain::product_group::ProductGroup;
         dpp_vault::handlers::find_by_identity::IdentityQuery {
             product_group: ProductGroup::Battery,
-            gtin: "04012345000009".into(),
+            identifier: "04012345000009".into(),
             batch_id: Some("BATCH-2026-04-001".into()),
         }
     }
@@ -4058,6 +4059,22 @@ mod fixtures {
         dpp_vault::handlers::public_read::PublicReadQuery {
             schema_view: Some("battery".into()),
         }
+    }
+
+    /// The vault's by-GTIN route reads two query structs — the label's
+    /// qualifiers and the public read's `schema_view` — so its documented
+    /// parameters are the union of both.
+    pub fn vault_by_gtin_query() -> serde_json::Value {
+        let label = dpp_vault::handlers::public_read_by_gtin::LabelQuery {
+            batch: Some("LOT-2026-A".into()),
+            serial: Some("SN-0001".into()),
+        };
+        let mut merged = serde_json::to_value(public_read_query()).expect("serialises");
+        let label = serde_json::to_value(label).expect("serialises");
+        if let (Some(merged), Some(label)) = (merged.as_object_mut(), label.as_object()) {
+            merged.extend(label.clone());
+        }
+        merged
     }
 
     pub fn template_query() -> dpp_integrator::handlers::templates::TemplateQuery {

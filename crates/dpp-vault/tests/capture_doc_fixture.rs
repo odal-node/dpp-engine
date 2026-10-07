@@ -164,7 +164,7 @@ async fn capture_battery() {
             "commodityCode": "85076000",
             "productGroupData": {
                 "productGroup": "battery",
-                "gtin": "09506000134352",
+                "productIdentifier": { "scheme": "gs1", "gtin": "09506000134352" },
                 "batteryType": "industrial",
                 "batteryChemistry": "NMC",
                 "batteryPassportNumber": "BP-2026-000123",
@@ -232,7 +232,7 @@ async fn capture_textile() {
             "materials": [{"name": "Cotton", "weightKg": 0.22}],
             "productGroupData": {
                 "productGroup": "textile",
-                "gtin": "09506000134369",
+                "productIdentifier": { "scheme": "gs1", "gtin": "09506000134369" },
                 "fibreComposition": [
                     {"fibre": "cotton", "pct": 95.0},
                     {"fibre": "elastane", "pct": 5.0}
@@ -271,7 +271,7 @@ async fn capture_electronics() {
             "materials": [{"name": "Aluminium", "weightKg": 0.06, "recycledPct": 80.0}],
             "productGroupData": {
                 "productGroup": "electronics",
-                "gtin": "09506000134376",
+                "productIdentifier": { "scheme": "gs1", "gtin": "09506000134376" },
                 // Closed to Regulation (EU) 2023/1670 Art. 1(1)'s four device
                 // types as of electronics v1.2.0.
                 "productCategory": "smartphone",
@@ -315,7 +315,7 @@ async fn capture_aluminium() {
             "materials": [{"name": "Aluminium", "weightKg": 1000.0}],
             "productGroupData": {
                 "productGroup": "aluminium",
-                "gtin": "09506000200019",
+                "productIdentifier": { "scheme": "gs1", "gtin": "09506000200019" },
                 "alloyGrade": "1050A",
                 "productionRoute": "secondary-recycled",
                 "co2ePerTonneKg": 4200.0,
@@ -341,7 +341,7 @@ async fn capture_construction() {
             "materials": [{"name": "Clinker", "weightKg": 800.0}],
             "productGroupData": {
                 "productGroup": "construction",
-                "gtin": "09506000200026",
+                "productIdentifier": { "scheme": "gs1", "gtin": "09506000200026" },
                 "productFamily": "cement",
                 "countryOfOrigin": "DE",
                 "co2ePerFunctionalUnitKg": 620.0,
@@ -366,7 +366,7 @@ async fn capture_detergent() {
             "materials": [{"name": "Water", "weightKg": 1.1}],
             "productGroupData": {
                 "productGroup": "detergent",
-                "gtin": "09506000200033",
+                "productIdentifier": { "scheme": "gs1", "gtin": "09506000200033" },
                 "productType": "laundry",
                 "format": "liquid",
                 // Every surfactant must be readily biodegradable — `false` is a
@@ -404,7 +404,7 @@ async fn capture_furniture() {
             "materials": [{"name": "Oak", "weightKg": 6.4}],
             "productGroupData": {
                 "productGroup": "furniture",
-                "gtin": "09506000200040",
+                "productIdentifier": { "scheme": "gs1", "gtin": "09506000200040" },
                 "productType": "chair",
                 "primaryMaterial": "solid-wood",
                 "countryOfOrigin": "DK"
@@ -428,7 +428,7 @@ async fn capture_mattress() {
             "materials": [{"name": "Steel springs", "weightKg": 14.0}],
             "productGroupData": {
                 "productGroup": "mattress",
-                "gtin": "09506000200057",
+                "productIdentifier": { "scheme": "gs1", "gtin": "09506000200057" },
                 "primaryMaterial": "mixed",
                 "countryOfOrigin": "FI"
             }
@@ -451,7 +451,7 @@ async fn capture_steel() {
             "materials": [{"name": "Steel", "weightKg": 1000.0}],
             "productGroupData": {
                 "productGroup": "steel",
-                "gtin": "09506000200064",
+                "productIdentifier": { "scheme": "gs1", "gtin": "09506000200064" },
                 "co2ePerTonneSteel": 1850.0,
                 "recycledScrapContentPct": 42.0,
                 "productCategory": "flat",
@@ -477,7 +477,7 @@ async fn capture_toy() {
             "materials": [{"name": "Beech", "weightKg": 0.4}],
             "productGroupData": {
                 "productGroup": "toy",
-                "gtin": "09506000200071",
+                "productIdentifier": { "scheme": "gs1", "gtin": "09506000200071" },
                 "ageGroup": "0-3",
                 "primaryMaterial": "wood",
                 "ceMarking": true,
@@ -502,7 +502,7 @@ async fn capture_tyre() {
             "materials": [{"name": "Natural rubber", "weightKg": 3.1}],
             "productGroupData": {
                 "productGroup": "tyre",
-                "gtin": "09506000200088",
+                "productIdentifier": { "scheme": "gs1", "gtin": "09506000200088" },
                 "tyreClass": "C1",
                 "fuelEfficiencyClass": "B",
                 "wetGripClass": "A",

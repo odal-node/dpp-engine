@@ -12,6 +12,51 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ### Breaking
 
+- **`POST /dpp/{dppId}/archive` is now `POST /dpp/{dppId}/retire`, the status it
+  sets is `"retired"`, and the event it emits is `dpp.passport.retired`.**
+  *(Breaking across six surfaces: the route, the `retireDpp` operationId, the
+  `PassportStatus` wire value, the event subject, `trustMode.archive` →
+  `trustMode.backup` on `GET /node/state`, and `odal passport archive` →
+  `odal passport retire`. `"archived"` is **refused** on input, not aliased.)*
+
+  **Migration:** call `/retire` instead of `/archive`; expect `"retired"`
+  wherever you matched `"archived"`; resubscribe webhooks and NATS consumers
+  filtering `dpp.passport.archived`; rename `ARCHIVE_S3_*` to `BACKUP_S3_*`.
+  Migration `0041_retired_status.sql` rewrites stored statuses on upgrade.
+
+  **Why.** The word named three different things here. **EN 18221:2026 clause
+  4.2** — one of the six standards cited by Commission Implementing Decision (EU)
+  2026/1736 — uses "archiving" for the retention of historical versions of a
+  passport that is **still live**, which this node does in `passport_version`
+  and serves at `GET /dpp/{dppId}/versions`. A terminal lifecycle status is not
+  that, and neither is the **ESPR Art. 10(4)** back-up copy held by an
+  **Art. 2(32)** independent provider. While all three wore the word, anyone
+  mapping this system onto EN 18221 by name ticked a box that was not ticked —
+  which is how the clause 4.2 gap survived unnoticed: the name looked taken.
+
+  *Different*, not unrelated, and the difference matters when reading the
+  back-up: clause 4.2 expects archived versions to be held by the back-up
+  provider **as well as** by this node, so a provider is not exempt from the
+  clause. What separates the two here is shape — `BackupCopyPort` carries one
+  copy per passport and no series at all — so no arrangement with a provider
+  wires `passport_version` for us, and nothing here should be read as saying a
+  provider owes no history.
+
+  **Nothing was removed.** Archiving keeps the word and now means only what the
+  standard means by it. The status is `retired`; the Art. 10(4) copy is the
+  back-up copy. `scripts/vocabulary-check.sh`, in `just check`, refuses any new
+  route path, `api/paths/` file or event subject containing "archiv".
+
+  **The audit trail is not rewritten.** `action`, `prevStatus` and `newStatus`
+  are inside the hash chain, so `0041` only *widens* `passport_audit`'s CHECK —
+  `retired` is added and `archived` stays legal. An entry saying `archived`
+  records a transition performed while that was the word, and editing it would
+  make every later entry read as tampered.
+
+  Pins dpp-core **0.21.0**, which carries the status rename and renames the
+  back-up port with it (`ports::archive::ArchivePort` → `ports::backup::BackupCopyPort`,
+  plus `ArchiveReceipt`/`ArchiveStatus`/`ArchiveVerification`/`GhostArchive`).
+
 - **A production or sandbox node refuses `ALLOW_UNSIGNED_PLUGINS=true`.**
   *(Breaking: a node started with `NODE_PROFILE=production` or
   `NODE_PROFILE=sandbox` and that variable set to `true` no longer boots.
@@ -41,7 +86,187 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   `LoadedPlugin::signature_verified()` records the fact where the loader
   establishes it.
 
+- **Product group data carries a `productIdentifier`, not a `gtin`.**
+  *(Breaking for every request and response body carrying `productGroupData`:
+  `"gtin": "09506000134352"` is now
+  `"productIdentifier": { "scheme": "gs1", "gtin": "09506000134352" }`.)*
+  dpp-core 0.21.0 accepts any EN 18219 clause 5 scheme — a GS1 GTIN, an
+  identification link (`scheme: identificationLink`, `url`) or a DID
+  (`scheme: did`, `did`) — where it required a GTIN, and a GTIN needs GS1
+  membership that the self-issuing schemes do not. Stored documents are not
+  rewritten: a signed record cannot be, and a stored `productGroupData.gtin`
+  still reads. The demo passports in `ops/demo/passports/` and
+  `ops/demo/samples/` are migrated, and `odal passport validate` checks for
+  `productIdentifier`.
+
+  **`GET /vault/api/v1/dpp/by-identity` takes `identifier`, not `gtin`**, the
+  identifier's value under whichever scheme issued it. `batteryPassportNumber`
+  is no longer mandatory battery content (core 0.21.0): the mandatory set is
+  45 fields for an EV battery, 44 for an LMT one and 37 for an industrial one.
+
+- **The GS1 carrier follows the passport's stated level.** *(Breaking for
+  anything that parses `qrCodeUrl`.)* A model-level passport prints
+  `/01/{gtin}`, a batch-level one `/01/{gtin}/10/{batch}`, and an item-level one
+  or one that states no level `/01/{gtin}/21/{serial}`. The lot is no longer
+  printed beside a serial. A GTIN with AI 21 is a serialised GTIN, which GS1
+  defines as one individual item, so a serial on a carrier printed on every
+  unit of a model or batch gave all of them one "individual" identity. The
+  serial is the passport's **carrier serial**, now served as `carrierSerial`
+  where one was attributed; absent, it is derived from the passport id as
+  before. Publish refuses a serial or lot GS1 would reject
+  (`passport_publish_rejected_total{reason="carrier_invalid"}`) rather than
+  printing it. A passport identified by a link or a DID gets the
+  `{base}/dpp/{id}` carrier.
+
+- **A registration is never queued with values the passport lacks.**
+  *(Breaking: where the product group's passport obligation is live, publish
+  answers `422` with reason `missing_registry_identity` for a passport with no
+  product identifier, where it used to queue a registration the adapter then
+  completed with an invented one.)* Core's
+  `RegistrationRequest::from_published_passport` now names every missing field —
+  the operator identifier, the facility, the carrier and the product
+  identifier. Where the obligation is live the refusal comes before anything is
+  persisted and the passport stays a draft; where it is not, the passport
+  publishes with no registration and `GET /registry` counts it under
+  `unregisteredPublished`. The EU-registry adapter registers the passport's
+  own product identifier, where it used to scrape a GTIN out of the carrier URL
+  and fall back to the internal passport id under an invented `passport_id`
+  scheme; a queued registration without an identifier is refused rather than
+  completed with one. The envelope carries core's `submission` array in place of
+  a single `payload`.
+
+- **The AAS door serves any passport with a product identifier.** A passport
+  identified by a link or a DID used to answer `406` because it carried no
+  GTIN; it now gets an AAS environment keyed on its own identifier. A passport
+  with no identifier at all still answers `406`.
+
+- **A node that serves its snapshots must name who hosts them.** *(Breaking: a
+  node with `SNAPSHOT_PUBLIC_BASE_URL` set and `SNAPSHOT_PROVIDER_NAME` unset no
+  longer boots. Set `SNAPSHOT_PROVIDER_NAME` to the legal name of whoever hosts
+  the back-up, or unset the URL to declare no back-up link.)* dpp-core 0.21.0
+  refuses a registration that declares a back-up link and names no digital
+  product passport service provider, because ESPR Art. 10(4) makes the copy
+  available *through* one. Publish set the link and never the provider, so every
+  registration of a node serving its snapshots was refused and then retried
+  hourly, which reads as a registry outage. The refusal now comes at boot, where
+  the operator is looking, and the provider is declared on every registration,
+  link or not.
+
+  Only the name is required — Annex III(l) mandates no identifier scheme and none
+  is assumed. `SNAPSHOT_PROVIDER_SCHEME` and `SNAPSHOT_PROVIDER_VALUE` (both or
+  neither) and `SNAPSHOT_PROVIDER_COUNTRY` are optional, and are checked at boot
+  with the registry's own rules rather than on the first registration.
+
 ### Fixed
+
+- **Registrations are posted where the registry listens, under the key it
+  reads.** The adapter posted to `/registrations`, a path that was invented and
+  that core now records as wrong; it posts to `/dpp-registration-requests`, taken
+  from core's constant, as do the status and transfer routes. It also sends the
+  request's key in the registry's `Idempotency-Key` header. The key had travelled
+  only in the body as `requestId`, which the registry does not read, so a
+  submission that reached it and whose reply was lost was registered again on the
+  next attempt.
+
+  **A replayed key is not a failure.** A `409` naming the key means the registry
+  already holds the submission, so the row moves to `submitted` and the drain
+  polls for the verdict instead of posting it again. No registry id is recorded
+  for it, since the registry returned none — the column stays empty rather than
+  holding an empty string. Any other `409` is still a refusal. A `2xx` whose body
+  this node cannot read is still an error, but now says the submission may have
+  been accepted: the retry carries the same key and comes back as that `409`, so
+  it converges instead of registering the product twice.
+
+  **A refusal names the registry's trace id.** The registry's error body carries
+  a `subCode` and a `traceId`, the only handle a conversation with its support
+  has. The row's `message`, which `GET /dpp/{dppId}/registry` returns, now reads
+  `<message> [<subCode>] (registry trace id <id>)` where the raw JSON body was.
+  A body that is not that shape is kept as it came.
+
+- **A printed label resolves to the passport it was printed for.** Core 0.21.0
+  removed the by-GTIN lookups, and they had been wrong: they returned *a*
+  passport carrying the GTIN, with no ordering, so once a product had a passport
+  per batch or per unit, all but one of its labels resolved to another's
+  passport. The resolver dropped the label's batch and serial and looked up the
+  GTIN alone.
+  The resolver now forwards them to `GET /vault/public/dpp/by-gtin/{gtin}` as
+  `batch` and `serial`, and the vault resolves the passport the label names: by
+  its carrier serial when a serial is present, whatever its level; by its lot at
+  batch level; otherwise the model-level passport. Migration
+  `0042_passport_identifier_index.sql` indexes the identifier and the carrier
+  serial, so none of these is a table scan. A malformed GTIN answers `422`, as
+  the route's description already said.
+
+  **A label keeps working after an amendment.** The successor carries its
+  predecessor's carrier serial, so the object's label names both records and
+  the current one is served; a superseded passport whose successor predates
+  that is followed forward. A draft is never the answer — an amendment whose
+  publish was refused leaves one behind, and following it would turn a working
+  label into a `404`.
+
+- **The QR image printed an unverified carrier.** `GET /dpp/{dppId}/qr` checked
+  the passport's signature and then built the code from the served JSON beside
+  it. It now prints the `qrCodeUrl` inside the verified payload — the carrier
+  the node signed at publish — so a code cannot disagree with the signed
+  record. The passport page shows the same value.
+
+- **A battery Art. 77(1) does not reach is no longer asked for its category's
+  content.** The mandatory-content gate runs inside core's `transition_to`,
+  and until dpp-core 0.21.0 it fired regardless of scope, so an industrial
+  battery at or below 2 kWh was asked for everything a passport the article
+  requires must carry; the readiness note admitted it. Core now asks the
+  article first: a record it provably does not reach (`notCovered`,
+  `belowThreshold`, `notYetBinding`) is not gated, and an undeclared capacity
+  or placing date still is. The readiness note on `POST /dpp/{dppId}/lint` says
+  so instead of apologising for the difference.
+
+- **The demo dossiers presented as passports a payload no node could issue.**
+  Their views were a hand-built object whose content mixed a few battery fields
+  with keys and numbers put there to test canonicalisation (`"b"`, `"B"`, `"é"`,
+  `"€"`, `"😀"`, `"\u{FF21}"`, `"hugeNumber"` and others). No battery schema
+  declares any of them, so a real node would refuse the passport at create, yet
+  01 to 09 showed them to a reader as a genuine passport's data. Those
+  dossiers now carry a real light-means-of-transport battery passport, holding
+  only schema-declared fields and every data point core's publish gate requires
+  for its category. The generator publishes it with core's own
+  `transition_to` and publish's own retention and carrier-URL stamping, which
+  moves to `stamp_publish_obligations` so publish and the generator share one
+  copy, and takes the public view from `public_view`, core's redaction. The
+  canonicalisation keys move to a new `11-canonicalisation-vectors.json`, which
+  verifies and says in its README row that it is no passport.
+  `demo_dossiers_verify.rs` gains `every_example_passport_is_one_a_node_would_publish`
+  (the typed validation, the strict schema and the mandatory-content gate) and
+  `every_public_view_is_cores_redaction_of_its_passport`; the UTF-16 ordering
+  test now reads 11. Every verdict is unchanged apart from 09's parse-error text.
+
+- **A dossier's readable payloads listed their keys in a different order from
+  the one they were signed in.** A dossier carries each signed view twice, as
+  the JWS and as a readable copy of its payload, and the audit trail's
+  `published` entry carries two more. The copies are `serde_json::Value`, whose
+  map sorts keys by code point, while the signatures cover RFC 8785 bytes,
+  sorted by UTF-16 code unit. They agree for almost every key, but not for
+  `"😀"` beside `"\u{FF21}"`, so a reader comparing the readable copy with the
+  signed bytes saw the very ordering mistake that pair is there to catch.
+  `DossierV1` now writes every JSON member through `SignedKeyOrder`, so the
+  export lists each object's keys in signed order, and the demo generator writes
+  its files the same way. The regenerated dossiers change only in the order of
+  that pair; every hash, signature and verdict is unchanged, since all of them
+  are taken over canonical bytes. `demo_dossiers_verify.rs` gains
+  `every_dossier_file_lists_its_keys_in_signed_order` and
+  `each_readable_view_is_its_signed_payload`, and `dpp-types` gains
+  `a_dossier_writes_each_payload_copy_in_the_order_it_was_signed`.
+
+- **The demo dossiers' canonicalisation keys could not tell UTF-16 order from
+  code point order.** The signed payload carries keys meant to catch a verifier
+  that sorts them wrongly, but every one of them sorts the same under both
+  orders, so a verifier sorting by code point or by UTF-8 bytes would still have
+  verified all ten files. The payload gains `"\u{FF21}"` (fullwidth `Ａ`, the
+  single UTF-16 unit `0xFF21`) beside `"😀"` (the pair `0xD83D 0xDE00`): the
+  emoji sorts first by code unit and last by code point. The dossiers and
+  `expected.json` are regenerated, so every hash and signature in them changes;
+  no verdict does. `demo_dossiers_verify.rs` gains
+  `the_signed_full_view_orders_keys_by_utf16_code_unit`, which fails if the pair
+  leaves the corpus or the signed bytes stop putting the emoji first.
 
 - **The demo evidence dossiers were no longer dossiers.** Every file in
   `ops/demo/dossiers/` predated `manifest.coreVersion` becoming required, so the
@@ -137,6 +362,23 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   which the description did list. Against the old list the new check reports
   both halves: `sandbox` emitted and undocumented, `staging` documented and
   never emitted.
+
+- **`wasmtime` and `wasmtime-wasi` 48.0.3 → 48.0.4**, clearing RUSTSEC-2026-0321
+  to RUSTSEC-2026-0327. All seven concern the sandbox sector plugins run inside:
+  the WASI preview 0 `poll_oneoff` circumvents fuel consumption (-0321), a guest
+  with no stdio makes the host allocate excess memory (-0322), `fd_readdir`
+  copies uninitialised struct padding into guest memory (-0323), a pre-epoch
+  filesystem timestamp panics the host on wasip3 (-0324), and three
+  memory-corruption faults in `wasmtime` itself — mis-typed tag imports (-0325),
+  missing GC rooting across `try_call` (-0326), and an unvalidated
+  async-lifted callback result count (-0327). Which of them a plugin can reach
+  here has not been established, and the sandbox is what they are about, so the
+  bump is not left waiting on that. The existing `wasmtime = "48"` requirement
+  already permitted the patch, so no manifest changed.
+
+  Recorded here because the security audit was already failing on `main` and the
+  registry-contract change could not pass it otherwise. It is its own commit,
+  and the only lockfile change in that branch.
 
 ## [0.14.0] - 2026-09-24
 
@@ -914,9 +1156,9 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   time, which `GET /dpp/{dppId}` already serves, so this route does not return
   it and "which version is this" stays answerable.
 
-  ⚠️ **Operator-scoped only.** The clause requires archived attributes to carry
-  the same access restrictions as the corresponding attributes in the *current*
-  passport, which for an operator reading its own passport are none. Serving
+  ⚠️ **Operator-scoped only.** The clause restricts an archived attribute
+  exactly as the same attribute is restricted in the *current* passport, which
+  for an operator reading its own passport means not at all. Serving
   versions to a credential-scoped reader means running the **live** passport's
   disclosure policy over the archived document; no such route exists yet, and
   adding one without that step would disclose fields the current passport

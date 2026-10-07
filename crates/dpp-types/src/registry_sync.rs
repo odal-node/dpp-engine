@@ -115,7 +115,7 @@ impl RegistrySyncStatus {
 /// `status_intent` column independently of the registration queue state.
 ///
 /// Recorded by [`RegistrySyncOutbox::enqueue_status`] when a passport is
-/// suspended, archived, or declared end-of-life. The registry has no published
+/// suspended, retired, or declared end-of-life. The registry has no published
 /// status-push API yet, so nothing drains these — they are kept durably for
 /// that path and cleared when a passport is re-published.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -123,7 +123,7 @@ impl RegistrySyncStatus {
 pub enum RegistryStatusIntent {
     /// Passport suspended (reversible — cleared on re-publish).
     Suspended,
-    /// Passport deactivated (archive/EOL).
+    /// Passport deactivated (retire/EOL).
     Deactivated,
 }
 
@@ -230,7 +230,7 @@ pub trait RegistrySyncOutbox: Send + Sync {
     /// A no-op when the passport has no row — deliberately *not* an error.
     /// [`RegistrySyncOutbox::commit_publish`] is the only thing that creates
     /// rows, so no row means the passport never published and owes no
-    /// registration; `Draft -> Archived` is legal, so this is a normal path, not
+    /// registration; `Draft -> Retired` is legal, so this is a normal path, not
     /// a missing-row bug. (A passport published before this outbox existed also
     /// has no row and no payload to register from. Surfacing those belongs in a
     /// reconciliation query over Published passports lacking a row — not in a
@@ -248,6 +248,10 @@ pub trait RegistrySyncOutbox: Send + Sync {
     /// The registry accepted the submission for validation but has not ruled on
     /// it: record the identifier it returned and move the row to `submitted`, so
     /// the next drain polls for the verdict instead of registering again.
+    ///
+    /// An **empty** `registry_id` means the registry returned none, which is the
+    /// case for a replayed submission: it is acknowledged, not re-described. The
+    /// row keeps whatever id it already held and never records `''` as one.
     async fn mark_submitted(
         &self,
         passport_id: PassportId,

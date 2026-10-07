@@ -94,7 +94,9 @@ pub fn validate_steel_row(
         co2e_per_unit: None,
         repairability_score: None,
         product_group_data: Some(ProductGroupData::Steel(SteelData {
-            gtin: gtin.expect("field verified present by errors.is_empty() guard above"),
+            product_identifier: dpp_domain::identifier::ProductIdentifier::gs1(
+                gtin.expect("field verified present by errors.is_empty() guard above"),
+            ),
             co2e_per_tonne_steel: co2e
                 .expect("field verified present by errors.is_empty() guard above"),
             recycled_scrap_content_pct: recycled

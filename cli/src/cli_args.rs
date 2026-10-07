@@ -219,7 +219,7 @@ pub enum Commands {
 pub enum PassportCommands {
     /// List or search passports (id, name, status) — no ID needed
     List {
-        /// Filter by status (draft, active, suspended, archived)
+        /// Filter by status (draft, active, suspended, retired)
         #[arg(long)]
         status: Option<String>,
         /// Free-text search across product name, batch, and manufacturer
@@ -257,8 +257,8 @@ pub enum PassportCommands {
         /// Passport ID
         id: String,
     },
-    /// Archive a passport (terminal state)
-    Archive {
+    /// Retire a passport (terminal state)
+    Retire {
         /// Passport ID
         id: String,
     },
@@ -292,7 +292,7 @@ pub enum PassportCommands {
         /// Output format
         #[arg(long, default_value = "json")]
         format: String,
-        /// Filter by status (draft, active, suspended, archived)
+        /// Filter by status (draft, active, suspended, retired)
         #[arg(long)]
         status: Option<String>,
         /// Output file (stdout if omitted)
@@ -320,7 +320,7 @@ pub enum PassportCommands {
         #[arg(long)]
         json: bool,
     },
-    /// Retire a published passport in favour of one that already exists.
+    /// Supersede a published passport with one that already exists.
     ///
     /// The successor must already be published and must already carry
     /// `supersedesId` pointing back at this passport — that link is declared
@@ -328,12 +328,12 @@ pub enum PassportCommands {
     /// instead when the replacement is a correction of this record rather than
     /// a passport created independently.
     Supersede {
-        /// Passport ID to retire
+        /// Passport ID to supersede
         id: String,
         /// The successor's passport ID
         #[arg(long = "superseded-by")]
         superseded_by: String,
-        /// Why the passport is being retired
+        /// Why the passport is being superseded
         #[arg(long)]
         reason: Option<String>,
         /// Output raw JSON instead of a summary
@@ -383,9 +383,10 @@ pub enum PassportCommands {
         /// Product group key (battery, textile, …)
         #[arg(long = "product-group")]
         product_group: String,
-        /// GTIN
+        /// Product identifier: the GTIN-14 for a GS1 identifier, else the
+        /// identification link or DID
         #[arg(long)]
-        gtin: String,
+        identifier: String,
         /// Batch identifier
         #[arg(long)]
         batch: Option<String>,

@@ -11,17 +11,94 @@ use dpp_domain::{
     passport::PassportId,
     ports::registry_sync::{
         RegistrationGranularity, RegistrationRequest, RegistryIdentifiers, RegistryRecord,
-        RegistryStatus, RegistrySyncPort,
+        RegistryStatus, RegistrySyncPort, ServiceProviderRef,
     },
     transfer::TransferRecord,
 };
 use dpp_registry::{
-    EuRegistryEnvelope, EuRegistryResponse, FacilityIdentifier, Granularity, OperatorIdentifier,
-    ProductIdentifier, ProductItemIdentifier, RegistrationLevel, RegistrationPayload,
-    StatusResponse, TransferNotification,
+    EuRegistryEnvelope, EuRegistryResponse, FacilityIdentifier, Granularity,
+    IDEMPOTENCY_KEY_HEADER, OperatorIdentifier, ProductIdentifier, ProductItemIdentifier,
+    REGISTRATION_PATH, RegistrationLevel, RegistrationPayload, RegistrationSubmission,
+    RegistryErrorBody, STATUS_IDEMPOTENCY_KEY_REUSED, STATUS_PATH_TEMPLATE,
+    ServiceProviderReference, StatusResponse, TRANSFER_PATH_TEMPLATE, TransferNotification,
 };
 
+/// Map the port's service provider onto the registry's reference to one.
+///
+/// Public so the node's configuration can validate a declared provider with the
+/// registry's own rules at boot, rather than finding out when the first
+/// registration is refused.
+pub fn service_provider_reference(provider: &ServiceProviderRef) -> ServiceProviderReference {
+    ServiceProviderReference {
+        name: provider.name.clone(),
+        scheme: provider.scheme.clone(),
+        value: provider.value.clone(),
+        country: provider.country.clone(),
+    }
+}
+
+/// The path beneath the base URL for one passport's status or transfer route.
+///
+/// Both templates are core's, with `{id}` for the passport. Spelling them here
+/// as well is what let the registration path sit wrong for as long as it did:
+/// the adapter and its mock agreed with each other and with nothing else.
+fn path_for(template: &str, passport_id: PassportId) -> String {
+    template.replace("{id}", &passport_id.to_string())
+}
+
+/// What the registry said about a refusal, worded for the operator.
+///
+/// The registry's error body carries a `subCode` and a `traceId`, and the trace
+/// id is the only handle a conversation with its support has. This text reaches
+/// the operator as the outbox row's `message`, where a raw JSON body is one
+/// nobody quotes — so the human-readable part leads and the identifiers follow.
+///
+/// A body that is not that shape, or carries none of it, is returned as it
+/// came: reading it must never cost what the registry actually said.
+fn refusal_text(body: &str) -> String {
+    let Ok(parsed) = serde_json::from_str::<RegistryErrorBody>(body) else {
+        return body.to_owned();
+    };
+    let mut parts = Vec::new();
+    if let Some(message) = parsed.message {
+        parts.push(message);
+    }
+    if let Some(sub_code) = parsed.sub_code {
+        parts.push(format!("[{sub_code}]"));
+    }
+    if let Some(trace_id) = parsed.trace_id {
+        parts.push(format!("(registry trace id {trace_id})"));
+    }
+    if parts.is_empty() {
+        body.to_owned()
+    } else {
+        parts.join(" ")
+    }
+}
+
 impl EuRegistrySync {
+    /// A submission the registry already holds, whose verdict is outstanding.
+    ///
+    /// What a replayed idempotency key means: an earlier attempt reached the
+    /// registry and its answer never reached us. The registry acknowledges the
+    /// key and nothing else, so there is no record id to report and none is
+    /// made up — `registry_id` is empty, as the other identifiers are on a
+    /// record built from a response that did not carry them. The drain moves
+    /// the row to `submitted` and polls.
+    pub(super) fn held_by_registry() -> RegistryRecord {
+        RegistryRecord {
+            identifiers: RegistryIdentifiers {
+                product_id: String::new(),
+                operator_id: String::new(),
+                facility_id: String::new(),
+                registry_id: String::new(),
+            },
+            status: RegistryStatus::Pending,
+            registered_at: Utc::now(),
+            updated_at: Utc::now(),
+        }
+    }
+
     /// Map a bridge `EuRegistryResponse` to a domain `RegistryRecord`.
     pub(super) fn response_to_record(resp: &EuRegistryResponse) -> RegistryRecord {
         use dpp_registry::RegistryStatusCode;
@@ -163,18 +240,32 @@ pub(super) fn item_id_for(request: &RegistrationRequest) -> Option<ProductItemId
     }
 }
 
-/// Extract GTIN-14 from a GS1 Digital Link URI.
+/// The registry's product identifier for a registration: the passport's own
+/// EN 18219 identifier, carried on the request.
 ///
-/// GS1 DL format: `https://host/01/{gtin14}[/extra/segments]`.
-/// Returns `None` if the URI does not contain a valid 14-digit GTIN segment.
-pub(super) fn extract_gtin_from_gs1_dl(uri: &str) -> Option<String> {
-    let after = uri.split("/01/").nth(1)?;
-    let gtin = after.split('/').next()?.trim();
-    if gtin.len() == 14 && gtin.chars().all(|c| c.is_ascii_digit()) {
-        Some(gtin.to_owned())
-    } else {
-        None
-    }
+/// This used to be scraped out of the data carrier URI, with the internal
+/// passport id under an invented `passport_id` scheme as the fallback. That
+/// registered a product with a public authority under a value meaningless
+/// outside this node, and it was reached for exactly the passports identified
+/// without GS1, whose carrier holds no GTIN to scrape.
+///
+/// # Errors
+///
+/// [`DppError::Validation`] when the request carries no identifier — it was
+/// queued before the field existed — or one the registry has no scheme for.
+/// Neither is completed with an invented value, and `allow_invalid_payloads`
+/// does not reach this: there is no payload to send without one.
+pub(super) fn product_id_for(request: &RegistrationRequest) -> Result<ProductIdentifier, DppError> {
+    let identifier = request.product_identifier.as_ref().ok_or_else(|| {
+        DppError::Validation(
+            "the registration carries no product identifier; it was queued before \
+             registrations carried one"
+                .into(),
+        )
+    })?;
+    ProductIdentifier::try_from(identifier).map_err(|e| {
+        DppError::Validation(format!("the product identifier cannot be registered: {e}").into())
+    })
 }
 
 #[async_trait]
@@ -183,11 +274,7 @@ impl RegistrySyncPort for EuRegistrySync {
     async fn register(&self, request: RegistrationRequest) -> Result<RegistryRecord, DppError> {
         let base_url = &self.config.endpoint.base_url;
 
-        // Extract GTIN from the GS1 Digital Link URI when present; fall back to
-        // passport_id scheme so the payload carries a product identifier either way.
-        let (product_scheme, product_value) = extract_gtin_from_gs1_dl(&request.data_carrier_uri)
-            .map(|g| ("gtin".to_owned(), g))
-            .unwrap_or_else(|| ("passport_id".to_owned(), request.passport_id.to_string()));
+        let product_id = product_id_for(&request)?;
 
         // Build the bridge envelope from the port request.
         let envelope = EuRegistryEnvelope {
@@ -198,13 +285,9 @@ impl RegistrySyncPort for EuRegistrySync {
             // had already committed looked like a new one on the next attempt.
             request_id: request.request_id,
             timestamp: Utc::now(),
-            payload: RegistrationPayload {
+            submission: RegistrationSubmission::single(RegistrationPayload {
                 passport_id: request.passport_id.0,
-                product_id: ProductIdentifier {
-                    scheme: product_scheme,
-                    value: product_value,
-                    label: None,
-                },
+                product_id,
                 level: level_for(&request),
                 item_id: item_id_for(&request),
                 facility_id: facility_identifier_for(&request),
@@ -234,7 +317,11 @@ impl RegistrySyncPort for EuRegistrySync {
                 jws_signature: request.jws_signature.clone(),
                 commodity_code: request.commodity_code.clone(),
                 backup_url: request.backup_url.clone(),
-            },
+                service_provider: request
+                    .service_provider
+                    .as_ref()
+                    .map(service_provider_reference),
+            }),
         };
 
         // Fail closed. A registration is a regulatory submission, and the
@@ -243,7 +330,7 @@ impl RegistrySyncPort for EuRegistrySync {
         // record in front of a live registry. Refusing here also keeps the
         // failure attached to the passport that caused it, rather than surfacing
         // later as an opaque remote rejection.
-        if let Err(e) = envelope.payload.validate() {
+        if let Err(e) = envelope.validate() {
             if !self.config.allow_invalid_payloads {
                 metrics::counter!("registry_payload_rejected_total").increment(1);
                 tracing::error!(
@@ -265,11 +352,19 @@ impl RegistrySyncPort for EuRegistrySync {
         }
 
         let passport_id = request.passport_id;
+        // The registry's own idempotency key travels as a header. The
+        // envelope's `requestId` is ours and reaches the registry as ordinary
+        // payload, so it de-duplicates nothing there. It is the same value, for
+        // the reason `requestId` exists: minted once, frozen into the queued
+        // payload, so every retry — in this call or a later drain pass — is
+        // recognisably the same submission.
+        let idempotency_key = request.request_id.to_string();
 
         let result = self
             .with_retry(|| {
-                let url = format!("{base_url}/registrations");
+                let url = format!("{base_url}{REGISTRATION_PATH}");
                 let envelope = envelope.clone();
+                let idempotency_key = idempotency_key.clone();
                 async move {
                     let token = self.get_token().await.map_err(|e| {
                         RetryableError::Fatal(format!("token acquisition failed: {e}"))
@@ -279,6 +374,7 @@ impl RegistrySyncPort for EuRegistrySync {
                         .client
                         .post(&url)
                         .bearer_auth(&token)
+                        .header(IDEMPOTENCY_KEY_HEADER, idempotency_key)
                         .json(&envelope)
                         .send()
                         .await
@@ -297,18 +393,49 @@ impl RegistrySyncPort for EuRegistrySync {
                     if (500..600).contains(&status) {
                         let body = resp.text().await.unwrap_or_default();
                         return Err(RetryableError::Retryable(format!(
-                            "server error {status}: {body}"
+                            "server error {status}: {}",
+                            refusal_text(&body)
                         )));
                     }
                     if !resp.status().is_success() {
                         let body = resp.text().await.unwrap_or_default();
+                        // A replayed key is not a refusal. The registry has this
+                        // submission already — an earlier attempt got through and
+                        // its answer was lost — so resubmitting is wrong and so
+                        // is calling it a failure. Anything else on a 409 says
+                        // nothing about whether a submission exists, and stays
+                        // the refusal it was.
+                        if status == STATUS_IDEMPOTENCY_KEY_REUSED
+                            && serde_json::from_str::<RegistryErrorBody>(&body)
+                                .is_ok_and(|b| b.is_idempotency_key_reused())
+                        {
+                            tracing::info!(
+                                passport_id = %passport_id,
+                                detail = %refusal_text(&body),
+                                "EU registry already holds this submission (idempotency key \
+                                 replayed) — polling for its verdict instead of resubmitting"
+                            );
+                            return Ok(Self::held_by_registry());
+                        }
                         return Err(RetryableError::Fatal(format!(
-                            "registration rejected {status}: {body}"
+                            "registration rejected {status}: {}",
+                            refusal_text(&body)
                         )));
                     }
 
+                    // The registry accepted the request; whether this node can
+                    // read what it said back is a separate question, and the
+                    // answer must not be "so it failed". Reading the body as an
+                    // error is safe because the retry carries the same key, which
+                    // the registry answers with the replay above — whereas a
+                    // retry without it would register the product twice.
                     let eu_resp: EuRegistryResponse = resp.json().await.map_err(|e| {
-                        RetryableError::Fatal(format!("invalid response body: {e}"))
+                        RetryableError::Fatal(format!(
+                            "the registry answered {status} with a body this node cannot read \
+                             ({e}); the submission may have been accepted, and the retry \
+                             carries the same Idempotency-Key so it is recognised, not \
+                             registered twice"
+                        ))
                     })?;
 
                     Ok(Self::response_to_record(&eu_resp))
@@ -336,7 +463,7 @@ impl RegistrySyncPort for EuRegistrySync {
         let base_url = &self.config.endpoint.base_url;
 
         self.with_retry(|| {
-            let url = format!("{base_url}/registrations/{passport_id}/status");
+            let url = format!("{base_url}{}", path_for(STATUS_PATH_TEMPLATE, passport_id));
             async move {
                 let token = self
                     .get_token()
@@ -369,13 +496,15 @@ impl RegistrySyncPort for EuRegistrySync {
                 if (500..600).contains(&status_code) {
                     let body = resp.text().await.unwrap_or_default();
                     return Err(RetryableError::Retryable(format!(
-                        "server error {status_code}: {body}"
+                        "server error {status_code}: {}",
+                        refusal_text(&body)
                     )));
                 }
                 if !resp.status().is_success() {
                     let body = resp.text().await.unwrap_or_default();
                     return Err(RetryableError::Fatal(format!(
-                        "status check failed {status_code}: {body}"
+                        "status check failed {status_code}: {}",
+                        refusal_text(&body)
                     )));
                 }
 
@@ -454,7 +583,10 @@ impl RegistrySyncPort for EuRegistrySync {
         }
 
         self.with_retry(|| {
-            let url = format!("{base_url}/registrations/{passport_id}/transfer");
+            let url = format!(
+                "{base_url}{}",
+                path_for(TRANSFER_PATH_TEMPLATE, passport_id)
+            );
             let notification = notification.clone();
             async move {
                 let token = self
@@ -484,13 +616,15 @@ impl RegistrySyncPort for EuRegistrySync {
                 if (500..600).contains(&status_code) {
                     let body = resp.text().await.unwrap_or_default();
                     return Err(RetryableError::Retryable(format!(
-                        "server error {status_code}: {body}"
+                        "server error {status_code}: {}",
+                        refusal_text(&body)
                     )));
                 }
                 if !resp.status().is_success() {
                     let body = resp.text().await.unwrap_or_default();
                     return Err(RetryableError::Fatal(format!(
-                        "transfer notification failed {status_code}: {body}"
+                        "transfer notification failed {status_code}: {}",
+                        refusal_text(&body)
                     )));
                 }
 

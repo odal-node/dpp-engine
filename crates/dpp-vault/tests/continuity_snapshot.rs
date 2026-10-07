@@ -17,7 +17,7 @@ use chrono::Utc;
 
 use dpp_dal::in_memory_repo::InMemoryPassportRepo;
 use dpp_domain::{
-    DppError, GhostArchive, GhostRegistrySync, PassthroughRegistry,
+    DppError, GhostBackup, GhostRegistrySync, PassthroughRegistry,
     eol::{DeactivationReason, EolEvent},
     passport::{FacilitySnapshot, ManufacturerInfo, Passport, PassportId},
     product_group::ProductGroup,
@@ -206,7 +206,7 @@ async fn build_service() -> (
         Arc::new(InMemoryAuditRepo::default()),
         Arc::new(dpp_common::event::NoOpEventBus),
         Arc::new(GhostRegistrySync),
-        Arc::new(GhostArchive),
+        Arc::new(GhostBackup),
         OperatorIdentity {
             legal_name: "Test Operator GmbH".to_owned(),
             country: "DE".to_owned(),
@@ -271,6 +271,7 @@ fn draft_passport() -> Passport {
             address: None,
         }),
         seal: None,
+        carrier_serial: None,
     }
 }
 

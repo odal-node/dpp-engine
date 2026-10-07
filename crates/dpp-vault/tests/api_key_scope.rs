@@ -86,12 +86,12 @@ async fn read_scoped_credential_cannot_mutate_passports() {
         .await;
     assert_eq!(update.status(), 403, "update must require write scope");
 
-    // publish / suspend / archive / transfer-accept take no request body of their
+    // publish / suspend / retire / transfer-accept take no request body of their
     // own; eol and transfer-initiate share the identical first-line gate.
     for path in [
         format!("/api/v1/dpp/{id}/publish"),
         format!("/api/v1/dpp/{id}/suspend"),
-        format!("/api/v1/dpp/{id}/archive"),
+        format!("/api/v1/dpp/{id}/retire"),
         format!("/api/v1/dpp/{id}/transfer/accept"),
         // `lint` persists a recomputed `lintResult` via `patch_fields` — a
         // database write on any passport the caller can name, and one that

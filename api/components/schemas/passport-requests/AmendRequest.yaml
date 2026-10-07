@@ -26,7 +26,9 @@ properties:
     example:
       productName: Model X Battery Pack (rev B)
       productGroupData:
-        gtin: '01234567890128'
+        productIdentifier:
+          scheme: gs1
+          gtin: '01234567890128'
         batteryType: industrial
   reason:
     type: string

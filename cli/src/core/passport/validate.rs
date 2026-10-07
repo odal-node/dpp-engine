@@ -104,7 +104,7 @@ pub fn find_issues(rec: &serde_json::Value) -> Vec<String> {
         match sd.get("productGroup").and_then(|s| s.as_str()) {
             Some("battery") => {
                 for f in &[
-                    "gtin",
+                    "productIdentifier",
                     "batteryChemistry",
                     "nominalVoltageV",
                     "nominalCapacityAh",
@@ -118,7 +118,7 @@ pub fn find_issues(rec: &serde_json::Value) -> Vec<String> {
             }
             Some("textile") => {
                 for f in &[
-                    "gtin",
+                    "productIdentifier",
                     "fibreComposition",
                     "countryOfOrigin",
                     "careInstructions",
@@ -149,7 +149,7 @@ mod tests {
             "productName": "T-Shirt",
             "productGroupData": {
                 "productGroup": "textile",
-                "gtin": "09506000134352",
+                "productIdentifier": { "scheme": "gs1", "gtin": "09506000134352" },
                 "fibreComposition": [{"fibre": "cotton", "pct": 100.0}],
                 "countryOfOrigin": "DE",
                 "careInstructions": "Machine wash 30°C",
@@ -165,7 +165,7 @@ mod tests {
             "productName": "EV Battery",
             "productGroupData": {
                 "productGroup": "battery",
-                "gtin": "09876543210123",
+                "productIdentifier": { "scheme": "gs1", "gtin": "09876543210123" },
                 "batteryChemistry": "NMC",
                 "nominalVoltageV": 3.7,
                 "nominalCapacityAh": 50.0,
@@ -183,10 +183,14 @@ mod tests {
     }
 
     #[test]
-    fn missing_gtin() {
+    fn missing_product_identifier() {
         let rec =
             json!({ "productName": "Widget", "productGroupData": { "productGroup": "battery" } });
-        assert!(find_issues(&rec).iter().any(|i| i.contains("gtin")));
+        assert!(
+            find_issues(&rec)
+                .iter()
+                .any(|i| i.contains("productIdentifier"))
+        );
     }
 
     #[test]
@@ -200,7 +204,7 @@ mod tests {
     }
 
     #[test]
-    fn textile_missing_gtin() {
+    fn textile_missing_product_identifier() {
         let rec = json!({
             "productName": "T-Shirt",
             "productGroupData": {
@@ -211,7 +215,11 @@ mod tests {
                 "chemicalComplianceStandard": "REACH"
             }
         });
-        assert!(find_issues(&rec).iter().any(|i| i.contains("gtin")));
+        assert!(
+            find_issues(&rec)
+                .iter()
+                .any(|i| i.contains("productIdentifier"))
+        );
     }
 
     #[test]

@@ -1,17 +1,28 @@
 # Demo Evidence Dossiers
 
-Test dossiers for the evidence verifier: four that verify, four tampered in
-different ways, two that are not dossiers at all. Built from the engine's own
-types with real Ed25519 signing (not hand-crafted JSON) by
-`crates/dpp-vault/examples/generate_demo_dossiers.rs`. Every operator, DID and
-host in them is fictional.
+Test dossiers for the evidence verifier: four passports that verify, four
+tampered in different ways, two that are not dossiers at all, and one that
+verifies but is no passport, kept to test canonicalisation. Built from the
+engine's own types with real Ed25519 signing (not hand-crafted JSON) by
+`crates/dpp-vault/examples/generate_demo_dossiers.rs`. Every company, operator,
+DID and host in them is fictional.
 
-Each is a dossier a node could have exported. Its history uses the node's own
+Each of 01 to 09 is a dossier a node could have exported. The passport is a
+light-means-of-transport battery passport holding only fields the battery schema
+declares, including every data point core's publish gate makes mandatory for
+that category. It is published the way the node publishes one: core's own
+transition to published, then the retention horizon and carrier URL publish
+stamps. Its public view is core's own redaction of it, so the restricted
+composition and dismantling content, the authority-only test reports and the
+battery's own history are all absent there. Its history uses the node's own
 entries — `created`, `published`, `transferred`, `deactivated` — with the
 statuses and metadata the node records, and its views and end-of-life record are
-read back out of that history the way the node's assembler reads them. Only the
-passport payload is synthetic: it carries keys and numbers chosen to exercise
-canonicalisation, not a real product's data.
+read back out of that history the way the node's assembler reads them.
+
+11 is the exception, on purpose: its payload is keys and numbers chosen to catch
+a verifier that sorts or formats JSON differently from RFC 8785. No battery
+schema declares them, so no node could issue it, and it is never offered as an
+example passport.
 
 `expected.json` holds `verify_dossier_json`'s verdict on each file, check by
 check. `crates/dpp-vault/tests/demo_dossiers_verify.rs` fails when a file stops
@@ -40,6 +51,7 @@ the node's. `odal verify` exits 0 when every check passes, 1 when one fails, and
 | 08 | `08-hidden-field-injection.json` | exit 1, TAMPER | `input_fidelity` | The subtle one: an unrecognized field (`certificationStatus`) injected inside `transferChain.transfers[0]` — a *tolerant* nested type (not `deny_unknown_fields`). It parses fine and is silently dropped, so every signature/hash check stays green. **Only `input_fidelity` catches it.** |
 | 09 | `09-unknown-top-level-field.json` | exit 2, hard parse error | — | An unrecognized field (`verifiedBy`) at the dossier's own top level. `DossierV1` itself *is* `deny_unknown_fields`, so this never even produces a report — rejected before verification starts. Contrast with 08: same idea, different location, different severity. |
 | 10 | `10-not-json.txt` | exit 2, hard parse error | — | Not JSON at all. |
+| 11 | `11-canonicalisation-vectors.json` | exit 0, VERIFIED | — | Not a passport: its payload is keys and numbers that catch a verifier which canonicalises wrongly (key order by UTF-16 code unit, with `"😀"` beside fullwidth `"Ａ"` telling it from code point order; ECMAScript number formatting). Verifies only if the verifier gets every one right. |
 
 ## Demo Flow
 

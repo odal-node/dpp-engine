@@ -148,6 +148,7 @@ async fn seed_with(dal: &PgDal, jws: Option<&str>, seal: Option<SealedEnvelope>)
         responsible_operator: None,
         facility: None,
         seal,
+        carrier_serial: None,
     };
     let id = passport.id;
     PgPassportRepo::new(dal.clone())

@@ -17,8 +17,7 @@ use dpp_domain::transfer::{TransferReason, TransferRecord};
 use super::client::EuRegistrySync;
 use super::config::EuRegistrySyncConfig;
 use super::mapping::{
-    extract_gtin_from_gs1_dl, facility_identifier_for, item_id_for, level_for,
-    operator_identifier_for,
+    facility_identifier_for, item_id_for, level_for, operator_identifier_for, product_id_for,
 };
 use super::token::CachedToken;
 use dpp_registry::StatusResponse;
@@ -110,6 +109,10 @@ fn request_with_facility(facility: Option<dpp_domain::FacilitySnapshot>) -> Regi
         model_id: None,
         commodity_code: Some("85076000".into()),
         backup_url: None,
+        product_identifier: Some(dpp_domain::ProductIdentifier::gs1(
+            dpp_domain::Gtin::parse("09506000134352").unwrap(),
+        )),
+        service_provider: None,
     }
 }
 
@@ -160,24 +163,49 @@ fn facility_identifier_falls_back_to_bare_value() {
 }
 
 #[test]
-fn extract_gtin_from_valid_gs1_dl() {
-    let uri = "https://id.odal-node.io/01/09506000134352/21/abc123";
-    assert_eq!(
-        extract_gtin_from_gs1_dl(uri),
-        Some("09506000134352".to_owned())
-    );
+fn a_gs1_identifier_is_registered_as_its_gtin() {
+    let product_id = product_id_for(&valid_request()).expect("a GTIN registers");
+    assert_eq!(product_id.scheme, "gtin");
+    assert_eq!(product_id.value, "09506000134352");
 }
 
+/// A passport identified without GS1 has no GTIN anywhere, and its carrier is a
+/// `/dpp/{id}` link. It registers under its own identifier, not under a value
+/// scraped from the carrier or the internal passport id.
 #[test]
-fn extract_gtin_returns_none_for_non_gs1_uri() {
-    assert_eq!(
-        extract_gtin_from_gs1_dl("https://p.odal-node.io/some-uuid"),
-        None
-    );
-    assert_eq!(
-        extract_gtin_from_gs1_dl("https://id.example.com/01/short"),
-        None
-    );
+fn a_did_identifier_is_registered_as_itself_not_as_the_passport_id() {
+    let request = RegistrationRequest {
+        product_identifier: Some(
+            dpp_domain::ProductIdentifier::did("did:web:passports.example.com:item:0001").unwrap(),
+        ),
+        data_carrier_uri: "https://id.example.com/dpp/0190a1b2-0000-7000-8000-000000000001".into(),
+        ..valid_request()
+    };
+    let product_id = product_id_for(&request).expect("a DID registers");
+    assert_eq!(product_id.value, "did:web:passports.example.com:item:0001");
+    assert_ne!(product_id.scheme, "passport_id");
+    assert_ne!(product_id.value, request.passport_id.to_string());
+}
+
+/// A request queued before registrations carried an identifier is refused
+/// before anything is sent, rather than completed with an invented one.
+#[tokio::test]
+async fn a_registration_without_a_product_identifier_is_refused() {
+    let state = Arc::new(MockState::default());
+    let base_url = mock_server::spawn(state.clone()).await;
+    let sync = EuRegistrySync::new(mock_config(&base_url)).unwrap();
+
+    let request = RegistrationRequest {
+        product_identifier: None,
+        ..valid_request()
+    };
+    let err = sync
+        .register(request)
+        .await
+        .expect_err("a registration with no product identifier must be refused");
+
+    assert!(matches!(err, DppError::Validation(_)), "got: {err:?}");
+    assert_eq!(state.register_hits.load(Ordering::SeqCst), 0);
 }
 
 #[test]
@@ -210,23 +238,30 @@ mod mock_server {
     use axum::{
         Json, Router,
         extract::{Path, State},
-        http::StatusCode,
+        http::{HeaderMap, StatusCode},
         response::{IntoResponse, Response},
         routing::{get, post},
+    };
+    use dpp_registry::{
+        IDEMPOTENCY_KEY_HEADER, REGISTRATION_PATH, STATUS_PATH_TEMPLATE, TRANSFER_PATH_TEMPLATE,
     };
     use serde_json::Value;
     use tokio::sync::Mutex;
 
     /// Shared state for a mock EU registry: canned response queues per route,
-    /// plus a hit counter on `/registrations` for retry-count assertions.
+    /// plus a hit counter on the registration route for retry-count assertions.
     #[derive(Default)]
     pub(super) struct MockState {
         pub(super) register_queue: Mutex<VecDeque<(StatusCode, Value)>>,
         pub(super) register_hits: AtomicUsize,
-        /// Envelopes the registry actually received on `/registrations`.
+        /// Envelopes the registry actually received on the registration route.
         /// Asserting on the wire body is the only way to catch a field the
         /// mapping states wrongly — a status-code assertion passes either way.
         pub(super) register_bodies: Mutex<VecDeque<Value>>,
+        /// The `Idempotency-Key` header of each registration, `None` when the
+        /// request carried none. A header is not in the body, so `register_bodies`
+        /// cannot see it.
+        pub(super) register_keys: Mutex<VecDeque<Option<String>>>,
         pub(super) status_queue: Mutex<VecDeque<(StatusCode, Value)>>,
         pub(super) transfer_queue: Mutex<VecDeque<(StatusCode, Value)>>,
         /// Bodies the registry actually received on `/transfer`. Asserting on
@@ -257,11 +292,18 @@ mod mock_server {
 
     async fn register_handler(
         State(state): State<Arc<MockState>>,
+        headers: HeaderMap,
         Json(body): Json<Value>,
     ) -> Response {
         state
             .register_hits
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        state.register_keys.lock().await.push_back(
+            headers
+                .get(IDEMPOTENCY_KEY_HEADER)
+                .and_then(|v| v.to_str().ok())
+                .map(str::to_owned),
+        );
         state.register_bodies.lock().await.push_back(body);
         pop_or_500(&state.register_queue).await
     }
@@ -286,9 +328,13 @@ mod mock_server {
     pub(super) async fn spawn(state: Arc<MockState>) -> String {
         let app = Router::new()
             .route("/token", post(token_handler))
-            .route("/registrations", post(register_handler))
-            .route("/registrations/{id}/status", get(status_handler))
-            .route("/registrations/{id}/transfer", post(transfer_handler))
+            // The paths are core's own constants, not literals: a mock that
+            // spells them itself agrees with the adapter whatever core says, and
+            // that agreement is what let the invented registration path pass.
+            // The two templates use `{id}`, which is also axum's capture syntax.
+            .route(REGISTRATION_PATH, post(register_handler))
+            .route(STATUS_PATH_TEMPLATE, get(status_handler))
+            .route(TRANSFER_PATH_TEMPLATE, post(transfer_handler))
             .with_state(state);
 
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -832,7 +878,7 @@ async fn a_vat_operator_is_not_submitted_as_a_did() {
         .await
         .pop_front()
         .expect("the registry must have received a payload");
-    let operator = &sent["payload"]["operatorId"];
+    let operator = &sent["submission"][0]["operatorId"];
     assert_eq!(operator["scheme"], "vat");
     assert_eq!(operator["value"], "DE811234567");
     assert!(
@@ -858,7 +904,7 @@ async fn a_did_operator_keeps_its_did_field() {
         .expect("a did-scheme operator must register");
 
     let sent = state.register_bodies.lock().await.pop_front().unwrap();
-    let operator = &sent["payload"]["operatorId"];
+    let operator = &sent["submission"][0]["operatorId"];
     assert_eq!(operator["scheme"], "did");
     assert_eq!(operator["did"], "did:web:test.example");
 }
@@ -1026,4 +1072,303 @@ fn the_request_id_survives_the_outbox_round_trip() {
     let payload = serde_json::to_value(&request).unwrap();
     let replayed: RegistrationRequest = serde_json::from_value(payload).unwrap();
     assert_eq!(replayed.request_id, expected);
+}
+
+// ── The registry's observed contract ────────────────────────────────────────
+
+/// What the registry sends back for a replayed idempotency key.
+fn key_reused_body() -> serde_json::Value {
+    serde_json::json!({
+        "subCode": dpp_registry::SUB_CODE_IDEMPOTENCY_KEY_REUSED,
+        "traceId": "trace-409",
+        "message": "this key was already used",
+    })
+}
+
+/// The registry's key is a header. The envelope's `requestId` is ours and
+/// reaches the registry as ordinary payload, so a replay carrying only that is,
+/// to the registry, a new submission — which is how a registration whose reply
+/// was lost could be registered twice.
+#[tokio::test]
+async fn a_registration_carries_its_request_id_as_the_idempotency_key() {
+    let state = Arc::new(MockState::default());
+    {
+        let mut q = state.register_queue.lock().await;
+        q.push_back((
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            serde_json::json!({"error": "upstream"}),
+        ));
+        q.push_back((axum::http::StatusCode::OK, registered_response("EU-REG-K")));
+    }
+    let base_url = mock_server::spawn(state.clone()).await;
+    let sync = EuRegistrySync::new(mock_config(&base_url)).unwrap();
+
+    let request = valid_request();
+    let expected = request.request_id.to_string();
+    sync.register(request).await.expect("succeeds on retry");
+
+    let keys = state.register_keys.lock().await;
+    assert_eq!(
+        keys.iter().cloned().collect::<Vec<_>>(),
+        vec![Some(expected.clone()), Some(expected)],
+        "every attempt must present the request's own key in the header"
+    );
+}
+
+/// A replayed key means an earlier attempt reached the registry and its answer
+/// never reached us. That submission exists, so this is neither a failure nor
+/// grounds to resubmit: the registry holds it and its verdict is outstanding.
+#[tokio::test]
+async fn a_replayed_key_means_the_registry_already_has_the_submission() {
+    let state = Arc::new(MockState::default());
+    state
+        .register_queue
+        .lock()
+        .await
+        .push_back((axum::http::StatusCode::CONFLICT, key_reused_body()));
+    let base_url = mock_server::spawn(state.clone()).await;
+    let sync = EuRegistrySync::new(mock_config(&base_url)).unwrap();
+
+    let record = sync
+        .register(valid_request())
+        .await
+        .expect("a replayed key is not a failure");
+
+    assert_eq!(record.status, RegistryStatus::Pending);
+    assert!(
+        record.identifiers.registry_id.is_empty(),
+        "the registry returned no id, and none may be invented"
+    );
+    assert_eq!(
+        state.register_hits.load(Ordering::SeqCst),
+        1,
+        "a replayed key must not be retried"
+    );
+}
+
+/// Only the one `subCode` is read as "already done". A conflict that names
+/// nothing, or something else, says nothing about whether a submission exists.
+#[tokio::test]
+async fn a_conflict_that_is_not_a_replayed_key_is_still_a_refusal() {
+    for body in [
+        serde_json::json!({}),
+        serde_json::json!({"subCode": "SOME_OTHER_CONFLICT", "traceId": "trace-x"}),
+    ] {
+        let state = Arc::new(MockState::default());
+        state
+            .register_queue
+            .lock()
+            .await
+            .push_back((axum::http::StatusCode::CONFLICT, body.clone()));
+        let base_url = mock_server::spawn(state.clone()).await;
+        let sync = EuRegistrySync::new(mock_config(&base_url)).unwrap();
+
+        let err = sync
+            .register(valid_request())
+            .await
+            .expect_err("an unrecognised conflict is a refusal");
+
+        assert!(
+            err.to_string().contains("registration rejected 409"),
+            "got: {err} for {body}"
+        );
+    }
+}
+
+/// A 2xx whose body this node cannot read is **unknown**, not failed: the
+/// registry accepted the request. Reading it as an error is safe only because
+/// the retry carries the same key — the registry answers the replay with the
+/// conflict above, and the row converges instead of being registered twice or
+/// stuck on a body that will never parse.
+#[tokio::test]
+async fn a_success_body_this_node_cannot_read_resolves_when_the_key_is_replayed() {
+    let state = Arc::new(MockState::default());
+    {
+        let mut q = state.register_queue.lock().await;
+        q.push_back((
+            axum::http::StatusCode::OK,
+            serde_json::json!({"correlationId": "c-1", "outcome": "SOMETHING_NEW"}),
+        ));
+        q.push_back((axum::http::StatusCode::CONFLICT, key_reused_body()));
+    }
+    let base_url = mock_server::spawn(state.clone()).await;
+    let sync = EuRegistrySync::new(mock_config(&base_url)).unwrap();
+
+    let id = Uuid::now_v7();
+    let attempt = || RegistrationRequest {
+        request_id: id,
+        ..valid_request()
+    };
+
+    let first = sync
+        .register(attempt())
+        .await
+        .expect_err("an unreadable body must not be recorded as a registration");
+    assert!(
+        first.to_string().contains("may have been accepted"),
+        "the error must say the submission may exist: {first}"
+    );
+
+    let second = sync
+        .register(attempt())
+        .await
+        .expect("the replay is recognised, not refused");
+    assert_eq!(second.status, RegistryStatus::Pending);
+
+    let keys = state.register_keys.lock().await;
+    assert_eq!(
+        keys.iter().cloned().collect::<Vec<_>>(),
+        vec![Some(id.to_string()); 2],
+        "the replay must present the key the first attempt did"
+    );
+}
+
+/// The trace id is the only handle a conversation with the registry's support
+/// has. It reaches the operator through the row's `message`, so the message has
+/// to lead with it rather than bury it in a raw body.
+#[tokio::test]
+async fn a_refusal_carries_the_registry_trace_id_and_sub_code() {
+    let state = Arc::new(MockState::default());
+    state.register_queue.lock().await.push_back((
+        axum::http::StatusCode::UNPROCESSABLE_ENTITY,
+        serde_json::json!({
+            "subCode": "VALIDATION_FAILED",
+            "traceId": "trace-422",
+            "message": "the unique product identifier is not accepted",
+        }),
+    ));
+    let base_url = mock_server::spawn(state.clone()).await;
+    let sync = EuRegistrySync::new(mock_config(&base_url)).unwrap();
+
+    let err = sync
+        .register(valid_request())
+        .await
+        .unwrap_err()
+        .to_string();
+
+    // The exact wording, not the words: the raw JSON body contains every one of
+    // them, so a check on the words passes whether or not the body was read.
+    assert!(
+        err.contains(
+            "registration rejected 422: the unique product identifier is not accepted \
+             [VALIDATION_FAILED] (registry trace id trace-422)"
+        ),
+        "got: {err}"
+    );
+    assert!(
+        !err.contains("traceId"),
+        "the raw body must not be passed through when it was readable: {err}"
+    );
+}
+
+/// A body that is not the registry's error shape — a gateway page, a bare
+/// string — is kept verbatim. Nothing is lost by trying to read it.
+#[tokio::test]
+async fn a_refusal_with_an_unreadable_body_keeps_what_the_registry_said() {
+    let state = Arc::new(MockState::default());
+    state.register_queue.lock().await.push_back((
+        axum::http::StatusCode::BAD_GATEWAY,
+        serde_json::json!("upstream gateway down"),
+    ));
+    let base_url = mock_server::spawn(state.clone()).await;
+    let mut config = mock_config(&base_url);
+    config.max_retries = 1;
+    let sync = EuRegistrySync::new(config).unwrap();
+
+    let err = sync
+        .register(valid_request())
+        .await
+        .unwrap_err()
+        .to_string();
+
+    assert!(err.contains("upstream gateway down"), "got: {err}");
+}
+
+/// ESPR Art. 10(4) makes the back-up copy available *through* a service
+/// provider, so a declared link with nobody named beside it is refused by core's
+/// validation. Nothing here may send it: it was the state every registration of
+/// a node serving its snapshots was in, retried hourly, until publish named the
+/// provider.
+#[tokio::test]
+async fn a_backup_link_with_no_provider_is_refused_before_it_is_sent() {
+    let state = Arc::new(MockState::default());
+    let base_url = mock_server::spawn(state.clone()).await;
+    let sync = EuRegistrySync::new(mock_config(&base_url)).unwrap();
+
+    let request = RegistrationRequest {
+        backup_url: Some("https://backup.example.com/dpp/x/public.json".into()),
+        service_provider: None,
+        ..valid_request()
+    };
+    let err = sync
+        .register(request)
+        .await
+        .expect_err("a link with no provider must be refused");
+
+    assert!(matches!(err, DppError::Validation(_)), "got: {err:?}");
+    assert!(err.to_string().contains("serviceProvider"), "got: {err}");
+    assert_eq!(state.register_hits.load(Ordering::SeqCst), 0);
+}
+
+/// The same link with its provider is submitted, and both arrive.
+#[tokio::test]
+async fn a_backup_link_with_its_provider_is_sent_with_both() {
+    let state = Arc::new(MockState::default());
+    state
+        .register_queue
+        .lock()
+        .await
+        .push_back((axum::http::StatusCode::OK, registered_response("EU-REG-B")));
+    let base_url = mock_server::spawn(state.clone()).await;
+    let sync = EuRegistrySync::new(mock_config(&base_url)).unwrap();
+
+    let request = RegistrationRequest {
+        backup_url: Some("https://backup.example.com/dpp/x/public.json".into()),
+        service_provider: Some(dpp_domain::ports::registry_sync::ServiceProviderRef::named(
+            "Example Backup Provider",
+        )),
+        ..valid_request()
+    };
+    sync.register(request).await.expect("registers");
+
+    let bodies = state.register_bodies.lock().await;
+    let passport = &bodies[0]["submission"][0];
+    assert_eq!(
+        passport["backupUrl"],
+        "https://backup.example.com/dpp/x/public.json"
+    );
+    assert_eq!(
+        passport["serviceProvider"]["name"],
+        "Example Backup Provider"
+    );
+}
+
+/// The registry caps the unique product identifier, and the identifier it
+/// checks is the carrier URL. The cap is enforced by core's validation, which
+/// this adapter runs before anything leaves the node — the test pins that it is
+/// reached from here, so a refused submission cannot be one the registry sees.
+#[tokio::test]
+async fn a_product_identifier_over_the_registry_cap_is_refused_before_it_is_sent() {
+    let state = Arc::new(MockState::default());
+    let base_url = mock_server::spawn(state.clone()).await;
+    let sync = EuRegistrySync::new(mock_config(&base_url)).unwrap();
+
+    let request = RegistrationRequest {
+        data_carrier_uri: format!(
+            "https://id.example.com/01/09506000134352/21/{}",
+            "a".repeat(dpp_registry::MAX_PRODUCT_IDENTIFIER_CHARS)
+        ),
+        ..valid_request()
+    };
+    let err = sync
+        .register(request)
+        .await
+        .expect_err("an identifier over the cap must be refused");
+
+    assert!(matches!(err, DppError::Validation(_)), "got: {err:?}");
+    assert_eq!(
+        state.register_hits.load(Ordering::SeqCst),
+        0,
+        "the registry was contacted for an identifier it would refuse"
+    );
 }

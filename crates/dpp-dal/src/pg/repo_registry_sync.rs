@@ -110,7 +110,7 @@ impl RegistrySyncOutbox for PgRegistrySyncRepo {
         //
         // Annotates an existing row; it never creates one. Rows are created by
         // the publish transaction alone, so no row means the passport never
-        // published — and `Draft -> Archived` is legal, so `archive` reaches here
+        // published — and `Draft -> Retired` is legal, so `retire` reaches here
         // for exactly those. Inserting would fabricate a payload-less row that
         // the drain then marks `rejected`, raising an Art. 13 alarm for a
         // passport that never owed a registration.
@@ -152,10 +152,14 @@ impl RegistrySyncOutbox for PgRegistrySyncRepo {
         // does not run hot against the registry. `attempts` deliberately keeps
         // counting: a submission that never resolves is exactly the kind of
         // stall a human needs to see.
+        //
+        // An empty id is the registry having returned none — a replayed
+        // submission is acknowledged without one — so the column keeps what it
+        // held (NULL, the first time) rather than recording `''` as an id.
         let res = sqlx::query(
             r#"UPDATE odal.registry_sync SET
                  status = 'submitted',
-                 registry_id = $2,
+                 registry_id = COALESCE(NULLIF($2, ''), registry_id),
                  submitted_at = COALESCE(submitted_at, now()),
                  attempts = attempts + 1,
                  last_attempt_at = now(),

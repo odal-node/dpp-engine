@@ -142,7 +142,9 @@ fn battery_product_group_data() -> ProductGroupData {
         product_group::{BatteryChemistry, BatteryData, BatteryType},
     };
     ProductGroupData::Battery(Box::new(BatteryData {
-        gtin: Gtin::parse("09506000134352").unwrap(),
+        product_identifier: dpp_domain::ProductIdentifier::gs1(
+            Gtin::parse("09506000134352").unwrap(),
+        ),
         battery_chemistry: BatteryChemistry::Lfp,
         nominal_voltage_v: 400.0,
         nominal_capacity_ah: 100.0,

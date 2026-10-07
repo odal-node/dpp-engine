@@ -1,4 +1,4 @@
-//! `POST /api/v1/dpp/{dppId}/archive` — archive a passport after retention expiry.
+//! `POST /api/v1/dpp/{dppId}/retire` — retire a passport after retention expiry.
 
 use axum::{
     Json,
@@ -14,11 +14,11 @@ use super::error::{
     require_write,
 };
 
-/// `POST /api/v1/dpp/{dppId}/archive` — permanently archive a published or suspended passport.
+/// `POST /api/v1/dpp/{dppId}/retire` — permanently retire a published or suspended passport.
 ///
 /// Blocked by the ESPR retention guard until the product group's minimum retention
 /// period has elapsed from `published_at`. Returns `422` on a policy violation.
-pub async fn archive_handler(
+pub async fn retire_handler(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthContext>,
     Path(dpp_id): Path<String>,
@@ -31,11 +31,11 @@ pub async fn archive_handler(
         Err(e) => return e,
     };
 
-    match state.service.archive(passport_id, &auth).await {
+    match state.service.retire(passport_id, &auth).await {
         Ok(p) => (StatusCode::OK, Json(crate::api::PassportResponse::from(&p))).into_response(),
         Err(dpp_domain::DppError::NotFound(_)) => not_found_error("DPP not found."),
         Err(dpp_domain::DppError::InvalidTransition { .. }) => {
-            conflict_error("DPP cannot be archived from its current state.")
+            conflict_error("DPP cannot be retired from its current state.")
         }
         // Business-rule rejection (e.g. the ESPR retention guard) — a client
         // error, not a server fault.

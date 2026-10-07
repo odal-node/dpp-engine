@@ -129,7 +129,7 @@ jobs:
         with:
           workspaces: dpp-engine
       - name: Install cargo-nextest
-        uses: taiki-e/install-action@94c31af3204a9f15ab40b35ad084410b905bbc73 # v2.87.17
+        uses: taiki-e/install-action@861a07ce7084f55488e375df125cdc99bba60eb7 # v2.87.23
         with:
           tool: nextest
       # Run first, and as its own step, so "the API description no longer
@@ -199,14 +199,14 @@ jobs:
         with:
           workspaces: dpp-engine
       - name: Install cargo-nextest
-        uses: taiki-e/install-action@94c31af3204a9f15ab40b35ad084410b905bbc73 # v2.87.17
+        uses: taiki-e/install-action@861a07ce7084f55488e375df125cdc99bba60eb7 # v2.87.23
         with:
           tool: nextest
       - name: Create results dir
         run: mkdir -p dpp-engine/results
       # One S3 server for the whole job, rather than one per S3 test — the same
       # arrangement as the Postgres service above, for the same reason. The four
-      # `s3_archive` tests booted their own and spent about ten seconds each
+      # `s3_backup` tests booted their own and spent about ten seconds each
       # doing it, which put them on the wrong side of the slow-test budget
       # whenever the runner was busy. `ODAL_TEST_S3_ENDPOINT` points them here;
       # unset, they still start their own container, so a bare `cargo test`
@@ -214,7 +214,7 @@ jobs:
       #
       # A step rather than a `services:` entry so the readiness wait and the
       # server's own log on failure sit in one place. The image and tag are the
-      # ones `s3_archive.rs` and `snapshot_static_tier.rs` pin for their own
+      # ones `s3_backup.rs` and `snapshot_static_tier.rs` pin for their own
       # containers; the three must move together.
       #
       # RustFS, not MinIO: `docker.io/minio/minio` was removed, and on 2026-09-24
@@ -521,7 +521,7 @@ jobs:
         working-directory: dpp-engine
         run: bash scripts/check-audit-register.test.sh
       - name: Install cargo-deny
-        uses: taiki-e/install-action@94c31af3204a9f15ab40b35ad084410b905bbc73 # v2.87.17
+        uses: taiki-e/install-action@861a07ce7084f55488e375df125cdc99bba60eb7 # v2.87.23
         with:
           tool: cargo-deny
       - name: cargo deny (bans, licenses, sources)
@@ -544,7 +544,7 @@ jobs:
         with:
           workspaces: dpp-engine
       - name: Install cargo-nextest
-        uses: taiki-e/install-action@94c31af3204a9f15ab40b35ad084410b905bbc73 # v2.87.17
+        uses: taiki-e/install-action@861a07ce7084f55488e375df125cdc99bba60eb7 # v2.87.23
         with:
           tool: nextest
       - name: PostgreSQL integration tests (check + clippy + pg_integration)

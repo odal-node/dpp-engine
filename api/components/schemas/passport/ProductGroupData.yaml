@@ -2,7 +2,7 @@ type: object
 description: |
   Product group-specific data, **internally tagged** by a `productGroup`
   discriminator — e.g.
-  `{ "productGroup": "battery", "gtin": "…", "batteryChemistry": "LFP", … }`.
+  `{ "productGroup": "battery", "productIdentifier": { "scheme": "gs1", "gtin": "…" }, "batteryChemistry": "LFP", … }`.
   The remaining fields are product group-specific and validated against the
   product group's versioned JSON schema. Product groups include `battery`, `textile`,
   `steel`, `aluminium`, `tyre`, `electronics`, and others.
@@ -23,7 +23,9 @@ properties:
 additionalProperties: true
 example:
   productGroup: battery
-  gtin: '09506000134352'
+  productIdentifier:
+    scheme: gs1
+    gtin: '09506000134352'
   batteryChemistry: LFP
   nominalVoltageV: 48
   nominalCapacityAh: 100

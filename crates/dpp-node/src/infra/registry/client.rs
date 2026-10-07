@@ -11,6 +11,15 @@
 //! exponential backoff (3 attempts, 1s → 2s → 4s). Non-retryable errors
 //! (4xx except 429) fail immediately.
 //!
+//! # Idempotency
+//!
+//! Every registration carries the request's own key in the registry's
+//! `Idempotency-Key` header, so a submission that reached the registry and whose
+//! answer was lost is recognised when it is sent again. The registry answers
+//! that replay with a 409 naming the key, which is **not** a failure: it means
+//! the submission exists, and the adapter reports it as pending so the drain
+//! polls for the verdict instead of posting it a third time.
+//!
 //! # Unreachable registry
 //!
 //! If the registry is unreachable (connection refused, DNS failure) the adapter

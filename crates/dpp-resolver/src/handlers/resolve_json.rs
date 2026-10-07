@@ -401,11 +401,12 @@ mod security_regression {
             responsible_operator: None,
             facility: None,
             seal: None,
+            carrier_serial: None,
         };
         passport.product_group_data = Some(
             serde_json::from_value(json!({
                 "productGroup": "battery",
-                "gtin": "09506000134352",
+                "productIdentifier": { "scheme": "gs1", "gtin": "09506000134352" },
                 "batteryChemistry": "LFP",
                 "batteryType": "ev",
                 "nominalVoltageV": 3.2,

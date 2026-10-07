@@ -789,7 +789,7 @@ mod tests {
     /// An EV battery, which Art. 8 reaches by category alone.
     fn ev_battery() -> ProductGroupData {
         let battery: BatteryData = serde_json::from_value(serde_json::json!({
-            "gtin": "09506000134352",
+            "productIdentifier": { "scheme": "gs1", "gtin": "09506000134352" },
             "batteryChemistry": "NMC",
             "batteryType": "ev",
             "nominalVoltageV": 400.0,

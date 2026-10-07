@@ -48,7 +48,7 @@ COPY dpp-engine/ dpp-engine/
 WORKDIR /build/dpp-engine
 RUN rm -f .cargo/config.toml
 # `s3` is off by default (object storage is an optional deployment
-# dependency); the image opts in so ESPR archival and continuity snapshots
+# dependency); the image opts in so the ESPR Art. 10(4) back-up copy and continuity snapshots
 # work out of the box. This is the artefact operators run — any claim about
 # what the shipped binary contains must be checked against *this* feature
 # set, not against a bare `cargo build`.

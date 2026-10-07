@@ -1,7 +1,7 @@
 //! Selects the eIDAS qualified-seal backend from the environment.
 //!
 //! The composition root for sealing, in the same place every other adapter's
-//! lives — `s3_archive`, `snapshot_store` and `credential_issuers` all resolve
+//! lives — `s3_backup`, `snapshot_store` and `credential_issuers` all resolve
 //! themselves here rather than in `main`, so the binary asks for a port and does
 //! not learn how any of them are built.
 //!

@@ -1,4 +1,4 @@
-//! Infrastructure adapters: NATS event bus, PostgreSQL job store, EU registry sync, S3 archive.
+//! Infrastructure adapters: NATS event bus, PostgreSQL job store, EU registry sync, S3 back-up copy.
 
 pub mod credential_issuance;
 pub mod credential_issuers;
@@ -8,7 +8,7 @@ pub mod pg_job_store;
 pub mod registry;
 pub mod registry_drain;
 pub mod ruleset;
-pub mod s3_archive;
+pub mod s3_backup;
 #[cfg(feature = "s3")]
 pub mod s3_snapshot;
 pub mod seal;

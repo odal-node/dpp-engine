@@ -109,7 +109,7 @@ impl SnapshotOutbox for PgSnapshotOutboxRepo {
         // an INSERT ... ON CONFLICT would describe a case that cannot arise.
         //
         // `p.status = 'active'` — the DB spelling of `Published` — is what keeps
-        // the pass bounded. Without it every suspended, archived and
+        // the pass bounded. Without it every suspended, retired and
         // deactivated passport would be re-armed on every cycle for the rest of
         // the deployment's life, and each one would drive a `remove()` against
         // an object that is already gone. The set of passports needing renewal

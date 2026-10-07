@@ -87,7 +87,9 @@ pub fn validate_textile_row(
     }
 
     let textile_data = ProductGroupData::Textile(Box::new(TextileData {
-        gtin: gtin.expect("field verified present by errors.is_empty() guard above"),
+        product_identifier: dpp_domain::identifier::ProductIdentifier::gs1(
+            gtin.expect("field verified present by errors.is_empty() guard above"),
+        ),
         fibre_composition: fibres.expect("field verified present by errors.is_empty() guard above"),
         country_of_origin: country_of_origin
             .expect("field verified present by errors.is_empty() guard above"),
@@ -229,7 +231,7 @@ mod tests {
         assert_eq!(req.product_name, "Organic Cotton Tee");
         match req.product_group_data.unwrap() {
             ProductGroupData::Textile(t) => {
-                assert_eq!(t.gtin.as_str(), "09506000134352");
+                assert_eq!(t.product_identifier.as_str(), "09506000134352");
                 assert_eq!(t.fibre_composition.len(), 1);
                 assert_eq!(t.fibre_composition[0].fibre, "cotton");
             }

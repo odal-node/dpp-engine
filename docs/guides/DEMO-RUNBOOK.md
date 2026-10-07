@@ -18,7 +18,7 @@ Two things that are hard to convey any other way:
    than per document.
 2. **The carrier URL is derived, not configured.** `build_carrier_url` mints a
    GS1 Digital Link from the product's GTIN — see
-   [§7](#7-the-carrier-url-is-derived-from-the-product-gtin), which
+   [§7](#7-the-carrier-url-is-derived-from-the-product-identifier), which
    also covers why the shipped corpus cannot yet show the non-GS1 alternative.
 
 ---
@@ -211,36 +211,38 @@ wires it whenever credentials are live. So a self-issued credential works on
 A credential from *another* issuer does need that issuer's DID to be publicly
 resolvable — which is the guard doing its job.
 
-## 7. The carrier URL is derived from the product GTIN
+## 7. The carrier URL is derived from the product identifier
 
-`build_carrier_url` branches on whether the product group data carries a GTIN:
+`build_carrier_url` branches on the scheme of the passport's
+`productGroupData.productIdentifier`, and for a GS1 identifier on the level the
+passport states in `granularity`:
 
-| Product group data | Carrier URL | Needs GS1 membership? |
-|---|---|---|
-| Carries a GTIN | `{base}/01/{gtin}[/10/{batch}]/21/{serial}` — a GS1 Digital Link | **Yes** |
-| Carries none | `{base}/dpp/{id}` | No |
+| Product identifier | Level | Carrier URL | Needs GS1 membership? |
+|---|---|---|---|
+| GS1 (`scheme: gs1`) | model | `{base}/01/{gtin}` | **Yes** |
+| GS1 | batch | `{base}/01/{gtin}/10/{batch}` | **Yes** |
+| GS1 | item, or not stated | `{base}/01/{gtin}/21/{serial}` | **Yes** |
+| Identification link or DID | any | `{base}/dpp/{id}` | No |
 
-The `/10/{batch}` segment appears whenever the passport has a `batchId`, which
-every passport in `ops/demo/passports/` does — so that is the form you will
-actually see on screen.
+No passport in `ops/demo/passports/` states a level, so every one prints the
+`/21/{serial}` form, with a serial derived from the passport id. Scanning it
+resolves to exactly that passport, whatever else shares its GTIN.
 
 ### 🚨 The non-GS1 form cannot be demonstrated from the shipped corpus
 
-All six demo passports carry a GTIN, and
+All six demo passports carry a GS1 identifier, and
 `crates/dpp-vault/tests/demo_passports_publish.rs::every_demo_passport_carries_a_gtin`
 asserts they always will. Every one therefore mints a Digital Link, and there is
 no second passport to stand beside it showing `{base}/dpp/{id}`.
 
 This matters more than a missing fixture. Requiring a GTIN would mean requiring
-GS1 membership, and EN 18219 clause 5 offers identifier schemes that do not —
-which is exactly the claim a side-by-side comparison would make concrete. The
-fallback branch exists in `build_carrier_url`, but the code comment there scopes
-it to records that identify no trade item (an unsold-goods report or an untyped
-record), not to a manufacturer without GS1 membership.
+GS1 membership, and EN 18219 clause 5 offers identifier schemes that do not.
+The node now accepts them — a `productIdentifier` of `scheme: did` or
+`scheme: identificationLink` publishes with the `{base}/dpp/{id}` carrier — which
+is exactly the claim a side-by-side comparison would make concrete.
 
-**Do not promise this comparison in a demo.** Showing it needs a non-GS1 demo
-passport and a decision about whether that guard test should still hold — both
-out of scope here.
+**Do not promise this comparison in a demo yet.** Showing it needs a non-GS1
+demo passport and a decision about whether that guard test should still hold.
 
 ---
 

@@ -12,7 +12,8 @@ use std::collections::BTreeMap;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use dpp_domain::{DppError, passport::PassportId, transfer::TransferChain};
-use serde::{Deserialize, Serialize};
+use serde::ser::{SerializeMap, SerializeSeq};
+use serde::{Deserialize, Serialize, Serializer};
 use uuid::Uuid;
 
 use crate::audit::PassportAuditEntry;
@@ -71,39 +72,67 @@ pub struct DossierManifest {
 
 /// A complete evidence dossier: a self-contained, signed snapshot of a
 /// passport's full proof chain.
+///
+/// Every member that carries JSON is written through
+/// [`serialize_in_signed_key_order`], so each readable payload copy lists its
+/// keys in the order they were signed in; see [`SignedKeyOrder`] for why.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct DossierV1 {
     pub manifest: DossierManifest,
     pub manifest_jws: String,
+    #[serde(serialize_with = "serialize_in_signed_key_order")]
     pub full_view: SignedLayer,
+    #[serde(serialize_with = "serialize_in_signed_key_order")]
     pub public_view: SignedLayer,
     /// DID document snapshots, keyed by DID. Always contains at least
     /// `manifest.issuer_did`; may contain other operators' DIDs when a
     /// transfer chain is present.
+    #[serde(serialize_with = "serialize_in_signed_key_order")]
     pub did_documents: BTreeMap<String, serde_json::Value>,
     /// Ordered ascending by timestamp (chain order).
+    #[serde(serialize_with = "serialize_in_signed_key_order")]
     pub audit_entries: Vec<PassportAuditEntry>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        serialize_with = "serialize_in_signed_key_order"
+    )]
     pub transfer_chain: Option<TransferChain>,
     /// Present iff the passport was deactivated (End-of-Life declared).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        serialize_with = "serialize_in_signed_key_order"
+    )]
     pub eol_event: Option<serde_json::Value>,
     /// Always `None` in v1 — the signed-checkpoint layer is not yet built.
     /// Present as a field (not omitted) so the format doesn't need a
     /// breaking version bump when checkpoints ship.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        serialize_with = "serialize_in_signed_key_order"
+    )]
     pub checkpoint: Option<serde_json::Value>,
     /// Always empty in v1 — `dpp-calc` invocation is not yet wired end to
     /// end (see the roadmap note on licensed factor data). Present as a
     /// field for the same forward-compatibility reason as `checkpoint`.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(
+        default,
+        skip_serializing_if = "Vec::is_empty",
+        serialize_with = "serialize_in_signed_key_order"
+    )]
     pub calc_receipts: Vec<serde_json::Value>,
     /// The recursive component-tree (bill-of-materials) verification report,
     /// present iff the passport declares `component_refs`. Attested via
     /// `content_hashes` — a tampered report fails `content_integrity`. `None`
     /// for a unit with no modelled sub-assemblies.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        serialize_with = "serialize_in_signed_key_order"
+    )]
     pub component_graph: Option<serde_json::Value>,
     /// The passport's eIDAS qualified seal, present iff one has been applied.
     ///
@@ -120,8 +149,67 @@ pub struct DossierV1 {
     ///
     /// `None` for a passport whose seal is still queued, or for a node with no
     /// QTSP configured — absent, never a placeholder.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        serialize_with = "serialize_in_signed_key_order"
+    )]
     pub qualified_seal: Option<serde_json::Value>,
+}
+
+/// Writes a JSON value with every object's keys in the order they are signed
+/// in: by UTF-16 code unit, as RFC 8785 §3.2.3 sorts them.
+///
+/// A dossier carries each signed view twice, as the JWS and as a readable copy
+/// of its payload, and the audit trail's `published` entry carries a third and
+/// fourth. The copies are `serde_json::Value`, whose map keeps its keys sorted
+/// by UTF-8 byte, which is code point order. The two orders agree for almost
+/// every key, but not for a key outside the Basic Multilingual Plane next to
+/// one in U+E000–U+FFFF: `😀` is the surrogate pair `0xD83D 0xDE00` and sorts
+/// before `\u{FF21}` (`0xFF21`) by code unit, after it by code point. Written
+/// in code point order, a readable copy disagrees with the bytes it sits beside
+/// and reads as the very ordering mistake a verifier must not make.
+///
+/// Order is the only thing this changes. Every hash and signature in a dossier
+/// is taken over canonical bytes, so no verdict depends on it; this only makes
+/// what a reader sees match what was signed.
+pub struct SignedKeyOrder<'a>(pub &'a serde_json::Value);
+
+impl Serialize for SignedKeyOrder<'_> {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        match self.0 {
+            serde_json::Value::Object(map) => {
+                let mut entries: Vec<_> = map.iter().collect();
+                entries.sort_by(|(a, _), (b, _)| a.encode_utf16().cmp(b.encode_utf16()));
+                let mut out = serializer.serialize_map(Some(entries.len()))?;
+                for (key, value) in entries {
+                    out.serialize_entry(key, &SignedKeyOrder(value))?;
+                }
+                out.end()
+            }
+            serde_json::Value::Array(items) => {
+                let mut out = serializer.serialize_seq(Some(items.len()))?;
+                for item in items {
+                    out.serialize_element(&SignedKeyOrder(item))?;
+                }
+                out.end()
+            }
+            other => other.serialize(serializer),
+        }
+    }
+}
+
+/// `serialize_with` for [`DossierV1`]'s members: the member as JSON, written
+/// through [`SignedKeyOrder`].
+///
+/// # Errors
+/// Returns the serializer's error if the member cannot be represented as JSON.
+pub fn serialize_in_signed_key_order<T: Serialize, S: Serializer>(
+    value: &T,
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    let value = serde_json::to_value(value).map_err(serde::ser::Error::custom)?;
+    SignedKeyOrder(&value).serialize(serializer)
 }
 
 /// Canonical SHA-256 (hex) of a JSON value (RFC 8785 / JCS bytes).
@@ -274,4 +362,67 @@ pub trait EvidenceDossierRepository: Send + Sync {
     ) -> Result<Vec<EvidenceDossierSummary>, DppError>;
     /// One stored dossier by id.
     async fn get(&self, id: Uuid) -> Result<Option<EvidenceDossierRecord>, DppError>;
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::*;
+
+    fn layer(payload: serde_json::Value) -> SignedLayer {
+        SignedLayer {
+            payload,
+            jws: "x".to_owned(),
+        }
+    }
+
+    /// A node exports a dossier by serialising `DossierV1` directly, so this is
+    /// the path the HTTP export takes. `😀` (0xD83D 0xDE00) must come before
+    /// `\u{FF21}` (0xFF21), at the top of the payload and inside an array, as
+    /// they are in the canonical bytes a signature covers.
+    #[test]
+    fn a_dossier_writes_each_payload_copy_in_the_order_it_was_signed() {
+        let payload = json!({
+            "\u{FF21}": 6, "😀": 5, "€": 4, "é": 3, "b": 1, "B": 2,
+            "nested": [{ "\u{FF21}": 1, "😀": 2 }],
+        });
+        let dossier = DossierV1 {
+            manifest: DossierManifest {
+                format_version: "1".to_owned(),
+                passport_id: "p".to_owned(),
+                issuer_did: "did:web:node.example".to_owned(),
+                created_at: "2026-09-30T00:00:00Z".parse().expect("a timestamp"),
+                node_version: "0".to_owned(),
+                core_version: "0".to_owned(),
+                ruleset_version: None,
+                content_hashes: BTreeMap::new(),
+            },
+            manifest_jws: "x".to_owned(),
+            full_view: layer(payload.clone()),
+            public_view: layer(payload),
+            did_documents: BTreeMap::new(),
+            audit_entries: Vec::new(),
+            transfer_chain: None,
+            eol_event: None,
+            checkpoint: None,
+            calc_receipts: Vec::new(),
+            component_graph: None,
+            qualified_seal: None,
+        };
+
+        let written = serde_json::to_string(&dossier).expect("serialise the dossier");
+        let signed = r#"{"B":2,"b":1,"nested":[{"😀":2,"Ａ":1}],"é":3,"€":4,"😀":5,"Ａ":6}"#;
+        assert!(
+            written.contains(&format!(r#""fullView":{{"jws":"x","payload":{signed}}}"#)),
+            "the full view's payload is not in signed key order: {written}"
+        );
+        assert!(
+            written.contains(&format!(r#""publicView":{{"jws":"x","payload":{signed}}}"#)),
+            "the public view's payload is not in signed key order: {written}"
+        );
+
+        let read: DossierV1 = serde_json::from_str(&written).expect("it reads back");
+        assert_eq!(read.full_view.payload, dossier.full_view.payload);
+    }
 }

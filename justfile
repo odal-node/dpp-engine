@@ -285,6 +285,20 @@ no-xml-entity-resolution-self-test:
 subjects-check:
     bash scripts/subjects-check.sh
 
+# Keep "archive" meaning EN 18221 clause 4.2 and nothing else.
+#
+# The word once named three things here — clause 4.2's version history, a
+# terminal lifecycle status, and the ESPR Art. 10(4) back-up copy — and while it
+# did, the clause 4.2 gap was invisible because the name looked taken. Renaming
+# the other two fixed it once; nothing stopped it recurring. The rule and its
+# reasoning live in the script.
+vocabulary-check:
+    bash scripts/vocabulary-check.sh
+
+# Prove each of vocabulary-check's five rules actually refuses something.
+vocabulary-check-self-test:
+    bash scripts/vocabulary-check.test.sh
+
 # Every table with a live DELETE grant must be named in ops/pg/README.md.
 #
 # "The app role cannot DELETE" is the sentence a reader uses to reason about
@@ -342,7 +356,7 @@ doc:
     cargo doc --workspace --no-deps
 
 # Fast gate (no Docker) — mirrors CI jobs: fmt, clippy, debug-prints, test-unit, audit
-check: fmt-check lint debug-check no-rsa-private-key no-xml-entity-resolution no-xml-entity-resolution-self-test subjects-check mod-rs-check harness-check contract-fixture-check contract-fixture-check-self-test spec-version-check outbound-check grants-check migrations-check check-plugins test check-integration audit
+check: fmt-check lint debug-check no-rsa-private-key no-xml-entity-resolution no-xml-entity-resolution-self-test subjects-check vocabulary-check vocabulary-check-self-test mod-rs-check harness-check contract-fixture-check contract-fixture-check-self-test spec-version-check outbound-check grants-check migrations-check check-plugins test check-integration audit
 
 # Full local CI mirror — adds integration-feature clippy + the Docker tiers (needs Docker running)
 ci: check lint-integration test-integration test-pg

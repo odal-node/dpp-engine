@@ -812,7 +812,7 @@ mod tests {
         #[serde(rename_all = "camelCase")]
         struct IdentityParams {
             product_group: String,
-            gtin: String,
+            identifier: String,
             #[serde(default)]
             batch_id: Option<String>,
         }
@@ -831,10 +831,13 @@ mod tests {
                         .and_then(|sd| sd.get("productGroup"))
                         .and_then(|s| s.as_str())
                         == Some(q.product_group.as_str())
+                        // A CSV import carries a GTIN, so every passport this
+                        // double holds is identified under scheme 1.
                         && p.get("productGroupData")
-                            .and_then(|sd| sd.get("gtin"))
+                            .and_then(|sd| sd.get("productIdentifier"))
+                            .and_then(|id| id.get("gtin"))
                             .and_then(|g| g.as_str())
-                            == Some(q.gtin.as_str())
+                            == Some(q.identifier.as_str())
                         && p.get("batchId").and_then(|b| b.as_str()) == q.batch_id.as_deref()
                 })
                 .cloned();
@@ -973,7 +976,10 @@ mod tests {
             let mut passports = mock.passports.lock().unwrap();
             let published = passports
                 .iter_mut()
-                .find(|p| p["productGroupData"]["gtin"].as_str() == Some(published_gtin.as_str()))
+                .find(|p| {
+                    p["productGroupData"]["productIdentifier"]["gtin"].as_str()
+                        == Some(published_gtin.as_str())
+                })
                 .expect("BATCH-3 passport must exist after v1 import");
             published["status"] = serde_json::json!("active");
         }
@@ -1073,7 +1079,10 @@ mod tests {
             let mut passports = mock.passports.lock().unwrap();
             let published = passports
                 .iter_mut()
-                .find(|p| p["productGroupData"]["gtin"].as_str() == Some(published_gtin.as_str()))
+                .find(|p| {
+                    p["productGroupData"]["productIdentifier"]["gtin"].as_str()
+                        == Some(published_gtin.as_str())
+                })
                 .expect("BATCH-3 passport must exist after v1 import");
             published["status"] = serde_json::json!("active");
         }
@@ -1236,7 +1245,10 @@ mod tests {
             let mut passports = mock.passports.lock().unwrap();
             let published = passports
                 .iter_mut()
-                .find(|p| p["productGroupData"]["gtin"].as_str() == Some(published_gtin.as_str()))
+                .find(|p| {
+                    p["productGroupData"]["productIdentifier"]["gtin"].as_str()
+                        == Some(published_gtin.as_str())
+                })
                 .expect("BATCH-3 passport must exist after v1 import");
             published["status"] = serde_json::json!("active");
         }

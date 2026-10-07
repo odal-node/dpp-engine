@@ -65,6 +65,7 @@ fn passport(status: PassportStatus, supersedes: Option<PassportId>) -> Passport 
         responsible_operator: None,
         facility: None,
         seal: None,
+        carrier_serial: None,
     }
 }
 
@@ -139,7 +140,7 @@ async fn a_passport_nothing_replaced_has_no_successor() {
     let successors = PgSuccessorRepo::new(pg.dal.clone());
 
     let lonely = repo
-        .create(passport(PassportStatus::Archived, None))
+        .create(passport(PassportStatus::Retired, None))
         .await
         .expect("create");
 

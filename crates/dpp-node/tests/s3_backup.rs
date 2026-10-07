@@ -1,4 +1,4 @@
-//! Integration test: `S3ArchiveAdapter` against a real S3-compatible server.
+//! Integration test: `S3BackupAdapter` against a real S3-compatible server.
 //!
 //! Run: `cargo test -p dpp-node --features integration-tests`
 
@@ -13,11 +13,11 @@ use testcontainers::{
 use chrono::Utc;
 use dpp_domain::{
     passport::{ManufacturerInfo, Passport, PassportId},
-    ports::archive::ArchivePort,
+    ports::backup::BackupCopyPort,
     product_group::ProductGroup,
     status::PassportStatus,
 };
-use dpp_node::infra::s3_archive::{S3ArchiveAdapter, S3ArchiveConfig};
+use dpp_node::infra::s3_backup::{S3BackupAdapter, S3BackupConfig};
 
 /// The S3 server build every path here tests against.
 ///
@@ -98,7 +98,7 @@ async fn start_s3() -> S3Server {
     // A bucket per test, so one shared server gives the same isolation a
     // container per test gave. `ensure_bucket` creates it, buckets are cheap,
     // and simple lowercase hex keeps the name inside S3's naming rules.
-    let bucket = format!("test-archive-{}", uuid::Uuid::new_v4().simple());
+    let bucket = format!("test-backup-{}", uuid::Uuid::new_v4().simple());
 
     if let Some(endpoint) = std::env::var(SHARED_ENDPOINT_ENV)
         .ok()
@@ -174,8 +174,8 @@ async fn wait_until_ready(endpoint: &str) {
     panic!("the S3 server at {endpoint} was not ready within 30s");
 }
 
-fn build_adapter(s3: &S3Server) -> S3ArchiveAdapter {
-    S3ArchiveAdapter::new(S3ArchiveConfig {
+fn build_adapter(s3: &S3Server) -> S3BackupAdapter {
+    S3BackupAdapter::new(S3BackupConfig {
         endpoint: Some(s3.endpoint.clone()),
         bucket: s3.bucket.clone(),
         access_key_id: s3.access_key.clone(),
@@ -230,20 +230,21 @@ fn make_passport() -> Passport {
         responsible_operator: None,
         facility: None,
         seal: None,
+        carrier_serial: None,
     }
 }
 
 #[tokio::test]
-async fn archive_then_verify_integrity() {
+async fn store_then_verify_integrity() {
     let s3 = start_s3().await;
     let adapter = build_adapter(&s3);
     adapter.ensure_bucket().await.expect("create bucket");
 
     let passport = make_passport();
-    let receipt = adapter.archive(&passport, 10).await.expect("archive");
+    let receipt = adapter.store(&passport, 10).await.expect("back up");
 
     assert!(!receipt.content_hash.is_empty());
-    assert!(receipt.archive_id.starts_with("passports/"));
+    assert!(receipt.backup_id.starts_with("passports/"));
 
     let verification = adapter
         .verify(passport.id, &receipt.content_hash)
@@ -261,7 +262,7 @@ async fn verify_wrong_hash_returns_not_ok() {
     adapter.ensure_bucket().await.expect("create bucket");
 
     let passport = make_passport();
-    adapter.archive(&passport, 10).await.expect("archive");
+    adapter.store(&passport, 10).await.expect("back up");
 
     let v = adapter
         .verify(passport.id, "deadbeefdeadbeef")
@@ -277,7 +278,7 @@ async fn retrieve_returns_original_passport() {
     adapter.ensure_bucket().await.expect("create bucket");
 
     let passport = make_passport();
-    adapter.archive(&passport, 10).await.expect("archive");
+    adapter.store(&passport, 10).await.expect("back up");
 
     let retrieved = adapter
         .retrieve(passport.id)

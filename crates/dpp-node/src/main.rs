@@ -18,7 +18,7 @@ use dpp_common::{
 };
 use dpp_crypto::keystore::KeyStore;
 use dpp_domain::{
-    ports::archive::ArchivePort, ports::compliance::ComplianceRegistry,
+    ports::backup::BackupCopyPort, ports::compliance::ComplianceRegistry,
     ports::registry_sync::RegistrySyncPort,
 };
 use dpp_identity_service::state::AppState as IdentityState;
@@ -157,9 +157,9 @@ async fn main() -> anyhow::Result<()> {
         }
     };
 
-    // ── ESPR Art. 13 archive (S3 or NoOp) ────────────────────────────────────
-    let (archive, archive_trust): (Arc<dyn ArchivePort>, TrustMode) =
-        dpp_node::infra::s3_archive::from_env();
+    // ── ESPR Art. 10(4) back-up copy (S3 or NoOp) ───────────────────────────
+    let (backup, backup_trust): (Arc<dyn BackupCopyPort>, TrustMode) =
+        dpp_node::infra::s3_backup::from_env();
 
     // Credential issuers: who may attest which audience. Ghost when unconfigured,
     // so a node that cannot grant credentialed access says so rather than
@@ -188,7 +188,7 @@ async fn main() -> anyhow::Result<()> {
         profile,
         seal_wiring.trust,
         registry_trust,
-        archive_trust,
+        backup_trust,
         credential_trust,
         plugins::compliance_trust(&plugin_host),
     )?;
@@ -260,7 +260,7 @@ async fn main() -> anyhow::Result<()> {
         db.audit_repo.clone(),
         event_bus,
         registry_sync,
-        archive,
+        backup,
         operator,
         cfg.resolver_base_url.clone(),
     )
@@ -274,6 +274,9 @@ async fn main() -> anyhow::Result<()> {
     .with_webhooks(db.webhook_outbox.clone());
     if let Some(base) = cfg.snapshot_public_base_url.clone() {
         passport_service = passport_service.with_snapshot_public_base_url(base);
+    }
+    if let Some(provider) = cfg.snapshot_provider.clone() {
+        passport_service = passport_service.with_service_provider(provider);
     }
     // Only arm the reconcile outbox when there is somewhere to reconcile *to*.
     // Enqueuing rows no drain will ever consume would grow an unbounded backlog

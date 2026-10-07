@@ -1,6 +1,6 @@
 //! Historical versions of a passport — EN 18221:2026 clause 4.2 archiving.
 //!
-//! 🚨 Not `PassportStatus::Archived`, which is a terminal lifecycle state. See
+//! 🚨 Not `PassportStatus::Retired`, which is a terminal lifecycle state. See
 //! `ops/pg/0040_passport_version.sql` for why both wear the word.
 
 use async_trait::async_trait;

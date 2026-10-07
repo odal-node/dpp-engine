@@ -26,7 +26,7 @@ async fn test_battery_invalid_gtin() {
         "materials": [{"name": "Lithium", "weightKg": 1.0}],
         "productGroupData": {
             "productGroup": "battery",
-            "gtin": "123",
+            "productIdentifier": { "scheme": "gs1", "gtin": "123" },
             "batteryChemistry": "Li-ion",
             "batteryType": "industrial",
             "nominalVoltageV": 12.0,
@@ -59,7 +59,7 @@ async fn test_textile_fibre_sum_invalid() {
         "materials": [{"name": "Cotton", "weightKg": 0.1}],
         "productGroupData": {
             "productGroup": "textile",
-            "gtin": "09506000134352",
+            "productIdentifier": { "scheme": "gs1", "gtin": "09506000134352" },
             "fibreComposition": [
                 {"fibre": "cotton", "pct": 50.0},
                 {"fibre": "polyester", "pct": 40.0}
@@ -142,7 +142,7 @@ async fn test_textile_empty_care_instructions() {
         "materials": [{"name": "Cotton", "weightKg": 0.2}],
         "productGroupData": {
             "productGroup": "textile",
-            "gtin": "09506000134352",
+            "productIdentifier": { "scheme": "gs1", "gtin": "09506000134352" },
             "fibreComposition": [
                 {"fibre": "cotton", "pct": 100.0}
             ],
@@ -191,7 +191,7 @@ async fn test_battery_rejects_a_caller_chosen_schema_version() {
         "schemaVersion": "1.0.0",
         "productGroupData": {
             "productGroup": "battery",
-            "gtin": "09506000134352",
+            "productIdentifier": { "scheme": "gs1", "gtin": "09506000134352" },
             "batteryChemistry": "LFP",
             "batteryType": "industrial",
             "nominalVoltageV": 12.0,
@@ -243,7 +243,7 @@ async fn test_battery_accepts_the_current_schema_version() {
         "schemaVersion": current,
         "productGroupData": {
             "productGroup": "battery",
-            "gtin": "09506000134352",
+            "productIdentifier": { "scheme": "gs1", "gtin": "09506000134352" },
             "batteryChemistry": "LFP",
             "batteryType": "industrial",
             "nominalVoltageV": 12.0,

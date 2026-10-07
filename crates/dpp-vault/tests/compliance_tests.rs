@@ -19,7 +19,7 @@ async fn test_passthrough_battery_stores_result() {
         "materials": [{"name": "Lithium", "weightKg": 1.2}],
         "productGroupData": {
             "productGroup": "battery",
-            "gtin": "09506000134352",
+            "productIdentifier": { "scheme": "gs1", "gtin": "09506000134352" },
             "batteryChemistry": "NMC",
             "batteryType": "portable",
             "nominalVoltageV": 24.0,
@@ -62,7 +62,7 @@ async fn test_passthrough_textile_stores_result() {
         "materials": [{"name": "Cotton", "weightKg": 0.15}],
         "productGroupData": {
             "productGroup": "textile",
-            "gtin": "09506000134352",
+            "productIdentifier": { "scheme": "gs1", "gtin": "09506000134352" },
             "fibreComposition": [
                 {"fibre": "wool", "pct": 100.0}
             ],

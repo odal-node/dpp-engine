@@ -28,7 +28,7 @@ fn battery_passport(gtin: &str) -> serde_json::Value {
         ],
         "productGroupData": {
             "productGroup": "battery",
-            "gtin": gtin,
+            "productIdentifier": { "scheme": "gs1", "gtin": gtin },
             "batteryChemistry": "LFP",
             "batteryType": "portable",
             "nominalVoltageV": 48.0,
@@ -53,7 +53,7 @@ async fn by_identity_finds_the_matching_draft() {
     let id = created["id"].as_str().expect("id missing").to_owned();
 
     let resp = client
-        .get("/api/v1/dpp/by-identity?productGroup=battery&gtin=09506000134352")
+        .get("/api/v1/dpp/by-identity?productGroup=battery&identifier=09506000134352")
         .await;
     assert_eq!(resp.status(), 200, "the route must be reachable, not 404");
     let found: serde_json::Value = resp.json().await.expect("parse by-identity response");
@@ -75,7 +75,7 @@ async fn by_identity_returns_404_when_nothing_matches() {
 
     // Same product group, a GTIN that was never created.
     let resp = client
-        .get("/api/v1/dpp/by-identity?productGroup=battery&gtin=00000000000000")
+        .get("/api/v1/dpp/by-identity?productGroup=battery&identifier=00000000000000")
         .await;
     assert_eq!(resp.status(), 404, "no passport matches this identity");
 }

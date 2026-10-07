@@ -17,7 +17,7 @@ pub struct Config {
     /// cross-service hook to evict it on suspend. A short default keeps that
     /// recall-blind window small; raise it only with an explicit acceptance of
     /// the recall-propagation latency. The complete fix is event-driven
-    /// invalidation (vault publishes a cache-bust on suspend/archive).
+    /// invalidation (vault publishes a cache-bust on suspend/retire).
     pub cache_ttl_secs: u64,
 
     /// Port to listen on (default: 8003)

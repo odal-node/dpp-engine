@@ -45,7 +45,7 @@ async fn retiring_a_facility_preserves_passport_provenance_and_audits() {
                 "manufacturer": { "name": "GreenCell GmbH", "address": "Berlin, DE" },
                 "productGroupData": {
                     "productGroup": "battery",
-                    "gtin": "09506000134352",
+                    "productIdentifier": { "scheme": "gs1", "gtin": "09506000134352" },
                     "batteryChemistry": "LFP",
                     "batteryType": "portable",
                     "nominalVoltageV": 48.0,

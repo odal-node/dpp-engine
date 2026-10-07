@@ -70,30 +70,28 @@ pub async fn resolve_aas_handler(
         }
     };
 
-    // The AAS asset identity is the GTIN. Unsold-goods reports and untyped
-    // product groups carry none — they do not identify a trade item — so no AAS
-    // representation of them exists. 406 is the honest answer to "I want this
-    // as AAS": the resource has no representation matching the request.
+    // The AAS asset identity is the passport's product identifier, in whichever
+    // EN 18219 scheme issued it — a GTIN, an identification link or a DID.
+    // Unsold-goods reports and untyped product groups without one do not
+    // identify a product, so no AAS representation of them exists. 406 is the
+    // honest answer to "I want this as AAS": the resource has no representation
+    // matching the request.
     //
     // This is the door's constraint, not the mappers'. `dpp-aas` still builds a
     // correct unsold-goods submodel for a caller that supplies its own asset
     // identity — a file export or an AASX package for a reporting authority —
-    // because `build_aas_from_passport` takes the identity as a parameter. What
-    // is unavailable is *this* representation at *this* URL, and the fix is not
-    // to invent a `globalAssetId`: a fabricated trade-item identifier inside a
-    // document an integrator treats as authoritative is worse than a 406.
-    let Some(gtin) = passport
-        .product_group_data
-        .as_ref()
-        .and_then(|sd| sd.gtin())
-    else {
+    // through `AssetIdentity::Named`. What is unavailable is *this*
+    // representation at *this* URL, and the fix is not to invent a
+    // `globalAssetId`: a fabricated product identifier inside a document an
+    // integrator treats as authoritative is worse than a 406.
+    let Some(identity) = dpp_aas::AssetIdentity::from_passport(&passport) else {
         return problem(
             StatusCode::NOT_ACCEPTABLE,
-            "This passport has no GTIN, so it has no AAS representation.",
+            "This passport has no product identifier, so it has no AAS representation.",
         );
     };
 
-    let environment = match dpp_aas::build_aas_environment(&passport, gtin, Audience::Public) {
+    let environment = match dpp_aas::build_aas_environment(&passport, identity, Audience::Public) {
         Ok(env) => env,
         Err(_) => {
             // A masking failure is a disclosure-policy defect, not a caller

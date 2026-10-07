@@ -6,7 +6,7 @@ use std::fmt::Write as _;
 use chrono::{DateTime, Utc};
 use qrcode::QrCode;
 
-use crate::carrier::carrier_uri;
+use crate::carrier::{carrier_uri, product_identifier};
 use crate::esc::esc;
 use crate::sections;
 
@@ -77,17 +77,13 @@ pub fn render_page(
         .get("status")
         .and_then(|v| v.as_str())
         .unwrap_or("unknown"));
-    // `gtin` lives in the product group-specific payload, not on the passport itself
-    // (see `crate::domain::carrier_uri`'s doc comment for the JSON shape).
-    let gtin = esc(p
-        .get("productGroupData")
-        .and_then(|sd| sd.get("gtin"))
-        .and_then(|v| v.as_str())
-        .unwrap_or("-"));
+    // The identifier lives in the product group payload, not on the envelope,
+    // and may be a GTIN, an identification link or a DID.
+    let product_identifier = esc(product_identifier(p).unwrap_or("-"));
     let batch_id = esc(p.get("batchId").and_then(|v| v.as_str()).unwrap_or("-"));
 
     let product_group_html = sections::build_product_group_section(p);
-    let qr_svg = carrier_uri(p, resolver_base_url, dpp_id)
+    let qr_svg = carrier_uri(p)
         .map(|uri| build_qr_svg(&uri))
         .unwrap_or_default();
     // Escape the id for HTML contexts (the QR above encodes the carrier URI).
@@ -115,7 +111,7 @@ pub fn render_page(
     .badge-active,.badge-published{{background:#d1fae5;color:#065f46}}
     .badge-draft{{background:#fef3c7;color:#92400e}}
     .badge-suspended{{background:#fee2e2;color:#991b1b}}
-    .badge-archived{{background:#e5e7eb;color:#374151}}
+    .badge-retired{{background:#e5e7eb;color:#374151}}
     table{{width:100%;border-collapse:collapse;margin-top:.5rem}}
     th,td{{text-align:left;padding:.5rem .4rem;border-bottom:1px solid #f3f4f6;vertical-align:top}}
     th{{width:44%;color:#6b7280;font-weight:500;font-size:.875rem}}
@@ -141,7 +137,7 @@ pub fn render_page(
     <table aria-label="Product information">
       <tr><th scope="row">Passport ID</th><td><code>{dpp_id}</code></td></tr>
       <tr><th scope="row">Manufacturer</th><td>{manufacturer}</td></tr>
-      <tr><th scope="row">GTIN</th><td>{gtin}</td></tr>
+      <tr><th scope="row">Product identifier</th><td>{product_identifier}</td></tr>
       <tr><th scope="row">Batch ID</th><td>{batch_id}</td></tr>
     </table>
 
@@ -288,6 +284,32 @@ mod tests {
         );
     }
 
+    /// The badge class is `badge-{status}` interpolated from the status string,
+    /// so a renamed status silently loses its styling: the rule is still in the
+    /// stylesheet under the old name, the class on the element is the new one,
+    /// and nothing fails — the badge just renders unstyled on the one page a
+    /// consumer actually sees. That is exactly what `archived` → `retired` did
+    /// until this test was written.
+    #[test]
+    fn the_retired_badge_has_a_style_rule_to_match_its_class() {
+        let mut passport = unredacted_passport();
+        passport["status"] = serde_json::json!("retired");
+        let html = render_page(
+            DPP_ID,
+            &passport,
+            "https://id.odal-node.io",
+            SnapshotNotice::Live,
+        );
+        assert!(
+            html.contains("badge-retired"),
+            "the element must carry the class"
+        );
+        assert!(
+            html.contains(".badge-retired{"),
+            "and the stylesheet must define it, or the badge renders unstyled"
+        );
+    }
+
     #[test]
     fn missing_fields_fall_back_to_placeholders() {
         let html = render_page(
@@ -300,7 +322,7 @@ mod tests {
         assert!(html.contains("badge-unknown"));
         assert!(
             html.contains(">-<"),
-            "gtin/batch must fall back to a dash, not be omitted"
+            "identifier/batch must fall back to a dash, not be omitted"
         );
     }
 

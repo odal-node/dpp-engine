@@ -2,9 +2,10 @@ get:
   operationId: resolveByGtinBatchSerial
   summary: GS1 Digital Link resolver — GTIN + batch/lot + serial
   description: |
-    The full shape this node's own carrier emits for a batched,
-    serialised trade item. **Resolution is keyed on the GTIN alone**:
-    `batch` and `serial` are accepted and ignored. Same behaviour as
+    The shape this node printed for a batched passport before its carrier
+    followed the passport's stated level, and one any conformant label may
+    carry. **The serial is the resolution key**: it names one passport
+    whatever its level, so the batch is not consulted. Same behaviour as
     `/01/{gtin}` otherwise (`linkType` / `Accept` negotiation).
   tags:
     - Public Resolver
@@ -21,13 +22,13 @@ get:
       required: true
       schema:
         type: string
-      description: Accepted and ignored — not a resolution key.
+      description: AI 10. Not consulted once a serial is present.
     - name: serial
       in: path
       required: true
       schema:
         type: string
-      description: Accepted and ignored — not a resolution key.
+      description: AI 21, the carrier serial. Selects the passport.
     - name: linkType
       in: query
       required: false

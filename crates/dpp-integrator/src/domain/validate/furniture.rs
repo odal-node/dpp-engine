@@ -88,7 +88,9 @@ pub fn validate_furniture_row(
         co2e_per_unit: None,
         repairability_score: None,
         product_group_data: Some(ProductGroupData::Furniture(FurnitureData {
-            gtin: gtin.expect("field verified present by errors.is_empty() guard above"),
+            product_identifier: dpp_domain::identifier::ProductIdentifier::gs1(
+                gtin.expect("field verified present by errors.is_empty() guard above"),
+            ),
             product_type: product_type
                 .expect("field verified present by errors.is_empty() guard above"),
             primary_material: primary_material

@@ -140,7 +140,7 @@ pub async fn public_read_handler(
 ///
 /// # What this does not reach
 ///
-/// A passport retired **without** a successor — `archived` at the end of its
+/// A passport retired **without** a successor — `retired` at the end of its
 /// retention, or `deactivated` at end of life. Those keep serving their own
 /// frozen view, whose `status` still reads as it did at publish. There is no
 /// successor to send a reader to and no authenticated way to say "this is over"
@@ -277,7 +277,7 @@ mod tests {
             "productName": "Test Pack",
             "productGroupData": {
                 "productGroup": "battery",
-                "gtin": "09506000134352",
+                "productIdentifier": { "scheme": "gs1", "gtin": "09506000134352" },
                 "batteryChemistry": "LFP",
                 "nominalVoltageV": 48.0,
                 "nominalCapacityAh": 100.0,

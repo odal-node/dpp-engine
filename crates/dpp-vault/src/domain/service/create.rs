@@ -579,6 +579,7 @@ mod tests {
             responsible_operator: None,
             facility: None,
             seal: None,
+            carrier_serial: None,
         }
     }
 
@@ -883,7 +884,7 @@ mod tests {
             &mut p,
             &serde_json::json!({"productGroupData": {
                 "productGroup": "textile",
-                "gtin": "09506000134352",
+                "productIdentifier": { "scheme": "gs1", "gtin": "09506000134352" },
                 "fibreComposition": [{ "fibre": "cotton", "pct": 100.0 }],
                 "careInstructions": "wash cold",
                 "countryOfOrigin": "PT",

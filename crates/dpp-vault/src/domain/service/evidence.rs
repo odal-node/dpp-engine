@@ -327,7 +327,7 @@ impl PassportService {
 /// as the most recent `"published"` audit entry recorded them.
 ///
 /// The exact bytes that were signed, never reconstructed from the current
-/// passport row, which may have since mutated (suspend/archive/eol change
+/// passport row, which may have since mutated (suspend/retire/eol change
 /// `status` without re-signing). See `publish.rs` for why this metadata is
 /// stamped there. `None` when no publish has stamped a snapshot.
 ///
