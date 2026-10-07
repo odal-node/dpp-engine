@@ -28,7 +28,9 @@
 //!    every pass.
 //! 5. **Ask whether the authority is acceptable**, by the caller's policy.
 //! 6. **Read the result back** with the reader the audit uses and require it to
-//!    say what was expected. The last guard before something is stored.
+//!    say what was expected, and require the signature to read exactly as it did
+//!    before: the same covered digest, verifying or not as it did. The last guard
+//!    before something is stored.
 
 use chrono::{DateTime, Utc};
 
@@ -182,12 +184,52 @@ pub async fn renew_archive_timestamp(
             )));
         }
     }
+    signature_untouched(seal_der, &attached.seal_der)?;
 
     Ok(Renewed {
         seal_der: attached.seal_der,
         previous_expires: request.previous_expires,
         expires: attached.expires,
     })
+}
+
+/// Refuse a renewal that changed what the signature says.
+///
+/// A renewal adds one unsigned attribute, and the signature, its covered digest
+/// and whether it verifies must come out exactly as they went in. Attaching the
+/// stamp re-encodes the structure around them, and a re-encoding that disturbed
+/// the signed part would store a seal the audit then calls broken, over one that
+/// was sound. Compared with the original rather than required to verify, so a
+/// renewal is judged on what it changed and not on the seal it was handed.
+fn signature_untouched(original: &[u8], renewed: &[u8]) -> Result<(), RenewalError> {
+    let read = |seal: &[u8]| {
+        Ok::<_, SealError>((
+            cades::covered_digest(seal)?,
+            cades::verify_against_embedded_certificate(seal)?,
+        ))
+    };
+    match (read(original), read(renewed)) {
+        (Ok(before), Ok(after)) if before == after => Ok(()),
+        (Ok((digest_before, verifies_before)), Ok((digest_after, verifies_after))) => {
+            Err(RenewalError::Unusable(format!(
+                "the renewed seal's signature does not read as the original's did: it {} the \
+                 same digest and {}",
+                if digest_before == digest_after {
+                    "covers"
+                } else {
+                    "no longer covers"
+                },
+                match (verifies_before, verifies_after) {
+                    (true, false) => "no longer verifies",
+                    (false, true) => "verifies only now",
+                    _ => "verifies as before",
+                },
+            )))
+        }
+        (Err(e), _) | (_, Err(e)) => Err(RenewalError::Unusable(format!(
+            "the renewed seal's signature cannot be compared with the original's: {e}"
+        ))),
+    }
 }
 
 #[cfg(test)]

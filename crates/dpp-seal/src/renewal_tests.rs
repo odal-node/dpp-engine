@@ -383,3 +383,64 @@ async fn a_renewal_stamped_in_the_same_second_is_still_the_newest() {
         "the later-expiring stamp must win the tie"
     );
 }
+
+/// `seal` with the last byte of its signature value flipped: still well-formed,
+/// no longer a signature over what it signs.
+fn with_signature_flipped(seal: &[u8]) -> Vec<u8> {
+    use cms::{content_info::ContentInfo, signed_data::SignedData};
+    use der::{Decode as _, Encode as _, asn1::SetOfVec};
+
+    let info = ContentInfo::from_der(seal).expect("CMS");
+    let mut sd: SignedData = info.content.decode_as().expect("SignedData");
+    let mut signer = sd.signer_infos.0.as_slice()[0].clone();
+    let mut signature = signer.signature.as_bytes().to_vec();
+    let last = signature.len() - 1;
+    signature[last] ^= 0x01;
+    signer.signature = der::asn1::OctetString::new(signature).expect("octets");
+    let mut signers = SetOfVec::new();
+    signers.insert(signer).expect("signer");
+    sd.signer_infos = cms::signed_data::SignerInfos::from(signers);
+    ContentInfo {
+        content_type: info.content_type,
+        content: der::Any::encode_from(&sd).expect("encode"),
+    }
+    .to_der()
+    .expect("re-encode")
+}
+
+/// **The read-back refuses a renewal that changed what the signature says.**
+///
+/// A renewal adds one unsigned attribute. One that came out covering another
+/// digest, or no longer verifying, would be stored over a sound seal and read as
+/// broken from then on. It is judged on what it changed, so a seal that never
+/// verified is not refused for that.
+#[test]
+fn a_renewal_must_leave_the_signature_as_it_found_it() {
+    let (seal, _dir) = seal_ending_in(30);
+    signature_untouched(&seal, &seal).expect("nothing changed");
+
+    let broken = with_signature_flipped(&seal);
+    assert!(
+        matches!(
+            signature_untouched(&seal, &broken),
+            Err(RenewalError::Unusable(ref why)) if why.contains("no longer verifies")
+        ),
+        "a signature that stopped verifying is refused"
+    );
+
+    let other_dir = tempfile::tempdir().expect("tempdir");
+    tsa_identity(other_dir.path(), "Other TSA", 30);
+    let other = LocalIdentity::load_or_create(other_dir.path())
+        .expect("identity")
+        .sign_detached_at(&[0x55; 32], SealConformanceLevel::BaselineLta)
+        .expect("sign");
+    assert!(
+        matches!(
+            signature_untouched(&seal, &other),
+            Err(RenewalError::Unusable(ref why)) if why.contains("no longer covers")
+        ),
+        "a seal over another digest is refused"
+    );
+
+    signature_untouched(&broken, &broken).expect("judged on the change, not on the seal");
+}

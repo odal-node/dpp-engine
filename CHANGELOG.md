@@ -199,7 +199,8 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   seal is touched; a stamp whose authority's certificate ends no later than the one
   it replaces is refused (a renewal that gains nothing would otherwise be bought
   again on every pass); an authority whose clock is more than ten minutes from this
-  node's is refused; the renewed seal is read back and must say what was expected;
+  node's is refused; the renewed seal is read back and must say what was expected,
+  with its signature covering the same digest and verifying exactly as before;
   and under `NODE_PROFILE=production` the authority must be one the held Trusted
   Lists name as a qualified timestamp authority when it stamped, so a node that
   holds no lists renews nothing rather than storing protection that only looks like
