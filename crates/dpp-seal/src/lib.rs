@@ -44,7 +44,6 @@
 //! and the selector maps one environment value to one module — so a backend can
 //! be added or dropped without touching the others.
 
-pub(crate) mod ats;
 pub mod backend;
 pub mod cades;
 pub mod eideasy;

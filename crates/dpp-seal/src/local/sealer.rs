@@ -265,7 +265,7 @@ impl LocalIdentity {
         let signer_info = self.at_level(
             signer_info,
             level,
-            crate::ats::Enclosing {
+            crate::cades::ats::Enclosing {
                 econtent_type: &econtent.econtent_type,
                 certificates: Some(&certificates),
                 crls: crls.as_ref(),
@@ -316,7 +316,7 @@ impl LocalIdentity {
         &self,
         signer: SignerInfo,
         level: SealConformanceLevel,
-        enclosing: crate::ats::Enclosing<'_>,
+        enclosing: crate::cades::ats::Enclosing<'_>,
     ) -> Result<SignerInfo, SealError> {
         use sha2::{Digest as _, Sha256};
 
@@ -339,24 +339,26 @@ impl LocalIdentity {
             // That ordering is the clause's: the index covers every unsigned
             // attribute value *present when the archive timestamp is requested*,
             // and an archive timestamp cannot index itself.
-            let index = crate::ats::hash_index(enclosing, &signer)?;
+            let index = crate::cades::ats::hash_index(enclosing, &signer)?;
 
             // Step 2 of the concatenation. Detached, so the hash of the signed
             // data is not in the envelope — but the `message-digest` signed
             // attribute is that hash, and the archive timestamp uses the same
             // algorithm the signature did, which is the condition that makes
             // reading it sound.
-            let signed_data_hash = crate::ats::signed_data_hash(&signer, &crate::ats::sha256_alg())
-                .ok_or_else(|| {
-                    SealError::Config(
-                        "cannot read the signed-data hash for the archive timestamp: the \
+            let signed_data_hash =
+                crate::cades::ats::signed_data_hash(&signer, &crate::cades::ats::sha256_alg())
+                    .ok_or_else(|| {
+                        SealError::Config(
+                            "cannot read the signed-data hash for the archive timestamp: the \
                          message-digest attribute is absent or was computed under a different \
                          algorithm"
-                            .to_owned(),
-                    )
-                })?;
+                                .to_owned(),
+                        )
+                    })?;
 
-            let imprint = crate::ats::imprint(enclosing, &signer, &signed_data_hash, &index)?;
+            let imprint =
+                crate::cades::ats::imprint(enclosing, &signer, &signed_data_hash, &index)?;
             signer = self.with_archive_timestamp(signer, &imprint, 2, &index)?;
         }
 
@@ -393,7 +395,7 @@ impl LocalIdentity {
         signer: SignerInfo,
         imprint: &[u8],
         serial: u64,
-        index: &crate::ats::AtsHashIndexV3,
+        index: &crate::cades::ats::AtsHashIndexV3,
     ) -> Result<SignerInfo, SealError> {
         use der::asn1::SetOfVec;
 
