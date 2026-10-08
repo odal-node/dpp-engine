@@ -118,7 +118,7 @@ impl LocalTsa {
         &self,
         imprint: &[u8],
         serial: u64,
-        index: Option<&crate::ats::AtsHashIndexV3>,
+        index: Option<&crate::cades::ats::AtsHashIndexV3>,
     ) -> Result<Any, SealError> {
         self.token_at(imprint, serial, index, chrono::Utc::now(), None)
     }
@@ -135,7 +135,7 @@ impl LocalTsa {
         &self,
         imprint: &[u8],
         serial: u64,
-        index: Option<&crate::ats::AtsHashIndexV3>,
+        index: Option<&crate::cades::ats::AtsHashIndexV3>,
         at: chrono::DateTime<chrono::Utc>,
         nonce: Option<der::asn1::Uint>,
     ) -> Result<Any, SealError> {
@@ -210,7 +210,7 @@ impl LocalTsa {
                         })?;
                     let mut set = SetOfVec::new();
                     set.insert(x509_cert::attr::Attribute {
-                        oid: crate::ats::ID_AA_ATS_HASH_INDEX_V3,
+                        oid: crate::cades::ats::ID_AA_ATS_HASH_INDEX_V3,
                         values,
                     })
                     .map_err(|e| SealError::Config(format!("cannot attach the hash index: {e}")))?;

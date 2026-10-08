@@ -43,7 +43,7 @@ use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
 use chrono::{DateTime, Utc};
-use dpp_seal::{CadesInspector, TimestampSource, renewal::RenewalError};
+use dpp_seal::{CadesInspector, TimestampSource, timestamp::renewal::RenewalError};
 use dpp_types::{SealOutbox, SealedPassport, trust::NodeProfile};
 
 /// How many seals one audit batch may try to renew.
@@ -342,7 +342,7 @@ pub fn from_env(
             )
         }
         SourceChoice::Rfc3161 { url, timeout } => {
-            let source = dpp_seal::rfc3161::Rfc3161Source::new(&url, timeout)
+            let source = dpp_seal::timestamp::rfc3161::Rfc3161Source::new(&url, timeout)
                 .context("Failed to build the RFC 3161 timestamp source")?;
             // The host only, never the whole address: a path or query can carry a
             // token even when userinfo is refused.

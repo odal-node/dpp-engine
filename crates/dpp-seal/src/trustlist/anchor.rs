@@ -27,7 +27,7 @@ use sha2::{Digest as _, Sha256};
 /// claim of qualified status that rests on one. Configuration is for choices
 /// about a deployment; this is the thing the deployment is trusted *against*.
 ///
-/// It is the same reasoning [`crate::config::SEAL_PROVIDER`] applies — a
+/// It is the same reasoning [`crate::backend::SEAL_PROVIDER`] applies — a
 /// node that cannot name its trust provider must not quietly become one that has
 /// none — carried to its root. Changing the anchor is a reviewed commit and a
 /// release, and that is the feature, not the friction.

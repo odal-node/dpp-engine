@@ -38,7 +38,7 @@ use dpp_types::TimestampStanding;
 
 use crate::cades::{self, ArchivalFreshness, TimestampToken};
 use crate::error::SealError;
-use crate::timestamp_source::TimestampSource;
+use crate::timestamp::TimestampSource;
 
 /// How far an authority's clock may differ from this node's before its stamp is
 /// refused.

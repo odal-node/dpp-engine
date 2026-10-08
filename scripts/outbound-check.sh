@@ -44,7 +44,7 @@ crates/dpp-node/src/infra/registry/client.rs
 crates/dpp-integrator/src/infra/vault_client.rs
 crates/dpp-resolver/src/main.rs
 crates/dpp-seal/src/eideasy/client.rs
-crates/dpp-seal/src/rfc3161.rs
+crates/dpp-seal/src/timestamp/rfc3161.rs
 crates/dpp-vault/src/infra/identity_client.rs
 cli/src/http.rs
 cli/src/core/snapshot.rs'
