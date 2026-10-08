@@ -291,6 +291,34 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ### Fixed
 
+- **The integration tier no longer hangs on the request after a `publish`.**
+  `publish_serve_cycle`, `textile` and `suspension` stalled about once in a
+  thousand runs on the request sent straight after `POST …/publish`, until the
+  client timeout fired. It was never in the vault: the router had not received
+  the request, and the client's socket held the unread tail of the previous
+  response.
+
+  The publish response is about 10 KiB and `hyper` reads a socket 8 KiB at a
+  time, so when its headers arrived some two kilobytes were still unread and the
+  response owned its connection until they were. The tests asserted on
+  `resp.status()` and wrote `let resp = …` for the next call — and **a shadowed
+  binding is not dropped**, so the first response lived to the end of the test.
+  In a narrow race the pool handed that same busy connection to the next request,
+  which queued behind a body nobody was going to read while the test waited for
+  it. Nothing was running anywhere.
+
+  `TestClient` now reads every response to the end before returning it, so a
+  test cannot hold a response that still owns a connection; the response it
+  returns is an ordinary `reqwest::Response`, and no test changed. Its timeout
+  note no longer says "the server accepted the request and never answered" — a
+  total timeout cannot know that, and here it was the opposite of true. The
+  connect has its own ten-second timeout, and a stalled request now reports what
+  the router had in flight and the last requests it answered.
+
+  Other suites build their own shared clients the same way
+  (`dpp-node/tests/smoke.rs`, `dpp-resolver/tests/resolver_e2e.rs`) and are not
+  covered by this.
+
 - **A seal's timestamp is only believed when its authority is a qualified one.**
   `attestedSealedAt` was checked for its own signature, its imprint and its
   authority's validity window, and never for *who* the authority was — so a seal
