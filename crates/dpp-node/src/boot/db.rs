@@ -73,7 +73,10 @@ pub async fn init_db(cfg: &NodeConfig) -> anyhow::Result<DbComponents> {
         }
     }
 
-    tracing::info!(url = %cfg.database_url, "connecting to PostgreSQL");
+    // The URL carries the app role's password inline: log where the database
+    // is, never how to log in to it.
+    let db_target = dpp_common::config::redact_url_credentials(&cfg.database_url);
+    tracing::info!(url = %db_target, "connecting to PostgreSQL");
 
     // If a privileged migration URL is provided, run sqlx migrations before
     // the app pool opens. odal_app cannot run DDL; migrations need a superuser
@@ -107,7 +110,7 @@ pub async fn init_db(cfg: &NodeConfig) -> anyhow::Result<DbComponents> {
         return Err(e).context("Failed to connect to PostgreSQL after 30 attempts");
     }
     let dal = dal_opt.expect("dal set on success");
-    tracing::info!(url = %cfg.database_url, "PostgreSQL connected");
+    tracing::info!(url = %db_target, "PostgreSQL connected");
 
     let version_store: Arc<dyn dpp_types::audit::PassportVersionStore> =
         Arc::new(dpp_dal::pg::PgPassportVersionRepo::new(dal.clone()));
@@ -152,4 +155,99 @@ pub async fn init_db(cfg: &NodeConfig) -> anyhow::Result<DbComponents> {
         idempotency: Arc::new(PgIdempotencyRepo::new(dal.clone())),
         db_ping: Arc::new(PgPing(dal)),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    //! `init_db` needs a live Postgres to get past its connect loop, but it logs
+    //! the database it is about to use *before* that, and it bails ahead of the
+    //! loop when `DATABASE_MIGRATE_URL` will not parse — so the line can be read
+    //! back here with no database and without waiting out 30 retries.
+    use std::io;
+    use std::sync::Mutex;
+
+    use tracing_subscriber::fmt::MakeWriter;
+
+    use super::*;
+
+    /// A log sink the test can read back.
+    #[derive(Clone, Default)]
+    struct Captured(Arc<Mutex<Vec<u8>>>);
+
+    impl io::Write for Captured {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(buf);
+            Ok(buf.len())
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl MakeWriter<'_> for Captured {
+        type Writer = Self;
+
+        fn make_writer(&self) -> Self {
+            self.clone()
+        }
+    }
+
+    fn config(database_url: &str, database_migrate_url: &str) -> NodeConfig {
+        NodeConfig {
+            database_url: database_url.into(),
+            database_migrate_url: Some(database_migrate_url.into()),
+            key_store_path: "/tmp/ks.json".into(),
+            key_store_passphrase: "passphrase-must-not-leak".into(),
+            did_web_base_url: "https://node.example.com".into(),
+            cors_allowed_origins: Vec::new(),
+            admin_username: None,
+            admin_password: None,
+            batch_concurrency: 20,
+            nats_url: None,
+            port: 8001,
+            log_level: "info".into(),
+            plugins_dir: "./plugins".into(),
+            metrics_addr: None,
+            webhook_allow_private_targets: false,
+            resolver_base_url: "https://dpp.example.com".into(),
+            snapshot_public_base_url: None,
+            snapshot_provider: None,
+        }
+    }
+
+    /// Both URLs carry their password inline, so a log field that prints one as
+    /// configured puts the app role's password into whatever aggregates the
+    /// node's logs — on every boot, at INFO. Asserts on the **secret values**,
+    /// like `NodeConfig`'s `Debug` test does, and on the host surviving, so the
+    /// redaction cannot have emptied the line of what makes it useful.
+    #[tokio::test]
+    async fn the_connection_log_line_never_contains_the_password() {
+        let logs = Captured::default();
+        let _subscriber = tracing::subscriber::set_default(
+            tracing_subscriber::fmt()
+                .with_writer(logs.clone())
+                .with_ansi(false)
+                .finish(),
+        );
+
+        // The migrate URL is unparseable (port) on purpose: that is what ends
+        // `init_db` before the retry loop. It also carries a password, so the
+        // test would catch it being logged too.
+        let cfg = config(
+            "postgres://odal_app:pg-pass-must-not-leak@db.internal:5432/odal",
+            "postgres://postgres:migrate-pass-must-not-leak@db.internal:notaport/odal",
+        );
+        assert!(
+            init_db(&cfg).await.is_err(),
+            "the unparseable migrate URL should have ended boot"
+        );
+
+        let logged = String::from_utf8(logs.0.lock().unwrap().clone()).expect("log is utf-8");
+        assert!(logged.contains("connecting to PostgreSQL"), "{logged}");
+        assert!(logged.contains("db.internal:5432/odal"), "{logged}");
+        for secret in ["pg-pass-must-not-leak", "migrate-pass-must-not-leak"] {
+            assert!(!logged.contains(secret), "boot logged {secret}: {logged}");
+        }
+    }
 }

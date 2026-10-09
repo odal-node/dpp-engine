@@ -53,7 +53,10 @@ async fn main() -> anyhow::Result<()> {
 
     fmt().with_env_filter(EnvFilter::new(&cfg.log_level)).init();
 
-    tracing::info!(url = %cfg.database_url, "connecting to PostgreSQL");
+    tracing::info!(
+        url = %dpp_common::config::redact_url_credentials(&cfg.database_url),
+        "connecting to PostgreSQL"
+    );
 
     let dal = PgDal::connect(&cfg.database_url)
         .await
