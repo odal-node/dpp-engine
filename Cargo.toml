@@ -100,9 +100,6 @@ rand         = "0.10"
 # JWT / OAuth
 jsonwebtoken = "9"
 
-# Schema validation
-jsonschema   = "0.17"
-
 # QR code
 qrcode       = "0.14"
 # PNG only — the sole use is encoding a QR code (dpp-resolver's resolve_qr).

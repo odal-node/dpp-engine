@@ -9,7 +9,9 @@ use dpp_domain::{
     ComplianceError, ComplianceErrorKind, ComplianceResult,
     error::DppError,
     passport::{Passport, PassportId},
-    ports::registry_sync::{RegisteringOperator, RegistrationGranularity, RegistrationRequest},
+    ports::registry_sync::{
+        RegisteringOperator, RegistrationGranularity, RegistrationRequest, ServiceProviderRef,
+    },
     product_group::ProductGroupData,
     status::PassportStatus,
 };
@@ -464,14 +466,11 @@ impl PassportService {
                     RegistrationGranularity::Item,
                 ) {
                     Ok(mut reg_req) => {
-                        // Declare the back-up only where this deployment actually
-                        // publishes one. The snapshot tier writing to object
-                        // storage is not enough — the registry has to be able to
-                        // fetch it.
-                        reg_req.backup_url = self
-                            .snapshot_public_base_url
-                            .as_ref()
-                            .map(|base| snapshot_backup_url(base, &passport.id.to_string()));
+                        declare_backup(
+                            &mut reg_req,
+                            self.snapshot_public_base_url.as_deref(),
+                            self.service_provider.as_ref(),
+                        );
                         let payload = serde_json::to_value(&reg_req)
                             .map_err(|e| DppError::Serialisation(e.to_string()))?;
                         Some((outbox, payload))
@@ -662,6 +661,28 @@ fn snapshot_backup_url(base: &str, dpp_id: &str) -> String {
     )
 }
 
+/// Declare this deployment's back-up on a registration: where it is served, and
+/// who hosts it.
+///
+/// The link is declared only where this deployment actually publishes one. The
+/// snapshot tier writing to object storage is not enough — the registry has to
+/// be able to fetch it.
+///
+/// The provider is declared whenever one is configured, link or not. ESPR Art.
+/// 10(4) makes the back-up available *through* a service provider
+/// unconditionally, so naming one is never wrong; the converse is what the
+/// registry refuses — a link with nobody named beside it — which is why the two
+/// travel through one function rather than being assigned at separate sites.
+fn declare_backup(
+    request: &mut RegistrationRequest,
+    base_url: Option<&str>,
+    provider: Option<&ServiceProviderRef>,
+) {
+    request.backup_url =
+        base_url.map(|base| snapshot_backup_url(base, &request.passport_id.to_string()));
+    request.service_provider = provider.cloned();
+}
+
 /// Engine-side obligations at publish, which core has no view of: the
 /// retention horizon comes from this deployment's product group catalog, and
 /// the carrier URL from its resolver. Both are derived from the timestamp core
@@ -775,7 +796,7 @@ mod rejection_reasons {
 #[cfg(test)]
 mod tests {
     use super::{
-        build_carrier_url, gate_outcome, snapshot_backup_url, snapshot_json_key,
+        build_carrier_url, declare_backup, gate_outcome, snapshot_backup_url, snapshot_json_key,
         validate_schema_for_publish,
     };
     use chrono::Utc;
@@ -952,6 +973,83 @@ mod tests {
             !snapshot_backup_url("https://backup.example.com/dpp/", id).contains("//dpp"),
             "no empty path segment"
         );
+    }
+
+    // ── declare_backup ───────────────────────────────────────────────────────
+
+    fn registration() -> dpp_domain::ports::registry_sync::RegistrationRequest {
+        use dpp_domain::ports::registry_sync::{RegistrationGranularity, RegistrationRequest};
+        RegistrationRequest {
+            request_id: uuid::Uuid::now_v7(),
+            passport_id: PassportId::new(),
+            operator_identifier: "did:web:test.example".into(),
+            operator_identifier_scheme: "did".into(),
+            operator_name: "Test Operator GmbH".into(),
+            facility_identifier: "4012345000009".into(),
+            facility: None,
+            product_category: "battery".into(),
+            data_carrier_uri: "https://id.example.com/01/09506000134352/21/abc123".into(),
+            schema_version: "2.7.0".into(),
+            jws_signature: None,
+            published_at: None,
+            country_code: "DE".into(),
+            granularity: RegistrationGranularity::Item,
+            model_id: None,
+            commodity_code: None,
+            backup_url: None,
+            product_identifier: None,
+            service_provider: None,
+        }
+    }
+
+    fn provider() -> dpp_domain::ports::registry_sync::ServiceProviderRef {
+        dpp_domain::ports::registry_sync::ServiceProviderRef::named("Example Backup Provider")
+    }
+
+    /// The registry refuses a declared back-up link with nobody named beside it,
+    /// so the link and its provider have to leave publish together. This is the
+    /// regression: publish set the link and never the provider, and every
+    /// registration of a node that served its snapshots was refused.
+    #[test]
+    fn a_declared_backup_link_travels_with_its_provider() {
+        let mut request = registration();
+        declare_backup(
+            &mut request,
+            Some("https://backup.example.com/dpp"),
+            Some(&provider()),
+        );
+
+        assert_eq!(
+            request.backup_url,
+            Some(snapshot_backup_url(
+                "https://backup.example.com/dpp",
+                &request.passport_id.to_string()
+            ))
+        );
+        assert_eq!(request.service_provider, Some(provider()));
+    }
+
+    /// A provider is named whether or not a link is published: Art. 10(4) makes
+    /// the copy available through one unconditionally, and the registry accepts
+    /// the provider alone. Only the link needs a stated reason to be declared.
+    #[test]
+    fn a_provider_is_named_even_when_no_link_is_published() {
+        let mut request = registration();
+        declare_backup(&mut request, None, Some(&provider()));
+
+        assert_eq!(request.backup_url, None);
+        assert_eq!(request.service_provider, Some(provider()));
+    }
+
+    /// Nothing configured, nothing declared — no invented provider, and no link
+    /// to storage nobody has said is served.
+    #[test]
+    fn nothing_is_declared_when_nothing_is_configured() {
+        let mut request = registration();
+        declare_backup(&mut request, None, None);
+
+        assert_eq!(request.backup_url, None);
+        assert_eq!(request.service_provider, None);
     }
 
     // ── gate_outcome ─────────────────────────────────────────────────────────

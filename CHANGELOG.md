@@ -140,7 +140,48 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   GTIN; it now gets an AAS environment keyed on its own identifier. A passport
   with no identifier at all still answers `406`.
 
+- **A node that serves its snapshots must name who hosts them.** *(Breaking: a
+  node with `SNAPSHOT_PUBLIC_BASE_URL` set and `SNAPSHOT_PROVIDER_NAME` unset no
+  longer boots. Set `SNAPSHOT_PROVIDER_NAME` to the legal name of whoever hosts
+  the back-up, or unset the URL to declare no back-up link.)* dpp-core 0.21.0
+  refuses a registration that declares a back-up link and names no digital
+  product passport service provider, because ESPR Art. 10(4) makes the copy
+  available *through* one. Publish set the link and never the provider, so every
+  registration of a node serving its snapshots was refused and then retried
+  hourly, which reads as a registry outage. The refusal now comes at boot, where
+  the operator is looking, and the provider is declared on every registration,
+  link or not.
+
+  Only the name is required — Annex III(l) mandates no identifier scheme and none
+  is assumed. `SNAPSHOT_PROVIDER_SCHEME` and `SNAPSHOT_PROVIDER_VALUE` (both or
+  neither) and `SNAPSHOT_PROVIDER_COUNTRY` are optional, and are checked at boot
+  with the registry's own rules rather than on the first registration.
+
 ### Fixed
+
+- **Registrations are posted where the registry listens, under the key it
+  reads.** The adapter posted to `/registrations`, a path that was invented and
+  that core now records as wrong; it posts to `/dpp-registration-requests`, taken
+  from core's constant, as do the status and transfer routes. It also sends the
+  request's key in the registry's `Idempotency-Key` header. The key had travelled
+  only in the body as `requestId`, which the registry does not read, so a
+  submission that reached it and whose reply was lost was registered again on the
+  next attempt.
+
+  **A replayed key is not a failure.** A `409` naming the key means the registry
+  already holds the submission, so the row moves to `submitted` and the drain
+  polls for the verdict instead of posting it again. No registry id is recorded
+  for it, since the registry returned none — the column stays empty rather than
+  holding an empty string. Any other `409` is still a refusal. A `2xx` whose body
+  this node cannot read is still an error, but now says the submission may have
+  been accepted: the retry carries the same key and comes back as that `409`, so
+  it converges instead of registering the product twice.
+
+  **A refusal names the registry's trace id.** The registry's error body carries
+  a `subCode` and a `traceId`, the only handle a conversation with its support
+  has. The row's `message`, which `GET /dpp/{dppId}/registry` returns, now reads
+  `<message> [<subCode>] (registry trace id <id>)` where the raw JSON body was.
+  A body that is not that shape is kept as it came.
 
 - **A printed label resolves to the passport it was printed for.** Core 0.21.0
   removed the by-GTIN lookups, and they had been wrong: they returned *a*
@@ -321,6 +362,23 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   which the description did list. Against the old list the new check reports
   both halves: `sandbox` emitted and undocumented, `staging` documented and
   never emitted.
+
+- **`wasmtime` and `wasmtime-wasi` 48.0.3 → 48.0.4**, clearing RUSTSEC-2026-0321
+  to RUSTSEC-2026-0327. All seven concern the sandbox sector plugins run inside:
+  the WASI preview 0 `poll_oneoff` circumvents fuel consumption (-0321), a guest
+  with no stdio makes the host allocate excess memory (-0322), `fd_readdir`
+  copies uninitialised struct padding into guest memory (-0323), a pre-epoch
+  filesystem timestamp panics the host on wasip3 (-0324), and three
+  memory-corruption faults in `wasmtime` itself — mis-typed tag imports (-0325),
+  missing GC rooting across `try_call` (-0326), and an unvalidated
+  async-lifted callback result count (-0327). Which of them a plugin can reach
+  here has not been established, and the sandbox is what they are about, so the
+  bump is not left waiting on that. The existing `wasmtime = "48"` requirement
+  already permitted the patch, so no manifest changed.
+
+  Recorded here because the security audit was already failing on `main` and the
+  registry-contract change could not pass it otherwise. It is its own commit,
+  and the only lockfile change in that branch.
 
 ## [0.14.0] - 2026-09-24
 
