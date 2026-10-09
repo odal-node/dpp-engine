@@ -212,6 +212,7 @@ mod tests {
             webhook_allow_private_targets: false,
             resolver_base_url: "https://dpp.example.com".into(),
             snapshot_public_base_url: None,
+            snapshot_provider: None,
         }
     }
 
