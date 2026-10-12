@@ -15,7 +15,7 @@ use chrono::{DateTime, Utc};
 use der::Encode as _;
 
 use crate::error::SealError;
-use crate::timestamp_source::TimestampSource;
+use crate::timestamp::TimestampSource;
 
 use super::timestamp::LocalTsa;
 

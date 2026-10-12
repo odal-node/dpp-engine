@@ -1,39 +1,13 @@
 //! What the verdict says about a seal, and what it deliberately does not.
 
 use super::*;
-use crate::trustlist::{verify_lotl, verify_trusted_list};
+use base64::Engine as _;
 use cms::content_info::ContentInfo;
 use cms::signed_data::SignedData;
+use der::Decode as _;
 use dpp_types::CreationDevice;
 
-const EU_LOTL: &str = include_str!("../tests/fixtures/eu-lotl.xml");
-const FI_LIST: &str = include_str!("../tests/fixtures/fi-trusted-list.xml");
-
-/// Finland's list, verified through the verified list of lists.
-///
-/// The real document rather than a fixture assembled here: a hand-built list
-/// would prove the matcher agrees with the builder, and the names in a published
-/// list are exactly the thing whose encoding this module bets on.
-fn finnish_list() -> VerifiedTrustedList {
-    let lotl = verify_lotl(EU_LOTL).expect("the LOTL verifies");
-    let pointer = lotl
-        .pointers()
-        .iter()
-        .find(|p| p.territory.as_deref() == Some("FI"))
-        .expect("the LOTL points at Finland")
-        .clone();
-    verify_trusted_list(FI_LIST, &pointer).expect("Finland's list verifies")
-}
-
-/// A seal from the local backend, and the directory holding its key.
-///
-/// The directory is returned because dropping it removes the key store.
-fn local_seal() -> (Vec<u8>, tempfile::TempDir) {
-    let dir = tempfile::tempdir().expect("tempdir");
-    let id = crate::local::LocalIdentity::load_or_create(dir.path()).expect("identity");
-    let seal = id.sign_detached(&[0x11; 32]).expect("sign");
-    (seal, dir)
-}
+use crate::qualification::test_support::{finnish_list, local_seal, name_signer, reencode};
 
 /// The same seal with its certificate's issuer name replaced.
 ///
@@ -65,30 +39,6 @@ fn seal_issued_by(issuer: x509_cert::name::Name) -> (Vec<u8>, tempfile::TempDir)
     name_signer(&mut sd, &relabelled);
 
     (reencode(sd), dir)
-}
-
-/// Point the seal's single `SignerInfo` at `certificate`.
-fn name_signer(sd: &mut SignedData, certificate: &x509_cert::Certificate) {
-    let mut signers = sd.signer_infos.0.as_slice().to_vec();
-    signers[0].sid = cms::signed_data::SignerIdentifier::IssuerAndSerialNumber(
-        cms::cert::IssuerAndSerialNumber {
-            issuer: certificate.tbs_certificate.issuer.clone(),
-            serial_number: certificate.tbs_certificate.serial_number.clone(),
-        },
-    );
-    let mut set = der::asn1::SetOfVec::new();
-    set.insert(signers.remove(0)).expect("signer");
-    sd.signer_infos = cms::signed_data::SignerInfos::from(set);
-}
-
-/// Re-encode a modified `SignedData` as a detached CAdES seal.
-fn reencode(sd: SignedData) -> Vec<u8> {
-    ContentInfo {
-        content_type: const_oid::db::rfc5911::ID_SIGNED_DATA,
-        content: der::Any::encode_from(&sd).expect("encode"),
-    }
-    .to_der()
-    .expect("re-encode")
 }
 
 /// A seal carrying exactly `certificates`, the first being the signer's.
@@ -636,6 +586,3 @@ fn a_not_listed_verdict_says_how_much_was_consulted() {
         "and must not hedge when there is nothing to hedge about: {whole}"
     );
 }
-
-#[path = "timestamp_authority_tests.rs"]
-mod timestamp_authority;

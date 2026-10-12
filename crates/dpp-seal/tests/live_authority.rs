@@ -30,8 +30,8 @@ use dpp_domain::seal::SealConformanceLevel;
 use dpp_seal::TimestampSource as _;
 use dpp_seal::cades::{self, ArchivalFreshness};
 use dpp_seal::local::LocalIdentity;
-use dpp_seal::renewal::renew_archive_timestamp;
-use dpp_seal::rfc3161::Rfc3161Source;
+use dpp_seal::timestamp::renewal::renew_archive_timestamp;
+use dpp_seal::timestamp::rfc3161::Rfc3161Source;
 use rand::Rng as _;
 
 fn live_source() -> (String, Rfc3161Source) {

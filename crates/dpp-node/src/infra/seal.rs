@@ -344,8 +344,9 @@ fn wiring_from_env() -> Result<SealWiring> {
             // remember.
             let conformance_level = conformance_level_from_env(SealConformanceLevel::BaselineLta)?;
             tracing::info!("eIDAS seal: ghost (no provider) — set SEAL_PROVIDER to enable sealing");
-            let port: Arc<dyn SealPort> =
-                Arc::new(dpp_seal::QtspSealAdapter::new(dpp_seal::ghost::GhostSeal));
+            let port: Arc<dyn SealPort> = Arc::new(dpp_seal::QtspSealAdapter::new(
+                dpp_seal::backend::ghost::GhostSeal,
+            ));
             let mode = mode_for(&port.capabilities())?;
             Ok(SealWiring {
                 port,

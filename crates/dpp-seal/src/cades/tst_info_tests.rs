@@ -14,6 +14,8 @@ use der::{
     asn1::{Any, Uint},
 };
 
+use crate::cades::token_facts;
+
 /// The shape of a real token's `TSTInfo`, assembled by hand so the test does not
 /// depend on the type under test to build its own input.
 #[derive(der::Sequence)]
@@ -73,7 +75,7 @@ fn real_world_tst_info() -> Vec<u8> {
 /// A second authority — FreeTSA, SHA-512 over ECDSA P-384 — is exercised by the
 /// `#[ignore]`d live tests rather than kept here: its certificate embeds a
 /// person's email address, which has no business in this repository.
-const REAL_TOKEN: &[u8] = include_bytes!("../tests/fixtures/real-timestamp-token-sectigo.der");
+const REAL_TOKEN: &[u8] = include_bytes!("../../tests/fixtures/real-timestamp-token-sectigo.der");
 
 /// The imprint that token stamps: SHA-256 of the 64 random bytes it was asked for.
 const REAL_TOKEN_IMPRINT: &str = "f48fb2955f8bdc8a32a38fd592bd89630e83d83c98c642f11647cd7feb115f05";

@@ -1,6 +1,6 @@
 //! `SealBackend` — the one thing every sealing backend has to be able to do.
 //!
-//! [`crate::adapter::QtspSealAdapter`] holds one of these and does nothing but
+//! [`crate::backend::QtspSealAdapter`] holds one of these and does nothing but
 //! forward the port's calls to it. The seam exists so that adding, swapping or
 //! dropping a backend touches that backend's module and the selector, and
 //! nothing else — in particular, not the `SealPort` implementation, which has
