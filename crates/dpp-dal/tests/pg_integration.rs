@@ -730,8 +730,12 @@ async fn t9_find_by_identity_matches_draft_and_published_via_index() {
         "a batch mismatch must not fall back to matching on gtin alone"
     );
 
-    // The identifier expression `0042` indexes, verbatim: Postgres uses an
-    // expression index only for a query that repeats the expression.
+    // The statement `find_by_identity` sends, with the draft's values in place
+    // of its parameters. Its whole shape matters, not only the WHERE clause:
+    // the ORDER BY and the absence of a LIMIT change what the planner
+    // optimises for. The identifier expression is the one `0042` indexes,
+    // verbatim: Postgres uses an expression index only for a query that
+    // repeats the expression.
     //
     // Sequential scans are priced out rather than outnumbered. On a table this
     // small the planner rightly prefers one; this test used to insert 200
@@ -752,7 +756,8 @@ async fn t9_find_by_identity_matches_draft_and_published_via_index() {
                 doc->'productGroupData'->'productIdentifier'->>'did', \
                 doc->'productGroupData'->>'gtin')) = '09506000134352' \
            AND doc->>'batchId' IS NOT DISTINCT FROM 'BATCH-D' \
-         LIMIT 1",
+           AND doc->>'serialNumber' IS NOT DISTINCT FROM NULL \
+         ORDER BY created_at",
     )
     .fetch_all(&mut *tx)
     .await
