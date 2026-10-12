@@ -755,8 +755,8 @@ jobs:
           container="$(docker create "${{ matrix.image }}:ci")"
           trap 'docker rm -f "$container" >/dev/null 2>&1 || true' EXIT
           docker cp "$container:/usr/share/licenses/odal-node" ./licenses
-          if ! grep -q '^Business Source License 1.1' ./licenses/LICENSE; then
-            echo "::error::${{ matrix.image }} does not carry the engine's LICENSE at /usr/share/licenses/odal-node/LICENSE."
+          if ! cmp -s ./licenses/LICENSE dpp-engine/LICENSE; then
+            echo "::error::${{ matrix.image }} does not carry this repository's LICENSE, unaltered, at /usr/share/licenses/odal-node/LICENSE."
             exit 1
           fi
           notices=./licenses/THIRD-PARTY-NOTICES
