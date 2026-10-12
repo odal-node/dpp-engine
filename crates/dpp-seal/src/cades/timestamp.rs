@@ -174,7 +174,7 @@ impl GenTime {
 /// authority's token verifies perfectly and means nothing, which is exactly what
 /// this crate's own development sealer produces — so **this time must not be
 /// treated as a proof of existence on its own**, and
-/// [`certificate_standing`] takes the moment it is willing to trust as an
+/// [`certificate_standing`](super::certificate_standing) takes the moment it is willing to trust as an
 /// argument rather than reading this one itself.
 ///
 /// `Ok(None)` when there is no timestamp at all (a `B-B` seal), when the token
@@ -285,7 +285,7 @@ impl TimestampToken {
 
     /// The DER of every issuer name the token's embedded certificates refer to.
     ///
-    /// The same question [`chain_issuer_names`] answers for a seal, for the same
+    /// The same question [`chain_issuer_names`](super::chain_issuer_names) answers for a seal, for the same
     /// reason: which listed certificates are worth trying.
     #[must_use]
     pub fn chain_issuer_names(&self) -> Vec<Vec<u8>> {
@@ -300,7 +300,7 @@ impl TimestampToken {
 
     /// Whether the authority's certificate chains to `anchor_certificate_der`.
     ///
-    /// The same walk [`check_path_to`] makes for a seal — intermediates only from
+    /// The same walk [`check_path_to`](super::check_path_to) makes for a seal — intermediates only from
     /// what the token carries, every link verified — because it is the same
     /// function. Two copies of a certificate-path check are two places for a
     /// forgery to be accepted in only one.
@@ -366,7 +366,6 @@ pub(super) fn signature_timestamp(signed: &Signed) -> Option<TimestampToken> {
     Some(TimestampToken { token, gen_time })
 }
 
-/// Whether a parsed structure's signature holds under its own certificate.
 /// Was the authority's certificate valid at the moment the token claims?
 ///
 /// A timestamp is a statement by a certificate holder, and a statement made

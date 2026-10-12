@@ -192,15 +192,6 @@ pub fn covered_digest(seal_der: &[u8]) -> Result<Option<Vec<u8>>, SealError> {
     Ok(Some(octets.as_bytes().to_vec()))
 }
 
-/// Check the signature against the certificate the seal carries.
-///
-/// A `true` means the signature over the signed attributes verifies under the
-/// public key in the certificate travelling inside the seal — the structure is
-/// internally consistent. It says **nothing** about trust: no chain was built and
-/// no authority was consulted. Whether that is the whole truth about a seal or
-/// only a fragment of it depends on the certificate, which is why the decision to
-/// report it as a verdict belongs to the backend rather than here.
-///
 /// `rsaEncryption` — RFC 8017. Its `AlgorithmIdentifier` parameters must be NULL.
 pub(super) const RSA_ENCRYPTION: const_oid::ObjectIdentifier =
     const_oid::ObjectIdentifier::new_unwrap("1.2.840.113549.1.1.1");
@@ -267,6 +258,15 @@ pub fn can_verify_signatures_of(certificate_der: &[u8]) -> bool {
     Certificate::from_der(certificate_der).is_ok_and(|c| verifying_key(&c).is_ok())
 }
 
+/// Check the signature against the certificate the seal carries.
+///
+/// A `true` means the signature over the signed attributes verifies under the
+/// public key in the certificate travelling inside the seal — the structure is
+/// internally consistent. It says **nothing** about trust: no chain was built and
+/// no authority was consulted. Whether that is the whole truth about a seal or
+/// only a fragment of it depends on the certificate, which is why the decision to
+/// report it as a verdict belongs to the backend rather than here.
+///
 /// # Every algorithm the published population actually uses
 ///
 /// This was P-256 only, which is what the local development backend emits — and
@@ -280,7 +280,7 @@ pub fn can_verify_signatures_of(certificate_der: &[u8]) -> bool {
 /// binding degrading to "unknown" on the first real provider seal, silently, at
 /// exactly the point it started to matter.
 ///
-/// It now uses the same verifier as [`check_path_to`], so the algorithms it
+/// It now uses the same verifier as [`check_path_to`](super::check_path_to), so the algorithms it
 /// accepts are one list in `Cargo.toml` rather than two that can drift.
 pub fn verify_against_embedded_certificate(seal_der: &[u8]) -> Result<bool, SealError> {
     let signed = parse(seal_der)?;
@@ -305,6 +305,7 @@ pub fn verify_against_embedded_certificate(seal_der: &[u8]) -> Result<bool, Seal
     signature_holds(&signed)
 }
 
+/// Whether a parsed structure's signature holds under its own certificate.
 pub(super) fn signature_holds(signed: &Signed) -> Result<bool, SealError> {
     let Some(signed_attrs) = signed.signer.signed_attrs.as_ref() else {
         return Ok(false);

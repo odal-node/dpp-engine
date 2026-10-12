@@ -13,7 +13,7 @@ use crate::error::SealError;
 /// Three outcomes rather than a boolean, because *this CA did not sign it* and
 /// *the check could not be run* send a reader in opposite directions. Collapsing
 /// them would either brand a lawful seal a forgery or let an unrunnable check
-/// read as a clean miss — the same split [`super::trustlist`] draws between a
+/// read as a clean miss — the same split [`crate::trustlist`] draws between a
 /// document signed by the wrong key and one altered after signing.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum IssuerCheck {

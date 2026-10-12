@@ -44,7 +44,7 @@ pub(super) struct Signed {
     /// Held rather than counted. This was a boolean for as long as nothing read
     /// the values — the reasoning being that carrying them would invite a caller
     /// to treat "revocation data is present" as "revocation was checked", which
-    /// is the confusion this module is arranged to prevent. [`certificate_standing`]
+    /// is the confusion this module is arranged to prevent. [`certificate_standing`](super::certificate_standing)
     /// now actually reads them, so the distinction is made by what that function
     /// returns instead: presence alone reports `NotAvailable` until a CRL is
     /// found that covers this certificate and verifies under its issuer.
@@ -166,7 +166,7 @@ pub(super) const ID_AA_SIGNATURE_TIME_STAMP_TOKEN: const_oid::ObjectIdentifier =
 /// `id-aa-ets-revocationValues` — revocation material carried as an attribute.
 ///
 /// RFC 5126 §6.3.4. The **older** home for the material that distinguishes a
-/// long-term seal; see [`evidenced_level`] for why both homes are accepted.
+/// long-term seal; see [`evidenced_level`](super::evidenced_level) for why both homes are accepted.
 pub(super) const ID_AA_ETS_REVOCATION_VALUES: const_oid::ObjectIdentifier =
     const_oid::ObjectIdentifier::new_unwrap("1.2.840.113549.1.9.16.2.24");
 

@@ -91,7 +91,7 @@ impl SignerCertificate {
 /// Read the signer certificate's issuer, subject and device indication.
 ///
 /// Says nothing about whether the seal verifies — that is
-/// [`verify_against_embedded_certificate`], and the two are deliberately
+/// [`verify_against_embedded_certificate`](super::verify_against_embedded_certificate), and the two are deliberately
 /// separate: *who issued this* and *does it check out* are different questions,
 /// and a caller that wants a trust verdict needs both answered rather than one
 /// standing in for the other.
@@ -174,7 +174,7 @@ pub(super) fn creation_device(tbs: &x509_cert::TbsCertificate) -> CreationDevice
 ///
 /// `attested` is the time the **caller** is willing to treat as a proof of
 /// existence, and this function deliberately cannot work it out for itself. A
-/// token's own checks (see [`attested_sealing_time`]) establish that the time is
+/// token's own checks (see [`attested_sealing_time`](super::attested_sealing_time)) establish that the time is
 /// genuinely what the token says, not that anybody should believe the authority
 /// that said it — and a time from an authority nobody lists would settle the very
 /// finding it is the evidence for. Whether the authority is a qualified one is a
