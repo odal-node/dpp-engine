@@ -26,7 +26,11 @@ container="odal-shared-test-pg-$$"
 port="${ODAL_TEST_PG_PORT:-55432}"
 
 cleanup() {
-    docker rm -f "$container" > /dev/null 2>&1 || true
+    # `-v`, or the server's data stays behind. `postgres:17` declares its data
+    # directory a volume, and an explicit `docker rm` keeps a container's
+    # anonymous volumes even when `--rm` started it. Each run then left one
+    # orphaned volume holding every database it cloned, 1-10 GB apiece.
+    docker rm -f -v "$container" > /dev/null 2>&1 || true
 }
 trap cleanup EXIT
 
