@@ -108,10 +108,12 @@ async fn step_infrastructure(cfg: &Config) -> Result<()> {
             style("✓").green()
         );
     } else {
+        // Named in full: the root can be a parent of the current directory,
+        // and a `.env` written beside the operator instead is never read.
         println!(
-            "  Copy {} to {} in your deployment root and set these variables:\n",
-            style(".env.example").cyan(),
-            style(".env").cyan()
+            "  Copy {} to {} and set these variables:\n",
+            style(root.join(".env.example").display()).cyan(),
+            style(root.join(".env").display()).cyan()
         );
         for var in &[
             "DATABASE_POSTGRES_PASS",

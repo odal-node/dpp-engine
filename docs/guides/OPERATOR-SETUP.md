@@ -38,10 +38,14 @@ kind: localhost → `dev`, otherwise → `prod`). You can hold several profiles
 
 ### Step 2 — Infrastructure *(localhost only)*
 
-The Console offers to scaffold `docker/docker-compose.yml` and `.env.example` in
-the current directory and start your services. Before confirming **Start
-services**, copy `.env.example` to `.env` in the same directory and set at least
-these values:
+The Console looks for an existing install, a directory holding
+`docker/docker-compose.yml`, in the current directory and then its parents. It
+uses the first one it finds, or starts a new install in the current directory
+when there is none. It scaffolds whatever that install is missing, including
+`.env.example`, and offers to start your services. Before confirming **Start
+services**, copy `.env.example` to `.env` in that install's root, beside its
+`docker/` directory (the Console prints both paths), and set at least these
+values:
 
 ```sh
 # .env — never commit this file. `odal` does not create or modify it.
