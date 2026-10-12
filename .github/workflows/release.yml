@@ -26,7 +26,7 @@ jobs:
           - image: dpp-node
             dockerfile: dpp-engine/docker/node.Dockerfile
             description: >-
-              Odal Node MVP single binary — fuses vault, identity, integrator,
+              Odal Node single binary — fuses vault, identity, integrator,
               and Wasm plugin host into one process for self-hosted Digital
               Product Passport deployments.
             readme: crates/dpp-node/README.md
@@ -67,10 +67,17 @@ jobs:
           # differ per package: GHCR shows `.description` as the package's
           # short blurb and `.documentation` as a deep link to the image's own
           # README (crates/dpp-node or dpp-resolver), instead of the shared one.
+          # The link is to the README at the tag being built, so an image points
+          # at the docs it shipped with rather than whatever `main` says later.
+          #
+          # `.licenses` is set by hand: metadata-action copies GitHub's detected
+          # licence, and GitHub does not recognise the Business Source License,
+          # so the default is NOASSERTION. BUSL-1.1 is its SPDX identifier.
           labels: |
             org.opencontainers.image.title=${{ matrix.image }}
             org.opencontainers.image.description=${{ matrix.description }}
-            org.opencontainers.image.documentation=https://github.com/odal-node/dpp-engine/blob/main/${{ matrix.readme }}
+            org.opencontainers.image.documentation=https://github.com/odal-node/dpp-engine/blob/${{ github.ref_name }}/${{ matrix.readme }}
+            org.opencontainers.image.licenses=BUSL-1.1
 
       # Context is the workspace root holding both checked-out repos. BuildKit
       # honours docker/<dockerfile>.dockerignore to keep the context small.
