@@ -93,8 +93,37 @@ roxmltree    = "0.21"
 
 # XMLDSig verification for trusted lists. Pure Rust, so the node stays a single
 # self-hosted binary — the constraint that ruled out libxmlsec1 bindings and the
-# EU DSS validator. See the workspace `[patch.crates-io]` for the vendored fix.
-xml-sec      = "0.1.16"
+# EU DSS validator.
+#
+# Two releases set the floor. 0.1.17 raised the node-set capacity (upstream
+# structured-world/xml-sec#158): before it, FR, CZ, IT and ES could not verify,
+# and this workspace carried a fork with that one constant raised. 0.1.18 stopped
+# trusting a key just because the document carries it, so `trustlist::verify`
+# pins the certificate the anchor or the LOTL already authorised. Germany is
+# still refused, on a different and older ceiling (100 000 XML nodes per
+# document) that neither the fork nor #158 touched.
+#
+# ── Accepting a pre-release dependency, deliberately ─────────────────────────
+#
+# Upstream describes `xml-sec` as an early-stage pre-release with an unstable
+# API and incomplete coverage, and says it should not be used in production.
+# That is accurate about the risk this takes on, because this crate decides
+# whether a Member State's trusted list signature is valid.
+#
+# It is accepted anyway: the alternative is a C library (libxmlsec1 + libxml2)
+# and the native build, packaging and CVE surface that comes with it, against a
+# single-static-binary deployment. Failing closed limits what a gap can cost —
+# a list whose signature cannot be verified is *not trusted*, never trusted
+# wrongly — and no trusted list is consulted for a compliance verdict yet.
+#
+#   * **A version bump is a real change**, not a nudge. The API is unstable by
+#     its author's account (0.1.18 changed key trust under a patch version), so
+#     bumping means building and testing `dpp-seal`, including the over-ceiling
+#     lists in `tests/fixtures/local`.
+#   * **Reconsider on first production sealing.** If a trusted-list verdict
+#     starts carrying legal weight on this dependency, the acceptance above
+#     needs re-arguing rather than inheriting.
+xml-sec      = "0.1.20"
 
 cms          = { version = "0.2", default-features = false }
 x509-cert    = "0.2"

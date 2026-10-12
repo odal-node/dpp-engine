@@ -291,6 +291,27 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ### Fixed
 
+- **Trusted lists verify on the released `xml-sec`, and only with the key the
+  chain authorised.** The workspace no longer carries an `xml-sec` fork. It
+  existed to raise one constant, the 65 536-entry node-set ceiling that the
+  French, Czech, Italian and Spanish lists exceed. Upstream raised it in 0.1.17
+  (`structured-world/xml-sec#158`), and `dpp-seal` now requires 0.1.20 from
+  crates.io. Italy's and France's published lists verify on it end to end.
+
+  Since 0.1.18 `xml-sec` refuses to verify with a key just because the document
+  carries it. The verifier now hands it the one certificate this node already
+  decided to trust as an exact pin: for the LOTL, the certificate the Official
+  Journal anchor authorises; for a national list, the one its LOTL pointer
+  names. A signature is therefore checked against that key and no other, by
+  `xml-sec` itself. Before, `xml-sec` chose its own key from the document, and
+  the two agreed only because a document with more than one certificate was
+  refused first. A genuine list checked with a different real certificate
+  pinned is refused (`the_signature_is_checked_only_against_the_pinned_certificate`).
+
+  The guard on the resolved dependency now fails if the build resolves a release
+  before 0.1.17 or a git source. Germany's list is still refused, on a separate
+  ceiling of 100 000 XML nodes per document that the fork never touched.
+
 - **A seal's timestamp is only believed when its authority is a qualified one.**
   `attestedSealedAt` was checked for its own signature, its imprint and its
   authority's validity window, and never for *who* the authority was — so a seal

@@ -247,7 +247,10 @@ fn every_national_pointer_carries_certificates_to_verify_against() {
 /// the document: `signing_certificate` takes the certificate out of `ds:KeyInfo`
 /// and compares it against what the LOTL authorises, while `xml-sec` resolves a
 /// key of its own to check the signature with — by leaf analysis, not by
-/// position. They agree only while there is one certificate to choose.
+/// position. They agree only while there is one certificate to choose. (Since
+/// `xml-sec` is handed that certificate as its only trusted key, a disagreement
+/// would now fail closed inside `xml-sec` as well; this rule keeps the refusal
+/// early and named.)
 ///
 /// XMLDSig permits a `KeyInfo` to carry a whole chain, and the order within it
 /// is not fixed. A publisher that ships one is now **refused** —
@@ -280,33 +283,21 @@ fn each_signature_names_exactly_one_certificate() {
     }
 }
 
-/// The `xml-sec` in this build is the fork, not the registry crate.
+/// The `xml-sec` in this build is a release with the raised node-set ceiling.
 ///
-/// Said explicitly because the way this breaks is quiet. `[patch.crates-io]`
-/// applies only while the fork's version satisfies the requirement in
-/// `dpp-seal/Cargo.toml`. Bump that requirement past the fork — which is exactly
-/// what someone will do the day upstream publishes — and Cargo emits an
-/// **unused patch warning, not an error**, and silently resolves to the registry
-/// crate.
-///
-/// Without this, the only symptom is Italy and France failing verification, and
-/// a reader has to infer the cause from two country names. With it, the
-/// diagnostic says which of the two situations they are in: upstream shipped the
-/// fix and the stanza should go, or the ceiling is back.
+/// Releases before 0.1.17 stop canonicalising at 65 536 node-set entries, and
+/// the French, Czech, Italian and Spanish lists are over it. They fail as a
+/// canonicaliser that gives up, not as a bad signature, so the symptom names
+/// four countries and not the cause. Those documents are too large to commit,
+/// so CI never sees them; this is the check CI can run.
 ///
 /// Read from `Cargo.lock` rather than probed at runtime because the resolved
-/// source is a build fact, and the lock is where the build records it.
-///
-/// **Editing the lock does not reproduce the failure**, which is the first thing
-/// anyone will try: `cargo` reconciles the lockfile against the manifest before
-/// building, so a hand-edited source line is rewritten back to the fork and this
-/// passes. That is a property of the check being sound rather than a gap — the
-/// lock always describes the build that actually ran. The real trigger is a
-/// requirement bump once upstream publishes a version the fork does not satisfy,
-/// which cannot be simulated today because `0.1.16` is still the latest
-/// published. The assertion itself was confirmed by inverting it.
+/// version is a build fact, and the lock is where the build records it. It
+/// fails on a requirement or lock that takes `xml-sec` below 0.1.17, and on a
+/// fork reappearing under `[patch.crates-io]` (a git source), which would bring
+/// the same question back unanswered.
 #[test]
-fn the_patched_xml_sec_is_the_one_that_resolved() {
+fn xml_sec_is_a_release_with_the_raised_node_set_ceiling() {
     let lock = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../Cargo.lock"));
     let entry = lock
         .split("[[package]]")
@@ -314,12 +305,21 @@ fn the_patched_xml_sec_is_the_one_that_resolved() {
         .expect("xml-sec is in the lockfile");
 
     assert!(
-        entry.contains("source = \"git+https://github.com/odal-node/xml-sec.git"),
-        "`xml-sec` resolved to the registry crate, so the [patch.crates-io] stanza in the \
-         workspace manifest is not applying — most likely because the requirement in \
-         dpp-seal/Cargo.toml moved past the fork's version. If upstream \
-         structured-world/xml-sec#158 has shipped, delete the stanza and the fork together; \
-         if it has not, the node-set ceiling is back and Italy and France stop verifying.\n\n\
-         Lock entry:\n{entry}"
+        entry.contains("source = \"registry+https://github.com/rust-lang/crates.io-index\""),
+        "`xml-sec` no longer resolves to a crates.io release. If a fork is back, say why \
+         beside it in the manifest and update this test.\n\nLock entry:\n{entry}"
+    );
+    let version: Vec<u64> = entry
+        .lines()
+        .find_map(|l| l.strip_prefix("version = \""))
+        .and_then(|v| v.strip_suffix('"'))
+        .expect("the entry has a version")
+        .split('.')
+        .map(|n| n.parse().expect("a numeric version"))
+        .collect();
+    assert!(
+        version.as_slice() >= [0, 1, 17].as_slice(),
+        "`xml-sec` {version:?} predates 0.1.17, so the FR, CZ, IT and ES trusted lists stop \
+         verifying at the 65 536 node-set ceiling (structured-world/xml-sec#158)"
     );
 }

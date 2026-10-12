@@ -2,7 +2,7 @@
 
 use base64::Engine as _;
 use roxmltree::{Document, Node};
-use xml_sec::xmldsig::{DefaultKeyResolver, DsigStatus, VerifyContext};
+use xml_sec::xmldsig::{DefaultKeyResolver, DsigStatus, KeyResolverConfig, VerifyContext};
 
 use super::anchor::{EU_LOTL_ANCHOR, LotlAnchor};
 use super::model::TrustedListPointer;
@@ -291,18 +291,7 @@ pub fn verify_lotl_with(xml: &str, anchor: &LotlAnchor) -> Result<VerifiedLotl, 
     // does not permit.
     check_signature_profile(xml).map_err(LotlRejected::NonConformantProfile)?;
 
-    let resolver = DefaultKeyResolver::default();
-    let outcome = VerifyContext::new()
-        .key_resolver(&resolver)
-        .verify(xml)
-        .map_err(|e| LotlRejected::SignatureInvalid(e.to_string()))?;
-
-    if !matches!(outcome.status, DsigStatus::Valid) {
-        return Err(LotlRejected::SignatureInvalid(format!(
-            "{:?}",
-            outcome.status
-        )));
-    }
+    verify_signature_with(xml, der.clone()).map_err(LotlRejected::SignatureInvalid)?;
 
     let pointers = parse_lotl(xml).map_err(|e| LotlRejected::Malformed(e.to_string()))?;
 
@@ -579,30 +568,48 @@ pub fn verify_trusted_list(
     // what the signature covers, so it is checked before one is computed.
     check_signature_profile(xml).map_err(TrustedListRejected::NonConformantProfile)?;
 
-    let resolver = DefaultKeyResolver::default();
-    let outcome = VerifyContext::new()
-        .key_resolver(&resolver)
-        .verify(xml)
-        .map_err(|e| TrustedListRejected::SignatureInvalid(e.to_string()))?;
-
-    if !matches!(outcome.status, DsigStatus::Valid) {
-        return Err(TrustedListRejected::SignatureInvalid(format!(
-            "{:?}",
-            outcome.status
-        )));
-    }
+    let der = base64::engine::general_purpose::STANDARD
+        .decode(&certificate)
+        .map_err(|e| TrustedListRejected::Malformed(format!("certificate is not base64: {e}")))?;
+    verify_signature_with(xml, der.clone()).map_err(TrustedListRejected::SignatureInvalid)?;
 
     let content = super::parse::parse_trusted_list(xml)
         .map_err(|e| TrustedListRejected::Malformed(e.to_string()))?;
 
-    let der = base64::engine::general_purpose::STANDARD
-        .decode(&certificate)
-        .unwrap_or_default();
     Ok(VerifiedTrustedList {
         content,
         signed_by: base64::engine::general_purpose::STANDARD
             .encode(<sha2::Sha256 as sha2::Digest>::digest(&der)),
     })
+}
+
+/// Check `xml`'s signature with the one key this node already decided to trust.
+///
+/// `certificate_der` is the certificate the anchor (for the LOTL) or the LOTL's
+/// pointer (for a national list) authorised, and it goes to `xml-sec` as an exact
+/// pin. The signature is then checked against that key and no other, by
+/// `xml-sec` itself: the trust decision above and the cryptography here cannot
+/// be about two different keys, even if something upstream of this function
+/// changes how the certificate is picked. `xml-sec` refuses a key the document
+/// supplies unless the caller authorised it, which is the same rule stated from
+/// its side.
+///
+/// No certificate path is built. The pin is the whole trust model here: the
+/// Official Journal names the LOTL's certificates, and the LOTL names each
+/// national list's.
+pub(super) fn verify_signature_with(xml: &str, certificate_der: Vec<u8>) -> Result<(), String> {
+    let resolver = DefaultKeyResolver::new(KeyResolverConfig {
+        trusted_certs: vec![certificate_der],
+        ..KeyResolverConfig::default()
+    });
+    let outcome = VerifyContext::new()
+        .key_resolver(&resolver)
+        .verify(xml)
+        .map_err(|e| e.to_string())?;
+    if !matches!(outcome.status, DsigStatus::Valid) {
+        return Err(format!("{:?}", outcome.status));
+    }
+    Ok(())
 }
 
 /// The enveloped-signature transform, the first of the two the profile mandates.
@@ -753,14 +760,18 @@ fn check_signature_profile(xml: &str) -> Result<(), String> {
 /// # Why this reads `ds:KeyInfo`, and why it insists on exactly one
 ///
 /// Everything above depends on this returning **the certificate the signature
-/// will actually be verified with**. Nothing else in this module establishes
-/// that: the anchor decision is taken here, and the signature is computed by
-/// `xml-sec` afterwards, from a certificate it selects for itself. If the two
-/// pick differently, the trust decision is about one certificate and the
-/// cryptography about another, and a caller cannot tell — [`VerifyResult`]
-/// exposes no certificate, so there is nothing to compare afterwards.
+/// will actually be verified with**. The anchor decision is taken here, and the
+/// signature is computed by `xml-sec` afterwards, from a certificate it selects
+/// for itself. If the two picked differently, the trust decision would be about
+/// one certificate and the cryptography about another.
 ///
-/// They do select differently. `xml-sec` resolves the signing certificate from
+/// Two locks keep them together. The certificate returned here is handed to
+/// `xml-sec` as its only trusted key ([`verify_signature_with`]), so a key it
+/// selected from anywhere else is refused by `xml-sec` itself as unauthorised.
+/// And this function refuses a `ds:KeyInfo` with more than one certificate, so
+/// that case fails here, named as what it is, before any canonicalisation.
+///
+/// They would select differently. `xml-sec` resolves the signing certificate from
 /// `ds:KeyInfo` by *chain analysis* — `select_x509_signing_certificate` takes
 /// the entry that is neither self-signed nor the issuer of any other entry, and
 /// only falls back to document order when that finds nothing. Document order is
