@@ -291,6 +291,15 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ### Fixed
 
+- **Boot no longer logs the database password.** `dpp-node` logged
+  `DATABASE_URL` as configured on "connecting to PostgreSQL" and "PostgreSQL
+  connected", and the standalone `dpp-vault` on its own connecting line, so the
+  app role's password reached the INFO log on every start. All three now go
+  through `redact_url_credentials`, which `NodeConfig`'s `Debug` and the
+  resolver already use: host, port and database stay in the line, and the
+  field is still called `url`. A node whose logs were shipped anywhere should
+  rotate the `odal_app` password.
+
 - **Trusted lists verify on the released `xml-sec`, and only with the key the
   chain authorised.** The workspace no longer carries an `xml-sec` fork. It
   existed to raise one constant, the 65 536-entry node-set ceiling that the
