@@ -6,11 +6,15 @@
 //! `dealloc` + `write_output`/`read_input` packing) observable end-to-end when
 //! driven by the real wasmtime host — something the hand-rolled WAT fixtures
 //! cannot do.
+//!
+//! `meta` and `capabilities` are left to the trait's defaults, built from
+//! `plugin_identity` and `schema_version_range`, so `describe` reports what a
+//! real plugin written against this SDK reports.
 
 use dpp_plugin_sdk::export_plugin;
 use dpp_plugin_sdk::traits::{
-    AbiVersion, DppProductGroupPlugin, METRIC_CO2E_SCORE, PluginCapabilities, PluginCapability,
-    PluginComplianceStatus, PluginError, PluginInput, PluginMeta, PluginResult, SchemaVersionRange,
+    DppProductGroupPlugin, METRIC_CO2E_SCORE, PluginComplianceStatus, PluginError, PluginIdentity,
+    PluginInput, PluginResult, SchemaVersionRange,
 };
 use serde_json::Value;
 
@@ -18,33 +22,19 @@ use serde_json::Value;
 struct EchoPlugin;
 
 impl DppProductGroupPlugin for EchoPlugin {
-    fn meta(&self) -> PluginMeta {
-        PluginMeta {
-            product_group: "abi-echo".into(),
-            name: "ABI Echo Fixture".into(),
-            version: env!("CARGO_PKG_VERSION").into(),
-            license: "BSL-1.1".into(),
-            description: None,
-            author: None,
-            homepage: None,
+    fn plugin_identity(&self) -> PluginIdentity {
+        PluginIdentity {
+            product_group: "abi-echo",
+            name: "ABI Echo Fixture",
+            version: env!("CARGO_PKG_VERSION"),
+            description: "Echoes its input; exercises the export_plugin! ABI",
         }
     }
 
-    fn capabilities(&self) -> PluginCapabilities {
-        PluginCapabilities {
-            abi_version: AbiVersion::current(),
-            supported_schemas: vec![SchemaVersionRange {
-                min_version: "1.0.0".into(),
-                max_version: "1.0.0".into(),
-            }],
-            capabilities: vec![
-                PluginCapability::Validate,
-                PluginCapability::ComputeMetrics,
-                PluginCapability::GeneratePassport,
-            ],
-            min_host_version: None,
-            max_fuel: None,
-            max_memory_bytes: None,
+    fn schema_version_range(&self) -> SchemaVersionRange {
+        SchemaVersionRange {
+            min_version: "1.0.0".into(),
+            max_version: "1.0.0".into(),
         }
     }
 
@@ -65,9 +55,9 @@ impl DppProductGroupPlugin for EchoPlugin {
             .maybe_metric(METRIC_CO2E_SCORE, co2e))
     }
 
-    fn generate_passport(&self, input: &PluginInput) -> Result<Value, PluginError> {
-        self.validate_input(input)?;
-        Ok(input.clone())
+    fn generate_passport(&self, input: PluginInput) -> Result<Value, PluginError> {
+        self.validate_input(&input)?;
+        Ok(input)
     }
 }
 

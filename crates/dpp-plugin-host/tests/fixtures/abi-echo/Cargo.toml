@@ -16,7 +16,11 @@ crate-type = ["cdylib"]
 path = "src/lib.rs"
 
 [dependencies]
-dpp-plugin-sdk = { path = "../../../../../../dpp-core/crates/dpp-plugin-sdk" }
+# The published SDK at the version of `dpp-plugin-traits` the workspace pins, so
+# the guest is built against the same contract the host links. Bump the two
+# together. A path into a sibling dpp-core checkout built whatever that working
+# tree held, and resolved only from a checkout sitting next to it.
+dpp-plugin-sdk = "0.21.0"
 serde_json     = "1"
 
 [profile.release]

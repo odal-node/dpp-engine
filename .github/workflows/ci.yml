@@ -105,14 +105,15 @@ jobs:
       #
       # Features are named per package rather than via `--all-features`, which
       # would also enable `cli/desktop` (pulls rfd's ashpd/Wayland subtree, kept
-      # out of server-side builds on purpose — see cli/Cargo.toml) and
-      # `dpp-plugin-host/wasm-fixture-tests` (needs the wasm32-wasip1 target and
-      # a nested cargo build). Neither is a gap this closes.
+      # out of server-side builds on purpose — see cli/Cargo.toml). That is not a
+      # gap this closes. `dpp-plugin-host/wasm-fixture-tests` is on: linting
+      # `tests/sdk_abi.rs` needs no wasm target, only running it does, and the
+      # integration job below runs it.
       - name: cargo clippy
         working-directory: dpp-engine
         run: |
           cargo clippy --workspace --all-targets \
-            --features dpp-dal/integration-tests,dpp-vault/integration-tests,dpp-plugin-host/integration-tests,dpp-node/integration-tests \
+            --features dpp-dal/integration-tests,dpp-vault/integration-tests,dpp-plugin-host/integration-tests,dpp-plugin-host/wasm-fixture-tests,dpp-node/integration-tests \
             -- -D warnings
 
   test-unit:
@@ -280,11 +281,27 @@ jobs:
           set -e
           cp target/nextest/default/junit.xml results/vault.xml
           exit $test_exit
-      - name: Plugin host integration tests (incl. fuel sandbox)
+      # The SDK ABI round-trip (`tests/sdk_abi.rs`) compiles a real
+      # `export_plugin!` plugin to wasm32-wasip1 and drives it through the host:
+      # the one test that sees the guest side of the ABI. It ran nowhere, and its
+      # fixture drifted from the SDK until it no longer compiled. The target is
+      # added here, not in rust-toolchain.toml, which keeps wasm targets out of
+      # every other build on purpose.
+      #
+      # The fixture is built in its own step so the test finds it current. Built
+      # inside the test, a cold release build would count against the slow-test
+      # budget at the end of this job.
+      - name: Build the SDK ABI fixture (wasm32-wasip1)
+        working-directory: dpp-engine
+        run: |
+          rustup target add wasm32-wasip1
+          cargo build --release --target wasm32-wasip1 \
+            --manifest-path crates/dpp-plugin-host/tests/fixtures/abi-echo/Cargo.toml
+      - name: Plugin host integration tests (incl. fuel sandbox and SDK ABI)
         working-directory: dpp-engine
         run: |
           set +e
-          cargo nextest run -p dpp-plugin-host --features integration-tests --no-tests=fail
+          cargo nextest run -p dpp-plugin-host --features integration-tests,wasm-fixture-tests --no-tests=fail
           test_exit=$?
           set -e
           cp target/nextest/default/junit.xml results/plugin-host.xml

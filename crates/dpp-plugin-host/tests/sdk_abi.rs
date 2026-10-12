@@ -21,6 +21,8 @@ use std::process::Command;
 
 use dpp_plugin_host::{loader::LoadedPlugin, runtime::build_engine};
 use dpp_plugin_traits::AbiVersion;
+use ed25519_dalek::{Signer, SigningKey, VerifyingKey};
+use sha2::{Digest, Sha256};
 
 /// Compile the `abi-echo` fixture to wasm32-wasip1 and return the artifact path.
 ///
@@ -47,18 +49,36 @@ fn build_fixture_wasm() -> PathBuf {
     wasm
 }
 
+/// Sign `wasm` the way a publisher does: a detached Ed25519 signature over its
+/// SHA-256, written to `{wasm}.sig`. Returns the key the host must pin.
+///
+/// The host refuses an unsigned plugin unless `ALLOW_UNSIGNED_PLUGINS` is set,
+/// and setting it means mutating the process environment. Signing instead loads
+/// the fixture through the same verified path a production plugin takes.
+fn sign_fixture(wasm: &Path) -> VerifyingKey {
+    let key = SigningKey::from_bytes(&[11; 32]);
+    let bytes = std::fs::read(wasm).expect("read fixture wasm");
+    let signature = key.sign(&Sha256::digest(&bytes));
+    let mut sig_path = wasm.as_os_str().to_owned();
+    sig_path.push(".sig");
+    std::fs::write(PathBuf::from(sig_path), signature.to_bytes()).expect("write fixture .sig");
+    key.verifying_key()
+}
+
 /// One test, one fixture build: a single `#[test]` avoids parallel cargo
 /// invocations racing on the fixture's target dir.
 #[test]
 fn sdk_generated_abi_round_trips_through_host() {
     let engine = build_engine().expect("build engine");
     let wasm = build_fixture_wasm();
+    let publisher = sign_fixture(&wasm);
 
     // `from_file` calls the macro-generated `describe` export and caches the
     // result — proving `describe` + alloc/dealloc + write_output round-trip
     // from a real `export_plugin!` plugin (not a hardcoded WAT return).
-    let plugin = LoadedPlugin::from_file(&engine, &wasm, "abi-echo", None)
+    let plugin = LoadedPlugin::from_file(&engine, &wasm, "abi-echo", Some(&publisher))
         .expect("load real SDK-generated plugin");
+    assert!(plugin.signature_verified());
 
     let caps = &plugin.capabilities;
     assert_eq!(

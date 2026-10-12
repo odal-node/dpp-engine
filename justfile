@@ -128,7 +128,7 @@ lint:
 
 # Clippy the feature-gated integration test code (the normal gate skips it)
 lint-integration:
-    cargo clippy -p dpp-dal -p dpp-vault -p dpp-plugin-host -p dpp-node --all-targets --features integration-tests -- -D warnings
+    cargo clippy -p dpp-dal -p dpp-vault -p dpp-plugin-host -p dpp-node --all-targets --features integration-tests,dpp-plugin-host/wasm-fixture-tests -- -D warnings
 
 # Validate api/openapi.yaml (needs Node; no install — npx fetches on demand).
 #
