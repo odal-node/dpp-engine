@@ -129,6 +129,75 @@ pub async fn start_postgres() -> PgContainer {
 }
 
 // ---------------------------------------------------------------------------
+// What the router has accepted
+// ---------------------------------------------------------------------------
+
+/// Requests the vault's router has accepted and not yet answered.
+static IN_FLIGHT: std::sync::Mutex<Vec<(u64, String, std::time::Instant)>> =
+    std::sync::Mutex::new(Vec::new());
+/// The last few it did answer, newest last.
+static ANSWERED: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+static NEXT_REQUEST: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+const ANSWERED_KEPT: usize = 6;
+
+/// Takes a request off [`IN_FLIGHT`] however its handler ends — returned,
+/// panicked, or dropped along with its connection.
+struct InFlightGuard(u64);
+
+impl Drop for InFlightGuard {
+    fn drop(&mut self) {
+        if let Ok(mut in_flight) = IN_FLIGHT.lock() {
+            in_flight.retain(|(id, _, _)| *id != self.0);
+        }
+    }
+}
+
+/// Outermost layer of the test router: records each request until it is
+/// answered, so a client that times out can say whether the router ever saw it.
+async fn track_requests(
+    req: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    let id = NEXT_REQUEST.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let label = format!("{} {}", req.method(), req.uri().path());
+    let started = std::time::Instant::now();
+    if let Ok(mut in_flight) = IN_FLIGHT.lock() {
+        in_flight.push((id, label.clone(), started));
+    }
+    let _guard = InFlightGuard(id);
+
+    let response = next.run(req).await;
+
+    if let Ok(mut answered) = ANSWERED.lock() {
+        if answered.len() == ANSWERED_KEPT {
+            answered.remove(0);
+        }
+        answered.push(format!(
+            "{label} -> {} in {}ms",
+            response.status().as_u16(),
+            started.elapsed().as_millis()
+        ));
+    }
+    response
+}
+
+/// What the router is holding, and what it last answered.
+fn in_flight_report() -> String {
+    let in_flight = IN_FLIGHT.lock().map(|g| g.clone()).unwrap_or_default();
+    let answered = ANSWERED.lock().map(|g| g.join(", ")).unwrap_or_default();
+    let holding = if in_flight.is_empty() {
+        "the router has no request in flight".to_owned()
+    } else {
+        let held: Vec<String> = in_flight
+            .iter()
+            .map(|(_, label, since)| format!("{label} for {:.1}s", since.elapsed().as_secs_f64()))
+            .collect();
+        format!("in the router: {}", held.join("; "))
+    };
+    format!("{holding}; last answered: [{answered}]")
+}
+
+// ---------------------------------------------------------------------------
 // Mock identity service
 // ---------------------------------------------------------------------------
 
@@ -432,7 +501,7 @@ async fn start_vault_with_identity(
         idempotency: None,
     };
 
-    let app = router::build(state);
+    let app = router::build(state).layer(axum::middleware::from_fn(track_requests));
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
         .expect("failed to bind");
@@ -593,8 +662,9 @@ pub struct TestClient {
 /// below the harness ceiling, so a stall is reported **as a timed-out request
 /// against a named URL** rather than as a dead test.
 ///
-/// This does not fix a stall. It makes the next one diagnosable, which is the
-/// prerequisite for fixing it.
+/// The stall that prompted this has since been traced to its cause — see
+/// [`TestClient::send`] — and the timeout stays: the next hang, of whatever kind,
+/// should be a named request and not a dead test.
 ///
 /// # 🚨 Why forty-five and not thirty
 ///
@@ -602,33 +672,27 @@ pub struct TestClient {
 ///
 /// `PgDal::connect` builds a pool with `max_connections(10)` and no explicit
 /// `acquire_timeout`, so sqlx applies its default — **also thirty seconds**. The
-/// two candidate explanations for a request the server accepts and never answers
-/// are "the pool had no connection to give" and "the handler is stuck on
-/// something else", and at thirty-all they expire together: whichever fires
-/// first is a race, and the failure looks identical either way.
+/// two candidate explanations for a request that is stuck in the vault are "the
+/// pool had no connection to give" and "the handler is stuck on something else",
+/// and at thirty-all they expire together: whichever fires first is a race, and
+/// the failure looks identical either way.
 ///
 /// Above sqlx's ceiling, they separate. If the cause is pool starvation the
 /// request now comes back as a **500 naming the acquire failure** while this
 /// client is still waiting; if it is anything else, this still fires with the
-/// named-URL timeout it fired with before. One observation will say which,
-/// instead of another re-run that proves nothing.
+/// named-URL timeout it fired with before.
 ///
 /// Still far below nextest's 120-second ceiling, so a stall is a failed request
 /// rather than a killed test.
 const REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(45);
 
-/// Says so when a request failed because nothing answered.
+/// How long opening the connection may take, apart from the request as a whole.
 ///
-/// `reqwest`'s `Display` for a timeout does not make it obvious, and a timeout
-/// means something very different from a refused connection: the server is
-/// there and did not reply.
-fn timeout_hint(e: &reqwest::Error) -> &'static str {
-    if e.is_timeout() {
-        " (timed out — the server accepted the request and never answered)"
-    } else {
-        ""
-    }
-}
+/// `reqwest`'s total timeout fires in whichever phase the request is in, so
+/// without this a request that never got a connection reads exactly like one the
+/// server accepted and never answered. Loopback connects in microseconds; ten
+/// seconds is a stall, and the failure now says it was in the connect.
+const CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 
 impl TestClient {
     pub fn new(base_url: impl Into<String>, token: impl Into<String>) -> Self {
@@ -637,87 +701,136 @@ impl TestClient {
             token: token.into(),
             inner: reqwest::Client::builder()
                 .timeout(REQUEST_TIMEOUT)
+                .connect_timeout(CONNECT_TIMEOUT)
                 .build()
                 .expect("a reqwest client"),
         }
     }
 
-    pub async fn post_json(&self, path: &str, body: serde_json::Value) -> reqwest::Response {
-        self.inner
-            .post(format!("{}{path}", self.base_url))
-            .bearer_auth(&self.token)
-            .json(&body)
+    /// Says what was happening when a request timed out, or nothing if it did not.
+    ///
+    /// A timeout can mean two very different things: the request never reached
+    /// the router (a fault in the connection or in the client), or it is inside a
+    /// handler and has not come out (a database call, a lock, an await that never
+    /// resolves). The client cannot tell which, so the router keeps a list of what
+    /// it has accepted and not answered and the note reports it.
+    ///
+    /// It must not claim the server received the request. `reqwest`'s total
+    /// timeout cannot know that — and in the stall this was written for, the
+    /// server **never had**.
+    fn stall_note(&self, e: &reqwest::Error) -> String {
+        if !e.is_timeout() {
+            return String::new();
+        }
+        if e.is_connect() {
+            return format!(
+                " (timed out connecting after {}s, so the request was never sent)",
+                CONNECT_TIMEOUT.as_secs()
+            );
+        }
+        format!(
+            " (no response in {}s; {})",
+            REQUEST_TIMEOUT.as_secs(),
+            in_flight_report()
+        )
+    }
+
+    /// Sends `request` and returns the response with its **body already read**.
+    ///
+    /// # 🚨 Why the body is read here, and not left to the test
+    ///
+    /// A `reqwest::Response` that still has body to read owns its connection.
+    /// `hyper` reads from the socket 8 KiB at a time, and the publish response is
+    /// about 10 KiB, so when the headers arrive some two kilobytes are still in
+    /// the kernel and the connection cannot take another request until someone
+    /// reads them or drops the response.
+    ///
+    /// The tests do neither. They assert on `resp.status()` and then write
+    /// `let resp = ...` for the next call, and **a shadowed binding is not
+    /// dropped** — the first response lives to the end of the test. In almost
+    /// every run that is harmless, because the next request is given a different
+    /// connection. In a narrow race `hyper-util`'s pool hands that same
+    /// still-busy connection to the next request, which then queues behind a body
+    /// nobody is going to read, while the test waits for the request. Nothing is
+    /// running anywhere and nothing ever will, until the client timeout fires —
+    /// about one run in a thousand on Linux, on a request that follows `publish`.
+    ///
+    /// That was the intermittent hang in `publish_serve_cycle`, `textile` and
+    /// `suspension`, and it was never in the vault: the router had not received
+    /// the request it was blamed for, and the server's socket was empty while the
+    /// client's held the unread tail. Reading the body before returning makes it
+    /// impossible to hold a response
+    /// that still owns a connection, and the response handed back is an ordinary
+    /// `reqwest::Response` over those bytes, so no test has to change.
+    async fn send(
+        &self,
+        method: &str,
+        path: &str,
+        request: reqwest::RequestBuilder,
+    ) -> reqwest::Response {
+        let url = format!("{}{path}", self.base_url);
+        let response = request
             .send()
             .await
-            .unwrap_or_else(|e| {
-                panic!(
-                    "POST {}{path} failed{}: {e}",
-                    self.base_url,
-                    timeout_hint(&e)
-                )
-            })
+            .unwrap_or_else(|e| panic!("{method} {url} failed{}: {e}", self.stall_note(&e)));
+
+        let (status, version, headers) = (
+            response.status(),
+            response.version(),
+            response.headers().clone(),
+        );
+        let body = response.bytes().await.unwrap_or_else(|e| {
+            panic!("{method} {url} answered {status}, but its body failed: {e}")
+        });
+
+        let mut buffered = axum::http::Response::new(body);
+        *buffered.status_mut() = status;
+        *buffered.version_mut() = version;
+        *buffered.headers_mut() = headers;
+        reqwest::Response::from(buffered)
+    }
+
+    pub async fn post_json(&self, path: &str, body: serde_json::Value) -> reqwest::Response {
+        let request = self
+            .inner
+            .post(format!("{}{path}", self.base_url))
+            .bearer_auth(&self.token)
+            .json(&body);
+        self.send("POST", path, request).await
     }
 
     pub async fn get(&self, path: &str) -> reqwest::Response {
-        self.inner
+        let request = self
+            .inner
             .get(format!("{}{path}", self.base_url))
-            .bearer_auth(&self.token)
-            .send()
-            .await
-            .unwrap_or_else(|e| {
-                panic!(
-                    "GET {}{path} failed{}: {e}",
-                    self.base_url,
-                    timeout_hint(&e)
-                )
-            })
+            .bearer_auth(&self.token);
+        self.send("GET", path, request).await
     }
 
     pub async fn put_json(&self, path: &str, body: serde_json::Value) -> reqwest::Response {
-        self.inner
+        let request = self
+            .inner
             .put(format!("{}{path}", self.base_url))
             .bearer_auth(&self.token)
-            .json(&body)
-            .send()
-            .await
-            .unwrap_or_else(|e| {
-                panic!(
-                    "PUT {}{path} failed{}: {e}",
-                    self.base_url,
-                    timeout_hint(&e)
-                )
-            })
+            .json(&body);
+        self.send("PUT", path, request).await
     }
 
     pub async fn patch_json(&self, path: &str, body: serde_json::Value) -> reqwest::Response {
-        self.inner
+        let request = self
+            .inner
             .patch(format!("{}{path}", self.base_url))
             .bearer_auth(&self.token)
-            .json(&body)
-            .send()
-            .await
-            .unwrap_or_else(|e| {
-                panic!(
-                    "PATCH {}{path} failed{}: {e}",
-                    self.base_url,
-                    timeout_hint(&e)
-                )
-            })
+            .json(&body);
+        self.send("PATCH", path, request).await
     }
 
     pub async fn post_no_auth(&self, path: &str, body: serde_json::Value) -> reqwest::Response {
-        self.inner
+        let request = self
+            .inner
             .post(format!("{}{path}", self.base_url))
-            .json(&body)
-            .send()
-            .await
-            .unwrap_or_else(|e| {
-                panic!(
-                    "POST {}{path} failed{}: {e}",
-                    self.base_url,
-                    timeout_hint(&e)
-                )
-            })
+            .json(&body);
+        self.send("POST", path, request).await
     }
 
     pub async fn post_with_token(
@@ -726,33 +839,19 @@ impl TestClient {
         body: serde_json::Value,
         token: &str,
     ) -> reqwest::Response {
-        self.inner
+        let request = self
+            .inner
             .post(format!("{}{path}", self.base_url))
             .bearer_auth(token)
-            .json(&body)
-            .send()
-            .await
-            .unwrap_or_else(|e| {
-                panic!(
-                    "POST {}{path} failed{}: {e}",
-                    self.base_url,
-                    timeout_hint(&e)
-                )
-            })
+            .json(&body);
+        self.send("POST", path, request).await
     }
 
     pub async fn delete(&self, path: &str) -> reqwest::Response {
-        self.inner
+        let request = self
+            .inner
             .delete(format!("{}{path}", self.base_url))
-            .bearer_auth(&self.token)
-            .send()
-            .await
-            .unwrap_or_else(|e| {
-                panic!(
-                    "DELETE {}{path} failed{}: {e}",
-                    self.base_url,
-                    timeout_hint(&e)
-                )
-            })
+            .bearer_auth(&self.token);
+        self.send("DELETE", path, request).await
     }
 }
