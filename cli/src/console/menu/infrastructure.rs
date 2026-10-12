@@ -5,9 +5,9 @@ use console::style;
 use inquire::{InquireError, Select};
 
 use crate::{
-    config::{Config, EnvKind},
+    config::Config,
     core::infra::{
-        action_down, action_status, action_up, action_update, compose_file, preflight_prod_env,
+        action_down, action_status, action_up, action_update, compose_file, preflight_start,
         source_tree_present,
     },
     stateless::render::render_status,
@@ -68,14 +68,13 @@ pub(super) async fn infrastructure() -> Result<()> {
                 "Start" => match Config::load() {
                     Ok(cfg) => match compose_file() {
                         Ok(compose) => {
-                            let safe = !matches!(cfg.kind, EnvKind::Prod)
-                                || match preflight_prod_env(&compose) {
-                                    Ok(()) => true,
-                                    Err(e) => {
-                                        print_err(e);
-                                        false
-                                    }
-                                };
+                            let safe = match preflight_start(&compose, cfg.kind) {
+                                Ok(()) => true,
+                                Err(e) => {
+                                    print_err(e);
+                                    false
+                                }
+                            };
                             if safe {
                                 let build = source_tree_present(&compose);
                                 println!(
@@ -126,14 +125,13 @@ pub(super) async fn infrastructure() -> Result<()> {
                 "Update images" => match Config::load() {
                     Ok(cfg) => match compose_file() {
                         Ok(compose) if source_tree_present(&compose) => {
-                            let safe = !matches!(cfg.kind, EnvKind::Prod)
-                                || match preflight_prod_env(&compose) {
-                                    Ok(()) => true,
-                                    Err(e) => {
-                                        print_err(e);
-                                        false
-                                    }
-                                };
+                            let safe = match preflight_start(&compose, cfg.kind) {
+                                Ok(()) => true,
+                                Err(e) => {
+                                    print_err(e);
+                                    false
+                                }
+                            };
                             if safe {
                                 println!(
                                     "\n  Rebuilding Odal Node from source ({})\n",

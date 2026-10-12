@@ -10,21 +10,17 @@
 use anyhow::Result;
 
 use crate::{
-    config::{Config, EnvKind},
-    core::infra::{
-        action_up, action_update, compose_file, preflight_prod_env, source_tree_present,
-    },
+    config::Config,
+    core::infra::{action_up, action_update, compose_file, preflight_start, source_tree_present},
 };
 
 pub async fn run_update() -> Result<()> {
     let cfg = Config::load()?;
     let compose = compose_file()?;
     if source_tree_present(&compose) {
-        // The rebuild recreates the containers, so it starts the node: hold a
-        // production profile to the same preflight `odal up` does.
-        if matches!(cfg.kind, EnvKind::Prod) {
-            preflight_prod_env(&compose)?;
-        }
+        // The rebuild recreates the containers, so it starts the node: hold it
+        // to every check `odal up` makes.
+        preflight_start(&compose, cfg.kind)?;
         println!(
             "Rebuilding Odal Node from source ({})...",
             compose.display()

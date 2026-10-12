@@ -370,13 +370,17 @@ reversible; retirement is terminal and gated.
 ## Updating the node
 
 ```sh
-odal update        # pull the images for ODAL_VERSION (inside a clone: rebuild from source)
+odal update        # pull the images for ODAL_VERSION
 odal down          # stop running services
 odal up            # restart with new images
 odal status        # verify healthy
 ```
 
 Or from the Console: **Infrastructure › Update images**, then **Stop**, then **Start**.
+
+Inside a clone of the engine, `odal update` (and **Update images**) rebuilds
+from source and restarts the services itself, so skip the stop and start and go
+straight to `odal status`.
 
 ---
 

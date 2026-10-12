@@ -12,7 +12,7 @@ use crate::{
     core::{
         infra::{
             COMPOSE_FILE, action_up, deployment_env_var, find_install_root, infra_container_status,
-            preflight_prod_env, scaffold_install, source_tree_present,
+            preflight_start, scaffold_install, source_tree_present,
         },
         onboarding::{action_bootstrap, action_node_state},
     },
@@ -158,9 +158,7 @@ async fn step_infrastructure(cfg: &Config) -> Result<()> {
         return Ok(());
     }
 
-    if matches!(cfg.kind, EnvKind::Prod)
-        && let Err(e) = preflight_prod_env(&compose_path)
-    {
+    if let Err(e) = preflight_start(&compose_path, cfg.kind) {
         println!("\n  {} {}\n", style("⚠").yellow(), e);
         return Ok(());
     }

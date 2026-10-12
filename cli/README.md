@@ -31,11 +31,13 @@ rendered loudly).
 
 - **Active profile selection** (highest precedence first): `--profile <name>` →
   `ODAL_PROFILE` → the saved current profile → `default`.
-- **`kind` drives behaviour:** `odal up`/`down`/`update` always operate the full
-  self-host stack (`docker-compose.yml` — node + resolver + infra). The kind
-  selects how: `dev` (localhost) **builds** the node image from your source tree
-  and tolerates dev-default secrets; `prod` (remote) **pulls** the published
-  image and runs a `.env` secret preflight. The kind also sets the banner colour.
+- **`kind` drives the preflight, not the build:** `odal up`/`down`/`update`
+  always operate the full self-host stack (`docker-compose.yml` — node +
+  resolver + infra). `dev` (localhost) tolerates dev-default secrets; `prod`
+  (remote) runs a `.env` secret preflight first. Whether the node image is
+  **built** or **pulled** is decided by the install, not the kind: inside a
+  clone of the engine it is built from source, anywhere else the published
+  image runs. The kind also sets the banner colour.
   (The infra-only `docker-compose.dev.yml` is for engine development —
   `just infra` + `cargo run` — and is not driven by `odal`.)
 

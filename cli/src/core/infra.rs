@@ -10,7 +10,10 @@ use std::{
 use anyhow::{Context, Result};
 
 use super::types::{ContainerHealth, ServiceHealth, ServiceStatus, StatusReport};
-use crate::{config::Config, http::OdalClient};
+use crate::{
+    config::{Config, EnvKind},
+    http::OdalClient,
+};
 
 /// Walk up from CWD to find the installation root — the directory that contains
 /// a `docker/` folder with either compose file (dev or prod).
@@ -525,6 +528,57 @@ pub fn deployment_owned_elsewhere(compose_file: &Path) -> Option<String> {
     };
     (!same).then_some(theirs)
 }
+
+/// Every check a start must pass before compose runs, whichever command starts
+/// the stack.
+///
+/// `odal up`, `odal update`'s rebuild, guided setup and the console's Start and
+/// Update all end in [`action_up`]. Each used to carry its own subset of these
+/// checks and only `up` had all three, so an update or a console start could
+/// boot a stack `up` refuses: one missing a bind-mount source, or one belonging
+/// to another install, recreated against that install's signing-key volume. One
+/// function, so a check added here reaches every start.
+pub fn preflight_start(compose_file: &Path, kind: EnvKind) -> Result<()> {
+    // Production must not boot on missing or dev-default secrets.
+    if matches!(kind, EnvKind::Prod) {
+        preflight_prod_env(compose_file)?;
+    }
+
+    // The compose file bind-mounts the database role-provisioning hook. Docker
+    // fabricates an empty directory for a missing mount source rather than
+    // failing, so without this check the stack starts, reports success, and the
+    // node then retries authentication forever against a role whose password
+    // was never set. Refuse up front instead, and say what to do about it.
+    if let Some(root) = compose_file.parent().and_then(Path::parent) {
+        let missing = missing_scaffold_files(root);
+        if !missing.is_empty() {
+            anyhow::bail!(
+                "this install is missing files the stack needs:\n{}\n\
+                 Run `odal init` to scaffold them, then try again.",
+                missing
+                    .iter()
+                    .map(|f| format!("  • {f}"))
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            );
+        }
+    }
+
+    // Compose fixes the project name, so a second install root does not get a
+    // second deployment — it takes over the first one's containers and volumes,
+    // including the one holding the signing key. Refuse rather than adopt.
+    if let Some(owner) = deployment_owned_elsewhere(compose_file) {
+        anyhow::bail!(
+            "a deployment of this project is already running, started from:\n  {owner}\n\
+             Starting it from here would recreate those containers with this \
+             directory's .env, against that deployment's volumes — including the \
+             one holding the signing key.\n\n\
+             Run `odal` from that directory instead, or set \
+             COMPOSE_PROJECT_NAME to give this install its own deployment."
+        );
+    }
+    Ok(())
+}
 /// Report Docker container health for the full-stack compose project.
 pub(crate) fn infra_container_status() -> Result<Vec<ContainerHealth>> {
     let compose = compose_file()?;
@@ -828,6 +882,22 @@ mod tests {
             missing_scaffold_files(root.path()),
             vec!["ops/bootstrap/pg-init.sh"]
         );
+    }
+
+    /// The check every start makes, not only `odal up`: an update's rebuild and
+    /// the console's Start used to skip it and boot a stack whose role hook was
+    /// missing. Refused before Docker is consulted, so no daemon is needed here.
+    #[test]
+    fn a_start_is_refused_while_a_mounted_file_is_missing() {
+        let root = tempfile::TempDir::new().unwrap();
+        scaffold_install(root.path()).unwrap();
+        std::fs::remove_file(root.path().join("ops/bootstrap/pg-init.sh")).unwrap();
+
+        let compose = root.path().join("docker").join(COMPOSE_FILE);
+        let refused = preflight_start(&compose, EnvKind::Dev)
+            .expect_err("a start with a missing mount source is refused")
+            .to_string();
+        assert!(refused.contains("ops/bootstrap/pg-init.sh"), "{refused}");
     }
 
     /// Whether to build is decided by the source tree being present, not by the
