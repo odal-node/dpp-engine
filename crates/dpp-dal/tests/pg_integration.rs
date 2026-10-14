@@ -668,14 +668,13 @@ async fn t9_find_by_identity_matches_draft_and_published_via_index() {
     let pg = start_pg().await;
     let repo = PgPassportRepo::new(pg.dal.clone());
 
-    // Enough decoy rows that a seq scan and an index scan would visibly differ
-    // in the query plan — a handful of rows can fool the planner into a seq
-    // scan regardless of the index's existence.
-    for i in 0..200 {
-        let gtin = format!("{i:013}{}", check_digit_for(&format!("{i:013}")));
+    // One decoy per key the lookup compares: the draft's identifier under
+    // another batch, and the draft's batch under the published passport's
+    // identifier. The second is also what `batch_id: None` below must skip.
+    for (gtin, batch) in [("09506000134352", "BATCH-X"), ("01234567890128", "BATCH-D")] {
         repo.create(battery_passport_with(
-            &gtin,
-            Some("DECOY"),
+            gtin,
+            Some(batch),
             PassportStatus::Draft,
         ))
         .await
@@ -731,8 +730,23 @@ async fn t9_find_by_identity_matches_draft_and_published_via_index() {
         "a batch mismatch must not fall back to matching on gtin alone"
     );
 
-    // The identifier expression `0042` indexes, verbatim: Postgres uses an
-    // expression index only for a query that repeats the expression.
+    // The statement `find_by_identity` sends, with the draft's values in place
+    // of its parameters. Its whole shape matters, not only the WHERE clause:
+    // the ORDER BY and the absence of a LIMIT change what the planner
+    // optimises for. The identifier expression is the one `0042` indexes,
+    // verbatim: Postgres uses an expression index only for a query that
+    // repeats the expression.
+    //
+    // Sequential scans are priced out rather than outnumbered. On a table this
+    // small the planner rightly prefers one; this test used to insert 200
+    // decoys, one commit each, to tip it, and on a busy runner that alone ran
+    // past the CI time budget. A disabled seq scan still appears when no index
+    // can serve the query, so the assertions below keep their meaning.
+    let mut tx = pg.dal.pool().begin().await.expect("begin");
+    sqlx::query("SET LOCAL enable_seqscan = off")
+        .execute(&mut *tx)
+        .await
+        .expect("disable seq scan");
     let plan_rows = sqlx::query(
         "EXPLAIN SELECT doc FROM odal.passport \
          WHERE status IN ('draft','active') \
@@ -742,9 +756,10 @@ async fn t9_find_by_identity_matches_draft_and_published_via_index() {
                 doc->'productGroupData'->'productIdentifier'->>'did', \
                 doc->'productGroupData'->>'gtin')) = '09506000134352' \
            AND doc->>'batchId' IS NOT DISTINCT FROM 'BATCH-D' \
-         LIMIT 1",
+           AND doc->>'serialNumber' IS NOT DISTINCT FROM NULL \
+         ORDER BY created_at",
     )
-    .fetch_all(pg.dal.pool())
+    .fetch_all(&mut *tx)
     .await
     .expect("explain");
     let plan: String = plan_rows
@@ -752,21 +767,17 @@ async fn t9_find_by_identity_matches_draft_and_published_via_index() {
         .map(|r| r.get::<String, _>("QUERY PLAN"))
         .collect::<Vec<_>>()
         .join("\n");
+    // By name, not any index scan: `idx_passport_identifier` covers the same
+    // expression and `idx_passport_status` the status filter, so either would
+    // pass for the identity index if it were gone.
     assert!(
-        plan.contains("Index Scan") || plan.contains("Bitmap Index Scan"),
+        plan.contains("idx_passport_identity"),
         "expected idx_passport_identity to be used, got plan:\n{plan}"
     );
     assert!(
         !plan.contains("Seq Scan"),
         "find_by_identity must not fall back to a sequential scan, got plan:\n{plan}"
     );
-}
-
-/// GS1 mod-10 check digit for a 13-digit data prefix — lets the decoy loop
-/// generate 200 distinct, individually valid GTIN-14s.
-fn check_digit_for(data13: &str) -> u8 {
-    let digits: Vec<u8> = data13.bytes().map(|b| b - b'0').collect();
-    dpp_domain::gs1_check_digit(&digits)
 }
 
 /// A structurally-valid but unsigned dossier — enough to persist/round-trip
