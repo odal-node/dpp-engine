@@ -127,7 +127,7 @@ xml-sec      = "0.1.20"
 
 cms          = { version = "0.2", default-features = false }
 x509-cert    = "0.2"
-der          = "0.7"
+der          = "0.8"
 const-oid    = "0.9"
 p256         = { version = "0.14", features = ["ecdsa", "pkcs8"] }
 rcgen        = "0.14"
