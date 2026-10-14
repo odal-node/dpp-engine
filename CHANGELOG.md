@@ -291,6 +291,27 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ### Fixed
 
+- **`odal` runs the published images outside a clone of this repository.** The
+  guided setup, the console's Start and `odal update` decided whether to build
+  from the profile kind, and every self-hosted node infers `dev` because it is
+  reached over localhost, so every install was sent down `docker compose up
+  --build`. Outside a clone the compose file's build context does not exist, and
+  the build failed before any service started. They now decide the way `odal up`
+  already did, by whether the install carries the engine source. `odal update`
+  rebuilds and restarts inside a clone and pulls the images for `ODAL_VERSION`
+  anywhere else; the console's Update images does the same.
+
+  Every path that starts the stack (`odal up`, `odal update`'s rebuild, guided
+  setup, the console's Start and Update) now runs the same checks through one
+  function, `preflight_start`. Before, only `odal up` had all three: the
+  production `.env` preflight, the refusal of an install missing a bind-mounted
+  file, and the refusal to recreate a deployment started from another install
+  root, which would have reused that install's signing-key volume.
+
+  `odal init` also writes `.env.example`, never `.env`. It documents
+  `ODAL_VERSION`: image tags are the release number without the git tag's
+  leading `v` (tag `v0.14.0` is image `0.14.0`).
+
 - **The node and resolver images carry their licences.** Each runtime image now
   ships the engine's `LICENSE` (BSL 1.1, Additional Use Grant included) and a
   `THIRD-PARTY-NOTICES` file at `/usr/share/licenses/odal-node/`. The notices are
