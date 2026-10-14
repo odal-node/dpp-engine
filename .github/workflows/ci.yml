@@ -550,6 +550,34 @@ jobs:
   test-postgres:
     name: Postgres integration tests
     runs-on: ubuntu-latest
+    # The same shared server `test-integration` uses, for the same reason —
+    # and with a sharper one here. Without `ODAL_TEST_PG_ADMIN_URL` every test
+    # starts its own `postgres:17`, so nextest's first four tests all pull the
+    # image at the same instant: 11-19s when the registry answers, and on
+    # 2026-10-14 all four sat past the 120s hang cutoff with nothing passing,
+    # which killed the run on `main`. The runner pulls a service image itself,
+    # once, before any step starts; the tests then clone a database from a
+    # migrated template in about 190ms and have nothing left to pull.
+    #
+    # Every test in `pg_integration` goes through `start_pg()`, so none needs a
+    # container of its own. The job and its name stay as they are — the name is
+    # what the branch ruleset's required check refers to.
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      ODAL_TEST_PG_ADMIN_URL: postgres://postgres:test@127.0.0.1:5432/postgres
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
