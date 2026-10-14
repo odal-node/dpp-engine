@@ -10,7 +10,10 @@ use std::{
 use anyhow::{Context, Result};
 
 use super::types::{ContainerHealth, ServiceHealth, ServiceStatus, StatusReport};
-use crate::{config::Config, http::OdalClient};
+use crate::{
+    config::{Config, EnvKind},
+    http::OdalClient,
+};
 
 /// Walk up from CWD to find the installation root — the directory that contains
 /// a `docker/` folder with either compose file (dev or prod).
@@ -56,6 +59,12 @@ pub const COMPOSE_TEMPLATE: &str = include_str!("../../../docker/docker-compose.
 pub const PG_INIT_TEMPLATE: &str = include_str!("../../../ops/bootstrap/pg-init.sh");
 pub const BOOTSTRAP_SQL_TEMPLATE: &str = include_str!("../../../ops/bootstrap/bootstrap.sql");
 
+/// The engine's own `.env.example`, embedded so an install without the source
+/// tree gets the file every setup instruction starts from. The compose file
+/// refuses to start without `.env` values it has no default for, and an
+/// operator outside a clone otherwise has nowhere to copy them from.
+pub const ENV_EXAMPLE_TEMPLATE: &str = include_str!("../../../.env.example");
+
 /// One file an install root needs, and what to write into it.
 struct ScaffoldFile {
     rel: &'static str,
@@ -64,6 +73,10 @@ struct ScaffoldFile {
     /// non-executable one. `pg-init.sh` uses `set -e` and `exit 1`, which mean
     /// different things to a sourced script, so it is written executable.
     executable: bool,
+    /// Whether the stack reads this file when it starts, so that `odal up`
+    /// must refuse without it. `.env.example` is only copied from; an install
+    /// scaffolded before it existed still starts.
+    required: bool,
 }
 
 const SCAFFOLD: &[ScaffoldFile] = &[
@@ -71,16 +84,27 @@ const SCAFFOLD: &[ScaffoldFile] = &[
         rel: "docker/docker-compose.yml",
         contents: COMPOSE_TEMPLATE,
         executable: false,
+        required: true,
     },
     ScaffoldFile {
         rel: "ops/bootstrap/pg-init.sh",
         contents: PG_INIT_TEMPLATE,
         executable: true,
+        required: true,
     },
     ScaffoldFile {
         rel: "ops/bootstrap/bootstrap.sql",
         contents: BOOTSTRAP_SQL_TEMPLATE,
         executable: false,
+        required: true,
+    },
+    // Never `.env` itself: that holds the operator's secrets, and a scaffolder
+    // that wrote one would start a node on the template's values.
+    ScaffoldFile {
+        rel: ".env.example",
+        contents: ENV_EXAMPLE_TEMPLATE,
+        executable: false,
+        required: false,
     },
 ];
 
@@ -119,7 +143,7 @@ pub fn scaffold_install(root: &Path) -> Result<Vec<PathBuf>> {
 pub fn missing_scaffold_files(root: &Path) -> Vec<&'static str> {
     SCAFFOLD
         .iter()
-        .filter(|f| !root.join(f.rel).is_file())
+        .filter(|f| f.required && !root.join(f.rel).is_file())
         .map(|f| f.rel)
         .collect()
 }
@@ -504,6 +528,57 @@ pub fn deployment_owned_elsewhere(compose_file: &Path) -> Option<String> {
     };
     (!same).then_some(theirs)
 }
+
+/// Every check a start must pass before compose runs, whichever command starts
+/// the stack.
+///
+/// `odal up`, `odal update`'s rebuild, guided setup and the console's Start and
+/// Update all end in [`action_up`]. Each used to carry its own subset of these
+/// checks and only `up` had all three, so an update or a console start could
+/// boot a stack `up` refuses: one missing a bind-mount source, or one belonging
+/// to another install, recreated against that install's signing-key volume. One
+/// function, so a check added here reaches every start.
+pub fn preflight_start(compose_file: &Path, kind: EnvKind) -> Result<()> {
+    // Production must not boot on missing or dev-default secrets.
+    if matches!(kind, EnvKind::Prod) {
+        preflight_prod_env(compose_file)?;
+    }
+
+    // The compose file bind-mounts the database role-provisioning hook. Docker
+    // fabricates an empty directory for a missing mount source rather than
+    // failing, so without this check the stack starts, reports success, and the
+    // node then retries authentication forever against a role whose password
+    // was never set. Refuse up front instead, and say what to do about it.
+    if let Some(root) = compose_file.parent().and_then(Path::parent) {
+        let missing = missing_scaffold_files(root);
+        if !missing.is_empty() {
+            anyhow::bail!(
+                "this install is missing files the stack needs:\n{}\n\
+                 Run `odal init` to scaffold them, then try again.",
+                missing
+                    .iter()
+                    .map(|f| format!("  • {f}"))
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            );
+        }
+    }
+
+    // Compose fixes the project name, so a second install root does not get a
+    // second deployment — it takes over the first one's containers and volumes,
+    // including the one holding the signing key. Refuse rather than adopt.
+    if let Some(owner) = deployment_owned_elsewhere(compose_file) {
+        anyhow::bail!(
+            "a deployment of this project is already running, started from:\n  {owner}\n\
+             Starting it from here would recreate those containers with this \
+             directory's .env, against that deployment's volumes — including the \
+             one holding the signing key.\n\n\
+             Run `odal` from that directory instead, or set \
+             COMPOSE_PROJECT_NAME to give this install its own deployment."
+        );
+    }
+    Ok(())
+}
 /// Report Docker container health for the full-stack compose project.
 pub(crate) fn infra_container_status() -> Result<Vec<ContainerHealth>> {
     let compose = compose_file()?;
@@ -580,8 +655,8 @@ fn compose_command(compose_file: &Path) -> std::process::Command {
 /// Start services via `docker compose up -d`.
 ///
 /// When `build` is set, images are built from source first (`--build`) — used
-/// for local self-host from the source tree, where no published node image
-/// exists yet. Remote/prod deployments pull the published image instead.
+/// when the install carries the engine source (see [`source_tree_present`]).
+/// Otherwise compose runs the published image, pulling it if it is missing.
 pub async fn action_up(compose_file: &Path, build: bool) -> Result<()> {
     let mut cmd = compose_command(compose_file);
     cmd.args(["up", "-d"]);
@@ -752,6 +827,45 @@ mod tests {
         );
     }
 
+    /// An install outside a clone has no other copy of the variables the
+    /// compose file refuses to start without. The example is written; the
+    /// operator's `.env` is not, since a scaffolded one would start a node on
+    /// the template's values.
+    #[test]
+    fn scaffolding_writes_the_example_env_and_never_the_env_itself() {
+        let root = tempfile::TempDir::new().unwrap();
+        scaffold_install(root.path()).unwrap();
+
+        let example = std::fs::read_to_string(root.path().join(".env.example")).unwrap();
+        assert_eq!(example, ENV_EXAMPLE_TEMPLATE);
+        for var in [
+            "DATABASE_POSTGRES_PASS",
+            "DATABASE_APP_PASS",
+            "RESOLVER_BASE_URL",
+        ] {
+            assert!(
+                COMPOSE_TEMPLATE.contains(&format!("${{{var}:?")),
+                "the compose file no longer requires {var}"
+            );
+            assert!(
+                example.contains(&format!("\n{var}=")),
+                "the scaffolded example does not set {var}, which compose requires"
+            );
+        }
+        assert!(!root.path().join(".env").exists());
+    }
+
+    /// The example is copied from, never read by the stack, so an install
+    /// scaffolded before it was part of the scaffold still starts.
+    #[test]
+    fn an_install_without_the_example_env_still_starts() {
+        let root = tempfile::TempDir::new().unwrap();
+        scaffold_install(root.path()).unwrap();
+        std::fs::remove_file(root.path().join(".env.example")).unwrap();
+
+        assert!(missing_scaffold_files(root.path()).is_empty());
+    }
+
     /// What `odal up` checks before invoking compose. A mount source that is a
     /// *directory* is exactly what Docker leaves behind, so it must not count
     /// as present.
@@ -768,6 +882,22 @@ mod tests {
             missing_scaffold_files(root.path()),
             vec!["ops/bootstrap/pg-init.sh"]
         );
+    }
+
+    /// The check every start makes, not only `odal up`: an update's rebuild and
+    /// the console's Start used to skip it and boot a stack whose role hook was
+    /// missing. Refused before Docker is consulted, so no daemon is needed here.
+    #[test]
+    fn a_start_is_refused_while_a_mounted_file_is_missing() {
+        let root = tempfile::TempDir::new().unwrap();
+        scaffold_install(root.path()).unwrap();
+        std::fs::remove_file(root.path().join("ops/bootstrap/pg-init.sh")).unwrap();
+
+        let compose = root.path().join("docker").join(COMPOSE_FILE);
+        let refused = preflight_start(&compose, EnvKind::Dev)
+            .expect_err("a start with a missing mount source is refused")
+            .to_string();
+        assert!(refused.contains("ops/bootstrap/pg-init.sh"), "{refused}");
     }
 
     /// Whether to build is decided by the source tree being present, not by the
