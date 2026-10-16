@@ -528,15 +528,18 @@ jobs:
           workspaces: dpp-engine
       - name: Install cargo-audit
         run: cargo install cargo-audit --locked
-      - name: cargo audit
+      - name: cargo audit (a yanked crate needs a register entry)
         working-directory: dpp-engine
-        run: cargo audit --deny yanked --deny unmaintained
+        run: bash scripts/check-yanked.sh
       - name: Suppression register is current
         working-directory: dpp-engine
         run: bash scripts/check-audit-register.sh
       - name: Suppression register checker self-test
         working-directory: dpp-engine
         run: bash scripts/check-audit-register.test.sh
+      - name: Yanked-crate checker self-test
+        working-directory: dpp-engine
+        run: bash scripts/check-yanked.test.sh
       - name: Install cargo-deny
         uses: taiki-e/install-action@ab6895351a88b908e96a4697860d4ffea5e57dbe # v2.87.27
         with:

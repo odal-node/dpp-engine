@@ -662,8 +662,18 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   the patch, so no manifest changed. Nothing else in the lockfile moved except
   the `cranelift`, `pulley` and `wiggle` crates that release pins to.
 
-  `zip` 8.6.0, yanked upstream, still fails the audit's `--deny yanked`. Its fix
-  is a major bump and is a separate change.
+  `zip` 8.6.0 is yanked upstream, and `cargo audit --deny yanked` has no way to
+  leave one crate alone (`--ignore` takes advisory IDs, which a yanked crate does
+  not have), so it kept the audit red, and with it every pull request, this one
+  included. It cannot be replaced from here: calamine, whose latest release
+  requires `zip ^8.6`, pulls it in, and every zip from 8.0.0 through 9.0.2 is
+  yanked. The audit is now `scripts/check-yanked.sh`. It still denies yanked and
+  unmaintained crates and fails on every vulnerability, but lets a yanked crate
+  through when `.cargo/yanked-register.txt` names that exact version with an
+  owner, a reason and an expiry that is at most 60 days out. An entry that has
+  expired, or that no longer matches a yanked crate, fails the audit, so the
+  exception ends on a date or when calamine moves to zip 9, whichever comes
+  first. The register holds `zip 8.6.0` and expires on 15 December.
 
 ## [0.14.0] - 2026-09-24
 
