@@ -228,6 +228,16 @@ properties:
       so one second-life unit may derive from several predecessors.
     items:
       $ref: ./DerivationRef.yaml
+  personalData:
+    type: object
+    additionalProperties:
+      $ref: ./PersonalDataStatement.yaml
+    description: >-
+      What the operator states about personal data in the marked fields of
+      `productGroupData`, keyed by dotted field path. Absent when it states
+      nothing. On a **redacted read** the key is absent: a statement is shown
+      only to an audience that sees the field it speaks about, and never to the
+      public.
   componentRefs:
     type: array
     description: >-

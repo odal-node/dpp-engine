@@ -1,29 +1,22 @@
 //! Dossier-side JWS helpers on top of `dpp_crypto::jws`.
 //!
-//! `dpp-crypto` exposes the raw verifier and the DID-document key-extraction
-//! functions; what it does not expose is payload decoding and content
-//! binding, which dossier verification needs — those live here.
+//! `dpp-crypto` exposes the raw verifier and the DID-document key resolution;
+//! what it does not expose is payload decoding and content binding, which
+//! dossier verification needs — those live here.
 
 use anyhow::anyhow;
 use base64::Engine;
-use dpp_crypto::jws::{
-    canonicalize, extract_key_by_fingerprint, extract_kid_from_jws, extract_primary_public_key,
-    verify_jws,
-};
+use dpp_crypto::jws::{canonicalize, resolve_verification_key, verify_jws};
 
 /// Resolve the public key to verify `jws` against, from a DID document.
 ///
-/// If the JWS carries a `kid`, it must resolve to a key by fingerprint (this
-/// includes rotation-archived keys). A present-but-unresolvable `kid` (revoked,
-/// rotated out, or simply wrong) returns `None` so the caller surfaces an
-/// accurate "kid does not resolve" diagnosis — it does **not** silently
-/// substitute the primary key. The primary-key fallback is reserved for legacy
-/// tokens signed before `kid` was added, i.e. tokens carrying no `kid` at all.
+/// The `kid` must name a verification method the document publishes and
+/// references from `assertionMethod` (this includes rotation-archived keys). A
+/// `kid` that names none (revoked, rotated out, or simply wrong) returns `None`
+/// so the caller surfaces an accurate "kid does not resolve" diagnosis. So does a
+/// token with no `kid` at all: it is not checked against a key chosen for it.
 pub(crate) fn resolve_public_key(jws: &str, did_document: &serde_json::Value) -> Option<String> {
-    match extract_kid_from_jws(jws) {
-        Some(kid) => extract_key_by_fingerprint(did_document, &kid),
-        None => extract_primary_public_key(did_document),
-    }
+    resolve_verification_key(did_document, jws)
 }
 
 /// Decode the payload segment of a compact JWS to raw bytes (post-base64,
@@ -85,16 +78,21 @@ mod tests {
         format!("{signing_input}.{}", b64.encode(sig.to_bytes()))
     }
 
+    /// The method the document publishes, which a `kid` names in full.
+    const METHOD: &str = "did:web:example.com#root";
+
     fn did_doc_for(signing_key: &SigningKey) -> serde_json::Value {
         let b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD;
         let x = b64.encode(signing_key.verifying_key().to_bytes());
         serde_json::json!({
+            "id": "did:web:example.com",
             "verificationMethod": [{
-                "id": "did:web:example.com#root",
-                "type": "JsonWebKey2020",
+                "id": METHOD,
+                "type": "JsonWebKey",
+                "controller": "did:web:example.com",
                 "publicKeyJwk": { "kty": "OKP", "crv": "Ed25519", "x": x },
             }],
-            "assertionMethod": ["did:web:example.com#root"],
+            "assertionMethod": [METHOD],
         })
     }
 
@@ -102,10 +100,10 @@ mod tests {
     fn content_binding_rejects_signature_over_different_content() {
         let signing_key = SigningKey::from_bytes(&[7u8; 32]);
         let did_doc = did_doc_for(&signing_key);
-        let key = resolve_public_key("x.x.x", &did_doc).unwrap();
 
         let signed = serde_json::json!({"a": 1});
-        let jws = sign(&signing_key, &signed);
+        let jws = sign_with_kid(&signing_key, &signed, METHOD);
+        let key = resolve_public_key(&jws, &did_doc).unwrap();
 
         assert!(verify_jws_content(&jws, &key, &signed).unwrap());
         let other = serde_json::json!({"a": 2});
@@ -116,12 +114,14 @@ mod tests {
     }
 
     #[test]
-    fn resolve_falls_back_to_primary_key_without_kid() {
+    fn a_token_without_a_kid_resolves_to_no_key() {
         let signing_key = SigningKey::from_bytes(&[7u8; 32]);
         let did_doc = did_doc_for(&signing_key);
         let jws = sign(&signing_key, &serde_json::json!({"a": 1})); // header has no kid
-        let key = resolve_public_key(&jws, &did_doc);
-        assert!(key.is_some(), "must fall back to the primary key");
+        assert!(
+            resolve_public_key(&jws, &did_doc).is_none(),
+            "a token that names no key must not be checked against the document's only one"
+        );
     }
 
     #[test]
@@ -134,7 +134,7 @@ mod tests {
         let jws = sign_with_kid(
             &signing_key,
             &serde_json::json!({"a": 1}),
-            "not-a-real-fingerprint",
+            "did:web:example.com#not-a-real-method",
         );
         assert!(
             resolve_public_key(&jws, &did_doc).is_none(),

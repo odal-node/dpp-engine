@@ -12,6 +12,62 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ### Breaking
 
+- **`dpp-core` 0.22.0: a key is named by its own thumbprint, and a token
+  signed before this release no longer verifies.** Verification methods were
+  named by position, so after a rotation `#key-1` named a different key. They are
+  now named by the key's RFC 7638 thumbprint in RFC 9278 URI form, and every
+  signature carries the absolute URL of the method that made it as its `kid`.
+  The DID document is `JsonWebKey` with the Controlled Identifiers context, and
+  a token that names no key is refused rather than checked against a default.
+
+  **Migration:** sign again anything signed before the upgrade. That covers
+  passport and snapshot proofs, access credentials and signed ruleset bundles.
+  `POST /internal/keys/rotate` now answers `new_key_id` as
+  `did:web:…#urn:ietf:params:oauth:jwk-thumbprint:sha-256:…` instead of
+  `…#key-1`, and a reader of the DID document finds the current key at
+  `authentication[0]`. The demo dossiers are
+  regenerated.
+
+- **`dpp-core` 0.22.0: an access credential is typed as a VC-JWT.** The
+  `X-DPP-Credential` verifier now goes through core's
+  `authenticate_access_credential`, which requires `typ: vc+jwt` and `cty: vc`
+  and binds the credential to the issuer document it was checked against. A
+  signature of the issuer's key that is not typed as a credential, such as a
+  passport proof, no longer passes for one. Credentials issued before this
+  release must be issued again.
+
+- **`dpp-core` 0.22.0: a submission to the EU registry is acknowledged with a
+  correlation identifier, and the registration identifier comes later.** The
+  registry accepts a submission for checking and rules on it afterwards, and
+  only a successful ruling generates the registration identifier (IR (EU)
+  2026/1778 Art. 8(7) and 8(8)). The adapter used to treat the answer to the
+  `POST` as a registration and polled by this node's passport id, a value the
+  registry never received. `register` now returns the correlation identifier,
+  and `check_submission` finds the submission's task on the registry's
+  dashboard and reads its result; `check_status` and `notify_transfer` take the
+  registration identifier.
+
+  The outbox row's `registry_id` holds the correlation identifier while the row
+  is `submitted` and the registration identifier once it is `registered`, so a
+  transfer notification waits for `registered` and never sends a correlation
+  identifier as a record id. A submission the registry already holds, answered
+  to a replayed idempotency key, carries no handle: the row stays `submitted`
+  and is not polled until the identifier is recovered. A state the node has no
+  name for keeps the poll going and is never read as a refusal. The drain no
+  longer reports a `deactivated` outcome, because a submission's ruling is not
+  a record's state.
+
+  An item-level registration is made under the serial the carrier prints, and
+  carries its batch, where it used to name the item by the passport's own id.
+
+- **`dpp-core` 0.22.0: the battery rules follow the Commission's guidance
+  v2.0.** `co2ePerUnitKg` is optional, and it and the four recycled-content
+  shares are not applicable to electric-vehicle, LMT and industrial batteries.
+  The battery import template stops asking for them, `co2ePerUnitKg` is an
+  optional import column, the demo passports and the demo dossier drop them,
+  and the mandatory-field counts quoted in the API description are now 41, 40
+  and 33.
+
 - **`POST /dpp/{dppId}/archive` is now `POST /dpp/{dppId}/retire`, the status it
   sets is `"retired"`, and the event it emits is `dpp.passport.retired`.**
   *(Breaking across six surfaces: the route, the `retireDpp` operationId, the
@@ -158,6 +214,22 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   with the registry's own rules rather than on the first registration.
 
 ### Added
+
+- **A field that can hold personal data is refused on the write that would store
+  it unless the operator says what is held.** ESPR Art. 10(1)(e), Reg. (EU)
+  2025/2509 Art. 20(10) and Reg. (EU) 2026/405 Art. 22(h) forbid storing customer
+  personal data in a passport without consent, and a draft is stored. Create,
+  every draft update and the draft an amendment builds now run core's
+  `check_personal_data` before the write and answer `422` naming the field.
+  `personalData` is accepted on create, patchable on a draft through
+  `PUT /dpp/{dppId}` and `amend`, served back on the authenticated read, and
+  frozen at publish. The schema marks the fields: battery
+  `usageHistory.negativeEvents` and `usageHistory.operatingConditions[].note`,
+  and textile `repairHistoryUrl`. This node never reads what a field says.
+
+  Not yet done: the erasable store for the records a `held: outside` statement
+  names, and the route that erases one. Until they exist an operator keeps
+  those records elsewhere and names them.
 
 - **The GS1 resolver accepts a consumer product variant (AI 22) and a
   third-party extension (AI 235).** A label printed elsewhere may carry either

@@ -38,7 +38,7 @@ fn sign_jws(payload: &serde_json::Value) -> (String, serde_json::Value) {
     let signing_key = SigningKey::generate(&mut rand::rand_core::UnwrapErr(rand::rngs::SysRng));
     let b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD;
     let pub_key_b64 = b64.encode(signing_key.verifying_key().as_bytes());
-    let header_b64 = b64.encode(r#"{"alg":"EdDSA","crv":"Ed25519"}"#);
+    let header_b64 = b64.encode(r#"{"alg":"EdDSA","kid":"did:web:test.resolver.example#key-1"}"#);
     let payload_b64 = b64.encode(serde_json::to_vec(payload).unwrap());
     let signing_input = format!("{header_b64}.{payload_b64}");
     let sig_b64 = b64.encode(signing_key.sign(signing_input.as_bytes()).to_bytes());

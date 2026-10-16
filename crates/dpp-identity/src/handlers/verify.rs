@@ -151,7 +151,7 @@ mod tests {
         let (store, _dir) = temp_store();
         store.generate_key("root").expect("provision key");
         let payload = json!({"passportId": "abc", "productName": "Widget"});
-        let jws = signer::sign(&store, "root", &payload).expect("sign");
+        let jws = signer::sign(&store, "root", &payload, "test-kid").expect("sign");
 
         let app = app(store);
         let resp = post_json(
@@ -167,7 +167,7 @@ mod tests {
         let (store, _dir) = temp_store();
         store.generate_key("root").expect("provision key");
         let signed_payload = json!({"passportId": "abc"});
-        let jws = signer::sign(&store, "root", &signed_payload).expect("sign");
+        let jws = signer::sign(&store, "root", &signed_payload, "test-kid").expect("sign");
 
         let app = app(store);
         // Caller expects a different payload than what was actually signed.

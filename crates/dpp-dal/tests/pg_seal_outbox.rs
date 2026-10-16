@@ -75,6 +75,7 @@ fn published_passport(jws: &str) -> Passport {
         derived_from: Vec::new(),
         component_refs: Vec::new(),
         life_status: None,
+        personal_data: Default::default(),
         retention_until: None,
         product_id: None,
         commodity_code: None,

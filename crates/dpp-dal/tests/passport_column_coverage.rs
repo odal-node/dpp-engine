@@ -113,6 +113,7 @@ fn fully_populated(supersedes: Option<PassportId>) -> Passport {
         derived_from: Vec::new(),
         component_refs: Vec::new(),
         life_status: None,
+        personal_data: Default::default(),
         retention_until: Some(now + chrono::Duration::days(3650)),
         product_id: Some(uuid::Uuid::now_v7()),
         commodity_code: None,

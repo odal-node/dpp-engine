@@ -606,6 +606,7 @@ mod label_resolution {
             compliance_result: None,
             lint_result: None,
             product_group_data: Some(ProductGroupData::Battery(Box::new(battery))),
+            personal_data: Default::default(),
             status,
             qr_code_url: None,
             jws_signature: None,

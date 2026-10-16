@@ -100,22 +100,16 @@ pub async fn verify_passport_jws(
     // Fetch the operator DID document; fail closed (503) on any transport/parse error.
     let did_doc = fetch_did(http, operator_did_url).await?;
 
-    // Select the key by kid (fingerprint) so rotation-archived keys remain usable.
-    // Fall back to the primary key for old kid-less JWS tokens.
-    let pub_key = {
-        let kid = jws::extract_kid_from_jws(jws);
-        kid.as_deref()
-            .and_then(|k| jws::extract_key_by_fingerprint(&did_doc, k))
-            .or_else(|| jws::extract_primary_public_key(&did_doc))
-            .ok_or_else(|| {
-                tracing::warn!(
-                    code = event_codes::DID_UNREACHABLE,
-                    operator_did_url,
-                    "operator DID has no matching verification key"
-                );
-                StatusCode::SERVICE_UNAVAILABLE
-            })?
-    };
+    // The key the `kid` names in the operator's document, so rotation-archived
+    // keys stay usable. A token that names none is not checked against a default.
+    let pub_key = jws::resolve_verification_key(&did_doc, jws).ok_or_else(|| {
+        tracing::warn!(
+            code = event_codes::DID_UNREACHABLE,
+            operator_did_url,
+            "operator DID has no matching verification key"
+        );
+        StatusCode::SERVICE_UNAVAILABLE
+    })?;
 
     // 1) Signature must verify against the operator key.
     match jws::verify_jws(jws, &pub_key) {
