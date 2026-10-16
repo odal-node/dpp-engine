@@ -862,6 +862,7 @@ mod tests {
             compliance_result: None,
             lint_result: None,
             product_group_data: None,
+            personal_data: Default::default(),
             status: PassportStatus::Draft,
             qr_code_url: None,
             jws_signature: None,
@@ -1030,6 +1031,8 @@ mod tests {
             commodity_code: None,
             backup_url: None,
             product_identifier: None,
+            batch_id: None,
+            item_serial: None,
             service_provider: None,
         }
     }

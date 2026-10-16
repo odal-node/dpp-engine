@@ -92,7 +92,17 @@ pub async fn sign_handler(
         return http_problem::internal_error("failed to provision signing key").into_response();
     }
 
-    match signer::sign(&state.store, &body.operator_id, &payload_value) {
+    // The `kid` is the absolute DID URL of the key's verification method, which
+    // is the identifier the DID document this service serves gives that key.
+    let kid = match state.verification_method_url(&body.operator_id) {
+        Ok(kid) => kid,
+        Err(e) => {
+            tracing::error!(operator_id = %body.operator_id, error = %e, "failed to name the signing key");
+            return http_problem::internal_error(e.to_string()).into_response();
+        }
+    };
+
+    match signer::sign(&state.store, &body.operator_id, &payload_value, &kid) {
         Ok(jws) => (
             StatusCode::OK,
             Json(InternalSignResponse { jws_signature: jws }),

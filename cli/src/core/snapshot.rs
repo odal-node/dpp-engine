@@ -206,11 +206,11 @@ async fn load_document(target: &str) -> Result<serde_json::Value> {
 
 /// The base64 public key to check the snapshot's proof under.
 ///
-/// With `--did-url`, the proof's own `kid` picks the verification method, and
-/// only the primary key is used when it names none. That ordering matters
-/// across a key rotation: a snapshot signed before the rotation verifies under
-/// the archived key the DID document still carries, and resolving straight to
-/// the primary would report a perfectly sound copy as unproven.
+/// With `--did-url`, the proof's own `kid` picks the verification method, and a
+/// proof that names none resolves to no key. That matters across a key
+/// rotation: a snapshot signed before the rotation verifies under the archived
+/// key the DID document still carries, and resolving straight to the primary
+/// would report a perfectly sound copy as unproven.
 async fn resolve_key(
     document: &serde_json::Value,
     key: Option<&str>,
@@ -243,15 +243,12 @@ async fn resolve_key(
     let did_document: serde_json::Value = serde_json::from_slice(&body)
         .with_context(|| format!("{did_url} did not return a JSON DID document"))?;
 
-    let kid = document
+    // The key the proof's `kid` names in the document. A proof that names none is
+    // not checked against a key chosen for it.
+    let resolved = document
         .get("snapshotJwsSignature")
         .and_then(serde_json::Value::as_str)
-        .and_then(dpp_crypto::jws::extract_kid_from_jws);
-
-    let resolved = match kid {
-        Some(kid) => dpp_crypto::jws::extract_key_by_fingerprint(&did_document, &kid),
-        None => dpp_crypto::jws::extract_primary_public_key(&did_document),
-    };
+        .and_then(|proof| dpp_crypto::jws::resolve_verification_key(&did_document, proof));
 
     resolved.ok_or_else(|| anyhow!("no usable Ed25519 public key in the DID document at {did_url}"))
 }
@@ -337,9 +334,26 @@ mod tests {
         store.generate_key("root").expect("generate key");
         let did = dpp_vc::build_did_document(&store, "snapshot-test.example.com", "root")
             .expect("build did document");
-        let key = dpp_crypto::jws::extract_primary_public_key(&did)
-            .expect("did document carries a primary key");
+        // Resolved the way a verifier resolves it, from a token naming the key.
+        let probe = dpp_crypto::jws::sign(&store, "root", &serde_json::json!({}), &kid(&store))
+            .expect("sign probe");
+        let key = dpp_crypto::jws::resolve_verification_key(&did, &probe)
+            .expect("did document carries the signing key");
         (dir, store, key)
+    }
+
+    /// The `kid` the node signs under: the absolute DID URL of the key's
+    /// verification method in the document `keystore` builds.
+    fn kid(store: &dpp_crypto::keystore::KeyStore) -> String {
+        let thumbprint = store
+            .public_key("root")
+            .expect("key present")
+            .thumbprint_uri()
+            .expect("thumbprint");
+        format!(
+            "{}#{thumbprint}",
+            dpp_vc::did_for("snapshot-test.example.com")
+        )
     }
 
     /// A snapshot document in the shape `render_public_snapshot` writes: the
@@ -357,7 +371,8 @@ mod tests {
             "asOf": rfc3339(as_of),
             "validUntil": rfc3339(valid_until),
         });
-        let proof = dpp_crypto::jws::sign(store, "root", &document).expect("sign snapshot");
+        let proof =
+            dpp_crypto::jws::sign(store, "root", &document, &kid(store)).expect("sign snapshot");
         document["snapshotJwsSignature"] = serde_json::Value::String(proof);
         document
     }

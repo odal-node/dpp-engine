@@ -223,7 +223,7 @@ mod tests {
             .decode(payload_b64)
             .unwrap();
         let payload: serde_json::Value = serde_json::from_slice(&payload_bytes).unwrap();
-        let jws = dpp_crypto::jws::sign(&mock.store, "root", &payload).unwrap();
+        let jws = dpp_crypto::jws::sign(&mock.store, "root", &payload, "test-kid").unwrap();
         (
             StatusCode::OK,
             Json(serde_json::json!({"jws_signature": jws})),

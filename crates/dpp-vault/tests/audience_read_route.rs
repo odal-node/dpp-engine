@@ -54,7 +54,9 @@ fn issuer_key() -> SigningKey {
 /// Mint a compact JWS over the JCS-canonical credential, exactly as an issuer
 /// would.
 fn sign_credential(key: &SigningKey, cred: &DppAccessCredential) -> String {
-    let header = B64.encode(format!(r#"{{"alg":"EdDSA","kid":"{KID}"}}"#).as_bytes());
+    let header = B64.encode(
+        format!(r#"{{"alg":"EdDSA","cty":"vc","kid":"{ISSUER}#{KID}","typ":"vc+jwt"}}"#).as_bytes(),
+    );
     let value = serde_json::to_value(cred).expect("credential to value");
     let canonical = dpp_crypto::jws::canonicalize(&value).expect("canonicalize");
     let payload = B64.encode(&canonical);

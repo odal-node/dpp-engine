@@ -279,11 +279,6 @@ const COMMON: &[Column] = &[
     req("batteryWeightKg", "batteryWeightKg", "12.4"),
     req("nominalCapacityAh", "nominalCapacityAh", "100.0"),
     req("batteryChemistry", "batteryChemistry", "LFP"),
-    // Not in the rules table, but the row validator requires it for every
-    // battery — the template has to satisfy the importer as well as the
-    // publish gate, and a column the importer demands is as load-bearing as
-    // one the guidance does.
-    req("co2ePerUnitKg", "co2ePerUnitKg", "85.4"),
     req("batteryStatus", "batteryStatus", "original"),
     // Mandatory for EV and LMT, `Conditional` for industrial — but the row
     // validator requires it for every battery, so every template carries it.
@@ -311,23 +306,10 @@ const COMMON: &[Column] = &[
         "criticalRaw_1_countryOfOrigin",
         "CL",
     ),
-    // ── Recycled and renewable content ────────────────────────────────────
-    req(
-        "recycledContentCobaltPct",
-        "recycledContentCobaltPct",
-        "0.0",
-    ),
-    req(
-        "recycledContentLithiumPct",
-        "recycledContentLithiumPct",
-        "6.5",
-    ),
-    req(
-        "recycledContentNickelPct",
-        "recycledContentNickelPct",
-        "0.0",
-    ),
-    req("recycledContentLeadPct", "recycledContentLeadPct", "0.0"),
+    // ── Renewable content ─────────────────────────────────────────────────
+    // The four recycled-content shares are not asked of any of the three
+    // categories this template serves: the Commission's guidance v2.0 has them
+    // not filled or displayed as of February 2027.
     req("renewableContentPct", "renewableContentPct", "18.0"),
     // ── Electrical characteristics ────────────────────────────────────────
     req("minimalVoltageV", "minimalVoltageV", "40.0"),

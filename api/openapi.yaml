@@ -106,6 +106,8 @@ components:
       $ref: components/schemas/passport/SecondLifeOperation.yaml
     DerivationRef:
       $ref: components/schemas/passport/DerivationRef.yaml
+    PersonalDataStatement:
+      $ref: components/schemas/passport/PersonalDataStatement.yaml
     LifeStatus:
       $ref: components/schemas/passport/LifeStatus.yaml
     CarbonFootprint:

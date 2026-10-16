@@ -13,7 +13,7 @@ use std::sync::Arc;
 
 use dpp_domain::ports::registry_sync::{RegistryStatus, RegistrySyncPort};
 use dpp_domain::transfer::TransferRecord;
-use dpp_types::{RegistrySyncOutbox, RegistryTransferOutbox};
+use dpp_types::{RegistrySyncOutbox, RegistrySyncStatus, RegistryTransferOutbox};
 
 /// Outcome tallies for one drain pass — surfaced to metrics and asserted in tests.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
@@ -29,6 +29,18 @@ pub struct TransferDrainStats {
     /// Rows held back because the passport's own registration has not been
     /// accepted by the registry yet, so there is no record to amend.
     pub deferred: u32,
+}
+
+/// Whether the registry answered a transfer notification with a refusal.
+///
+/// A record has no `rejected` state: that was a state of a submission, and the
+/// port reports it as a [`SubmissionReport`](dpp_domain::ports::registry_sync::SubmissionReport).
+/// The registry's `rejected` reply to a *notification* is still a refusal of it,
+/// and arrives as the state the port has no name for, carrying the registry's
+/// word. Read as anything else it would be retried for as long as the registry
+/// keeps saying no.
+fn is_rejection(status: &RegistryStatus) -> bool {
+    matches!(status, RegistryStatus::Unrecognised(state) if state.eq_ignore_ascii_case("rejected"))
 }
 
 /// Drain up to `batch` due rows once.
@@ -71,15 +83,20 @@ pub async fn drain_once(
                 continue;
             }
         };
-        // Which registry record does this handover amend? Only the registration
-        // response can say. No id yet means the registration has not been
-        // accepted — hold the row rather than sending a notification the
-        // registry cannot attach to anything.
+        // Which registry record does this handover amend? Only the ruling on the
+        // registration can say. No registration identifier yet means the
+        // registration has not been accepted — hold the row rather than sending a
+        // notification the registry cannot attach to anything.
+        //
+        // 🚨 Only a `registered` row holds that identifier. While a row is
+        // `submitted` the same column holds the submission's correlation
+        // identifier, which names no record and must never be sent as one.
         let registry_id = registrations
             .pending_for(row.passport_id)
             .await
             .ok()
             .flatten()
+            .filter(|r| r.status == RegistrySyncStatus::Registered)
             .and_then(|r| r.registry_id)
             .filter(|id| !id.trim().is_empty());
         let Some(registry_id) = registry_id else {
@@ -102,7 +119,7 @@ pub async fn drain_once(
         metrics::histogram!("registry_transfer_drain_seconds")
             .record(started.elapsed().as_secs_f64());
         match outcome {
-            Ok(rec) if rec.status == RegistryStatus::Rejected => {
+            Ok(rec) if is_rejection(&rec.status) => {
                 tracing::warn!(
                     passport_id = %row.passport_id,
                     transfer_id = %tid,
@@ -115,7 +132,7 @@ pub async fn drain_once(
                 stats.rejected += 1;
             }
             Ok(rec) => {
-                let _ = outbox.mark_notified(tid, rec.identifiers.registry_id).await;
+                let _ = outbox.mark_notified(tid, rec.registration_id).await;
                 stats.notified += 1;
             }
             Err(e) => {
@@ -139,7 +156,7 @@ mod tests {
     use dpp_domain::operator::{OperatorRole, ResponsibleOperator};
     use dpp_domain::passport::PassportId;
     use dpp_domain::ports::registry_sync::{
-        RegistrationRequest, RegistryIdentifiers, RegistryRecord,
+        RegistrationRequest, RegistryRecord, SubmissionAcknowledgement, SubmissionReport,
     };
     use dpp_domain::transfer::{TransferChain, TransferReason};
     use dpp_types::{
@@ -247,9 +264,12 @@ mod tests {
     }
 
     /// Stands in for the registration outbox. `registry_id` is `None` when the
-    /// passport's own registration has not been accepted yet.
+    /// passport's own registration has not been accepted yet, and `status` is
+    /// where the row stands: a `submitted` row holds the submission's
+    /// correlation identifier in the same column.
     struct FakeRegistrations {
         registry_id: Option<String>,
+        status: RegistrySyncStatus,
     }
 
     #[async_trait]
@@ -312,7 +332,7 @@ mod tests {
         ) -> Result<Option<RegistrySyncRow>, DppError> {
             Ok(Some(RegistrySyncRow {
                 passport_id,
-                status: RegistrySyncStatus::Registered,
+                status: self.status,
                 status_intent: None,
                 registry_id: self.registry_id.clone(),
                 payload: None,
@@ -350,10 +370,13 @@ mod tests {
         async fn register(
             &self,
             _request: RegistrationRequest,
-        ) -> Result<RegistryRecord, DppError> {
+        ) -> Result<SubmissionAcknowledgement, DppError> {
             unreachable!("the transfer drain never registers")
         }
-        async fn check_status(&self, _pid: PassportId) -> Result<RegistryRecord, DppError> {
+        async fn check_submission(&self, _id: &str) -> Result<SubmissionReport, DppError> {
+            unreachable!("the transfer drain never polls a submission")
+        }
+        async fn check_status(&self, _registration_id: &str) -> Result<RegistryRecord, DppError> {
             unreachable!("the transfer drain never checks status")
         }
         async fn notify_transfer(
@@ -369,18 +392,15 @@ mod tests {
                 // A notified transfer leaves the registration `Registered` — the
                 // registry amends the record, it does not restatus it.
                 Outcome::Notified => RegistryStatus::Registered,
-                Outcome::Rejected => RegistryStatus::Rejected,
+                // A record has no `rejected` state; the registry's refusal of a
+                // notification arrives as the state the port has no name for.
+                Outcome::Rejected => RegistryStatus::Unrecognised("rejected".into()),
                 Outcome::Transient => {
                     return Err(DppError::Internal("registry unreachable".into()));
                 }
             };
             Ok(RegistryRecord {
-                identifiers: RegistryIdentifiers {
-                    product_id: String::new(),
-                    operator_id: String::new(),
-                    facility_id: String::new(),
-                    registry_id: "EU-REG-T".into(),
-                },
+                registration_id: "EU-REG-T".into(),
                 status,
                 registered_at: Utc::now(),
                 updated_at: Utc::now(),
@@ -411,8 +431,19 @@ mod tests {
         port: &Arc<FakePort>,
         registry_id: Option<String>,
     ) -> TransferDrainStats {
-        let registrations: Arc<dyn RegistrySyncOutbox> =
-            Arc::new(FakeRegistrations { registry_id });
+        run_with_row(outbox, port, registry_id, RegistrySyncStatus::Registered).await
+    }
+
+    async fn run_with_row(
+        outbox: &Arc<FakeOutbox>,
+        port: &Arc<FakePort>,
+        registry_id: Option<String>,
+        status: RegistrySyncStatus,
+    ) -> TransferDrainStats {
+        let registrations: Arc<dyn RegistrySyncOutbox> = Arc::new(FakeRegistrations {
+            registry_id,
+            status,
+        });
         drain_once(
             &(outbox.clone() as Arc<dyn RegistryTransferOutbox>),
             &registrations,
@@ -476,6 +507,31 @@ mod tests {
         assert!(
             outbox.rejected.lock().unwrap().is_empty(),
             "waiting on a registration is not a terminal failure"
+        );
+    }
+
+    /// 🚨 While a registration is `submitted` its row holds the submission's
+    /// correlation identifier in the column a registered row holds the
+    /// registration identifier in. A transfer notification naming the
+    /// correlation identifier would amend a record that does not exist, so the
+    /// row is held until the registry has ruled.
+    #[tokio::test]
+    async fn a_transfer_does_not_use_a_submissions_correlation_id_as_a_registration_id() {
+        let (outbox, port) = fakes(Outcome::Notified, vec![row_from(&record())]);
+
+        let stats = run_with_row(
+            &outbox,
+            &port,
+            Some("CORRELATION-1".to_owned()),
+            RegistrySyncStatus::Submitted,
+        )
+        .await;
+
+        assert_eq!(stats.deferred, 1);
+        assert_eq!(stats.notified, 0);
+        assert!(
+            port.seen.lock().unwrap().is_empty(),
+            "the correlation identifier must never reach the registry as a record id"
         );
     }
 

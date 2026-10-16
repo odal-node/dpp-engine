@@ -4635,6 +4635,11 @@ components:
             A list rather than the single `parentPassportRef` it replaces: Regulation (EU) 2023/1542 Art. 77(7) is plural on both sides — "linked to the battery passport or passports of the original battery or batteries" — so one second-life unit may derive from several predecessors.
           items:
             $ref: '#/components/schemas/DerivationRef'
+        personalData:
+          type: object
+          additionalProperties:
+            $ref: '#/components/schemas/PersonalDataStatement'
+          description: 'What the operator states about personal data in the marked fields of `productGroupData`, keyed by dotted field path. Absent when it states nothing. On a **redacted read** the key is absent: a statement is shown only to an audience that sees the field it speaks about, and never to the public.'
         componentRefs:
           type: array
           description: |-
@@ -4939,6 +4944,60 @@ components:
           description: Where to fetch the predecessor's passport, and the hash pinning its signed public view.
         operation:
           $ref: '#/components/schemas/SecondLifeOperation'
+    PersonalDataStatement:
+      description: |-
+        What the operator states about the personal data related to one field of
+        `productGroupData` that the product group's schema marks as able to hold it
+        (`x-personal-data`). Either nothing related is held, or it is held outside the
+        passport in an erasable record.
+
+        Every statement asserts that the field's value carries no personal data beyond
+        what the governing act requires the passport to carry. The personal data
+        itself is never in the passport: a published passport is signed, frozen,
+        archived and copied to a back-up provider, so it cannot be erased from, and
+        withdrawn consent (GDPR Art. 7(3)) obliges erasure (Art. 17(1)(b)).
+
+        Where a governing act admits customer personal data only with explicit consent
+        (ESPR Art. 10(1)(e), Reg. (EU) 2025/2509 Art. 20(10), Reg. (EU) 2026/405
+        Art. 22(h)), a basis other than `consent` is refused. The record named by
+        `record` is not served by any route of this node.
+      oneOf:
+        - type: object
+          title: Nothing held
+          required:
+            - held
+          properties:
+            held:
+              type: string
+              enum:
+                - nothing
+          additionalProperties: false
+        - type: object
+          title: Held outside the passport
+          required:
+            - held
+            - lawfulBasis
+            - record
+          properties:
+            held:
+              type: string
+              enum:
+                - outside
+            lawfulBasis:
+              type: string
+              description: The ground of GDPR Art. 6(1) the data is held on.
+              enum:
+                - consent
+                - contract
+                - legalObligation
+                - vitalInterests
+                - publicTask
+                - legitimateInterests
+            record:
+              type: string
+              minLength: 1
+              description: The identifier of the erasable record holding the data. Required, and not blank.
+          additionalProperties: false
     LifeStatus:
       type: string
       description: |-
@@ -5320,6 +5379,11 @@ components:
             🚨 **`waste` is refused here.** The other four describe how a unit came to be, and Art. 77(7) makes each operation produce a *new* passport — so a repurposed unit is created as `repurposed`. `waste` is the one value that happens to a record which continues, and under that article's second subparagraph it moves responsibility as well, so it belongs to a versioning event on the passport becoming waste rather than to the creation of a new one.
 
             Omitting it is lawful everywhere. For a battery it reads as *not stated* rather than *not applicable*, and publish does not refuse it — the lint result says so instead, because a default would put a claim about a unit onto a record that is about to be signed.
+        personalData:
+          type: object
+          additionalProperties:
+            $ref: '#/components/schemas/PersonalDataStatement'
+          description: What the operator states about personal data, keyed by the dotted path of each field of `productGroupData` the product group schema marks as able to hold it (for example `usageHistory.negativeEvents`). A marked field with a value is refused with a `422` naming it, on create and on every later write to the draft, unless it has an entry here. A statement about a field that is not marked, or an `outside` statement with a blank record, is refused too. Patchable on a draft, frozen at publish, and covered by the operator's signature. The personal data itself never goes in the passport.
         componentRefs:
           type: array
           items:
@@ -7553,25 +7617,33 @@ components:
       type: object
       description: |
         A W3C DID Core `did:web` document. Lists the operator's Ed25519
-        verification methods; rotated keys are retained (so historical
-        signatures still verify) and revoked keys are omitted.
+        verification methods as `JsonWebKey`s (W3C Controlled Identifiers v1.0);
+        rotated keys are retained (so historical signatures still verify) and revoked
+        keys are omitted.
+
+        Each method is named by its key's own RFC 7638 thumbprint, in the URI form of
+        RFC 9278, so a name never moves to another key when the keys are rotated. A
+        token's `kid` is the absolute URL of the method that signed it. The first
+        entry of `authentication` is the current key.
       example:
         '@context':
           - https://www.w3.org/ns/did/v1
-          - https://w3id.org/security/suites/ed25519-2020/v1
+          - https://www.w3.org/ns/cid/v1
         id: did:web:id.odal-node.io
         verificationMethod:
-          - id: did:web:id.odal-node.io#key-1
-            type: JsonWebKey2020
+          - id: did:web:id.odal-node.io#urn:ietf:params:oauth:jwk-thumbprint:sha-256:<thumbprint>
+            type: JsonWebKey
             controller: did:web:id.odal-node.io
             publicKeyJwk:
               kty: OKP
               crv: Ed25519
               x: <base64url>
+              kid: urn:ietf:params:oauth:jwk-thumbprint:sha-256:<thumbprint>
+              alg: EdDSA
         authentication:
-          - did:web:id.odal-node.io#key-1
+          - did:web:id.odal-node.io#urn:ietf:params:oauth:jwk-thumbprint:sha-256:<thumbprint>
         assertionMethod:
-          - did:web:id.odal-node.io#key-1
+          - did:web:id.odal-node.io#urn:ietf:params:oauth:jwk-thumbprint:sha-256:<thumbprint>
     InternalSignRequest:
       type: object
       required:
@@ -7644,7 +7716,7 @@ components:
           type: string
         new_key_id:
           type: string
-          example: did:web:id.odal-node.io#key-1
+          example: did:web:id.odal-node.io#urn:ietf:params:oauth:jwk-thumbprint:sha-256:<thumbprint>
         fingerprint:
           type: string
           description: SHA-256 fingerprint (hex) of the new public key.
@@ -8206,8 +8278,8 @@ components:
         gates pass", not "publish will certainly succeed".
 
         The mandatory-content half is the reason this exists. It is the gate that most
-        often refuses a battery — 45 data points for an electric-vehicle one, 44 for
-        an LMT battery, 37 for an industrial one — and it could not previously be
+        often refuses a battery — 41 data points for an electric-vehicle one, 40 for
+        an LMT battery, 33 for an industrial one — and it could not previously be
         previewed anywhere: it is reachable only from a stored passport, and the only
         dry-run the API offered takes an unsaved request body.
       required:
@@ -8839,7 +8911,8 @@ components:
           description: |
             The correction, in the same shape the draft-update body takes: only the
             patchable content fields (`productName`, `co2ePerUnit`,
-            `repairabilityScore`, `productGroupData`, `componentRefs`) take effect.
+            `repairabilityScore`, `productGroupData`, `componentRefs`, `personalData`) take
+            effect.
 
             Other keys are ignored rather than refused, so a client that sends a full
             create-shaped body still works and still cannot make a create-time field

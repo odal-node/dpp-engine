@@ -130,6 +130,19 @@ properties:
       rather than *not applicable*, and publish does not refuse it — the lint
       result says so instead, because a default would put a claim about a unit
       onto a record that is about to be signed.
+  personalData:
+    type: object
+    additionalProperties:
+      $ref: ../passport/PersonalDataStatement.yaml
+    description: >-
+      What the operator states about personal data, keyed by the dotted path of
+      each field of `productGroupData` the product group schema marks as able to
+      hold it (for example `usageHistory.negativeEvents`). A marked field with a
+      value is refused with a `422` naming it, on create and on every later write
+      to the draft, unless it has an entry here. A statement about a field that is
+      not marked, or an `outside` statement with a blank record, is refused too.
+      Patchable on a draft, frozen at publish, and covered by the operator's
+      signature. The personal data itself never goes in the passport.
   componentRefs:
     type: array
     items:

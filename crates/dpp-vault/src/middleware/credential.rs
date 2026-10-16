@@ -9,9 +9,11 @@
 //! Chosen over an embedded W3C Data Integrity `proof` member for four reasons,
 //! recorded here because it is a wire-format decision that binds every issuer:
 //!
-//! 1. It reuses the verification path this workspace already has —
-//!    [`extract_kid_from_jws`] → issuer DID document → [`extract_key_by_fingerprint`]
-//!    → [`verify_jws`], with EdDSA pinned and `alg:none` rejected.
+//! 1. It reuses the verification path core already has —
+//!    [`authenticate_access_credential`]: the `kid` names a verification method
+//!    in the issuer's DID document, the signature is checked against that key
+//!    with EdDSA pinned and `alg:none` rejected, and the token must be typed
+//!    `vc+jwt` so another signature of the same key cannot pass for a credential.
 //! 2. One canonicalisation scheme (JCS) rather than two. A second signing scheme
 //!    would be a permanent review burden on the most security-sensitive code here.
 //! 3. Header-safe by construction: base64url, no escaping.
@@ -41,11 +43,11 @@ use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use base64::Engine;
 use dpp_common::http_problem;
-use dpp_crypto::jws::verifier::{
-    extract_key_by_fingerprint, extract_kid_from_jws, extract_primary_public_key, verify_jws,
-};
 use dpp_domain::Audience;
-use dpp_vc::{DppAccessCredential, StatusList, TrustedIssuerRegistry};
+use dpp_vc::{
+    DppAccessCredential, StatusList, TrustedIssuerRegistry,
+    credential::authenticate_access_credential,
+};
 
 /// The header a caller presents an access credential in.
 pub const CREDENTIAL_HEADER: &str = "X-DPP-Credential";
@@ -218,28 +220,26 @@ pub async fn read_and_verify(
         return CredentialOutcome::Rejected(reject("Credential header is not valid UTF-8."));
     };
 
-    let Some(credential) = decode_payload(jws) else {
+    let Some(unverified) = decode_payload(jws) else {
         return CredentialOutcome::Rejected(reject(
             "Credential is not a compact JWS carrying a DPP access credential.",
         ));
     };
 
     // Authenticate before doing anything with the claims: until the signature
-    // verifies, `issuer` is a string the caller chose.
-    let Some(did_doc) = directory.did_document(&credential.issuer).await else {
+    // verifies, `issuer` is a string the caller chose, and it is used only to
+    // find the document the signature is checked against.
+    let Some(did_doc) = directory.did_document(&unverified.issuer).await else {
         return CredentialOutcome::Rejected(reject("Credential issuer DID could not be resolved."));
     };
-    let key = extract_kid_from_jws(jws)
-        .and_then(|kid| extract_key_by_fingerprint(&did_doc, &kid))
-        .or_else(|| extract_primary_public_key(&did_doc));
-    let Some(key) = key else {
-        return CredentialOutcome::Rejected(reject(
-            "Credential issuer DID document has no matching verification key.",
-        ));
+    // Core's reading of the token: the key its `kid` names in the issuer's
+    // document, the signature, the `vc+jwt` type that keeps another signature of
+    // the same key from passing as a credential, and the issuer the document
+    // belongs to. A token with no `kid` names no key and is refused.
+    let credential = match authenticate_access_credential(jws, &did_doc) {
+        Ok(credential) => credential,
+        Err(result) => return CredentialOutcome::Rejected(reject(rejection_detail(&result))),
     };
-    if !verify_jws(jws, &key).unwrap_or(false) {
-        return CredentialOutcome::Rejected(reject("Credential signature did not verify."));
-    }
 
     // Only now that the signature holds is it worth spending a network round
     // trip on revocation: an unsigned document's status URL is attacker chosen.
@@ -297,10 +297,11 @@ fn rejection_detail(result: &dpp_vc::VerificationResult) -> &'static str {
         V::Revoked => "Credential has been revoked, or its revocation status could not be checked.",
         V::UntrustedIssuer { .. } => "Credential issuer is not trusted by this node.",
         V::OutOfScope { .. } => "Credential does not cover the requested product.",
-        // Not reachable from here — the signature is verified against the
-        // issuer's published key before core is called, and that failure has its
-        // own message at the call site — but mapped rather than lumped in so a
-        // future reordering cannot silently produce a misleading detail.
+        // The authentication step's refusal: no key matching the `kid`, a
+        // signature that does not verify, a token that is not typed as a
+        // credential, or an issuer other than the document's. Core's text names
+        // the `kid` and the document, which came from the caller, so one fixed
+        // sentence stands for all of them.
         V::InvalidSignature(_) => "Credential signature did not verify.",
         // `Valid` is unreachable — the caller checks `is_valid()` first — and
         // `MalformedCredential` carries text derived from the credential.
@@ -341,9 +342,21 @@ mod tests {
         base64::engine::general_purpose::URL_SAFE_NO_PAD;
 
     /// Mint a compact JWS over the JCS-canonical credential, exactly as
-    /// `dpp_crypto::jws::sign` does — header `{alg,kid}`, JCS payload, EdDSA.
+    /// `dpp_vc::credential::sign_access_credential` does: the `kid` is the
+    /// absolute URL of the issuer's verification method, the token is typed as
+    /// a VC-JWT (`typ: vc+jwt`, `cty: vc`), the payload is JCS, the algorithm
+    /// EdDSA.
     fn sign_credential(key: &SigningKey, kid: &str, cred: &DppAccessCredential) -> String {
-        let header = B64.encode(format!(r#"{{"alg":"EdDSA","kid":"{kid}"}}"#).as_bytes());
+        sign_with_header(
+            key,
+            &format!(r#"{{"alg":"EdDSA","cty":"vc","kid":"{ISSUER}#{kid}","typ":"vc+jwt"}}"#),
+            cred,
+        )
+    }
+
+    /// The same, under whatever protected header the caller states.
+    fn sign_with_header(key: &SigningKey, header_json: &str, cred: &DppAccessCredential) -> String {
+        let header = B64.encode(header_json.as_bytes());
         let value = serde_json::to_value(cred).expect("to value");
         let canonical = dpp_crypto::jws::canonicalize(&value).expect("canonicalize");
         let payload = B64.encode(&canonical);
@@ -487,6 +500,51 @@ mod tests {
         assert!(matches!(out, CredentialOutcome::Rejected(_)));
     }
 
+    /// 🚨 A signature by the issuer's key is authentic whatever it signs, so a
+    /// passport proof or an SD-JWT VC from the same key could otherwise be
+    /// offered as a credential. The type is what says this token is one.
+    #[tokio::test]
+    async fn the_issuers_signature_over_a_credential_shaped_payload_must_be_typed_as_one() {
+        let (key, kid) = key_and_kid();
+        let cred = credential(CredentialRole::Recycler, 30);
+        let directory = Directory::with(Some(did_doc(&key, &kid)));
+
+        for header in [
+            // No type at all, as a passport proof is signed.
+            format!(r#"{{"alg":"EdDSA","kid":"{ISSUER}#{kid}"}}"#),
+            // The type of another credential format.
+            format!(r#"{{"alg":"EdDSA","kid":"{ISSUER}#{kid}","typ":"dc+sd-jwt"}}"#),
+            // The right type with the wrong content type.
+            format!(r#"{{"alg":"EdDSA","cty":"other","kid":"{ISSUER}#{kid}","typ":"vc+jwt"}}"#),
+        ] {
+            let jws = sign_with_header(&key, &header, &cred);
+            let out = read_and_verify(&headers_with(Some(&jws)), &directory, &trusting()).await;
+            assert!(
+                matches!(out, CredentialOutcome::Rejected(_)),
+                "{header} must not pass for a credential"
+            );
+        }
+    }
+
+    /// A token that names no key is not checked against the one the document
+    /// happens to publish.
+    #[tokio::test]
+    async fn a_credential_that_names_no_key_is_refused() {
+        let (key, kid) = key_and_kid();
+        let jws = sign_with_header(
+            &key,
+            r#"{"alg":"EdDSA","cty":"vc","typ":"vc+jwt"}"#,
+            &credential(CredentialRole::Recycler, 30),
+        );
+        let out = read_and_verify(
+            &headers_with(Some(&jws)),
+            &Directory::with(Some(did_doc(&key, &kid))),
+            &trusting(),
+        )
+        .await;
+        assert!(matches!(out, CredentialOutcome::Rejected(_)));
+    }
+
     #[tokio::test]
     async fn an_unresolvable_issuer_fails_closed() {
         let (key, kid) = key_and_kid();
@@ -592,6 +650,7 @@ mod tests {
         cred.credential_status = Some(dpp_vc::CredentialStatus {
             id: "https://issuer.example/status#4".to_owned(),
             status_type: "BitstringStatusListEntry".to_owned(),
+            status_purpose: "revocation".to_owned(),
             status_list_index: Some("4".to_owned()),
             status_list_credential: Some("https://issuer.example/status".to_owned()),
         });

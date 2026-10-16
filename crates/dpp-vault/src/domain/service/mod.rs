@@ -541,6 +541,7 @@ mod snapshot_render_tests {
             compliance_result: None,
             lint_result: None,
             product_group_data: None,
+            personal_data: Default::default(),
             status: PassportStatus::Published,
             qr_code_url: Some("https://id.example/01/09506000134352".into()),
             jws_signature: Some("full.jws.signature".into()),

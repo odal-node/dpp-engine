@@ -115,7 +115,14 @@ pub fn sign_bundle(
         content_sha256: content_hash(&content)?,
     };
     let manifest_value = serde_json::to_value(&manifest)?;
-    let manifest_jws = jws::sign(store, key_id, &manifest_value)?;
+    // A bundle is verified against the publisher's key as the node is configured
+    // with it, not through a DID document, so the `kid` names the key by its own
+    // thumbprint: the identifier that stays with the key whatever else changes.
+    let kid = store
+        .public_key(key_id)
+        .ok_or_else(|| anyhow::anyhow!("no key found for {key_id}"))?
+        .thumbprint_uri()?;
+    let manifest_jws = jws::sign(store, key_id, &manifest_value, &kid)?;
     Ok(SignedBundle {
         manifest_jws,
         content,
