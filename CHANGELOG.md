@@ -291,6 +291,16 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ### Fixed
 
+- **The resolver no longer says it conforms to the GS1 Conformant Resolver
+  Standard.** The handler's documentation and the description of `GET
+  /01/{gtin}` called the route a "GS1-conformant resolver", and nothing backed
+  the claim: no revision was named, no test named the standard's criteria, and
+  two required criteria are unmet (a description of the resolver served from
+  `/.well-known/gs1resolver`, and decompression of a compressed Digital Link).
+  The text now describes the behaviour and says it has not been assessed against
+  the standard. A conformance claim, if one is made, comes from assessing every
+  criterion; that work is tracked in #477. (#469)
+
 - **`odal` runs the published images outside a clone of this repository.** The
   guided setup, the console's Start and `odal update` decided whether to build
   from the profile kind, and every self-hosted node infers `dev` because it is
