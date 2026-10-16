@@ -71,6 +71,10 @@
       "description": "Signed outbound event delivery — subscribe, list, remove, test."
     },
     {
+      "name": "Personal Data",
+      "description": "Erasing the records a passport's `personalData` statements name. A record is held outside the passport so it can be erased, and no route reads one."
+    },
+    {
       "name": "Plugins",
       "description": "Signed product-group plugin hot-install — verify, persist, hot-swap (admin-only)."
     },
@@ -215,7 +219,7 @@
       "post": {
         "operationId": "validateDpp",
         "summary": "Dry-run a passport body without creating it",
-        "description": "Runs exactly the validation `POST /vault/api/v1/dpp` runs, and persists\nnothing. The same code path serves both, so a preview and the real create\ncannot disagree.\n\n**Two verdicts, because create and publish deliberately differ.** Create is\nlenient about a product group with no resolvable JSON Schema — a draft is allowed\nto be incomplete — while publish fails closed on it, since a signed\npassport must have passed a real schema check. A body can therefore be\ncreatable but not yet clear the publish-time schema gate, and that gap is\nreported rather than hidden until publish is attempted.\n\nA body that create **would reject** gets back the identical rejection create\nwould have returned, not a paraphrase of it: a `422`, or a `409` for a\n`carrierSerial` another passport already holds. A body create would accept\nreturns `200` with the two verdicts.\n\n**`productGroupDataValid` is not a publish verdict.** It reports one of publish's\npreconditions — the product group-data gates — and publish applies others this\nroute does not run:\n\n- the **registry identity** requirement (a default facility and a primary\n  operator identifier), which needs operator state this route never reads;\n- the **category-mandatory content** gate, which is reachable only by\n  attempting the lifecycle transition, so it cannot be previewed;\n- the **compliance** gate, which needs a `placedOnMarketDate` and a stored\n  passport.\n\nA `productGroupDataValid: true` therefore means \"this body clears the schema\ngate\", never \"publish will succeed\". The field was called `publishValid`\nand was renamed because that name promised the latter.\n",
+        "description": "Runs exactly the validation `POST /vault/api/v1/dpp` runs, and persists\nnothing. The same code path serves both, so a preview and the real create\ncannot disagree.\n\n**Two verdicts, because create and publish deliberately differ.** Create is\nlenient about a product group with no resolvable JSON Schema — a draft is allowed\nto be incomplete — while publish fails closed on it, since a signed\npassport must have passed a real schema check. A body can therefore be\ncreatable but not yet clear the publish-time schema gate, and that gap is\nreported rather than hidden until publish is attempted.\n\nA body that create **would reject** gets back the identical rejection create\nwould have returned, not a paraphrase of it: a `422`, or a `409` for a\n`carrierSerial` another passport already holds. A body create would accept\nreturns `200` with the two verdicts.\n\nThe `422` includes the personal-data check. A field the product group's\nschema marks as able to hold personal data that has a value and no\n`personalData` statement, a statement about a field that is not marked, an\n`outside` statement naming no record, and a basis a governing act does not\nadmit are all refused here as they are on create, each naming its field. The\ncheck reads no store, so it is part of the preview. It never reads what a\nfield says.\n\n**`productGroupDataValid` is not a publish verdict.** It reports one of publish's\npreconditions — the product group-data gates — and publish applies others this\nroute does not run:\n\n- the **registry identity** requirement (a default facility and a primary\n  operator identifier), which needs operator state this route never reads;\n- the **category-mandatory content** gate, which is reachable only by\n  attempting the lifecycle transition, so it cannot be previewed;\n- the **compliance** gate, which needs a `placedOnMarketDate` and a stored\n  passport.\n\nA `productGroupDataValid: true` therefore means \"this body clears the schema\ngate\", never \"publish will succeed\". The field was called `publishValid`\nand was renamed because that name promised the latter.\n",
         "tags": [
           "DPP Management"
         ],
@@ -2804,6 +2808,64 @@
           },
           "501": {
             "description": "This deployment reaches no key store, so it cannot sign. The standalone\nvault binary answers this; the fused node does not.\n",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/vault/api/v1/personal-data/{record}": {
+      "delete": {
+        "operationId": "erasePersonalDataRecord",
+        "summary": "Erase a record of personal data",
+        "description": "Erases a record that a passport's `personalData` statement names\n(`{\"held\": \"outside\", \"record\": \"<id>\"}`), keeping a tombstone. This is how\na withdrawn consent (GDPR Art. 7(3)) is honoured: a published passport is\nsigned, frozen, archived and copied to the back-up provider, so the personal\ndata is held in a record that can be erased instead.\n\n**Erasing touches nothing else.** Not the passport, which is signed and\nfrozen. Not the statement in it, which keeps naming the record, so a reader\nfollowing the statement learns that the record is gone rather than that it\nnever existed. Not any other record.\n\n**Idempotent.** Erasing a record that is already erased returns the receipt\nit was given the first time, so a caller that lost the answer asks again. It\ntakes no `Idempotency-Key`.\n\n**The tombstone is not free of personal data.** It keeps the identifier, the\npassport and field the record belonged to, and when it was erased — none of\nthe content. A passport identifier can relate to whoever owns the item, and\ninformation that can be linked to a person is personal data (GDPR Recital\n26). The receipt is therefore as sensitive as the passport's individual-item\ndata, and the operator needs a basis for keeping the tombstone; to show that\nit erased (Art. 5(2)) is one. Nothing in this node deletes it.\n\n**No route reads a record.** A record is served by no resolver, public,\ncredentialed or authenticated view of a passport, and is never part of the\narchive of past versions or of the back-up copy. Serving one is a disclosure\nthat needs a basis of its own, which only the controller can establish for\neach purpose.\n\nAdmin-scoped, like every other route that removes something: the write scope\nproduces and moves passports, and none of that destroys anything.\n",
+        "tags": [
+          "Personal Data"
+        ],
+        "security": [
+          {
+            "BearerApiKey": []
+          },
+          {
+            "BasicAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "record",
+            "in": "path",
+            "required": true,
+            "description": "The record's identifier, as the passport's statement names it (`personalData.<field>.record`).",
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The record is erased. The same receipt on every call after the first.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PersonalDataErasureReceipt"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "description": "This node never held a record with that identifier, which includes a string that could not have been one. A record that was held and is erased is not a `404`: it answers `200` with its receipt.",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -6636,6 +6698,37 @@
           "skip": {
             "type": "integer",
             "description": "The offset this page starts at."
+          }
+        }
+      },
+      "PersonalDataErasureReceipt": {
+        "type": "object",
+        "description": "What is left of an erased record of personal data: which record it was, which\npassport and field it related to, and when it was erased. None of the erased\ncontent.\n\nThe tombstone is not free of personal data. A passport identifier can relate to\nwhoever owns the item (GDPR Recital 26), so the receipt is as sensitive as the\npassport's individual-item data and is kept only as long as the operator has a\nbasis to keep it.",
+        "required": [
+          "record",
+          "passportId",
+          "field",
+          "erasedAt"
+        ],
+        "properties": {
+          "record": {
+            "type": "string",
+            "description": "The erased record's identifier, as the passport's statement names it."
+          },
+          "passportId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "The passport the record related to."
+          },
+          "field": {
+            "type": "string",
+            "description": "The marked field the record related to, as a dotted path inside `productGroupData`.",
+            "example": "usageHistory.negativeEvents"
+          },
+          "erasedAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When the record's content was erased."
           }
         }
       },
