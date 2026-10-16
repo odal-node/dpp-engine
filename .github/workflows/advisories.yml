@@ -48,19 +48,24 @@ jobs:
           toolchain: stable
 
       # The same invocation and the same flags as the pull-request path, so a
-      # nightly failure and a CI failure mean the same thing. `--deny yanked`
+      # nightly failure and a CI failure mean the same thing. The yanked check
       # catches the other thing that changes without a commit: a crate
-      # withdrawn from the registry after we pinned it.
+      # withdrawn from the registry after we pinned it. A yanked crate the
+      # register tolerates carries an expiry date, which is another thing that
+      # passes on a calendar and not on a commit, so this run is where it is
+      # noticed.
       - name: Install cargo-audit
         run: cargo install cargo-audit --locked
-      - name: cargo audit
-        run: cargo audit --deny yanked --deny unmaintained
+      - name: cargo audit (a yanked crate needs a register entry)
+        run: bash scripts/check-yanked.sh
 
       # Reason 2 above. This is the check that cannot be reached by pushing.
       - name: Suppression register is current
         run: bash scripts/check-audit-register.sh
       - name: Suppression register checker self-test
         run: bash scripts/check-audit-register.test.sh
+      - name: Yanked-crate checker self-test
+        run: bash scripts/check-yanked.test.sh
 
       # Bans, licences and sources are properties of the tree and cannot change
       # without a commit, so they stay on the pull-request run. Advisories stay

@@ -643,6 +643,38 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   registry-contract change could not pass it otherwise. It is its own commit,
   and the only lockfile change in that branch.
 
+- **`wasmtime` and `wasmtime-wasi` 49.0.2 → 49.0.3**, clearing RUSTSEC-2026-0352
+  to RUSTSEC-2026-0364, which had turned the security audit red on `main`. The
+  one that matters most is in `wasmtime-wasi` (-0352): renaming a symlink whose
+  name ends in a slash lets a guest step out of a directory it was given. It is
+  listed for macOS and FreeBSD hosts only, and this host preopens no directory
+  (see `runtime::build_store`), so a plugin here has no directory to step out
+  of. The other twelve are in `wasmtime` itself and are mostly host panics in the
+  component-model and async paths (-0353 to -0358, -0360, -0361), plus a stack
+  overflow dropping a long chain of recursive types (-0359), an async-entrypoint
+  requirement that is not enforced (-0362), component-model handle tables
+  capped per instance and charged to no limit (-0363), and exception tags that
+  can leave host data structures unaligned (-0364). The host runs plugins
+  synchronously as `wasm32-wasip1` modules, which keeps it away from most of
+  those paths, but which of them a plugin can reach has not been established
+  for each, and the sandbox is what they are about, so the bump is not left
+  waiting on that. The existing `wasmtime = "49"` requirement already permitted
+  the patch, so no manifest changed. Nothing else in the lockfile moved except
+  the `cranelift`, `pulley` and `wiggle` crates that release pins to.
+
+  `zip` 8.6.0 is yanked upstream, and `cargo audit --deny yanked` has no way to
+  leave one crate alone (`--ignore` takes advisory IDs, which a yanked crate does
+  not have), so it kept the audit red, and with it every pull request, this one
+  included. It cannot be replaced from here: calamine, whose latest release
+  requires `zip ^8.6`, pulls it in, and every zip from 8.0.0 through 9.0.2 is
+  yanked. The audit is now `scripts/check-yanked.sh`. It still denies yanked and
+  unmaintained crates and fails on every vulnerability, but lets a yanked crate
+  through when `.cargo/yanked-register.txt` names that exact version with an
+  owner, a reason and an expiry that is at most 60 days out. An entry that has
+  expired, or that no longer matches a yanked crate, fails the audit, so the
+  exception ends on a date or when calamine moves to zip 9, whichever comes
+  first. The register holds `zip 8.6.0` and expires on 15 December.
+
 ## [0.14.0] - 2026-09-24
 
 ### Breaking
