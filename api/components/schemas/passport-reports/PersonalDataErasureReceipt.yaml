@@ -1,0 +1,33 @@
+type: object
+description: |-
+  What is left of an erased record of personal data: which record it was, which
+  passport and field it related to, and when it was erased. None of the erased
+  content.
+
+  The tombstone is not free of personal data. A passport identifier can relate to
+  whoever owns the item (GDPR Recital 26), so the receipt is as sensitive as the
+  passport's individual-item data and is kept only as long as the operator has a
+  basis to keep it.
+required:
+  - record
+  - passportId
+  - field
+  - erasedAt
+properties:
+  record:
+    type: string
+    description: The erased record's identifier, as the passport's statement names it.
+  passportId:
+    type: string
+    format: uuid
+    description: The passport the record related to.
+  field:
+    type: string
+    description: >-
+      The marked field the record related to, as a dotted path inside
+      `productGroupData`.
+    example: usageHistory.negativeEvents
+  erasedAt:
+    type: string
+    format: date-time
+    description: When the record's content was erased.

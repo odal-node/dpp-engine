@@ -21,6 +21,9 @@
 
 mod amend;
 mod create;
+/// The personal-data check every write that stores a passport runs, shared with
+/// the dry-run route so a preview cannot pass what a create refuses.
+pub(crate) use create::guard_personal_data;
 /// The component-reference rule, shared with the create handler so the two
 /// entry points cannot drift apart on what a valid BOM entry is.
 pub(crate) use create::validate_component_ref;

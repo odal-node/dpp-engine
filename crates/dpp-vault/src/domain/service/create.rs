@@ -538,7 +538,7 @@ pub(super) fn apply_patch(
 /// Core's [`dpp_domain::check_personal_data`] makes the decision and never
 /// reads what a field says; this maps its findings to the `422` the other
 /// field-level refusals use, one entry per field.
-pub(super) fn guard_personal_data(passport: &Passport) -> Result<(), DppError> {
+pub(crate) fn guard_personal_data(passport: &Passport) -> Result<(), DppError> {
     let errors = dpp_domain::check_personal_data(passport);
     if errors.is_empty() {
         Ok(())
