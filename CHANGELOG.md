@@ -643,6 +643,28 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   registry-contract change could not pass it otherwise. It is its own commit,
   and the only lockfile change in that branch.
 
+- **`wasmtime` and `wasmtime-wasi` 49.0.2 → 49.0.3**, clearing RUSTSEC-2026-0352
+  to RUSTSEC-2026-0364, which had turned the security audit red on `main`. The
+  one that matters most is in `wasmtime-wasi` (-0352): renaming a symlink whose
+  name ends in a slash lets a guest step out of a directory it was given. It is
+  listed for macOS and FreeBSD hosts only, and this host preopens no directory
+  (see `runtime::build_store`), so a plugin here has no directory to step out
+  of. The other twelve are in `wasmtime` itself and are mostly host panics in the
+  component-model and async paths (-0353 to -0358, -0360, -0361), plus a stack
+  overflow dropping a long chain of recursive types (-0359), an async-entrypoint
+  requirement that is not enforced (-0362), component-model handle tables
+  capped per instance and charged to no limit (-0363), and exception tags that
+  can leave host data structures unaligned (-0364). The host runs plugins
+  synchronously as `wasm32-wasip1` modules, which keeps it away from most of
+  those paths, but which of them a plugin can reach has not been established
+  for each, and the sandbox is what they are about, so the bump is not left
+  waiting on that. The existing `wasmtime = "49"` requirement already permitted
+  the patch, so no manifest changed. Nothing else in the lockfile moved except
+  the `cranelift`, `pulley` and `wiggle` crates that release pins to.
+
+  `zip` 8.6.0, yanked upstream, still fails the audit's `--deny yanked`. Its fix
+  is a major bump and is a separate change.
+
 ## [0.14.0] - 2026-09-24
 
 ### Breaking
