@@ -101,11 +101,17 @@ pub async fn drain_once(
                 // it never received. The row stays `submitted` until its
                 // correlation identifier is recovered from the registry's own
                 // record of the operator's requests.
+                //
+                // Backed off and counted as an attempt, like any other pass that
+                // gets no ruling: left alone the row stays due, sorts to the head
+                // of the queue every pass, and can never reach the stalled count
+                // that tells an operator it needs reconciling.
                 tracing::warn!(
                     passport_id = %pid,
                     "registry holds this submission under a correlation identifier this node \
                      does not have — it cannot be polled and needs reconciling"
                 );
+                let _ = outbox.mark_submitted(pid, String::new()).await;
                 stats.submitted += 1;
                 continue;
             };
@@ -204,19 +210,25 @@ async fn apply_report(
         // A state this node has no name for is not a verdict. Reading it as a
         // refusal would discard a submission that may have succeeded, and as a
         // registration would record one that may not exist, so the row stays
-        // `submitted` and the next pass asks again.
+        // `submitted` and a later pass asks again — backed off like the
+        // acknowledgement was, with the attempt counted, so a poll that never
+        // gets a ruling neither runs hot nor escapes the stalled count.
         Ok(SubmissionReport::Unrecognised { state }) => {
             tracing::warn!(
                 passport_id = %pid,
                 state = %state,
                 "registry reported a submission state this node has no name for — polling on"
             );
+            let _ = outbox.mark_submitted(pid, String::new()).await;
             stats.submitted += 1;
         }
         // Still being checked: the expected answer to a fresh submission, not an
         // edge case. Anything the report type grows later is read the same way,
-        // as not yet ruled on.
-        Ok(_) => stats.submitted += 1,
+        // as not yet ruled on, and backed off the same way.
+        Ok(_) => {
+            let _ = outbox.mark_submitted(pid, String::new()).await;
+            stats.submitted += 1;
+        }
         Err(e) => {
             // Transient/unreachable — back off and retry. The row stays.
             let _ = outbox.mark_attempt_failed(pid, e.to_string()).await;

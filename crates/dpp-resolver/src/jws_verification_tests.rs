@@ -315,6 +315,26 @@ async fn tampered_jws_returns_conflict() {
     );
 }
 
+/// A proof whose `kid` names no method in the operator's document, which is
+/// every proof signed before keys were named by thumbprint, is unverifiable for
+/// good and not for now: `409`, not the `503` that means "try again".
+#[tokio::test]
+async fn a_proof_naming_no_key_in_the_document_returns_conflict() {
+    let signed = json!({"id": "00000000-0000-4000-8000-00000000000a", "productName": "Widget"});
+    let (jws, mut did_doc) = sign_jws(&signed);
+    // The document is reachable and publishes a key, but not under the name the
+    // proof carries.
+    did_doc["verificationMethod"][0]["id"] = json!("did:web:test.resolver.example#key-2");
+    did_doc["assertionMethod"] = json!(["did:web:test.resolver.example#key-2"]);
+    let did_url = serve_did(did_doc).await;
+    let served = json!({"id": "00000000-0000-4000-8000-00000000000a", "productName": "Widget", "status": "active", "publicJwsSignature": jws});
+    let vault = serve_vault(served).await;
+    assert_eq!(
+        resolve_json_status(vault, did_url, "00000000-0000-4000-8000-00000000000a").await,
+        StatusCode::CONFLICT
+    );
+}
+
 /// A published passport with no signature must fail closed (`409`), not
 /// render as valid.
 #[tokio::test]

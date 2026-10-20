@@ -644,6 +644,42 @@ pub(crate) mod tests {
         }
     }
 
+    /// 🚨 A personal-data statement names an erasable record and the basis it is
+    /// held on, and the API documents that the public never sees one. The
+    /// redaction is core's, so this pins the outcome where this crate builds the
+    /// view the public reaches: if a core change, or a path that serialises the
+    /// passport directly, stops removing it, this fails.
+    #[test]
+    fn the_public_view_never_carries_a_personal_data_statement() {
+        use dpp_domain::{HeldOutside, LawfulBasis, PersonalDataRecordId, PersonalDataStatement};
+
+        let mut passport = battery_passport();
+        passport.personal_data.insert(
+            "usageHistory.negativeEvents".to_owned(),
+            PersonalDataStatement::HeldOutside(HeldOutside::new(
+                LawfulBasis::Consent,
+                PersonalDataRecordId::new("record-not-for-the-public"),
+            )),
+        );
+        // Present on the record itself, so absence from the view cannot be a
+        // statement that was never set.
+        let stored = serde_json::to_value(&passport).expect("serialises");
+        assert!(
+            stored.get("personalData").is_some(),
+            "the statement is unset on the fixture, so this test would pass vacuously"
+        );
+
+        let view = public_view(&passport);
+        assert!(
+            view.get("personalData").is_none(),
+            "personalData reached the public view"
+        );
+        assert!(
+            !view.to_string().contains("record-not-for-the-public"),
+            "the erasable record's identifier reached the public view"
+        );
+    }
+
     /// A published passport with no public proof is a corrupt row: fail closed
     /// rather than fall back to the live view and silently restore the drift.
     #[test]

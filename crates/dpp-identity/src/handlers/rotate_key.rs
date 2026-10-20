@@ -96,12 +96,18 @@ pub async fn rotate_key_handler(
         }
     };
 
-    let new_key_id = match state.verification_method_url(&body.operator_id) {
-        Ok(url) => url,
-        Err(e) => {
-            tracing::error!(operator_id = %body.operator_id, error = %e, "failed to name the new signing key");
-            return http_problem::internal_error(e.to_string()).into_response();
-        }
+    // The method the document just built names as current: its first
+    // `authentication` entry. Read from that document rather than asked of the
+    // store a second time, because the rotation has already happened: a failure
+    // here would report an error for it, and a caller that retried would rotate
+    // again, archiving the key it had just been given.
+    let Some(new_key_id) = did_document["authentication"][0]
+        .as_str()
+        .map(str::to_owned)
+    else {
+        tracing::error!(operator_id = %body.operator_id, "the rebuilt DID document names no current key");
+        return http_problem::internal_error("the rebuilt DID document names no current key")
+            .into_response();
     };
 
     (
@@ -176,6 +182,12 @@ mod tests {
         .await
         .into_response();
         assert_eq!(resp.status(), StatusCode::OK);
+        let rotated: serde_json::Value = serde_json::from_slice(
+            &axum::body::to_bytes(resp.into_body(), usize::MAX)
+                .await
+                .expect("response body"),
+        )
+        .expect("response is JSON");
 
         let did_document =
             did_builder::build_did_document(&state.store, &state.did_web_base_url, "op1")
@@ -198,6 +210,12 @@ mod tests {
         assert_ne!(
             kid_before, kid_after,
             "the new key must be named by its own thumbprint, not the old key's name"
+        );
+        // The id the rotation reports is read from the document it rebuilt, and
+        // must be the name a token signed now carries.
+        assert_eq!(
+            rotated["new_key_id"], kid_after,
+            "the reported new_key_id is the method a token signed now names"
         );
         let jws_after =
             signer::sign(&state.store, "op1", &payload, &kid_after).expect("sign after rotation");

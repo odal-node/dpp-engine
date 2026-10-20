@@ -816,6 +816,45 @@ async fn the_task_list_is_paged_until_the_submission_is_found() {
     );
 }
 
+/// The walk is capped, and a task past the cap is not a task that is not listed:
+/// the search ran out. It is reported as a state the node cannot rule on, which
+/// keeps the poll going and says why, rather than as `Processing`, which would
+/// read as the registry still working on it.
+#[tokio::test]
+async fn a_search_that_runs_out_of_pages_says_so() {
+    use super::mapping::MAX_TASK_PAGES;
+
+    let state = Arc::new(MockState::default());
+    let full_page = || {
+        serde_json::Value::Array(
+            (0..50)
+                .map(|n| registration_task(&format!("CORR-FILL-{n}"), n, "SUCCESS"))
+                .collect(),
+        )
+    };
+    {
+        let mut q = state.tasks_queue.lock().await;
+        for _ in 0..MAX_TASK_PAGES {
+            q.push_back(task_page(full_page()));
+        }
+    }
+    let base_url = mock_server::spawn(state.clone()).await;
+    let sync = EuRegistrySync::new(mock_config(&base_url)).unwrap();
+
+    let report = sync.check_submission("CORR-1").await.expect("a report");
+
+    assert!(
+        matches!(&report, SubmissionReport::Unrecognised { state } if state.contains("not found within")),
+        "a search that ran out is not `Processing`: {report:?}"
+    );
+    assert!(!report.is_terminal(), "and it keeps the poll going");
+    assert_eq!(
+        state.task_pages_asked.lock().await.len(),
+        MAX_TASK_PAGES as usize,
+        "the walk stops at the cap"
+    );
+}
+
 #[tokio::test]
 async fn an_unreachable_dashboard_is_an_error_not_a_verdict() {
     let state = Arc::new(MockState::default());

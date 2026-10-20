@@ -42,7 +42,7 @@ pub fn service_provider_reference(provider: &ServiceProviderRef) -> ServiceProvi
 const TASK_PAGE_SIZE: usize = 50;
 
 /// How many pages of the dashboard list are read looking for a submission.
-const MAX_TASK_PAGES: u32 = 20;
+pub(super) const MAX_TASK_PAGES: u32 = 20;
 
 /// The URL of one of the registry's routes beneath `base_url`, with `{id}`
 /// replaced by `id`.
@@ -487,8 +487,10 @@ impl RegistrySyncPort for EuRegistrySync {
         // The registry's interface finds a submission's task by paging the
         // operator's tasks: no route that takes a correlation identifier has
         // been seen. The page cap bounds the walk for an operator with a long
-        // history, and a task past it is reported as not yet ruled on.
+        // history. A walk that reaches it with every page full has not shown the
+        // task to be unlisted, only that the search ran out, and says so below.
         let mut found = None;
+        let mut cut_short = false;
         for page in 0..MAX_TASK_PAGES {
             let query = [
                 ("page", page.to_string()),
@@ -506,9 +508,20 @@ impl RegistrySyncPort for EuRegistrySync {
             if found.is_some() || listed < TASK_PAGE_SIZE {
                 break;
             }
+            cut_short = page + 1 == MAX_TASK_PAGES;
         }
         let Some(task) = found else {
-            // Not listed (yet). That is not a verdict, so the poll goes on.
+            // Not a verdict either way, so the poll goes on. A task the list does
+            // not show yet is `Processing`; one the search stopped short of is
+            // reported as that, so the operator is told why it is not resolving.
+            if cut_short {
+                return Ok(SubmissionReport::Unrecognised {
+                    state: format!(
+                        "not found within the {MAX_TASK_PAGES} pages of {TASK_PAGE_SIZE} \
+                         tasks the search reads; the dashboard may list it further on"
+                    ),
+                });
+            }
             return Ok(SubmissionReport::Processing);
         };
 

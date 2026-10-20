@@ -250,7 +250,17 @@ async fn resolve_key(
         .and_then(serde_json::Value::as_str)
         .and_then(|proof| dpp_crypto::jws::resolve_verification_key(&did_document, proof));
 
-    resolved.ok_or_else(|| anyhow!("no usable Ed25519 public key in the DID document at {did_url}"))
+    // Said as what it is: the document is fine, and it is the proof's `kid` that
+    // names no method in it. A proof signed before keys were named by thumbprint,
+    // or by a key since removed, names none, and sending the operator to inspect
+    // a healthy DID document would hide that.
+    resolved.ok_or_else(|| {
+        anyhow!(
+            "no verification method in the DID document at {did_url} is named by the \
+             snapshot's proof, so there is no key to check it under (a proof signed before \
+             keys were named by thumbprint, or by a key since removed, names none)"
+        )
+    })
 }
 
 /// True for a target this command should fetch rather than open.

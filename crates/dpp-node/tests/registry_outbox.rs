@@ -724,9 +724,13 @@ async fn an_accepted_submission_is_not_yet_a_registration() {
     );
 }
 
-/// A processing submission stays `submitted` and is asked again next pass: the
+/// A processing submission stays `submitted` and is asked again later: the
 /// registry has not ruled, and neither recording a registration nor a refusal
-/// would be true.
+/// would be true. "Later" is the backoff the acknowledgement set, applied again
+/// by every poll that gets no ruling. Each poll counts as an attempt, so a
+/// submission that is never ruled on reaches the stalled count, and the row is
+/// not due again on the very next pass: left due it would be polled every pass
+/// and sort to the head of the queue ahead of every pending row.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_submission_still_being_checked_keeps_being_polled() {
     let _c = start_pg().await;
@@ -736,11 +740,31 @@ async fn a_submission_still_being_checked_keeps_being_polled() {
 
     let (port, calls, polls) = mock_with_poll(Outcome::Accepted, Outcome::Processing);
     drain_once(&outbox, &port, None, 10).await;
-    for _ in 0..2 {
+    let mut attempts = outbox.pending_for(id).await.unwrap().unwrap().attempts;
+    for polled in 1..=2 {
         make_due(&dal, id).await;
         let stats = drain_once(&outbox, &port, None, 10).await;
         assert_eq!(stats.submitted, 1);
         assert_eq!((stats.registered, stats.rejected), (0, 0));
+
+        // The poll found no ruling, so the row is backed off and the attempt is
+        // counted...
+        let row = outbox.pending_for(id).await.unwrap().unwrap();
+        assert!(
+            row.next_attempt_at > Utc::now(),
+            "a poll with no ruling backs the row off"
+        );
+        assert!(row.attempts > attempts, "and counts as an attempt");
+        attempts = row.attempts;
+
+        // ...so the next pass, with the backoff still running, leaves it alone.
+        let idle = drain_once(&outbox, &port, None, 10).await;
+        assert_eq!(idle.submitted, 0);
+        assert_eq!(
+            polls.load(Ordering::SeqCst),
+            polled,
+            "not polled again before the backoff has passed"
+        );
     }
 
     assert_eq!(calls.load(Ordering::SeqCst), 1, "never resubmitted");
@@ -777,6 +801,7 @@ async fn a_submission_the_registry_already_holds_is_submitted_without_an_id() {
     // With no handle there is nothing to poll, and the node's own passport id is
     // not a substitute: the registry never received it. The row waits, neither
     // polled nor submitted again.
+    let attempts = row.attempts;
     make_due(&dal, id).await;
     let later = drain_once(&outbox, &port, None, 10).await;
     assert_eq!(later.submitted, 1);
@@ -787,6 +812,17 @@ async fn a_submission_the_registry_already_holds_is_submitted_without_an_id() {
     );
     let row = outbox.pending_for(id).await.unwrap().unwrap();
     assert_eq!(row.status, RegistrySyncStatus::Submitted);
+    // Waiting is backed off and counted, not left due: a row that stays due sorts
+    // to the head of the queue every pass, and one whose attempts never grow can
+    // never reach the stalled count that says it needs reconciling.
+    assert!(
+        row.next_attempt_at > Utc::now(),
+        "a handle-less row is backed off, not left due"
+    );
+    assert!(
+        row.attempts > attempts,
+        "and each pass counts as an attempt"
+    );
 }
 
 /// A submitted row is polled, never resubmitted — resubmitting is what would

@@ -20,8 +20,13 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   The DID document is `JsonWebKey` with the Controlled Identifiers context, and
   a token that names no key is refused rather than checked against a default.
 
-  **Migration:** sign again anything signed before the upgrade. That covers
-  passport and snapshot proofs, access credentials and signed ruleset bundles.
+  **Migration:** sign again what can be signed again: snapshot proofs, access
+  credentials and signed ruleset bundles. The proof of a passport that is
+  already published is frozen with the record and cannot be re-signed. It no
+  longer verifies, and the resolver answers that passport's own URL with `409`:
+  a proof whose `kid` the operator's document does not name is unverifiable for
+  good, not unreachable. `amend` issues a successor signed under the new naming,
+  and the product's label resolves to it.
   `POST /internal/keys/rotate` now answers `new_key_id` as
   `did:web:…#urn:ietf:params:oauth:jwk-thumbprint:sha-256:…` instead of
   `…#key-1`, and a reader of the DID document finds the current key at

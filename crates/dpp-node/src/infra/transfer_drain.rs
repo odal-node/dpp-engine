@@ -131,6 +131,26 @@ pub async fn drain_once(
                     .await;
                 stats.rejected += 1;
             }
+            // A state the port has no name for, other than the refusal above, is
+            // not a verdict. Closing the row as notified would record a
+            // notification the registry may not have accepted, which the
+            // registration drain declines to do for the same reason. It is a
+            // failed attempt: the row backs off, stays pending, and counts toward
+            // the stalled rollup. The notification route carries no idempotency
+            // key, so the retry sends it again.
+            Ok(rec) if matches!(rec.status, RegistryStatus::Unrecognised(_)) => {
+                let _ = outbox
+                    .mark_attempt_failed(
+                        tid,
+                        format!(
+                            "the registry answered a transfer notification with a state this \
+                             node has no name for: {:?}",
+                            rec.status
+                        ),
+                    )
+                    .await;
+                stats.retried += 1;
+            }
             Ok(rec) => {
                 let _ = outbox.mark_notified(tid, rec.registration_id).await;
                 stats.notified += 1;
@@ -355,6 +375,9 @@ mod tests {
     enum Outcome {
         Notified,
         Rejected,
+        /// A reply carrying a state the port has no name for that is not the
+        /// registry's `rejected`.
+        Unrecognised,
         Transient,
     }
 
@@ -395,6 +418,7 @@ mod tests {
                 // A record has no `rejected` state; the registry's refusal of a
                 // notification arrives as the state the port has no name for.
                 Outcome::Rejected => RegistryStatus::Unrecognised("rejected".into()),
+                Outcome::Unrecognised => RegistryStatus::Unrecognised("UNDER_REVIEW".into()),
                 Outcome::Transient => {
                     return Err(DppError::Internal("registry unreachable".into()));
                 }
@@ -557,6 +581,26 @@ mod tests {
         assert_eq!(stats.rejected, 1);
         assert_eq!(outbox.rejected.lock().unwrap().len(), 1);
         assert!(outbox.notified.lock().unwrap().is_empty());
+    }
+
+    /// 🚨 A state this node has no name for, other than `rejected`, is not an
+    /// acceptance. Recording it as one would close the row for good on a
+    /// notification the registry may not have taken.
+    #[tokio::test]
+    async fn an_unrecognised_reply_is_not_recorded_as_a_notification() {
+        let (outbox, port) = fakes(Outcome::Unrecognised, vec![row_from(&record())]);
+
+        let stats = run(&outbox, &port).await;
+
+        assert_eq!((stats.notified, stats.rejected), (0, 0));
+        assert_eq!(stats.retried, 1);
+        assert_eq!(
+            outbox.failed.lock().unwrap().len(),
+            1,
+            "a failed attempt, so the row backs off and stays pending"
+        );
+        assert!(outbox.notified.lock().unwrap().is_empty());
+        assert!(outbox.rejected.lock().unwrap().is_empty());
     }
 
     /// An unreachable registry must not lose the notification: the row backs off

@@ -301,8 +301,15 @@ fn rejection_detail(result: &dpp_vc::VerificationResult) -> &'static str {
         // signature that does not verify, a token that is not typed as a
         // credential, or an issuer other than the document's. Core's text names
         // the `kid` and the document, which came from the caller, so one fixed
-        // sentence stands for all of them.
-        V::InvalidSignature(_) => "Credential signature did not verify.",
+        // sentence stands for all of them. It says which things to check, so an
+        // issuer whose tooling does not yet set the type, or names its key by a
+        // bare fingerprint, is not sent to debug a signature that is sound. It
+        // opens with the sentence this refusal has always said.
+        V::InvalidSignature(_) => {
+            "Credential signature did not verify. Check that its `kid` names a method in the \
+             issuer's DID document, that it is typed `typ: vc+jwt` with `cty: vc`, and that its \
+             issuer is the document's."
+        }
         // `Valid` is unreachable — the caller checks `is_valid()` first — and
         // `MalformedCredential` carries text derived from the credential.
         V::MalformedCredential(_) | V::Valid { .. } => "Credential is not valid.",
