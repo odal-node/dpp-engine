@@ -751,7 +751,7 @@ async fn gtin_resolution_verifies_a_valid_signature() {
     let gtin = "09506000134352";
     let passport_id = "00000000-0000-4000-9000-0000000000aa";
     let public_view = json!({ "id": passport_id, "productName": "Signed GTIN Widget" });
-    let header = r#"{"alg":"EdDSA","crv":"Ed25519"}"#;
+    let header = r#"{"alg":"EdDSA","kid":"did:web:valid.example#key-1"}"#;
     let header_b64 = b64.encode(header);
     let payload_b64 = b64.encode(serde_json::to_vec(&public_view).unwrap());
     let signing_input = format!("{header_b64}.{payload_b64}");

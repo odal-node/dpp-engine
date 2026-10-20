@@ -30,7 +30,8 @@ pub struct InternalRotateKeyRequest {
 #[derive(Debug, Serialize)]
 pub struct InternalRotateKeyResponse {
     pub operator_id: String,
-    /// The new primary verification method, e.g. `did:web:…#key-1`.
+    /// The new primary verification method: the DID, `#`, and the new key's
+    /// thumbprint URI, e.g. `did:web:…#urn:ietf:params:oauth:jwk-thumbprint:sha-256:…`.
     pub new_key_id: String,
     /// SHA-256 fingerprint (hex) of the new public key.
     pub fingerprint: String,
@@ -46,10 +47,12 @@ pub struct InternalRotateKeyResponse {
 ///   1. Archive the existing key under a timestamped entry (so old signatures
 ///      remain verifiable after the rotation).
 ///   2. Generate and persist a new key pair.
-///   3. Rebuild the DID document: new key is `#key-1` (primary / `authentication`);
-///      archived keys are appended as `#key-2`, `#key-3`, … under `assertionMethod`
-///      so historical passport signatures remain verifiable.
-///   4. Return the new fingerprint and the updated DID document.
+///   3. Rebuild the DID document: the new key is the first `authentication`
+///      method; archived keys stay under `assertionMethod`, each named by its own
+///      thumbprint so a name never moves to another key, and historical passport
+///      signatures remain verifiable.
+///   4. Return the new key's method id, its fingerprint and the updated DID
+///      document.
 pub async fn rotate_key_handler(
     State(state): State<AppState>,
     Json(body): Json<InternalRotateKeyRequest>,
@@ -93,10 +96,24 @@ pub async fn rotate_key_handler(
         }
     };
 
+    // The method the document just built names as current: its first
+    // `authentication` entry. Read from that document rather than asked of the
+    // store a second time, because the rotation has already happened: a failure
+    // here would report an error for it, and a caller that retried would rotate
+    // again, archiving the key it had just been given.
+    let Some(new_key_id) = did_document["authentication"][0]
+        .as_str()
+        .map(str::to_owned)
+    else {
+        tracing::error!(operator_id = %body.operator_id, "the rebuilt DID document names no current key");
+        return http_problem::internal_error("the rebuilt DID document names no current key")
+            .into_response();
+    };
+
     (
         StatusCode::OK,
         Json(InternalRotateKeyResponse {
-            new_key_id: format!("{}#key-1", did_document["id"].as_str().unwrap_or("")),
+            new_key_id,
             operator_id: body.operator_id,
             // `KeyEntry` implements `Drop` (zeroizing), so the field is cloned
             // rather than moved out.
@@ -144,14 +161,17 @@ mod tests {
         let (store, _dir) = temp_store();
         store.generate_key("op1").expect("provision initial key");
 
-        let payload = json!({"id": "dpp:test:1", "status": "published"});
-        let jws_before = signer::sign(&store, "op1", &payload).expect("sign before rotation");
-        let kid = verifier::extract_kid_from_jws(&jws_before).expect("kid present in header");
-
         let state = AppState {
             store: Arc::new(store),
             did_web_base_url: "http://localhost".into(),
         };
+
+        let payload = json!({"id": "dpp:test:1", "status": "published"});
+        let kid_before = state
+            .verification_method_url("op1")
+            .expect("name the key before rotation");
+        let jws_before =
+            signer::sign(&state.store, "op1", &payload, &kid_before).expect("sign before rotation");
 
         let resp = rotate_key_handler(
             State(state.clone()),
@@ -162,13 +182,19 @@ mod tests {
         .await
         .into_response();
         assert_eq!(resp.status(), StatusCode::OK);
+        let rotated: serde_json::Value = serde_json::from_slice(
+            &axum::body::to_bytes(resp.into_body(), usize::MAX)
+                .await
+                .expect("response body"),
+        )
+        .expect("response is JSON");
 
         let did_document =
             did_builder::build_did_document(&state.store, &state.did_web_base_url, "op1")
                 .expect("build did document after rotation");
 
-        // The pre-rotation key must still resolve by its kid fingerprint...
-        let archived_key = verifier::extract_key_by_fingerprint(&did_document, &kid)
+        // The pre-rotation key must still resolve by the kid it signed under...
+        let archived_key = verifier::resolve_verification_key(&did_document, &jws_before)
             .expect("archived key still resolvable by kid after rotation");
         assert!(
             verifier::verify_jws(&jws_before, &archived_key).expect("verify_jws parses cleanly"),
@@ -176,9 +202,25 @@ mod tests {
         );
 
         // ...and it must genuinely be the archived key, not the new primary —
-        // otherwise this test would pass even if archival were broken.
-        let new_primary =
-            verifier::extract_primary_public_key(&did_document).expect("new primary key present");
+        // otherwise this test would pass even if archival were broken. The new
+        // primary is the key a token signed now resolves to.
+        let kid_after = state
+            .verification_method_url("op1")
+            .expect("name the key after rotation");
+        assert_ne!(
+            kid_before, kid_after,
+            "the new key must be named by its own thumbprint, not the old key's name"
+        );
+        // The id the rotation reports is read from the document it rebuilt, and
+        // must be the name a token signed now carries.
+        assert_eq!(
+            rotated["new_key_id"], kid_after,
+            "the reported new_key_id is the method a token signed now names"
+        );
+        let jws_after =
+            signer::sign(&state.store, "op1", &payload, &kid_after).expect("sign after rotation");
+        let new_primary = verifier::resolve_verification_key(&did_document, &jws_after)
+            .expect("new primary key present");
         assert_ne!(
             archived_key, new_primary,
             "archived key must differ from the new primary"

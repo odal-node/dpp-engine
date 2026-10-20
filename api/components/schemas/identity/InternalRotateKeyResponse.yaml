@@ -10,7 +10,7 @@ properties:
     type: string
   new_key_id:
     type: string
-    example: did:web:id.odal-node.io#key-1
+    example: did:web:id.odal-node.io#urn:ietf:params:oauth:jwk-thumbprint:sha-256:<thumbprint>
   fingerprint:
     type: string
     description: SHA-256 fingerprint (hex) of the new public key.

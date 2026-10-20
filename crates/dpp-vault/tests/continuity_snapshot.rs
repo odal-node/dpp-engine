@@ -190,13 +190,23 @@ async fn build_service() -> (
     store.generate_key("root").expect("generate key");
     let did_document = dpp_vc::build_did_document(&store, "snapshot-test.example.com", "root")
         .expect("build did document");
-    let public_key = dpp_crypto::jws::extract_primary_public_key(&did_document)
-        .expect("did document carries a primary key");
     let identity = Arc::new(dpp_vc::LocalIdentityService::new(
         Arc::new(store),
         "root".to_owned(),
         "snapshot-test.example.com".to_owned(),
     ));
+    // The key, as a verifier gets it: resolved from the document by the `kid` a
+    // token this identity signed names.
+    let probe = dpp_domain::ports::identity::IdentityPort::sign_passport(
+        identity.as_ref(),
+        PassportId::new(),
+        &serde_json::json!({}),
+    )
+    .await
+    .expect("sign probe")
+    .jws;
+    let public_key = dpp_crypto::jws::resolve_verification_key(&did_document, &probe)
+        .expect("did document carries the signing key");
 
     let snapshots = InMemorySnapshotOutbox::default();
     let service = PassportService::new(
@@ -256,6 +266,7 @@ fn draft_passport() -> Passport {
         derived_from: Vec::new(),
         component_refs: Vec::new(),
         life_status: None,
+        personal_data: Default::default(),
         retention_until: None,
         product_id: None,
         commodity_code: None,

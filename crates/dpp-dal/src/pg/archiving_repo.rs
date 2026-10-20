@@ -313,6 +313,7 @@ mod tests {
             compliance_result: None,
             lint_result: None,
             product_group_data: None,
+            personal_data: Default::default(),
             status: PassportStatus::Draft,
             qr_code_url: None,
             jws_signature: None,

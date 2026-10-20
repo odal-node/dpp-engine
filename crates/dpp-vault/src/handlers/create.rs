@@ -17,7 +17,7 @@ use uuid::Uuid;
 
 use crate::{middleware::scope::RequireWrite, state::AppState};
 
-use super::error::{api_error, field_conflict_error, internal_error};
+use super::error::{api_error, field_conflict_error, field_validation_error, internal_error};
 use crate::extract::Json;
 
 /// Request body for passport creation.
@@ -89,7 +89,7 @@ pub async fn create_handler(
         .co2e_per_unit
         .or_else(|| {
             body.product_group_data.as_ref().and_then(|sd| match sd {
-                ProductGroupData::Battery(b) => Some(b.co2e_per_unit_kg),
+                ProductGroupData::Battery(b) => b.co2e_per_unit_kg,
                 ProductGroupData::Textile(t) => t.carbon_footprint_kg_co2e,
                 _ => None,
             })
@@ -137,6 +137,7 @@ pub async fn create_handler(
         compliance_result: None,
         lint_result: None,
         product_group_data: body.product_group_data,
+        personal_data: body.personal_data,
         status: PassportStatus::Draft,
         qr_code_url: None,
         jws_signature: None,
@@ -198,6 +199,10 @@ pub async fn create_handler(
             Json(crate::api::PassportResponse::from(&p)),
         )
             .into_response(),
+        // What the service refuses on the assembled record rather than on the
+        // request: a field able to hold personal data that has a value and no
+        // statement, which names the field.
+        Err(dpp_domain::DppError::Validation(errs)) => field_validation_error(&errs),
         Err(e) => internal_error(e),
     }
 }
@@ -377,7 +382,7 @@ mod schema_validation {
             nominal_voltage_v: 3.2,
             nominal_capacity_ah: 100.0,
             expected_lifetime_cycles: Some(3000),
-            co2e_per_unit_kg: 85.4,
+            co2e_per_unit_kg: Some(85.4),
             recycled_content_cobalt_pct: None,
             recycled_content_lithium_pct: Some(12.5),
             recycled_content_nickel_pct: None,

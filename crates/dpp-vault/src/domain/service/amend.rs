@@ -46,7 +46,7 @@ use dpp_domain::{
 use dpp_types::{audit::PassportAuditEntry, auth::AuthContext};
 
 use super::PassportService;
-use super::create::{apply_compliance, apply_lint, apply_patch};
+use super::create::{apply_compliance, apply_lint, apply_patch, guard_personal_data};
 
 impl PassportService {
     /// Issue a corrected successor to a published passport.
@@ -178,6 +178,7 @@ impl PassportService {
         // issuance is re-signed under the classes that governed it originally.
 
         apply_patch(&mut successor, patch)?;
+        guard_personal_data(&successor)?;
         apply_compliance(&mut successor, &*self.compliance);
         apply_lint(&mut successor);
 

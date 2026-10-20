@@ -115,7 +115,24 @@ pub fn sign_bundle(
         content_sha256: content_hash(&content)?,
     };
     let manifest_value = serde_json::to_value(&manifest)?;
-    let manifest_jws = jws::sign(store, key_id, &manifest_value)?;
+    // A bundle is verified against the publisher's key as the node is configured
+    // with it, not through a DID document, so the `kid` names the key by its own
+    // thumbprint: the identifier that stays with the key whatever else changes.
+    let name = || -> anyhow::Result<String> {
+        store
+            .public_key(key_id)
+            .ok_or_else(|| anyhow::anyhow!("no key found for {key_id}"))?
+            .thumbprint_uri()
+    };
+    let kid = name()?;
+    let manifest_jws = jws::sign(store, key_id, &manifest_value, &kid)?;
+    // The name and the signature are two reads of the store. A rotation between
+    // them would put one key's name on the other's signature, so the name is read
+    // again and a bundle whose key changed under it is refused.
+    anyhow::ensure!(
+        name()? == kid,
+        "the key {key_id} was rotated while the bundle was being signed; retry"
+    );
     Ok(SignedBundle {
         manifest_jws,
         content,

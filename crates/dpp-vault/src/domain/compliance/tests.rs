@@ -32,7 +32,7 @@ fn ev_battery() -> ProductGroupData {
         battery_type: BatteryType::Ev,
         nominal_voltage_v: 400.0,
         nominal_capacity_ah: 200.0,
-        co2e_per_unit_kg: 5100.0,
+        co2e_per_unit_kg: Some(5100.0),
         rated_capacity_kwh: Some(80.0),
         recycled_content_cobalt_pct: Some(16.0),
         recycled_content_lithium_pct: Some(6.0),

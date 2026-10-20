@@ -15,7 +15,7 @@ use dpp_domain::product_group::{
 };
 use dpp_domain::seal::SealedEnvelope;
 use dpp_domain::status::PassportStatus;
-use dpp_domain::{Granularity, InstrumentRef};
+use dpp_domain::{Granularity, InstrumentRef, PersonalDataStatement};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -73,6 +73,11 @@ pub struct PassportResponse {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lint_result: Option<LintResult>,
     pub product_group_data: Option<ProductGroupData>,
+    /// What the operator states about personal data in the marked fields of
+    /// `productGroupData`. Absent when it states nothing. Core's redaction
+    /// removes it from every view the public can reach.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub personal_data: BTreeMap<String, PersonalDataStatement>,
     pub status: PassportStatus,
     pub qr_code_url: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -146,6 +151,7 @@ impl From<&Passport> for PassportResponse {
             compliance_result: p.compliance_result.clone(),
             lint_result: p.lint_result.clone(),
             product_group_data: p.product_group_data.clone(),
+            personal_data: p.personal_data.clone(),
             status: p.status.clone(),
             qr_code_url: p.qr_code_url.clone(),
             carrier_serial: p.carrier_serial.clone(),
@@ -209,6 +215,7 @@ mod tests {
             compliance_result: None,
             lint_result: None,
             product_group_data: None,
+            personal_data: Default::default(),
             status: PassportStatus::Draft,
             qr_code_url: None,
             jws_signature: None,
@@ -264,6 +271,10 @@ mod tests {
         p.retention_locked = true;
         p.version = 3;
         p.carrier_serial = Some("SN-0001".into());
+        p.personal_data.insert(
+            "usageHistory.negativeEvents".into(),
+            dpp_domain::PersonalDataStatement::NothingHeld,
+        );
         p
     }
 
@@ -342,6 +353,7 @@ mod tests {
         "lifeStatus",
         "responsibleOperator",
         "componentRefs",
+        "personalData",
         "retentionUntil",
         "productId",
         "commodityCode",

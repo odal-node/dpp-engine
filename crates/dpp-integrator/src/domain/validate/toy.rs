@@ -122,6 +122,7 @@ pub fn validate_toy_row(
         // asks that a status be supported by a derivation edge — so an
         // imported `repurposed` would be exactly the defect that rule catches.
         life_status: None,
+        personal_data: Default::default(),
         component_refs: Vec::new(),
     })
 }

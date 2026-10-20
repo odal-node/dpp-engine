@@ -11,6 +11,7 @@ use dpp_domain::DppError;
 use dpp_domain::operator::{OperatorRole, ResponsibleOperator};
 use dpp_domain::ports::registry_sync::{
     RegistrationGranularity, RegistrationRequest, RegistryStatus, RegistrySyncPort,
+    SubmissionAcknowledgement, SubmissionReport,
 };
 use dpp_domain::transfer::{TransferReason, TransferRecord};
 
@@ -53,11 +54,15 @@ fn response_to_record_maps_status_correctly() {
     };
     let record = EuRegistrySync::response_to_record(&resp);
     assert_eq!(record.status, RegistryStatus::Registered);
-    assert_eq!(record.identifiers.registry_id, "EU-REG-2026-00001");
+    assert_eq!(record.registration_id, "EU-REG-2026-00001");
 }
 
+/// `rejected` and `pending` were states of a submission, and the port reports
+/// those as a [`SubmissionReport`]. A *record* that answers with one has a state
+/// the port has no name for, and carries it as the registry said it rather than
+/// reading it as one of the three it does name.
 #[test]
-fn response_to_record_maps_rejected() {
+fn a_record_reply_of_rejected_is_carried_as_the_registry_said_it() {
     let resp = EuRegistryResponse {
         registry_id: "EU-REG-2026-00002".into(),
         passport_id: Uuid::nil(),
@@ -67,11 +72,14 @@ fn response_to_record_maps_rejected() {
         updated_at: Utc::now(),
     };
     let record = EuRegistrySync::response_to_record(&resp);
-    assert_eq!(record.status, RegistryStatus::Rejected);
+    assert_eq!(
+        record.status,
+        RegistryStatus::Unrecognised("rejected".into())
+    );
 }
 
 #[test]
-fn status_to_record_maps_pending() {
+fn a_status_reply_of_pending_is_carried_as_the_registry_said_it() {
     let resp = StatusResponse {
         registry_id: "EU-REG-2026-00003".into(),
         status: RegistryStatusCode::Pending,
@@ -79,8 +87,11 @@ fn status_to_record_maps_pending() {
         message: None,
     };
     let record = EuRegistrySync::status_to_record(&resp);
-    assert_eq!(record.status, RegistryStatus::Pending);
-    assert_eq!(record.identifiers.registry_id, "EU-REG-2026-00003");
+    assert_eq!(
+        record.status,
+        RegistryStatus::Unrecognised("pending".into())
+    );
+    assert_eq!(record.registration_id, "EU-REG-2026-00003");
 }
 
 /// A registration request with realistic non-facility fields. Pair it with a
@@ -109,6 +120,8 @@ fn request_with_facility(facility: Option<dpp_domain::FacilitySnapshot>) -> Regi
         model_id: None,
         commodity_code: Some("85076000".into()),
         backup_url: None,
+        batch_id: None,
+        item_serial: Some("abc123".into()),
         product_identifier: Some(dpp_domain::ProductIdentifier::gs1(
             dpp_domain::Gtin::parse("09506000134352").unwrap(),
         )),
@@ -243,7 +256,8 @@ mod mock_server {
         routing::{get, post},
     };
     use dpp_registry::{
-        IDEMPOTENCY_KEY_HEADER, REGISTRATION_PATH, STATUS_PATH_TEMPLATE, TRANSFER_PATH_TEMPLATE,
+        IDEMPOTENCY_KEY_HEADER, REGISTRATION_PATH, STATUS_PATH_TEMPLATE, TASK_RESULT_PATH_TEMPLATE,
+        TASKS_PATH, TRANSFER_PATH_TEMPLATE,
     };
     use serde_json::Value;
     use tokio::sync::Mutex;
@@ -263,6 +277,14 @@ mod mock_server {
         /// cannot see it.
         pub(super) register_keys: Mutex<VecDeque<Option<String>>>,
         pub(super) status_queue: Mutex<VecDeque<(StatusCode, Value)>>,
+        /// Pages of the dashboard's task list, one popped per request.
+        pub(super) tasks_queue: Mutex<VecDeque<(StatusCode, Value)>>,
+        /// Dashboard task results, one popped per request.
+        pub(super) task_result_queue: Mutex<VecDeque<(StatusCode, Value)>>,
+        /// The task identifier each result was read by, and the `page` each
+        /// task-list request asked for.
+        pub(super) task_results_read: Mutex<VecDeque<String>>,
+        pub(super) task_pages_asked: Mutex<VecDeque<String>>,
         pub(super) transfer_queue: Mutex<VecDeque<(StatusCode, Value)>>,
         /// Bodies the registry actually received on `/transfer`. Asserting on
         /// the wire body is the only way to catch a field the adapter silently
@@ -315,6 +337,28 @@ mod mock_server {
         pop_or_500(&state.status_queue).await
     }
 
+    async fn tasks_handler(
+        State(state): State<Arc<MockState>>,
+        axum::extract::Query(query): axum::extract::Query<
+            std::collections::HashMap<String, String>,
+        >,
+    ) -> Response {
+        state
+            .task_pages_asked
+            .lock()
+            .await
+            .push_back(query.get("page").cloned().unwrap_or_default());
+        pop_or_500(&state.tasks_queue).await
+    }
+
+    async fn task_result_handler(
+        State(state): State<Arc<MockState>>,
+        Path(id): Path<String>,
+    ) -> Response {
+        state.task_results_read.lock().await.push_back(id);
+        pop_or_500(&state.task_result_queue).await
+    }
+
     async fn transfer_handler(
         State(state): State<Arc<MockState>>,
         Path(_id): Path<String>,
@@ -335,6 +379,14 @@ mod mock_server {
             .route(REGISTRATION_PATH, post(register_handler))
             .route(STATUS_PATH_TEMPLATE, get(status_handler))
             .route(TRANSFER_PATH_TEMPLATE, post(transfer_handler))
+            // The dashboard is a separate service of the registry, on its own
+            // base URL, and a submission's outcome is read from it.
+            .nest(
+                "/dashboard",
+                Router::new()
+                    .route(TASKS_PATH, get(tasks_handler))
+                    .route(TASK_RESULT_PATH_TEMPLATE, get(task_result_handler)),
+            )
             .with_state(state);
 
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -356,6 +408,7 @@ fn mock_config(base_url: &str) -> EuRegistrySyncConfig {
             api_version: "1.0".into(),
             mtls_required: false,
             token_endpoint: Some(format!("{base_url}/token")),
+            dashboard_base_url: format!("{base_url}/dashboard"),
         },
         client_id: "test-client".into(),
         client_secret: "test-secret".into(),
@@ -375,24 +428,41 @@ fn registered_response(registry_id: &str) -> serde_json::Value {
     })
 }
 
+/// What the registry answers a submission with: a handle on the check it will
+/// make, never a registration.
+fn accepted_response(correlation_id: &str) -> serde_json::Value {
+    serde_json::json!({
+        "correlationId": correlation_id,
+        "outcome": "PROCESSING",
+    })
+}
+
+/// The acknowledgement a submission under `correlation_id` produces.
+fn accepted(correlation_id: &str) -> SubmissionAcknowledgement {
+    SubmissionAcknowledgement::Accepted {
+        correlation_id: correlation_id.to_owned(),
+    }
+}
+
 #[tokio::test]
-async fn register_succeeds_and_maps_response() {
+async fn register_succeeds_and_returns_the_correlation_id() {
     let state = Arc::new(MockState::default());
     state
         .register_queue
         .lock()
         .await
-        .push_back((axum::http::StatusCode::OK, registered_response("EU-REG-1")));
+        .push_back((axum::http::StatusCode::OK, accepted_response("CORR-1")));
     let base_url = mock_server::spawn(state.clone()).await;
     let sync = EuRegistrySync::new(mock_config(&base_url)).unwrap();
 
-    let record = sync
+    let acknowledgement = sync
         .register(valid_request())
         .await
         .expect("register should succeed");
 
-    assert_eq!(record.status, RegistryStatus::Registered);
-    assert_eq!(record.identifiers.registry_id, "EU-REG-1");
+    // A submission is acknowledged with a handle, not registered: the registry
+    // rules on it afterwards, and only then generates a registration identifier.
+    assert_eq!(acknowledgement, accepted("CORR-1"));
     assert_eq!(state.register_hits.load(Ordering::SeqCst), 1);
 }
 
@@ -462,17 +532,17 @@ async fn register_retries_on_429_then_succeeds() {
             axum::http::StatusCode::TOO_MANY_REQUESTS,
             serde_json::json!({}),
         ));
-        q.push_back((axum::http::StatusCode::OK, registered_response("EU-REG-2")));
+        q.push_back((axum::http::StatusCode::OK, accepted_response("CORR-2")));
     }
     let base_url = mock_server::spawn(state.clone()).await;
     let sync = EuRegistrySync::new(mock_config(&base_url)).unwrap();
 
-    let record = sync
+    let acknowledgement = sync
         .register(valid_request())
         .await
         .expect("should succeed after one retry");
 
-    assert_eq!(record.status, RegistryStatus::Registered);
+    assert_eq!(acknowledgement, accepted("CORR-2"));
     assert_eq!(state.register_hits.load(Ordering::SeqCst), 2);
 }
 
@@ -507,7 +577,34 @@ async fn check_status_success() {
         axum::http::StatusCode::OK,
         serde_json::json!({
             "registryId": "EU-REG-3",
-            "status": "pending",
+            "status": "registered",
+            "updatedAt": Utc::now().to_rfc3339(),
+        }),
+    ));
+    let base_url = mock_server::spawn(state.clone()).await;
+    let sync = EuRegistrySync::new(mock_config(&base_url)).unwrap();
+
+    // Asked by the registration identifier, which the registry generated: it
+    // never received this node's passport id.
+    let record = sync
+        .check_status("EU-REG-3")
+        .await
+        .expect("check_status should succeed");
+
+    assert_eq!(record.status, RegistryStatus::Registered);
+    assert_eq!(record.registration_id, "EU-REG-3");
+}
+
+/// A registration identifier is a URI in the registry's own guide. It is one
+/// path segment, so a `/` in it cannot add segments to the route.
+#[tokio::test]
+async fn a_registration_id_is_escaped_into_one_path_segment() {
+    let state = Arc::new(MockState::default());
+    state.status_queue.lock().await.push_back((
+        axum::http::StatusCode::OK,
+        serde_json::json!({
+            "registryId": "https://reg.example/dpp/1",
+            "status": "registered",
             "updatedAt": Utc::now().to_rfc3339(),
         }),
     ));
@@ -515,12 +612,11 @@ async fn check_status_success() {
     let sync = EuRegistrySync::new(mock_config(&base_url)).unwrap();
 
     let record = sync
-        .check_status(PassportId::new())
+        .check_status("https://reg.example/dpp/1")
         .await
-        .expect("check_status should succeed");
+        .expect("the route matches only if the id stayed one segment");
 
-    assert_eq!(record.status, RegistryStatus::Pending);
-    assert_eq!(record.identifiers.registry_id, "EU-REG-3");
+    assert_eq!(record.registration_id, "https://reg.example/dpp/1");
 }
 
 #[tokio::test]
@@ -535,14 +631,242 @@ async fn check_status_404_is_fatal_not_found() {
     let sync = EuRegistrySync::new(mock_config(&base_url)).unwrap();
 
     let err = sync
-        .check_status(PassportId::new())
+        .check_status("EU-REG-3")
         .await
         .expect_err("404 should surface as not-found");
 
     assert!(
-        err.to_string().contains("not found in EU registry"),
+        err.to_string().contains("status check failed 404"),
         "got: {err}"
     );
+}
+
+// ── Reading a submission back ────────────────────────────────────────────────
+
+fn task_page(tasks: serde_json::Value) -> (axum::http::StatusCode, serde_json::Value) {
+    (
+        axum::http::StatusCode::OK,
+        serde_json::json!({ "content": tasks }),
+    )
+}
+
+fn registration_task(correlation_id: &str, task_id: u64, status: &str) -> serde_json::Value {
+    serde_json::json!({
+        "taskId": task_id,
+        "type": "DPP_REGISTRATION",
+        "correlationId": correlation_id,
+        "status": status,
+    })
+}
+
+#[tokio::test]
+async fn a_submission_still_being_checked_is_processing_and_reads_no_result() {
+    let state = Arc::new(MockState::default());
+    state
+        .tasks_queue
+        .lock()
+        .await
+        .push_back(task_page(serde_json::json!([registration_task(
+            "CORR-1",
+            7,
+            "PROCESSING"
+        )])));
+    let base_url = mock_server::spawn(state.clone()).await;
+    let sync = EuRegistrySync::new(mock_config(&base_url)).unwrap();
+
+    let report = sync.check_submission("CORR-1").await.expect("a report");
+
+    assert_eq!(report, SubmissionReport::Processing);
+    assert!(
+        state.task_results_read.lock().await.is_empty(),
+        "an unfinished task has no result worth reading"
+    );
+}
+
+#[tokio::test]
+async fn a_successful_submission_reports_the_registration_identifier_from_its_result() {
+    let state = Arc::new(MockState::default());
+    state
+        .tasks_queue
+        .lock()
+        .await
+        .push_back(task_page(serde_json::json!([
+            registration_task("CORR-OTHER", 6, "SUCCESS"),
+            registration_task("CORR-1", 7, "SUCCESS"),
+        ])));
+    state.task_result_queue.lock().await.push_back((
+        axum::http::StatusCode::OK,
+        serde_json::json!({
+            "status": "SUCCESS",
+            "resultPayload": { "report": { "itemDetails": [{
+                "uniqueProductIdentifier": "https://id.example.com/01/09506000134352/21/abc123",
+                "outcome": "ACCEPTED",
+                "registrationIdentifier": "EU-REG-7",
+            }] } },
+        }),
+    ));
+    let base_url = mock_server::spawn(state.clone()).await;
+    let sync = EuRegistrySync::new(mock_config(&base_url)).unwrap();
+
+    let report = sync.check_submission("CORR-1").await.expect("a report");
+
+    assert_eq!(
+        report,
+        SubmissionReport::Registered {
+            registration_id: "EU-REG-7".into()
+        }
+    );
+    assert_eq!(
+        state
+            .task_results_read
+            .lock()
+            .await
+            .iter()
+            .collect::<Vec<_>>(),
+        ["7"],
+        "the result is read by the task's own identifier, not the correlation id"
+    );
+}
+
+#[tokio::test]
+async fn a_failed_submission_is_refused_with_the_registrys_error_code() {
+    let state = Arc::new(MockState::default());
+    state
+        .tasks_queue
+        .lock()
+        .await
+        .push_back(task_page(serde_json::json!([registration_task(
+            "CORR-1", 7, "FAILURE"
+        )])));
+    state.task_result_queue.lock().await.push_back((
+        axum::http::StatusCode::OK,
+        serde_json::json!({
+            "status": "FAILURE",
+            "resultPayload": { "report": { "itemDetails": [{
+                "uniqueProductIdentifier": "https://id.example.com/01/09506000134352/21/abc123",
+                "outcome": "REJECTED",
+                "errorCode": "NOT_RESOLVABLE_UPI",
+            }] } },
+        }),
+    ));
+    let base_url = mock_server::spawn(state.clone()).await;
+    let sync = EuRegistrySync::new(mock_config(&base_url)).unwrap();
+
+    let SubmissionReport::Refused { reason } =
+        sync.check_submission("CORR-1").await.expect("a report")
+    else {
+        panic!("a failed submission is refused");
+    };
+    assert!(reason.contains("NOT_RESOLVABLE_UPI"), "{reason}");
+}
+
+/// A submission the list does not show (yet) is not a verdict either way.
+#[tokio::test]
+async fn a_submission_the_dashboard_does_not_list_is_still_processing() {
+    let state = Arc::new(MockState::default());
+    state
+        .tasks_queue
+        .lock()
+        .await
+        .push_back(task_page(serde_json::json!([registration_task(
+            "CORR-ELSE",
+            1,
+            "SUCCESS"
+        )])));
+    let base_url = mock_server::spawn(state.clone()).await;
+    let sync = EuRegistrySync::new(mock_config(&base_url)).unwrap();
+
+    assert_eq!(
+        sync.check_submission("CORR-1").await.expect("a report"),
+        SubmissionReport::Processing
+    );
+}
+
+/// The task is found by paging the list, since no route takes a correlation
+/// identifier: a full page that does not hold it means asking for the next.
+#[tokio::test]
+async fn the_task_list_is_paged_until_the_submission_is_found() {
+    let state = Arc::new(MockState::default());
+    let full_page: Vec<_> = (0..50)
+        .map(|n| registration_task(&format!("CORR-FILL-{n}"), n, "SUCCESS"))
+        .collect();
+    {
+        let mut q = state.tasks_queue.lock().await;
+        q.push_back(task_page(serde_json::Value::Array(full_page)));
+        q.push_back(task_page(serde_json::json!([registration_task(
+            "CORR-1",
+            99,
+            "PROCESSING"
+        )])));
+    }
+    let base_url = mock_server::spawn(state.clone()).await;
+    let sync = EuRegistrySync::new(mock_config(&base_url)).unwrap();
+
+    let report = sync.check_submission("CORR-1").await.expect("a report");
+
+    assert_eq!(report, SubmissionReport::Processing);
+    assert_eq!(
+        state
+            .task_pages_asked
+            .lock()
+            .await
+            .iter()
+            .collect::<Vec<_>>(),
+        ["0", "1"]
+    );
+}
+
+/// The walk is capped, and a task past the cap is not a task that is not listed:
+/// the search ran out. It is reported as a state the node cannot rule on, which
+/// keeps the poll going and says why, rather than as `Processing`, which would
+/// read as the registry still working on it.
+#[tokio::test]
+async fn a_search_that_runs_out_of_pages_says_so() {
+    use super::mapping::MAX_TASK_PAGES;
+
+    let state = Arc::new(MockState::default());
+    let full_page = || {
+        serde_json::Value::Array(
+            (0..50)
+                .map(|n| registration_task(&format!("CORR-FILL-{n}"), n, "SUCCESS"))
+                .collect(),
+        )
+    };
+    {
+        let mut q = state.tasks_queue.lock().await;
+        for _ in 0..MAX_TASK_PAGES {
+            q.push_back(task_page(full_page()));
+        }
+    }
+    let base_url = mock_server::spawn(state.clone()).await;
+    let sync = EuRegistrySync::new(mock_config(&base_url)).unwrap();
+
+    let report = sync.check_submission("CORR-1").await.expect("a report");
+
+    assert!(
+        matches!(&report, SubmissionReport::Unrecognised { state } if state.contains("not found within")),
+        "a search that ran out is not `Processing`: {report:?}"
+    );
+    assert!(!report.is_terminal(), "and it keeps the poll going");
+    assert_eq!(
+        state.task_pages_asked.lock().await.len(),
+        MAX_TASK_PAGES as usize,
+        "the walk stops at the cap"
+    );
+}
+
+#[tokio::test]
+async fn an_unreachable_dashboard_is_an_error_not_a_verdict() {
+    let state = Arc::new(MockState::default());
+    // Nothing queued: the mock answers 500 on every attempt.
+    let base_url = mock_server::spawn(state.clone()).await;
+    let sync = EuRegistrySync::new(mock_config(&base_url)).unwrap();
+
+    let err = sync
+        .check_submission("CORR-1")
+        .await
+        .expect_err("a registry that cannot be read says nothing about the submission");
+    assert!(err.to_string().contains("failed after 3 attempts"), "{err}");
 }
 
 #[tokio::test]
@@ -601,19 +925,19 @@ async fn invalid_payload_is_submitted_when_the_override_is_set() {
         .register_queue
         .lock()
         .await
-        .push_back((axum::http::StatusCode::OK, registered_response("EU-REG-9")));
+        .push_back((axum::http::StatusCode::OK, accepted_response("CORR-9")));
     let base_url = mock_server::spawn(state.clone()).await;
 
     let mut config = mock_config(&base_url);
     config.allow_invalid_payloads = true;
     let sync = EuRegistrySync::new(config).unwrap();
 
-    let record = sync
+    let acknowledgement = sync
         .register(invalid_request())
         .await
         .expect("the override must permit submission");
 
-    assert_eq!(record.identifiers.registry_id, "EU-REG-9");
+    assert_eq!(acknowledgement, accepted("CORR-9"));
     assert_eq!(state.register_hits.load(Ordering::SeqCst), 1);
 }
 
@@ -639,17 +963,17 @@ async fn a_registration_this_node_builds_passes_validation() {
         .register_queue
         .lock()
         .await
-        .push_back((axum::http::StatusCode::OK, registered_response("EU-REG-OK")));
+        .push_back((axum::http::StatusCode::OK, accepted_response("CORR-OK")));
     let base_url = mock_server::spawn(state.clone()).await;
     // No override: this must succeed on the fail-closed path.
     let sync = EuRegistrySync::new(mock_config(&base_url)).unwrap();
 
-    let record = sync
+    let acknowledgement = sync
         .register(valid_request())
         .await
         .expect("a fully-populated registration must pass local validation");
 
-    assert_eq!(record.identifiers.registry_id, "EU-REG-OK");
+    assert_eq!(acknowledgement, accepted("CORR-OK"));
     assert_eq!(state.register_hits.load(Ordering::SeqCst), 1);
 }
 
@@ -695,6 +1019,52 @@ fn only_item_level_registrations_carry_an_item_identifier() {
             "a {granularity:?} registration covers a group, not one unit"
         );
     }
+}
+
+/// 🚨 The item is registered under the serial its carrier prints, never under
+/// this node's passport id. The id matches no label, so an item registered under
+/// it could not be found from the product.
+#[test]
+fn an_item_is_registered_under_its_carrier_serial_not_the_passport_id() {
+    let request = valid_request();
+    let item = item_id_for(&request).expect("an item-level request names its unit");
+    assert_eq!(item.scheme, "serial");
+    assert_eq!(item.value, "abc123");
+    assert_ne!(item.value, request.passport_id.to_string());
+}
+
+/// An item-level request with no serial is not completed with one made up: it
+/// has no item identifier, and validation refuses the payload.
+#[tokio::test]
+async fn an_item_without_a_serial_is_refused_rather_than_given_one() {
+    let request = RegistrationRequest {
+        item_serial: None,
+        ..valid_request()
+    };
+    assert!(item_id_for(&request).is_none());
+
+    let state = Arc::new(MockState::default());
+    let base_url = mock_server::spawn(state.clone()).await;
+    let sync = EuRegistrySync::new(mock_config(&base_url)).unwrap();
+    let err = sync
+        .register(request)
+        .await
+        .expect_err("an item with no identifier must be refused");
+    assert!(matches!(err, DppError::Validation(_)), "got: {err:?}");
+    assert_eq!(state.register_hits.load(Ordering::SeqCst), 0);
+}
+
+/// Art. 8(4) and 8(5) link a batch where one exists; the request carries it at
+/// batch and item level.
+#[test]
+fn the_batch_the_request_carries_is_linked_on_the_level() {
+    let mut request = valid_request();
+    assert!(level_for(&request).batch_id.is_none());
+
+    request.batch_id = Some("LOT-2026-01".into());
+    let level = level_for(&request);
+    assert_eq!(level.batch_id.as_deref(), Some("LOT-2026-01"));
+    assert!(level.validate().is_ok());
 }
 
 /// An unlinked model must stay absent rather than becoming a blank identifier,
@@ -859,7 +1229,7 @@ async fn a_vat_operator_is_not_submitted_as_a_did() {
         .register_queue
         .lock()
         .await
-        .push_back((axum::http::StatusCode::OK, registered_response("EU-REG-V")));
+        .push_back((axum::http::StatusCode::OK, accepted_response("CORR-V")));
     let base_url = mock_server::spawn(state.clone()).await;
     let sync = EuRegistrySync::new(mock_config(&base_url)).unwrap();
 
@@ -895,7 +1265,7 @@ async fn a_did_operator_keeps_its_did_field() {
         .register_queue
         .lock()
         .await
-        .push_back((axum::http::StatusCode::OK, registered_response("EU-REG-D")));
+        .push_back((axum::http::StatusCode::OK, accepted_response("CORR-D")));
     let base_url = mock_server::spawn(state.clone()).await;
     let sync = EuRegistrySync::new(mock_config(&base_url)).unwrap();
 
@@ -972,26 +1342,6 @@ fn a_counterparty_without_an_eu_identifier_falls_back_to_its_did() {
 
 // ── Status fidelity and idempotency ─────────────────────────────────────────
 
-/// A registration the registry has accepted but not yet ruled on must map to
-/// `Pending`, not success. Registration is validated asynchronously, so this is
-/// the *expected* response to a submission — the drain turning it into
-/// `registered` recorded every submission as complete.
-#[test]
-fn a_pending_response_stays_pending() {
-    let resp = EuRegistryResponse {
-        registry_id: "EU-REG-P".into(),
-        passport_id: Uuid::nil(),
-        status: RegistryStatusCode::Pending,
-        message: None,
-        rejection_reasons: None,
-        updated_at: Utc::now(),
-    };
-    assert_eq!(
-        EuRegistrySync::response_to_record(&resp).status,
-        RegistryStatus::Pending
-    );
-}
-
 /// A deactivated record is not a rejected one. Rejection means the submission
 /// was defective and can be corrected; deactivation means the record is out of
 /// service, which resubmitting does not fix.
@@ -1007,7 +1357,7 @@ fn a_deactivated_record_is_not_reported_as_rejected() {
     };
     let mapped = EuRegistrySync::response_to_record(&resp).status;
     assert_eq!(mapped, RegistryStatus::Deactivated);
-    assert_ne!(mapped, RegistryStatus::Rejected);
+    assert_ne!(mapped, RegistryStatus::Unrecognised("rejected".into()));
 
     let status = StatusResponse {
         registry_id: "EU-REG-D".into(),
@@ -1037,7 +1387,7 @@ async fn retrying_a_registration_reuses_its_request_id() {
                 serde_json::json!({"error": "upstream"}),
             ));
         }
-        q.push_back((axum::http::StatusCode::OK, registered_response("EU-REG-I")));
+        q.push_back((axum::http::StatusCode::OK, accepted_response("CORR-I")));
     }
     let base_url = mock_server::spawn(state.clone()).await;
     let sync = EuRegistrySync::new(mock_config(&base_url)).unwrap();
@@ -1098,7 +1448,7 @@ async fn a_registration_carries_its_request_id_as_the_idempotency_key() {
             axum::http::StatusCode::INTERNAL_SERVER_ERROR,
             serde_json::json!({"error": "upstream"}),
         ));
-        q.push_back((axum::http::StatusCode::OK, registered_response("EU-REG-K")));
+        q.push_back((axum::http::StatusCode::OK, accepted_response("CORR-K")));
     }
     let base_url = mock_server::spawn(state.clone()).await;
     let sync = EuRegistrySync::new(mock_config(&base_url)).unwrap();
@@ -1129,16 +1479,15 @@ async fn a_replayed_key_means_the_registry_already_has_the_submission() {
     let base_url = mock_server::spawn(state.clone()).await;
     let sync = EuRegistrySync::new(mock_config(&base_url)).unwrap();
 
-    let record = sync
+    let acknowledgement = sync
         .register(valid_request())
         .await
         .expect("a replayed key is not a failure");
 
-    assert_eq!(record.status, RegistryStatus::Pending);
-    assert!(
-        record.identifiers.registry_id.is_empty(),
-        "the registry returned no id, and none may be invented"
-    );
+    // The registry's reply to a replayed key names the conflict, not the
+    // submission, so there is no correlation identifier to report and none may
+    // be invented.
+    assert_eq!(acknowledgement, SubmissionAcknowledgement::AlreadyHeld);
     assert_eq!(
         state.register_hits.load(Ordering::SeqCst),
         1,
@@ -1187,7 +1536,7 @@ async fn a_success_body_this_node_cannot_read_resolves_when_the_key_is_replayed(
         let mut q = state.register_queue.lock().await;
         q.push_back((
             axum::http::StatusCode::OK,
-            serde_json::json!({"correlationId": "c-1", "outcome": "SOMETHING_NEW"}),
+            serde_json::json!({"somethingElse": "the registry changed its mind about the shape"}),
         ));
         q.push_back((axum::http::StatusCode::CONFLICT, key_reused_body()));
     }
@@ -1213,7 +1562,7 @@ async fn a_success_body_this_node_cannot_read_resolves_when_the_key_is_replayed(
         .register(attempt())
         .await
         .expect("the replay is recognised, not refused");
-    assert_eq!(second.status, RegistryStatus::Pending);
+    assert_eq!(second, SubmissionAcknowledgement::AlreadyHeld);
 
     let keys = state.register_keys.lock().await;
     assert_eq!(
@@ -1318,7 +1667,7 @@ async fn a_backup_link_with_its_provider_is_sent_with_both() {
         .register_queue
         .lock()
         .await
-        .push_back((axum::http::StatusCode::OK, registered_response("EU-REG-B")));
+        .push_back((axum::http::StatusCode::OK, accepted_response("CORR-B")));
     let base_url = mock_server::spawn(state.clone()).await;
     let sync = EuRegistrySync::new(mock_config(&base_url)).unwrap();
 

@@ -20,7 +20,7 @@ path = "src/lib.rs"
 # the guest is built against the same contract the host links. Bump the two
 # together. A path into a sibling dpp-core checkout built whatever that working
 # tree held, and resolved only from a checkout sitting next to it.
-dpp-plugin-sdk = "0.21.0"
+dpp-plugin-sdk = "0.22.0"
 serde_json     = "1"
 
 [profile.release]

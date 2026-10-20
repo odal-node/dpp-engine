@@ -38,8 +38,8 @@ use dpp_domain::{
     passport::{ManufacturerInfo, Passport, PassportId},
     ports::passport_repo::PassportRepository,
     ports::registry_sync::{
-        RegisteringOperator, RegistrationGranularity, RegistrationRequest, RegistryIdentifiers,
-        RegistryRecord, RegistryStatus, RegistrySyncPort,
+        RegisteringOperator, RegistrationGranularity, RegistrationRequest, RegistryRecord,
+        RegistrySyncPort, SubmissionAcknowledgement, SubmissionReport,
     },
     product_group::{ProductGroup, ProductGroupData},
     status::PassportStatus,
@@ -111,6 +111,7 @@ fn draft_passport() -> Passport {
         derived_from: Vec::new(),
         component_refs: Vec::new(),
         life_status: None,
+        personal_data: Default::default(),
         retention_until: None,
         product_id: None,
         commodity_code: None,
@@ -162,56 +163,80 @@ async fn outbox_row_count(dal: &PgDal, id: PassportId) -> i64 {
 
 // ─── Mock registry port ───────────────────────────────────────────────────────
 
+/// What the registry says. A submission is answered with `Accepted`, `Held` or
+/// `Transient`; the poll that follows with `Registered`, `Rejected`,
+/// `Processing` or `Transient`. The two steps are different questions with
+/// different answers, which is the shape of a real asynchronous registration.
 #[derive(Clone, Copy)]
 enum Outcome {
-    Registered,
-    Transient,
-    Rejected,
-    /// Accepted for asynchronous validation — the registry's normal first answer.
-    Pending,
-    /// A replayed submission: the registry holds it and returned no id for it.
+    /// Submission accepted, under a correlation identifier.
+    Accepted,
+    /// A replayed submission: the registry holds it and gave no handle for it.
     Held,
-    /// Withdrawn from service.
-    Deactivated,
+    /// The registry could not be reached.
+    Transient,
+    /// Poll: the registry ruled and generated a registration identifier.
+    Registered,
+    /// Poll: the registry refused the submission.
+    Rejected,
+    /// Poll: the registry has not finished checking.
+    Processing,
 }
+
+/// The handle the mock registry gives a submission.
+const CORRELATION_ID: &str = "CORR-TEST-0001";
+
+/// The registration identifier the mock registry generates.
+const REGISTRATION_ID: &str = "EU-REG-TEST-0001";
 
 struct MockPort {
+    /// What `register` answers.
     outcome: Outcome,
     calls: Arc<AtomicUsize>,
-    /// Calls to `check_status`, counted separately so a test can prove the
+    /// Calls to `check_submission`, counted separately so a test can prove the
     /// drain *polled* a submitted row instead of registering it again.
     polls: Arc<AtomicUsize>,
-    /// What a poll reports, when it differs from the submission's answer.
+    /// What a poll reports.
     poll_outcome: Outcome,
-}
-
-fn record(status: RegistryStatus, registry_id: &str) -> RegistryRecord {
-    RegistryRecord {
-        identifiers: RegistryIdentifiers {
-            product_id: "PROD".into(),
-            operator_id: "OP".into(),
-            facility_id: "FAC".into(),
-            registry_id: registry_id.into(),
-        },
-        status,
-        registered_at: Utc::now(),
-        updated_at: Utc::now(),
-    }
 }
 
 #[async_trait]
 impl RegistrySyncPort for MockPort {
-    async fn register(&self, _req: RegistrationRequest) -> Result<RegistryRecord, DppError> {
+    async fn register(
+        &self,
+        _req: RegistrationRequest,
+    ) -> Result<SubmissionAcknowledgement, DppError> {
         self.calls.fetch_add(1, Ordering::SeqCst);
-        Ok(match answer(self.outcome) {
-            Ok(rec) => rec,
-            Err(e) => return Err(e),
-        })
+        match self.outcome {
+            Outcome::Accepted => Ok(SubmissionAcknowledgement::Accepted {
+                correlation_id: CORRELATION_ID.into(),
+            }),
+            Outcome::Held => Ok(SubmissionAcknowledgement::AlreadyHeld),
+            Outcome::Transient => Err(DppError::Internal("EU registry transient failure".into())),
+            other => panic!("not an answer to a submission: {}", other as u8),
+        }
     }
 
-    async fn check_status(&self, _pid: PassportId) -> Result<RegistryRecord, DppError> {
+    async fn check_submission(&self, correlation_id: &str) -> Result<SubmissionReport, DppError> {
         self.polls.fetch_add(1, Ordering::SeqCst);
-        answer(self.poll_outcome)
+        // A poll names the submission by the handle the registry gave it, never
+        // by this node's passport id.
+        assert_eq!(correlation_id, CORRELATION_ID);
+        match self.poll_outcome {
+            Outcome::Registered => Ok(SubmissionReport::Registered {
+                registration_id: REGISTRATION_ID.into(),
+            }),
+            Outcome::Rejected => Ok(SubmissionReport::Refused {
+                reason: "the registry refused the submission: NOT_RESOLVABLE_UPI".into(),
+            }),
+            Outcome::Processing => Ok(SubmissionReport::Processing),
+            Outcome::Transient => Err(DppError::Internal("EU registry transient failure".into())),
+            other => panic!("not an answer to a poll: {}", other as u8),
+        }
+    }
+
+    async fn check_status(&self, _registration_id: &str) -> Result<RegistryRecord, DppError> {
+        unimplemented!("not exercised")
     }
 
     async fn notify_transfer(
@@ -223,21 +248,8 @@ impl RegistrySyncPort for MockPort {
     }
 }
 
-/// The record (or error) the registry gives for an outcome, shared by
-/// `register` and `check_status` — a verdict means the same thing either way.
-fn answer(outcome: Outcome) -> Result<RegistryRecord, DppError> {
-    match outcome {
-        Outcome::Registered => Ok(record(RegistryStatus::Registered, "EU-REG-TEST-0001")),
-        Outcome::Transient => Err(DppError::Internal("EU registry transient failure".into())),
-        Outcome::Rejected => Ok(record(RegistryStatus::Rejected, "")),
-        Outcome::Pending => Ok(record(RegistryStatus::Pending, "EU-REG-TEST-0001")),
-        Outcome::Held => Ok(record(RegistryStatus::Pending, "")),
-        Outcome::Deactivated => Ok(record(RegistryStatus::Deactivated, "EU-REG-TEST-0001")),
-    }
-}
-
 fn mock(outcome: Outcome) -> (Arc<dyn RegistrySyncPort>, Arc<AtomicUsize>) {
-    let (port, calls, _) = mock_with_poll(outcome, outcome);
+    let (port, calls, _) = mock_with_poll(outcome, Outcome::Processing);
     (port, calls)
 }
 
@@ -260,6 +272,15 @@ fn mock_with_poll(
         poll_outcome,
     });
     (port, calls, polls)
+}
+
+/// Make every row due again, as the passage of the backoff would.
+async fn make_due(dal: &PgDal, id: PassportId) {
+    sqlx::query("UPDATE odal.registry_sync SET next_attempt_at = now() WHERE passport_id = $1")
+        .bind(id.0)
+        .execute(dal.pool())
+        .await
+        .expect("make the row due");
 }
 
 // ─── (a) atomic publish + idempotency + (b) drains exactly once ───────────────
@@ -301,22 +322,37 @@ async fn publish_is_atomic_idempotent_and_drains_exactly_once() {
     outbox.commit_publish(&again, payload).await.unwrap();
     assert_eq!(outbox_row_count(&dal, id).await, 1, "still exactly one row");
 
-    // (b) drain once with a healthy port → registered; a second pass is a no-op,
-    // so the registry is called exactly once across the (simulated) restart.
-    let (port, calls) = mock(Outcome::Registered);
+    // (b) drain with a healthy port. The first pass submits and the registry
+    // answers with a handle; the second reads its ruling and registers. After
+    // that a pass is a no-op, so the registry is submitted to exactly once
+    // across the (simulated) restart.
+    let (port, calls, polls) = mock_with_poll(Outcome::Accepted, Outcome::Registered);
     let s1 = drain_once(&outbox, &port, None, 50).await;
-    assert_eq!(s1.registered, 1);
+    assert_eq!(s1.submitted, 1);
+    assert_eq!(s1.registered, 0, "an acknowledgement is not a registration");
+    let submitted = outbox.pending_for(id).await.unwrap().unwrap();
+    assert_eq!(submitted.status, RegistrySyncStatus::Submitted);
+    assert_eq!(submitted.registry_id.as_deref(), Some(CORRELATION_ID));
+
+    make_due(&dal, id).await;
+    let s2 = drain_once(&outbox, &port, None, 50).await;
+    assert_eq!(s2.registered, 1);
     let after = outbox.pending_for(id).await.unwrap().unwrap();
     assert_eq!(after.status, RegistrySyncStatus::Registered);
-    assert_eq!(after.registry_id.as_deref(), Some("EU-REG-TEST-0001"));
+    assert_eq!(
+        after.registry_id.as_deref(),
+        Some(REGISTRATION_ID),
+        "the column now holds the registration identifier, not the handle"
+    );
 
     assert!(
         outbox.due(50).await.unwrap().is_empty(),
         "registered row not due"
     );
-    let s2 = drain_once(&outbox, &port, None, 50).await;
-    assert_eq!(s2.registered, 0);
-    assert_eq!(calls.load(Ordering::SeqCst), 1, "registered exactly once");
+    let s3 = drain_once(&outbox, &port, None, 50).await;
+    assert_eq!(s3.registered, 0);
+    assert_eq!(calls.load(Ordering::SeqCst), 1, "submitted exactly once");
+    assert_eq!(polls.load(Ordering::SeqCst), 1, "polled exactly once");
 }
 
 // ─── (c) transient backoff and (d) terminal rejection ─────────────────────────
@@ -346,11 +382,21 @@ async fn drain_backs_off_on_transient_and_marks_terminal_rejection() {
 
     // (d) terminal rejection → row rejected (kept for a human, never dropped).
     let rejected_id = create_and_publish(&dal, &outbox).await;
-    let (port_r, _) = mock(Outcome::Rejected);
+    // The registry accepts the submission and rules against it afterwards.
+    let (port_r, _, _) = mock_with_poll(Outcome::Accepted, Outcome::Rejected);
+    drain_once(&outbox, &port_r, None, 50).await;
+    make_due(&dal, rejected_id).await;
     let sr = drain_once(&outbox, &port_r, None, 50).await;
     assert_eq!(sr.rejected, 1);
     let row = outbox.pending_for(rejected_id).await.unwrap().unwrap();
     assert_eq!(row.status, RegistrySyncStatus::Rejected);
+    assert!(
+        row.message
+            .as_deref()
+            .is_some_and(|m| m.contains("NOT_RESOLVABLE_UPI")),
+        "the registry's reason reaches the row for a human: {:?}",
+        row.message
+    );
 }
 
 // ─── 0024 heals rows the old write path already clobbered ─────────────────────
@@ -518,7 +564,7 @@ async fn suspend_before_drain_must_not_drop_the_pending_registration() {
 
     // And the loss is real, not just a state-machine detail: the registry is
     // never called for this passport.
-    let (port, calls) = mock(Outcome::Registered);
+    let (port, calls) = mock(Outcome::Accepted);
     drain_once(&outbox, &port, None, 50).await;
     assert_eq!(
         calls.load(Ordering::SeqCst),
@@ -585,7 +631,7 @@ async fn retiring_an_unpublished_draft_creates_no_outbox_row() {
     );
 
     // Nothing to drain, and no false rejection raised.
-    let (port, calls) = mock(Outcome::Registered);
+    let (port, calls) = mock(Outcome::Accepted);
     let stats = drain_once(&outbox, &port, None, 50).await;
     assert_eq!(calls.load(Ordering::SeqCst), 0, "registry not called");
     assert_eq!(
@@ -610,8 +656,10 @@ async fn republish_clears_a_stale_suspend_intent() {
 
     let id = create_and_publish(&dal, &outbox).await;
 
-    // Drain the registration, then suspend.
-    let (port, _) = mock(Outcome::Registered);
+    // Drain the registration — submitted, then ruled on — then suspend.
+    let (port, _, _) = mock_with_poll(Outcome::Accepted, Outcome::Registered);
+    drain_once(&outbox, &port, None, 50).await;
+    make_due(&dal, id).await;
     drain_once(&outbox, &port, None, 50).await;
     outbox
         .enqueue_status(id, RegistryStatusIntent::Suspended)
@@ -656,7 +704,7 @@ async fn an_accepted_submission_is_not_yet_a_registration() {
     let outbox: Arc<dyn RegistrySyncOutbox> = Arc::new(PgRegistrySyncRepo::new(dal.clone()));
     let id = create_and_publish(&dal, &outbox).await;
 
-    let (port, calls) = mock(Outcome::Pending);
+    let (port, calls) = mock(Outcome::Accepted);
     let stats = drain_once(&outbox, &port, None, 10).await;
 
     assert_eq!(calls.load(Ordering::SeqCst), 1);
@@ -671,9 +719,59 @@ async fn an_accepted_submission_is_not_yet_a_registration() {
     assert_eq!(row.status, RegistrySyncStatus::Submitted);
     assert_eq!(
         row.registry_id.as_deref(),
-        Some("EU-REG-TEST-0001"),
-        "the registry's record id is kept so the verdict can be polled for"
+        Some(CORRELATION_ID),
+        "the registry's handle is kept so the verdict can be polled for"
     );
+}
+
+/// A processing submission stays `submitted` and is asked again later: the
+/// registry has not ruled, and neither recording a registration nor a refusal
+/// would be true. "Later" is the backoff the acknowledgement set, applied again
+/// by every poll that gets no ruling. Each poll counts as an attempt, so a
+/// submission that is never ruled on reaches the stalled count, and the row is
+/// not due again on the very next pass: left due it would be polled every pass
+/// and sort to the head of the queue ahead of every pending row.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_submission_still_being_checked_keeps_being_polled() {
+    let _c = start_pg().await;
+    let dal = _c.dal.clone();
+    let outbox: Arc<dyn RegistrySyncOutbox> = Arc::new(PgRegistrySyncRepo::new(dal.clone()));
+    let id = create_and_publish(&dal, &outbox).await;
+
+    let (port, calls, polls) = mock_with_poll(Outcome::Accepted, Outcome::Processing);
+    drain_once(&outbox, &port, None, 10).await;
+    let mut attempts = outbox.pending_for(id).await.unwrap().unwrap().attempts;
+    for polled in 1..=2 {
+        make_due(&dal, id).await;
+        let stats = drain_once(&outbox, &port, None, 10).await;
+        assert_eq!(stats.submitted, 1);
+        assert_eq!((stats.registered, stats.rejected), (0, 0));
+
+        // The poll found no ruling, so the row is backed off and the attempt is
+        // counted...
+        let row = outbox.pending_for(id).await.unwrap().unwrap();
+        assert!(
+            row.next_attempt_at > Utc::now(),
+            "a poll with no ruling backs the row off"
+        );
+        assert!(row.attempts > attempts, "and counts as an attempt");
+        attempts = row.attempts;
+
+        // ...so the next pass, with the backoff still running, leaves it alone.
+        let idle = drain_once(&outbox, &port, None, 10).await;
+        assert_eq!(idle.submitted, 0);
+        assert_eq!(
+            polls.load(Ordering::SeqCst),
+            polled,
+            "not polled again before the backoff has passed"
+        );
+    }
+
+    assert_eq!(calls.load(Ordering::SeqCst), 1, "never resubmitted");
+    assert_eq!(polls.load(Ordering::SeqCst), 2);
+    let row = outbox.pending_for(id).await.unwrap().unwrap();
+    assert_eq!(row.status, RegistrySyncStatus::Submitted);
+    assert_eq!(row.registry_id.as_deref(), Some(CORRELATION_ID));
 }
 
 /// A replayed idempotency key is answered without an id: the registry holds the
@@ -699,6 +797,32 @@ async fn a_submission_the_registry_already_holds_is_submitted_without_an_id() {
         row.registry_id, None,
         "no id was returned, so none may be recorded"
     );
+
+    // With no handle there is nothing to poll, and the node's own passport id is
+    // not a substitute: the registry never received it. The row waits, neither
+    // polled nor submitted again.
+    let attempts = row.attempts;
+    make_due(&dal, id).await;
+    let later = drain_once(&outbox, &port, None, 10).await;
+    assert_eq!(later.submitted, 1);
+    assert_eq!(
+        calls.load(Ordering::SeqCst),
+        1,
+        "the registry holds it already, so it is not submitted again"
+    );
+    let row = outbox.pending_for(id).await.unwrap().unwrap();
+    assert_eq!(row.status, RegistrySyncStatus::Submitted);
+    // Waiting is backed off and counted, not left due: a row that stays due sorts
+    // to the head of the queue every pass, and one whose attempts never grow can
+    // never reach the stalled count that says it needs reconciling.
+    assert!(
+        row.next_attempt_at > Utc::now(),
+        "a handle-less row is backed off, not left due"
+    );
+    assert!(
+        row.attempts > attempts,
+        "and each pass counts as an attempt"
+    );
 }
 
 /// A submitted row is polled, never resubmitted — resubmitting is what would
@@ -711,7 +835,7 @@ async fn a_submitted_row_is_polled_not_resubmitted() {
     let id = create_and_publish(&dal, &outbox).await;
 
     // First pass: accepted for validation.
-    let (port, calls, polls) = mock_with_poll(Outcome::Pending, Outcome::Registered);
+    let (port, calls, polls) = mock_with_poll(Outcome::Accepted, Outcome::Registered);
     drain_once(&outbox, &port, None, 10).await;
     assert_eq!(calls.load(Ordering::SeqCst), 1);
     assert_eq!(polls.load(Ordering::SeqCst), 0);
@@ -736,34 +860,6 @@ async fn a_submitted_row_is_polled_not_resubmitted() {
 
     let row = outbox.pending_for(id).await.unwrap().unwrap();
     assert_eq!(row.status, RegistrySyncStatus::Registered);
-}
-
-/// A verdict of "deactivated" is terminal but is not a rejection: nothing about
-/// the submission was defective, so there is nothing to correct and resubmit.
-#[tokio::test(flavor = "multi_thread")]
-async fn a_deactivated_record_is_terminal_but_not_rejected() {
-    let _c = start_pg().await;
-    let dal = _c.dal.clone();
-    let outbox: Arc<dyn RegistrySyncOutbox> = Arc::new(PgRegistrySyncRepo::new(dal.clone()));
-    let id = create_and_publish(&dal, &outbox).await;
-
-    let (port, _calls) = mock(Outcome::Deactivated);
-    let stats = drain_once(&outbox, &port, None, 10).await;
-
-    assert_eq!(stats.deactivated, 1);
-    assert_eq!(stats.rejected, 0);
-
-    let row = outbox.pending_for(id).await.unwrap().unwrap();
-    assert_eq!(row.status, RegistrySyncStatus::Deactivated);
-    assert_ne!(row.status, RegistrySyncStatus::Rejected);
-
-    let counts = outbox.status_counts(5).await.expect("counts");
-    assert_eq!(counts.deactivated, 1);
-    assert_eq!(counts.rejected, 0);
-    assert!(
-        outbox.due(10).await.unwrap().is_empty(),
-        "a deactivated row is terminal and stops draining"
-    );
 }
 
 // ─── reconciliation: published passports nobody is tracking ──────────────────
@@ -861,7 +957,7 @@ async fn an_expired_operator_holds_the_drain_without_losing_rows() {
 
     let expired =
         operator_verified_at(&dal, Some(Utc::now() - chrono::Duration::days(365 * 3 + 1))).await;
-    let (port, calls) = mock(Outcome::Registered);
+    let (port, calls, _) = mock_with_poll(Outcome::Accepted, Outcome::Registered);
     let stats = drain_once(&outbox, &port, Some(&expired), 50).await;
 
     assert_eq!(
@@ -882,6 +978,14 @@ async fn an_expired_operator_holds_the_drain_without_losing_rows() {
     let current = operator_verified_at(&dal, Some(Utc::now())).await;
     let stats = drain_once(&outbox, &port, Some(&current), 50).await;
     assert_eq!(calls.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        stats.submitted, 1,
+        "the held row is submitted once verified"
+    );
+
+    // And the registry's ruling follows on the next pass.
+    make_due(&dal, id).await;
+    let stats = drain_once(&outbox, &port, Some(&current), 50).await;
     assert_eq!(stats.registered, 1);
 }
 
@@ -894,7 +998,7 @@ async fn a_never_verified_operator_also_holds_the_drain() {
     create_and_publish(&dal, &outbox).await;
 
     let never = operator_verified_at(&dal, None).await;
-    let (port, calls) = mock(Outcome::Registered);
+    let (port, calls) = mock(Outcome::Accepted);
     drain_once(&outbox, &port, Some(&never), 50).await;
 
     assert_eq!(calls.load(Ordering::SeqCst), 0);

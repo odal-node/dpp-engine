@@ -296,6 +296,7 @@ mod tests {
             product_name: "Test Widget".into(),
             product_group: None,
             life_status: None,
+            personal_data: Default::default(),
             supersedes_id: None,
             manufacturer: ManufacturerInfo {
                 name: "Acme".into(),

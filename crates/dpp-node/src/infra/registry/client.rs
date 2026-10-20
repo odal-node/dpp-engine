@@ -137,6 +137,62 @@ impl EuRegistrySync {
         Ok(access_token)
     }
 
+    /// One authenticated `GET` of `url`, read as JSON.
+    ///
+    /// A single attempt, classified for [`Self::with_retry`]: connection
+    /// failures are `Unreachable`, `429` and `5xx` are retryable, and anything
+    /// else that is not a success, a body this node cannot read included, is
+    /// fatal. `what` names the call in the messages.
+    pub(super) async fn get_json<T: serde::de::DeserializeOwned>(
+        &self,
+        url: &str,
+        query: &[(&str, String)],
+        what: &str,
+    ) -> Result<T, RetryableError> {
+        let token = self
+            .get_token()
+            .await
+            .map_err(|e| RetryableError::Fatal(format!("token acquisition failed: {e}")))?;
+
+        let resp = self
+            .client
+            .get(url)
+            .query(query)
+            .bearer_auth(&token)
+            .send()
+            .await
+            .map_err(|e| {
+                if e.is_connect() || e.is_timeout() {
+                    RetryableError::Unreachable(e.to_string())
+                } else {
+                    RetryableError::Retryable(e.to_string())
+                }
+            })?;
+
+        let status = resp.status().as_u16();
+        if status == 429 {
+            return Err(RetryableError::Retryable("rate limited (429)".into()));
+        }
+        if (500..600).contains(&status) {
+            let body = resp.text().await.unwrap_or_default();
+            return Err(RetryableError::Retryable(format!(
+                "server error {status}: {}",
+                super::mapping::refusal_text(&body)
+            )));
+        }
+        if !resp.status().is_success() {
+            let body = resp.text().await.unwrap_or_default();
+            return Err(RetryableError::Fatal(format!(
+                "{what} failed {status}: {}",
+                super::mapping::refusal_text(&body)
+            )));
+        }
+
+        resp.json()
+            .await
+            .map_err(|e| RetryableError::Fatal(format!("invalid {what} response: {e}")))
+    }
+
     /// Execute an HTTP request with retry logic.
     ///
     /// Retries on 5xx, 429, timeouts, and connection errors.

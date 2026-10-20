@@ -7,8 +7,6 @@ use base64::Engine;
 use dpp_common::http_problem;
 use serde::{Deserialize, Serialize};
 
-use dpp_crypto::jws::signer;
-
 use crate::state::AppState;
 
 /// Whether `operator_id` is a well-formed identifier safe to key the on-disk
@@ -92,7 +90,11 @@ pub async fn sign_handler(
         return http_problem::internal_error("failed to provision signing key").into_response();
     }
 
-    match signer::sign(&state.store, &body.operator_id, &payload_value) {
+    // The `kid` is the absolute DID URL of the key's verification method, which
+    // is the identifier the DID document this service serves gives that key.
+    // `AppState::sign` names the key and signs with it as one step, and refuses a
+    // token whose key was rotated while it was being made.
+    match state.sign(&body.operator_id, &payload_value) {
         Ok(jws) => (
             StatusCode::OK,
             Json(InternalSignResponse { jws_signature: jws }),
