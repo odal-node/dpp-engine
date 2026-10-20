@@ -643,9 +643,9 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   registry-contract change could not pass it otherwise. It is its own commit,
   and the only lockfile change in that branch.
 
-- **`wasmtime` and `wasmtime-wasi` 49.0.2 → 49.0.3**, clearing RUSTSEC-2026-0352
-  to RUSTSEC-2026-0364, which had turned the security audit red on `main`. The
-  one that matters most is in `wasmtime-wasi` (-0352): renaming a symlink whose
+- **`wasmtime` and `wasmtime-wasi` 49.0.2 → 49.0.4**, clearing RUSTSEC-2026-0352
+  to RUSTSEC-2026-0364 and RUSTSEC-2026-0378 and -0379, which had turned the
+  security audit red on `main`. The one that matters most is in `wasmtime-wasi` (-0352): renaming a symlink whose
   name ends in a slash lets a guest step out of a directory it was given. It is
   listed for macOS and FreeBSD hosts only, and this host preopens no directory
   (see `runtime::build_store`), so a plugin here has no directory to step out
@@ -654,26 +654,32 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   overflow dropping a long chain of recursive types (-0359), an async-entrypoint
   requirement that is not enforced (-0362), component-model handle tables
   capped per instance and charged to no limit (-0363), and exception tags that
-  can leave host data structures unaligned (-0364). The host runs plugins
+  can leave host data structures unaligned (-0364). Two more were published
+  after 49.0.3 and need 49.0.4: a host panic lowering a host-created
+  component-model stream into a guest that expects a different payload type
+  (-0378), and, rated critical, the Cranelift aarch64 backend jumping to the
+  wrong target on a large `br_table` (-0379), which is listed for aarch64 only.
+  The host runs plugins
   synchronously as `wasm32-wasip1` modules, which keeps it away from most of
   those paths, but which of them a plugin can reach has not been established
   for each, and the sandbox is what they are about, so the bump is not left
   waiting on that. The existing `wasmtime = "49"` requirement already permitted
-  the patch, so no manifest changed. Nothing else in the lockfile moved except
-  the `cranelift`, `pulley` and `wiggle` crates that release pins to.
+  the patch, so no manifest changed for wasmtime. Nothing else moved for it
+  except the `cranelift`, `pulley` and `wiggle` crates that release pins to.
 
-  `zip` 8.6.0 is yanked upstream, and `cargo audit --deny yanked` has no way to
-  leave one crate alone (`--ignore` takes advisory IDs, which a yanked crate does
-  not have), so it kept the audit red, and with it every pull request, this one
-  included. It cannot be replaced from here: calamine, whose latest release
-  requires `zip ^8.6`, pulls it in, and every zip from 8.0.0 through 9.0.2 is
-  yanked. The audit is now `scripts/check-yanked.sh`. It still denies yanked and
-  unmaintained crates and fails on every vulnerability, but lets a yanked crate
-  through when `.cargo/yanked-register.txt` names that exact version with an
-  owner, a reason and an expiry that is at most 60 days out. An entry that has
-  expired, or that no longer matches a yanked crate, fails the audit, so the
-  exception ends on a date or when calamine moves to zip 9, whichever comes
-  first. The register holds `zip 8.6.0` and expires on 15 December.
+  **`calamine` 0.36 → 0.37 and `zip` 8.6 → 9**, clearing RUSTSEC-2026-0367,
+  -0368 and -0369, which `zip` 8.6.0 carries (symlink and permission handling
+  while extracting an archive; fixed from 9.0.0). calamine 0.37.0 is the release
+  that moves to `zip ^9.0`, so the integrator's own `zip` dependency moves with
+  it, which keeps one `zip` in the build (it is version-matched to calamine's for
+  the XLSX bomb pre-scan). The integrator never extracts an archive, so those
+  three were not reachable through its own code. The one API change is that
+  `ZipFile::name` now returns a `Result`; `precheck_xlsx` refuses an entry whose
+  name cannot be read, as it does for every other entry error. In 9.0.5 that
+  case cannot occur, because a name that is not valid UTF-8 is decoded as CP437
+  instead, and the test `a_non_utf8_entry_name_does_not_dodge_the_scan` pins that
+  such an entry is still classified and scanned. `zip` 9 brings in `nix`, which
+  the lockfile did not have.
 
 ## [0.14.0] - 2026-09-24
 

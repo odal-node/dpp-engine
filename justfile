@@ -341,19 +341,14 @@ mod-rs-check:
 spec-version-check:
     bash scripts/spec-version-check.sh
 
-# Run security audit against the RustSec advisory database. Yanked and
-# unmaintained crates are denied so they stop passing silently (a yanked crate
-# is a maintainer's explicit "don't use this") — kept separate from
-# vulnerability denial (already the default) so the classes can be tuned
-# independently. `check-yanked.sh` runs `cargo audit --deny yanked --deny
-# unmaintained` and lets a yanked crate through only when
-# `.cargo/yanked-register.txt` names that exact version, with an expiry:
-# `cargo audit` itself cannot leave one yanked crate alone.
+# Run security audit against the RustSec advisory database. --deny yanked/
+# unmaintained so those stop passing silently (a yanked crate is a
+# maintainer's explicit "don't use this") — kept separate from vulnerability
+# denial (already the default) so the two classes can be tuned independently.
 audit:
-    bash scripts/check-yanked.sh
+    cargo audit --deny yanked --deny unmaintained
     bash scripts/check-audit-register.sh
     bash scripts/check-audit-register.test.sh
-    bash scripts/check-yanked.test.sh
     cargo deny check bans licenses sources
 
 # Build documentation (engine does not gate docs with -D warnings yet)
