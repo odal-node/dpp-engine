@@ -681,6 +681,28 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   such an entry is still classified and scanned. `zip` 9 brings in `nix`, which
   the lockfile did not have.
 
+- **`rustls-webpki` 0.103.15 → 0.103.16, and `webpki-roots` and
+  `webpki-root-certs` 1.0.9 → 1.0.10**, clearing RUSTSEC-2026-0382, -0381 and
+  -0383, published on 19 and 20 October, which turned the security audit red on
+  `main` with no change of ours. -0382 lets certificate verification accept a
+  distrusted intermediate, and the other two are the bundled root stores
+  trusting the distrusted emSign intermediates. `rustls-webpki` verifies every
+  TLS connection the node makes through `reqwest`, `sqlx` and the NATS client,
+  so this one is reachable. The existing requirements already permitted the
+  patches, so no manifest changed for them.
+
+  **`async-nats` is declared without its `websockets` feature.** A fourth copy,
+  `webpki-roots` 0.26.11, carries the same -0381 and cannot be moved: it is
+  pulled only by `tokio-websockets` 0.10, which `async-nats` 0.50 pins, and
+  0.50.0 is the newest release. The node reaches NATS over `nats://` and nothing
+  here configures `ws://` or `wss://`, so the transport is switched off and the
+  crate is in no build. A WebSocket NATS URL is no longer supported by the
+  client. The crate stays in `Cargo.lock`, because `async-nats` names it in a
+  weak feature (`tokio-websockets?/ring`) and cargo records that edge whether or
+  not the feature is on, so the advisory is registered in `.cargo/audit.toml` as
+  not in the graph, which `scripts/check-audit-register.sh` checks against the
+  default and the shipped build.
+
 ## [0.14.0] - 2026-09-24
 
 ### Breaking
