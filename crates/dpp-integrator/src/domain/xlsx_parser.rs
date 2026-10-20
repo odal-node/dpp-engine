@@ -158,7 +158,11 @@ fn precheck_xlsx(bytes: &[u8]) -> Result<(), ParseError> {
         let entry = zip
             .by_index(i)
             .map_err(|e| ParseError::Csv(format!("XLSX entry error: {e}")))?;
-        let name = entry.name();
+        // A name that cannot be read is refused, not skipped: skipping would
+        // leave that entry's XML unscanned.
+        let name = entry
+            .name()
+            .map_err(|e| ParseError::Csv(format!("XLSX entry name error: {e}")))?;
         let is_worksheet = name.starts_with("xl/worksheets/") && name.ends_with(".xml");
         let is_xml = name.ends_with(".xml") || name.ends_with(".rels");
         let mut limited = LimitedReader {
@@ -346,6 +350,34 @@ mod tests {
         assert!(
             precheck_xlsx(&zip).is_err(),
             "dimension-bomb archive must be rejected"
+        );
+    }
+
+    /// An entry name that is not valid UTF-8 is decoded (zip falls back to
+    /// CP437) and the entry is still classified and scanned by it. The guard
+    /// keys on the name, so a name it could not read would be a way to dodge the
+    /// scan; this pins that it is not.
+    #[test]
+    fn a_non_utf8_entry_name_does_not_dodge_the_scan() {
+        let bomb =
+            br#"<worksheet><sheetData><c r="A1"/><c r="XFD1048576"/></sheetData></worksheet>"#;
+        let mut zip = zip_with(&[("xl/worksheets/s1.xml", bomb)]);
+        // Corrupt the byte after `xl/worksheets/` in the local header (name
+        // starts at +30) and in the central directory entry (name at +46), so
+        // the two agree. 0xFF is never valid UTF-8.
+        const NAME_OFFSET: usize = "xl/worksheets/".len();
+        assert_eq!(&zip[..4], b"PK\x03\x04", "first bytes are a local header");
+        zip[30 + NAME_OFFSET] = 0xFF;
+        let central = zip
+            .windows(4)
+            .position(|w| w == b"PK\x01\x02")
+            .expect("a central directory entry");
+        zip[central + 46 + NAME_OFFSET] = 0xFF;
+
+        let err = precheck_xlsx(&zip).expect_err("the dimension bomb must still be caught");
+        assert!(
+            matches!(&err, ParseError::Csv(m) if m.contains("oversized dense range")),
+            "rejected by the worksheet scan, not for some other reason: {err:?}"
         );
     }
 
