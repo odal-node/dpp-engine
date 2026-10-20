@@ -13,7 +13,12 @@ properties:
     description: The registry's own record id, once it has issued one.
   message:
     type: string
-    description: The last thing the registry (or the drain) said about it.
+    description: >-
+      The last thing the registry (or the drain) said about it. On a `submitted`
+      row that is waiting for a person it is the reason: the candidate
+      correlation identifiers of an ambiguous lookup, that the handle was not
+      found, or a submission state this node has no name for. A person settles
+      such a row with `POST /vault/api/v1/dpp/{dppId}/registry/handle`.
   attempts:
     type: integer
   stalled:

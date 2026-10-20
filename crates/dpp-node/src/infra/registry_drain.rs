@@ -28,6 +28,13 @@ use dpp_domain::ports::registry_sync::{
 };
 use dpp_types::{RegistrySyncOutbox, RegistrySyncStatus};
 
+/// What a row's message says to do once a person has found the submission's
+/// correlation identifier by other means. The registry's own interface lists each
+/// submission with one.
+const RECONCILE_BY_HAND: &str = "Once the right correlation identifier is known, record it with \
+     `odal registry handle <passport-id> <correlation-id>` \
+     (POST /vault/api/v1/dpp/{dppId}/registry/handle).";
+
 /// Outcome tallies for one drain pass — surfaced to metrics and asserted in tests.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct DrainStats {
@@ -232,7 +239,12 @@ async fn apply_report(
                 state = %state,
                 "registry reported a submission state this node has no name for — polling on"
             );
-            let _ = outbox.mark_submitted(pid, String::new()).await;
+            let _ = outbox
+                .mark_submitted_noting(
+                    pid,
+                    format!("the registry reported a submission state this node has no name for: {state}"),
+                )
+                .await;
             stats.submitted += 1;
         }
         // Still being checked: the expected answer to a fresh submission, not an
@@ -275,7 +287,16 @@ async fn recover_handle(
                  not have, and the row's payload cannot say what was submitted — it needs \
                  reconciling by hand"
             );
-            let _ = outbox.mark_submitted(pid, String::new()).await;
+            let _ = outbox
+                .mark_submitted_noting(
+                    pid,
+                    format!(
+                        "the registry holds this submission under a correlation identifier this \
+                         node does not have, and the row's payload cannot say what was submitted, \
+                         so it cannot be looked for. {RECONCILE_BY_HAND}"
+                    ),
+                )
+                .await;
             stats.submitted += 1;
         }
     }
@@ -329,7 +350,17 @@ async fn recover_with_request(
                 "more than one registry submission reports this passport's unique product \
                  identifier — the handle was not chosen and needs reconciling by hand"
             );
-            let _ = outbox.mark_submitted(pid, String::new()).await;
+            let _ = outbox
+                .mark_submitted_noting(
+                    pid,
+                    format!(
+                        "more than one registry submission reports this passport's unique \
+                         product identifier, so the correlation identifier was not chosen. \
+                         Candidates: {}. {RECONCILE_BY_HAND}",
+                        candidates.join(", ")
+                    ),
+                )
+                .await;
             stats.submitted += 1;
         }
         Ok(SubmissionLookup::NotFound { exhaustive }) => {
@@ -339,7 +370,22 @@ async fn recover_with_request(
                 "the registry holds this submission and its correlation identifier was not \
                  found among the tasks read — looking again later"
             );
-            let _ = outbox.mark_submitted(pid, String::new()).await;
+            let read = if exhaustive {
+                "every task the registry listed was read"
+            } else {
+                "only part of the registry's task list was read, or a task is still being \
+                 checked, so absence proves nothing"
+            };
+            let _ = outbox
+                .mark_submitted_noting(
+                    pid,
+                    format!(
+                        "the registry holds this submission and its correlation identifier was \
+                         not found among its tasks ({read}). Looking again later. \
+                         {RECONCILE_BY_HAND}"
+                    ),
+                )
+                .await;
             stats.submitted += 1;
         }
         // An adapter that cannot look a submission up, and anything the lookup
@@ -350,7 +396,15 @@ async fn recover_with_request(
                 "this registry adapter cannot look a submission up without its handle — it \
                  needs reconciling by hand"
             );
-            let _ = outbox.mark_submitted(pid, String::new()).await;
+            let _ = outbox
+                .mark_submitted_noting(
+                    pid,
+                    format!(
+                        "this registry adapter cannot look a submission up without its \
+                         correlation identifier. {RECONCILE_BY_HAND}"
+                    ),
+                )
+                .await;
             stats.submitted += 1;
         }
         Err(e) => {

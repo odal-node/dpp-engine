@@ -204,6 +204,12 @@ components:
       $ref: components/schemas/registry/RegistryRollupView.yaml
     RegistrationView:
       $ref: components/schemas/registry/RegistrationView.yaml
+    RecordRegistryHandleRequest:
+      $ref: components/schemas/registry/RecordRegistryHandleRequest.yaml
+    RecordRegistryHandleResponse:
+      $ref: components/schemas/registry/RecordRegistryHandleResponse.yaml
+    SubmissionReport:
+      $ref: components/schemas/registry/SubmissionReport.yaml
     RegistrationCounts:
       $ref: components/schemas/registry/RegistrationCounts.yaml
     TransferNotificationView:
@@ -385,6 +391,8 @@ paths:
     $ref: paths/vault/vault_api_v1_evidence_verify.yaml
   /vault/api/v1/dpp/{dppId}/registry:
     $ref: paths/vault/vault_api_v1_dpp_{dppId}_registry.yaml
+  /vault/api/v1/dpp/{dppId}/registry/handle:
+    $ref: paths/vault/vault_api_v1_dpp_{dppId}_registry_handle.yaml
   /vault/api/v1/registry:
     $ref: paths/vault/vault_api_v1_registry.yaml
   /vault/api/v1/dpp/{dppId}/stats:

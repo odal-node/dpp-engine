@@ -1,0 +1,17 @@
+type: object
+description: >-
+  The correlation identifier of a passport's registry submission, as the
+  registry's own interface lists it.
+required:
+  - correlationId
+additionalProperties: false
+properties:
+  correlationId:
+    type: string
+    minLength: 1
+    maxLength: 200
+    pattern: '^\S+$'
+    description: >-
+      The registry's identifier for the submission. Not empty, at most 200
+      characters, and without whitespace or control characters. It is checked
+      against the registry before it is recorded.
