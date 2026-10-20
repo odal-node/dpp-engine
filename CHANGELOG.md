@@ -270,6 +270,41 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   presenter's own `kid` and issuer are not echoed. A bad signature keeps its old
   sentence.
 
+- **A registration waiting for a person says why, and a person can settle it
+  (needs the `dpp-core` release that carries `confirm_submission`).** The drain
+  recovers a lost submission handle itself where it can, and leaves three cases
+  alone because choosing would give a passport another passport's registration:
+  several submissions report its identifier, none could be placed, and an adapter
+  that cannot look a submission up. Such a row stayed `submitted` and said nothing:
+  the candidates and the reason were in a log, and nothing could record the right
+  handle.
+
+  *The reason is on the row.* `message` now holds why the row is waiting, and
+  `GET /vault/api/v1/dpp/{dppId}/registry` shows it: the candidates of an
+  ambiguous lookup, that the handle was not found and whether all of the task list
+  was read, or a submission state this node has no name for.
+  `mark_submitted` still clears it; a new `mark_submitted_noting` backs the row off
+  and counts the attempt as it does, and keeps the message.
+
+  *A person can record the handle.* `POST /vault/api/v1/dpp/{dppId}/registry/handle`
+  (admin scope; `odal registry handle <passport-id> <correlation-id>`) takes the
+  correlation identifier read off the registry's own interface. It does not take
+  the operator's word for it: the submission it names is read back from the
+  registry through the new `confirm_submission`, and the request is refused with
+  `422` unless that submission reports the unique product identifier this passport
+  was submitted under. The refusal says what the registry did show: another
+  passport's identifier, none, a submission still being checked, or no such handle
+  among the tasks read. It writes only to a `submitted` row that holds no handle,
+  in one conditional statement, so a handle the registry gave is never
+  overwritten (`409`) and a row already ruled on is not touched. The attempts
+  start again, so the row stops reading as stalled while the new poll runs. The
+  ruling is not applied by the route: the drain applies it on its next pass,
+  which keeps what a registration, a refusal or an unnamed state does to a row in
+  one place. Recording the same handle again is a `200` that changes nothing, so a
+  retry after a lost response does not fail on its own success. The write is
+  audited as `registry_handle_recorded`, with who recorded which handle and what
+  the registry reported (migration `0043` admits the action).
+
 - **A field that can hold personal data is refused on the write that would store
   it unless the operator says what is held.** ESPR Art. 10(1)(e), Reg. (EU)
   2025/2509 Art. 20(10) and Reg. (EU) 2026/405 Art. 22(h) forbid storing customer

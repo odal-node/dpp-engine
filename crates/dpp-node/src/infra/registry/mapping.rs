@@ -11,8 +11,8 @@ use dpp_domain::{
     operator::ResponsibleOperator,
     ports::registry_sync::{
         RegistrationGranularity, RegistrationRequest, RegistryRecord, RegistryStatus,
-        RegistrySyncPort, ServiceProviderRef, SubmissionAcknowledgement, SubmissionLookup,
-        SubmissionReport, TransferReport,
+        RegistrySyncPort, ServiceProviderRef, SubmissionAcknowledgement, SubmissionConfirmation,
+        SubmissionLookup, SubmissionReport, TransferReport,
     },
     transfer::TransferRecord,
 };
@@ -707,6 +707,65 @@ impl RegistrySyncPort for EuRegistrySync {
                         .collect(),
                 })
             }
+        }
+    }
+
+    /// Whether a handle a person supplied is this request's submission, by reading
+    /// the submission it names and the identifiers it reports.
+    ///
+    /// The opposite question to [`find_submission`](Self::find_submission), which
+    /// has an answer only while the registry's records hold exactly one candidate.
+    /// This one has an answer whenever the registry will say what the submission
+    /// contains: its task is found by the handle, and a finished one lists each
+    /// passport against the unique product identifier it was submitted under.
+    ///
+    /// A task still being checked reports no passport, so it is
+    /// [`StillChecking`](SubmissionConfirmation::StillChecking) and not a
+    /// mismatch. A handle no task carries is
+    /// [`Unlisted`](SubmissionConfirmation::Unlisted), and says whether the whole
+    /// list was read, because a list too long to read may hold it further on.
+    #[tracing::instrument(skip(self, request), fields(passport_id = %request.passport_id))]
+    async fn confirm_submission(
+        &self,
+        request: &RegistrationRequest,
+        correlation_id: &str,
+    ) -> Result<SubmissionConfirmation, DppError> {
+        let dashboard = &self.config.endpoint.dashboard_base_url;
+        let upi = request.data_carrier_uri.as_str();
+
+        let search = self
+            .search_tasks(|task| task.is_submission(correlation_id))
+            .await?;
+        let Some(task) = search.hit.map(|at| &search.tasks[at]) else {
+            return Ok(SubmissionConfirmation::Unlisted {
+                exhaustive: search.complete,
+            });
+        };
+        if !task.is_finished() {
+            return Ok(SubmissionConfirmation::StillChecking);
+        }
+        let Some(task_id) = task.id_segment() else {
+            // A finished task with nothing to read its result by: what it
+            // contains cannot be seen, which is neither a match nor a mismatch.
+            tracing::warn!(
+                correlation_id,
+                "a finished registry task carries no identifier to read its result by"
+            );
+            return Ok(SubmissionConfirmation::Unsupported);
+        };
+        let result_url = url_for(dashboard, TASK_RESULT_PATH_TEMPLATE, &task_id)?;
+        let result = self.finished_result(&result_url, &task_id).await?;
+
+        let reported: Vec<String> = result
+            .unique_product_identifiers()
+            .map(str::to_owned)
+            .collect();
+        if reported.iter().any(|identifier| identifier == upi) {
+            Ok(SubmissionConfirmation::Confirmed {
+                report: report_for(task, Some(result.as_ref())),
+            })
+        } else {
+            Ok(SubmissionConfirmation::Mismatch { reported })
         }
     }
 

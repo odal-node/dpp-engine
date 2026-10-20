@@ -447,6 +447,59 @@ mod tests {
         }
     }
 
+    /// `odal registry [id]` predates `odal registry handle`, and adding the
+    /// subcommand must not change what it means: runbooks and the node's own row
+    /// messages name the old form.
+    #[test]
+    fn parse_registry_status_keeps_its_old_form() {
+        let cli = Cli::parse_from(["odal", "registry"]);
+        assert!(matches!(
+            cli.command,
+            Some(Commands::Registry {
+                id: None,
+                json: false,
+                command: None
+            })
+        ));
+
+        let cli = Cli::parse_from(["odal", "registry", "id-xyz", "--json"]);
+        if let Some(Commands::Registry { id, json, command }) = cli.command {
+            assert_eq!(id.as_deref(), Some("id-xyz"));
+            assert!(json);
+            assert!(command.is_none());
+        } else {
+            panic!("expected Registry");
+        }
+    }
+
+    #[test]
+    fn parse_registry_handle() {
+        use cli_args::RegistryCommands;
+        let cli = Cli::parse_from(["odal", "registry", "handle", "id-xyz", "CORR-1", "--json"]);
+        if let Some(Commands::Registry {
+            command:
+                Some(RegistryCommands::Handle {
+                    id,
+                    correlation_id,
+                    json,
+                }),
+            ..
+        }) = cli.command
+        {
+            assert_eq!(id, "id-xyz");
+            assert_eq!(correlation_id, "CORR-1");
+            assert!(json);
+        } else {
+            panic!("expected Registry::Handle");
+        }
+    }
+
+    #[test]
+    fn a_registry_handle_needs_both_identifiers() {
+        assert!(Cli::try_parse_from(["odal", "registry", "handle", "id-xyz"]).is_err());
+        assert!(Cli::try_parse_from(["odal", "registry", "handle"]).is_err());
+    }
+
     #[test]
     fn parse_operator_stats() {
         let cli = Cli::parse_from(["odal", "stats", "--json"]);

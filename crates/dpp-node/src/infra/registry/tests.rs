@@ -11,7 +11,8 @@ use dpp_domain::DppError;
 use dpp_domain::operator::{OperatorRole, ResponsibleOperator};
 use dpp_domain::ports::registry_sync::{
     RegistrationGranularity, RegistrationRequest, RegistryStatus, RegistrySyncPort,
-    SubmissionAcknowledgement, SubmissionLookup, SubmissionReport, TransferReport,
+    SubmissionAcknowledgement, SubmissionConfirmation, SubmissionLookup, SubmissionReport,
+    TransferReport,
 };
 use dpp_domain::transfer::{TransferReason, TransferRecord};
 
@@ -1186,6 +1187,207 @@ async fn a_finished_result_is_read_once_however_often_the_lookup_runs() {
         2,
         "two tasks, three lookups, two reads"
     );
+}
+
+// ── Confirming a handle a person supplied ────────────────────────────────────
+
+/// A registry with one finished submission, `CORR-1`, reporting `upis`.
+async fn registry_holding(upis: &[&str]) -> (Arc<MockState>, EuRegistrySync) {
+    let state = Arc::new(MockState::default());
+    state.tasks_by_page.lock().await.insert(
+        "0".into(),
+        task_page(serde_json::json!([registration_task(
+            "CORR-1", 1, "SUCCESS"
+        )])),
+    );
+    state
+        .results_by_task
+        .lock()
+        .await
+        .insert("1".into(), result_naming(upis, Some("REG-1")));
+    let base_url = mock_server::spawn(state.clone()).await;
+    let sync = EuRegistrySync::new(mock_config(&base_url)).unwrap();
+    (state, sync)
+}
+
+/// 🚨 A handle is confirmed by what the submission it names reports, never by the
+/// person's say-so: this is the check that stops a typo giving a passport another
+/// passport's registration.
+#[tokio::test]
+async fn a_handle_whose_submission_reports_this_identifier_is_confirmed() {
+    let request = valid_request();
+    let (_, sync) = registry_holding(&[request.data_carrier_uri.as_str()]).await;
+
+    assert_eq!(
+        sync.confirm_submission(&request, "CORR-1")
+            .await
+            .expect("a confirmation"),
+        SubmissionConfirmation::Confirmed {
+            report: SubmissionReport::Registered {
+                registration_id: "REG-1".into()
+            }
+        },
+        "the handle is right, and what it leads to is read in the same step"
+    );
+}
+
+#[tokio::test]
+async fn a_handle_whose_submission_reports_other_identifiers_is_a_mismatch() {
+    let request = valid_request();
+    let (_, sync) = registry_holding(&[SOMEONE_ELSES]).await;
+
+    assert_eq!(
+        sync.confirm_submission(&request, "CORR-1")
+            .await
+            .expect("a confirmation"),
+        SubmissionConfirmation::Mismatch {
+            reported: vec![SOMEONE_ELSES.into()]
+        },
+        "the handle names a real submission, and not this passport's"
+    );
+}
+
+/// A submission refused before any passport was read reports none. It cannot be
+/// shown to be this passport's, which is a mismatch and not a confirmation.
+#[tokio::test]
+async fn a_submission_that_reports_no_passport_is_a_mismatch_with_none() {
+    let request = valid_request();
+    let (_, sync) = registry_holding(&[]).await;
+
+    assert_eq!(
+        sync.confirm_submission(&request, "CORR-1")
+            .await
+            .expect("a confirmation"),
+        SubmissionConfirmation::Mismatch { reported: vec![] }
+    );
+}
+
+/// A match is by the identifier and nothing nearer. One that differs only by a
+/// trailing slash is another identifier.
+#[tokio::test]
+async fn an_identifier_that_merely_resembles_this_one_is_not_this_one() {
+    let request = valid_request();
+    let near = format!("{}/", request.data_carrier_uri);
+    let (_, sync) = registry_holding(&[near.as_str()]).await;
+
+    assert!(
+        !sync
+            .confirm_submission(&request, "CORR-1")
+            .await
+            .expect("a confirmation")
+            .is_confirmed()
+    );
+}
+
+/// A submission still being checked reports no passport yet. That is not a
+/// mismatch, and no result is read for it: there is nothing in it to match.
+#[tokio::test]
+async fn a_submission_still_being_checked_is_neither_confirmed_nor_a_mismatch() {
+    let request = valid_request();
+    let state = Arc::new(MockState::default());
+    state.tasks_by_page.lock().await.insert(
+        "0".into(),
+        task_page(serde_json::json!([registration_task(
+            "CORR-1",
+            1,
+            "PROCESSING"
+        )])),
+    );
+    let base_url = mock_server::spawn(state.clone()).await;
+    let sync = EuRegistrySync::new(mock_config(&base_url)).unwrap();
+
+    assert_eq!(
+        sync.confirm_submission(&request, "CORR-1")
+            .await
+            .expect("a confirmation"),
+        SubmissionConfirmation::StillChecking
+    );
+    assert!(state.task_results_read.lock().await.is_empty());
+}
+
+/// A handle no task carries names nothing, and with every task read that is
+/// certain.
+#[tokio::test]
+async fn a_handle_no_task_carries_names_nothing_when_all_were_read() {
+    let request = valid_request();
+    let (_, sync) = registry_holding(&[request.data_carrier_uri.as_str()]).await;
+
+    assert_eq!(
+        sync.confirm_submission(&request, "CORR-TYPO")
+            .await
+            .expect("a confirmation"),
+        SubmissionConfirmation::Unlisted { exhaustive: true }
+    );
+}
+
+/// With a list too long to read in full, the same answer is not certain, and says
+/// so: the handle may be further on.
+#[tokio::test]
+async fn a_handle_missing_from_a_long_list_says_not_all_of_it_was_read() {
+    let request = valid_request();
+    let state = Arc::new(MockState::default());
+    {
+        let mut pages = state.tasks_by_page.lock().await;
+        for page in (0..10).chain(90..100) {
+            pages.insert(page.to_string(), filler_page(5_000, &format!("P{page}")));
+        }
+    }
+    let base_url = mock_server::spawn(state.clone()).await;
+    let sync = EuRegistrySync::new(mock_config(&base_url)).unwrap();
+
+    assert_eq!(
+        sync.confirm_submission(&request, "CORR-MIDDLE")
+            .await
+            .expect("a confirmation"),
+        SubmissionConfirmation::Unlisted { exhaustive: false }
+    );
+}
+
+/// Confirming reads the one task the handle names, not every result in the list
+/// as a lookup does.
+#[tokio::test]
+async fn confirming_reads_only_the_submission_the_handle_names() {
+    let request = valid_request();
+    let state = Arc::new(MockState::default());
+    state.tasks_by_page.lock().await.insert(
+        "0".into(),
+        task_page(serde_json::json!([
+            registration_task("CORR-A", 1, "SUCCESS"),
+            registration_task("CORR-1", 2, "SUCCESS"),
+            registration_task("CORR-B", 3, "SUCCESS"),
+        ])),
+    );
+    state.results_by_task.lock().await.insert(
+        "2".into(),
+        result_naming(&[request.data_carrier_uri.as_str()], Some("REG-1")),
+    );
+    let base_url = mock_server::spawn(state.clone()).await;
+    let sync = EuRegistrySync::new(mock_config(&base_url)).unwrap();
+
+    sync.confirm_submission(&request, "CORR-1")
+        .await
+        .expect("a confirmation");
+
+    assert_eq!(
+        state
+            .task_results_read
+            .lock()
+            .await
+            .iter()
+            .collect::<Vec<_>>(),
+        ["2"]
+    );
+}
+
+#[tokio::test]
+async fn an_unreachable_dashboard_cannot_confirm_a_handle() {
+    let state = Arc::new(MockState::default());
+    let base_url = mock_server::spawn(state.clone()).await;
+    let sync = EuRegistrySync::new(mock_config(&base_url)).unwrap();
+
+    sync.confirm_submission(&valid_request(), "CORR-1")
+        .await
+        .expect_err("a registry that cannot be read confirms nothing");
 }
 
 #[tokio::test]

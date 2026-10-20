@@ -331,6 +331,17 @@ const UNCHECKED: &[(&str, &str)] = &[
          emit",
     ),
     (
+        "SubmissionReport",
+        "an internally-tagged enum whose four variants carry three different \
+         payload fields (`registrationId`, `reason`, `state`), so no single \
+         fixture can emit the union of documented properties and the key-set \
+         comparison reports the other three as undocumented. The wire form of \
+         every variant is pinned instead by \
+         `every_submission_report_serialises_as_documented`, which also checks \
+         the documented property list against what the variants can actually \
+         emit",
+    ),
+    (
         "RevocationStanding",
         "an internally-tagged enum whose four variants carry three different \
          payload fields (`asOf`, `at`, `reason`), so no single fixture can emit \
@@ -569,6 +580,14 @@ fn object_cases() -> Vec<ObjectCase> {
     case!("TreeReport", fixtures::tree_report());
     case!("TreeNodeReport", fixtures::tree_node_report());
     case!("RegistrationView", fixtures::registration_view());
+    case!(
+        "RecordRegistryHandleRequest",
+        fixtures::record_handle_request()
+    );
+    case!(
+        "RecordRegistryHandleResponse",
+        fixtures::record_handle_response()
+    );
     case!("TransferNotificationView", fixtures::transfer_view());
     case!("CurrentOperatorView", fixtures::current_operator_view());
     case!("PassportRegistryView", fixtures::passport_registry_view());
@@ -1306,6 +1325,94 @@ fn every_revocation_standing_serialises_as_documented() {
     assert_eq!(
         documented, emitted,
         "the schema must document exactly the fields these variants emit"
+    );
+}
+
+/// `SubmissionReport` is `UNCHECKED` above for the reason `RevocationStanding`
+/// is: its variants carry three different payload fields, so no single fixture
+/// emits the union. This pins what the key-set comparison could not — the tag
+/// each variant carries, the field each carries beside it, and that the schema
+/// documents exactly the fields they can emit between them and every `outcome`
+/// they can emit.
+///
+/// What a reader relies on is which field to read for which `outcome`: a
+/// `registrationId` read off a `processing` report would be a field that is not
+/// there, and a `state` read off a `refused` one a different question.
+#[test]
+fn every_submission_report_serialises_as_documented() {
+    use dpp_domain::ports::registry_sync::SubmissionReport;
+
+    let spec = spec();
+    let schema = &schemas(&spec)["SubmissionReport"];
+    let documented: BTreeSet<String> = schema["properties"]
+        .as_object()
+        .expect("SubmissionReport documents properties")
+        .keys()
+        .cloned()
+        .collect();
+    let documented_outcomes: BTreeSet<String> = schema["properties"]["outcome"]["enum"]
+        .as_array()
+        .expect("outcome documents its values")
+        .iter()
+        .map(|v| v.as_str().expect("an outcome is a string").to_owned())
+        .collect();
+
+    let cases: &[(SubmissionReport, &str, Option<&str>)] = &[
+        (SubmissionReport::Processing, "processing", None),
+        (
+            SubmissionReport::Registered {
+                registration_id: "EUDPP-2026-0001".to_owned(),
+            },
+            "registered",
+            Some("registrationId"),
+        ),
+        (
+            SubmissionReport::Refused {
+                reason: "unknown product group".to_owned(),
+            },
+            "refused",
+            Some("reason"),
+        ),
+        (
+            SubmissionReport::Unrecognised {
+                state: "UNDER_REVIEW".to_owned(),
+            },
+            "unrecognised",
+            Some("state"),
+        ),
+    ];
+
+    let mut emitted: BTreeSet<String> = BTreeSet::new();
+    let mut emitted_outcomes: BTreeSet<String> = BTreeSet::new();
+    for (value, outcome, payload) in cases {
+        let json = serde_json::to_value(value).expect("serialises");
+        let object = json.as_object().expect("an object");
+        assert_eq!(
+            object["outcome"], *outcome,
+            "the tag is what a reader switches on: {json}"
+        );
+        match payload {
+            Some(field) => assert!(
+                object.contains_key(*field),
+                "`{outcome}` must carry `{field}`: {json}"
+            ),
+            None => assert_eq!(
+                object.len(),
+                1,
+                "`{outcome}` says nothing further and must carry nothing further: {json}"
+            ),
+        }
+        emitted.extend(object.keys().cloned());
+        emitted_outcomes.insert((*outcome).to_owned());
+    }
+
+    assert_eq!(
+        documented, emitted,
+        "the schema must document exactly the fields these variants emit"
+    );
+    assert_eq!(
+        documented_outcomes, emitted_outcomes,
+        "the schema must list exactly the outcomes these variants emit"
     );
 }
 
@@ -2368,6 +2475,7 @@ mod handler_sources {
         include_str!("../../dpp-vault/src/handlers/public_read_by_gtin.rs"),
         include_str!("../../dpp-vault/src/handlers/publish.rs"),
         include_str!("../../dpp-vault/src/handlers/read.rs"),
+        include_str!("../../dpp-vault/src/handlers/registry_handle.rs"),
         include_str!("../../dpp-vault/src/handlers/registry_identity.rs"),
         include_str!("../../dpp-vault/src/handlers/registry_status.rs"),
         include_str!("../../dpp-vault/src/handlers/retire.rs"),
@@ -2858,6 +2966,7 @@ mod fixtures {
             info::VaultInfo,
             list::PassportListResponse,
             node_state::NodeState,
+            registry_handle::{RecordHandleRequest, RecordHandleResponse},
             registry_status::{
                 CurrentOperatorView, PassportRegistryView, RegistrationCounts, RegistrationView,
                 RegistryRollupView, RegistryVerificationView, TransferNotificationCounts,
@@ -4376,6 +4485,26 @@ mod fixtures {
             attempts: 2,
             stalled: false,
             status_intent: Some("deactivated"),
+        }
+    }
+
+    pub fn record_handle_request() -> RecordHandleRequest {
+        RecordHandleRequest {
+            correlation_id: "7c9e6679-7425-40de-944b-e07fc1f90ae7".into(),
+        }
+    }
+
+    pub fn record_handle_response() -> RecordHandleResponse {
+        RecordHandleResponse {
+            passport_id: uuid().to_string(),
+            correlation_id: "7c9e6679-7425-40de-944b-e07fc1f90ae7".into(),
+            recorded: true,
+            registry: Some(
+                dpp_domain::ports::registry_sync::SubmissionReport::Registered {
+                    registration_id: "EUDPP-2026-0001".into(),
+                },
+            ),
+            note: "the handle is recorded and nothing else",
         }
     }
 

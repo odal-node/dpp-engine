@@ -258,6 +258,42 @@ pub trait RegistrySyncOutbox: Send + Sync {
         registry_id: String,
     ) -> Result<(), DppError>;
 
+    /// A `submitted` row that cannot be moved on by the drain, and the reason.
+    ///
+    /// Backed off and counted as an attempt exactly as [`Self::mark_submitted`]
+    /// is, so it stops sorting to the head of the queue and reaches the stalled
+    /// count that tells an operator it needs looking at. What differs is the
+    /// `message`: it is **kept** and read back by the per-passport registry
+    /// route, where `mark_submitted` clears it. A row waiting for a person, or
+    /// for a state nobody has named, would otherwise show no reason, and the
+    /// operator would have to find it in a log. The registry id the row holds is
+    /// left as it is.
+    async fn mark_submitted_noting(
+        &self,
+        passport_id: PassportId,
+        message: String,
+    ) -> Result<(), DppError>;
+
+    /// A person has established the correlation identifier of a `submitted` row
+    /// that holds none: record it, so the drain polls the submission by it.
+    ///
+    /// Returns whether the row took it. It takes it only while the row is
+    /// `submitted` **and** holds no identifier, so it can never overwrite one the
+    /// registry gave, never touch a row that has been ruled on, and loses a race
+    /// with another writer rather than stacking on it. `false` means the row was
+    /// not in that state when the write was made.
+    ///
+    /// The row's attempts start again and it is due at once. The poll that follows
+    /// is a new one, run on a handle somebody checked, so the count that earned
+    /// the stall belongs to what came before and must not keep the row reported
+    /// as stalled while it is being polled. The message is cleared: whatever it
+    /// said was about the missing handle.
+    async fn record_handle(
+        &self,
+        passport_id: PassportId,
+        correlation_id: &str,
+    ) -> Result<bool, DppError>;
+
     /// Terminal: the registry withdrew the record from service. Distinct from
     /// [`Self::mark_rejected`] — nothing about the submission was defective, so
     /// there is nothing to correct and resubmit.

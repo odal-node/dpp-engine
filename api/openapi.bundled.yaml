@@ -1570,6 +1570,131 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '404':
           $ref: '#/components/responses/NotFound'
+  /vault/api/v1/dpp/{dppId}/registry/handle:
+    post:
+      operationId: recordDppRegistryHandle
+      summary: Record the registry's handle for a submission this node lost it for
+      description: |
+        Records the correlation identifier of a passport's registry submission, for a
+        registration that is waiting for a person.
+
+        The node's drain recovers a lost handle itself where it can, by the unique
+        product identifier the passport was submitted under. It leaves three cases
+        alone, because choosing would give a passport another passport's
+        registration: several submissions report the identifier, none could be
+        placed, and an adapter that cannot look a submission up. A row in one of them
+        stays `submitted` and says why in `message` on
+        `GET /vault/api/v1/dpp/{dppId}/registry`. Someone who has read the right
+        correlation identifier off the registry's own interface gives it to the row
+        here.
+
+        **The handle is checked, not taken on trust.** The submission it names is
+        read back from the registry, and the request is refused unless that
+        submission reports the unique product identifier this passport was submitted
+        under. A typo, or the handle of a neighbouring passport, is refused with
+        `422` and nothing is recorded. An identifier is not unique to a passport — a
+        successor can be submitted under its predecessor's — so a match says the
+        submission *reports* the identifier, which is all the registry says.
+
+        **It records the handle and nothing else.** The node's drain polls the
+        submission by it on its next pass and applies the registry's ruling then,
+        which is the one place that decides what a registration or a refusal does to
+        a row. The row's attempts start again, so it stops reading as stalled while
+        it is being polled. `registry` in the response is what the registry reported
+        when the handle was checked, so the answer is known now without waiting for
+        that pass.
+
+        The write is recorded in the passport's audit trail as
+        `registry_handle_recorded`, with who recorded which handle and what the
+        registry reported.
+
+        Not idempotency-keyed, and does not need to be: a row that already holds this
+        handle answers `200` with `recorded: false` and changes nothing, so a retry
+        after a lost response does not fail on its own success. A row that holds a
+        *different* handle is refused with `409`; one the registry gave is never
+        overwritten.
+      tags:
+        - Registry
+      security:
+        - BearerApiKey: []
+        - BasicAuth: []
+      parameters:
+        - name: dppId
+          in: path
+          required: true
+          schema:
+            $ref: '#/components/schemas/DppId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RecordRegistryHandleRequest'
+      responses:
+        '200':
+          description: |
+            The row holds the handle: this request recorded it, or the row already
+            held it.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RecordRegistryHandleResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          description: |
+            No passport with that id, or the passport has no registry registration —
+            it owes one only once published. Distinct from `409` and `422`, which mean
+            a registration exists and is not in a state, or does not match, what this
+            records.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '409':
+          description: |
+            The registration is not in a state that takes a handle. The detail says
+            which: the registry has not accepted the submission yet, so there is no
+            handle to record; it has already ruled, so none is needed; or the row
+            already holds a different correlation identifier, which is never
+            overwritten.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '422':
+          description: |
+            The handle was not recorded because it was not shown to be this
+            passport's. The detail says which: the submission it names reports other
+            passports' identifiers, or none; the registry has not finished checking
+            it, so it reports no passport yet; no submission with that identifier was
+            found in the part of the registry's list this node read; this node's
+            registry connection cannot read a submission's contents; or the row's
+            stored payload is unreadable, so there is nothing to check against. Also
+            returned for a `correlationId` that is empty, over 200 characters, or
+            contains whitespace or control characters.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '501':
+          description: This node has no registry queues, so there is no registration to record a handle on.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '502':
+          description: |
+            The registry could not be read, so the handle could not be checked and was
+            not recorded. Safe to retry.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
   /vault/api/v1/registry:
     get:
       operationId: getRegistryRollup
@@ -6460,7 +6585,7 @@ components:
           description: The registry's own record id, once it has issued one.
         message:
           type: string
-          description: The last thing the registry (or the drain) said about it.
+          description: 'The last thing the registry (or the drain) said about it. On a `submitted` row that is waiting for a person it is the reason: the candidate correlation identifiers of an ambiguous lookup, that the handle was not found, or a submission state this node has no name for. A person settles such a row with `POST /vault/api/v1/dpp/{dppId}/registry/handle`.'
         attempts:
           type: integer
         stalled:
@@ -6469,6 +6594,71 @@ components:
         statusIntent:
           type: string
           description: 'A status change owed to the registry, independent of the queue state. Nothing drains these: the registry publishes no status-push API, so they are held durably and reported rather than accumulating out of sight.'
+    RecordRegistryHandleRequest:
+      type: object
+      description: The correlation identifier of a passport's registry submission, as the registry's own interface lists it.
+      required:
+        - correlationId
+      additionalProperties: false
+      properties:
+        correlationId:
+          type: string
+          minLength: 1
+          maxLength: 200
+          pattern: ^\S+$
+          description: The registry's identifier for the submission. Not empty, at most 200 characters, and without whitespace or control characters. It is checked against the registry before it is recorded.
+    RecordRegistryHandleResponse:
+      type: object
+      description: The result of recording a registry submission's correlation identifier by hand.
+      required:
+        - passportId
+        - correlationId
+        - recorded
+        - note
+      properties:
+        passportId:
+          type: string
+        correlationId:
+          type: string
+          description: The correlation identifier the registration now holds.
+        recorded:
+          type: boolean
+          description: '`true` when this request recorded the handle. `false` when the registration already held it, in which case nothing was checked or written.'
+        registry:
+          $ref: '#/components/schemas/SubmissionReport'
+        note:
+          type: string
+          description: 'Stated rather than implied: the handle is recorded and nothing else. The node''s drain applies the registry''s ruling on its next pass.'
+    SubmissionReport:
+      type: object
+      description: What the registry reported about a submission, read by its correlation identifier.
+      required:
+        - outcome
+      properties:
+        outcome:
+          type: string
+          enum:
+            - processing
+            - registered
+            - refused
+            - unrecognised
+          description: |-
+            `processing`: the registry has not finished checking the submission.
+
+            `registered`: the submission succeeded and the passport is registered; `registrationId` is the identifier the registry generated for it.
+
+            `refused`: the submission was refused, as a whole, so a passport can be refused for another passport's fault; `reason` is what the registry said.
+
+            `unrecognised`: the registry reported a state this node has no name for; `state` is that state exactly as reported. Not a verdict.
+        registrationId:
+          type: string
+          description: The identifier the registry generated for the passport. Present only on `registered`.
+        reason:
+          type: string
+          description: The registry's description of the refusal. Present only on `refused`.
+        state:
+          type: string
+          description: The state exactly as the registry reported it. Present only on `unrecognised`.
     RegistrationCounts:
       type: object
       required:

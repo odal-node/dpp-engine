@@ -342,11 +342,25 @@ impl Default for SealWiring {
 }
 
 pub async fn start_vault(dal: PgDal) -> String {
-    start_vault_with_identity(dal, Arc::new(MockIdentity), None, SealWiring::default()).await
+    start_vault_with_identity(
+        dal,
+        Arc::new(MockIdentity),
+        None,
+        SealWiring::default(),
+        None,
+    )
+    .await
 }
 
 pub async fn start_vault_failing_signer(dal: PgDal) -> String {
-    start_vault_with_identity(dal, Arc::new(FailingIdentity), None, SealWiring::default()).await
+    start_vault_with_identity(
+        dal,
+        Arc::new(FailingIdentity),
+        None,
+        SealWiring::default(),
+        None,
+    )
+    .await
 }
 
 /// A vault whose signer takes `delay` per signature — for requests that must
@@ -357,6 +371,7 @@ pub async fn start_vault_slow_signer(dal: PgDal, delay: std::time::Duration) -> 
         Arc::new(SlowIdentity(delay)),
         None,
         SealWiring::default(),
+        None,
     )
     .await
 }
@@ -364,7 +379,23 @@ pub async fn start_vault_slow_signer(dal: PgDal, delay: std::time::Duration) -> 
 /// A vault whose seal ports are wired to order — for the routes whose answers
 /// turn on whether this node can read a seal, or buy one.
 pub async fn start_vault_with_seal(dal: PgDal, seal: SealWiring) -> String {
-    start_vault_with_identity(dal, Arc::new(MockIdentity), None, seal).await
+    start_vault_with_identity(dal, Arc::new(MockIdentity), None, seal, None).await
+}
+
+/// A vault whose registry port is the one given — for the routes whose answers turn
+/// on what the registry says, which the ghost never does.
+pub async fn start_vault_with_registry(
+    dal: PgDal,
+    registry: Arc<dyn dpp_domain::ports::registry_sync::RegistrySyncPort>,
+) -> String {
+    start_vault_with_identity(
+        dal,
+        Arc::new(MockIdentity),
+        None,
+        SealWiring::default(),
+        Some(registry),
+    )
+    .await
 }
 
 /// A vault with the credential path **configured** — the audience-scoped route
@@ -379,6 +410,7 @@ pub async fn start_vault_with_credentials(
         Arc::new(MockIdentity),
         Some((directory, trust)),
         SealWiring::default(),
+        None,
     )
     .await
 }
@@ -393,6 +425,7 @@ async fn start_vault_with_identity(
     identity: Arc<dyn IdentityPort>,
     credentials: Option<CredentialWiring>,
     seal: SealWiring,
+    registry: Option<Arc<dyn dpp_domain::ports::registry_sync::RegistrySyncPort>>,
 ) -> String {
     struct PgPing(PgDal);
     #[async_trait]
@@ -412,7 +445,7 @@ async fn start_vault_with_identity(
     let compliance = Arc::new(PassthroughRegistry::new());
     let event_bus: Arc<dyn dpp_common::event::EventBus> = Arc::new(dpp_common::event::NoOpEventBus);
     let registry_sync: Arc<dyn dpp_domain::ports::registry_sync::RegistrySyncPort> =
-        Arc::new(GhostRegistrySync);
+        registry.unwrap_or_else(|| Arc::new(GhostRegistrySync));
 
     // Mirror production: the registry reader stamps the default facility + primary
     // operator identifier onto new passports, read live from the operator config.

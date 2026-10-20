@@ -48,6 +48,47 @@ impl PgRegistrySyncRepo {
             next_attempt_at: row.get::<DateTime<Utc>, _>("next_attempt_at"),
         }
     }
+
+    /// The write behind [`RegistrySyncOutbox::mark_submitted`] and
+    /// [`RegistrySyncOutbox::mark_submitted_noting`], which differ only in what
+    /// they leave in `message`.
+    ///
+    /// Backed off like any other incomplete row, so the poll for a verdict
+    /// does not run hot against the registry. `attempts` deliberately keeps
+    /// counting: a submission that never resolves is exactly the kind of
+    /// stall a human needs to see.
+    ///
+    /// An empty id is the registry having returned none — a replayed
+    /// submission is acknowledged without one — so the column keeps what it
+    /// held (NULL, the first time) rather than recording `''` as an id.
+    async fn submitted(
+        &self,
+        passport_id: PassportId,
+        registry_id: &str,
+        message: Option<&str>,
+    ) -> Result<(), DppError> {
+        let res = sqlx::query(
+            r#"UPDATE odal.registry_sync SET
+                 status = 'submitted',
+                 registry_id = COALESCE(NULLIF($2, ''), registry_id),
+                 submitted_at = COALESCE(submitted_at, now()),
+                 attempts = attempts + 1,
+                 last_attempt_at = now(),
+                 next_attempt_at = now()
+                   + (LEAST(power(2, attempts + 1), 3600) * (0.75 + random() * 0.5))
+                     * interval '1 second',
+                 message = $3,
+                 updated_at = now()
+               WHERE passport_id = $1"#,
+        )
+        .bind(passport_id.0)
+        .bind(registry_id)
+        .bind(message)
+        .execute(self.dal.pool())
+        .await
+        .map_err(db_err)?;
+        require_updated(&res, "registry_sync row for passport", passport_id.0)
+    }
 }
 
 #[async_trait]
@@ -148,34 +189,44 @@ impl RegistrySyncOutbox for PgRegistrySyncRepo {
         passport_id: PassportId,
         registry_id: String,
     ) -> Result<(), DppError> {
-        // Backed off like any other incomplete row, so the poll for a verdict
-        // does not run hot against the registry. `attempts` deliberately keeps
-        // counting: a submission that never resolves is exactly the kind of
-        // stall a human needs to see.
-        //
-        // An empty id is the registry having returned none — a replayed
-        // submission is acknowledged without one — so the column keeps what it
-        // held (NULL, the first time) rather than recording `''` as an id.
+        self.submitted(passport_id, &registry_id, None).await
+    }
+
+    async fn mark_submitted_noting(
+        &self,
+        passport_id: PassportId,
+        message: String,
+    ) -> Result<(), DppError> {
+        self.submitted(passport_id, "", Some(&message)).await
+    }
+
+    async fn record_handle(
+        &self,
+        passport_id: PassportId,
+        correlation_id: &str,
+    ) -> Result<bool, DppError> {
+        // One conditional statement, so the check and the write cannot be pulled
+        // apart by another writer: it takes the identifier only while the row is
+        // `submitted` and holds none. A row the drain has since ruled on, or one
+        // that was handed an identifier in the meantime, does not match and the
+        // answer is `false`.
         let res = sqlx::query(
             r#"UPDATE odal.registry_sync SET
-                 status = 'submitted',
-                 registry_id = COALESCE(NULLIF($2, ''), registry_id),
-                 submitted_at = COALESCE(submitted_at, now()),
-                 attempts = attempts + 1,
-                 last_attempt_at = now(),
-                 next_attempt_at = now()
-                   + (LEAST(power(2, attempts + 1), 3600) * (0.75 + random() * 0.5))
-                     * interval '1 second',
+                 registry_id = $2,
+                 attempts = 0,
+                 next_attempt_at = now(),
                  message = NULL,
                  updated_at = now()
-               WHERE passport_id = $1"#,
+               WHERE passport_id = $1
+                 AND status = 'submitted'
+                 AND COALESCE(registry_id, '') = ''"#,
         )
         .bind(passport_id.0)
-        .bind(&registry_id)
+        .bind(correlation_id)
         .execute(self.dal.pool())
         .await
         .map_err(db_err)?;
-        require_updated(&res, "registry_sync row for passport", passport_id.0)
+        Ok(res.rows_affected() > 0)
     }
 
     async fn mark_deactivated(

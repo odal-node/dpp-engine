@@ -195,12 +195,17 @@ pub enum Commands {
     },
     // ── EU registry ──────────────────────────────────────────────────────────
     /// EU registry sync status — the rollup, or one passport's record
+    /// (`odal registry handle` records a submission's correlation identifier
+    /// for a registration waiting for a person)
+    #[command(args_conflicts_with_subcommands = true)]
     Registry {
         /// Passport ID (operator-wide rollup if omitted)
         id: Option<String>,
         /// Output raw JSON instead of a summary
         #[arg(long)]
         json: bool,
+        #[command(subcommand)]
+        command: Option<RegistryCommands>,
     },
     // ── Insight ──────────────────────────────────────────────────────────────
     /// Operator-wide scan telemetry — how often your passports were resolved
@@ -895,6 +900,25 @@ pub enum SnapshotCommands {
         #[arg(long, value_name = "URL")]
         did_url: Option<String>,
         /// Output the verdict as JSON instead of a summary
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum RegistryCommands {
+    /// Record the registry's correlation identifier for a submission this node
+    /// lost the handle of — what a registration says it is waiting for a person
+    /// to do. The node reads the submission back from the registry and refuses
+    /// unless it reports this passport's identifier, so a typo is not recorded.
+    /// Requires an admin credential
+    Handle {
+        /// Passport ID
+        id: String,
+        /// The submission's correlation identifier, as the registry's own
+        /// interface lists it
+        correlation_id: String,
+        /// Output the raw route response instead of a summary
         #[arg(long)]
         json: bool,
     },
