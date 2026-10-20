@@ -37,6 +37,7 @@ mod publish;
 /// and carrier URL with the function publish uses, rather than a copy of it.
 pub use publish::stamp_publish_obligations;
 mod query;
+pub mod registry_abandon;
 pub mod registry_handle;
 /// Public: the versions route has to tell apart the two ways of having no
 /// archived version, because only one of them is answered by the live record.

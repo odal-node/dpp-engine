@@ -270,6 +270,43 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   presenter's own `kid` and issuer are not echoed. A bad signature keeps its old
   sentence.
 
+- **A registration the registry never accepted can be abandoned, once the
+  registry is shown to hold nothing for it.** A `pending` row is retried with
+  backoff for as long as the passport stays published, so a payload the registry
+  refuses every time, or a product withdrawn before it was ever registered, kept
+  the queue asking forever and left a database edit as the only way off it.
+  `POST /vault/api/v1/dpp/{dppId}/registry/abandon` (admin scope;
+  `odal registry abandon <passport-id> --reason "…"`) ends the row as the new
+  `abandoned` status.
+
+  *The danger is what it can be wrong about.* A `pending` row whose first attempt
+  got through and whose reply was lost looks exactly like one that never did, and
+  abandoning it would leave a registration the registry may grant that the node
+  believes it dropped. So the route does not take the operator's word for it: it
+  reads the registry's task list through `find_submission`, and refuses unless
+  **all** of it was read and none of it reports the unique product identifier the
+  passport was submitted under. A submission the registry does hold is a `409`
+  naming its correlation identifier or its candidates. A list too long to read in
+  full, a task still being checked, and an adapter that cannot look are each a
+  `422`, because none of them shows the registry to hold nothing.
+
+  *It cannot race the drain.* The write is one conditional statement that takes a
+  row only while it is `pending`, has been tried at least once, and is backed off
+  (`next_attempt_at` in the future). A row being attempted is still due, and only
+  a finished attempt pushes it out, so an abandon cannot land between the drain
+  reading a row and submitting it. And nothing the drain writes can move a row out
+  of `abandoned`: its updates carry `status <> 'abandoned'`, and the due set never
+  offered it.
+
+  *What it ends.* The queue row, not the passport: the passport stays published,
+  the rollup counts the registration as `abandoned` (and the
+  `registry_outbox_abandoned` gauge) so it is not read as still owed, and it
+  stops counting as stalled. Publishing the passport again queues it afresh, as
+  it does a rejected one. A reason is required and kept on the row; the write is
+  audited as `registry_abandoned` with who, why, how many attempts, and what the
+  row had been saying. Abandoning an already-abandoned row is a `200` that
+  changes nothing. Migration `0044` admits the status and the action.
+
 - **A registration waiting for a person says why, and a person can settle it
   (needs the `dpp-core` release that carries `confirm_submission`).** The drain
   recovers a lost submission handle itself where it can, and leaves three cases

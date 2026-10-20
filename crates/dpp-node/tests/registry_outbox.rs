@@ -1149,6 +1149,207 @@ async fn a_handle_is_recorded_only_on_a_submitted_row_that_holds_none() {
     assert!(!outbox.record_handle(other, "CORR-Y").await.unwrap());
 }
 
+/// 🚨 `abandon` ends only a row the drain has tried and is not about to try again:
+/// `pending`, attempted at least once, and backed off. A new row is due, a row
+/// being attempted is still due, and a `submitted` row is one the registry holds.
+/// Each is what stops this write racing the drain or orphaning a registration.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_row_is_abandoned_only_after_a_failed_attempt_and_while_it_waits() {
+    let _c = start_pg().await;
+    let dal = _c.dal.clone();
+    let outbox: Arc<dyn RegistrySyncOutbox> = Arc::new(PgRegistrySyncRepo::new(dal.clone()));
+    let id = create_and_publish(&dal, &outbox).await;
+
+    // Never tried: due now, and indistinguishable from a row about to be submitted.
+    assert!(!outbox.abandon(id, "withdrawn".into()).await.unwrap());
+
+    // Tried and failed: backed off, so the drain is not about to touch it.
+    outbox
+        .mark_attempt_failed(id, "the registry refused the payload".into())
+        .await
+        .unwrap();
+    // …but a row the backoff has run out on is due again, and so is not abandoned.
+    make_due(&dal, id).await;
+    assert!(
+        !outbox.abandon(id, "withdrawn".into()).await.unwrap(),
+        "due again: the drain may be in the middle of trying it"
+    );
+    outbox
+        .mark_attempt_failed(id, "the registry refused the payload".into())
+        .await
+        .unwrap();
+
+    assert!(outbox.abandon(id, "withdrawn".into()).await.unwrap());
+    let row = outbox.pending_for(id).await.unwrap().unwrap();
+    assert_eq!(row.status, RegistrySyncStatus::Abandoned);
+    assert_eq!(row.message.as_deref(), Some("withdrawn"));
+    assert_eq!(row.attempts, 2, "what it took to give up on is kept");
+
+    // And only once.
+    assert!(!outbox.abandon(id, "again".into()).await.unwrap());
+    assert_eq!(
+        outbox
+            .pending_for(id)
+            .await
+            .unwrap()
+            .unwrap()
+            .message
+            .as_deref(),
+        Some("withdrawn")
+    );
+
+    // A submitted row is one the registry holds; a ruled-on one needs nothing.
+    let held = create_and_publish(&dal, &outbox).await;
+    outbox.mark_submitted(held, "CORR-X".into()).await.unwrap();
+    assert!(!outbox.abandon(held, "no".into()).await.unwrap());
+    outbox
+        .mark_registered(held, REGISTRATION_ID.into())
+        .await
+        .unwrap();
+    assert!(!outbox.abandon(held, "no".into()).await.unwrap());
+    assert_eq!(
+        outbox.pending_for(held).await.unwrap().unwrap().status,
+        RegistrySyncStatus::Registered
+    );
+}
+
+/// 🚨 Abandoned is terminal for the drain. It is never offered a row in that state,
+/// and nothing it writes can move one out of it: a pass that read a row before it
+/// was abandoned would otherwise record its outcome over the decision.
+#[tokio::test(flavor = "multi_thread")]
+async fn nothing_the_drain_writes_resurrects_an_abandoned_row() {
+    let _c = start_pg().await;
+    let dal = _c.dal.clone();
+    let outbox: Arc<dyn RegistrySyncOutbox> = Arc::new(PgRegistrySyncRepo::new(dal.clone()));
+    let id = create_and_publish(&dal, &outbox).await;
+    outbox
+        .mark_attempt_failed(id, "refused".into())
+        .await
+        .unwrap();
+    assert!(outbox.abandon(id, "withdrawn".into()).await.unwrap());
+    make_due(&dal, id).await;
+
+    // A pass finds nothing to do, and submits nothing.
+    let (port, calls, polls, lookups) = mock_with_lookup(
+        Outcome::Accepted,
+        Outcome::Registered,
+        SubmissionLookup::Unsupported,
+    );
+    let stats = drain_once(&outbox, &port, None, 10).await;
+    assert_eq!(
+        (
+            stats.registered,
+            stats.submitted,
+            stats.rejected,
+            stats.retried
+        ),
+        (0, 0, 0, 0)
+    );
+    assert_eq!(calls.load(Ordering::SeqCst), 0, "never submitted");
+    assert_eq!(polls.load(Ordering::SeqCst), 0);
+    assert_eq!(lookups.count.load(Ordering::SeqCst), 0);
+
+    // And every write the drain makes about a row bounces off.
+    assert!(outbox.mark_submitted(id, "CORR".into()).await.is_err());
+    assert!(
+        outbox
+            .mark_submitted_noting(id, "waiting".into())
+            .await
+            .is_err()
+    );
+    assert!(
+        outbox
+            .mark_registered(id, REGISTRATION_ID.into())
+            .await
+            .is_err()
+    );
+    assert!(outbox.mark_rejected(id, "refused".into()).await.is_err());
+    assert!(
+        outbox
+            .mark_attempt_failed(id, "failed".into())
+            .await
+            .is_err()
+    );
+    assert!(!outbox.record_handle(id, "CORR").await.unwrap());
+
+    let row = outbox.pending_for(id).await.unwrap().unwrap();
+    assert_eq!(row.status, RegistrySyncStatus::Abandoned);
+    assert_eq!(row.message.as_deref(), Some("withdrawn"));
+    assert_eq!(row.registry_id, None);
+}
+
+/// An abandoned registration is counted, so a published passport that will not be
+/// registered is visible and not read as still owed, and it does not count as
+/// stalled work for anyone to do.
+#[tokio::test(flavor = "multi_thread")]
+async fn an_abandoned_registration_is_counted_and_is_not_stalled() {
+    let _c = start_pg().await;
+    let dal = _c.dal.clone();
+    let outbox: Arc<dyn RegistrySyncOutbox> = Arc::new(PgRegistrySyncRepo::new(dal.clone()));
+    let id = create_and_publish(&dal, &outbox).await;
+    for _ in 0..3 {
+        outbox
+            .mark_attempt_failed(id, "refused".into())
+            .await
+            .unwrap();
+    }
+    let before = outbox.status_counts(2).await.unwrap();
+    assert_eq!(
+        (before.pending, before.abandoned, before.stalled),
+        (1, 0, 1)
+    );
+
+    assert!(outbox.abandon(id, "withdrawn".into()).await.unwrap());
+
+    let after = outbox.status_counts(2).await.unwrap();
+    assert_eq!(
+        (after.pending, after.abandoned, after.stalled),
+        (0, 1, 0),
+        "no longer owed, and no longer asking for a person"
+    );
+}
+
+/// Publishing the passport again is a new obligation to register it, and the only
+/// way back: it queues the registration afresh, as it does one the registry
+/// rejected.
+#[tokio::test(flavor = "multi_thread")]
+async fn publishing_again_queues_an_abandoned_registration_afresh() {
+    let _c = start_pg().await;
+    let dal = _c.dal.clone();
+    let outbox: Arc<dyn RegistrySyncOutbox> = Arc::new(PgRegistrySyncRepo::new(dal.clone()));
+    let repo = PgPassportRepo::new(dal.clone());
+    let mut p = draft_passport();
+    repo.create(p.clone()).await.expect("create draft");
+    p.status = PassportStatus::Published;
+    p.published_at = Some(Utc::now());
+    let payload = serde_json::to_value(
+        RegistrationRequest::from_published_passport(
+            &p,
+            test_operator(),
+            RegistrationGranularity::Item,
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    outbox.commit_publish(&p, payload.clone()).await.unwrap();
+    outbox
+        .mark_attempt_failed(p.id, "refused".into())
+        .await
+        .unwrap();
+    assert!(outbox.abandon(p.id, "withdrawn".into()).await.unwrap());
+
+    outbox.commit_publish(&p, payload).await.unwrap();
+
+    let row = outbox.pending_for(p.id).await.unwrap().unwrap();
+    assert_eq!(row.status, RegistrySyncStatus::Pending);
+    assert_eq!(row.attempts, 0);
+    assert_eq!(
+        row.message, None,
+        "whatever it said belonged to the old one"
+    );
+    assert!(row.next_attempt_at <= Utc::now(), "due at once");
+}
+
 /// A state nobody has named keeps the row polling and says what it was, so an
 /// operator is not left to find it in a log.
 #[tokio::test(flavor = "multi_thread")]

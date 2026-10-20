@@ -4,6 +4,7 @@ required:
   - submitted
   - registered
   - rejected
+  - abandoned
   - deactivated
   - statusIntents
   - stalled
@@ -17,6 +18,12 @@ properties:
     type: integer
   rejected:
     type: integer
+  abandoned:
+    type: integer
+    description: >-
+      Rows an operator gave up on after the registry was shown to hold nothing
+      for them: published passports that will not be registered. Counted so they
+      are not read as still owed.
   deactivated:
     type: integer
   statusIntents:

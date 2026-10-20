@@ -7,7 +7,7 @@ required:
 properties:
   status:
     type: string
-    enum: [pending, submitted, registered, rejected, deactivated]
+    enum: [pending, submitted, registered, rejected, abandoned, deactivated]
   registryId:
     type: string
     description: The registry's own record id, once it has issued one.

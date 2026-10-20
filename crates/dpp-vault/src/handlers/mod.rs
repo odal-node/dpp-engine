@@ -21,6 +21,7 @@ pub mod public_read;
 pub mod public_read_by_gtin;
 pub mod publish;
 pub mod read;
+pub mod registry_abandon;
 pub mod registry_handle;
 pub mod registry_identity;
 pub mod registry_status;
