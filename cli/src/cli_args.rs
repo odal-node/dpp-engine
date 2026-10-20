@@ -922,6 +922,21 @@ pub enum RegistryCommands {
         #[arg(long)]
         json: bool,
     },
+    /// Give up on a registration the registry never accepted, once the node has
+    /// read the registry's task list and found nothing for the passport. Only
+    /// after an attempt has failed; a registration the registry holds is never
+    /// abandoned from here. The passport stays published. Requires an admin
+    /// credential
+    Abandon {
+        /// Passport ID
+        id: String,
+        /// Why the registration is being given up on (kept in the audit trail)
+        #[arg(long)]
+        reason: String,
+        /// Output the raw route response instead of a summary
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[derive(Subcommand)]

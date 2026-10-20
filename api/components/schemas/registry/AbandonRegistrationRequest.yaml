@@ -1,0 +1,16 @@
+type: object
+description: >-
+  Why a registration the registry never accepted is being given up on.
+required:
+  - reason
+additionalProperties: false
+properties:
+  reason:
+    type: string
+    minLength: 1
+    maxLength: 500
+    description: >-
+      Why the registration is being abandoned, for example that the product was
+      withdrawn before it was registered. Required: the write ends an obligation
+      the node was tracking, and the audit trail is the only account of why. Not
+      empty, at most 500 characters, and without control characters.

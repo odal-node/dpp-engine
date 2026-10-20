@@ -1982,6 +1982,115 @@
         }
       }
     },
+    "/vault/api/v1/dpp/{dppId}/registry/abandon": {
+      "post": {
+        "operationId": "abandonDppRegistration",
+        "summary": "Give up on a registration the registry never accepted",
+        "description": "Ends a passport's registry registration queue row as `abandoned`, for a\nregistration the registry never accepted. The node retries a `pending`\nregistration with backoff for as long as the passport is published; when the\nregistry refuses the payload on every attempt, or the product is withdrawn\nbefore it was ever registered, that is forever. This is how a person ends it.\n\n**The registry is checked, not taken on trust.** A `pending` registration\nwhose first attempt got through and whose reply was lost looks exactly like\none that never did: the registry holds a submission for the passport and this\nnode has no record that it does. Abandoning that one would leave a\nregistration the registry may grant that the node believes it dropped. So the\nregistry's task list is read, and the request is refused unless **all** of it\nwas read and none of it reports the unique product identifier the passport\nwas submitted under. A list too long to read in full, a task still being\nchecked, and a connection that cannot look a submission up are each refused\nwith `422`: none of them shows the registry to hold nothing. A submission the\nregistry does hold is a `409`, and names its correlation identifier.\n\n**Only after an attempt has failed.** The registration must be `pending`, must\nhave been tried at least once, and must be waiting for its next attempt. A row\nbeing attempted is still due, and only a finished attempt pushes it out, so\nthis cannot land between the node reading the row and submitting it. A\n`submitted` registration is one the registry holds and is never abandoned from\nhere.\n\n**It ends the queue row, not the passport.** The passport stays published, and\n`GET /vault/api/v1/registry` counts the registration as `abandoned` so it is\nnot read as still owed. Nothing the node's drain writes moves a row out of\n`abandoned`. Publishing the passport again queues it afresh.\n\nThe write is recorded in the passport's audit trail as `registry_abandoned`,\nwith who gave up on it, the reason, and what the row had been saying.\n\nNot idempotency-keyed, and does not need to be: a registration that is already\nabandoned answers `200` with `alreadyAbandoned: true` and changes nothing, asks\nthe registry nothing and writes the trail nothing, so a retry after a lost\nresponse does not fail on its own success.\n",
+        "tags": [
+          "Registry"
+        ],
+        "security": [
+          {
+            "BearerApiKey": []
+          },
+          {
+            "BasicAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "dppId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/DppId"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AbandonRegistrationRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The registration is abandoned: by this request, or already.\n",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AbandonRegistrationResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "description": "No passport with that id, or the passport has no registry registration —\nit owes one only once published. Distinct from `409` and `422`, which mean\na registration exists and cannot be abandoned as it stands.\n",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The registration cannot be abandoned. The detail says which: the registry\nhas accepted the submission, so it holds a registration or is deciding one;\nthe registry has already ruled; the registry holds a submission for the\npassport's identifier (the detail names its correlation identifier, or the\ncandidates); or the node has not tried the registration yet, or is about to\nor is trying it now.\n",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The registry could not be shown to hold nothing for the passport, so the\nregistration was not abandoned. The detail says which: part of the task list\nwas not read, or a task is still being checked; this node's registry\nconnection cannot look a submission up; or the registration's stored payload\nis unreadable, so there is nothing to look up by. Also returned for a\n`reason` that is empty, over 500 characters, or contains control characters.\n",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "501": {
+            "description": "This node has no registry queues, so there is no registration to abandon.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "The registry could not be read, so it could not be shown to hold nothing and\nthe registration was not abandoned. Safe to retry.\n",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/vault/api/v1/registry": {
       "get": {
         "operationId": "getRegistryRollup",
@@ -7801,6 +7910,7 @@
               "submitted",
               "registered",
               "rejected",
+              "abandoned",
               "deactivated"
             ]
           },
@@ -7822,6 +7932,44 @@
           "statusIntent": {
             "type": "string",
             "description": "A status change owed to the registry, independent of the queue state. Nothing drains these: the registry publishes no status-push API, so they are held durably and reported rather than accumulating out of sight."
+          }
+        }
+      },
+      "AbandonRegistrationRequest": {
+        "type": "object",
+        "description": "Why a registration the registry never accepted is being given up on.",
+        "required": [
+          "reason"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "reason": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 500,
+            "description": "Why the registration is being abandoned, for example that the product was withdrawn before it was registered. Required: the write ends an obligation the node was tracking, and the audit trail is the only account of why. Not empty, at most 500 characters, and without control characters."
+          }
+        }
+      },
+      "AbandonRegistrationResponse": {
+        "type": "object",
+        "description": "The result of giving up on a registration the registry never accepted.",
+        "required": [
+          "passportId",
+          "alreadyAbandoned",
+          "note"
+        ],
+        "properties": {
+          "passportId": {
+            "type": "string"
+          },
+          "alreadyAbandoned": {
+            "type": "boolean",
+            "description": "`true` when the registration was already abandoned, in which case nothing was read from the registry and nothing was written. `false` when this request abandoned it."
+          },
+          "note": {
+            "type": "string",
+            "description": "Stated rather than implied: the registration is abandoned, the passport stays published and is counted as abandoned, and publishing it again queues it afresh."
           }
         }
       },
@@ -7910,6 +8058,7 @@
           "submitted",
           "registered",
           "rejected",
+          "abandoned",
           "deactivated",
           "statusIntents",
           "stalled",
@@ -7927,6 +8076,10 @@
           },
           "rejected": {
             "type": "integer"
+          },
+          "abandoned": {
+            "type": "integer",
+            "description": "Rows an operator gave up on after the registry was shown to hold nothing for them: published passports that will not be registered. Counted so they are not read as still owed."
           },
           "deactivated": {
             "type": "integer"

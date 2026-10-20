@@ -5,8 +5,10 @@
 use anyhow::Result;
 
 use crate::{
-    core::registry::{action_provenance, action_registry_handle, action_registry_status},
-    stateless::render::render_registry_handle,
+    core::registry::{
+        action_provenance, action_registry_abandon, action_registry_handle, action_registry_status,
+    },
+    stateless::render::{render_registry_abandon, render_registry_handle},
 };
 
 pub async fn run_registry(id: Option<&str>, json: bool) -> Result<()> {
@@ -69,6 +71,20 @@ pub async fn run_registry(id: Option<&str>, json: bool) -> Result<()> {
                 }
             }
         }
+    }
+    Ok(())
+}
+
+/// `odal registry abandon <id> --reason "…"` — give up on a registration the
+/// registry never accepted, once the node has found nothing for the passport in
+/// the registry's task list.
+pub async fn run_registry_abandon(id: &str, reason: &str, json: bool) -> Result<()> {
+    let (client, cfg) = crate::http::load_client()?;
+    let abandoned = action_registry_abandon(id, reason, &client, &cfg).await?;
+    if json {
+        println!("{}", serde_json::to_string_pretty(&abandoned)?);
+    } else {
+        render_registry_abandon(&abandoned, id);
     }
     Ok(())
 }

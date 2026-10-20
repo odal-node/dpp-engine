@@ -495,6 +495,37 @@ mod tests {
     }
 
     #[test]
+    fn parse_registry_abandon() {
+        use cli_args::RegistryCommands;
+        let cli = Cli::parse_from([
+            "odal",
+            "registry",
+            "abandon",
+            "id-xyz",
+            "--reason",
+            "withdrawn before it was registered",
+        ]);
+        if let Some(Commands::Registry {
+            command: Some(RegistryCommands::Abandon { id, reason, json }),
+            ..
+        }) = cli.command
+        {
+            assert_eq!(id, "id-xyz");
+            assert_eq!(reason, "withdrawn before it was registered");
+            assert!(!json);
+        } else {
+            panic!("expected Registry::Abandon");
+        }
+    }
+
+    /// A registration is not given up on without saying why: the write ends an
+    /// obligation the node was tracking, and the reason is the trail's only account.
+    #[test]
+    fn abandoning_a_registration_requires_a_reason() {
+        assert!(Cli::try_parse_from(["odal", "registry", "abandon", "id-xyz"]).is_err());
+    }
+
+    #[test]
     fn a_registry_handle_needs_both_identifiers() {
         assert!(Cli::try_parse_from(["odal", "registry", "handle", "id-xyz"]).is_err());
         assert!(Cli::try_parse_from(["odal", "registry", "handle"]).is_err());

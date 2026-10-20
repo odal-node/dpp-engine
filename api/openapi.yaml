@@ -204,6 +204,10 @@ components:
       $ref: components/schemas/registry/RegistryRollupView.yaml
     RegistrationView:
       $ref: components/schemas/registry/RegistrationView.yaml
+    AbandonRegistrationRequest:
+      $ref: components/schemas/registry/AbandonRegistrationRequest.yaml
+    AbandonRegistrationResponse:
+      $ref: components/schemas/registry/AbandonRegistrationResponse.yaml
     RecordRegistryHandleRequest:
       $ref: components/schemas/registry/RecordRegistryHandleRequest.yaml
     RecordRegistryHandleResponse:
@@ -393,6 +397,8 @@ paths:
     $ref: paths/vault/vault_api_v1_dpp_{dppId}_registry.yaml
   /vault/api/v1/dpp/{dppId}/registry/handle:
     $ref: paths/vault/vault_api_v1_dpp_{dppId}_registry_handle.yaml
+  /vault/api/v1/dpp/{dppId}/registry/abandon:
+    $ref: paths/vault/vault_api_v1_dpp_{dppId}_registry_abandon.yaml
   /vault/api/v1/registry:
     $ref: paths/vault/vault_api_v1_registry.yaml
   /vault/api/v1/dpp/{dppId}/stats:

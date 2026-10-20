@@ -1161,6 +1161,32 @@ pub fn render_registry_handle(recorded: &serde_json::Value, id: &str) {
     println!("  Watch `odal registry {id}`.");
 }
 
+/// Render what giving up on a registration did.
+///
+/// Says what was *not* done as plainly as what was: the registry was checked and
+/// holds nothing, the queue row is ended, and the passport itself is still
+/// published. The node's own note travels with the response and is printed
+/// rather than paraphrased.
+pub fn render_registry_abandon(abandoned: &serde_json::Value, id: &str) {
+    let already = abandoned
+        .get("alreadyAbandoned")
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false);
+    if already {
+        println!(
+            "{} was already abandoned; nothing was checked or written",
+            plain(id)
+        );
+        return;
+    }
+    println!("Abandoned the registration of {}", plain(id));
+    println!("  The registry's task list was read and holds nothing for this passport.");
+    if let Some(note) = field(abandoned, "note") {
+        println!("  {note}");
+    }
+    println!("  Watch `odal registry`: it is counted as abandoned, not as owed.");
+}
+
 /// Render the operator-wide sealing summary.
 ///
 /// Leads with the passport count, not the row counts. An operator asking about

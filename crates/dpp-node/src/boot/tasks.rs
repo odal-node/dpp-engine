@@ -100,6 +100,9 @@ fn set_registry_gauges(c: &RegistrySyncCounts) {
     metrics::gauge!("registry_outbox_submitted").set(c.submitted as f64);
     metrics::gauge!("registry_outbox_stalled").set(c.stalled as f64);
     metrics::gauge!("registry_outbox_rejected").set(c.rejected as f64);
+    // Given up on by a person, after the registry was shown to hold nothing for
+    // it: a published passport that will not be registered, kept visible.
+    metrics::gauge!("registry_outbox_abandoned").set(c.abandoned as f64);
     metrics::gauge!("registry_outbox_deactivated").set(c.deactivated as f64);
 }
 
@@ -122,6 +125,7 @@ pub async fn spawn_registry_drain(
                 submitted = c.submitted,
                 registered = c.registered,
                 rejected = c.rejected,
+                abandoned = c.abandoned,
                 deactivated = c.deactivated,
                 status_intents = c.status_intents,
                 stalled = c.stalled,
