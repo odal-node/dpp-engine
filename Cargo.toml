@@ -140,7 +140,18 @@ async-trait  = "0.1"
 dotenvy      = "0.15"
 
 # Event bus
-async-nats   = "0.50"
+#
+# Default features minus `websockets`. That feature pulls tokio-websockets 0.10
+# and, through it, webpki-roots 0.26, whose bundled roots trust the distrusted
+# emSign intermediates (RUSTSEC-2026-0381). No release of async-nats takes a
+# newer tokio-websockets, so the line cannot be moved; and the node reaches NATS
+# over `nats://`, never `ws://`, so the transport is dead weight. TLS to NATS
+# stays (`ring`). Re-add `websockets` only with a release that no longer pins
+# webpki-roots 0.26.
+async-nats   = { version = "0.50", default-features = false, features = [
+    "server_2_10", "server_2_11", "server_2_12", "server_2_14",
+    "service", "ring", "jetstream", "nkeys", "crypto", "object-store", "kv", "nuid",
+] }
 
 # AWS S3 and S3-compatible stores (RustFS, R2, …)
 #
