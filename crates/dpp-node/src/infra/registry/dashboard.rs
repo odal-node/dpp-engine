@@ -33,7 +33,11 @@ pub(super) struct TaskPage {
 #[serde(rename_all = "camelCase")]
 pub(super) struct Task {
     /// The task's own identifier, which its result is read by. Kept as it came:
-    /// nothing says whether it is a string or a number.
+    /// nothing says whether it is a string or a number. Defaulted, because a
+    /// `Value` is not an `Option` and a missing field is an error for it: one
+    /// listed task without an identifier would fail the whole page. A task with
+    /// none reads as having none ([`Task::id_segment`] is `None`).
+    #[serde(default)]
     pub task_id: serde_json::Value,
     /// The submission's correlation identifier.
     #[serde(default)]
@@ -219,6 +223,35 @@ mod tests {
         assert_eq!(string_id.id_segment().as_deref(), Some("abc"));
         let missing: Task = serde_json::from_value(json!({ "taskId": null })).expect("a task");
         assert_eq!(missing.id_segment(), None);
+        let absent: Task = serde_json::from_value(json!({})).expect("a task with no id at all");
+        assert_eq!(absent.id_segment(), None);
+    }
+
+    /// 🚨 The list holds all of the operator's tasks, not only registrations, and
+    /// its shape is not published. One entry without an identifier must not fail
+    /// the page it is on: the whole page would then be an error, the poll would
+    /// back off, and every submission waiting behind that page would stall with it.
+    #[test]
+    fn one_task_without_an_identifier_does_not_fail_the_page() {
+        let page: TaskPage = serde_json::from_value(json!({
+            "content": [
+                { "correlationId": "someone-else", "type": "SOMETHING_ELSE" },
+                {
+                    "taskId": 7,
+                    "correlationId": "corr-1",
+                    "type": "DPP_REGISTRATION",
+                    "status": "PROCESSING",
+                },
+            ]
+        }))
+        .expect("a page with one odd task still reads");
+
+        let found = page
+            .content
+            .into_iter()
+            .find(|task| task.is_submission("corr-1"))
+            .expect("the submission on the same page is still found");
+        assert_eq!(found.id_segment().as_deref(), Some("7"));
     }
 
     #[test]
