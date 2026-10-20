@@ -241,8 +241,9 @@ mod tests {
     use super::*;
 
     /// Each way a handle goes unrecorded has the status its documentation gives
-    /// it. `NotConfigured` has no integration test, because every harness wires
-    /// the queues, and it is the one documented status nothing else constructs.
+    /// it, whatever the route's tests can or cannot reach: this pins the mapping
+    /// itself, and `registry_handle_route` pins the ones it can construct over
+    /// HTTP, including `NotConfigured`, on a node harnessed with no queues.
     #[test]
     fn each_refusal_has_the_status_the_route_documents() {
         use RecordHandleError as E;

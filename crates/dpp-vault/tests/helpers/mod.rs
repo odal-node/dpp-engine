@@ -341,13 +341,38 @@ impl Default for SealWiring {
     }
 }
 
+/// How a harness wires the registry.
+///
+/// The port is optional because the ghost is the shipped default, and the queues
+/// are optional because a node with no Postgres outboxes reports the registry
+/// surface as unconfigured, which is the one node some routes' answers turn on.
+pub struct RegistryWiring {
+    /// The adapter that answers the registry. `None` is the ghost, which holds no
+    /// submission and confirms nothing.
+    pub port: Option<Arc<dyn dpp_domain::ports::registry_sync::RegistrySyncPort>>,
+    /// Whether the registration and transfer outboxes are wired. `false` is a node
+    /// with no registry queues, where nothing is queued and no registration is
+    /// owed or tracked.
+    pub queues: bool,
+}
+
+impl Default for RegistryWiring {
+    fn default() -> Self {
+        // Every node that publishes wires the queues, so the harness does.
+        Self {
+            port: None,
+            queues: true,
+        }
+    }
+}
+
 pub async fn start_vault(dal: PgDal) -> String {
     start_vault_with_identity(
         dal,
         Arc::new(MockIdentity),
         None,
         SealWiring::default(),
-        None,
+        RegistryWiring::default(),
     )
     .await
 }
@@ -358,7 +383,7 @@ pub async fn start_vault_failing_signer(dal: PgDal) -> String {
         Arc::new(FailingIdentity),
         None,
         SealWiring::default(),
-        None,
+        RegistryWiring::default(),
     )
     .await
 }
@@ -371,7 +396,7 @@ pub async fn start_vault_slow_signer(dal: PgDal, delay: std::time::Duration) -> 
         Arc::new(SlowIdentity(delay)),
         None,
         SealWiring::default(),
-        None,
+        RegistryWiring::default(),
     )
     .await
 }
@@ -379,7 +404,14 @@ pub async fn start_vault_slow_signer(dal: PgDal, delay: std::time::Duration) -> 
 /// A vault whose seal ports are wired to order — for the routes whose answers
 /// turn on whether this node can read a seal, or buy one.
 pub async fn start_vault_with_seal(dal: PgDal, seal: SealWiring) -> String {
-    start_vault_with_identity(dal, Arc::new(MockIdentity), None, seal, None).await
+    start_vault_with_identity(
+        dal,
+        Arc::new(MockIdentity),
+        None,
+        seal,
+        RegistryWiring::default(),
+    )
+    .await
 }
 
 /// A vault whose registry port is the one given — for the routes whose answers turn
@@ -393,7 +425,27 @@ pub async fn start_vault_with_registry(
         Arc::new(MockIdentity),
         None,
         SealWiring::default(),
-        Some(registry),
+        RegistryWiring {
+            port: Some(registry),
+            ..RegistryWiring::default()
+        },
+    )
+    .await
+}
+
+/// A vault with no registry queues — the node the registry routes answer
+/// `configured: false` for, and the only one that can show what they refuse when
+/// there is nothing to record on.
+pub async fn start_vault_without_registry_queues(dal: PgDal) -> String {
+    start_vault_with_identity(
+        dal,
+        Arc::new(MockIdentity),
+        None,
+        SealWiring::default(),
+        RegistryWiring {
+            queues: false,
+            ..RegistryWiring::default()
+        },
     )
     .await
 }
@@ -410,7 +462,7 @@ pub async fn start_vault_with_credentials(
         Arc::new(MockIdentity),
         Some((directory, trust)),
         SealWiring::default(),
-        None,
+        RegistryWiring::default(),
     )
     .await
 }
@@ -425,7 +477,7 @@ async fn start_vault_with_identity(
     identity: Arc<dyn IdentityPort>,
     credentials: Option<CredentialWiring>,
     seal: SealWiring,
-    registry: Option<Arc<dyn dpp_domain::ports::registry_sync::RegistrySyncPort>>,
+    registry: RegistryWiring,
 ) -> String {
     struct PgPing(PgDal);
     #[async_trait]
@@ -445,7 +497,7 @@ async fn start_vault_with_identity(
     let compliance = Arc::new(PassthroughRegistry::new());
     let event_bus: Arc<dyn dpp_common::event::EventBus> = Arc::new(dpp_common::event::NoOpEventBus);
     let registry_sync: Arc<dyn dpp_domain::ports::registry_sync::RegistrySyncPort> =
-        registry.unwrap_or_else(|| Arc::new(GhostRegistrySync));
+        registry.port.unwrap_or_else(|| Arc::new(GhostRegistrySync));
 
     // Mirror production: the registry reader stamps the default facility + primary
     // operator identifier onto new passports, read live from the operator config.
@@ -464,12 +516,6 @@ async fn start_vault_with_identity(
         "https://resolver.example.com".to_owned(),
     )
     .with_registry_reader(operator_repo.clone())
-    // Mirror production here too: the node wires both registry outboxes, so
-    // a harness without them exercises a publish path that does not exist in
-    // any real deployment — and reports the registry surface as
-    // unconfigured.
-    .with_registry_outbox(Arc::new(PgRegistrySyncRepo::new(dal.clone())))
-    .with_transfer_outbox(Arc::new(PgRegistryTransferRepo::new(dal.clone())))
     // Same reasoning again, and it had already cost something: without a
     // transfer store the seal route's `responsibilityMayHaveTransferred`
     // took its `None => false` branch, so a test asserting the flag was
@@ -483,6 +529,15 @@ async fn start_vault_with_identity(
     // node with a seal provider selected wires the outbox, so a harness without
     // it reports the sealing surface as unconfigured and cannot exercise it at
     // all — which is exactly the node some of these tests need to talk to.
+    // Mirror production: the node wires both registry outboxes, so a harness
+    // without them exercises a publish path that does not exist in any real
+    // deployment — and reports the registry surface as unconfigured. A test
+    // that is about exactly that node asks for it with `queues: false`.
+    if registry.queues {
+        service = service
+            .with_registry_outbox(Arc::new(PgRegistrySyncRepo::new(dal.clone())))
+            .with_transfer_outbox(Arc::new(PgRegistryTransferRepo::new(dal.clone())));
+    }
     if seal.outbox {
         service = service.with_seal_outbox(Arc::new(PgSealOutboxRepo::new(dal.clone())));
     }

@@ -16,7 +16,7 @@
 mod helpers;
 use helpers::{
     TestClient, make_jwt, make_jwt_scoped, seed_operator_config, start_postgres, start_vault,
-    start_vault_with_registry,
+    start_vault_with_registry, start_vault_without_registry_queues,
 };
 
 use std::sync::{Arc, Mutex};
@@ -573,4 +573,70 @@ async fn a_node_with_no_registry_connection_records_nothing() {
     let resp = record(&client, &id, serde_json::json!({ "correlationId": HANDLE })).await;
     assert_eq!(resp.status(), 422);
     assert!(registration(&client, &id).await.get("registryId").is_none());
+}
+
+/// 🚨 A node with no registry queues has no registration to record a handle on,
+/// and says so with the status the route documents for it: `501`, which is a
+/// feature that is absent, and not `404`, which would say this passport has none.
+///
+/// The one documented status no other test constructs, because every other
+/// harness wires the queues. It is not a quieter `422` either: a client that
+/// treats `422` as "the registry did not confirm" would retry a request that can
+/// never succeed on this node.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_node_with_no_registry_queues_cannot_record_a_handle() {
+    let pg = start_postgres().await;
+    seed_operator_config(&pg.dal).await;
+    let url = start_vault_without_registry_queues(pg.dal.clone()).await;
+    let client = TestClient::new(&url, make_jwt(&op()));
+
+    // The surface says what it is before anything is asked of it.
+    let rollup: serde_json::Value = client.get("/api/v1/registry").await.json().await.unwrap();
+    assert_eq!(rollup["configured"], false, "{rollup}");
+
+    // A passport that exists and one that does not get the same answer: the
+    // missing thing is the node's queues, not either passport's row.
+    let id = created(&client).await;
+    for dpp in [id.as_str(), "00000000-0000-0000-0000-0000000000ff"] {
+        let resp = record(&client, dpp, serde_json::json!({ "correlationId": HANDLE })).await;
+        assert_eq!(resp.status(), 501, "{dpp}");
+        let problem: serde_json::Value = resp.json().await.unwrap();
+        assert!(
+            problem["detail"]
+                .as_str()
+                .is_some_and(|d| d.contains("no registry queues")),
+            "{problem}"
+        );
+    }
+
+    // And the per-passport view agrees with the rollup rather than reporting a
+    // registration that cannot exist.
+    let view: serde_json::Value = client
+        .get(&format!("/api/v1/dpp/{id}/registry"))
+        .await
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(view["configured"], false, "{view}");
+    assert!(view.get("registration").is_none(), "{view}");
+}
+
+/// The scope gate comes first: a write-scoped credential is told `403` on a node
+/// that could not have done the work anyway, so the answer never leaks whether the
+/// queues are wired to someone who may not ask.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_scope_is_checked_before_the_queues_are() {
+    let pg = start_postgres().await;
+    seed_operator_config(&pg.dal).await;
+    let url = start_vault_without_registry_queues(pg.dal.clone()).await;
+    let client = TestClient::new(&url, make_jwt_scoped(&op(), "write"));
+
+    let resp = record(
+        &client,
+        "00000000-0000-0000-0000-0000000000ff",
+        serde_json::json!({ "correlationId": HANDLE }),
+    )
+    .await;
+
+    assert_eq!(resp.status(), 403);
 }
